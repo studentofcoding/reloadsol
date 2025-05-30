@@ -1,8 +1,8 @@
 'use client'
 
 import React, { useState, useCallback } from 'react'
-import { useWallet, useConnection } from '@solana/wallet-adapter-react'
-import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
+import { useWallet, useConnection } from '../components/WalletProvider'
+import PhantomWalletButton from './PhantomWalletButton'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { executeBulkBuy, parseMintAddresses, isValidMintAddress } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
@@ -100,7 +100,7 @@ export default function BulkTokenBuyer() {
           <p className="text-slate-400">Split your SOL across multiple tokens instantly</p>
         </div>
         <div className="shrink-0">
-          <WalletMultiButton />
+          <PhantomWalletButton />
         </div>
       </div>
 
@@ -359,7 +359,7 @@ export default function BulkTokenBuyer() {
             <p className="text-slate-400 mb-6 max-w-md mx-auto">
               Connect your Solana wallet to start buying tokens in bulk with our secure interface
             </p>
-            <WalletMultiButton />
+            <PhantomWalletButton />
           </div>
         </div>
       )}

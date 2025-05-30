@@ -20,6 +20,11 @@ const nextConfig = {
       path: require.resolve('path-browserify'),
       'pino-pretty': false,
     };
+    // Exclude tokenOperations.ts from the build process
+    config.module.rules.push({
+      test: /tokenOperations\.ts$/,
+      use: 'null-loader',
+    });
     return config;
   },
 };

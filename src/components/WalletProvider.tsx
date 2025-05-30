@@ -1,29 +1,57 @@
 'use client'
 
-import React, { useMemo } from 'react'
-import { ConnectionProvider, WalletProvider as SolanaWalletProvider } from '@solana/wallet-adapter-react'
+import React, { createContext, useContext, useEffect, useState, useMemo } from 'react'
+import { Connection as SolanaConnection, PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base'
-import { WalletModalProvider } from '@solana/wallet-adapter-react-ui'
-import {
-  PhantomWalletAdapter,
-  SolflareWalletAdapter,
-  TorusWalletAdapter,
-  LedgerWalletAdapter,
-} from '@solana/wallet-adapter-wallets'
 import { clusterApiUrl } from '@solana/web3.js'
 
-// Import wallet adapter CSS
-require('@solana/wallet-adapter-react-ui/styles.css')
+// Phantom wallet interface
+interface PhantomProvider {
+  isPhantom?: boolean
+  publicKey?: PublicKey
+  isConnected?: boolean
+  signTransaction<T extends Transaction | VersionedTransaction>(transaction: T): Promise<T>
+  signAllTransactions<T extends Transaction | VersionedTransaction>(transactions: T[]): Promise<T[]>
+  signMessage(message: Uint8Array): Promise<{ signature: Uint8Array }>
+  connect(opts?: { onlyIfTrusted: boolean }): Promise<{ publicKey: PublicKey }>
+  disconnect(): Promise<void>
+  on(event: string, callback: Function): void
+  removeListener(event: string, callback: Function): void
+}
+
+// Wallet context interface
+interface WalletContextType {
+  publicKey: PublicKey | null
+  connected: boolean
+  connecting: boolean
+  signTransaction?: <T extends Transaction | VersionedTransaction>(transaction: T) => Promise<T>
+  signAllTransactions?: <T extends Transaction | VersionedTransaction>(transactions: T[]) => Promise<T[]>
+  signMessage?: (message: Uint8Array) => Promise<{ signature: Uint8Array }>
+  connect: () => Promise<void>
+  disconnect: () => Promise<void>
+}
+
+declare global {
+  interface Window {
+    solana?: PhantomProvider
+  }
+}
+
+// Create context
+const WalletContext = createContext<WalletContextType | null>(null)
 
 interface WalletProviderProps {
   children: React.ReactNode
 }
 
 export function WalletProvider({ children }: WalletProviderProps) {
-  // The network can be set to 'devnet', 'testnet', or 'mainnet-beta'
+  const [publicKey, setPublicKey] = useState<PublicKey | null>(null)
+  const [connected, setConnected] = useState(false)
+  const [connecting, setConnecting] = useState(false)
+  const [provider, setProvider] = useState<PhantomProvider | null>(null)
+
+  // Connection endpoint
   const network = WalletAdapterNetwork.Mainnet
-  
-  // You can also provide a custom RPC endpoint
   const endpoint = useMemo(() => {
     if (process.env.NEXT_PUBLIC_RPC_URL) {
       return process.env.NEXT_PUBLIC_RPC_URL
@@ -31,23 +59,175 @@ export function WalletProvider({ children }: WalletProviderProps) {
     return clusterApiUrl(network)
   }, [network])
 
-  const wallets = useMemo(
-    () => [
-      new PhantomWalletAdapter(),
-      new SolflareWalletAdapter(),
-      new TorusWalletAdapter(),
-      new LedgerWalletAdapter(),
-    ],
-    []
-  )
+  // Check for Phantom wallet
+  useEffect(() => {
+    const getProvider = () => {
+      if ('solana' in window) {
+        const phantom = window.solana
+        if (phantom?.isPhantom) {
+          setProvider(phantom)
+          return phantom
+        }
+      }
+      return null
+    }
+
+    const phantom = getProvider()
+    
+    if (phantom) {
+      // Try to auto-connect if previously connected
+      phantom.connect({ onlyIfTrusted: true }).catch(() => {
+        // Ignore error - user hasn't connected before
+      })
+    }
+  }, [])
+
+  // Set up event listeners
+  useEffect(() => {
+    if (!provider) return
+
+    const handleConnect = (publicKey: PublicKey) => {
+      setPublicKey(publicKey)
+      setConnected(true)
+      setConnecting(false)
+    }
+
+    const handleDisconnect = () => {
+      setPublicKey(null)
+      setConnected(false)
+      setConnecting(false)
+    }
+
+    const handleAccountChanged = (publicKey: PublicKey | null) => {
+      if (publicKey) {
+        setPublicKey(publicKey)
+        setConnected(true)
+      } else {
+        handleDisconnect()
+      }
+    }
+
+    provider.on('connect', handleConnect)
+    provider.on('disconnect', handleDisconnect)
+    provider.on('accountChanged', handleAccountChanged)
+
+    // Check if already connected
+    if (provider.isConnected && provider.publicKey) {
+      handleConnect(provider.publicKey)
+    }
+
+    return () => {
+      provider.removeListener('connect', handleConnect)
+      provider.removeListener('disconnect', handleDisconnect)
+      provider.removeListener('accountChanged', handleAccountChanged)
+    }
+  }, [provider])
+
+  // Connect function
+  const connect = async () => {
+    if (!provider) {
+      throw new Error('Phantom wallet not found! Please install Phantom wallet.')
+    }
+
+    setConnecting(true)
+    try {
+      const response = await provider.connect()
+      setPublicKey(response.publicKey)
+      setConnected(true)
+    } catch (error) {
+      console.error('Failed to connect to Phantom:', error)
+      throw error
+    } finally {
+      setConnecting(false)
+    }
+  }
+
+  // Disconnect function
+  const disconnect = async () => {
+    if (!provider) return
+
+    try {
+      await provider.disconnect()
+      setPublicKey(null)
+      setConnected(false)
+    } catch (error) {
+      console.error('Failed to disconnect from Phantom:', error)
+    }
+  }
+
+  // Sign transaction
+  const signTransaction = async <T extends Transaction | VersionedTransaction>(
+    transaction: T
+  ): Promise<T> => {
+    if (!provider) throw new Error('Phantom wallet not connected')
+    return await provider.signTransaction(transaction)
+  }
+
+  // Sign all transactions
+  const signAllTransactions = async <T extends Transaction | VersionedTransaction>(
+    transactions: T[]
+  ): Promise<T[]> => {
+    if (!provider) throw new Error('Phantom wallet not connected')
+    return await provider.signAllTransactions(transactions)
+  }
+
+  // Sign message
+  const signMessage = async (message: Uint8Array) => {
+    if (!provider) throw new Error('Phantom wallet not connected')
+    return await provider.signMessage(message)
+  }
+
+  const contextValue: WalletContextType = {
+    publicKey,
+    connected,
+    connecting,
+    signTransaction,
+    signAllTransactions,
+    signMessage,
+    connect,
+    disconnect,
+  }
 
   return (
-    <ConnectionProvider endpoint={endpoint}>
-      <SolanaWalletProvider wallets={wallets} autoConnect>
-        <WalletModalProvider>
-          {children}
-        </WalletModalProvider>
-      </SolanaWalletProvider>
-    </ConnectionProvider>
+    <WalletContext.Provider value={contextValue}>
+      <ConnectionProvider endpoint={endpoint}>
+        {children}
+      </ConnectionProvider>
+    </WalletContext.Provider>
   )
+}
+
+// Hook to use wallet context
+export function useWallet(): WalletContextType {
+  const context = useContext(WalletContext)
+  if (!context) {
+    throw new Error('useWallet must be used within a WalletProvider')
+  }
+  return context
+}
+
+// Connection context
+const ConnectionContext = createContext<SolanaConnection | null>(null)
+
+interface ConnectionProviderProps {
+  endpoint: string
+  children: React.ReactNode
+}
+
+function ConnectionProvider({ endpoint, children }: ConnectionProviderProps) {
+  const connection = useMemo(() => new SolanaConnection(endpoint, 'confirmed'), [endpoint])
+  
+  return (
+    <ConnectionContext.Provider value={connection}>
+      {children}
+    </ConnectionContext.Provider>
+  )
+}
+
+export function useConnection() {
+  const connection = useContext(ConnectionContext)
+  if (!connection) {
+    throw new Error('useConnection must be used within a ConnectionProvider')
+  }
+  return { connection }
 } 

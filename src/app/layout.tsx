@@ -1,14 +1,7 @@
-import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+'use client'
+
 import './globals.css'
 import { WalletProvider } from '@/components/WalletProvider'
-
-const inter = Inter({ subsets: ['latin'] })
-
-export const metadata: Metadata = {
-  title: 'Solana Bulk Token Buyer',
-  description: 'Buy multiple Solana tokens in bulk with a single transaction',
-}
 
 export default function RootLayout({
   children,
@@ -17,7 +10,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
+      <body>
         <WalletProvider>
           {children}
         </WalletProvider>
