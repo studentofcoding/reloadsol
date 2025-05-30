@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 255, 255, 255;
+  --background-start-rgb: 15, 23, 42;
+  --background-end-rgb: 30, 41, 59;
+  --card-bg: 51, 65, 85;
+  --border-color: 71, 85, 105;
+}
+
+* {
+  box-sizing: border-box;
+  padding: 0;
+  margin: 0;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  background: rgb(var(--background-start-rgb));
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+      135deg,
+      rgb(var(--background-start-rgb)) 0%,
+      rgb(var(--background-end-rgb)) 100%
+    );
+  min-height: 100vh;
+}
+
+/* Wallet adapter dark theme */
+.wallet-adapter-button {
+  @apply bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 px-4 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl border border-blue-500/20;
+}
+
+.wallet-adapter-button-trigger {
+  @apply bg-blue-600 hover:bg-blue-700 border border-blue-500/20;
+}
+
+.wallet-adapter-modal-wrapper {
+  @apply bg-slate-900/95 backdrop-blur-sm;
+}
+
+.wallet-adapter-modal {
+  @apply bg-slate-800 border border-slate-700 rounded-xl shadow-2xl;
+}
+
+.wallet-adapter-modal-title {
+  @apply text-white;
+}
+
+.wallet-adapter-modal-list {
+  @apply bg-slate-800;
+}
+
+.wallet-adapter-modal-list-more {
+  @apply bg-slate-700 text-slate-300 hover:bg-slate-600;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-800;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-600 rounded-md;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-500;
+}
+
+/* Focus rings for accessibility */
+input:focus,
+textarea:focus,
+select:focus,
+button:focus {
+  @apply outline-none ring-2 ring-blue-500/50 ring-offset-2 ring-offset-slate-900;
+}
+
+/* Custom animations */
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    opacity: 0.8;
+    box-shadow: 0 0 30px rgba(59, 130, 246, 0.6);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+} 
