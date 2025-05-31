@@ -7,6 +7,8 @@ import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { 
   executeBulkSell, 
   fetchUserTokens, 
+  fetchZeroBalanceTokens,
+  closeZeroBalanceTokens,
   getTokenSolValue,
   UserToken, 
   BulkSellRequest, 
@@ -20,14 +22,18 @@ export default function BulkTokenSeller() {
   
   // Form state
   const [selectedTokens, setSelectedTokens] = useState<UserToken[]>([])
+  const [selectedZeroBalanceTokens, setSelectedZeroBalanceTokens] = useState<UserToken[]>([])
   const [slippage, setSlippage] = useState<number>(100) // 1%
   const [priorityFee, setPriorityFee] = useState<number>(100000) // 0.0001 SOL
   
   // UI state
   const [userTokens, setUserTokens] = useState<UserToken[]>([])
+  const [zeroBalanceTokens, setZeroBalanceTokens] = useState<UserToken[]>([])
   const [isLoadingTokens, setIsLoadingTokens] = useState<boolean>(false)
   const [isLoading, setIsLoading] = useState<boolean>(false)
+  const [isClosingAccounts, setIsClosingAccounts] = useState<boolean>(false)
   const [result, setResult] = useState<BulkSellResult | null>(null)
+  const [closeResult, setCloseResult] = useState<{ successful: string[]; failed: Array<{ mintAddress: string; error: string }>; signatures: string[] } | null>(null)
   const [error, setError] = useState<string>('')
 
   // Fetch user tokens on wallet connection
@@ -36,7 +42,9 @@ export default function BulkTokenSeller() {
       fetchTokens()
     } else {
       setUserTokens([])
+      setZeroBalanceTokens([])
       setSelectedTokens([])
+      setSelectedZeroBalanceTokens([])
     }
   }, [connected, publicKey])
 
@@ -46,8 +54,22 @@ export default function BulkTokenSeller() {
     setIsLoadingTokens(true)
     setError('')
     try {
-      const tokens = await fetchUserTokens(connection, publicKey)
-      setUserTokens(tokens)
+      // Fetch all tokens including zero balance
+      const allTokens = await fetchUserTokens(connection, publicKey, true)
+      
+      // Separate sellable tokens from zero-balance/unsellable tokens
+      // Sellable tokens: have both meaningful balance AND SOL value >= 0.001
+      const sellableTokens = allTokens.filter(token => 
+        token.uiAmount > 0.000000000001 && token.solValue >= 0.001
+      )
+      
+      // Zero-balance/unsellable tokens: either zero balance OR SOL value < 0.001
+      const zeroTokens = allTokens.filter(token => 
+        token.uiAmount <= 0.000000000001 || token.solValue < 0.001
+      )
+      
+      setUserTokens(sellableTokens)
+      setZeroBalanceTokens(zeroTokens)
     } catch (error) {
       console.error('Error fetching tokens:', error)
       setError('Failed to fetch your tokens')
@@ -59,6 +81,18 @@ export default function BulkTokenSeller() {
   // Handle token selection
   const toggleTokenSelection = (token: UserToken) => {
     setSelectedTokens(prev => {
+      const isSelected = prev.some(t => t.mintAddress === token.mintAddress)
+      if (isSelected) {
+        return prev.filter(t => t.mintAddress !== token.mintAddress)
+      } else {
+        return [...prev, token]
+      }
+    })
+  }
+
+  // Handle zero-balance token selection
+  const toggleZeroBalanceTokenSelection = (token: UserToken) => {
+    setSelectedZeroBalanceTokens(prev => {
       const isSelected = prev.some(t => t.mintAddress === token.mintAddress)
       if (isSelected) {
         return prev.filter(t => t.mintAddress !== token.mintAddress)
@@ -114,9 +148,19 @@ export default function BulkTokenSeller() {
     setSelectedTokens([...userTokens])
   }
 
+  // Select all zero-balance tokens
+  const selectAllZeroBalanceTokens = () => {
+    setSelectedZeroBalanceTokens([...zeroBalanceTokens])
+  }
+
   // Clear selection
   const clearSelection = () => {
     setSelectedTokens([])
+  }
+
+  // Clear zero-balance selection
+  const clearZeroBalanceSelection = () => {
+    setSelectedZeroBalanceTokens([])
   }
 
   // Refresh all token prices
@@ -186,18 +230,20 @@ export default function BulkTokenSeller() {
       return
     }
 
-    if (selectedTokens.length === 0) {
-      setError('Please select at least one token to sell')
+    if (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0) {
+      setError('Please select at least one token')
       return
     }
 
     setIsLoading(true)
     setError('')
     setResult(null)
+    setCloseResult(null) // Clear any previous close-only results
 
     try {
       const request: BulkSellRequest = {
         tokens: selectedTokens,
+        unsellableTokens: selectedZeroBalanceTokens.length > 0 ? selectedZeroBalanceTokens : undefined,
         slippage,
         priorityFee,
       }
@@ -211,13 +257,14 @@ export default function BulkTokenSeller() {
 
       setResult(sellResult)
 
-      if (sellResult.success) {
+      if (sellResult.success || sellResult.successfulCloses.length > 0) {
         // Refresh token list and clear selection
         await fetchTokens()
         setSelectedTokens([])
+        setSelectedZeroBalanceTokens([])
       }
     } catch (err) {
-      console.error('Bulk sell error:', err)
+      console.error('Bulk operation error:', err)
       
       // Better error handling for different types of errors
       if (err instanceof Error) {
@@ -234,7 +281,7 @@ export default function BulkTokenSeller() {
     } finally {
       setIsLoading(false)
     }
-  }, [connected, publicKey, signAllTransactions, connection, selectedTokens, slippage, priorityFee, fetchTokens])
+  }, [connected, publicKey, signAllTransactions, connection, selectedTokens, selectedZeroBalanceTokens, slippage, priorityFee, fetchTokens])
 
   const estimatedSOL = selectedTokens.reduce((total, token) => total + token.solValue, 0)
 
@@ -383,30 +430,111 @@ export default function BulkTokenSeller() {
             </div>
           )}
 
+          {/* Zero-Balance Tokens Section */}
+          {zeroBalanceTokens.length > 0 && (
+            <>
+              <div className="border-t border-slate-600/50 pt-8">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                  <div>
+                    <h3 className="text-xl font-semibold text-white mb-1">Unsellable Tokens</h3>
+                    <p className="text-slate-400 text-sm">
+                      Zero balance or no liquidity • Close accounts to recover rent • {selectedZeroBalanceTokens.length} of {zeroBalanceTokens.length} selected
+                    </p>
+                  </div>
+                  <div className="flex items-center space-x-3">
+                    <button
+                      onClick={selectAllZeroBalanceTokens}
+                      disabled={zeroBalanceTokens.length === 0}
+                      className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg transition-colors text-sm"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      onClick={clearZeroBalanceSelection}
+                      disabled={selectedZeroBalanceTokens.length === 0}
+                      className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors text-sm"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 max-h-64 overflow-y-auto">
+                  {zeroBalanceTokens.map((token) => {
+                    const isSelected = selectedZeroBalanceTokens.some(t => t.mintAddress === token.mintAddress)
+                    return (
+                      <div
+                        key={token.mintAddress}
+                        onClick={() => toggleZeroBalanceTokenSelection(token)}
+                        className={`group p-4 rounded-xl border cursor-pointer transition-all duration-200 ${
+                          isSelected
+                            ? 'bg-gradient-to-r from-yellow-900/50 to-orange-900/50 border-yellow-500/50 shadow-glow'
+                            : 'bg-slate-700/30 border-slate-600/50 hover:bg-slate-600/30 hover:border-slate-500/50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
+                              isSelected ? 'bg-yellow-600' : 'bg-slate-600'
+                            }`}>
+                              {token.symbol?.charAt(0) || 'T'}
+                            </div>
+                            <div>
+                              <div className="font-semibold text-white">
+                                {token.symbol || 'Unknown'}
+                              </div>
+                              <div className="text-sm text-slate-400 font-mono truncate max-w-48">
+                                {token.mintAddress}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-semibold text-slate-400">
+                              {token.uiAmount > 0.000001 
+                                ? `${token.uiAmount.toFixed(6)} tokens`
+                                : '0 tokens'
+                              }
+                            </div>
+                            <div className="text-sm text-yellow-400">
+                              {token.uiAmount > 0.000000000001 
+                                ? (token.solValue > 0 ? `≈ ${token.solValue.toFixed(8)} SOL (< 0.001)` : 'No liquidity')
+                                : 'Close for rent'
+                              }
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+
           {/* Settings and Summary */}
-          {selectedTokens.length > 0 && (
+          {(selectedTokens.length > 0 || selectedZeroBalanceTokens.length > 0) && (
             <>
               {/* Summary */}
               <div className="bg-gradient-to-r from-blue-900/30 to-purple-900/30 border border-blue-500/30 rounded-xl p-6">
-                <h4 className="font-semibold text-blue-200 mb-4">Sale Summary</h4>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <h4 className="font-semibold text-blue-200 mb-4">Operation Summary</h4>
+                <div className="grid grid-cols-3 gap-4 text-sm">
                   <div>
-                    <span className="block text-blue-300 font-medium">Tokens Selected</span>
-                    <span className="text-xl font-bold text-blue-100">{selectedTokens.length}</span>
+                    <span className="block text-blue-300 font-medium">Total Operations</span>
+                    <span className="text-xl font-bold text-blue-100">{selectedTokens.length} Swap & {selectedTokens.length +selectedZeroBalanceTokens.length} Close</span>
                   </div>
                   <div>
                     <span className="block text-blue-300 font-medium">Estimated SOL</span>
-                    <span className="text-xl font-bold text-blue-100">{estimatedSOL.toFixed(4)}</span>
-                  </div>
-                  <div>
-                    <span className="block text-blue-300 font-medium">Accounts to Close</span>
-                    <span className="text-xl font-bold text-blue-100">{selectedTokens.length}</span>
-                  </div>
-                  <div>
-                    <span className="block text-blue-300 font-medium">Rent Recovery</span>
-                    <span className="text-xl font-bold text-blue-100">~{(selectedTokens.length * 0.00203928).toFixed(6)} SOL</span>
+                    <span className="text-xl font-bold text-blue-100">{(estimatedSOL + ((selectedTokens.length + selectedZeroBalanceTokens.length) * 0.00203928)).toFixed(4)}</span>
                   </div>
                 </div>
+                
+                {selectedZeroBalanceTokens.length > 0 && (
+                  <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-500/30 rounded-lg">
+                    <p className="text-yellow-200 text-sm">
+                      <strong>{selectedZeroBalanceTokens.length} unsellable token{selectedZeroBalanceTokens.length !== 1 ? 's' : ''}</strong> will be burned (if needed) and closed to recover rent
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Settings Grid */}
@@ -455,9 +583,9 @@ export default function BulkTokenSeller() {
               {/* Sell Button */}
               <button
                 onClick={handleBulkSell}
-                disabled={isLoading || selectedTokens.length === 0}
+                disabled={isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)}
                 className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
-                  isLoading || selectedTokens.length === 0
+                  isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)
                     ? 'bg-slate-600 text-slate-400 cursor-not-allowed'
                     : 'bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white shadow-glow hover:shadow-glow-lg transform hover:scale-[1.02] active:scale-[0.98]'
                 }`}
@@ -465,11 +593,18 @@ export default function BulkTokenSeller() {
                 {isLoading ? (
                   <div className="flex items-center justify-center space-x-3">
                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                    <span>Selling & Closing Accounts...</span>
+                    <span>Processing...</span>
                   </div>
                 ) : (
                   <div className="flex items-center justify-center space-x-2">
-                    <span>Sell {selectedTokens.length} Token{selectedTokens.length !== 1 ? 's' : ''} & Close</span>
+                    <span>
+                      {selectedTokens.length > 0 && selectedZeroBalanceTokens.length > 0
+                        ? `Sell ${selectedTokens.length} & Close ${selectedTokens.length + selectedZeroBalanceTokens.length} Accounts`
+                        : selectedTokens.length > 0
+                        ? `Sell ${selectedTokens.length} Token${selectedTokens.length !== 1 ? 's' : ''} & Close`
+                        : `Close ${selectedZeroBalanceTokens.length} Account${selectedZeroBalanceTokens.length !== 1 ? 's' : ''}`
+                      }
+                    </span>
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
                     </svg>
@@ -618,6 +753,107 @@ export default function BulkTokenSeller() {
                         <div className="flex items-center justify-between">
                           <span className="font-mono text-sm text-slate-300 truncate mr-4">{sig}</span>
                           <svg className="w-4 h-4 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </div>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Close Results Display */}
+          {closeResult && (
+            <div className="space-y-6 animate-slide-up">
+              <div className={`border rounded-xl p-6 backdrop-blur-sm ${
+                closeResult.successful.length > 0
+                  ? 'bg-gradient-to-r from-yellow-900/50 to-orange-800/50 border-yellow-500/50' 
+                  : 'bg-gradient-to-r from-red-900/50 to-red-800/50 border-red-500/50'
+              }`}>
+                <h3 className={`font-bold text-lg mb-3 ${closeResult.successful.length > 0 ? 'text-yellow-200' : 'text-red-200'}`}>
+                  {closeResult.successful.length > 0 ? '🎉 Accounts Closed!' : '❌ Account Closing Failed'}
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                  <div className={closeResult.successful.length > 0 ? 'text-yellow-300' : 'text-red-300'}>
+                    <span className="block font-medium">Accounts Closed</span>
+                    <span className="text-xl font-bold">{closeResult.successful.length}</span>
+                  </div>
+                  <div className={closeResult.successful.length > 0 ? 'text-yellow-300' : 'text-red-300'}>
+                    <span className="block font-medium">Failed to Close</span>
+                    <span className="text-xl font-bold">{closeResult.failed.length}</span>
+                  </div>
+                  <div className={closeResult.successful.length > 0 ? 'text-yellow-300' : 'text-red-300'}>
+                    <span className="block font-medium">Rent Recovered</span>
+                    <span className="text-xl font-bold">~{(closeResult.successful.length * 0.00203928).toFixed(6)} SOL</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Successful Closes */}
+              {closeResult.successful.length > 0 && (
+                <div className="bg-gradient-to-r from-yellow-900/30 to-orange-800/30 border border-yellow-500/30 rounded-xl p-6 backdrop-blur-sm">
+                  <h4 className="font-semibold text-yellow-200 mb-4 flex items-center">
+                    <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    Successfully Closed Accounts ({closeResult.successful.length})
+                  </h4>
+                  <div className="space-y-2">
+                    {closeResult.successful.map((mintAddress, index) => (
+                      <div key={index} className="bg-yellow-900/20 rounded-lg p-3 border border-yellow-500/20">
+                        <div className="flex justify-between items-center">
+                          <span className="font-mono text-sm text-yellow-100">{mintAddress}</span>
+                          <span className="text-yellow-200 text-xs">Account closed</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Failed Closes */}
+              {closeResult.failed.length > 0 && (
+                <div className="bg-gradient-to-r from-red-900/30 to-red-800/30 border border-red-500/30 rounded-xl p-6 backdrop-blur-sm">
+                  <h4 className="font-semibold text-red-200 mb-4 flex items-center">
+                    <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    Failed to Close Accounts ({closeResult.failed.length})
+                  </h4>
+                  <div className="space-y-3">
+                    {closeResult.failed.map((failure, index) => (
+                      <div key={index} className="bg-red-900/20 rounded-lg p-3 border border-red-500/20">
+                        <div className="font-mono text-sm text-red-100 mb-1">{failure.mintAddress}</div>
+                        <div className="text-xs text-red-300">{failure.error}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Close Transaction Signatures */}
+              {closeResult.signatures.length > 0 && (
+                <div className="bg-gradient-to-r from-slate-800/50 to-slate-700/50 border border-slate-600/50 rounded-xl p-6 backdrop-blur-sm">
+                  <h4 className="font-semibold text-slate-200 mb-4 flex items-center">
+                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Close Transaction Signatures ({closeResult.signatures.length})
+                  </h4>
+                  <div className="space-y-2">
+                    {closeResult.signatures.map((sig, index) => (
+                      <a
+                        key={index}
+                        href={`https://solscan.io/tx/${sig}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block bg-slate-700/30 hover:bg-slate-600/30 rounded-lg p-3 transition-colors border border-slate-600/30 hover:border-yellow-500/30"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-sm text-slate-300 truncate mr-4">{sig}</span>
+                          <svg className="w-4 h-4 text-yellow-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                           </svg>
                         </div>

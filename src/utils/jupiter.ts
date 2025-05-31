@@ -1,5 +1,5 @@
 import { Connection, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey, TransactionMessage } from '@solana/web3.js'
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createCloseAccountInstruction } from '@solana/spl-token'
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createCloseAccountInstruction, createBurnInstruction } from '@solana/spl-token'
 import { JUPITER_API, TOKENS } from './solana'
 import { SwapQuote, SwapTransaction, BulkBuyRequest, BulkBuyResult, TokenPurchase } from '@/types'
 
@@ -18,6 +18,7 @@ export interface UserToken {
 
 export interface BulkSellRequest {
   tokens: UserToken[]
+  unsellableTokens?: UserToken[] // Optional unsellable tokens to close
   slippage: number
   priorityFee: number
 }
@@ -162,19 +163,17 @@ export async function getTokenSolValue(
 // Fetch user's token balances with real SOL values
 export async function fetchUserTokens(
   connection: Connection,
-  userPublicKey: PublicKey
+  userPublicKey: PublicKey,
+  includeZeroBalance: boolean = false
 ): Promise<UserToken[]> {
   try {
-    const tokenAccountsResponse = await connection.getTokenAccountsByOwner(userPublicKey, {
+    const tokenAccounts = await connection.getTokenAccountsByOwner(userPublicKey, {
       programId: TOKEN_PROGRAM_ID,
     })
 
-    const userTokens: UserToken[] = []
-
-    // First pass: collect all tokens with basic info
-    const tokenPromises = tokenAccountsResponse.value.map(async ({ account, pubkey }) => {
+    const tokenPromises = tokenAccounts.value.map(async (tokenAccount) => {
       try {
-        const accountData = account.data
+        const accountData = tokenAccount.account.data
         
         // Parse token account data
         const mintBytes = accountData.slice(0, 32)
@@ -184,7 +183,8 @@ export async function fetchUserTokens(
         const mint = new PublicKey(mintBytes).toBase58()
         const amount = Number(amountBytes.readBigUInt64LE(0))
         
-        if (amount > 0) {
+        // Include tokens with balance > 0 OR if includeZeroBalance is true
+        if (amount > 0.000000000001 || includeZeroBalance) {
           // Try to get token metadata
           const tokenInfo = await getTokenInfo(mint)
           
@@ -199,7 +199,8 @@ export async function fetchUserTokens(
             solValue: 0, // Will be updated
             isLoadingPrice: true
           }
-          
+          console.log('token', token)
+
           return token
         }
         return null
@@ -209,14 +210,25 @@ export async function fetchUserTokens(
       }
     })
 
-    const tokens = (await Promise.all(tokenPromises)).filter((token): token is UserToken => 
-      token !== null && token.uiAmount > 0.000001
-    )
+    const tokens = (await Promise.all(tokenPromises)).filter((token): token is UserToken => {
+      if (!token) return false
+      
+      // If including zero balance, include all tokens
+      if (includeZeroBalance) {
+        return true
+      }
+      
+      // Otherwise, only include tokens with meaningful balance
+      return token.uiAmount > 0.000000000001
+    })
 
-    // Second pass: get SOL values in batches to avoid overwhelming the API
-    const BATCH_SIZE = 5
-    for (let i = 0; i < tokens.length; i += BATCH_SIZE) {
-      const batch = tokens.slice(i, i + BATCH_SIZE)
+    // Second pass: get SOL values for tokens with meaningful balance
+    const tokensWithBalance = tokens.filter(token => token.uiAmount > 0.000000000001)
+    const tokensZeroBalance = tokens.filter(token => token.uiAmount <= 0.000000000001)
+    
+    const BATCH_SIZE = 10
+    for (let i = 0; i < tokensWithBalance.length; i += BATCH_SIZE) {
+      const batch = tokensWithBalance.slice(i, i + BATCH_SIZE)
       
       const pricePromises = batch.map(async (token) => {
         const solValue = await getTokenSolValue(
@@ -224,6 +236,7 @@ export async function fetchUserTokens(
           token.balance,
           token.decimals
         )
+        console.log('solValue of', token.mintAddress, solValue)
         return { ...token, solValue, isLoadingPrice: false }
       })
       
@@ -232,18 +245,65 @@ export async function fetchUserTokens(
       // Update the original tokens array
       updatedBatch.forEach((updatedToken, batchIndex) => {
         const originalIndex = i + batchIndex
-        tokens[originalIndex] = updatedToken
+        tokensWithBalance[originalIndex] = updatedToken
       })
       
       // Small delay between batches to be nice to the API
-      if (i + BATCH_SIZE < tokens.length) {
+      if (i + BATCH_SIZE < tokensWithBalance.length) {
         await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
 
-    return tokens.sort((a, b) => b.solValue - a.solValue) // Sort by SOL value descending
+    // Now separate tokens based on their SOL value after fetching prices
+    // Sellable tokens must have SOL value >= 0.001 (meaningful value)
+    const sellableTokens = tokensWithBalance.filter(token => token.solValue >= 0.001)
+    const unsellableTokens = tokensWithBalance.filter(token => token.solValue < 0.001)
+
+    // Mark zero balance tokens and unsellable tokens as not loading
+    const allZeroBalanceTokens = [
+      ...tokensZeroBalance.map(token => ({
+        ...token,
+        solValue: 0,
+        isLoadingPrice: false
+      })),
+      ...unsellableTokens.map(token => ({
+        ...token,
+        isLoadingPrice: false
+      }))
+    ]
+
+    // Combine and sort: sellable tokens first (by SOL value), then zero/unsellable tokens
+    const allTokens = [...sellableTokens, ...allZeroBalanceTokens]
+    
+    return allTokens.sort((a, b) => {
+      // First sort by whether they have meaningful SOL value (>= 0.001)
+      if (a.solValue >= 0.001 && b.solValue < 0.001) return -1
+      if (a.solValue < 0.001 && b.solValue >= 0.001) return 1
+      
+      // Then sort by SOL value within sellable tokens, or alphabetically for unsellable tokens
+      if (a.solValue >= 0.001 && b.solValue >= 0.001) {
+        return b.solValue - a.solValue
+      } else {
+        return (a.symbol || '').localeCompare(b.symbol || '')
+      }
+    })
   } catch (error) {
     console.error('Error fetching user tokens:', error)
+    return []
+  }
+}
+
+// New function to fetch only zero-balance tokens for closing
+export async function fetchZeroBalanceTokens(
+  connection: Connection,
+  userPublicKey: PublicKey
+): Promise<UserToken[]> {
+  try {
+    const allTokens = await fetchUserTokens(connection, userPublicKey, true)
+    // Include tokens with zero balance OR tokens with SOL value < 0.001 (unsellable)
+    return allTokens.filter(token => token.uiAmount <= 0.000000000001 || token.solValue < 0.001)
+  } catch (error) {
+    console.error('Error fetching zero balance tokens:', error)
     return []
   }
 }
@@ -251,11 +311,24 @@ export async function fetchUserTokens(
 // Simple token info lookup (in production, use a proper token registry)
 async function getTokenInfo(mintAddress: string): Promise<{ decimals: number; symbol: string; name: string; logoURI?: string } | null> {
   try {
+    // First try Jupiter's Token API
+    const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
+    
+    if (response.ok) {
+      const tokenData = await response.json()
+      return {
+        decimals: tokenData.decimals,
+        symbol: tokenData.symbol,
+        name: tokenData.name,
+        logoURI: tokenData.logoURI
+      }
+    }
+
     // This is a simplified lookup - in production you'd use Jupiter's token list or similar
     const commonTokens: Record<string, any> = {
-      [TOKENS.SOL]: { decimals: 9, symbol: 'SOL', name: 'Solana' },
-      [TOKENS.USDC]: { decimals: 6, symbol: 'USDC', name: 'USD Coin' },
-      [TOKENS.USDT]: { decimals: 6, symbol: 'USDT', name: 'Tether USD' },
+      [TOKENS.SOL]: { decimals: 9, symbol: 'SOL', name: 'Wrapped SOL', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' },
+      [TOKENS.USDC]: { decimals: 6, symbol: 'USDC', name: 'USD Coin', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' },
+      [TOKENS.USDT]: { decimals: 6, symbol: 'USDT', name: 'Tether USD', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg' },
     }
 
     if (commonTokens[mintAddress]) {
@@ -292,107 +365,123 @@ export async function executeBulkSell(
   }
 
   try {
-    // Step 1: Get quotes for all tokens to sell
-    const quotes: Array<{ token: UserToken; quote: SwapQuote | null }> = []
-    
-    for (const token of request.tokens) {
-      const quote = await getSwapQuote(
-        token.mintAddress,
-        TOKENS.SOL,
-        token.balance, // Use full balance
-        request.slippage
-      )
-      quotes.push({ token, quote })
-    }
-
-    // Filter successful quotes
-    const validQuotes = quotes.filter(q => q.quote !== null)
-    
-    if (validQuotes.length === 0) {
-      throw new Error('No valid quotes received for any tokens')
-    }
-
-    // Step 2: Create swap transactions
-    const swapTransactions: VersionedTransaction[] = []
-    const swapTokens: UserToken[] = []
-    const swapQuotes: SwapQuote[] = []
-
-    for (const { token, quote } of validQuotes) {
-      if (!quote) continue
-
-      const swapTransaction = await getSwapTransaction(
-        quote,
-        userPublicKey,
-        request.priorityFee
-      )
-
-      if (swapTransaction) {
-        const tx = VersionedTransaction.deserialize(
-          Buffer.from(swapTransaction.swapTransaction, 'base64')
-        )
-        swapTransactions.push(tx)
-        swapTokens.push(token)
-        swapQuotes.push(quote)
-      } else {
-        result.failedSales.push({
-          mintAddress: token.mintAddress,
-          error: 'Failed to create swap transaction'
-        })
-      }
-    }
-
-    if (swapTransactions.length === 0) {
-      throw new Error('No valid swap transactions could be created')
-    }
-
-    // Step 3: Sign and send swap transactions
-    const signedSwapTransactions = await signAllTransactions(swapTransactions)
-    
-    const swapSignatures: string[] = []
     const successfulSwaps: UserToken[] = []
     
-    for (let i = 0; i < signedSwapTransactions.length; i++) {
-      try {
-        const signature = await connection.sendTransaction(signedSwapTransactions[i], {
-          skipPreflight: false,
-          preflightCommitment: 'confirmed',
-        })
+    // Only process swaps if there are tokens to sell
+    if (request.tokens && request.tokens.length > 0) {
+      // Step 1: Get quotes for all tokens to sell
+      const quotes: Array<{ token: UserToken; quote: SwapQuote | null }> = []
+      
+      for (const token of request.tokens) {
+        const quote = await getSwapQuote(
+          token.mintAddress,
+          TOKENS.SOL,
+          token.balance, // Use full balance
+          request.slippage
+        )
+        quotes.push({ token, quote })
+      }
 
-        // Confirm transaction
-        const confirmation = await connection.confirmTransaction(signature, 'confirmed')
-        
-        if (confirmation.value.err) {
-          result.failedSales.push({
-            mintAddress: swapTokens[i].mintAddress,
-            error: `Swap transaction failed: ${confirmation.value.err}`
-          })
-        } else {
-          swapSignatures.push(signature)
-          successfulSwaps.push(swapTokens[i])
-          
-          // Calculate actual SOL received from the quote
-          const quote = swapQuotes[i]
-          const solReceived = parseInt(quote.outAmount) / LAMPORTS_PER_SOL
-          
-          result.successfulSales.push({
-            mintAddress: swapTokens[i].mintAddress,
-            solReceived: solReceived
-          })
-          result.totalReceived += solReceived
+      // Filter successful quotes
+      const validQuotes = quotes.filter(q => q.quote !== null)
+      
+      if (validQuotes.length === 0) {
+        // Mark all tokens as failed to sell
+        result.failedSales = request.tokens.map(token => ({
+          mintAddress: token.mintAddress,
+          error: 'No valid quote available'
+        }))
+      } else {
+        // Step 2: Create swap transactions
+        const swapTransactions: VersionedTransaction[] = []
+        const swapTokens: UserToken[] = []
+        const swapQuotes: SwapQuote[] = []
+
+        for (const { token, quote } of validQuotes) {
+          if (!quote) continue
+
+          const swapTransaction = await getSwapTransaction(
+            quote,
+            userPublicKey,
+            request.priorityFee
+          )
+
+          if (swapTransaction) {
+            const tx = VersionedTransaction.deserialize(
+              Buffer.from(swapTransaction.swapTransaction, 'base64')
+            )
+            swapTransactions.push(tx)
+            swapTokens.push(token)
+            swapQuotes.push(quote)
+          } else {
+            result.failedSales.push({
+              mintAddress: token.mintAddress,
+              error: 'Failed to create swap transaction'
+            })
+          }
         }
-      } catch (error) {
-        result.failedSales.push({
-          mintAddress: swapTokens[i].mintAddress,
-          error: `Swap error: ${error}`
-        })
+
+        if (swapTransactions.length > 0) {
+          // Step 3: Sign and send swap transactions
+          const signedSwapTransactions = await signAllTransactions(swapTransactions)
+          
+          const swapSignatures: string[] = []
+          
+          for (let i = 0; i < signedSwapTransactions.length; i++) {
+            try {
+              const signature = await connection.sendTransaction(signedSwapTransactions[i], {
+                skipPreflight: false,
+                preflightCommitment: 'confirmed',
+              })
+
+              // Confirm transaction
+              const confirmation = await connection.confirmTransaction(signature, 'confirmed')
+              
+              if (confirmation.value.err) {
+                result.failedSales.push({
+                  mintAddress: swapTokens[i].mintAddress,
+                  error: `Swap transaction failed: ${confirmation.value.err}`
+                })
+              } else {
+                swapSignatures.push(signature)
+                successfulSwaps.push(swapTokens[i])
+                
+                // Calculate actual SOL received from the quote
+                const quote = swapQuotes[i]
+                const solReceived = parseInt(quote.outAmount) / LAMPORTS_PER_SOL
+                
+                result.successfulSales.push({
+                  mintAddress: swapTokens[i].mintAddress,
+                  solReceived: solReceived
+                })
+                result.totalReceived += solReceived
+              }
+            } catch (error) {
+              result.failedSales.push({
+                mintAddress: swapTokens[i].mintAddress,
+                error: `Swap error: ${error}`
+              })
+            }
+          }
+          
+          result.signatures.push(...swapSignatures)
+        }
       }
     }
 
-    // Step 4: Close token accounts for successful swaps
-    if (successfulSwaps.length > 0) {
+    // Step 4: Close token accounts for successful swaps AND selected unsellable tokens
+    const tokensToClose = [...successfulSwaps]
+    
+    // Add unsellable tokens to the close list if provided
+    if (request.unsellableTokens && request.unsellableTokens.length > 0) {
+      tokensToClose.push(...request.unsellableTokens)
+      console.log(`Adding ${request.unsellableTokens.length} unsellable tokens to close list`)
+    }
+    
+    if (tokensToClose.length > 0) {
       try {
         const closeResults = await closeTokenAccounts(
-          successfulSwaps,
+          tokensToClose,
           userPublicKey,
           connection,
           signAllTransactions
@@ -400,30 +489,37 @@ export async function executeBulkSell(
         
         result.successfulCloses = closeResults.successful
         result.failedCloses = closeResults.failed
-        result.signatures.push(...swapSignatures, ...closeResults.signatures)
+        result.signatures.push(...closeResults.signatures)
       } catch (error) {
         console.error('Error closing accounts:', error)
         // Mark all as failed to close
-        result.failedCloses = successfulSwaps.map(token => ({
+        result.failedCloses = tokensToClose.map(token => ({
           mintAddress: token.mintAddress,
           error: 'Failed to close account'
         }))
       }
     }
 
-    result.success = result.successfulSales.length > 0
+    // Operation is successful if we have successful sales OR successful closes
+    result.success = result.successfulSales.length > 0 || result.successfulCloses.length > 0
     return result
   } catch (error) {
     console.error('Bulk sell execution error:', error)
-    result.failedSales = request.tokens.map(token => ({
-      mintAddress: token.mintAddress,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    }))
+    
+    // Only mark tokens as failed to sell if we actually have tokens to sell
+    if (request.tokens && request.tokens.length > 0) {
+      result.failedSales = request.tokens.map(token => ({
+        mintAddress: token.mintAddress,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      }))
+    }
+    
     return result
   }
 }
 
 // Close token accounts after successful sales with improved error handling
+// Intelligently burns tokens first if balance > 0, then closes accounts
 async function closeTokenAccounts(
   tokens: UserToken[],
   userPublicKey: string,
@@ -437,10 +533,11 @@ async function closeTokenAccounts(
   }
 
   try {
+    const burnInstructions = []
     const closeInstructions = []
-    const closeTokens = []
+    const tokensToProcess = []
 
-    // Create close instructions for each token with better error handling
+    // Create burn and close instructions for each token
     for (const token of tokens) {
       try {
         // Check if the token might be problematic (like pump.fun tokens)
@@ -479,7 +576,7 @@ async function closeTokenAccounts(
           new PublicKey(userPublicKey)
         )
 
-        // Check if account exists and has zero balance before closing
+        // Check if account exists
         const accountInfo = await connection.getAccountInfo(tokenAccount)
         if (!accountInfo) {
           result.failed.push({
@@ -498,6 +595,28 @@ async function closeTokenAccounts(
           continue
         }
 
+        // Check current balance
+        const balanceInfo = await connection.getTokenAccountBalance(tokenAccount)
+        const currentBalance = balanceInfo.value.amount
+        const currentUiAmount = balanceInfo.value.uiAmount || 0
+
+        console.log(`Token ${token.mintAddress}: balance=${currentBalance}, uiAmount=${currentUiAmount}`)
+
+        // If token has balance > 0, we need to burn it first
+        if (parseInt(currentBalance) > 0) {
+          console.log(`Creating burn instruction for ${token.mintAddress} (${currentBalance} tokens)`)
+          
+          const burnInstruction = createBurnInstruction(
+            tokenAccount,
+            new PublicKey(token.mintAddress),
+            new PublicKey(userPublicKey),
+            BigInt(currentBalance) // Burn the entire balance
+          )
+          
+          burnInstructions.push(burnInstruction)
+        }
+
+        // Always create close instruction (will execute after burn if needed)
         const closeInstruction = createCloseAccountInstruction(
           tokenAccount,
           new PublicKey(userPublicKey),
@@ -505,31 +624,34 @@ async function closeTokenAccounts(
         )
 
         closeInstructions.push(closeInstruction)
-        closeTokens.push(token)
+        tokensToProcess.push(token)
       } catch (error) {
-        console.error(`Failed to prepare close for ${token.mintAddress}:`, error)
+        console.error(`Failed to prepare burn/close for ${token.mintAddress}:`, error)
         result.failed.push({
           mintAddress: token.mintAddress,
-          error: `Failed to create close instruction: ${error instanceof Error ? error.message : 'Unknown error'}`
+          error: `Failed to create burn/close instruction: ${error instanceof Error ? error.message : 'Unknown error'}`
         })
       }
     }
 
-    if (closeInstructions.length > 0) {
+    if (burnInstructions.length > 0 || closeInstructions.length > 0) {
       try {
-        // Create transaction with close instructions
+        // Combine burn and close instructions in the same transaction
+        const allInstructions = [...burnInstructions, ...closeInstructions]
+        
+        // Create transaction with burn + close instructions
         const { blockhash } = await connection.getLatestBlockhash('confirmed')
         
         const messageV0 = new TransactionMessage({
           payerKey: new PublicKey(userPublicKey),
           recentBlockhash: blockhash,
-          instructions: closeInstructions
+          instructions: allInstructions
         }).compileToV0Message()
 
         const transaction = new VersionedTransaction(messageV0)
         const signedTransactions = await signAllTransactions([transaction])
 
-        // Send close transaction with retry mechanism
+        // Send burn + close transaction with retry mechanism
         const signature = await retryWithBackoff(async () => {
           return await connection.sendTransaction(signedTransactions[0], {
             skipPreflight: false,
@@ -541,9 +663,9 @@ async function closeTokenAccounts(
         const confirmation = await connection.confirmTransaction(signature, 'confirmed')
         
         if (confirmation.value.err) {
-          const errorMsg = `Close transaction failed: ${JSON.stringify(confirmation.value.err)}`
+          const errorMsg = `Burn/Close transaction failed: ${JSON.stringify(confirmation.value.err)}`
           console.error(errorMsg)
-          closeTokens.forEach(token => {
+          tokensToProcess.forEach(token => {
             result.failed.push({
               mintAddress: token.mintAddress,
               error: errorMsg
@@ -551,12 +673,18 @@ async function closeTokenAccounts(
           })
         } else {
           result.signatures.push(signature)
-          result.successful = closeTokens.map(token => token.mintAddress)
-          console.log(`Successfully closed ${closeTokens.length} token accounts`)
+          result.successful = tokensToProcess.map(token => token.mintAddress)
+          console.log(`Successfully burned and closed ${tokensToProcess.length} token accounts`)
+          
+          // Log details
+          if (burnInstructions.length > 0) {
+            console.log(`- Burned tokens in ${burnInstructions.length} accounts`)
+          }
+          console.log(`- Closed ${closeInstructions.length} accounts`)
         }
       } catch (transactionError) {
         console.error('Transaction creation/sending failed:', transactionError)
-        closeTokens.forEach(token => {
+        tokensToProcess.forEach(token => {
           result.failed.push({
             mintAddress: token.mintAddress,
             error: `Transaction failed: ${transactionError instanceof Error ? transactionError.message : 'Unknown transaction error'}`
@@ -564,12 +692,12 @@ async function closeTokenAccounts(
         })
       }
     } else {
-      console.log('No token accounts to close')
+      console.log('No token accounts to burn/close')
     }
 
     return result
   } catch (error) {
-    console.error('Close accounts function failed:', error)
+    console.error('Burn/Close accounts function failed:', error)
     tokens.forEach(token => {
       result.failed.push({
         mintAddress: token.mintAddress,
@@ -724,4 +852,155 @@ export function parseMintAddresses(input: string): string[] {
     .map(addr => addr.trim())
     .filter(addr => addr.length > 0 && isValidMintAddress(addr))
     .slice(0, 10) // Limit to 10 addresses
-} 
+}
+
+// New function to close only zero-balance token accounts
+// Intelligently burns tokens first if balance > 0, then closes accounts
+export async function closeZeroBalanceTokens(
+  userPublicKey: string,
+  connection: Connection,
+  signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
+): Promise<{ successful: string[]; failed: Array<{ mintAddress: string; error: string }>; signatures: string[] }> {
+  const result = {
+    successful: [] as string[],
+    failed: [] as Array<{ mintAddress: string; error: string }>,
+    signatures: [] as string[]
+  }
+
+  try {
+    // Fetch tokens that are either zero-balance or have no SOL value (unsellable)
+    const unsellableTokens = await fetchZeroBalanceTokens(connection, new PublicKey(userPublicKey))
+    
+    if (unsellableTokens.length === 0) {
+      console.log('No unsellable tokens found to close')
+      return result
+    }
+
+    console.log(`Found ${unsellableTokens.length} unsellable tokens to close`)
+
+    const burnInstructions = []
+    const closeInstructions = []
+    const tokensToProcess = []
+
+    // Create burn and close instructions for each unsellable token
+    for (const token of unsellableTokens) {
+      try {
+        const tokenAccount = await getAssociatedTokenAddress(
+          new PublicKey(token.mintAddress),
+          new PublicKey(userPublicKey)
+        )
+
+        // Check current account balance
+        const balanceInfo = await connection.getTokenAccountBalance(tokenAccount)
+        const currentBalance = balanceInfo.value.amount
+        const currentUiAmount = balanceInfo.value.uiAmount || 0
+        
+        console.log(`Token ${token.mintAddress}: balance=${currentBalance}, uiAmount=${currentUiAmount}, solValue=${token.solValue}`)
+        
+        // For tokens with balance but low SOL value, we need to burn first
+        if (parseInt(currentBalance) > 0) {
+          if (token.solValue < 0.001) {
+            console.log(`Creating burn instruction for unsellable token ${token.mintAddress} (${currentBalance} tokens, SOL value ${token.solValue})`)
+            
+            const burnInstruction = createBurnInstruction(
+              tokenAccount,
+              new PublicKey(token.mintAddress),
+              new PublicKey(userPublicKey),
+              BigInt(currentBalance) // Burn the entire balance
+            )
+            
+            burnInstructions.push(burnInstruction)
+          } else {
+            result.failed.push({
+              mintAddress: token.mintAddress,
+              error: `Account has balance: ${currentUiAmount} and SOL value >= 0.001 (may be sellable)`
+            })
+            continue
+          }
+        }
+        
+        // Create close instruction (will execute after burn if needed)
+        const closeInstruction = createCloseAccountInstruction(
+          tokenAccount,
+          new PublicKey(userPublicKey),
+          new PublicKey(userPublicKey)
+        )
+
+        closeInstructions.push(closeInstruction)
+        tokensToProcess.push(token)
+      } catch (error) {
+        console.error(`Failed to prepare burn/close for ${token.mintAddress}:`, error)
+        result.failed.push({
+          mintAddress: token.mintAddress,
+          error: `Failed to create burn/close instruction: ${error instanceof Error ? error.message : 'Unknown error'}`
+        })
+      }
+    }
+
+    if (burnInstructions.length > 0 || closeInstructions.length > 0) {
+      try {
+        // Combine burn and close instructions in the same transaction
+        const allInstructions = [...burnInstructions, ...closeInstructions]
+        
+        // Create transaction with burn + close instructions
+        const { blockhash } = await connection.getLatestBlockhash('confirmed')
+        
+        const messageV0 = new TransactionMessage({
+          payerKey: new PublicKey(userPublicKey),
+          recentBlockhash: blockhash,
+          instructions: allInstructions
+        }).compileToV0Message()
+
+        const transaction = new VersionedTransaction(messageV0)
+        const signedTransactions = await signAllTransactions([transaction])
+
+        // Send burn + close transaction
+        const signature = await retryWithBackoff(async () => {
+          return await connection.sendTransaction(signedTransactions[0], {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+            maxRetries: 3
+          })
+        })
+
+        const confirmation = await connection.confirmTransaction(signature, 'confirmed')
+        
+        if (confirmation.value.err) {
+          const errorMsg = `Burn/Close transaction failed: ${JSON.stringify(confirmation.value.err)}`
+          console.error(errorMsg)
+          tokensToProcess.forEach(token => {
+            result.failed.push({
+              mintAddress: token.mintAddress,
+              error: errorMsg
+            })
+          })
+        } else {
+          result.signatures.push(signature)
+          result.successful = tokensToProcess.map(token => token.mintAddress)
+          console.log(`Successfully burned and closed ${tokensToProcess.length} unsellable token accounts`)
+          
+          // Log details
+          if (burnInstructions.length > 0) {
+            console.log(`- Burned tokens in ${burnInstructions.length} accounts`)
+          }
+          console.log(`- Closed ${closeInstructions.length} accounts`)
+        }
+      } catch (transactionError) {
+        console.error('Transaction creation/sending failed:', transactionError)
+        tokensToProcess.forEach(token => {
+          result.failed.push({
+            mintAddress: token.mintAddress,
+            error: `Transaction failed: ${transactionError instanceof Error ? transactionError.message : 'Unknown transaction error'}`
+          })
+        })
+      }
+    } else {
+      console.log('No valid unsellable token accounts to burn/close')
+    }
+
+    return result
+  } catch (error) {
+    console.error('Burn/Close unsellable accounts function failed:', error)
+    return result
+  }
+}
