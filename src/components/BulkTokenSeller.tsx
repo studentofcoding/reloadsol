@@ -35,6 +35,10 @@ export default function BulkTokenSeller() {
   const [result, setResult] = useState<BulkSellResult | null>(null)
   const [closeResult, setCloseResult] = useState<{ successful: string[]; failed: Array<{ mintAddress: string; error: string }>; signatures: string[] } | null>(null)
   const [error, setError] = useState<string>('')
+  
+  // Balance tracking
+  const [balanceBefore, setBalanceBefore] = useState<number>(0)
+  const [balanceAfter, setBalanceAfter] = useState<number>(0)
 
   // Fetch user tokens on wallet connection
   useEffect(() => {
@@ -241,6 +245,11 @@ export default function BulkTokenSeller() {
     setCloseResult(null) // Clear any previous close-only results
 
     try {
+      // Get balance before operation
+      const balanceBeforeOp = await connection.getBalance(publicKey)
+      const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL
+      setBalanceBefore(balanceBeforeSOL)
+
       const request: BulkSellRequest = {
         tokens: selectedTokens,
         unsellableTokens: selectedZeroBalanceTokens.length > 0 ? selectedZeroBalanceTokens : undefined,
@@ -254,6 +263,11 @@ export default function BulkTokenSeller() {
         connection,
         signAllTransactions
       )
+
+      // Get balance after operation
+      const balanceAfterOp = await connection.getBalance(publicKey)
+      const balanceAfterSOL = balanceAfterOp / LAMPORTS_PER_SOL
+      setBalanceAfter(balanceAfterSOL)
 
       setResult(sellResult)
 
@@ -286,12 +300,12 @@ export default function BulkTokenSeller() {
   const estimatedSOL = selectedTokens.reduce((total, token) => total + token.solValue, 0)
 
   return (
-    <div className="bg-gradient-to-br from-slate-800/90 to-slate-900/90 backdrop-blur-sm rounded-2xl shadow-dark-lg border border-slate-700/50 p-8 space-y-8 animate-fade-in">
+    <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 space-y-8">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-3xl font-bold text-white mb-2">Bulk Token Seller</h2>
-          <p className="text-slate-400">Sell your tokens and automatically close accounts</p>
+          <p className="text-gray-400">Sell your tokens and automatically close accounts</p>
         </div>
         <div className="shrink-0">
           <PhantomWalletButton />
@@ -304,7 +318,7 @@ export default function BulkTokenSeller() {
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
               <h3 className="text-xl font-semibold text-white mb-1">Your Tokens</h3>
-              <p className="text-slate-400 text-sm">
+              <p className="text-gray-400 text-sm">
                 Select tokens to sell • {selectedTokens.length} of {userTokens.length} selected
               </p>
             </div>
@@ -312,28 +326,28 @@ export default function BulkTokenSeller() {
               <button
                 onClick={fetchTokens}
                 disabled={isLoadingTokens}
-                className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors text-sm"
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors text-sm"
               >
                 {isLoadingTokens ? 'Refreshing...' : 'Refresh'}
               </button>
               <button
                 onClick={refreshAllPrices}
                 disabled={isLoadingTokens || userTokens.length === 0}
-                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors text-sm"
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors text-sm"
               >
                 Refresh Prices
               </button>
               <button
                 onClick={selectAllTokens}
                 disabled={userTokens.length === 0}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm"
+                className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors text-sm"
               >
                 Select All
               </button>
               <button
                 onClick={clearSelection}
                 disabled={selectedTokens.length === 0}
-                className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors text-sm"
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors text-sm"
               >
                 Clear
               </button>
@@ -343,23 +357,23 @@ export default function BulkTokenSeller() {
           {/* Token List */}
           {isLoadingTokens ? (
             <div className="flex items-center justify-center py-12">
-              <div className="flex items-center space-x-3 text-slate-400">
-                <div className="w-5 h-5 border-2 border-slate-400/30 border-t-slate-400 rounded-full animate-spin"></div>
+              <div className="flex items-center space-x-3 text-gray-400">
+                <div className="w-5 h-5 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
                 <span>Loading your tokens...</span>
               </div>
             </div>
           ) : userTokens.length === 0 ? (
             <div className="text-center py-12">
-              <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-slate-600 to-slate-700 rounded-full flex items-center justify-center">
-                <svg className="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
+                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
                 </svg>
               </div>
-              <h3 className="text-lg font-semibold text-slate-300 mb-2">No tokens found</h3>
-              <p className="text-slate-400 mb-4">You don't have any tokens to sell</p>
+              <h3 className="text-lg font-semibold text-gray-300 mb-2">No tokens found</h3>
+              <p className="text-gray-400 mb-4">You don't have any tokens to sell</p>
               <button
                 onClick={fetchTokens}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+                className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
               >
                 Refresh Tokens
               </button>
@@ -374,14 +388,14 @@ export default function BulkTokenSeller() {
                     onClick={() => toggleTokenSelection(token)}
                     className={`group p-4 rounded-xl border cursor-pointer transition-all duration-200 ${
                       isSelected
-                        ? 'bg-gradient-to-r from-blue-900/50 to-purple-900/50 border-blue-500/50 shadow-glow'
-                        : 'bg-slate-700/30 border-slate-600/50 hover:bg-slate-600/30 hover:border-slate-500/50'
+                        ? 'bg-gray-700 border-gray-500'
+                        : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-gray-500'
                     }`}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-3">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
-                          isSelected ? 'bg-blue-600' : 'bg-slate-600'
+                          isSelected ? 'bg-white text-black' : 'bg-gray-600'
                         }`}>
                           {token.symbol?.charAt(0) || 'T'}
                         </div>
@@ -389,7 +403,7 @@ export default function BulkTokenSeller() {
                           <div className="font-semibold text-white">
                             {token.symbol || 'Unknown'}
                           </div>
-                          <div className="text-sm text-slate-400 font-mono truncate max-w-48">
+                          <div className="text-sm text-gray-400 font-mono truncate max-w-48">
                             {token.mintAddress}
                           </div>
                         </div>
@@ -398,10 +412,10 @@ export default function BulkTokenSeller() {
                         <div className="font-semibold text-white">
                           {token.uiAmount.toFixed(6)}
                         </div>
-                        <div className="text-sm text-slate-400 flex items-center justify-end space-x-2">
+                        <div className="text-sm text-gray-400 flex items-center justify-end space-x-2">
                           {token.isLoadingPrice ? (
                             <div className="flex items-center space-x-1">
-                              <div className="w-3 h-3 border border-slate-400/30 border-t-slate-400 rounded-full animate-spin"></div>
+                              <div className="w-3 h-3 border border-gray-400 border-t-white rounded-full animate-spin"></div>
                               <span>Loading...</span>
                             </div>
                           ) : (
@@ -412,10 +426,10 @@ export default function BulkTokenSeller() {
                                   e.stopPropagation()
                                   refreshTokenPrice(token)
                                 }}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-slate-600/50 rounded"
+                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-600 rounded"
                                 title="Refresh price"
                               >
-                                <svg className="w-3 h-3 text-slate-400 hover:text-slate-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <svg className="w-3 h-3 text-gray-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                                 </svg>
                               </button>
@@ -433,11 +447,11 @@ export default function BulkTokenSeller() {
           {/* Zero-Balance Tokens Section */}
           {zeroBalanceTokens.length > 0 && (
             <>
-              <div className="border-t border-slate-600/50 pt-8">
+              <div className="border-t border-gray-600 pt-8">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                   <div>
                     <h3 className="text-xl font-semibold text-white mb-1">Unsellable Tokens</h3>
-                    <p className="text-slate-400 text-sm">
+                    <p className="text-gray-400 text-sm">
                       Zero balance or no liquidity • Close accounts to recover rent • {selectedZeroBalanceTokens.length} of {zeroBalanceTokens.length} selected
                     </p>
                   </div>
@@ -445,14 +459,14 @@ export default function BulkTokenSeller() {
                     <button
                       onClick={selectAllZeroBalanceTokens}
                       disabled={zeroBalanceTokens.length === 0}
-                      className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white rounded-lg transition-colors text-sm"
+                      className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors text-sm"
                     >
                       Select All
                     </button>
                     <button
                       onClick={clearZeroBalanceSelection}
                       disabled={selectedZeroBalanceTokens.length === 0}
-                      className="px-4 py-2 bg-slate-600 hover:bg-slate-500 text-white rounded-lg transition-colors text-sm"
+                      className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors text-sm"
                     >
                       Clear
                     </button>
@@ -468,14 +482,14 @@ export default function BulkTokenSeller() {
                         onClick={() => toggleZeroBalanceTokenSelection(token)}
                         className={`group p-4 rounded-xl border cursor-pointer transition-all duration-200 ${
                           isSelected
-                            ? 'bg-gradient-to-r from-yellow-900/50 to-orange-900/50 border-yellow-500/50 shadow-glow'
-                            : 'bg-slate-700/30 border-slate-600/50 hover:bg-slate-600/30 hover:border-slate-500/50'
+                            ? 'bg-gray-700 border-gray-500'
+                            : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-gray-500'
                         }`}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-3">
                             <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
-                              isSelected ? 'bg-yellow-600' : 'bg-slate-600'
+                              isSelected ? 'bg-white text-black' : 'bg-gray-600'
                             }`}>
                               {token.symbol?.charAt(0) || 'T'}
                             </div>
@@ -483,19 +497,19 @@ export default function BulkTokenSeller() {
                               <div className="font-semibold text-white">
                                 {token.symbol || 'Unknown'}
                               </div>
-                              <div className="text-sm text-slate-400 font-mono truncate max-w-48">
+                              <div className="text-sm text-gray-400 font-mono truncate max-w-48">
                                 {token.mintAddress}
                               </div>
                             </div>
                           </div>
                           <div className="text-right">
-                            <div className="font-semibold text-slate-400">
+                            <div className="font-semibold text-gray-400">
                               {token.uiAmount > 0.000001 
                                 ? `${token.uiAmount.toFixed(6)} tokens`
                                 : '0 tokens'
                               }
                             </div>
-                            <div className="text-sm text-yellow-400">
+                            <div className="text-sm text-gray-400">
                               {token.uiAmount > 0.000000000001 
                                 ? (token.solValue > 0 ? `≈ ${token.solValue.toFixed(8)} SOL (< 0.001)` : 'No liquidity')
                                 : 'Close for rent'
@@ -515,22 +529,22 @@ export default function BulkTokenSeller() {
           {(selectedTokens.length > 0 || selectedZeroBalanceTokens.length > 0) && (
             <>
               {/* Summary */}
-              <div className="bg-gradient-to-r from-blue-900/30 to-purple-900/30 border border-blue-500/30 rounded-xl p-6">
-                <h4 className="font-semibold text-blue-200 mb-4">Operation Summary</h4>
+              <div className="bg-gray-800 border border-gray-600 rounded-xl p-6">
+                <h4 className="font-semibold text-white mb-4">Operation Summary</h4>
                 <div className="grid grid-cols-3 gap-4 text-sm">
                   <div>
-                    <span className="block text-blue-300 font-medium">Total Operations</span>
-                    <span className="text-xl font-bold text-blue-100">{selectedTokens.length} Swap & {selectedTokens.length +selectedZeroBalanceTokens.length} Close</span>
+                    <span className="block text-gray-300 font-medium">Total Operations</span>
+                    <span className="text-xl font-bold text-white">{selectedTokens.length} Swap & {selectedTokens.length +selectedZeroBalanceTokens.length} Close</span>
                   </div>
                   <div>
-                    <span className="block text-blue-300 font-medium">Estimated SOL</span>
-                    <span className="text-xl font-bold text-blue-100">{(estimatedSOL + ((selectedTokens.length + selectedZeroBalanceTokens.length) * 0.00203928)).toFixed(4)}</span>
+                    <span className="block text-gray-300 font-medium">Estimated SOL</span>
+                    <span className="text-xl font-bold text-white">{(estimatedSOL + ((selectedTokens.length + selectedZeroBalanceTokens.length) * 0.00203928)).toFixed(4)}</span>
                   </div>
                 </div>
                 
                 {selectedZeroBalanceTokens.length > 0 && (
-                  <div className="mt-4 p-3 bg-yellow-900/20 border border-yellow-500/30 rounded-lg">
-                    <p className="text-yellow-200 text-sm">
+                  <div className="mt-4 p-3 bg-gray-700 border border-gray-600 rounded-lg">
+                    <p className="text-gray-200 text-sm">
                       <strong>{selectedZeroBalanceTokens.length} unsellable token{selectedZeroBalanceTokens.length !== 1 ? 's' : ''}</strong> will be burned (if needed) and closed to recover rent
                     </p>
                   </div>
@@ -541,18 +555,18 @@ export default function BulkTokenSeller() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Slippage */}
                 <div className="space-y-3">
-                  <label htmlFor="slippage" className="block text-sm font-semibold text-slate-200 uppercase tracking-wide">
+                  <label htmlFor="slippage" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
                     Slippage Tolerance
                   </label>
                   <select
                     id="slippage"
                     value={slippage}
                     onChange={(e) => setSlippage(Number(e.target.value))}
-                    className="w-full px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-xl text-white focus:bg-slate-700 focus:border-blue-500 transition-all duration-200"
+                    className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
                     disabled={isLoading}
                   >
                     {SLIPPAGE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value} className="bg-slate-800">
+                      <option key={option.value} value={option.value} className="bg-gray-800">
                         {option.label}
                       </option>
                     ))}
@@ -561,18 +575,18 @@ export default function BulkTokenSeller() {
 
                 {/* Priority Fee */}
                 <div className="space-y-3">
-                  <label htmlFor="priorityFee" className="block text-sm font-semibold text-slate-200 uppercase tracking-wide">
+                  <label htmlFor="priorityFee" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
                     Priority Fee
                   </label>
                   <select
                     id="priorityFee"
                     value={priorityFee}
                     onChange={(e) => setPriorityFee(Number(e.target.value))}
-                    className="w-full px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-xl text-white focus:bg-slate-700 focus:border-blue-500 transition-all duration-200"
+                    className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
                     disabled={isLoading}
                   >
                     {PRIORITY_FEE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value} className="bg-slate-800">
+                      <option key={option.value} value={option.value} className="bg-gray-800">
                         {option.label}
                       </option>
                     ))}
@@ -586,13 +600,13 @@ export default function BulkTokenSeller() {
                 disabled={isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)}
                 className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
                   isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)
-                    ? 'bg-slate-600 text-slate-400 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-red-600 to-orange-600 hover:from-red-700 hover:to-orange-700 text-white shadow-glow hover:shadow-glow-lg transform hover:scale-[1.02] active:scale-[0.98]'
+                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                    : 'bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl'
                 }`}
               >
                 {isLoading ? (
                   <div className="flex items-center justify-center space-x-3">
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
                     <span>Processing...</span>
                   </div>
                 ) : (
@@ -628,29 +642,53 @@ export default function BulkTokenSeller() {
 
           {/* Results Display */}
           {result && (
-            <div className="space-y-6 animate-slide-up">
-              <div className={`border rounded-xl p-6 backdrop-blur-sm ${
+            <div className="space-y-6">
+              <div className={`border rounded-xl p-6 ${
                 result.success 
-                  ? 'bg-gradient-to-r from-green-900/50 to-emerald-800/50 border-green-500/50' 
-                  : 'bg-gradient-to-r from-red-900/50 to-red-800/50 border-red-500/50'
+                  ? 'bg-gray-800 border-gray-600' 
+                  : 'bg-gray-800 border-gray-600'
               }`}>
-                <h3 className={`font-bold text-lg mb-3 ${result.success ? 'text-green-200' : 'text-red-200'}`}>
-                  {result.success ? '🎉 Sale Completed!' : '❌ Sale Failed'}
+                <h3 className={`font-bold text-lg mb-3 ${result.success ? 'text-white' : 'text-gray-300'}`}>
+                  {result.success ? '✅ Sale Completed!' : '❌ Sale Failed'}
                 </h3>
+                
+                {/* Balance Change Display */}
+                {balanceBefore > 0 && balanceAfter > 0 && (
+                  <div className="mb-4 p-4 bg-gray-700 rounded-lg">
+                    <h4 className="text-sm font-semibold text-gray-200 mb-2">Wallet Balance Change</h4>
+                    <div className="grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <span className="block text-gray-400">Before</span>
+                        <span className="text-white font-mono">{balanceBefore.toFixed(4)} SOL</span>
+                      </div>
+                      <div>
+                        <span className="block text-gray-400">After</span>
+                        <span className="text-white font-mono">{balanceAfter.toFixed(4)} SOL</span>
+                      </div>
+                      <div>
+                        <span className="block text-gray-400">Difference</span>
+                        <span className="text-white font-mono">
+                          +{(balanceAfter - balanceBefore).toFixed(4)} SOL
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div className={result.success ? 'text-green-300' : 'text-red-300'}>
+                  <div className="text-white">
                     <span className="block font-medium">Successful Sales</span>
                     <span className="text-xl font-bold">{result.successfulSales.length}</span>
                   </div>
-                  <div className={result.success ? 'text-green-300' : 'text-red-300'}>
+                  <div className="text-white">
                     <span className="block font-medium">Failed Sales</span>
                     <span className="text-xl font-bold">{result.failedSales.length}</span>
                   </div>
-                  <div className={result.success ? 'text-green-300' : 'text-red-300'}>
+                  <div className="text-white">
                     <span className="block font-medium">Accounts Closed</span>
                     <span className="text-xl font-bold">{result.successfulCloses.length}</span>
                   </div>
-                  <div className={result.success ? 'text-green-300' : 'text-red-300'}>
+                  <div className="text-white">
                     <span className="block font-medium">SOL Received</span>
                     <span className="text-xl font-bold">{result.totalReceived.toFixed(4)}</span>
                   </div>

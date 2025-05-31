@@ -9,15 +9,15 @@ export default function PhantomWalletButton() {
   if (connected && publicKey) {
     return (
       <div className="flex items-center space-x-3">
-        <div className="bg-gradient-to-r from-purple-600 to-purple-700 rounded-lg px-4 py-2 text-white font-medium">
-          <div className="text-sm opacity-80">Connected to Phantom</div>
+        <div className="bg-white text-black rounded-lg px-4 py-2 font-medium border border-gray-300">
+          <div className="text-sm opacity-70">Connected to Phantom</div>
           <div className="text-xs font-mono">
             {publicKey.toBase58().slice(0, 4)}...{publicKey.toBase58().slice(-4)}
           </div>
         </div>
         <button
           onClick={disconnect}
-          className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+          className="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium transition-colors border border-gray-600"
         >
           Disconnect
         </button>
@@ -30,16 +30,16 @@ export default function PhantomWalletButton() {
       onClick={connect}
       disabled={connecting}
       className={`
-        flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold transition-all duration-200
+        flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold transition-all duration-200 border
         ${connecting 
-          ? 'bg-gray-600 text-gray-400 cursor-not-allowed' 
-          : 'bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white shadow-lg hover:shadow-xl transform hover:scale-105'
+          ? 'bg-gray-600 text-gray-400 cursor-not-allowed border-gray-500' 
+          : 'bg-white hover:bg-gray-100 text-black border-gray-300 shadow-lg hover:shadow-xl'
         }
       `}
     >
       {connecting ? (
         <>
-          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+          <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
           <span>Connecting...</span>
         </>
       ) : (
