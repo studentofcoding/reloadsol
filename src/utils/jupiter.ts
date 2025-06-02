@@ -1,7 +1,132 @@
-import { Connection, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey, TransactionMessage } from '@solana/web3.js'
+import { Connection, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey, TransactionMessage, SystemProgram } from '@solana/web3.js'
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createCloseAccountInstruction, createBurnInstruction } from '@solana/spl-token'
+import { createUmi } from "@metaplex-foundation/umi-bundle-defaults"
+import { publicKey } from "@metaplex-foundation/umi"
+import { fetchAllDigitalAssetWithTokenByOwner } from "@metaplex-foundation/mpl-token-metadata"
 import { JUPITER_API, TOKENS } from './solana'
 import { SwapQuote, SwapTransaction, BulkBuyRequest, BulkBuyResult, TokenPurchase } from '@/types'
+
+// Add BigInt JSON serialization support
+declare global {
+  interface BigInt {
+    toJSON(): string
+  }
+}
+
+if (typeof BigInt.prototype.toJSON === 'undefined') {
+  BigInt.prototype.toJSON = function () {
+    return this.toString()
+  }
+}
+
+// Fee configuration
+const FEE_CONFIG = {
+  DEV_WALLET: '7YzQF9Q5M3J8K6L4N9P2R5S8T1U4V7W8X2Y6Z3A7B4C9', // Replace with your actual dev wallet address
+  FEE_PER_OPERATION: 0.0001, // 0.0001 SOL per successful operation
+  REFERRAL_PERCENTAGE: 30, // 30% of fee goes to referral, 70% to dev
+}
+
+// Fee and referral utilities
+export function getReferralFromUrl(): string | null {
+  if (typeof window === 'undefined') return null
+  
+  try {
+    const url = new URL(window.location.href)
+    const referral = url.searchParams.get('ref')
+    
+    // Validate referral address
+    if (referral && isValidMintAddress(referral)) {
+      return referral
+    }
+  } catch (error) {
+    console.warn('Error parsing referral from URL:', error)
+  }
+  
+  return null
+}
+
+export function calculateFeeDistribution(operationCount: number): {
+  totalFee: number
+  devFee: number
+  referralFee: number
+  feeInLamports: number
+  devFeeInLamports: number
+  referralFeeInLamports: number
+} {
+  const totalFee = FEE_CONFIG.FEE_PER_OPERATION * operationCount
+  const referral = getReferralFromUrl()
+  
+  let devFee = totalFee
+  let referralFee = 0
+  
+  if (referral) {
+    referralFee = totalFee * (FEE_CONFIG.REFERRAL_PERCENTAGE / 100)
+    devFee = totalFee - referralFee
+  }
+  
+  return {
+    totalFee,
+    devFee,
+    referralFee,
+    feeInLamports: Math.floor(totalFee * LAMPORTS_PER_SOL),
+    devFeeInLamports: Math.floor(devFee * LAMPORTS_PER_SOL),
+    referralFeeInLamports: Math.floor(referralFee * LAMPORTS_PER_SOL),
+  }
+}
+
+export function createFeeTransferInstructions(
+  fromPubkey: PublicKey,
+  operationCount: number
+): any[] {
+  if (FEE_CONFIG.DEV_WALLET === 'YOUR_DEV_WALLET_ADDRESS_HERE' || !isValidMintAddress(FEE_CONFIG.DEV_WALLET)) {
+    console.warn('Dev wallet not properly configured, skipping fee transfers')
+    return []
+  }
+  
+  const feeDistribution = calculateFeeDistribution(operationCount)
+  const instructions = []
+  
+  try {
+    // Transfer to dev wallet
+    if (feeDistribution.devFeeInLamports > 0) {
+      const devTransferInstruction = SystemProgram.transfer({
+        fromPubkey,
+        toPubkey: new PublicKey(FEE_CONFIG.DEV_WALLET),
+        lamports: feeDistribution.devFeeInLamports,
+      })
+      instructions.push(devTransferInstruction)
+      console.log(`Created dev fee transfer: ${feeDistribution.devFee} SOL`)
+    }
+    
+    // Transfer to referral if exists
+    const referral = getReferralFromUrl()
+    if (referral && feeDistribution.referralFeeInLamports > 0) {
+      const referralTransferInstruction = SystemProgram.transfer({
+        fromPubkey,
+        toPubkey: new PublicKey(referral),
+        lamports: feeDistribution.referralFeeInLamports,
+      })
+      instructions.push(referralTransferInstruction)
+      console.log(`Created referral fee transfer: ${feeDistribution.referralFee} SOL to ${referral}`)
+    }
+  } catch (error) {
+    console.error('Error creating fee transfer instructions:', error)
+  }
+  
+  return instructions
+}
+
+export function getFeeInfo(): {
+  feePerOperation: number
+  referralPercentage: number
+  devWallet: string
+} {
+  return {
+    feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
+    referralPercentage: FEE_CONFIG.REFERRAL_PERCENTAGE,
+    devWallet: FEE_CONFIG.DEV_WALLET,
+  }
+}
 
 // New interfaces for selling
 export interface UserToken {
@@ -14,6 +139,8 @@ export interface UserToken {
   uiAmount: number
   solValue: number // Real SOL value from quote
   isLoadingPrice?: boolean
+  frozen?: boolean // Whether the token account is frozen
+  isNFT?: boolean // Whether the token is likely an NFT
 }
 
 export interface BulkSellRequest {
@@ -160,13 +287,24 @@ export async function getTokenSolValue(
   }
 }
 
-// Fetch user's token balances with real SOL values
+// Fetch user's token balances with real SOL values (fungible tokens only, excluding NFTs)
 export async function fetchUserTokens(
   connection: Connection,
   userPublicKey: PublicKey,
-  includeZeroBalance: boolean = false
+  includeZeroBalance: boolean = false,
+  includeNFTs: boolean = false
 ): Promise<UserToken[]> {
   try {
+    // STEP 1: Initialize NFT cache first (one-time fetch)
+    if (!nftCacheInitialized) {
+      console.log('Initializing NFT cache...')
+      const userNFTs = await fetchUserNFTMints(connection, userPublicKey)
+      userNFTs.forEach(mint => nftMintCache.add(mint))
+      nftCacheInitialized = true
+      console.log(`NFT cache initialized with ${userNFTs.size} NFTs`)
+    }
+
+    // STEP 2: Get all token accounts
     const tokenAccounts = await connection.getTokenAccountsByOwner(userPublicKey, {
       programId: TOKEN_PROGRAM_ID,
     })
@@ -177,7 +315,6 @@ export async function fetchUserTokens(
         
         // Parse token account data
         const mintBytes = accountData.slice(0, 32)
-        const ownerBytes = accountData.slice(32, 64)
         const amountBytes = accountData.slice(64, 72)
         
         const mint = new PublicKey(mintBytes).toBase58()
@@ -185,22 +322,42 @@ export async function fetchUserTokens(
         
         // Include tokens with balance > 0 OR if includeZeroBalance is true
         if (amount > 0.000000000001 || includeZeroBalance) {
-          // Try to get token metadata
+          // STEP 3: Check if it's an NFT first (using cache - no API call)
+          const tokenIsNFT = nftMintCache.has(mint)
+          
+          // Skip NFTs unless explicitly requested
+          if (tokenIsNFT && !includeNFTs) {
+            console.log(`Skipping NFT: ${mint}`)
+            return null
+          }
+          
+          // STEP 4: Check frozen status (for non-NFTs or if including NFTs)
+          const isFrozen = isTokenAccountFrozen(accountData)
+          
+          // STEP 5: Get token metadata (simplified - no NFT checking inside)
           const tokenInfo = await getTokenInfo(mint)
+          
+          // STEP 6: Additional Jupiter API check for frozen status if needed
+          let jupiterFrozen = false
+          if (!isFrozen && !tokenIsNFT) {
+            jupiterFrozen = await checkTokenFrozenStatusWithJupiter(mint)
+          }
           
           const token: UserToken = {
             mintAddress: mint,
             balance: amount,
-            decimals: tokenInfo?.decimals || 6,
-            symbol: tokenInfo?.symbol || 'Unknown',
-            name: tokenInfo?.name || 'Unknown Token',
+            decimals: tokenInfo?.decimals || (tokenIsNFT ? 0 : 6),
+            symbol: tokenInfo?.symbol || (tokenIsNFT ? 'NFT' : 'Unknown'),
+            name: tokenInfo?.name || (tokenIsNFT ? 'NFT' : 'Unknown Token'),
             logoURI: tokenInfo?.logoURI,
-            uiAmount: amount / Math.pow(10, tokenInfo?.decimals || 6),
-            solValue: 0, // Will be updated
-            isLoadingPrice: true
+            uiAmount: amount / Math.pow(10, tokenInfo?.decimals || (tokenIsNFT ? 0 : 6)),
+            solValue: 0, // Will be updated for non-NFTs
+            isLoadingPrice: !tokenIsNFT && !isFrozen && !jupiterFrozen, // Only load prices for tradeable tokens
+            frozen: isFrozen || jupiterFrozen,
+            isNFT: tokenIsNFT
           }
-          console.log('token', token)
-
+          
+          console.log('token', token.symbol, 'frozen:', token.frozen, 'isNFT:', token.isNFT)
           return token
         }
         return null
@@ -222,13 +379,25 @@ export async function fetchUserTokens(
       return token.uiAmount > 0.000000000001
     })
 
-    // Second pass: get SOL values for tokens with meaningful balance
-    const tokensWithBalance = tokens.filter(token => token.uiAmount > 0.000000000001)
-    const tokensZeroBalance = tokens.filter(token => token.uiAmount <= 0.000000000001)
+    // STEP 7: Get SOL values only for tradeable tokens (non-NFT, non-frozen, with balance)
+    const tradeableTokens = tokens.filter(token => 
+      !token.isNFT && 
+      !token.frozen && 
+      token.uiAmount > 0.000000000001 && 
+      token.isLoadingPrice
+    )
+    const nonTradeableTokens = tokens.filter(token => 
+      token.isNFT || 
+      token.frozen || 
+      token.uiAmount <= 0.000000000001 ||
+      !token.isLoadingPrice
+    )
+    
+    console.log(`Fetching prices for ${tradeableTokens.length} tradeable tokens, skipping ${nonTradeableTokens.length} non-tradeable tokens`)
     
     const BATCH_SIZE = 10
-    for (let i = 0; i < tokensWithBalance.length; i += BATCH_SIZE) {
-      const batch = tokensWithBalance.slice(i, i + BATCH_SIZE)
+    for (let i = 0; i < tradeableTokens.length; i += BATCH_SIZE) {
+      const batch = tradeableTokens.slice(i, i + BATCH_SIZE)
       
       const pricePromises = batch.map(async (token) => {
         const solValue = await getTokenSolValue(
@@ -236,7 +405,7 @@ export async function fetchUserTokens(
           token.balance,
           token.decimals
         )
-        console.log('solValue of', token.mintAddress, solValue)
+        console.log('solValue of', token.symbol, solValue)
         return { ...token, solValue, isLoadingPrice: false }
       })
       
@@ -245,43 +414,55 @@ export async function fetchUserTokens(
       // Update the original tokens array
       updatedBatch.forEach((updatedToken, batchIndex) => {
         const originalIndex = i + batchIndex
-        tokensWithBalance[originalIndex] = updatedToken
+        tradeableTokens[originalIndex] = updatedToken
       })
       
       // Small delay between batches to be nice to the API
-      if (i + BATCH_SIZE < tokensWithBalance.length) {
+      if (i + BATCH_SIZE < tradeableTokens.length) {
         await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
 
-    // Now separate tokens based on their SOL value after fetching prices
-    // Sellable tokens must have SOL value >= 0.001 (meaningful value)
-    const sellableTokens = tokensWithBalance.filter(token => token.solValue >= 0.001)
-    const unsellableTokens = tokensWithBalance.filter(token => token.solValue < 0.001)
+    // STEP 8: Categorize tokens after price fetching
+    const allTokens = [...tradeableTokens, ...nonTradeableTokens]
+    
+    // Separate sellable vs unsellable among the tradeable tokens
+    const sellableTokens = tradeableTokens.filter(token => 
+      token.solValue >= 0.001 || isPumpFunToken(token.mintAddress)
+    )
+    const unsellableTokens = tradeableTokens.filter(token => 
+      token.solValue < 0.001 && !isPumpFunToken(token.mintAddress)
+    )
+    
+    // Mark all non-tradeable tokens as not loading
+    nonTradeableTokens.forEach(token => {
+      token.isLoadingPrice = false
+      if (token.uiAmount <= 0.000000000001) {
+        token.solValue = 0
+      }
+    })
 
-    // Mark zero balance tokens and unsellable tokens as not loading
-    const allZeroBalanceTokens = [
-      ...tokensZeroBalance.map(token => ({
-        ...token,
-        solValue: 0,
-        isLoadingPrice: false
-      })),
-      ...unsellableTokens.map(token => ({
-        ...token,
-        isLoadingPrice: false
-      }))
-    ]
-
-    // Combine and sort: sellable tokens first (by SOL value), then zero/unsellable tokens
-    const allTokens = [...sellableTokens, ...allZeroBalanceTokens]
+    console.log(`Categorized tokens: ${sellableTokens.length} sellable, ${unsellableTokens.length} unsellable, ${nonTradeableTokens.filter(t => t.frozen).length} frozen, ${nonTradeableTokens.filter(t => t.isNFT).length} NFTs`)
     
     return allTokens.sort((a, b) => {
-      // First sort by whether they have meaningful SOL value (>= 0.001)
-      if (a.solValue >= 0.001 && b.solValue < 0.001) return -1
-      if (a.solValue < 0.001 && b.solValue >= 0.001) return 1
+      // Check if tokens are sellable (SOL value >= 0.001 OR pump.fun token) AND not frozen
+      const aIsSellable = (a.solValue >= 0.001 || isPumpFunToken(a.mintAddress)) && !a.frozen
+      const bIsSellable = (b.solValue >= 0.001 || isPumpFunToken(b.mintAddress)) && !b.frozen
       
-      // Then sort by SOL value within sellable tokens, or alphabetically for unsellable tokens
-      if (a.solValue >= 0.001 && b.solValue >= 0.001) {
+      // Check if tokens are frozen
+      const aIsFrozen = a.frozen
+      const bIsFrozen = b.frozen
+      
+      // Sort order: sellable tokens first, then unsellable tokens, then frozen tokens last
+      if (aIsSellable && !bIsSellable) return -1
+      if (!aIsSellable && bIsSellable) return 1
+      
+      // Within the same category, handle frozen tokens
+      if (!aIsFrozen && bIsFrozen) return -1
+      if (aIsFrozen && !bIsFrozen) return 1
+      
+      // Then sort by SOL value within sellable tokens, or alphabetically for others
+      if (aIsSellable && bIsSellable) {
         return b.solValue - a.solValue
       } else {
         return (a.symbol || '').localeCompare(b.symbol || '')
@@ -293,6 +474,147 @@ export async function fetchUserTokens(
   }
 }
 
+// Function to clear NFT cache (useful when switching users)
+export function clearNFTCache(): void {
+  nftMintCache.clear()
+  nftCacheInitialized = false
+}
+
+// Public function to check if a token is an NFT (ensures cache is initialized)
+export async function checkIfTokenIsNFT(
+  connection: Connection,
+  userPublicKey: PublicKey,
+  mintAddress: string
+): Promise<boolean> {
+  try {
+    // Initialize cache if not done yet
+    if (!nftCacheInitialized) {
+      const userNFTs = await fetchUserNFTMints(connection, userPublicKey)
+      userNFTs.forEach(mint => nftMintCache.add(mint))
+      nftCacheInitialized = true
+    }
+    
+    return nftMintCache.has(mintAddress)
+  } catch (error) {
+    console.warn(`Error checking NFT status for ${mintAddress}:`, error)
+    return false
+  }
+}
+
+// New function to fetch only NFTs if needed
+export async function fetchUserNFTs(
+  connection: Connection,
+  userPublicKey: PublicKey
+): Promise<UserToken[]> {
+  try {
+    const allTokens = await fetchUserTokens(connection, userPublicKey, true, true) // Include zero balance and NFTs
+    return allTokens.filter(token => token.isNFT)
+  } catch (error) {
+    console.error('Error fetching user NFTs:', error)
+    return []
+  }
+}
+
+// Alternative function to fetch NFT details directly using Metaplex
+export async function fetchUserNFTsDetailed(
+  connection: Connection,
+  userPublicKey: PublicKey
+): Promise<Array<{
+  mintAddress: string
+  name: string
+  symbol: string
+  uri: string
+  publicKey: string
+}>> {
+  try {
+    // Create UMI instance
+    const umi = createUmi(connection.rpcEndpoint)
+    
+    // Convert PublicKey to UMI publicKey
+    const ownerPublicKey = publicKey(userPublicKey.toBase58())
+    
+    console.log("Fetching detailed NFT information...")
+    const allNFTs = await fetchAllDigitalAssetWithTokenByOwner(umi, ownerPublicKey)
+    
+    return allNFTs.map((nft) => ({
+      mintAddress: nft.publicKey.toString(),
+      name: nft.metadata.name,
+      symbol: nft.metadata.symbol,
+      uri: nft.metadata.uri,
+      publicKey: nft.publicKey.toString()
+    }))
+  } catch (error) {
+    console.error('Error fetching detailed NFT information:', error)
+    return []
+  }
+}
+
+// Enhanced function to get specific NFT metadata
+export async function getNFTMetadata(
+  connection: Connection,
+  userPublicKey: PublicKey,
+  mintAddress: string
+): Promise<{
+  decimals: number
+  symbol: string
+  name: string
+  logoURI?: string
+  uri?: string
+  isNFT: boolean
+} | null> {
+  try {
+    // First check if it's an NFT
+    const tokenIsNFT = isTokenInNFTCache(mintAddress)
+    
+    if (tokenIsNFT) {
+      // Get detailed NFT metadata
+      const umi = createUmi(connection.rpcEndpoint)
+      const ownerPublicKey = publicKey(userPublicKey.toBase58())
+      
+      try {
+        const allNFTs = await fetchAllDigitalAssetWithTokenByOwner(umi, ownerPublicKey)
+        const specificNFT = allNFTs.find(nft => nft.publicKey.toString() === mintAddress)
+        
+        if (specificNFT) {
+          return {
+            decimals: 0,
+            symbol: specificNFT.metadata.symbol || 'NFT',
+            name: specificNFT.metadata.name || 'NFT',
+            logoURI: undefined, // Could be extracted from URI metadata
+            uri: specificNFT.metadata.uri,
+            isNFT: true
+          }
+        }
+      } catch (error) {
+        console.warn(`Failed to get specific NFT metadata for ${mintAddress}:`, error)
+      }
+      
+      // Fallback for NFTs
+      return {
+        decimals: 0,
+        symbol: 'NFT',
+        name: 'NFT',
+        logoURI: undefined,
+        isNFT: true
+      }
+    }
+    
+    // Not an NFT, use regular token info
+    const tokenInfo = await getTokenInfo(mintAddress)
+    if (tokenInfo) {
+      return {
+        ...tokenInfo,
+        isNFT: false
+      }
+    }
+    
+    return null
+  } catch (error) {
+    console.error(`Error getting token/NFT metadata for ${mintAddress}:`, error)
+    return null
+  }
+}
+
 // New function to fetch only zero-balance tokens for closing
 export async function fetchZeroBalanceTokens(
   connection: Connection,
@@ -300,18 +622,23 @@ export async function fetchZeroBalanceTokens(
 ): Promise<UserToken[]> {
   try {
     const allTokens = await fetchUserTokens(connection, userPublicKey, true)
-    // Include tokens with zero balance OR tokens with SOL value < 0.001 (unsellable)
-    return allTokens.filter(token => token.uiAmount <= 0.000000000001 || token.solValue < 0.001)
+    // Include tokens with zero balance OR tokens with SOL value < 0.001 (unsellable), but exclude pump.fun tokens AND frozen tokens
+    return allTokens.filter(token => 
+      !token.frozen && (
+        token.uiAmount <= 0.000000000001 || 
+        (token.solValue < 0.001 && !isPumpFunToken(token.mintAddress))
+      )
+    )
   } catch (error) {
     console.error('Error fetching zero balance tokens:', error)
     return []
   }
 }
 
-// Simple token info lookup (in production, use a proper token registry)
+// Simple token info lookup (streamlined - NFT checking handled upstream)
 async function getTokenInfo(mintAddress: string): Promise<{ decimals: number; symbol: string; name: string; logoURI?: string } | null> {
   try {
-    // First try Jupiter's Token API
+    // Try Jupiter's Token API first
     const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
     
     if (response.ok) {
@@ -324,7 +651,7 @@ async function getTokenInfo(mintAddress: string): Promise<{ decimals: number; sy
       }
     }
 
-    // This is a simplified lookup - in production you'd use Jupiter's token list or similar
+    // Fallback to common tokens
     const commonTokens: Record<string, any> = {
       [TOKENS.SOL]: { decimals: 9, symbol: 'SOL', name: 'Wrapped SOL', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png' },
       [TOKENS.USDC]: { decimals: 6, symbol: 'USDC', name: 'USD Coin', logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png' },
@@ -343,8 +670,89 @@ async function getTokenInfo(mintAddress: string): Promise<{ decimals: number; sy
 }
 
 // Check if token is a pump.fun token
-function isPumpFunToken(mintAddress: string): boolean {
+export function isPumpFunToken(mintAddress: string): boolean {
   return mintAddress.includes('pump') || mintAddress.endsWith('pump')
+}
+
+// Cache for NFT mint addresses to avoid repeated API calls
+const nftMintCache = new Set<string>()
+let nftCacheInitialized = false
+
+// Fetch all NFTs owned by a user using Metaplex
+async function fetchUserNFTMints(
+  connection: Connection,
+  userPublicKey: PublicKey
+): Promise<Set<string>> {
+  try {
+    // Create UMI instance
+    const umi = createUmi(connection.rpcEndpoint)
+    
+    // Convert PublicKey to UMI publicKey
+    const ownerPublicKey = publicKey(userPublicKey.toBase58())
+    
+    console.log("Fetching NFTs using Metaplex...")
+    const allNFTs = await fetchAllDigitalAssetWithTokenByOwner(umi, ownerPublicKey)
+    
+    // Extract mint addresses
+    const nftMints = new Set<string>()
+    allNFTs.forEach((nft) => {
+      nftMints.add(nft.publicKey.toString())
+    })
+    
+    console.log(`Found ${nftMints.size} NFTs for user`)
+    return nftMints
+  } catch (error) {
+    console.error('Error fetching NFTs with Metaplex:', error)
+    return new Set<string>()
+  }
+}
+
+// Check if a token is an NFT using the cache (internal function)
+function isTokenInNFTCache(mintAddress: string): boolean {
+  return nftMintCache.has(mintAddress)
+}
+
+// Check if a token account is frozen by examining the account state
+function isTokenAccountFrozen(accountData: Buffer): boolean {
+  try {
+    // SPL Token account layout:
+    // - mint: 32 bytes (0-31)
+    // - owner: 32 bytes (32-63)  
+    // - amount: 8 bytes (64-71)
+    // - delegate: 36 bytes (72-107) - includes option flag + pubkey
+    // - state: 1 byte (108) - 0: Uninitialized, 1: Initialized, 2: Frozen
+    // - is_native: 12 bytes (109-120) - includes option flag + amount
+    // - delegated_amount: 8 bytes (121-128)
+    // - close_authority: 36 bytes (129-164) - includes option flag + pubkey
+    
+    if (accountData.length < 165) {
+      console.warn('Token account data too short to parse state')
+      return false
+    }
+    
+    const state = accountData.readUInt8(108)
+    return state === 2 // 2 = Frozen
+  } catch (error) {
+    console.warn('Error checking token account frozen state:', error)
+    return false
+  }
+}
+
+// Additional check with Jupiter API for frozen status
+async function checkTokenFrozenStatusWithJupiter(mintAddress: string): Promise<boolean> {
+  try {
+    const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
+    
+    if (response.ok) {
+      const tokenData = await response.json()
+      // Jupiter API might have frozen status or we can infer from other properties
+      return tokenData.frozen === true || tokenData.status === 'frozen'
+    }
+  } catch (error) {
+    console.warn(`Failed to check frozen status with Jupiter for ${mintAddress}:`, error)
+  }
+  
+  return false
 }
 
 // Execute bulk token sales with account closing
@@ -369,10 +777,22 @@ export async function executeBulkSell(
     
     // Only process swaps if there are tokens to sell
     if (request.tokens && request.tokens.length > 0) {
-      // Step 1: Get quotes for all tokens to sell
+      // Filter out frozen tokens first
+      const nonFrozenTokens = request.tokens.filter(token => !token.frozen)
+      const frozenTokens = request.tokens.filter(token => token.frozen)
+      
+      // Add frozen tokens to failed sales immediately
+      frozenTokens.forEach(token => {
+        result.failedSales.push({
+          mintAddress: token.mintAddress,
+          error: 'Token account is frozen and cannot be traded'
+        })
+      })
+      
+      // Step 1: Get quotes for all non-frozen tokens to sell
       const quotes: Array<{ token: UserToken; quote: SwapQuote | null }> = []
       
-      for (const token of request.tokens) {
+      for (const token of nonFrozenTokens) {
         const quote = await getSwapQuote(
           token.mintAddress,
           TOKENS.SOL,
@@ -386,11 +806,13 @@ export async function executeBulkSell(
       const validQuotes = quotes.filter(q => q.quote !== null)
       
       if (validQuotes.length === 0) {
-        // Mark all tokens as failed to sell
-        result.failedSales = request.tokens.map(token => ({
-          mintAddress: token.mintAddress,
-          error: 'No valid quote available'
-        }))
+        // Mark all non-frozen tokens as failed to sell (frozen tokens already marked above)
+        nonFrozenTokens.forEach(token => {
+          result.failedSales.push({
+            mintAddress: token.mintAddress,
+            error: 'No valid quote available'
+          })
+        })
       } else {
         // Step 2: Create swap transactions
         const swapTransactions: VersionedTransaction[] = []
@@ -472,10 +894,21 @@ export async function executeBulkSell(
     // Step 4: Close token accounts for successful swaps AND selected unsellable tokens
     const tokensToClose = [...successfulSwaps]
     
-    // Add unsellable tokens to the close list if provided
+    // Add unsellable tokens to the close list if provided (excluding frozen tokens)
     if (request.unsellableTokens && request.unsellableTokens.length > 0) {
-      tokensToClose.push(...request.unsellableTokens)
-      console.log(`Adding ${request.unsellableTokens.length} unsellable tokens to close list`)
+      const nonFrozenUnsellableTokens = request.unsellableTokens.filter(token => !token.frozen)
+      const frozenUnsellableTokens = request.unsellableTokens.filter(token => token.frozen)
+      
+      tokensToClose.push(...nonFrozenUnsellableTokens)
+      console.log(`Adding ${nonFrozenUnsellableTokens.length} unsellable tokens to close list`)
+      
+      // Add frozen unsellable tokens to failed closes
+      frozenUnsellableTokens.forEach(token => {
+        result.failedCloses.push({
+          mintAddress: token.mintAddress,
+          error: 'Token account is frozen and cannot be closed'
+        })
+      })
     }
     
     if (tokensToClose.length > 0) {
@@ -497,6 +930,55 @@ export async function executeBulkSell(
           mintAddress: token.mintAddress,
           error: 'Failed to close account'
         }))
+      }
+    }
+
+    // Step 5: Process fee transfers for successful operations
+    const totalSuccessfulOperations = result.successfulSales.length + result.successfulCloses.length
+    
+    if (totalSuccessfulOperations > 0) {
+      try {
+        const feeInstructions = createFeeTransferInstructions(
+          new PublicKey(userPublicKey),
+          totalSuccessfulOperations
+        )
+        
+        if (feeInstructions.length > 0) {
+          console.log(`Processing fees for ${totalSuccessfulOperations} successful operations`)
+          
+          // Create fee transaction
+          const { blockhash } = await connection.getLatestBlockhash('confirmed')
+          
+          const feeMessageV0 = new TransactionMessage({
+            payerKey: new PublicKey(userPublicKey),
+            recentBlockhash: blockhash,
+            instructions: feeInstructions
+          }).compileToV0Message()
+
+          const feeTransaction = new VersionedTransaction(feeMessageV0)
+          const signedFeeTransactions = await signAllTransactions([feeTransaction])
+
+          // Send fee transaction
+          const feeSignature = await connection.sendTransaction(signedFeeTransactions[0], {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+          })
+
+          const feeConfirmation = await connection.confirmTransaction(feeSignature, 'confirmed')
+          
+          if (!feeConfirmation.value.err) {
+            result.signatures.push(feeSignature)
+            console.log(`Fee transfer successful: ${feeSignature}`)
+            
+            const feeDistribution = calculateFeeDistribution(totalSuccessfulOperations)
+            console.log(`Total fees: ${feeDistribution.totalFee} SOL (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
+          } else {
+            console.error('Fee transfer failed:', feeConfirmation.value.err)
+          }
+        }
+      } catch (error) {
+        console.error('Error processing fee transfers:', error)
+        // Don't fail the entire operation if fee transfer fails
       }
     }
 
@@ -540,6 +1022,15 @@ async function closeTokenAccounts(
     // Create burn and close instructions for each token
     for (const token of tokens) {
       try {
+        // Skip frozen tokens
+        if (token.frozen) {
+          result.failed.push({
+            mintAddress: token.mintAddress,
+            error: 'Token account is frozen and cannot be closed'
+          })
+          continue
+        }
+        
         // Check if the token might be problematic (like pump.fun tokens)
         if (isPumpFunToken(token.mintAddress)) {
           console.warn(`Detected pump.fun token: ${token.mintAddress}`)
@@ -591,6 +1082,16 @@ async function closeTokenAccounts(
           result.failed.push({
             mintAddress: token.mintAddress,
             error: 'Invalid token account data length'
+          })
+          continue
+        }
+
+        // Double-check if account is frozen by examining the raw account data
+        const accountFrozenState = isTokenAccountFrozen(accountInfo.data)
+        if (accountFrozenState) {
+          result.failed.push({
+            mintAddress: token.mintAddress,
+            error: 'Token account is frozen (detected during account validation)'
           })
           continue
         }
@@ -818,6 +1319,53 @@ export async function executeBulkBuy(
     result.totalSpent = (amountPerToken * result.successfulPurchases.length) / LAMPORTS_PER_SOL
     result.success = result.successfulPurchases.length > 0
 
+    // Process fee transfers for successful purchases
+    if (result.successfulPurchases.length > 0) {
+      try {
+        const feeInstructions = createFeeTransferInstructions(
+          new PublicKey(userPublicKey),
+          result.successfulPurchases.length
+        )
+        
+        if (feeInstructions.length > 0) {
+          console.log(`Processing fees for ${result.successfulPurchases.length} successful purchases`)
+          
+          // Create fee transaction
+          const { blockhash } = await connection.getLatestBlockhash('confirmed')
+          
+          const feeMessageV0 = new TransactionMessage({
+            payerKey: new PublicKey(userPublicKey),
+            recentBlockhash: blockhash,
+            instructions: feeInstructions
+          }).compileToV0Message()
+
+          const feeTransaction = new VersionedTransaction(feeMessageV0)
+          const signedFeeTransactions = await signAllTransactions([feeTransaction])
+
+          // Send fee transaction
+          const feeSignature = await connection.sendTransaction(signedFeeTransactions[0], {
+            skipPreflight: false,
+            preflightCommitment: 'confirmed',
+          })
+
+          const feeConfirmation = await connection.confirmTransaction(feeSignature, 'confirmed')
+          
+          if (!feeConfirmation.value.err) {
+            result.signatures.push(feeSignature)
+            console.log(`Fee transfer successful: ${feeSignature}`)
+            
+            const feeDistribution = calculateFeeDistribution(result.successfulPurchases.length)
+            console.log(`Total fees: ${feeDistribution.totalFee} SOL (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
+          } else {
+            console.error('Fee transfer failed:', feeConfirmation.value.err)
+          }
+        }
+      } catch (error) {
+        console.error('Error processing fee transfers:', error)
+        // Don't fail the entire operation if fee transfer fails
+      }
+    }
+
     return result
   } catch (error) {
     console.error('Bulk buy execution error:', error)
@@ -852,6 +1400,37 @@ export function parseMintAddresses(input: string): string[] {
     .map(addr => addr.trim())
     .filter(addr => addr.length > 0 && isValidMintAddress(addr))
     .slice(0, 10) // Limit to 10 addresses
+}
+
+// Helper function to categorize user tokens for easier UI handling
+export function categorizeUserTokens(tokens: UserToken[]): {
+  sellable: UserToken[]
+  unsellable: UserToken[]
+  frozen: UserToken[]
+  zeroBalance: UserToken[]
+  nfts: UserToken[]
+} {
+  const sellable: UserToken[] = []
+  const unsellable: UserToken[] = []
+  const frozen: UserToken[] = []
+  const zeroBalance: UserToken[] = []
+  const nfts: UserToken[] = []
+
+  tokens.forEach(token => {
+    if (token.isNFT) {
+      nfts.push(token)
+    } else if (token.frozen) {
+      frozen.push(token)
+    } else if (token.uiAmount <= 0.000000000001) {
+      zeroBalance.push(token)
+    } else if (token.solValue >= 0.001 || isPumpFunToken(token.mintAddress)) {
+      sellable.push(token)
+    } else {
+      unsellable.push(token)
+    }
+  })
+
+  return { sellable, unsellable, frozen, zeroBalance, nfts }
 }
 
 // New function to close only zero-balance token accounts
@@ -984,6 +1563,51 @@ export async function closeZeroBalanceTokens(
             console.log(`- Burned tokens in ${burnInstructions.length} accounts`)
           }
           console.log(`- Closed ${closeInstructions.length} accounts`)
+          
+          // Process fee transfers for successful account closes
+          try {
+            const feeInstructions = createFeeTransferInstructions(
+              new PublicKey(userPublicKey),
+              tokensToProcess.length
+            )
+            
+            if (feeInstructions.length > 0) {
+              console.log(`Processing fees for ${tokensToProcess.length} successful account closes`)
+              
+              // Create fee transaction
+              const { blockhash: feeBlockhash } = await connection.getLatestBlockhash('confirmed')
+              
+              const feeMessageV0 = new TransactionMessage({
+                payerKey: new PublicKey(userPublicKey),
+                recentBlockhash: feeBlockhash,
+                instructions: feeInstructions
+              }).compileToV0Message()
+
+              const feeTransaction = new VersionedTransaction(feeMessageV0)
+              const signedFeeTransactions = await signAllTransactions([feeTransaction])
+
+              // Send fee transaction
+              const feeSignature = await connection.sendTransaction(signedFeeTransactions[0], {
+                skipPreflight: false,
+                preflightCommitment: 'confirmed',
+              })
+
+              const feeConfirmation = await connection.confirmTransaction(feeSignature, 'confirmed')
+              
+              if (!feeConfirmation.value.err) {
+                result.signatures.push(feeSignature)
+                console.log(`Fee transfer successful: ${feeSignature}`)
+                
+                const feeDistribution = calculateFeeDistribution(tokensToProcess.length)
+                console.log(`Total fees: ${feeDistribution.totalFee} SOL (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
+              } else {
+                console.error('Fee transfer failed:', feeConfirmation.value.err)
+              }
+            }
+          } catch (feeError) {
+            console.error('Error processing fee transfers for account closes:', feeError)
+            // Don't fail the entire operation if fee transfer fails
+          }
         }
       } catch (transactionError) {
         console.error('Transaction creation/sending failed:', transactionError)

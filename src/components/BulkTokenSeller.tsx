@@ -10,6 +10,7 @@ import {
   fetchZeroBalanceTokens,
   closeZeroBalanceTokens,
   getTokenSolValue,
+  isPumpFunToken,
   UserToken, 
   BulkSellRequest, 
   BulkSellResult 
@@ -62,14 +63,14 @@ export default function BulkTokenSeller() {
       const allTokens = await fetchUserTokens(connection, publicKey, true)
       
       // Separate sellable tokens from zero-balance/unsellable tokens
-      // Sellable tokens: have both meaningful balance AND SOL value >= 0.001
+      // Sellable tokens: have meaningful balance AND (SOL value >= 0.001 OR pump.fun token)
       const sellableTokens = allTokens.filter(token => 
-        token.uiAmount > 0.000000000001 && token.solValue >= 0.001
+        token.uiAmount > 0.000000000001 && (token.solValue >= 0.001 || isPumpFunToken(token.mintAddress))
       )
       
-      // Zero-balance/unsellable tokens: either zero balance OR SOL value < 0.001
+      // Zero-balance/unsellable tokens: either zero balance OR (SOL value < 0.001 AND not pump.fun)
       const zeroTokens = allTokens.filter(token => 
-        token.uiAmount <= 0.000000000001 || token.solValue < 0.001
+        token.uiAmount <= 0.000000000001 || (token.solValue < 0.001 && !isPumpFunToken(token.mintAddress))
       )
       
       setUserTokens(sellableTokens)
