@@ -21,8 +21,8 @@ if (typeof BigInt.prototype.toJSON === 'undefined') {
 
 // Fee configuration
 const FEE_CONFIG = {
-  DEV_WALLET: '7YzQF9Q5M3J8K6L4N9P2R5S8T1U4V7W8X2Y6Z3A7B4C9', // Replace with your actual dev wallet address
-  FEE_PER_OPERATION: 0.0001, // 0.0001 SOL per successful operation
+  DEV_WALLET: '3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX', // Your dev wallet address
+  FEE_PER_OPERATION: 0.0005, // 0.0001 SOL per successful operation
   REFERRAL_PERCENTAGE: 30, // 30% of fee goes to referral, 70% to dev
 }
 
@@ -78,7 +78,7 @@ export function createFeeTransferInstructions(
   fromPubkey: PublicKey,
   operationCount: number
 ): any[] {
-  if (FEE_CONFIG.DEV_WALLET === 'YOUR_DEV_WALLET_ADDRESS_HERE' || !isValidMintAddress(FEE_CONFIG.DEV_WALLET)) {
+  if (!isValidMintAddress(FEE_CONFIG.DEV_WALLET)) {
     console.warn('Dev wallet not properly configured, skipping fee transfers')
     return []
   }
@@ -116,6 +116,25 @@ export function createFeeTransferInstructions(
   return instructions
 }
 
+// Create fee transfer instructions in Jupiter format for inclusion in swap transactions
+export function createJupiterFeeInstructions(
+  fromPubkey: PublicKey,
+  operationCount: number
+): any[] {
+  const feeInstructions = createFeeTransferInstructions(fromPubkey, operationCount)
+  
+  // Convert to Jupiter format
+  return feeInstructions.map(instruction => ({
+    programId: instruction.programId.toBase58(),
+    keys: instruction.keys.map((key: any) => ({
+      pubkey: key.pubkey.toBase58(),
+      isSigner: key.isSigner,
+      isWritable: key.isWritable
+    })),
+    data: Buffer.from(instruction.data).toString('base64')
+  }))
+}
+
 export function getFeeInfo(): {
   feePerOperation: number
   referralPercentage: number
@@ -125,6 +144,24 @@ export function getFeeInfo(): {
     feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
     referralPercentage: FEE_CONFIG.REFERRAL_PERCENTAGE,
     devWallet: FEE_CONFIG.DEV_WALLET,
+  }
+}
+
+// Helper function to calculate fee preview for UI
+export function calculateFeePreview(operationCount: number): {
+  totalFees: number
+  devFee: number
+  referralFee: number
+  feePerOperation: number
+  referralAddress: string | null
+} {
+  const feeDistribution = calculateFeeDistribution(operationCount)
+  return {
+    totalFees: feeDistribution.totalFee,
+    devFee: feeDistribution.devFee,
+    referralFee: feeDistribution.referralFee,
+    feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
+    referralAddress: getReferralFromUrl(),
   }
 }
 
@@ -158,6 +195,13 @@ export interface BulkSellResult {
   failedCloses: Array<{ mintAddress: string; error: string }>
   totalReceived: number
   signatures: string[]
+  feeInfo: {
+    totalFees: number // Total fees paid in SOL
+    devFee: number // Fee paid to dev wallet
+    referralFee: number // Fee paid to referral (if any)
+    feePerOperation: number // Fee rate per operation
+    totalOperations: number // Number of successful operations
+  }
 }
 
 // Get quote for a single token swap
@@ -191,27 +235,35 @@ export async function getSwapQuote(
   }
 }
 
-// Get swap transaction
+// Get swap transaction with optional additional instructions
 export async function getSwapTransaction(
   quote: SwapQuote,
   userPublicKey: string,
-  priorityFeeLamports: number = 0
+  priorityFeeLamports: number = 0,
+  additionalInstructions: any[] = []
 ): Promise<SwapTransaction | null> {
   try {
+    const requestBody: any = {
+      quoteResponse: quote,
+      userPublicKey,
+      wrapAndUnwrapSol: true,
+      priorityLevelWithMaxLamports: {
+        priorityLevel: 'medium',
+        maxLamports: priorityFeeLamports,
+      },
+    }
+
+    // Add additional instructions if provided (like fee transfers)
+    if (additionalInstructions.length > 0) {
+      requestBody.additionalInstructions = additionalInstructions
+    }
+
     const response = await fetch(JUPITER_API.swap, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        quoteResponse: quote,
-        userPublicKey,
-        wrapAndUnwrapSol: true,
-        priorityLevelWithMaxLamports: {
-          priorityLevel: 'medium',
-          maxLamports: priorityFeeLamports,
-        },
-      }),
+      body: JSON.stringify(requestBody),
     })
 
     if (!response.ok) {
@@ -770,6 +822,13 @@ export async function executeBulkSell(
     failedCloses: [],
     totalReceived: 0,
     signatures: [],
+    feeInfo: {
+      totalFees: 0,
+      devFee: 0,
+      referralFee: 0,
+      feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
+      totalOperations: 0,
+    }
   }
 
   try {
@@ -822,10 +881,17 @@ export async function executeBulkSell(
         for (const { token, quote } of validQuotes) {
           if (!quote) continue
 
+          // Create fee instructions for this individual swap
+          const feeInstructions = createJupiterFeeInstructions(
+            new PublicKey(userPublicKey),
+            1 // 1 successful operation per swap
+          )
+
           const swapTransaction = await getSwapTransaction(
             quote,
             userPublicKey,
-            request.priorityFee
+            request.priorityFee,
+            feeInstructions // Include fee in the same transaction
           )
 
           if (swapTransaction) {
@@ -933,53 +999,19 @@ export async function executeBulkSell(
       }
     }
 
-    // Step 5: Process fee transfers for successful operations
+    // Step 5: Calculate and populate fee information
     const totalSuccessfulOperations = result.successfulSales.length + result.successfulCloses.length
     
     if (totalSuccessfulOperations > 0) {
-      try {
-        const feeInstructions = createFeeTransferInstructions(
-          new PublicKey(userPublicKey),
-          totalSuccessfulOperations
-        )
-        
-        if (feeInstructions.length > 0) {
-          console.log(`Processing fees for ${totalSuccessfulOperations} successful operations`)
-          
-          // Create fee transaction
-          const { blockhash } = await connection.getLatestBlockhash('confirmed')
-          
-          const feeMessageV0 = new TransactionMessage({
-            payerKey: new PublicKey(userPublicKey),
-            recentBlockhash: blockhash,
-            instructions: feeInstructions
-          }).compileToV0Message()
-
-          const feeTransaction = new VersionedTransaction(feeMessageV0)
-          const signedFeeTransactions = await signAllTransactions([feeTransaction])
-
-          // Send fee transaction
-          const feeSignature = await connection.sendTransaction(signedFeeTransactions[0], {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-          })
-
-          const feeConfirmation = await connection.confirmTransaction(feeSignature, 'confirmed')
-          
-          if (!feeConfirmation.value.err) {
-            result.signatures.push(feeSignature)
-            console.log(`Fee transfer successful: ${feeSignature}`)
-            
-            const feeDistribution = calculateFeeDistribution(totalSuccessfulOperations)
-            console.log(`Total fees: ${feeDistribution.totalFee} SOL (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
-          } else {
-            console.error('Fee transfer failed:', feeConfirmation.value.err)
-          }
-        }
-      } catch (error) {
-        console.error('Error processing fee transfers:', error)
-        // Don't fail the entire operation if fee transfer fails
+      const feeDistribution = calculateFeeDistribution(totalSuccessfulOperations)
+      result.feeInfo = {
+        totalFees: feeDistribution.totalFee,
+        devFee: feeDistribution.devFee,
+        referralFee: feeDistribution.referralFee,
+        feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
+        totalOperations: totalSuccessfulOperations,
       }
+      console.log(`Fees processed inline: ${feeDistribution.totalFee} SOL total (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
     }
 
     // Operation is successful if we have successful sales OR successful closes
@@ -1137,10 +1169,16 @@ async function closeTokenAccounts(
 
     if (burnInstructions.length > 0 || closeInstructions.length > 0) {
       try {
-        // Combine burn and close instructions in the same transaction
-        const allInstructions = [...burnInstructions, ...closeInstructions]
+        // Add fee instructions for successful closes
+        const feeInstructions = createFeeTransferInstructions(
+          new PublicKey(userPublicKey),
+          tokensToProcess.length
+        )
         
-        // Create transaction with burn + close instructions
+        // Combine burn, close, and fee instructions in the same transaction
+        const allInstructions = [...burnInstructions, ...closeInstructions, ...feeInstructions]
+        
+        // Create transaction with burn + close + fee instructions
         const { blockhash } = await connection.getLatestBlockhash('confirmed')
         
         const messageV0 = new TransactionMessage({
@@ -1222,6 +1260,13 @@ export async function executeBulkBuy(
     failedPurchases: [],
     totalSpent: 0,
     signatures: [],
+    feeInfo: {
+      totalFees: 0,
+      devFee: 0,
+      referralFee: 0,
+      feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
+      totalOperations: 0,
+    }
   }
 
   try {
@@ -1255,10 +1300,17 @@ export async function executeBulkBuy(
     for (const { mint, quote } of validQuotes) {
       if (!quote) continue
 
+      // Create fee instructions for this individual purchase
+      const feeInstructions = createJupiterFeeInstructions(
+        new PublicKey(userPublicKey),
+        1 // 1 successful operation per purchase
+      )
+
       const swapTransaction = await getSwapTransaction(
         quote,
         userPublicKey,
-        request.priorityFee
+        request.priorityFee,
+        feeInstructions // Include fee in the same transaction
       )
 
       if (swapTransaction) {
@@ -1319,51 +1371,17 @@ export async function executeBulkBuy(
     result.totalSpent = (amountPerToken * result.successfulPurchases.length) / LAMPORTS_PER_SOL
     result.success = result.successfulPurchases.length > 0
 
-    // Process fee transfers for successful purchases
+    // Calculate and populate fee information
     if (result.successfulPurchases.length > 0) {
-      try {
-        const feeInstructions = createFeeTransferInstructions(
-          new PublicKey(userPublicKey),
-          result.successfulPurchases.length
-        )
-        
-        if (feeInstructions.length > 0) {
-          console.log(`Processing fees for ${result.successfulPurchases.length} successful purchases`)
-          
-          // Create fee transaction
-          const { blockhash } = await connection.getLatestBlockhash('confirmed')
-          
-          const feeMessageV0 = new TransactionMessage({
-            payerKey: new PublicKey(userPublicKey),
-            recentBlockhash: blockhash,
-            instructions: feeInstructions
-          }).compileToV0Message()
-
-          const feeTransaction = new VersionedTransaction(feeMessageV0)
-          const signedFeeTransactions = await signAllTransactions([feeTransaction])
-
-          // Send fee transaction
-          const feeSignature = await connection.sendTransaction(signedFeeTransactions[0], {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-          })
-
-          const feeConfirmation = await connection.confirmTransaction(feeSignature, 'confirmed')
-          
-          if (!feeConfirmation.value.err) {
-            result.signatures.push(feeSignature)
-            console.log(`Fee transfer successful: ${feeSignature}`)
-            
-            const feeDistribution = calculateFeeDistribution(result.successfulPurchases.length)
-            console.log(`Total fees: ${feeDistribution.totalFee} SOL (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
-          } else {
-            console.error('Fee transfer failed:', feeConfirmation.value.err)
-          }
-        }
-      } catch (error) {
-        console.error('Error processing fee transfers:', error)
-        // Don't fail the entire operation if fee transfer fails
+      const feeDistribution = calculateFeeDistribution(result.successfulPurchases.length)
+      result.feeInfo = {
+        totalFees: feeDistribution.totalFee,
+        devFee: feeDistribution.devFee,
+        referralFee: feeDistribution.referralFee,
+        feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
+        totalOperations: result.successfulPurchases.length,
       }
+      console.log(`Fees processed inline: ${feeDistribution.totalFee} SOL total (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
     }
 
     return result
@@ -1564,50 +1582,9 @@ export async function closeZeroBalanceTokens(
           }
           console.log(`- Closed ${closeInstructions.length} accounts`)
           
-          // Process fee transfers for successful account closes
-          try {
-            const feeInstructions = createFeeTransferInstructions(
-              new PublicKey(userPublicKey),
-              tokensToProcess.length
-            )
-            
-            if (feeInstructions.length > 0) {
-              console.log(`Processing fees for ${tokensToProcess.length} successful account closes`)
-              
-              // Create fee transaction
-              const { blockhash: feeBlockhash } = await connection.getLatestBlockhash('confirmed')
-              
-              const feeMessageV0 = new TransactionMessage({
-                payerKey: new PublicKey(userPublicKey),
-                recentBlockhash: feeBlockhash,
-                instructions: feeInstructions
-              }).compileToV0Message()
-
-              const feeTransaction = new VersionedTransaction(feeMessageV0)
-              const signedFeeTransactions = await signAllTransactions([feeTransaction])
-
-              // Send fee transaction
-              const feeSignature = await connection.sendTransaction(signedFeeTransactions[0], {
-                skipPreflight: false,
-                preflightCommitment: 'confirmed',
-              })
-
-              const feeConfirmation = await connection.confirmTransaction(feeSignature, 'confirmed')
-              
-              if (!feeConfirmation.value.err) {
-                result.signatures.push(feeSignature)
-                console.log(`Fee transfer successful: ${feeSignature}`)
-                
-                const feeDistribution = calculateFeeDistribution(tokensToProcess.length)
-                console.log(`Total fees: ${feeDistribution.totalFee} SOL (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
-              } else {
-                console.error('Fee transfer failed:', feeConfirmation.value.err)
-              }
-            }
-          } catch (feeError) {
-            console.error('Error processing fee transfers for account closes:', feeError)
-            // Don't fail the entire operation if fee transfer fails
-          }
+          // Log fee summary (fees are now included in the transaction)
+          const feeDistribution = calculateFeeDistribution(tokensToProcess.length)
+          console.log(`Fees processed inline: ${feeDistribution.totalFee} SOL total (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
         }
       } catch (transactionError) {
         console.error('Transaction creation/sending failed:', transactionError)

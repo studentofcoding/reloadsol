@@ -30,7 +30,7 @@ export default function PhantomWalletButton() {
       onClick={connect}
       disabled={connecting}
       className={`
-        flex items-center space-x-2 px-6 py-3 rounded-lg font-semibold transition-all duration-200 border
+        flex items-center justify-center space-x-2 px-6 py-3 rounded-lg font-semibold transition-all duration-200 border mx-auto
         ${connecting 
           ? 'bg-gray-600 text-gray-400 cursor-not-allowed border-gray-500' 
           : 'bg-white hover:bg-gray-100 text-black border-gray-300 shadow-lg hover:shadow-xl'
@@ -47,7 +47,7 @@ export default function PhantomWalletButton() {
           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 2L2 7v10c0 5.55 3.84 9.74 9 11 5.16-1.26 9-5.45 9-11V7l-10-5z"/>
           </svg>
-          <span>Connect Phantom</span>
+          <span>Check my wallet</span>
         </>
       )}
     </button>

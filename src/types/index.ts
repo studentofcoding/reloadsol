@@ -20,6 +20,13 @@ export interface BulkBuyResult {
   failedPurchases: { mintAddress: string; error: string }[]
   totalSpent: number
   signatures: string[]
+  feeInfo: {
+    totalFees: number // Total fees paid in SOL
+    devFee: number // Fee paid to dev wallet
+    referralFee: number // Fee paid to referral (if any)
+    feePerOperation: number // Fee rate per operation
+    totalOperations: number // Number of successful operations
+  }
 }
 
 export interface SwapQuote {
