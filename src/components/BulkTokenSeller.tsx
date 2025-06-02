@@ -679,11 +679,11 @@ export default function BulkTokenSeller() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                   <div className="text-white">
                     <span className="block font-medium">Successful Sales</span>
-                    <span className="text-xl font-bold">{result.successfulSales.length}</span>
+                    <span className="text-xl font-bold">{result.successfulSwaps.length}</span>
                   </div>
                   <div className="text-white">
                     <span className="block font-medium">Failed Sales</span>
-                    <span className="text-xl font-bold">{result.failedSales.length}</span>
+                    <span className="text-xl font-bold">{result.failedSwaps.length}</span>
                   </div>
                   <div className="text-white">
                     <span className="block font-medium">Accounts Closed</span>
@@ -697,16 +697,16 @@ export default function BulkTokenSeller() {
               </div>
 
               {/* Successful Sales */}
-              {result.successfulSales.length > 0 && (
+              {result.successfulSwaps.length > 0 && (
                 <div className="bg-gradient-to-r from-green-900/30 to-emerald-800/30 border border-green-500/30 rounded-xl p-6 backdrop-blur-sm">
                   <h4 className="font-semibold text-green-200 mb-4 flex items-center">
                     <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                     </svg>
-                    Successful Sales ({result.successfulSales.length})
+                    Successful Sales ({result.successfulSwaps.length})
                   </h4>
                   <div className="space-y-2">
-                    {result.successfulSales.map((sale, index) => (
+                    {result.successfulSwaps.map((sale, index) => (
                       <div key={index} className="bg-green-900/20 rounded-lg p-3 border border-green-500/20">
                         <div className="flex justify-between items-center">
                           <span className="font-mono text-sm text-green-100">{sale.mintAddress}</span>
@@ -719,16 +719,16 @@ export default function BulkTokenSeller() {
               )}
 
               {/* Failed Sales */}
-              {result.failedSales.length > 0 && (
+              {result.failedSwaps.length > 0 && (
                 <div className="bg-gradient-to-r from-red-900/30 to-red-800/30 border border-red-500/30 rounded-xl p-6 backdrop-blur-sm">
                   <h4 className="font-semibold text-red-200 mb-4 flex items-center">
                     <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                     </svg>
-                    Failed Sales ({result.failedSales.length})
+                    Failed Sales ({result.failedSwaps.length})
                   </h4>
                   <div className="space-y-3">
-                    {result.failedSales.map((failure, index) => (
+                    {result.failedSwaps.map((failure, index) => (
                       <div key={index} className="bg-red-900/20 rounded-lg p-3 border border-red-500/20">
                         <div className="font-mono text-sm text-red-100 mb-1">{failure.mintAddress}</div>
                         <div className="text-xs text-red-300">{failure.error}</div>

@@ -189,8 +189,8 @@ export interface BulkSellRequest {
 
 export interface BulkSellResult {
   success: boolean
-  successfulSales: Array<{ mintAddress: string; solReceived: number }>
-  failedSales: Array<{ mintAddress: string; error: string }>
+  successfulSwaps: Array<{ mintAddress: string; solReceived: number }>
+  failedSwaps: Array<{ mintAddress: string; error: string }>
   successfulCloses: string[]
   failedCloses: Array<{ mintAddress: string; error: string }>
   totalReceived: number
@@ -816,8 +816,8 @@ export async function executeBulkSell(
 ): Promise<BulkSellResult> {
   const result: BulkSellResult = {
     success: false,
-    successfulSales: [],
-    failedSales: [],
+    successfulSwaps: [],
+    failedSwaps: [],
     successfulCloses: [],
     failedCloses: [],
     totalReceived: 0,
@@ -842,7 +842,7 @@ export async function executeBulkSell(
       
       // Add frozen tokens to failed sales immediately
       frozenTokens.forEach(token => {
-        result.failedSales.push({
+        result.failedSwaps.push({
           mintAddress: token.mintAddress,
           error: 'Token account is frozen and cannot be traded'
         })
@@ -867,7 +867,7 @@ export async function executeBulkSell(
       if (validQuotes.length === 0) {
         // Mark all non-frozen tokens as failed to sell (frozen tokens already marked above)
         nonFrozenTokens.forEach(token => {
-          result.failedSales.push({
+          result.failedSwaps.push({
             mintAddress: token.mintAddress,
             error: 'No valid quote available'
           })
@@ -902,7 +902,7 @@ export async function executeBulkSell(
             swapTokens.push(token)
             swapQuotes.push(quote)
           } else {
-            result.failedSales.push({
+            result.failedSwaps.push({
               mintAddress: token.mintAddress,
               error: 'Failed to create swap transaction'
             })
@@ -926,7 +926,7 @@ export async function executeBulkSell(
               const confirmation = await connection.confirmTransaction(signature, 'confirmed')
               
               if (confirmation.value.err) {
-                result.failedSales.push({
+                result.failedSwaps.push({
                   mintAddress: swapTokens[i].mintAddress,
                   error: `Swap transaction failed: ${confirmation.value.err}`
                 })
@@ -938,14 +938,14 @@ export async function executeBulkSell(
                 const quote = swapQuotes[i]
                 const solReceived = parseInt(quote.outAmount) / LAMPORTS_PER_SOL
                 
-                result.successfulSales.push({
+                result.successfulSwaps.push({
                   mintAddress: swapTokens[i].mintAddress,
                   solReceived: solReceived
                 })
                 result.totalReceived += solReceived
               }
             } catch (error) {
-              result.failedSales.push({
+              result.failedSwaps.push({
                 mintAddress: swapTokens[i].mintAddress,
                 error: `Swap error: ${error}`
               })
@@ -1000,7 +1000,7 @@ export async function executeBulkSell(
     }
 
     // Step 5: Calculate and populate fee information
-    const totalSuccessfulOperations = result.successfulSales.length + result.successfulCloses.length
+    const totalSuccessfulOperations = result.successfulSwaps.length + result.successfulCloses.length
     
     if (totalSuccessfulOperations > 0) {
       const feeDistribution = calculateFeeDistribution(totalSuccessfulOperations)
@@ -1015,14 +1015,14 @@ export async function executeBulkSell(
     }
 
     // Operation is successful if we have successful sales OR successful closes
-    result.success = result.successfulSales.length > 0 || result.successfulCloses.length > 0
+    result.success = result.successfulSwaps.length > 0 || result.successfulCloses.length > 0
     return result
   } catch (error) {
     console.error('Bulk sell execution error:', error)
     
     // Only mark tokens as failed to sell if we actually have tokens to sell
     if (request.tokens && request.tokens.length > 0) {
-      result.failedSales = request.tokens.map(token => ({
+      result.failedSwaps = request.tokens.map(token => ({
         mintAddress: token.mintAddress,
         error: error instanceof Error ? error.message : 'Unknown error'
       }))
