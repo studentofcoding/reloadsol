@@ -151,10 +151,11 @@ export default function TrendingTokens({
 
   return (
     <div className="h-full">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-2">
         <h3 className="text-xl font-bold text-white">Trending Tokens</h3>
         <div className="text-sm text-gray-400">in last hour</div>
       </div>
+      <p className="text-xs text-gray-400 mb-4">disclaimer: Token information is for educational purposes only, not financial advice and always DYOR.</p>
       
       {isLoading && (
         <div className="flex justify-center items-center py-10">
