@@ -43,7 +43,9 @@ export async function GET() {
       headers: {
         'accept': 'application/json',
         'cache-control': 'no-cache',
-      }
+      },
+      // Ensure we're not using a stale response from the browser cache
+      next: { revalidate: 300 } // 5 minutes in seconds
     })
 
     if (!response.ok) {
@@ -78,7 +80,8 @@ export async function GET() {
       {
         status: 200,
         headers: {
-          'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120'
+          // Set cache control to 5 minutes (300 seconds)
+          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60'
         }
       }
     )

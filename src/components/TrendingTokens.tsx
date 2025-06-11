@@ -64,8 +64,8 @@ export default function TrendingTokens({
     
     fetchTrendingTokens()
     
-    // Refresh every 2 minutes
-    const intervalId = setInterval(fetchTrendingTokens, 2 * 60 * 1000)
+    // Refresh every 5 minutes (300000 ms)
+    const intervalId = setInterval(fetchTrendingTokens, 5 * 60 * 1000)
     
     return () => clearInterval(intervalId)
   }, [])
