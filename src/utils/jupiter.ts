@@ -375,7 +375,7 @@ export async function fetchUserTokens(
         // Include tokens with balance > 0 OR if includeZeroBalance is true
         if (amount > 0.000000000001 || includeZeroBalance) {
           // STEP 3: Check if it's an NFT first (using cache - no API call)
-          const tokenIsNFT = nftMintCache.has(mint)
+          const tokenIsNFT = nftMintCache.has(mint) && !isPumpFunToken(mint)
           
           // Skip NFTs unless explicitly requested
           if (tokenIsNFT && !includeNFTs) {
@@ -539,6 +539,11 @@ export async function checkIfTokenIsNFT(
   mintAddress: string
 ): Promise<boolean> {
   try {
+    // If it's a pump.fun token, it's definitely not an NFT
+    if (isPumpFunToken(mintAddress)) {
+      return false;
+    }
+    
     // Initialize cache if not done yet
     if (!nftCacheInitialized) {
       const userNFTs = await fetchUserNFTMints(connection, userPublicKey)
@@ -615,7 +620,16 @@ export async function getNFTMetadata(
   isNFT: boolean
 } | null> {
   try {
-    // First check if it's an NFT
+    // First check if it's a pump.fun token - never an NFT
+    if (isPumpFunToken(mintAddress)) {
+      const tokenInfo = await getTokenInfo(mintAddress);
+      return {
+        ...(tokenInfo || { decimals: 6, symbol: 'TOKEN', name: 'Unknown Token' }),
+        isNFT: false
+      };
+    }
+    
+    // Then check if it's an NFT
     const tokenIsNFT = isTokenInNFTCache(mintAddress)
     
     if (tokenIsNFT) {
@@ -761,6 +775,10 @@ async function fetchUserNFTMints(
 
 // Check if a token is an NFT using the cache (internal function)
 function isTokenInNFTCache(mintAddress: string): boolean {
+  // Special case: tokens with "pump" in the address are never NFTs
+  if (isPumpFunToken(mintAddress)) {
+    return false;
+  }
   return nftMintCache.has(mintAddress)
 }
 
