@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 
 interface TrendingToken {
   token_symbol: string
@@ -20,6 +20,10 @@ export default function TrendingTokens({
   const [trendingTokens, setTrendingTokens] = useState<TrendingToken[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const [isHovering, setIsHovering] = useState<boolean>(false)
+  const scrollAnimationRef = useRef<number | null>(null)
+  const [shouldScroll, setShouldScroll] = useState<boolean>(false)
 
   useEffect(() => {
     const fetchTrendingTokens = async () => {
@@ -27,23 +31,8 @@ export default function TrendingTokens({
       setError(null)
       
       try {
-        const response = await fetch('https://api9.axiom.trade/meme-trending?timePeriod=5m', {
-          headers: {
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'accept-language': 'en-US,en;q=0.9',
-            'cache-control': 'max-age=0',
-            'cookie': 'auth-refresh-token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyZWZyZXNoVG9rZW5JZCI6IjlhNjIxNjIzLTJjN2QtNDIwNC04ZmIyLTFlODViYzY0MTNiOSIsImlhdCI6MTc0NTY2MjAxOH0.DHnI4iNiMRSSIqgaT3Lw8gAG62y53RRO_9H5uCwjblg; auth-access-token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdXRoZW50aWNhdGVkVXNlcklkIjoiMGU5N2E1MTMtZTU5Ni00ZjFhLWIyNzUtMGMxZDY5MmU5Y2Q0IiwiaWF0IjoxNzQ5NjE4MDgwLCJleHAiOjE3NDk2MTkwNDB9.h53m9D3Kqwv0mHhZdorn5zCfWk4rTlh0-4SaLe-ZKso',
-            'priority': 'u=0, i',
-            'sec-ch-ua': '"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"macOS"',
-            'sec-fetch-dest': 'document',
-            'sec-fetch-mode': 'navigate',
-            'sec-fetch-site': 'none',
-            'sec-fetch-user': '?1',
-            'upgrade-insecure-requests': '1'
-          }
-        })
+        // Use our local API endpoint instead of calling Jupiter API directly
+        const response = await fetch('/api/trending')
         
         if (!response.ok) {
           throw new Error(`Failed to fetch trending tokens: ${response.status}`)
@@ -51,7 +40,17 @@ export default function TrendingTokens({
         
         const data = await response.json()
         const tokens = data.tokens || []
-        setTrendingTokens(tokens.slice(0, 10)) // Take top 10 tokens
+        
+        // Remove duplicate tokens with the same token_address
+        const tokenMap = new Map<string, TrendingToken>()
+        tokens.forEach((token: TrendingToken) => {
+          if (!tokenMap.has(token.token_address)) {
+            tokenMap.set(token.token_address, token)
+          }
+        })
+        
+        const uniqueTokens = Array.from(tokenMap.values())
+        setTrendingTokens(uniqueTokens.slice(0, 10)) // Take top 10 unique tokens
       } catch (err) {
         console.error('Error fetching trending tokens:', err)
         setError('Failed to load trending tokens. Please try again later.')
@@ -67,6 +66,62 @@ export default function TrendingTokens({
     
     return () => clearInterval(intervalId)
   }, [])
+
+  // Check if scrolling is needed
+  useEffect(() => {
+    if (!isLoading && !error && scrollContainerRef.current) {
+      const container = scrollContainerRef.current
+      
+      // Check if content height exceeds container height
+      const needsScroll = container.scrollHeight > container.clientHeight
+      setShouldScroll(needsScroll)
+    }
+  }, [isLoading, error, trendingTokens])
+
+  // Auto-scroll animation
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef.current
+    if (!scrollContainer || isLoading || error || !shouldScroll || trendingTokens.length === 0) return
+
+    const startScrollAnimation = () => {
+      let lastTime = performance.now()
+      const scrollSpeed = 0.5 // pixels per millisecond
+
+      const animateScroll = (currentTime: number) => {
+        if (isHovering) {
+          scrollAnimationRef.current = requestAnimationFrame(animateScroll)
+          return
+        }
+        
+        const deltaTime = currentTime - lastTime
+        lastTime = currentTime
+        
+        // Scroll down by the calculated amount
+        scrollContainer.scrollTop += scrollSpeed * deltaTime
+        
+        // If we've reached the bottom, reset to top for infinite scroll
+        if (scrollContainer.scrollTop >= (scrollContainer.scrollHeight - scrollContainer.clientHeight)) {
+          scrollContainer.scrollTop = 0
+        }
+        
+        scrollAnimationRef.current = requestAnimationFrame(animateScroll)
+      }
+      
+      scrollAnimationRef.current = requestAnimationFrame(animateScroll)
+    }
+
+    // Start the animation after a short delay to ensure content is loaded
+    const timeoutId = setTimeout(() => {
+      startScrollAnimation()
+    }, 1000)
+
+    return () => {
+      clearTimeout(timeoutId)
+      if (scrollAnimationRef.current) {
+        cancelAnimationFrame(scrollAnimationRef.current)
+      }
+    }
+  }, [isLoading, error, trendingTokens, isHovering, shouldScroll])
   
   const formatPercentage = (value: number) => {
     return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`
@@ -81,11 +136,24 @@ export default function TrendingTokens({
     return `$${volume.toFixed(2)}`
   }
 
+  const formatPrice = (price: number) => {
+    if (price < 0.000001) return price.toExponential(2)
+    if (price < 0.01) return price.toFixed(6)
+    if (price < 1) return price.toFixed(4)
+    if (price < 1000) return price.toFixed(2)
+    return price.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  }
+
+  const openTokenChart = (event: React.MouseEvent, tokenAddress: string) => {
+    event.stopPropagation() // Prevent triggering the parent onClick
+    window.open(`https://axiom.trade/@reloadsol`, '_blank')
+  }
+
   return (
-    <div className="bg-gray-900 rounded-2xl p-6 border border-gray-700">
+    <div className="h-full">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-xl font-bold text-white">Trending Tokens</h3>
-        <div className="text-sm text-gray-400">5m timeframe</div>
+        <div className="text-sm text-gray-400">in last hour</div>
       </div>
       
       {isLoading && (
@@ -101,13 +169,19 @@ export default function TrendingTokens({
       )}
       
       {!isLoading && !error && (
-        <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
+        <div 
+          ref={scrollContainerRef}
+          className={`space-y-3 ${shouldScroll ? 'max-h-[600px] overflow-y-auto' : ''} pr-2 scroll-smooth`}
+          onMouseEnter={() => setIsHovering(true)}
+          onMouseLeave={() => setIsHovering(false)}
+          style={{ scrollbarWidth: 'thin' }}
+        >
           {trendingTokens.length === 0 ? (
             <div className="text-gray-400 text-center py-6">No trending tokens found</div>
           ) : (
             trendingTokens.map((token, index) => (
               <div 
-                key={token.token_address}
+                key={`${token.token_address}-${index}`}
                 onClick={() => onSelectToken(token.token_address)}
                 className="p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200"
               >
@@ -143,7 +217,7 @@ export default function TrendingTokens({
                   </div>
                   <div className="text-right">
                     <div className="text-white font-medium">
-                      ${token.price < 0.01 ? token.price.toExponential(2) : token.price.toFixed(token.price < 1 ? 4 : 2)}
+                      ${formatPrice(token.price)}
                     </div>
                     <div className={`text-xs ${token.change_5m >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                       {formatPercentage(token.change_5m)}
@@ -157,9 +231,20 @@ export default function TrendingTokens({
                       {formatPercentage(token.change_1h)}
                     </span>
                   </div>
-                  <div>
-                    <span className="text-gray-400">Vol: </span>
-                    <span className="text-white">{formatVolume(token.volume_1h)}</span>
+                  <div className="flex items-center space-x-2">
+                    <div>
+                      <span className="text-gray-400">Vol: </span>
+                      <span className="text-white">{formatVolume(token.volume_1h)}</span>
+                    </div>
+                    <button 
+                      onClick={(e) => openTokenChart(e, token.token_address)}
+                      className="ml-2 p-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
+                      title="View on Axiom"
+                    >
+                      <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
               </div>
