@@ -65,9 +65,12 @@ export async function GET() {
       logo_url: pool.baseAsset.icon
     }))
     
+    // Filter out tokens with extreme negative price movement (less than -40%)
+    const filteredTokens = transformedTokens.filter(token => token.change_5m > -0.4)
+    
     // Deduplicate tokens by token_address
     const tokenMap = new Map<string, TransformedToken>()
-    transformedTokens.forEach(token => {
+    filteredTokens.forEach(token => {
       if (!tokenMap.has(token.token_address)) {
         tokenMap.set(token.token_address, token)
       }

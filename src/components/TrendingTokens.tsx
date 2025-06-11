@@ -13,6 +13,12 @@ interface TrendingToken {
   logo_url?: string
 }
 
+interface TokenPrice {
+  token_address: string
+  price: number
+  change_5m: number
+}
+
 export default function TrendingTokens({
   onSelectToken
 }: {
@@ -21,6 +27,7 @@ export default function TrendingTokens({
   const [trendingTokens, setTrendingTokens] = useState<TrendingToken[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(true)
   const [error, setError] = useState<string | null>(null)
+  const [isPriceUpdating, setIsPriceUpdating] = useState<boolean>(false)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [isHovering, setIsHovering] = useState<boolean>(false)
   const scrollAnimationRef = useRef<number | null>(null)
@@ -28,6 +35,7 @@ export default function TrendingTokens({
   const [selectedTokenAddress, setSelectedTokenAddress] = useState<string | null>(null)
   const [isChartOpen, setIsChartOpen] = useState<boolean>(false)
 
+  // Fetch complete token data
   useEffect(() => {
     const fetchTrendingTokens = async () => {
       setIsLoading(true)
@@ -69,6 +77,69 @@ export default function TrendingTokens({
     
     return () => clearInterval(intervalId)
   }, [])
+
+  // Fetch price updates every 10 seconds
+  useEffect(() => {
+    // Only start price updates after initial token data is loaded
+    if (isLoading || error || trendingTokens.length === 0) return
+
+    const updatePrices = async () => {
+      setIsPriceUpdating(true)
+      
+      try {
+        const response = await fetch('/api/trending/prices')
+        
+        if (!response.ok) {
+          console.error(`Price update failed: ${response.status}`)
+          return
+        }
+        
+        const data = await response.json()
+        const prices = data.prices || []
+        
+        if (prices.length === 0) return
+        
+        // Update prices and 5m changes in the existing tokens
+        setTrendingTokens(currentTokens => {
+          // First update all tokens with new prices
+          const updatedTokens = currentTokens.map(token => {
+            // Find matching price update
+            const priceUpdate = prices.find(
+              (p: TokenPrice) => p.token_address === token.token_address
+            )
+            
+            if (priceUpdate) {
+              // Return updated token with new price and 5m change
+              return {
+                ...token,
+                price: priceUpdate.price,
+                change_5m: priceUpdate.change_5m
+              }
+            }
+            
+            // Return original token if no update found
+            return token
+          })
+          
+          // Then filter out tokens with extreme negative price movement
+          return updatedTokens.filter(token => token.change_5m > -0.4)
+        })
+      } catch (err) {
+        console.error('Error updating token prices:', err)
+        // Don't set error state for price updates to avoid disrupting the UI
+      } finally {
+        setIsPriceUpdating(false)
+      }
+    }
+
+    // Run immediately for the first time
+    updatePrices()
+    
+    // Update prices every 10 seconds
+    const priceIntervalId = setInterval(updatePrices, 10 * 1000)
+    
+    return () => clearInterval(priceIntervalId)
+  }, [isLoading, error, trendingTokens.length])
 
   // Check if scrolling is needed
   useEffect(() => {
@@ -161,7 +232,12 @@ export default function TrendingTokens({
     <div className="h-full">
       <div className="flex items-center justify-between mb-2">
         <h3 className="text-xl font-bold text-white">Trending Tokens</h3>
-        <div className="text-sm text-gray-400">in last hour</div>
+        <div className="flex items-center">
+          {isPriceUpdating && (
+            <div className="w-3 h-3 mr-2 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+          )}
+          <div className="text-sm text-gray-400">in last hour</div>
+        </div>
       </div>
       <p className="text-xs text-gray-400 mb-4">disclaimer: Token information is for educational purposes only, not financial advice and always DYOR.</p>
       
