@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useRef } from 'react'
+import ChartOverview from './ChartOverview'
 
 interface TrendingToken {
   token_symbol: string
@@ -24,6 +25,8 @@ export default function TrendingTokens({
   const [isHovering, setIsHovering] = useState<boolean>(false)
   const scrollAnimationRef = useRef<number | null>(null)
   const [shouldScroll, setShouldScroll] = useState<boolean>(false)
+  const [selectedTokenAddress, setSelectedTokenAddress] = useState<string | null>(null)
+  const [isChartOpen, setIsChartOpen] = useState<boolean>(false)
 
   useEffect(() => {
     const fetchTrendingTokens = async () => {
@@ -144,9 +147,14 @@ export default function TrendingTokens({
     return price.toLocaleString('en-US', { maximumFractionDigits: 2 })
   }
 
-  const openTokenChart = (event: React.MouseEvent, tokenAddress: string) => {
+  const openTokenChart = (event: React.MouseEvent, token: TrendingToken) => {
     event.stopPropagation() // Prevent triggering the parent onClick
-    window.open(`https://axiom.trade/@reloadsol`, '_blank')
+    onSelectToken(token.token_address)
+  }
+
+  const closeChart = () => {
+    setIsChartOpen(false)
+    setSelectedTokenAddress(null)
   }
 
   return (
@@ -183,7 +191,6 @@ export default function TrendingTokens({
             trendingTokens.map((token, index) => (
               <div 
                 key={`${token.token_address}-${index}`}
-                onClick={() => onSelectToken(token.token_address)}
                 className="p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200"
               >
                 <div className="flex items-center justify-between mb-2">
@@ -238,9 +245,9 @@ export default function TrendingTokens({
                       <span className="text-white">{formatVolume(token.volume_1h)}</span>
                     </div>
                     <button 
-                      onClick={(e) => openTokenChart(e, token.token_address)}
+                      onClick={(e) => openTokenChart(e, token)}
                       className="ml-2 p-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
-                      title="View on Axiom"
+                      title="View Chart"
                     >
                       <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />

@@ -23,6 +23,8 @@ export default function BulkTokenBuyer() {
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [result, setResult] = useState<BulkBuyResult | null>(null)
   const [error, setError] = useState<string>('')
+  const [selectedToken, setSelectedToken] = useState<string>('')
+  const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
   
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0)
@@ -32,8 +34,8 @@ export default function BulkTokenBuyer() {
   const parsedMints = parseMintAddresses(tokenMints)
   const validMints = parsedMints.filter(isValidMintAddress)
   
-  // Handle token selection from trending tokens
-  const handleSelectToken = useCallback((mintAddress: string) => {
+  // Handle adding a token to the list
+  const handleAddToken = useCallback((mintAddress: string) => {
     // Check if the mint address is already in the list
     if (!parsedMints.includes(mintAddress)) {
       // Add the new mint address to the existing ones
@@ -43,6 +45,13 @@ export default function BulkTokenBuyer() {
       setTokenMints(newTokenMints)
     }
   }, [tokenMints, parsedMints])
+  
+  // Handle token selection for chart display
+  const handleSelectToken = useCallback((mintAddress: string) => {
+    // Show chart for the selected token
+    setSelectedToken(mintAddress)
+    setIsChartLoading(true)
+  }, [])
 
   // Handle form submission
   const handleBulkBuy = useCallback(async () => {
@@ -138,6 +147,54 @@ export default function BulkTokenBuyer() {
 
           {connected && (
             <div className="space-y-8">
+              <div className="flex justify-between items-center">
+                  <p className="text-xs text-gray-400 flex items-center">
+                    <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                    </svg>
+                    Click on the  <svg className="w-4 h-4 mx-1 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                      </svg> icon on Trending Tokens to view price charts
+                  </p>
+                  {selectedToken && (
+                    <button 
+                      onClick={() => handleAddToken(selectedToken)}
+                      className="text-xs bg-gray-700 text-white py-1 px-3 rounded-md hover:bg-gray-600 transition-colors"
+                    >
+                      Add Selected Token
+                    </button>
+                  )}
+                </div>
+
+              
+              {/* Token Chart Section */}
+              {selectedToken && (
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                      Token Chart
+                    </label>
+                    <span className="text-xs font-mono text-gray-400">{selectedToken}</span>
+                  </div>
+                  <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
+                    {isChartLoading && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
+                        <div className="w-10 h-10 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+                      </div>
+                    )}
+                    <iframe 
+                      src={`https://birdeye.so/tv-widget/${selectedToken}?chain=solana&viewMode=pair&chartInterval=1D&chartType=CANDLE&chartTimezone=Asia%2FSingapore&chartLeftToolbar=show&theme=dark`}
+                      height="400"
+                      className="w-full"
+                      style={{ border: 'none' }}
+                      title={`Birdeye Chart - ${selectedToken}`}
+                      onLoad={() => setIsChartLoading(false)}
+                      allowFullScreen
+                      frameBorder="0"
+                    />
+                  </div>
+                </div>
+              )}
               {/* SOL Amount Input */}
               <div className="space-y-3">
                 <label htmlFor="solAmount" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
@@ -197,12 +254,6 @@ export default function BulkTokenBuyer() {
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-gray-400 flex items-center">
-                  <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-                  </svg>
-                  Click on a trending token to add it to this list
-                </p>
               </div>
 
               {/* Settings Grid */}
@@ -347,8 +398,25 @@ export default function BulkTokenBuyer() {
                       </h4>
                       <div className="space-y-2">
                         {result.successfulPurchases.map((purchase, index) => (
-                          <div key={index} className="bg-gray-700 rounded-lg p-3 font-mono text-sm text-white border border-gray-600">
-                            {purchase.mintAddress}
+                          <div 
+                            key={index} 
+                            className="bg-gray-700 rounded-lg p-3 font-mono text-sm text-white border border-gray-600 cursor-pointer hover:border-gray-500"
+                            onClick={() => handleAddToken(purchase.mintAddress)}
+                          >
+                            <div className="flex justify-between items-center">
+                              <span>{purchase.mintAddress}</span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleSelectToken(purchase.mintAddress)
+                                }}
+                                className="p-1 bg-gray-600 rounded hover:bg-gray-500 transition-colors"
+                              >
+                                <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                                </svg>
+                              </button>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -366,8 +434,25 @@ export default function BulkTokenBuyer() {
                       </h4>
                       <div className="space-y-3">
                         {result.failedPurchases.map((failure, index) => (
-                          <div key={index} className="bg-gray-700 rounded-lg p-3 border border-gray-600">
-                            <div className="font-mono text-sm text-white mb-1">{failure.mintAddress}</div>
+                          <div 
+                            key={index} 
+                            className="bg-gray-700 rounded-lg p-3 border border-gray-600 cursor-pointer hover:border-gray-500"
+                            onClick={() => handleAddToken(failure.mintAddress)}
+                          >
+                            <div className="font-mono text-sm text-white mb-1 flex justify-between items-center">
+                              <span>{failure.mintAddress}</span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleSelectToken(failure.mintAddress)
+                                }}
+                                className="p-1 bg-gray-600 rounded hover:bg-gray-500 transition-colors"
+                              >
+                                <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                                </svg>
+                              </button>
+                            </div>
                             <div className="text-xs text-gray-400">{failure.error}</div>
                           </div>
                         ))}
