@@ -9,12 +9,6 @@ export default function PhantomWalletButton() {
   if (connected && publicKey) {
     return (
       <div className="flex items-center space-x-3">
-        <div className="bg-white text-black rounded-lg px-4 py-2 font-medium border border-gray-300">
-          <div className="text-sm opacity-70">Connected to Phantom</div>
-          <div className="text-xs font-mono">
-            {publicKey.toBase58().slice(0, 4)}...{publicKey.toBase58().slice(-4)}
-          </div>
-        </div>
         <button
           onClick={disconnect}
           className="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium transition-colors border border-gray-600"

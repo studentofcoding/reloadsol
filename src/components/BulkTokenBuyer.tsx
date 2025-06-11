@@ -53,6 +53,23 @@ export default function BulkTokenBuyer() {
     setIsChartLoading(true)
   }, [])
 
+  // Listen for custom event to add token to list
+  useEffect(() => {
+    const handleAddTokenEvent = (event: CustomEvent) => {
+      if (event.detail && event.detail.tokenAddress) {
+        handleAddToken(event.detail.tokenAddress)
+      }
+    }
+
+    // Add event listener
+    window.addEventListener('addTokenToList', handleAddTokenEvent as EventListener)
+
+    // Clean up
+    return () => {
+      window.removeEventListener('addTokenToList', handleAddTokenEvent as EventListener)
+    }
+  }, [handleAddToken])
+
   // Handle form submission
   const handleBulkBuy = useCallback(async () => {
     if (!connected || !publicKey || !signAllTransactions) {

@@ -223,6 +223,15 @@ export default function TrendingTokens({
     onSelectToken(token.token_address)
   }
 
+  // Add token to list in BulkTokenBuyer
+  const handleAddToken = (token: TrendingToken) => {
+    // We'll use the window object to dispatch a custom event
+    const event = new CustomEvent('addTokenToList', {
+      detail: { tokenAddress: token.token_address }
+    })
+    window.dispatchEvent(event)
+  }
+
   const closeChart = () => {
     setIsChartOpen(false)
     setSelectedTokenAddress(null)
@@ -239,6 +248,13 @@ export default function TrendingTokens({
           <div className="text-sm text-gray-400">in last hour</div>
         </div>
       </div>
+      <p className="text-xs text-gray-400 my-4 flex items-center">
+        <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+        </svg>
+        Click on a token to add it to your list
+      </p>
+
       <p className="text-xs text-gray-400 mb-4">disclaimer: Token information is for educational purposes only, not financial advice and always DYOR.</p>
       
       {isLoading && (
@@ -268,6 +284,7 @@ export default function TrendingTokens({
               <div 
                 key={`${token.token_address}-${index}`}
                 className="p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200"
+                onClick={() => handleAddToken(token)}
               >
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center space-x-3">
