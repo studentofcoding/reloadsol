@@ -358,8 +358,8 @@ export default function BulkTokenSeller() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-3xl font-bold text-white mb-2">Bulk Token Seller</h2>
-          <p className="text-gray-400">Sell your tokens and automatically close accounts</p>
+          <h2 className="text-3xl font-bold text-white mb-2">Bulk Sell & Reload your SOL</h2>
+          <p className="text-gray-400">Sell your tokens - automatically close accounts & reload your SOL</p>
         </div>
         <div className="shrink-0">
           <PhantomWalletButton />
@@ -440,7 +440,7 @@ export default function BulkTokenSeller() {
                   <div
                     key={token.mintAddress}
                     onClick={() => toggleTokenSelection(token)}
-                    className={`group p-4 rounded-xl border cursor-pointer transition-all duration-200 ${
+                    className={`group p-3 rounded-xl border cursor-pointer transition-all duration-200 ${
                       isSelected
                         ? 'bg-gray-700 border-gray-500'
                         : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-gray-500'
