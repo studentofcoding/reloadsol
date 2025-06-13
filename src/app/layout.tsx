@@ -1,5 +1,6 @@
 import './globals.css'
 import { WalletProvider } from '@/components/WalletProvider'
+import { PasswordGate } from '@/components/PasswordGate'
 import { Metadata } from 'next';
 
 // This is needed for static export with App Router
@@ -53,7 +54,9 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <WalletProvider>
-          {children}
+          <PasswordGate>
+            {children}
+          </PasswordGate>
         </WalletProvider>
       </body>
     </html>
