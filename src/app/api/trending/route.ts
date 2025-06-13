@@ -63,6 +63,11 @@ let tokenCache: TokenCache = {
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes in milliseconds
 const FULL_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes in milliseconds
 
+// Track ongoing refresh operations to prevent concurrent fetches
+let refreshPromise: Promise<TransformedToken[]> | null = null;
+let refreshTimeout: NodeJS.Timeout | null = null;
+let currentRefreshOperation: Promise<TransformedToken[]> | null = null;
+
 export async function GET(request: NextRequest) {
   try {
     const currentTime = Date.now();
@@ -79,7 +84,13 @@ export async function GET(request: NextRequest) {
       console.log('Using cached token data, expires in', Math.round((tokenCache.expiresAt - currentTime) / 1000), 'seconds');
       return NextResponse.json(
         { 
-          tokens: Array.from(tokenCache.tokens.values()),
+          // Re-use the same ordering criteria used for fresh responses
+          tokens: Array.from(tokenCache.tokens.values()).sort((a, b) => {
+            if (b.organic_score !== a.organic_score) {
+              return b.organic_score - a.organic_score;
+            }
+            return Math.abs(b.change_1h || 0) - Math.abs(a.change_1h || 0);
+          }),
           cached: true,
           cache_age: Math.round((currentTime - tokenCache.timestamp) / 1000),
           expires_in: Math.round((tokenCache.expiresAt - currentTime) / 1000)
@@ -93,6 +104,90 @@ export async function GET(request: NextRequest) {
       )
     }
     
+    // Check if there's an ongoing refresh operation
+    if (refreshPromise) {
+      console.log('Using existing refresh operation in progress');
+      try {
+        // Wait for the existing refresh operation to complete
+        const tokens = await refreshPromise;
+        return NextResponse.json(
+          { 
+            tokens,
+            cached: false,
+            cache_age: 0,
+            refresh_type: 'concurrent',
+            expires_in: Math.round((tokenCache.expiresAt - Date.now()) / 1000),
+            stats: { concurrent_request: true }
+          },
+          {
+            status: 200,
+            headers: {
+              'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60'
+            }
+          }
+        )
+      } catch (error) {
+        // If the existing refresh operation failed, reset and continue with a new one
+        refreshPromise = null;
+        console.error('Existing refresh operation failed:', error);
+        // Continue to fetch fresh data
+      }
+    }
+    
+    // Create a new refresh operation
+    refreshPromise = fetchAndUpdateCache(needsFullRefresh, currentTime);
+    currentRefreshOperation = refreshPromise;
+    
+    try {
+      // Wait for the refresh operation to complete
+      const tokens = await refreshPromise;
+      
+      return NextResponse.json(
+        { 
+          tokens,
+          cached: false,
+          cache_age: 0,
+          refresh_type: needsFullRefresh ? 'full' : 'incremental',
+          expires_in: CACHE_TTL_MS / 1000,
+          last_updated: currentTime,
+          next_full_refresh: tokenCache.lastFullRefresh + FULL_REFRESH_INTERVAL_MS
+        },
+        {
+          status: 200,
+          headers: {
+            // Set cache control to 5 minutes (300 seconds)
+            'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60'
+          }
+        }
+      )
+    } finally {
+      // Set a timeout to clear the refreshPromise after a grace period
+      // This prevents a failed request from blocking all future requests permanently
+      if (refreshTimeout) {
+        clearTimeout(refreshTimeout);
+      }
+      
+      refreshTimeout = setTimeout(() => {
+        refreshPromise = null;
+        refreshTimeout = null;
+        currentRefreshOperation = null;
+      }, 10000); // 10 second grace period
+    }
+  } catch (error) {
+    // Make sure to clear the refreshPromise if an error occurs
+    refreshPromise = null;
+    currentRefreshOperation = null;
+    console.error('Error fetching trending tokens:', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch trending tokens', message: error instanceof Error ? error.message : 'Unknown error' },
+      { status: 500 }
+    )
+  }
+}
+
+// Separate async function to fetch and update the cache
+async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: number): Promise<TransformedToken[]> {
+  try {
     console.log(needsFullRefresh ? 'Performing full refresh' : 'Updating token cache');
     const response = await fetch('https://datapi.jup.ag/v1/pools/toptrending/1h', {
       headers: {
@@ -101,13 +196,13 @@ export async function GET(request: NextRequest) {
       },
       // Ensure we're not using a stale response from the browser cache
       next: { revalidate: 0 } // Force fresh data from API
-    })
+    });
 
     if (!response.ok) {
-      throw new Error(`API responded with status: ${response.status}`)
+      throw new Error(`API responded with status: ${response.status}`);
     }
 
-    const data = await response.json() as JupiterResponse
+    const data = await response.json() as JupiterResponse;
     
     // Transform the data to match our component's expected format
     const transformedTokens = data.pools.map((pool): TransformedToken => ({
@@ -121,7 +216,7 @@ export async function GET(request: NextRequest) {
       logo_url: pool.baseAsset.icon,
       organic_score: pool.baseAsset.organicScore,
       last_updated: currentTime
-    }))
+    }));
     
     // Filter out tokens with extreme negative price movement (less than -40%) and low organic score
     const filteredTokens = transformedTokens.filter(token => 
@@ -129,7 +224,7 @@ export async function GET(request: NextRequest) {
       token.organic_score >= 70.0 &&
       token.mcap > 300000 &&
       token.mcap < 2000000
-    )
+    );
     
     // If doing a full refresh, reset the cache
     if (needsFullRefresh) {
@@ -230,29 +325,14 @@ export async function GET(request: NextRequest) {
       return Math.abs(b.change_1h || 0) - Math.abs(a.change_1h || 0);
     });
     
-    return NextResponse.json(
-      { 
-        tokens: tokenArray,
-        cached: false,
-        cache_age: 0,
-        expires_in: CACHE_TTL_MS / 1000,
-        stats,
-        last_updated: currentTime,
-        next_full_refresh: tokenCache.lastFullRefresh + FULL_REFRESH_INTERVAL_MS
-      },
-      {
-        status: 200,
-        headers: {
-          // Set cache control to 5 minutes (300 seconds)
-          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60'
-        }
-      }
-    )
+    return tokenArray;
   } catch (error) {
-    console.error('Error fetching trending tokens:', error)
-    return NextResponse.json(
-      { error: 'Failed to fetch trending tokens', message: error instanceof Error ? error.message : 'Unknown error' },
-      { status: 500 }
-    )
+    console.error('Error in fetchAndUpdateCache:', error);
+    throw error; // Re-throw to be handled by the calling function
+  } finally {
+    // Clean up the promise reference if this operation is complete
+    if (refreshPromise === currentRefreshOperation) {
+      refreshPromise = null;
+    }
   }
 } 
