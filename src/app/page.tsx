@@ -18,7 +18,7 @@ export default function Home() {
             reloadSOL
           </h1>
           <h2 className="text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
-            Buy or Sell (and close) multiple tokens directly. 
+            Reload your Solana from all worthless memecoins, and trade smartly with us!
             <br />
             Powered by <img className="inline-block h-[1.25rem]" src="https://s3.coinmarketcap.com/static-gravity/image/4dc5810324c74688a5a1b805f7506ec5.jpg" alt="Jupiter Logo" /> Jupiter, <img className="inline-block h-[1.25rem]" src="https://pbs.twimg.com/profile_images/1902372646249234432/T4kNyTq0_400x400.jpg" alt="Superteam Logo" /> Superteam Indonesia and 
             a part of <img className="inline-block h-[1.25rem]" src="https://pbs.twimg.com/profile_images/1843973608378421248/CzmuKtDx_400x400.jpg" alt="Colosseum Breakout" />.
@@ -60,7 +60,7 @@ export default function Home() {
               </button>
               <button
                 onClick={() => setActiveTab('sell')}
-                className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 ${
+                className={`px-6 py-3 ml-2 rounded-lg font-semibold transition-all duration-200 ${
                   activeTab === 'sell'
                     ? 'bg-white text-black'
                     : 'text-gray-400 hover:text-white hover:bg-gray-700'

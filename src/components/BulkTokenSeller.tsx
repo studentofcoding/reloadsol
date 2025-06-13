@@ -17,6 +17,12 @@ import {
 } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
 
+// Default SOL to USD conversion rate (fallback if API fails)
+const DEFAULT_SOL_PRICE_USD = 145;
+
+// Interval to refresh SOL price in milliseconds (30 seconds)
+const PRICE_REFRESH_INTERVAL = 30 * 1000;
+
 export default function BulkTokenSeller() {
   const { publicKey, signAllTransactions, connected } = useWallet()
   const { connection } = useConnection()
@@ -40,18 +46,41 @@ export default function BulkTokenSeller() {
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0)
   const [balanceAfter, setBalanceAfter] = useState<number>(0)
+  
+  // SOL price in USD
+  const [solPriceUsd, setSolPriceUsd] = useState<number>(DEFAULT_SOL_PRICE_USD)
+  const [isLoadingSolPrice, setIsLoadingSolPrice] = useState<boolean>(false)
+  const [priceLastUpdated, setPriceLastUpdated] = useState<number>(0)
 
-  // Fetch user tokens on wallet connection
-  useEffect(() => {
-    if (connected && publicKey) {
-      fetchTokens()
-    } else {
-      setUserTokens([])
-      setZeroBalanceTokens([])
-      setSelectedTokens([])
-      setSelectedZeroBalanceTokens([])
+  // Fetch SOL price from our API endpoint
+  const fetchSolPrice = useCallback(async () => {
+    try {
+      setIsLoadingSolPrice(true)
+      
+      const response = await fetch('/api/solprice')
+      
+      if (!response.ok) {
+        throw new Error(`API responded with status: ${response.status}`)
+      }
+      
+      const data = await response.json()
+      
+      if (data?.price) {
+        setSolPriceUsd(data.price)
+        setPriceLastUpdated(Date.now())
+      }
+    } catch (error) {
+      console.error('Error fetching SOL price:', error)
+      // Keep using current price if fetch fails
+    } finally {
+      setIsLoadingSolPrice(false)
     }
-  }, [connected, publicKey])
+  }, [])
+
+  // Convert SOL value to USD
+  const solToUsd = useCallback((solValue: number): number => {
+    return solValue * solPriceUsd
+  }, [solPriceUsd])
 
   const fetchTokens = useCallback(async () => {
     if (!publicKey) return
@@ -190,7 +219,7 @@ export default function BulkTokenSeller() {
             )
             return { ...token, solValue, isLoadingPrice: false }
           } catch (error) {
-            console.error(`Failed to get price for ${token.symbol}:`, error)
+            console.error(`Failed to get price for ${token.name}:`, error)
             return { ...token, solValue: 0, isLoadingPrice: false }
           }
         })
@@ -298,6 +327,30 @@ export default function BulkTokenSeller() {
     }
   }, [connected, publicKey, signAllTransactions, connection, selectedTokens, selectedZeroBalanceTokens, slippage, priorityFee, fetchTokens])
 
+  // Fetch user tokens on wallet connection
+  useEffect(() => {
+    if (connected && publicKey) {
+      fetchTokens()
+      fetchSolPrice()
+    } else {
+      setUserTokens([])
+      setZeroBalanceTokens([])
+      setSelectedTokens([])
+      setSelectedZeroBalanceTokens([])
+    }
+  }, [connected, publicKey, fetchTokens, fetchSolPrice])
+  
+  // Set up interval to refresh SOL price
+  useEffect(() => {
+    // Set up interval
+    const interval = setInterval(() => {
+      fetchSolPrice()
+    }, PRICE_REFRESH_INTERVAL)
+    
+    // Clean up on unmount
+    return () => clearInterval(interval)
+  }, [fetchSolPrice])
+
   const estimatedSOL = selectedTokens.reduce((total, token) => total + token.solValue, 0)
 
   return (
@@ -398,14 +451,11 @@ export default function BulkTokenSeller() {
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
                           isSelected ? 'bg-white text-black' : 'bg-gray-600'
                         }`}>
-                          {token.symbol?.charAt(0) || 'T'}
+                          {token.logoURI ? <img src={token.logoURI} alt={token.name} className="w-10 h-10 rounded-full" /> : 'T'}
                         </div>
                         <div>
                           <div className="font-semibold text-white">
-                            {token.symbol || 'Unknown'}
-                          </div>
-                          <div className="text-sm text-gray-400 font-mono truncate max-w-48">
-                            {token.mintAddress}
+                            {token.name || token.symbol || 'Unknown'}
                           </div>
                         </div>
                       </div>
@@ -421,7 +471,7 @@ export default function BulkTokenSeller() {
                             </div>
                           ) : (
                             <>
-                              <span>≈ {token.solValue.toFixed(6)} SOL</span>
+                              <span>≈ ${solToUsd(token.solValue).toFixed(2)}</span>
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation()
@@ -496,9 +546,12 @@ export default function BulkTokenSeller() {
                             </div>
                             <div>
                               <div className="font-semibold text-white">
-                                {token.symbol || 'Unknown'}
+                                {token.name || token.symbol || 'Unknown'}
                               </div>
-                              <div className="text-sm text-gray-400 font-mono truncate max-w-48">
+                              <div className="text-sm text-gray-400">
+                                {token.symbol && token.name !== token.symbol ? token.symbol : ''}
+                              </div>
+                              <div className="text-xs text-gray-400 font-mono truncate max-w-48">
                                 {token.mintAddress}
                               </div>
                             </div>
@@ -512,7 +565,7 @@ export default function BulkTokenSeller() {
                             </div>
                             <div className="text-sm text-gray-400">
                               {token.uiAmount > 0.000000000001 
-                                ? (token.solValue > 0 ? `≈ ${token.solValue.toFixed(8)} SOL (< 0.001)` : 'No liquidity')
+                                ? (token.solValue > 0 ? `≈ $${solToUsd(token.solValue).toFixed(2)} (< $${solToUsd(0.001).toFixed(2)})` : 'No liquidity')
                                 : 'Close for rent'
                               }
                             </div>
@@ -540,6 +593,19 @@ export default function BulkTokenSeller() {
                   <div>
                     <span className="block text-gray-300 font-medium">Estimated SOL</span>
                     <span className="text-xl font-bold text-white">{(estimatedSOL + ((selectedTokens.length + selectedZeroBalanceTokens.length) * 0.00203928)).toFixed(4)}</span>
+                    <span className="block text-gray-400 text-sm">≈ ${solToUsd(estimatedSOL + ((selectedTokens.length + selectedZeroBalanceTokens.length) * 0.00203928)).toFixed(2)}</span>
+                    <span className="block text-gray-500 text-xs mt-1">
+                      {isLoadingSolPrice ? (
+                        <span className="flex items-center">
+                          <div className="w-2 h-2 mr-1 border border-gray-400 border-t-white rounded-full animate-spin"></div>
+                          Updating price...
+                        </span>
+                      ) : (
+                        <span>
+                          Price updated {priceLastUpdated ? `${Math.floor((Date.now() - priceLastUpdated) / 1000)}s ago` : 'on load'}
+                        </span>
+                      )}
+                    </span>
                   </div>
                 </div>
                 
@@ -692,6 +758,7 @@ export default function BulkTokenSeller() {
                   <div className="text-white">
                     <span className="block font-medium">SOL Received</span>
                     <span className="text-xl font-bold">{result.totalReceived.toFixed(4)}</span>
+                    <span className="block text-sm text-gray-400">≈ ${solToUsd(result.totalReceived).toFixed(2)}</span>
                   </div>
                 </div>
               </div>
@@ -708,9 +775,12 @@ export default function BulkTokenSeller() {
                   <div className="space-y-2">
                     {result.successfulSwaps.map((sale, index) => (
                       <div key={index} className="bg-green-900/20 rounded-lg p-3 border border-green-500/20">
-                        <div className="flex justify-between items-center">
-                          <span className="font-mono text-sm text-green-100">{sale.mintAddress}</span>
-                          <span className="text-green-200 font-semibold">{sale.solReceived.toFixed(6)} SOL</span>
+                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center">
+                          <span className="font-mono text-sm text-green-100 mb-1 sm:mb-0">{sale.mintAddress}</span>
+                          <div className="flex flex-col items-end">
+                            <span className="text-green-200 font-semibold">{sale.solReceived.toFixed(6)} SOL</span>
+                            <span className="text-xs text-green-300">≈ ${solToUsd(sale.solReceived).toFixed(2)}</span>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -826,6 +896,7 @@ export default function BulkTokenSeller() {
                   <div className={closeResult.successful.length > 0 ? 'text-yellow-300' : 'text-red-300'}>
                     <span className="block font-medium">Rent Recovered</span>
                     <span className="text-xl font-bold">~{(closeResult.successful.length * 0.00203928).toFixed(6)} SOL</span>
+                    <span className="block text-sm text-yellow-400">≈ ${solToUsd(closeResult.successful.length * 0.00203928).toFixed(2)}</span>
                   </div>
                 </div>
               </div>

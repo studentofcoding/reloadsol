@@ -154,7 +154,7 @@ export default function BulkTokenBuyer() {
           {/* Header with Wallet Connection */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h2 className="text-3xl font-bold text-white mb-2">Buy only 1 token or up to 10 tokens</h2>
+              <h2 className="text-3xl font-bold text-white mb-2">Buy 1 - 10 tokens</h2>
               <p className="text-gray-400">Split your SOL across multiple tokens instantly</p>
             </div>
             <div className="shrink-0">
