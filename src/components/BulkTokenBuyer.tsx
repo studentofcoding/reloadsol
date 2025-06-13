@@ -154,7 +154,7 @@ export default function BulkTokenBuyer() {
           {/* Header with Wallet Connection */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h2 className="text-3xl font-bold text-white mb-2">Bulk Token Purchase</h2>
+              <h2 className="text-3xl font-bold text-white mb-2">Buy only 1 token or up to 10 tokens</h2>
               <p className="text-gray-400">Split your SOL across multiple tokens instantly</p>
             </div>
             <div className="shrink-0">
@@ -215,7 +215,7 @@ export default function BulkTokenBuyer() {
               {/* SOL Amount Input */}
               <div className="space-y-3">
                 <label htmlFor="solAmount" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                  SOL Amount to Spend
+                  Total SOL amount to spend
                 </label>
                 <div className="relative">
                   <input
@@ -237,7 +237,7 @@ export default function BulkTokenBuyer() {
                   <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
                   </svg>
-                  This amount will be split equally among all tokens
+                  This amount will be split equally among all tokens (if buy more than 1 token)
                 </p>
               </div>
 
