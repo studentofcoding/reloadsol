@@ -332,7 +332,7 @@ export default function TrendingTokens({
       )}
       
       {!isLoading && !error && (
-        <div
+        <div 
           ref={scrollContainerRef}
           className={
             isMobile
@@ -353,78 +353,78 @@ export default function TrendingTokens({
               });
               
               return (
-                <div
-                  key={`${token.token_address}-${index}`}
+              <div 
+                key={`${token.token_address}-${index}`}
                   className={
                     isMobile
                       ? 'min-w-[220px] max-w-[220px] snap-center p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
                       : 'p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
                   }
-                  onClick={() => handleAddToken(token)}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center space-x-3">
-                      <div className="relative">
-                        <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center text-white font-bold overflow-hidden">
-                          {token.logo_url ? (
-                            <img
-                              src={token.logo_url}
-                              alt={token.token_symbol}
-                              className="w-full h-full object-cover"
-                              onError={(e) => {
-                                e.currentTarget.onerror = null
-                                e.currentTarget.src = ''
-                                e.currentTarget.parentElement!.textContent = token.token_symbol.charAt(0)
-                              }}
-                            />
-                          ) : (
-                            token.token_symbol.charAt(0)
-                          )}
-                        </div>
-                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-gray-900 rounded-full flex items-center justify-center text-xs text-white">
-                          {index + 1}
-                        </div>
+                onClick={() => handleAddToken(token)}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center space-x-3">
+                    <div className="relative">
+                      <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center text-white font-bold overflow-hidden">
+                        {token.logo_url ? (
+                          <img 
+                            src={token.logo_url} 
+                            alt={token.token_symbol} 
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              e.currentTarget.onerror = null
+                              e.currentTarget.src = ''
+                              e.currentTarget.parentElement!.textContent = token.token_symbol.charAt(0)
+                            }}
+                          />
+                        ) : (
+                          token.token_symbol.charAt(0)
+                        )}
                       </div>
-                      <div>
-                        <div className="font-semibold text-white">{token.token_symbol}</div>
-                        <div className="text-xs text-gray-400 truncate max-w-32">
-                          {token.created_at ? formatTimeAgo(token.created_at) : 'New'}
-                        </div>
+                      <div className="absolute -top-1 -right-1 w-5 h-5 bg-gray-900 rounded-full flex items-center justify-center text-xs text-white">
+                        {index + 1}
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-white font-medium">
-                        ${formatPrice(token.price)}
-                      </div>
-                      <div className={`text-xs ${token.change_5m >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {formatPercentage(token.change_5m)}
+                    <div>
+                      <div className="font-semibold text-white">{token.token_symbol}</div>
+                        <div className="text-xs text-gray-400 truncate max-w-32">
+                          {token.created_at ? formatTimeAgo(token.created_at) : 'New'}
                       </div>
                     </div>
                   </div>
-                  <div className="flex justify-between text-xs mt-2">
-                    <div>
-                      <span className="text-gray-400">1h: </span>
-                      <span className={token.change_1h >= 0 ? 'text-green-400' : 'text-red-400'}>
-                        {formatPercentage(token.change_1h)}
-                      </span>
+                  <div className="text-right">
+                    <div className="text-white font-medium">
+                      ${formatPrice(token.price)}
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <div>
-                        <span className="text-gray-400">Vol: </span>
-                        <span className="text-white">{formatVolume(token.volume_1h)}</span>
-                      </div>
-                      <button
-                        onClick={(e) => openTokenChart(e, token)}
-                        className="ml-2 p-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
-                        title="View Chart"
-                      >
-                        <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                        </svg>
-                      </button>
+                    <div className={`text-xs ${token.change_5m >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {formatPercentage(token.change_5m)}
                     </div>
                   </div>
                 </div>
+                <div className="flex justify-between text-xs mt-2">
+                  <div>
+                    <span className="text-gray-400">1h: </span>
+                    <span className={token.change_1h >= 0 ? 'text-green-400' : 'text-red-400'}>
+                      {formatPercentage(token.change_1h)}
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div>
+                      <span className="text-gray-400">Vol: </span>
+                      <span className="text-white">{formatVolume(token.volume_1h)}</span>
+                    </div>
+                    <button 
+                      onClick={(e) => openTokenChart(e, token)}
+                      className="ml-2 p-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
+                      title="View Chart"
+                    >
+                      <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
               )
             })
           )}

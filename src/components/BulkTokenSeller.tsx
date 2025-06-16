@@ -42,6 +42,8 @@ export default function BulkTokenSeller() {
   const [result, setResult] = useState<BulkSellResult | null>(null)
   const [closeResult, setCloseResult] = useState<{ successful: string[]; failed: Array<{ mintAddress: string; error: string }>; signatures: string[] } | null>(null)
   const [error, setError] = useState<string>('')
+  const [selectedToken, setSelectedToken] = useState<string>('')
+  const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
   
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0)
@@ -353,6 +355,13 @@ export default function BulkTokenSeller() {
 
   const estimatedSOL = selectedTokens.reduce((total, token) => total + token.solValue, 0)
 
+  // Handle token selection for chart display
+  const handleSelectToken = useCallback((mintAddress: string) => {
+    // Show chart for the selected token
+    setSelectedToken(mintAddress)
+    setIsChartLoading(true)
+  }, [])
+
   return (
     <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 space-y-8">
       {/* Header */}
@@ -368,6 +377,35 @@ export default function BulkTokenSeller() {
 
       {connected && (
         <div className="space-y-8">
+          {/* Token Chart Section */}
+          {selectedToken && (
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                  Token Chart
+                </label>
+                <span className="text-xs font-mono text-gray-400">{selectedToken}</span>
+              </div>
+              <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
+                {isChartLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
+                    <div className="w-10 h-10 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+                  </div>
+                )}
+                <iframe 
+                  src={`https://birdeye.so/tv-widget/${selectedToken}?chain=solana&viewMode=pair&chartInterval=1D&chartType=CANDLE&chartTimezone=Asia%2FSingapore&chartLeftToolbar=show&theme=dark`}
+                  height="400"
+                  className="w-full"
+                  style={{ border: 'none' }}
+                  title={`Birdeye Chart - ${selectedToken}`}
+                  onLoad={() => setIsChartLoading(false)}
+                  allowFullScreen
+                  frameBorder="0"
+                />
+              </div>
+            </div>
+          )}
+          
           {/* Token Selection Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
@@ -406,6 +444,17 @@ export default function BulkTokenSeller() {
                 Clear
               </button>
             </div>
+          </div>
+
+          <div className="flex justify-between items-center">
+            <p className="text-xs text-gray-400 flex items-center">
+              <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+              Hover over a token and click on the  <svg className="w-4 h-4 mx-1 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                </svg> icon to view price charts
+            </p>
           </div>
 
           {/* Token List */}
@@ -456,6 +505,20 @@ export default function BulkTokenSeller() {
                         <div>
                           <div className="font-semibold text-white">
                             {token.name || token.symbol || 'Unknown'}
+                            {token.solValue > 0 && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleSelectToken(token.mintAddress)
+                                  }}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-600 rounded ml-2"
+                                  title="View Chart"
+                                >
+                                  <svg className="w-4 h-4 text-gray-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                                  </svg>
+                                </button>
+                              )}
                           </div>
                         </div>
                       </div>
