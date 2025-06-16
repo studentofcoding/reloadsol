@@ -11,6 +11,7 @@ interface TrendingToken {
   change_5m: number
   volume_1h: number
   logo_url?: string
+  created_at?: number
 }
 
 interface TokenPrice {
@@ -312,7 +313,7 @@ export default function TrendingTokens({
                     <div>
                       <div className="font-semibold text-white">{token.token_symbol}</div>
                       <div className="text-xs text-gray-400 font-mono truncate max-w-32">
-                        {`${token.token_address.slice(0, 4)}...${token.token_address.slice(-4)}`}
+                        {token.created_at ? new Date(token.created_at * 1000).toLocaleString() : ''}
                       </div>
                     </div>
                   </div>

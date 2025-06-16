@@ -24,6 +24,7 @@ interface JupiterPool {
   id: string
   baseAsset: JupiterBaseAsset
   volume24h: number
+  createdAt: number
 }
 
 interface JupiterResponse {
@@ -41,7 +42,8 @@ interface TransformedToken {
   logo_url?: string
   organic_score: number
   last_updated?: number
-  price_change?: number // Price change since last update
+  price_change?: number 
+  created_at?: number
 }
 
 // Cache structure to store tokens with a timestamp
@@ -215,7 +217,8 @@ async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: numbe
       mcap: pool.baseAsset.mcap,
       logo_url: pool.baseAsset.icon,
       organic_score: pool.baseAsset.organicScore,
-      last_updated: currentTime
+      last_updated: currentTime,
+      created_at: pool.createdAt
     }));
     
     // Filter out tokens with extreme negative price movement (less than -40%) and low organic score
@@ -285,7 +288,8 @@ async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: numbe
             mcap: token.mcap,
             organic_score: token.organic_score,
             last_updated: currentTime,
-            price_change: priceChange
+            price_change: priceChange,
+            created_at: token.created_at
           });
           stats.updated++;
         } else {

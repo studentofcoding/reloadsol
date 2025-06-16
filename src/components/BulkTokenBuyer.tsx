@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useWallet, useConnection } from '../components/WalletProvider'
 import PhantomWalletButton from './PhantomWalletButton'
 import TrendingTokens from './TrendingTokens'
@@ -29,6 +29,14 @@ export default function BulkTokenBuyer() {
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0)
   const [balanceAfter, setBalanceAfter] = useState<number>(0)
+
+  // Token search state
+  const [searchTerm, setSearchTerm] = useState('')
+  const [searchResults, setSearchResults] = useState<any[]>([])
+  const [isSearching, setIsSearching] = useState(false)
+  const [showResults, setShowResults] = useState(false)
+  const searchTimeout = useRef<NodeJS.Timeout | null>(null)
+  const searchBoxRef = useRef<HTMLDivElement>(null)
 
   // Parse and validate mint addresses
   const parsedMints = parseMintAddresses(tokenMints)
@@ -69,6 +77,59 @@ export default function BulkTokenBuyer() {
       window.removeEventListener('addTokenToList', handleAddTokenEvent as EventListener)
     }
   }, [handleAddToken])
+
+  // Debounced search
+  useEffect(() => {
+    if (!searchTerm) {
+      setSearchResults([])
+      setShowResults(false)
+      return
+    }
+    setIsSearching(true)
+    if (searchTimeout.current) clearTimeout(searchTimeout.current)
+    searchTimeout.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/trending/search?query=${encodeURIComponent(searchTerm)}`)
+        if (res.ok) {
+          const data = await res.json()
+          setSearchResults(Array.isArray(data) ? data : [])
+          setShowResults(true)
+        } else {
+          setSearchResults([])
+          setShowResults(false)
+        }
+      } catch {
+        setSearchResults([])
+        setShowResults(false)
+      } finally {
+        setIsSearching(false)
+      }
+    }, 350)
+    // eslint-disable-next-line
+  }, [searchTerm])
+
+  // Hide results on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchBoxRef.current && !searchBoxRef.current.contains(event.target as Node)) {
+        setShowResults(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Add mint address from search result
+  const handleAddFromSearch = (mintAddress: string) => {
+    if (!parsedMints.includes(mintAddress)) {
+      const newTokenMints = tokenMints 
+        ? tokenMints.trim() + '\n' + mintAddress 
+        : mintAddress
+      setTokenMints(newTokenMints)
+    }
+    setShowResults(false)
+    setSearchTerm('')
+  }
 
   // Handle form submission
   const handleBulkBuy = useCallback(async () => {
@@ -246,6 +307,52 @@ export default function BulkTokenBuyer() {
                 <label htmlFor="tokenMints" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
                   Token Mint Addresses (up to 10)
                 </label>
+                <div className="relative" ref={searchBoxRef}>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={searchTerm}
+                      onChange={e => setSearchTerm(e.target.value)}
+                      placeholder="search token by name or symbol"
+                      className="w-full pl-4 pr-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                      <svg className="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                  {showResults && searchResults.length > 0 && (
+                    <div className="absolute z-20 mt-2 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-lg max-h-72 overflow-y-auto">
+                      {searchResults.map((token, idx) => (
+                        <button
+                          key={token.id}
+                          type="button"
+                          className="flex items-center w-full px-4 py-2 hover:bg-gray-800 text-left text-white"
+                          onClick={() => handleAddFromSearch(token.id)}
+                        >
+                          {token.icon && (
+                            <img src={token.icon} alt={token.symbol} className="w-6 h-6 mr-3 rounded-full" />
+                          )}
+                          <div className="flex-1">
+                            <div className="font-semibold">{token.name} <span className="text-xs text-gray-400">({token.symbol})</span></div>
+                            <div className="text-xs text-gray-400 font-mono truncate">{token.id}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {showResults && !isSearching && searchResults.length === 0 && (
+                    <div className="absolute z-20 mt-2 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-lg p-4 text-gray-400 text-sm">
+                      No results found.
+                    </div>
+                  )}
+                  {isSearching && (
+                    <div className="absolute z-20 mt-2 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-lg p-4 text-gray-400 text-sm">
+                      Searching...
+                    </div>
+                  )}
+                </div>
                 <textarea
                   id="tokenMints"
                   rows={6}

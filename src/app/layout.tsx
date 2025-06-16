@@ -55,7 +55,7 @@ export default function RootLayout({
       <body>
         <WalletProvider>
           <PasswordGate>
-            {children}
+          {children}
           </PasswordGate>
         </WalletProvider>
       </body>
