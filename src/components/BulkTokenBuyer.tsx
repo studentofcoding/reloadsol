@@ -528,7 +528,7 @@ export default function BulkTokenBuyer() {
                 
                 {/* Token List Display */}
                 {tokenList.length > 0 && (
-                  <div className="bg-gray-800 border border-gray-600 rounded-xl p-3 min-h-[100px] max-h-[200px] overflow-y-auto">
+                  <div className="max-h-[200px] overflow-y-auto">
                     <div className="flex flex-wrap gap-2">
                       {tokenList.map((token) => (
                         <div
