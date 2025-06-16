@@ -33,6 +33,10 @@ body {
   min-height: 100vh;
 }
 
+select, input, textarea {
+  font-size: 0.8rem;
+}
+
 /* Wallet adapter theme */
 .wallet-adapter-button {
   @apply bg-white hover:bg-gray-100 text-black font-medium py-2 px-4 rounded-lg transition-all duration-200 shadow-lg hover:shadow-xl border border-gray-300;

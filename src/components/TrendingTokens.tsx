@@ -35,6 +35,7 @@ export default function TrendingTokens({
   const [shouldScroll, setShouldScroll] = useState<boolean>(false)
   const [selectedTokenAddress, setSelectedTokenAddress] = useState<string | null>(null)
   const [isChartOpen, setIsChartOpen] = useState<boolean>(false)
+  const [isMobile, setIsMobile] = useState(false)
 
   // Fetch complete token data
   useEffect(() => {
@@ -197,6 +198,13 @@ export default function TrendingTokens({
       }
     }
   }, [isLoading, error, trendingTokens, isHovering, shouldScroll])
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth <= 768)
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
   
   const formatPercentage = (value: number) => {
     return `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`
@@ -271,20 +279,28 @@ export default function TrendingTokens({
       )}
       
       {!isLoading && !error && (
-        <div 
+        <div
           ref={scrollContainerRef}
-          className={`space-y-3 ${shouldScroll ? 'max-h-[600px] overflow-y-auto' : ''} pr-2 scroll-smooth`}
+          className={
+            isMobile
+              ? 'flex space-x-3 overflow-x-auto pb-2 scroll-smooth snap-x snap-mandatory'
+              : `space-y-3 ${shouldScroll ? 'max-h-[600px] overflow-y-auto' : ''} pr-2 scroll-smooth`
+          }
           onMouseEnter={() => setIsHovering(true)}
           onMouseLeave={() => setIsHovering(false)}
-          style={{ scrollbarWidth: 'thin' }}
+          style={isMobile ? { scrollbarWidth: 'thin', WebkitOverflowScrolling: 'touch' } : { scrollbarWidth: 'thin' }}
         >
           {trendingTokens.length === 0 ? (
             <div className="text-gray-400 text-center py-6">No trending tokens found</div>
           ) : (
             trendingTokens.map((token, index) => (
-              <div 
+              <div
                 key={`${token.token_address}-${index}`}
-                className="p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200"
+                className={
+                  isMobile
+                    ? 'min-w-[220px] max-w-[220px] snap-center p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
+                    : 'p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
+                }
                 onClick={() => handleAddToken(token)}
               >
                 <div className="flex items-center justify-between mb-2">
@@ -292,9 +308,9 @@ export default function TrendingTokens({
                     <div className="relative">
                       <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center text-white font-bold overflow-hidden">
                         {token.logo_url ? (
-                          <img 
-                            src={token.logo_url} 
-                            alt={token.token_symbol} 
+                          <img
+                            src={token.logo_url}
+                            alt={token.token_symbol}
                             className="w-full h-full object-cover"
                             onError={(e) => {
                               e.currentTarget.onerror = null
@@ -338,7 +354,7 @@ export default function TrendingTokens({
                       <span className="text-gray-400">Vol: </span>
                       <span className="text-white">{formatVolume(token.volume_1h)}</span>
                     </div>
-                    <button 
+                    <button
                       onClick={(e) => openTokenChart(e, token)}
                       className="ml-2 p-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
                       title="View Chart"

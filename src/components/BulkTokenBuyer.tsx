@@ -29,6 +29,7 @@ export default function BulkTokenBuyer() {
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0)
   const [balanceAfter, setBalanceAfter] = useState<number>(0)
+  const [walletBalance, setWalletBalance] = useState<number | null>(null)
 
   // Token search state
   const [searchTerm, setSearchTerm] = useState('')
@@ -202,6 +203,29 @@ export default function BulkTokenBuyer() {
     }
   }, [connected, publicKey, signAllTransactions, connection, solAmount, validMints, slippage, priorityFee])
 
+  // Fetch wallet balance for slider
+  useEffect(() => {
+    async function fetchBalance() {
+      if (connected && publicKey && connection) {
+        const lamports = await connection.getBalance(publicKey)
+        setWalletBalance(lamports / LAMPORTS_PER_SOL)
+      } else {
+        setWalletBalance(null)
+      }
+    }
+    fetchBalance()
+  }, [connected, publicKey, connection])
+
+  // Slider value (percentage of wallet balance)
+  const maxPercent = 96
+  const sliderValue = walletBalance && solAmount ? Math.round((parseFloat(solAmount) / walletBalance) * 100) : 0
+  const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!walletBalance) return
+    const percent = parseInt(e.target.value, 10)
+    const newAmount = ((walletBalance * percent) / 100).toFixed(4)
+    setSolAmount(newAmount)
+  }
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
       {/* Trending Tokens Column */}
@@ -275,9 +299,26 @@ export default function BulkTokenBuyer() {
               )}
               {/* SOL Amount Input */}
               <div className="space-y-3">
-                <label htmlFor="solAmount" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                  Total SOL amount to spend
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label htmlFor="solAmount" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                    Total SOL amount to spend
+                  </label>
+                  {walletBalance !== null && (
+                  <div className="flex items-center space-x-3">
+                    <input
+                      type="range"
+                      min={0}
+                      max={maxPercent}
+                      step={1}
+                      value={sliderValue > maxPercent ? maxPercent : sliderValue}
+                      onChange={handleSliderChange}
+                      disabled={!connected || walletBalance === 0}
+                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <span className="text-xs text-gray-400 font-mono w-12 text-right">{sliderValue > maxPercent ? maxPercent : sliderValue}%</span>
+                  </div>
+                )}
+                </div>
                 <div className="relative">
                   <input
                     id="solAmount"
@@ -359,7 +400,7 @@ export default function BulkTokenBuyer() {
                   value={tokenMints}
                   onChange={(e) => setTokenMints(e.target.value)}
                   placeholder="Enter token mint addresses, one per line or separated by commas/spaces&#10;&#10;Example:&#10;EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&#10;Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB&#10;DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-                  className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 font-mono text-sm focus:bg-gray-700 focus:border-gray-400 transition-all duration-200 resize-none"
+                  className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200 resize-none"
                   disabled={isLoading}
                 />
                 <div className="flex justify-between items-center">
