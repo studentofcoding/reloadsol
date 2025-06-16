@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 
+// Environment variable for Discord webhook URL
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+const ENABLE_DISCORD_NOTIFICATIONS = process.env.ENABLE_DISCORD_NOTIFICATIONS === 'true';
+
 interface JupiterBaseAsset {
   id: string
   name: string
@@ -187,6 +191,86 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// Function to send updates to Discord
+async function sendDiscordNotification(
+  tokenArray: TransformedToken[], 
+  stats: { 
+    added: number, 
+    updated: number, 
+    removed: number, 
+    unchanged: number,
+    price_increased: number,
+    price_decreased: number
+  },
+  refreshType: 'full' | 'incremental'
+) {
+  if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
+    console.log('Discord notifications disabled or webhook URL not configured');
+    return;
+  }
+
+  try {
+    // Only send notifications if there are meaningful changes
+    if (stats.added === 0 && stats.updated === 0 && stats.removed === 0) {
+      console.log('No changes to report to Discord');
+      return;
+    }
+
+    // Get top 5 tokens by organic score
+    const topTokens = tokenArray.slice(0, 5);
+    
+    // Format the message
+    const message = {
+      embeds: [
+        {
+          title: `Token Update (${refreshType})`,
+          description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased`,
+          color: 3447003, // Blue color
+          timestamp: new Date().toISOString(),
+          fields: [
+            {
+              name: 'Top Tokens',
+              value: topTokens.map(token => {
+                const priceChangeEmoji = token.price_change 
+                  ? (token.price_change > 0 ? '📈' : '📉') 
+                  : '';
+                const hourChangeEmoji = token.change_1h 
+                  ? (token.change_1h > 0 ? '🟢' : '🔴') 
+                  : '';
+                
+                return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
+                  `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
+                  `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
+              }).join('\n')
+            }
+          ],
+          footer: {
+            text: 'Buy Bulk Token Tracker'
+          }
+        }
+      ]
+    };
+
+    // Send the message to Discord
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(message),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Discord API responded with status: ${response.status}`);
+    }
+
+    console.log('Discord notification sent successfully');
+  } catch (error) {
+    console.error('Error sending Discord notification:', error);
+    // Don't throw the error to avoid disrupting the main flow
+  }
+}
+
 // Separate async function to fetch and update the cache
 async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: number): Promise<TransformedToken[]> {
   try {
@@ -252,16 +336,16 @@ async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: numbe
       }
       
       return {
-        token_symbol: pool.baseAsset.symbol,
-        token_address: pool.baseAsset.id,
-        price: pool.baseAsset.usdPrice,
+      token_symbol: pool.baseAsset.symbol,
+      token_address: pool.baseAsset.id,
+      price: pool.baseAsset.usdPrice,
         change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
         change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100,
         volume_1h: pool.baseAsset.stats1h.buyVolume,
-        mcap: pool.baseAsset.mcap,
-        logo_url: pool.baseAsset.icon,
-        organic_score: pool.baseAsset.organicScore,
-        last_updated: currentTime,
+      mcap: pool.baseAsset.mcap,
+      logo_url: pool.baseAsset.icon,
+      organic_score: pool.baseAsset.organicScore,
+      last_updated: currentTime,
         created_at: normalizedCreatedAt
       }
     });
@@ -384,6 +468,9 @@ async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: numbe
       // Then by absolute price change in the last hour (descending)
       return Math.abs(b.change_1h || 0) - Math.abs(a.change_1h || 0);
     });
+    
+    // Send notification to Discord with token updates
+    await sendDiscordNotification(tokenArray, stats, needsFullRefresh ? 'full' : 'incremental');
     
     return tokenArray;
   } catch (error) {

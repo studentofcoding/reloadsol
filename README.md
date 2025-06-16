@@ -11,6 +11,7 @@ A Next.js application for buying multiple Solana tokens in bulk with a single tr
 - ⚙️ **Customizable Settings**: Adjust slippage tolerance and priority fees
 - 📱 **Responsive Design**: Works on desktop and mobile devices
 - 🔐 **Wallet Integration**: Supports Phantom, Solflare, Torus, and Ledger wallets
+- 🔔 **Discord Notifications**: Receive token updates in your Discord channel
 
 ## How It Works
 
@@ -114,6 +115,30 @@ DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263 So111111111111111111111111111111111
 ### Environment Variables
 
 - `NEXT_PUBLIC_RPC_URL`: Custom Solana RPC endpoint (optional)
+- `DISCORD_WEBHOOK_URL`: Discord webhook URL for token update notifications
+- `ENABLE_DISCORD_NOTIFICATIONS`: Set to 'true' to enable Discord notifications
+
+### Discord Integration
+
+The application can send token updates to a Discord channel using webhooks:
+
+1. **Create a Discord webhook**:
+   - In Discord, go to Server Settings > Integrations > Webhooks
+   - Click "New Webhook", give it a name and select a channel
+   - Copy the webhook URL
+
+2. **Configure environment variables**:
+   ```bash
+   # Add these to your .env.local file
+   DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/your-webhook-id/your-webhook-token
+   ENABLE_DISCORD_NOTIFICATIONS=true
+   ```
+
+3. **Notification Content**:
+   - Token updates (added, updated, removed)
+   - Price movements
+   - Top 5 tokens by organic score
+   - Summary statistics
 
 ### Default Settings
 
