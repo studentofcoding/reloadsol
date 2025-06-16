@@ -105,9 +105,16 @@ export default function BulkTokenBuyer() {
       } finally {
         setIsSearching(false)
       }
-    }, 350)
-    // eslint-disable-next-line
-  }, [searchTerm])
+}, 350)
+   // eslint-disable-next-line
+   }, [searchTerm])
+
+  // Clear outstanding timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimeout.current) clearTimeout(searchTimeout.current)
+    }
+  }, [])
 
   // Hide results on outside click
   useEffect(() => {

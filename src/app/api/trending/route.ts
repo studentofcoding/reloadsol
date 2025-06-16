@@ -218,7 +218,8 @@ async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: numbe
       logo_url: pool.baseAsset.icon,
       organic_score: pool.baseAsset.organicScore,
       last_updated: currentTime,
-      created_at: pool.createdAt
+      // keep previously cached timestamp if the field is missing
+      created_at: pool.createdAt ?? tokenCache.tokens.get(pool.baseAsset.id)?.created_at
     }));
     
     // Filter out tokens with extreme negative price movement (less than -40%) and low organic score
@@ -289,7 +290,7 @@ async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: numbe
             organic_score: token.organic_score,
             last_updated: currentTime,
             price_change: priceChange,
-            created_at: token.created_at
+            created_at: token.created_at ?? existingToken.created_at
           });
           stats.updated++;
         } else {
