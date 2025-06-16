@@ -19,6 +19,15 @@ export default function BulkTokenBuyer() {
   const [slippage, setSlippage] = useState<number>(100) // 1%
   const [priorityFee, setPriorityFee] = useState<number>(100000) // 0.0001 SOL
   
+  // Token metadata state
+  type TokenInfo = {
+    address: string;
+    name: string;
+    symbol: string;
+    icon?: string;
+  }
+  const [tokenList, setTokenList] = useState<TokenInfo[]>([])
+  
   // UI state
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [result, setResult] = useState<BulkBuyResult | null>(null)
@@ -43,6 +52,65 @@ export default function BulkTokenBuyer() {
   const parsedMints = parseMintAddresses(tokenMints)
   const validMints = parsedMints.filter(isValidMintAddress)
   
+  // When tokenMints changes, update tokenList
+  useEffect(() => {
+    const fetchTokenMetadata = async (addresses: string[]) => {
+      // Filter for addresses we don't have metadata for yet
+      const existingAddresses = new Set(tokenList.map(token => token.address))
+      const addressesToFetch = addresses.filter(addr => !existingAddresses.has(addr) && isValidMintAddress(addr))
+      
+      if (addressesToFetch.length === 0) return
+      
+      // Create promises for each address
+      const fetchPromises = addressesToFetch.map(async (address): Promise<TokenInfo | null> => {
+        try {
+          const res = await fetch(`/api/trending/search?query=${address}`)
+          if (!res.ok) return null
+          
+          const data = await res.json()
+          const tokenInfo = Array.isArray(data) ? data.find(t => t.id === address) : null
+          
+          if (tokenInfo) {
+            return {
+              address,
+              name: tokenInfo.name || 'Unknown Token',
+              symbol: tokenInfo.symbol || '???',
+              icon: tokenInfo.icon || undefined
+            }
+          } else {
+            return {
+              address,
+              name: 'Unknown Token',
+              symbol: address.substring(0, 4) + '...',
+              icon: undefined
+            }
+          }
+        } catch {
+          return {
+            address,
+            name: 'Unknown Token',
+            symbol: address.substring(0, 4) + '...',
+            icon: undefined
+          }
+        }
+      })
+      
+      // Execute all fetches in parallel
+      const results = await Promise.all(fetchPromises)
+      const validResults = results.filter((result): result is TokenInfo => result !== null)
+      
+      if (validResults.length > 0) {
+        setTokenList(currentList => [...currentList, ...validResults])
+      }
+    }
+    
+    // Only update if there are valid mints that might not be in the list
+    if (validMints.length > 0) {
+      fetchTokenMetadata(validMints)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tokenMints])
+  
   // Handle adding a token to the list
   const handleAddToken = useCallback((mintAddress: string) => {
     // Check if the mint address is already in the list
@@ -54,6 +122,22 @@ export default function BulkTokenBuyer() {
       setTokenMints(newTokenMints)
     }
   }, [tokenMints, parsedMints])
+  
+  // Handle removing a token
+  const handleRemoveToken = (addressToRemove: string) => {
+    // Remove from parsed mints and update tokenMints string
+    const updatedMints = parsedMints.filter(addr => addr !== addressToRemove)
+    setTokenMints(updatedMints.join('\n'))
+    
+    // Also remove from tokenList
+    setTokenList(currentList => currentList.filter(token => token.address !== addressToRemove))
+  }
+  
+  // Handle clearing all tokens
+  const handleClearTokens = () => {
+    setTokenMints('')
+    setTokenList([])
+  }
   
   // Handle token selection for chart display
   const handleSelectToken = useCallback((mintAddress: string) => {
@@ -137,6 +221,7 @@ export default function BulkTokenBuyer() {
     }
     setShowResults(false)
     setSearchTerm('')
+    handleSelectToken(mintAddress)
   }
 
   // Handle form submission
@@ -231,6 +316,31 @@ export default function BulkTokenBuyer() {
     const percent = parseInt(e.target.value, 10)
     const newAmount = ((walletBalance * percent) / 100).toFixed(4)
     setSolAmount(newAmount)
+  }
+
+  // For paste handling
+  const handleTokenAreaPaste = (e: React.ClipboardEvent) => {
+    e.preventDefault()
+    const pastedText = e.clipboardData.getData('text')
+    const pastedAddresses = parseMintAddresses(pastedText)
+    
+    if (pastedAddresses.length === 0) return
+    
+    // Add unique addresses to the current list
+    const currentAddresses = new Set(parsedMints)
+    let newAddresses = ''
+    
+    pastedAddresses.forEach(addr => {
+      if (!currentAddresses.has(addr)) {
+        newAddresses += (newAddresses ? '\n' : '') + addr
+        currentAddresses.add(addr)
+      }
+    })
+    
+    if (newAddresses) {
+      const updatedTokenMints = tokenMints ? tokenMints + '\n' + newAddresses : newAddresses
+      setTokenMints(updatedTokenMints)
+    }
   }
 
   return (
@@ -352,16 +462,30 @@ export default function BulkTokenBuyer() {
 
               {/* Token Mint Addresses */}
               <div className="space-y-3">
-                <label htmlFor="tokenMints" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                  Token Mint Addresses (up to 10)
-                </label>
+                <div className="flex items-center justify-between">
+                  <label htmlFor="tokenMints" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                    Token Mint Addresses (up to 10)
+                  </label>
+                  {tokenList.length > 0 && (
+                    <button 
+                      type="button"
+                      onClick={handleClearTokens}
+                      className="text-xs text-gray-400 hover:text-white flex items-center"
+                    >
+                      <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                      Clear All
+                    </button>
+                  )}
+                </div>
                 <div className="relative" ref={searchBoxRef}>
                   <div className="relative">
                     <input
                       type="text"
                       value={searchTerm}
                       onChange={e => setSearchTerm(e.target.value)}
-                      placeholder="search token by name or symbol"
+                      placeholder="Search token by name, symbol, or CA"
                       className="w-full pl-4 pr-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
                     />
                     <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
@@ -401,15 +525,45 @@ export default function BulkTokenBuyer() {
                     </div>
                   )}
                 </div>
+                
+                {/* Token List Display */}
+                {tokenList.length > 0 && (
+                  <div className="bg-gray-800 border border-gray-600 rounded-xl p-3 min-h-[100px] max-h-[200px] overflow-y-auto">
+                    <div className="flex flex-wrap gap-2">
+                      {tokenList.map((token) => (
+                        <div
+                          key={token.address}
+                          className="flex items-center bg-gray-700 rounded-lg pl-2 pr-1 py-1 text-white"
+                        >
+                          {token.icon && (
+                            <img src={token.icon} alt={token.symbol} className="w-5 h-5 mr-1 rounded-full" />
+                          )}
+                          <span className="mr-1 text-sm">{token.name}</span>
+                          <span className="text-xs text-gray-400 mr-1">({token.symbol})</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveToken(token.address)}
+                            className="p-1 rounded-full hover:bg-gray-600"
+                          >
+                            <svg className="w-3 h-3 text-gray-300" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                            </svg>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Hidden textarea for internal state */}
                 <textarea
                   id="tokenMints"
-                  rows={6}
                   value={tokenMints}
                   onChange={(e) => setTokenMints(e.target.value)}
-                  placeholder="Enter token mint addresses, one per line or separated by commas/spaces&#10;&#10;Example:&#10;EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&#10;Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB&#10;DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-                  className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200 resize-none"
+                  className="hidden"
                   disabled={isLoading}
                 />
+                
                 <div className="flex justify-between items-center">
                   <div className="flex items-center space-x-4 text-xs">
                     <span className={`flex items-center space-x-1 ${validMints.length > 0 ? 'text-white' : 'text-gray-400'}`}>
