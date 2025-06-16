@@ -24,7 +24,7 @@ interface JupiterPool {
   id: string
   baseAsset: JupiterBaseAsset
   volume24h: number
-  createdAt: number
+  createdAt: string | number
 }
 
 interface JupiterResponse {
@@ -207,20 +207,64 @@ async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: numbe
     const data = await response.json() as JupiterResponse;
     
     // Transform the data to match our component's expected format
-    const transformedTokens = data.pools.map((pool): TransformedToken => ({
-      token_symbol: pool.baseAsset.symbol,
-      token_address: pool.baseAsset.id,
-      price: pool.baseAsset.usdPrice,
-      change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100, // Convert percentage to decimal, default to 0 if missing
-      change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100, // Convert percentage to decimal, default to 0 if missing
-      volume_1h: pool.baseAsset.stats1h.buyVolume, // Using buyVolume as volume_1h
-      mcap: pool.baseAsset.mcap,
-      logo_url: pool.baseAsset.icon,
-      organic_score: pool.baseAsset.organicScore,
-      last_updated: currentTime,
-      // keep previously cached timestamp if the field is missing
-      created_at: pool.createdAt ?? tokenCache.tokens.get(pool.baseAsset.id)?.created_at
-    }));
+    const transformedTokens = data.pools.map((pool): TransformedToken => {
+      // Debug logging for created_at timestamp
+      console.log(`Pool ${pool.baseAsset.symbol} createdAt:`, {
+        rawCreatedAt: pool.createdAt,
+        type: typeof pool.createdAt,
+        cachedCreatedAt: tokenCache.tokens.get(pool.baseAsset.id)?.created_at,
+        parsedDate: pool.createdAt ? new Date(pool.createdAt).toString() : 'N/A'
+      });
+      
+      // Parse and normalize the createdAt timestamp
+      let normalizedCreatedAt: number | undefined = undefined;
+      
+      if (pool.createdAt) {
+        // Handle string timestamps (ISO format)
+        if (typeof pool.createdAt === 'string') {
+          try {
+            // Try parsing as ISO date string first
+            const date = new Date(pool.createdAt);
+            if (!isNaN(date.getTime())) {
+              normalizedCreatedAt = Math.floor(date.getTime() / 1000); // Convert to seconds
+            } else {
+              // Try parsing as numeric string
+              normalizedCreatedAt = parseInt(pool.createdAt);
+              if (isNaN(normalizedCreatedAt)) normalizedCreatedAt = undefined;
+            }
+          } catch (e) {
+            console.error(`Failed to parse createdAt for ${pool.baseAsset.symbol}:`, pool.createdAt);
+          }
+        } 
+        // Handle numeric timestamps
+        else if (typeof pool.createdAt === 'number') {
+          normalizedCreatedAt = pool.createdAt;
+          // If value is in milliseconds, convert to seconds
+          if (normalizedCreatedAt > 1000000000000) {
+            normalizedCreatedAt = Math.floor(normalizedCreatedAt / 1000);
+          }
+        }
+      }
+      
+      // Fallback to cached value if available, or just leave as undefined
+      if (!normalizedCreatedAt && tokenCache.tokens.has(pool.baseAsset.id)) {
+        normalizedCreatedAt = tokenCache.tokens.get(pool.baseAsset.id)?.created_at;
+      }
+      
+      return {
+        token_symbol: pool.baseAsset.symbol,
+        token_address: pool.baseAsset.id,
+        price: pool.baseAsset.usdPrice,
+        change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
+        change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100,
+        volume_1h: pool.baseAsset.stats1h.buyVolume,
+        mcap: pool.baseAsset.mcap,
+        logo_url: pool.baseAsset.icon,
+        organic_score: pool.baseAsset.organicScore,
+        last_updated: currentTime,
+        created_at: normalizedCreatedAt
+      }
+    });
     
     // Filter out tokens with extreme negative price movement (less than -40%) and low organic score
     const filteredTokens = transformedTokens.filter(token => 
@@ -229,6 +273,17 @@ async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: numbe
       token.mcap > 300000 &&
       token.mcap < 2000000
     );
+    
+    // Log timestamps for all tokens in the final set
+    filteredTokens.forEach(token => {
+      console.log(`Final token ${token.token_symbol} (${token.token_address}) created_at:`, {
+        value: token.created_at,
+        type: typeof token.created_at,
+        parsedDate: token.created_at ? new Date(typeof token.created_at === 'number' ? 
+          (token.created_at > 1000000000000 ? token.created_at : token.created_at * 1000) : 
+          parseInt(token.created_at as any)).toString() : 'N/A'
+      });
+    });
     
     // If doing a full refresh, reset the cache
     if (needsFullRefresh) {

@@ -227,6 +227,59 @@ export default function TrendingTokens({
     return price.toLocaleString('en-US', { maximumFractionDigits: 2 })
   }
 
+  // Format timestamp as time ago (e.g. "2 hours ago", "3 days ago")
+  const formatTimeAgo = (timestamp: number | undefined): string => {
+    console.log('Token timestamp received:', timestamp, typeof timestamp);
+    
+    if (!timestamp || isNaN(timestamp)) {
+      console.log('Invalid timestamp detected:', timestamp);
+      return "Unknown time"
+    }
+    
+    // Since we've normalized timestamps to seconds in the API
+    // We need to convert to milliseconds for JavaScript Date
+    const date = new Date(timestamp * 1000)
+    console.log('Converted date:', date.toString(), 'Valid:', !isNaN(date.getTime()));
+    
+    // Check if date is valid
+    if (isNaN(date.getTime())) {
+      console.log('Date is invalid after conversion:', timestamp);
+      return "Unknown time"
+    }
+    
+    // Special case for future dates (invalid)
+    const now = new Date()
+    if (date > now) {
+      console.log('Date is in the future, likely invalid:', date);
+      return "Recently"
+    }
+    
+    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000)
+    console.log('Time difference in seconds:', seconds);
+    
+    // Handle timestamps too far in the past (likely invalid)
+    if (seconds > 10 * 365 * 24 * 60 * 60) { // More than 10 years
+      return "Unknown time"
+    }
+    
+    const minutes = Math.floor(seconds / 60)
+    const hours = Math.floor(minutes / 60)
+    const days = Math.floor(hours / 24)
+    const months = Math.floor(days / 30)
+    
+    if (months > 0) {
+      return months === 1 ? "1 month ago" : `${months} months ago`
+    } else if (days > 0) {
+      return days === 1 ? "1 day ago" : `${days} days ago`
+    } else if (hours > 0) {
+      return hours === 1 ? "1 hour ago" : `${hours} hours ago`
+    } else if (minutes > 0) {
+      return minutes === 1 ? "1 minute ago" : `${minutes} minutes ago`
+    } else {
+      return seconds <= 5 ? "just now" : `${seconds} seconds ago`
+    }
+  }
+
   const openTokenChart = (event: React.MouseEvent, token: TrendingToken) => {
     event.stopPropagation() // Prevent triggering the parent onClick
     onSelectToken(token.token_address)
@@ -293,80 +346,87 @@ export default function TrendingTokens({
           {trendingTokens.length === 0 ? (
             <div className="text-gray-400 text-center py-6">No trending tokens found</div>
           ) : (
-            trendingTokens.map((token, index) => (
-              <div
-                key={`${token.token_address}-${index}`}
-                className={
-                  isMobile
-                    ? 'min-w-[220px] max-w-[220px] snap-center p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
-                    : 'p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
-                }
-                onClick={() => handleAddToken(token)}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center space-x-3">
-                    <div className="relative">
-                      <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center text-white font-bold overflow-hidden">
-                        {token.logo_url ? (
-                          <img
-                            src={token.logo_url}
-                            alt={token.token_symbol}
-                            className="w-full h-full object-cover"
-                            onError={(e) => {
-                              e.currentTarget.onerror = null
-                              e.currentTarget.src = ''
-                              e.currentTarget.parentElement!.textContent = token.token_symbol.charAt(0)
-                            }}
-                          />
-                        ) : (
-                          token.token_symbol.charAt(0)
-                        )}
+            trendingTokens.map((token, index) => {
+              console.log(`Token ${token.token_symbol} (${token.token_address}):`, {
+                created_at: token.created_at,
+                type: typeof token.created_at
+              });
+              
+              return (
+                <div
+                  key={`${token.token_address}-${index}`}
+                  className={
+                    isMobile
+                      ? 'min-w-[220px] max-w-[220px] snap-center p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
+                      : 'p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
+                  }
+                  onClick={() => handleAddToken(token)}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center space-x-3">
+                      <div className="relative">
+                        <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center text-white font-bold overflow-hidden">
+                          {token.logo_url ? (
+                            <img
+                              src={token.logo_url}
+                              alt={token.token_symbol}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                e.currentTarget.onerror = null
+                                e.currentTarget.src = ''
+                                e.currentTarget.parentElement!.textContent = token.token_symbol.charAt(0)
+                              }}
+                            />
+                          ) : (
+                            token.token_symbol.charAt(0)
+                          )}
+                        </div>
+                        <div className="absolute -top-1 -right-1 w-5 h-5 bg-gray-900 rounded-full flex items-center justify-center text-xs text-white">
+                          {index + 1}
+                        </div>
                       </div>
-                      <div className="absolute -top-1 -right-1 w-5 h-5 bg-gray-900 rounded-full flex items-center justify-center text-xs text-white">
-                        {index + 1}
+                      <div>
+                        <div className="font-semibold text-white">{token.token_symbol}</div>
+                        <div className="text-xs text-gray-400 truncate max-w-32">
+                          {token.created_at ? formatTimeAgo(token.created_at) : 'New'}
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <div className="font-semibold text-white">{token.token_symbol}</div>
-                      <div className="text-xs text-gray-400 font-mono truncate max-w-32">
-                        {token.created_at ? new Date(token.created_at * 1000).toLocaleString() : ''}
+                    <div className="text-right">
+                      <div className="text-white font-medium">
+                        ${formatPrice(token.price)}
+                      </div>
+                      <div className={`text-xs ${token.change_5m >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatPercentage(token.change_5m)}
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-white font-medium">
-                      ${formatPrice(token.price)}
+                  <div className="flex justify-between text-xs mt-2">
+                    <div>
+                      <span className="text-gray-400">1h: </span>
+                      <span className={token.change_1h >= 0 ? 'text-green-400' : 'text-red-400'}>
+                        {formatPercentage(token.change_1h)}
+                      </span>
                     </div>
-                    <div className={`text-xs ${token.change_5m >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {formatPercentage(token.change_5m)}
+                    <div className="flex items-center space-x-2">
+                      <div>
+                        <span className="text-gray-400">Vol: </span>
+                        <span className="text-white">{formatVolume(token.volume_1h)}</span>
+                      </div>
+                      <button
+                        onClick={(e) => openTokenChart(e, token)}
+                        className="ml-2 p-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
+                        title="View Chart"
+                      >
+                        <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                 </div>
-                <div className="flex justify-between text-xs mt-2">
-                  <div>
-                    <span className="text-gray-400">1h: </span>
-                    <span className={token.change_1h >= 0 ? 'text-green-400' : 'text-red-400'}>
-                      {formatPercentage(token.change_1h)}
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <div>
-                      <span className="text-gray-400">Vol: </span>
-                      <span className="text-white">{formatVolume(token.volume_1h)}</span>
-                    </div>
-                    <button
-                      onClick={(e) => openTokenChart(e, token)}
-                      className="ml-2 p-1 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
-                      title="View Chart"
-                    >
-                      <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))
+              )
+            })
           )}
         </div>
       )}
