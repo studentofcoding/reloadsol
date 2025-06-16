@@ -528,8 +528,23 @@ export async function fetchUserTokens(
 
 // Function to clear NFT cache (useful when switching users)
 export function clearNFTCache(): void {
-  nftMintCache.clear()
-  nftCacheInitialized = false
+  nftMintCache.clear();
+  nftCacheInitialized = false;
+  
+  // Keep only the original hardcoded tokens in KNOWN_NON_NFT_TOKENS
+  // by recreating the set with only the initial values
+  const initialNonNFTTokens = [
+    'JCBKQBPvnjr7emdQGCNM8wtE8AZjyvJgh7JMvkfYxypm',
+    '7tPPYTBKrFLKKnoCwijrsfjAYadyp7GpAmSPUbVwbonk',
+    'DBRiDgJAMsM95moTzJs7M9LnkGErpbv9v6CUR1DXnUu5',
+    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+    'CHEg2pGFoJE3BQChUgYWXUCMQzQfNp6jBDYkdiW11dqN',
+    'DwJeLBy5PVHKR9Ec8491mk7E1XV11oB6JyjXZ2GjuoZX',
+  ];
+  
+  // Clear and repopulate the set
+  KNOWN_NON_NFT_TOKENS.clear();
+  initialNonNFTTokens.forEach(token => KNOWN_NON_NFT_TOKENS.add(token));
 }
 
 // Public function to check if a token is an NFT (ensures cache is initialized)
@@ -539,8 +554,8 @@ export async function checkIfTokenIsNFT(
   mintAddress: string
 ): Promise<boolean> {
   try {
-    // If it's a pump.fun token, it's definitely not an NFT
-    if (isPumpFunToken(mintAddress)) {
+    // If it's a known non-NFT token, it's definitely not an NFT
+    if (isKnownNonNFT(mintAddress)) {
       return false;
     }
     
@@ -551,7 +566,23 @@ export async function checkIfTokenIsNFT(
       nftCacheInitialized = true
     }
     
-    return nftMintCache.has(mintAddress)
+    // Check cache first
+    if (nftMintCache.has(mintAddress)) {
+      return true;
+    }
+    
+    // If not in cache, do a direct check
+    try {
+      const mintInfo = await connection.getTokenSupply(new PublicKey(mintAddress))
+      const supply = Number(mintInfo.value.amount)
+      const decimals = mintInfo.value.decimals
+      
+      // NFTs typically have 0 decimals and supply of 1
+      return decimals === 0 && supply <= 1;
+    } catch (error) {
+      console.warn(`Error checking token supply for ${mintAddress}:`, error)
+      return false;
+    }
   } catch (error) {
     console.warn(`Error checking NFT status for ${mintAddress}:`, error)
     return false
@@ -620,8 +651,8 @@ export async function getNFTMetadata(
   isNFT: boolean
 } | null> {
   try {
-    // First check if it's a pump.fun token - never an NFT
-    if (isPumpFunToken(mintAddress)) {
+    // First check if it's a known non-NFT token
+    if (isKnownNonNFT(mintAddress)) {
       const tokenInfo = await getTokenInfo(mintAddress);
       return {
         ...(tokenInfo || { decimals: 6, symbol: 'TOKEN', name: 'Unknown Token' }),
@@ -630,7 +661,7 @@ export async function getNFTMetadata(
     }
     
     // Then check if it's an NFT
-    const tokenIsNFT = isTokenInNFTCache(mintAddress)
+    const tokenIsNFT = await checkIfTokenIsNFT(connection, userPublicKey, mintAddress)
     
     if (tokenIsNFT) {
       // Get detailed NFT metadata
@@ -740,9 +771,43 @@ export function isPumpFunToken(mintAddress: string): boolean {
   return mintAddress.includes('pump') || mintAddress.endsWith('pump')
 }
 
+// Check if token is a well-known token (SOL, USDC, USDT, etc.)
+export function isWellKnownToken(mintAddress: string): boolean {
+  return Object.values(TOKENS).includes(mintAddress)
+}
+
+// List of known non-NFT tokens that might be incorrectly identified
+const KNOWN_NON_NFT_TOKENS = new Set([
+  // Add the tokens from your error logs
+  'JCBKQBPvnjr7emdQGCNM8wtE8AZjyvJgh7JMvkfYxypm',
+  '7tPPYTBKrFLKKnoCwijrsfjAYadyp7GpAmSPUbVwbonk',
+  'DBRiDgJAMsM95moTzJs7M9LnkGErpbv9v6CUR1DXnUu5',
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT (already in TOKENS)
+  'CHEg2pGFoJE3BQChUgYWXUCMQzQfNp6jBDYkdiW11dqN',
+  'DwJeLBy5PVHKR9Ec8491mk7E1XV11oB6JyjXZ2GjuoZX',
+  // Add more tokens as needed
+]);
+
+// Check if token is a known non-NFT token
+export function isKnownNonNFT(mintAddress: string): boolean {
+  return KNOWN_NON_NFT_TOKENS.has(mintAddress) || 
+         isWellKnownToken(mintAddress) || 
+         isPumpFunToken(mintAddress)
+}
+
 // Cache for NFT mint addresses to avoid repeated API calls
 const nftMintCache = new Set<string>()
 let nftCacheInitialized = false
+
+// Check if a token is an NFT using the cache (internal function)
+function isTokenInNFTCache(mintAddress: string): boolean {
+  // Check if it's a known non-NFT token first
+  if (isKnownNonNFT(mintAddress)) {
+    return false;
+  }
+  
+  return nftMintCache.has(mintAddress)
+}
 
 // Fetch all NFTs owned by a user using Metaplex
 async function fetchUserNFTMints(
@@ -757,29 +822,63 @@ async function fetchUserNFTMints(
     const ownerPublicKey = publicKey(userPublicKey.toBase58())
     
     console.log("Fetching NFTs using Metaplex...")
-    const allNFTs = await fetchAllDigitalAssetWithTokenByOwner(umi, ownerPublicKey)
+    const allDigitalAssets = await fetchAllDigitalAssetWithTokenByOwner(umi, ownerPublicKey)
     
     // Extract mint addresses
     const nftMints = new Set<string>()
-    allNFTs.forEach((nft) => {
-      nftMints.add(nft.publicKey.toString())
-    })
     
-    console.log(`Found ${nftMints.size} NFTs for user`)
+    // Process each digital asset
+    for (const asset of allDigitalAssets) {
+      const mintAddress = asset.publicKey.toString()
+      
+      // Skip known non-NFT tokens
+      if (isKnownNonNFT(mintAddress)) {
+        console.log(`Skipping known non-NFT token: ${mintAddress}`)
+        continue
+      }
+      
+      try {
+        // Check if Jupiter API recognizes this as a fungible token
+        const isJupiterToken = await isFungibleTokenWithJupiter(mintAddress)
+        if (isJupiterToken) {
+          console.log(`Skipping Jupiter-recognized token: ${mintAddress}`)
+          
+          // Add to known non-NFT tokens for future reference
+          KNOWN_NON_NFT_TOKENS.add(mintAddress)
+          continue
+        }
+        
+        // Get token supply and decimals to determine if it's an NFT
+        const mintInfo = await connection.getTokenSupply(new PublicKey(mintAddress))
+        
+        // Check if token has NFT characteristics:
+        // 1. Supply of 1 (or 0 for burned NFTs)
+        // 2. 0 decimals
+        const supply = Number(mintInfo.value.amount)
+        const decimals = mintInfo.value.decimals
+        
+        if (decimals === 0 && supply <= 1) {
+          // This is likely an NFT
+          nftMints.add(mintAddress)
+        } else {
+          // This is likely a fungible token
+          console.log(`Skipping fungible token: ${mintAddress} (supply: ${supply}, decimals: ${decimals})`)
+          
+          // Add to known non-NFT tokens for future reference
+          KNOWN_NON_NFT_TOKENS.add(mintAddress)
+        }
+      } catch (error) {
+        console.warn(`Error checking token ${mintAddress}, treating as non-NFT:`, error)
+        // Skip this token if we can't determine its characteristics
+      }
+    }
+    
+    console.log(`Found ${nftMints.size} verified NFTs for user`)
     return nftMints
   } catch (error) {
     console.error('Error fetching NFTs with Metaplex:', error)
     return new Set<string>()
   }
-}
-
-// Check if a token is an NFT using the cache (internal function)
-function isTokenInNFTCache(mintAddress: string): boolean {
-  // Special case: tokens with "pump" in the address are never NFTs
-  if (isPumpFunToken(mintAddress)) {
-    return false;
-  }
-  return nftMintCache.has(mintAddress)
 }
 
 // Check if a token account is frozen by examining the account state
@@ -820,6 +919,22 @@ async function checkTokenFrozenStatusWithJupiter(mintAddress: string): Promise<b
     }
   } catch (error) {
     console.warn(`Failed to check frozen status with Jupiter for ${mintAddress}:`, error)
+  }
+  
+  return false
+}
+
+// Check if a token is a fungible token using Jupiter API
+async function isFungibleTokenWithJupiter(mintAddress: string): Promise<boolean> {
+  try {
+    const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
+    
+    if (response.ok) {
+      // If Jupiter API returns data for this token, it's likely a fungible token
+      return true
+    }
+  } catch (error) {
+    console.warn(`Failed to check fungible status with Jupiter for ${mintAddress}:`, error)
   }
   
   return false
