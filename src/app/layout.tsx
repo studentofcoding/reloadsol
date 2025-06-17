@@ -55,10 +55,11 @@ export default function RootLayout({
       <body>
         <WalletProvider>
           <PasswordGate>
-          {children}
+            {children}
           </PasswordGate>
         </WalletProvider>
       </body>
+      <script async src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
     </html>
   )
 } 
