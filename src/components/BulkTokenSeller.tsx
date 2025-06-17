@@ -121,6 +121,11 @@ export default function BulkTokenSeller() {
       if (isSelected) {
         return prev.filter(t => t.mintAddress !== token.mintAddress)
       } else {
+        // Check if already at the limit
+        if (prev.length >= 22) {
+          setError('Maximum 22 tokens can be selected for selling')
+          return prev
+        }
         return [...prev, token]
       }
     })
@@ -133,60 +138,34 @@ export default function BulkTokenSeller() {
       if (isSelected) {
         return prev.filter(t => t.mintAddress !== token.mintAddress)
       } else {
+        // Check if already at the limit
+        if (prev.length >= 22) {
+          setError('Maximum 22 tokens can be selected for closing')
+          return prev
+        }
         return [...prev, token]
       }
     })
   }
 
-  // Refresh individual token price
-  const refreshTokenPrice = useCallback(async (token: UserToken) => {
-    if (!publicKey) return
-    
-    // Update the loading state for this specific token
-    setUserTokens(prev => prev.map(t => 
-      t.mintAddress === token.mintAddress 
-        ? { ...t, isLoadingPrice: true }
-        : t
-    ))
-    
-    try {
-      const solValue = await getTokenSolValue(
-        token.mintAddress,
-        token.balance,
-        token.decimals
-      )
-      
-      // Update the token with new price
-      setUserTokens(prev => prev.map(t => 
-        t.mintAddress === token.mintAddress 
-          ? { ...t, solValue, isLoadingPrice: false }
-          : t
-      ))
-      
-      // Update selected tokens if this token is selected
-      setSelectedTokens(prev => prev.map(t => 
-        t.mintAddress === token.mintAddress 
-          ? { ...t, solValue, isLoadingPrice: false }
-          : t
-      ))
-    } catch (error) {
-      console.error('Error refreshing token price:', error)
-      setUserTokens(prev => prev.map(t => 
-        t.mintAddress === token.mintAddress 
-          ? { ...t, isLoadingPrice: false }
-          : t
-      ))
-    }
-  }, [publicKey])
-
   // Select all tokens
   const selectAllTokens = () => {
-    setSelectedTokens([...userTokens])
+    if (userTokens.length > 22) {
+      setSelectedTokens(userTokens.slice(0, 22))
+      setError('Selection limited to first 22 tokens (Solana transaction limit)')
+    } else {
+      setSelectedTokens([...userTokens])
+    }
   }
 
   // Select all zero-balance tokens
   const selectAllZeroBalanceTokens = () => {
-    setSelectedZeroBalanceTokens([...zeroBalanceTokens])
+    if (zeroBalanceTokens.length > 22) {
+      setSelectedZeroBalanceTokens(zeroBalanceTokens.slice(0, 22))
+      setError('Selection limited to first 22 tokens (Solana transaction limit)')
+    } else {
+      setSelectedZeroBalanceTokens([...zeroBalanceTokens])
+    }
   }
 
   // Clear selection
@@ -258,6 +237,47 @@ export default function BulkTokenSeller() {
       setUserTokens(prev => prev.map(token => ({ ...token, isLoadingPrice: false })))
     }
   }, [publicKey, userTokens])
+
+  // Refresh individual token price
+  const refreshTokenPrice = useCallback(async (token: UserToken) => {
+    if (!publicKey) return
+    
+    // Update the loading state for this specific token
+    setUserTokens(prev => prev.map(t => 
+      t.mintAddress === token.mintAddress 
+        ? { ...t, isLoadingPrice: true }
+        : t
+    ))
+    
+    try {
+      const solValue = await getTokenSolValue(
+        token.mintAddress,
+        token.balance,
+        token.decimals
+      )
+      
+      // Update the token with new price
+      setUserTokens(prev => prev.map(t => 
+        t.mintAddress === token.mintAddress 
+          ? { ...t, solValue, isLoadingPrice: false }
+          : t
+      ))
+      
+      // Update selected tokens if this token is selected
+      setSelectedTokens(prev => prev.map(t => 
+        t.mintAddress === token.mintAddress 
+          ? { ...t, solValue, isLoadingPrice: false }
+          : t
+      ))
+    } catch (error) {
+      console.error('Error refreshing token price:', error)
+      setUserTokens(prev => prev.map(t => 
+        t.mintAddress === token.mintAddress 
+          ? { ...t, isLoadingPrice: false }
+          : t
+      ))
+    }
+  }, [publicKey])
 
   // Handle bulk sell with better error handling
   const handleBulkSell = useCallback(async () => {
@@ -489,7 +509,7 @@ export default function BulkTokenSeller() {
                   <div
                     key={token.mintAddress}
                     onClick={() => toggleTokenSelection(token)}
-                    className={`group p-3 rounded-xl border cursor-pointer transition-all duration-200 ${
+                    className={`group p-2 rounded-xl border cursor-pointer transition-all duration-200 ${
                       isSelected
                         ? 'bg-gray-700 border-gray-500'
                         : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-gray-500'
@@ -523,18 +543,16 @@ export default function BulkTokenSeller() {
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className="font-semibold text-white">
-                          {token.uiAmount.toFixed(6)}
-                        </div>
-                        <div className="text-sm text-gray-400 flex items-center justify-end space-x-2">
-                          {token.isLoadingPrice ? (
+                        <div className="font-semibold text-sm text-gray-400">
+                        {token.uiAmount.toFixed(6)} 
+                        {token.isLoadingPrice ? (
                             <div className="flex items-center space-x-1">
                               <div className="w-3 h-3 border border-gray-400 border-t-white rounded-full animate-spin"></div>
                               <span>Loading...</span>
                             </div>
                           ) : (
                             <>
-                              <span>≈ ${solToUsd(token.solValue).toFixed(2)}</span>
+                              <span className="ml-1 text-sm text-white">≈ ${solToUsd(token.solValue).toFixed(2)}</span>
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation()

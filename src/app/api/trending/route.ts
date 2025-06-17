@@ -5,6 +5,44 @@ import { NextRequest } from 'next/server'
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const ENABLE_DISCORD_NOTIFICATIONS = process.env.ENABLE_DISCORD_NOTIFICATIONS === 'true';
 
+// Add auto-notification interval (default 10 minute = 600000ms)
+const AUTO_NOTIFICATION_INTERVAL_MS = parseInt(process.env.AUTO_NOTIFICATION_INTERVAL_MS || '600000');
+
+// Track last auto notification time
+let lastAutoNotificationTime = 0;
+
+// Set up a timer to send notifications on schedule if enabled
+if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS) {
+  console.log(`Setting up automatic notification timer (${AUTO_NOTIFICATION_INTERVAL_MS}ms interval)`);
+  
+  // Initial delay of 30 seconds after server start before first check
+  setTimeout(() => {
+    console.log('Starting automatic notification timer');
+    
+    // Set interval for periodic notifications
+    setInterval(() => {
+      const currentTime = Date.now();
+      
+      // Check if it's time for a notification
+      if (currentTime - lastAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) {
+        console.log('Auto-notification interval triggered');
+        
+        // Determine if we need a full refresh
+        const needsFullRefresh = currentTime - tokenCache.lastFullRefresh >= FULL_REFRESH_INTERVAL_MS;
+        
+        // Trigger notification
+        fetchAndUpdateCache(needsFullRefresh, currentTime, true)
+          .then(tokenArray => {
+            console.log(`Scheduled notification completed with ${tokenArray.length} tokens`);
+          })
+          .catch(error => {
+            console.error('Error in scheduled notification:', error);
+          });
+      }
+    }, Math.min(60000, AUTO_NOTIFICATION_INTERVAL_MS / 2)); // Check at least every minute or half the notification interval
+  }, 30000);
+}
+
 interface JupiterBaseAsset {
   id: string
   name: string
@@ -74,6 +112,116 @@ let refreshPromise: Promise<TransformedToken[]> | null = null;
 let refreshTimeout: NodeJS.Timeout | null = null;
 let currentRefreshOperation: Promise<TransformedToken[]> | null = null;
 
+// Function to send updates to Discord
+async function sendDiscordNotification(
+  tokenArray: TransformedToken[], 
+  stats: { 
+    added: number, 
+    updated: number, 
+    removed: number, 
+    unchanged: number,
+    price_increased: number,
+    price_decreased: number
+  },
+  refreshType: 'full' | 'incremental',
+  forceSend: boolean = false
+) {
+  if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
+    console.log('Discord notifications disabled or webhook URL not configured');
+    return;
+  }
+
+  // Skip notification if not forced and no meaningful changes
+  if (!forceSend && stats.added === 0 && stats.updated === 0 && stats.removed === 0) {
+    console.log('No changes to report to Discord');
+    return;
+  }
+
+  try {
+    // Get top 5 tokens by organic score
+    const topTokens = tokenArray.slice(0, 5);
+    
+    // Format the message
+    const message = {
+      embeds: [
+        {
+          title: `Token Update (${refreshType})`,
+          description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased`,
+          color: 3447003, // Blue color
+          timestamp: new Date().toISOString(),
+          fields: [
+            {
+              name: 'Top Tokens',
+              value: topTokens.map(token => {
+                const priceChangeEmoji = token.price_change 
+                  ? (token.price_change > 0 ? '📈' : '📉') 
+                  : '';
+                const hourChangeEmoji = token.change_1h 
+                  ? (token.change_1h > 0 ? '🟢' : '🔴') 
+                  : '';
+                
+                return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
+                  `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
+                  `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
+              }).join('\n')
+            }
+          ],
+          footer: {
+            text: 'Buy Bulk Token Tracker'
+          }
+        }
+      ]
+    };
+
+    // Send the message to Discord
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(message),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Discord API responded with status: ${response.status}`);
+    }
+
+    console.log('Discord notification sent successfully');
+  } catch (error) {
+    console.error('Error sending Discord notification:', error);
+    // Don't throw the error to avoid disrupting the main flow
+  }
+}
+
+// Add a POST endpoint for scheduled notifications from cron jobs
+export async function POST(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const secretKey = searchParams.get('key');
+    const expectedSecretKey = process.env.NOTIFICATION_SECRET_KEY;
+    
+    // Validate secret key if configured
+    if (expectedSecretKey && secretKey !== expectedSecretKey) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    
+    // Force a full refresh and force notifications
+    const tokenArray = await fetchAndUpdateCache(true, Date.now(), true);
+    
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Notifications sent',
+      token_count: tokenArray.length
+    });
+  } catch (error) {
+    console.error('Error in scheduled notification:', error);
+    return NextResponse.json({ 
+      error: 'Failed to send scheduled notification', 
+      message: error instanceof Error ? error.message : 'Unknown error' 
+    }, { status: 500 });
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const currentTime = Date.now();
@@ -140,8 +288,8 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    // Create a new refresh operation
-    refreshPromise = fetchAndUpdateCache(needsFullRefresh, currentTime);
+    // Create a new refresh operation - never force notifications from frontend requests
+    refreshPromise = fetchAndUpdateCache(needsFullRefresh, currentTime, false);
     currentRefreshOperation = refreshPromise;
     
     try {
@@ -191,88 +339,12 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Function to send updates to Discord
-async function sendDiscordNotification(
-  tokenArray: TransformedToken[], 
-  stats: { 
-    added: number, 
-    updated: number, 
-    removed: number, 
-    unchanged: number,
-    price_increased: number,
-    price_decreased: number
-  },
-  refreshType: 'full' | 'incremental'
-) {
-  if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
-    console.log('Discord notifications disabled or webhook URL not configured');
-    return;
-  }
-
-  try {
-    // Only send notifications if there are meaningful changes
-    if (stats.added === 0 && stats.updated === 0 && stats.removed === 0) {
-      console.log('No changes to report to Discord');
-      return;
-    }
-
-    // Get top 5 tokens by organic score
-    const topTokens = tokenArray.slice(0, 5);
-    
-    // Format the message
-    const message = {
-      embeds: [
-        {
-          title: `Token Update (${refreshType})`,
-          description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased`,
-          color: 3447003, // Blue color
-          timestamp: new Date().toISOString(),
-          fields: [
-            {
-              name: 'Top Tokens',
-              value: topTokens.map(token => {
-                const priceChangeEmoji = token.price_change 
-                  ? (token.price_change > 0 ? '📈' : '📉') 
-                  : '';
-                const hourChangeEmoji = token.change_1h 
-                  ? (token.change_1h > 0 ? '🟢' : '🔴') 
-                  : '';
-                
-                return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
-                  `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
-                  `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
-              }).join('\n')
-            }
-          ],
-          footer: {
-            text: 'Buy Bulk Token Tracker'
-          }
-        }
-      ]
-    };
-
-    // Send the message to Discord
-    const response = await fetch(DISCORD_WEBHOOK_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(message),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Discord API responded with status: ${response.status}`);
-    }
-
-    console.log('Discord notification sent successfully');
-  } catch (error) {
-    console.error('Error sending Discord notification:', error);
-    // Don't throw the error to avoid disrupting the main flow
-  }
-}
-
 // Separate async function to fetch and update the cache
-async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: number): Promise<TransformedToken[]> {
+async function fetchAndUpdateCache(
+  needsFullRefresh: boolean, 
+  currentTime: number,
+  forceSendNotification: boolean = false
+): Promise<TransformedToken[]> {
   try {
     console.log(needsFullRefresh ? 'Performing full refresh' : 'Updating token cache');
     const response = await fetch('https://datapi.jup.ag/v1/pools/toptrending/1h', {
@@ -469,8 +541,24 @@ async function fetchAndUpdateCache(needsFullRefresh: boolean, currentTime: numbe
       return Math.abs(b.change_1h || 0) - Math.abs(a.change_1h || 0);
     });
     
-    // Send notification to Discord with token updates
-    await sendDiscordNotification(tokenArray, stats, needsFullRefresh ? 'full' : 'incremental');
+    // Only send notification if this is a scheduled run or forced notification
+    // Regular frontend API calls will no longer trigger notifications
+    const shouldSendNotification = 
+      (currentTime - lastAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) || 
+      forceSendNotification;
+    
+    if (shouldSendNotification) {
+      console.log('Sending scheduled Discord notification');
+      lastAutoNotificationTime = currentTime;
+      await sendDiscordNotification(
+        tokenArray, 
+        stats, 
+        needsFullRefresh ? 'full' : 'incremental',
+        forceSendNotification
+      );
+    } else {
+      console.log('Skipping Discord notification - not on schedule');
+    }
     
     return tokenArray;
   } catch (error) {
