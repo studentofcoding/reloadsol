@@ -10,3 +10,7 @@
 .env.development
 .env.test
 .env.production
+
+/trending_api
+/venv
+/__pycache__
