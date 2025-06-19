@@ -26,16 +26,16 @@ export default function Home() {
           </h2>
           <div className="mt-6 flex items-center justify-center space-x-6 text-sm text-gray-500">
             <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-              <span>Global Jupiter Integration</span>
+              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full"></div>
+              <span>Buy and sell more than 10 tokens</span>
             </div>
             <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-              <span>1 click mode</span>
+              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full"></div>
+              <span>Trending tokens insights</span>
             </div>
             <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
-              <span>Auto Account Closing</span>
+              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full"></div>
+              <span>Catch trend faster and smarter</span>
             </div>
           </div>
         </div>
@@ -44,7 +44,7 @@ export default function Home() {
         <div className="max-w-4xl mx-auto mb-2">
           <div className="flex items-center justify-between h-full">
             <div>
-            <button
+              <button
                 onClick={() => setActiveTab('sell')}
                 className={`px-6 py-3 mr-2 rounded-lg font-semibold transition-all duration-200 ${
                   activeTab === 'sell'
@@ -56,7 +56,7 @@ export default function Home() {
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                   </svg>
-                  <span>Reload your SOL</span>
+                  <span className="hidden md:block">Reload your SOL</span>
                 </div>
               </button>
               <button
@@ -69,9 +69,9 @@ export default function Home() {
               >
                 <div className="flex items-center space-x-2">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8v8m-3-4h6M12 4v2m0 12v2" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                   </svg>
-                  <span>Buy Tokens</span>
+                  <span className="hidden md:block">Buy Tokens</span>
                 </div>
               </button>
             </div>

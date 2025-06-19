@@ -357,7 +357,7 @@ export default function TrendingTokens({
                 key={`${token.token_address}-${index}`}
                   className={
                     isMobile
-                      ? 'min-w-[220px] max-w-[220px] snap-center p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
+                      ? 'min-w-full snap-center p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
                       : 'p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 cursor-pointer transition-all duration-200'
                   }
                 onClick={() => handleAddToken(token)}

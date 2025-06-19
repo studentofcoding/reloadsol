@@ -125,7 +125,7 @@ export default function TradingHistory() {
           <p className="text-gray-400 text-sm">Trade on reloadsol to track your history</p>
         </div>
       ) : (
-        <div className="flex space-x-4 overflow-x-auto mb-3">
+        <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
           {records.slice(0, 10).map((record) => (
             <div
               key={record.id}
@@ -156,17 +156,30 @@ export default function TradingHistory() {
                 <div className="flex items-center space-x-2">
                   <span className="text-sm text-gray-400 capitalize font-medium flex items-center space-x-2">
                     {record.operationType}
-                    {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token, idx) => (
-                      <div key={idx} className="flex items-center ml-2 space-x-2">
-                        <div className="w-3 h-3 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden">
-                          {token.logoURI ? (
-                            <img src={token.logoURI} alt={token.symbol || token.name || 'Token'} className="w-full h-full object-cover" onError={(e) => {e.currentTarget.onerror = null; e.currentTarget.src = ''; e.currentTarget.parentElement!.textContent = (token.symbol || token.name || '?').charAt(0).toUpperCase()}} />
-                          ) : ((token.symbol || token.name || '?').charAt(0).toUpperCase())}
-                        </div>
-                        <span className="text-xs text-gray-300 font-medium">{token.symbol || token.name || 'Unknown'}</span>
+                    <div className="flex items-center ml-2 space-x-2">
+                      <div className="relative flex items-center">
+                        {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token, idx) => (
+                          <div 
+                            key={idx} 
+                            className="w-3 h-3 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden"
+                            style={{ marginLeft: idx > 0 ? '-0.5rem' : '0' }}
+                          >
+                            {token.logoURI ? (
+                              <img src={token.logoURI} alt={token.symbol || token.name || 'Token'} className="w-full h-full object-cover" onError={(e) => {e.currentTarget.onerror = null; e.currentTarget.src = ''; e.currentTarget.parentElement!.textContent = (token.symbol || token.name || '?').charAt(0).toUpperCase()}} />
+                            ) : ((token.symbol || token.name || '?').charAt(0).toUpperCase())}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                    {record.successCount > 4 && <span className="text-xs text-gray-400">+{record.successCount - 4} more tokens</span>}
+                      <div className="flex items-center space-x-1">
+                        {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token, idx) => (
+                          <span key={idx} className="text-xs text-gray-300 font-medium">
+                            {token.symbol || token.name || 'Unknown'}
+                            {idx < Math.min(record.successCount, 4) - 1 ? ',' : ''}
+                          </span>
+                        ))}
+                        {record.successCount > 4 && <span className="text-xs text-gray-400">+{record.successCount - 4} more</span>}
+                      </div>
+                    </div>
 
                     {record.solAmount && record.solAmount > 0 && (
                       <span className="text-xs font-mono">
