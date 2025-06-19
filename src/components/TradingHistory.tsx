@@ -10,8 +10,8 @@ export default function TradingHistory() {
   const [stats, setStats] = useState<TrackingStats | null>(null)
   const [timeFilter, setTimeFilter] = useState<'all' | '24h' | '7d' | '30d'>('7d')
 
-  // Load records and stats
-  useEffect(() => {
+  // Function to load records and stats
+  const loadRecords = React.useCallback(() => {
     if (!connected || !publicKey) {
       setRecords([])
       setStats(null)
@@ -27,6 +27,28 @@ export default function TradingHistory() {
     setRecords(successfulRecords)
     setStats(tradingTracker.getStats(walletAddress))
   }, [connected, publicKey])
+
+  // Load records and stats
+  useEffect(() => {
+    loadRecords()
+  }, [loadRecords])
+
+  // Listen for new trading records and auto-refresh
+  useEffect(() => {
+    const handleNewRecord = (event: CustomEvent) => {
+      // Auto-refresh when a new trading record is added
+      console.log('🔄 New trading record detected, refreshing history...')
+      loadRecords()
+    }
+
+    // Add event listener
+    window.addEventListener('tradingRecordAdded', handleNewRecord as EventListener)
+
+    // Clean up
+    return () => {
+      window.removeEventListener('tradingRecordAdded', handleNewRecord as EventListener)
+    }
+  }, [loadRecords])
 
   if (!connected) {
     return (
@@ -91,17 +113,17 @@ export default function TradingHistory() {
       {/* Horizontal Records List */}
       {records.length === 0 ? (
         <div className="text-center py-4">
-          <p className="text-gray-400 text-sm">No successful operations found</p>
+          <p className="text-gray-400 text-sm">Trade on reloadsol to track your history</p>
         </div>
       ) : (
-        <div className="flex space-x-4 overflow-x-auto pb-2">
+        <div className="flex space-x-4 overflow-x-auto p-3 px-1">
           {records.slice(0, 10).map((record) => (
             <div
               key={record.id}
-              className="flex-shrink-0 p-3 hover:bg-gray-800/30 transition-colors min-w-[220px] rounded-lg"
+              className="flex-shrink-0 p-0 hover:bg-gray-800/30 transition-colors min-w-[180px] rounded-lg"
             >
               {/* Line 1: Timestamp */}
-              <div className="text-xs text-gray-400 mb-2">
+              <div className="text-xs text-gray-400 mb-1">
                 {formatRelativeTime(record.timestamp)}
               </div>
               
@@ -124,7 +146,7 @@ export default function TradingHistory() {
 
                     {record.solAmount && record.solAmount > 0 && (
                       <span className="text-xs font-mono">
-                        with {record.solAmount.toFixed(4)} SOL
+                        {record.solAmount.toFixed(4)} SOL
                       </span>
                     )}
                   </span>

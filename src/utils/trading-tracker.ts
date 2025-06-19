@@ -74,6 +74,13 @@ class TradingTracker {
       
       localStorage.setItem(this.STORAGE_KEY, JSON.stringify(records))
       
+      // Dispatch event to notify components of new tracking record
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('tradingRecordAdded', {
+          detail: { record: newRecord, operationType: record.operationType }
+        }))
+      }
+      
       console.log(`📊 Tracked ${record.operationType} operation:`, {
         wallet: record.walletAddress.slice(0, 8) + '...',
         tokens: record.totalTokens,
