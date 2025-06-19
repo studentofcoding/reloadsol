@@ -1,5 +1,5 @@
 import { Connection, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey, TransactionMessage, SystemProgram } from '@solana/web3.js'
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createCloseAccountInstruction, createBurnInstruction } from '@solana/spl-token'
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createCloseAccountInstruction, createBurnInstruction, NATIVE_MINT } from '@solana/spl-token'
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults"
 import { publicKey } from "@metaplex-foundation/umi"
 import { fetchAllDigitalAssetWithTokenByOwner } from "@metaplex-foundation/mpl-token-metadata"
@@ -1497,70 +1497,80 @@ export async function executeBulkBuy(
       totalFees: 0,
       devFee: 0,
       referralFee: 0,
-      feePerOperation: 0, // Will be calculated as 1% of SOL budget
+      feePerOperation: 0,
       totalOperations: 0,
       operationType: 'BUY' as FeeOperationType
     }
   }
 
   try {
-    // Calculate amount per token
+    // Calculate amount per token in lamports
     const amountPerToken = Math.floor((request.solAmount * LAMPORTS_PER_SOL) / request.tokenMints.length)
     
-    // Get quotes for all tokens
-    const quotes: Array<{ mint: string; quote: SwapQuote | null }> = []
-    
-    for (const mint of request.tokenMints) {
-      const quote = await getSwapQuote(
-        TOKENS.SOL,
-        mint,
-        amountPerToken,
-        request.slippage
-      )
-      quotes.push({ mint, quote })
-    }
+    console.log(`Executing bulk buy: ${request.tokenMints.length} tokens, ${amountPerToken} lamports per token`)
 
-    // Filter successful quotes
-    const validQuotes = quotes.filter(q => q.quote !== null)
-    
-    if (validQuotes.length === 0) {
-      throw new Error('No valid quotes received for any tokens')
-    }
-
-    // Get swap transactions
+    // Get swap transactions from Solana Tracker API
     const transactions: VersionedTransaction[] = []
     const transactionMints: string[] = []
 
-    for (const { mint, quote } of validQuotes) {
-      if (!quote) continue
+    for (const mint of request.tokenMints) {
+      try {
+        // Create abort controller for timeout
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
 
-      // Include fee instructions in the swap transaction
-      // For buy: 0.5% of total SOL budget divided by number of tokens
-      const feePerTransaction = (request.solAmount * FEE_CONFIG.FEES.BUY_PERCENTAGE) / (100 * request.tokenMints.length)
-      const feeInstructions = createJupiterFeeInstructions(
-        new PublicKey(userPublicKey),
-        'BUY',
-        1, // 1 token per transaction
-        feePerTransaction
-      )
+        // Prepare swap API body for BUY (SOL -> Token)
+        const swapApiBody = {
+          from: NATIVE_MINT.toBase58(), // SOL (Native mint for buy operations)
+          to: mint,                     // Target token
+          amount: amountPerToken/1000000000,       // Amount in lamports
+          slippage: request.slippage/100,   // Slippage tolerance
+          payer: userPublicKey,         // User's wallet
+          priorityFee: request.priorityFee/1000000000, // Priority fee in microlamports
+          fee: `${FEE_CONFIG.DEV_WALLET}:0.5` // Dev wallet with 0.5% fee
+        }
 
-      const swapTransaction = await getSwapTransaction(
-        quote,
-        userPublicKey,
-        request.priorityFee,
-        feeInstructions // Include fee in the same transaction
-      )
+        console.log(`Getting swap transaction for ${mint}:`, swapApiBody)
 
-      if (swapTransaction) {
+        // Call Solana Tracker swap API
+        const response = await fetch("https://swap-v2.solanatracker.io/swap", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Connection": "keep-alive"
+          },
+          body: JSON.stringify(swapApiBody),
+          signal: controller.signal,
+          keepalive: true
+        })
+
+        clearTimeout(timeoutId)
+
+        if (!response.ok) {
+          throw new Error(`Swap API error: ${response.status} ${response.statusText}`)
+        }
+
+        const swapResult = await response.json()
+        
+        if (!swapResult.txn) {
+          throw new Error('No transaction returned from swap API')
+        }
+
+        // Deserialize the transaction
         const tx = VersionedTransaction.deserialize(
-          Buffer.from(swapTransaction.swapTransaction, 'base64')
+          Buffer.from(swapResult.txn, 'base64')
         )
+        
         transactions.push(tx)
         transactionMints.push(mint)
-      } else {
+        
+        console.log(`Successfully created swap transaction for ${mint}`)
+
+      } catch (error) {
+        console.error(`Failed to create swap transaction for ${mint}:`, error)
         result.failedPurchases.push({
           mintAddress: mint,
-          error: 'Failed to get swap transaction'
+          error: error instanceof Error ? error.message : 'Unknown error creating transaction'
         })
       }
     }
@@ -1568,6 +1578,8 @@ export async function executeBulkBuy(
     if (transactions.length === 0) {
       throw new Error('No valid transactions could be created')
     }
+
+    console.log(`Signing ${transactions.length} transactions...`)
 
     // Sign all transactions
     const signedTransactions = await signAllTransactions(transactions)
@@ -1577,20 +1589,26 @@ export async function executeBulkBuy(
     
     for (let i = 0; i < signedTransactions.length; i++) {
       try {
+        console.log(`Sending transaction ${i + 1}/${signedTransactions.length} for ${transactionMints[i]}`)
+        
         const signature = await connection.sendTransaction(signedTransactions[i], {
           skipPreflight: false,
           preflightCommitment: 'confirmed',
         })
 
+        console.log(`Transaction sent: ${signature}`)
+
         // Confirm transaction
         const confirmation = await connection.confirmTransaction(signature, 'confirmed')
         
         if (confirmation.value.err) {
+          console.error(`Transaction failed for ${transactionMints[i]}:`, confirmation.value.err)
           result.failedPurchases.push({
             mintAddress: transactionMints[i],
             error: `Transaction failed: ${confirmation.value.err}`
           })
         } else {
+          console.log(`Transaction confirmed for ${transactionMints[i]}: ${signature}`)
           signatures.push(signature)
           result.successfulPurchases.push({
             mintAddress: transactionMints[i],
@@ -1598,6 +1616,7 @@ export async function executeBulkBuy(
           })
         }
       } catch (error) {
+        console.error(`Transaction error for ${transactionMints[i]}:`, error)
         result.failedPurchases.push({
           mintAddress: transactionMints[i],
           error: `Transaction error: ${error}`
@@ -1609,7 +1628,7 @@ export async function executeBulkBuy(
     result.totalSpent = (amountPerToken * result.successfulPurchases.length) / LAMPORTS_PER_SOL
     result.success = result.successfulPurchases.length > 0
 
-    // Calculate and populate fee information (fees are now included inline in transactions)
+    // Calculate fee information (fees are included in Solana Tracker API)
     if (result.successfulPurchases.length > 0) {
       // For buy: 0.5% of total SOL budget (request.solAmount)
       const feeDistribution = calculateFeeDistribution('BUY', result.successfulPurchases.length, request.solAmount)
@@ -1623,7 +1642,8 @@ export async function executeBulkBuy(
         operationType: 'BUY' as FeeOperationType
       }
       
-      console.log(`Fees included inline: ${feeDistribution.totalFee} SOL total (0.5% of ${request.solAmount} SOL budget) (Dev: ${feeDistribution.devFee})`)
+      console.log(`Bulk buy completed: ${result.successfulPurchases.length} successful, ${result.failedPurchases.length} failed`)
+      console.log(`Total fees: ${feeDistribution.totalFee} SOL (0.5% of ${request.solAmount} SOL budget)`)
     }
 
     return result
