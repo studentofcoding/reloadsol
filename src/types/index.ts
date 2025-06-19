@@ -1,5 +1,7 @@
 import { PublicKey } from '@solana/web3.js'
 
+export type FeeOperationType = 'BUY' | 'SELL' | 'CLOSE'
+
 export interface TokenPurchase {
   mintAddress: string
   amount: number
@@ -26,6 +28,7 @@ export interface BulkBuyResult {
     referralFee: number // Fee paid to referral (if any)
     feePerOperation: number // Fee rate per operation
     totalOperations: number // Number of successful operations
+    operationType: FeeOperationType // Type of operation for fee calculation
   }
 }
 

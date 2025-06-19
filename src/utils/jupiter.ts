@@ -19,14 +19,80 @@ if (typeof BigInt.prototype.toJSON === 'undefined') {
   }
 }
 
-// Fee configuration
+// Fee configuration with percentage-based fees for buy/sell and fixed fees for close
 const FEE_CONFIG = {
-  DEV_WALLET: '3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX', // Your dev wallet address
-  FEE_PER_OPERATION: 0.0005, // 0.0001 SOL per successful operation
-  REFERRAL_PERCENTAGE: 30, // 30% of fee goes to referral, 70% to dev
+  DEV_WALLET: '3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX',
+  FEES: {
+    BUY_PERCENTAGE: 0.5,     // 0.5% of SOL budget for buy operations
+    SELL_PERCENTAGE: 0.5,    // 0.5% of SOL received for sell operations
+    CLOSE: 0.001,          // 0.001 SOL per successful close operation (fixed)
+  },
+  REFERRAL_PERCENTAGE: 0, // All fees go to dev wallet (no referral split)
 }
 
-// Fee and referral utilities
+// Operation types for fee calculation
+export type FeeOperationType = 'BUY' | 'SELL' | 'CLOSE'
+
+// Get fee amount for specific operation type and amount
+export function getFeeForOperation(operationType: FeeOperationType, solAmount?: number): number {
+  switch (operationType) {
+    case 'BUY':
+      return solAmount ? (solAmount * FEE_CONFIG.FEES.BUY_PERCENTAGE) / 100 : 0
+    case 'SELL':
+      return solAmount ? (solAmount * FEE_CONFIG.FEES.SELL_PERCENTAGE) / 100 : 0
+    case 'CLOSE':
+      return FEE_CONFIG.FEES.CLOSE
+    default:
+      return 0
+  }
+}
+
+// Calculate fee distribution for specific operation type, count, and SOL amount
+export function calculateFeeDistribution(
+  operationType: FeeOperationType, 
+  operationCount: number, 
+  solAmount?: number
+): {
+  totalFee: number
+  devFee: number
+  referralFee: number
+  feeInLamports: number
+  devFeeInLamports: number
+  referralFeeInLamports: number
+  operationType: FeeOperationType
+  operationCount: number
+  feePercentage?: number
+  baseSolAmount?: number
+} {
+  let totalFee = 0
+  
+  if (operationType === 'BUY' || operationType === 'SELL') {
+    // Percentage-based fees
+    totalFee = solAmount ? getFeeForOperation(operationType, solAmount) : 0
+  } else {
+    // Fixed fees for CLOSE operations
+    totalFee = getFeeForOperation(operationType) * operationCount
+  }
+  
+  // All fees go to dev wallet (no referral split)
+  const devFee = totalFee
+  const referralFee = 0
+  
+  return {
+    totalFee,
+    devFee,
+    referralFee,
+    feeInLamports: Math.floor(totalFee * LAMPORTS_PER_SOL),
+    devFeeInLamports: Math.floor(devFee * LAMPORTS_PER_SOL),
+    referralFeeInLamports: Math.floor(referralFee * LAMPORTS_PER_SOL),
+    operationType,
+    operationCount,
+    feePercentage: operationType === 'BUY' ? FEE_CONFIG.FEES.BUY_PERCENTAGE : 
+                   operationType === 'SELL' ? FEE_CONFIG.FEES.SELL_PERCENTAGE : undefined,
+    baseSolAmount: solAmount
+  }
+}
+
 export function getReferralFromUrl(): string | null {
   if (typeof window === 'undefined') return null
   
@@ -45,83 +111,45 @@ export function getReferralFromUrl(): string | null {
   return null
 }
 
-export function calculateFeeDistribution(operationCount: number): {
-  totalFee: number
-  devFee: number
-  referralFee: number
-  feeInLamports: number
-  devFeeInLamports: number
-  referralFeeInLamports: number
-} {
-  const totalFee = FEE_CONFIG.FEE_PER_OPERATION * operationCount
-  const referral = getReferralFromUrl()
-  
-  let devFee = totalFee
-  let referralFee = 0
-  
-  if (referral) {
-    referralFee = totalFee * (FEE_CONFIG.REFERRAL_PERCENTAGE / 100)
-    devFee = totalFee - referralFee
-  }
-  
-  return {
-    totalFee,
-    devFee,
-    referralFee,
-    feeInLamports: Math.floor(totalFee * LAMPORTS_PER_SOL),
-    devFeeInLamports: Math.floor(devFee * LAMPORTS_PER_SOL),
-    referralFeeInLamports: Math.floor(referralFee * LAMPORTS_PER_SOL),
-  }
-}
-
+// Create fee transfer instructions
 export function createFeeTransferInstructions(
   fromPubkey: PublicKey,
-  operationCount: number
+  operationType: FeeOperationType,
+  operationCount: number,
+  solAmount?: number
 ): any[] {
   if (!isValidMintAddress(FEE_CONFIG.DEV_WALLET)) {
-    console.warn('Dev wallet not properly configured, skipping fee transfers')
+    console.warn('Invalid dev wallet address in fee config')
     return []
   }
-  
-  const feeDistribution = calculateFeeDistribution(operationCount)
+
+  const feeDistribution = calculateFeeDistribution(operationType, operationCount, solAmount)
   const instructions = []
-  
-  try {
-    // Transfer to dev wallet
-    if (feeDistribution.devFeeInLamports > 0) {
-      const devTransferInstruction = SystemProgram.transfer({
+
+  // Create transfer instruction to dev wallet (all fees go to dev now)
+  if (feeDistribution.devFeeInLamports > 0) {
+    instructions.push(
+      SystemProgram.transfer({
         fromPubkey,
         toPubkey: new PublicKey(FEE_CONFIG.DEV_WALLET),
         lamports: feeDistribution.devFeeInLamports,
       })
-      instructions.push(devTransferInstruction)
-      console.log(`Created dev fee transfer: ${feeDistribution.devFee} SOL`)
-    }
-    
-    // Transfer to referral if exists
-    const referral = getReferralFromUrl()
-    if (referral && feeDistribution.referralFeeInLamports > 0) {
-      const referralTransferInstruction = SystemProgram.transfer({
-        fromPubkey,
-        toPubkey: new PublicKey(referral),
-        lamports: feeDistribution.referralFeeInLamports,
-      })
-      instructions.push(referralTransferInstruction)
-      console.log(`Created referral fee transfer: ${feeDistribution.referralFee} SOL to ${referral}`)
-    }
-  } catch (error) {
-    console.error('Error creating fee transfer instructions:', error)
+    )
   }
-  
+
+  // Note: No referral transfers since all fees go to dev wallet
+
   return instructions
 }
 
 // Create fee transfer instructions in Jupiter format for inclusion in swap transactions
 export function createJupiterFeeInstructions(
   fromPubkey: PublicKey,
-  operationCount: number
+  operationType: FeeOperationType,
+  operationCount: number,
+  solAmount?: number
 ): any[] {
-  const feeInstructions = createFeeTransferInstructions(fromPubkey, operationCount)
+  const feeInstructions = createFeeTransferInstructions(fromPubkey, operationType, operationCount, solAmount)
   
   // Convert to Jupiter format
   return feeInstructions.map(instruction => ({
@@ -135,33 +163,77 @@ export function createJupiterFeeInstructions(
   }))
 }
 
-export function getFeeInfo(): {
-  feePerOperation: number
+// Get fee information for specific operation type
+export function getFeeInfo(operationType: FeeOperationType, solAmount?: number): {
+  feeAmount: number
+  feePercentage?: number
+  fixedFee?: number
   referralPercentage: number
   devWallet: string
+  operationType: FeeOperationType
 } {
+  let feeAmount = 0
+  let feePercentage: number | undefined
+  let fixedFee: number | undefined
+
+  if (operationType === 'BUY' || operationType === 'SELL') {
+    feePercentage = operationType === 'BUY' ? FEE_CONFIG.FEES.BUY_PERCENTAGE : FEE_CONFIG.FEES.SELL_PERCENTAGE
+    feeAmount = solAmount ? getFeeForOperation(operationType, solAmount) : 0
+  } else {
+    fixedFee = FEE_CONFIG.FEES.CLOSE
+    feeAmount = fixedFee
+  }
+
   return {
-    feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
+    feeAmount,
+    feePercentage,
+    fixedFee,
     referralPercentage: FEE_CONFIG.REFERRAL_PERCENTAGE,
     devWallet: FEE_CONFIG.DEV_WALLET,
+    operationType
   }
 }
 
-// Helper function to calculate fee preview for UI
-export function calculateFeePreview(operationCount: number): {
+// Calculate fee preview for specific operation type
+export function calculateFeePreview(operationType: FeeOperationType, operationCount: number, solAmount?: number): {
   totalFees: number
   devFee: number
   referralFee: number
-  feePerOperation: number
+  feeAmount: number
   referralAddress: string | null
+  operationType: FeeOperationType
+  operationCount: number
+  feePercentage?: number
+  baseSolAmount?: number
 } {
-  const feeDistribution = calculateFeeDistribution(operationCount)
+  const feeDistribution = calculateFeeDistribution(operationType, operationCount, solAmount)
   return {
     totalFees: feeDistribution.totalFee,
     devFee: feeDistribution.devFee,
     referralFee: feeDistribution.referralFee,
-    feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
-    referralAddress: getReferralFromUrl(),
+    feeAmount: feeDistribution.totalFee,
+    referralAddress: null, // No referral system now
+    operationType,
+    operationCount,
+    feePercentage: feeDistribution.feePercentage,
+    baseSolAmount: feeDistribution.baseSolAmount
+  }
+}
+
+// Get all fee rates for comparison
+export function getAllFeeRates(): {
+  buyPercentage: number
+  sellPercentage: number
+  closeFixed: number
+  referralPercentage: number
+  devWallet: string
+} {
+  return {
+    buyPercentage: FEE_CONFIG.FEES.BUY_PERCENTAGE,
+    sellPercentage: FEE_CONFIG.FEES.SELL_PERCENTAGE,
+    closeFixed: FEE_CONFIG.FEES.CLOSE,
+    referralPercentage: FEE_CONFIG.REFERRAL_PERCENTAGE,
+    devWallet: FEE_CONFIG.DEV_WALLET
   }
 }
 
@@ -201,6 +273,9 @@ export interface BulkSellResult {
     referralFee: number // Fee paid to referral (if any)
     feePerOperation: number // Fee rate per operation
     totalOperations: number // Number of successful operations
+    operationType: FeeOperationType // Type of operation for fee calculation
+    sellFeeRate: number // Specific sell fee rate
+    closeFeeRate: number // Specific close fee rate
   }
 }
 
@@ -955,13 +1030,16 @@ export async function executeBulkSell(
     failedCloses: [],
     totalReceived: 0,
     signatures: [],
-    feeInfo: {
-      totalFees: 0,
-      devFee: 0,
-      referralFee: 0,
-      feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
-      totalOperations: 0,
-    }
+            feeInfo: {
+          totalFees: 0,
+          devFee: 0,
+          referralFee: 0,
+          feePerOperation: 0, // Will be calculated based on actual amounts
+          totalOperations: 0,
+          operationType: 'SELL' as FeeOperationType,
+          sellFeeRate: 0, // Will be calculated as 1% of received SOL
+          closeFeeRate: getFeeForOperation('CLOSE')
+        }
   }
 
   try {
@@ -1014,11 +1092,9 @@ export async function executeBulkSell(
         for (const { token, quote } of validQuotes) {
           if (!quote) continue
 
-          // Create fee instructions for this individual swap
-          const feeInstructions = createJupiterFeeInstructions(
-            new PublicKey(userPublicKey),
-            1 // 1 successful operation per swap
-          )
+          // For sells, fees will be included in the close accounts transaction
+          // since we need the total SOL received to calculate the fee
+          const feeInstructions: any[] = []
 
           const swapTransaction = await getSwapTransaction(
             quote,
@@ -1116,7 +1192,8 @@ export async function executeBulkSell(
           tokensToClose,
           userPublicKey,
           connection,
-          signAllTransactions
+          signAllTransactions,
+          { successfulSwapsCount: result.successfulSwaps.length, totalSolReceived: result.totalReceived }
         )
         
         result.successfulCloses = closeResults.successful
@@ -1132,19 +1209,32 @@ export async function executeBulkSell(
       }
     }
 
-    // Step 5: Calculate and populate fee information
-    const totalSuccessfulOperations = result.successfulSwaps.length + result.successfulCloses.length
-    
-    if (totalSuccessfulOperations > 0) {
-      const feeDistribution = calculateFeeDistribution(totalSuccessfulOperations)
+    // Calculate and populate fee information (fees are now included inline in transactions)
+    if (result.successfulSwaps.length > 0 || result.successfulCloses.length > 0) {
+      // Calculate separate fees for sell and close operations
+      // For sell: 0.5% of total SOL received from sales
+      const sellFeeDistribution = calculateFeeDistribution('SELL', result.successfulSwaps.length, result.totalReceived)
+      // For close: fixed fee per account closed
+      const closeFeeDistribution = calculateFeeDistribution('CLOSE', result.successfulCloses.length)
+      
+      // Combine fees
+      const totalFees = sellFeeDistribution.totalFee + closeFeeDistribution.totalFee
+      const totalDevFee = sellFeeDistribution.devFee + closeFeeDistribution.devFee
+      const totalReferralFee = sellFeeDistribution.referralFee + closeFeeDistribution.referralFee
+      const totalOperations = result.successfulSwaps.length + result.successfulCloses.length
+      
       result.feeInfo = {
-        totalFees: feeDistribution.totalFee,
-        devFee: feeDistribution.devFee,
-        referralFee: feeDistribution.referralFee,
-        feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
-        totalOperations: totalSuccessfulOperations,
+        totalFees,
+        devFee: totalDevFee,
+        referralFee: totalReferralFee,
+        feePerOperation: totalOperations > 0 ? totalFees / totalOperations : 0, // Average fee per operation
+        totalOperations,
+        operationType: 'SELL' as FeeOperationType, // Primary operation type
+        sellFeeRate: getFeeForOperation('SELL', result.totalReceived),
+        closeFeeRate: getFeeForOperation('CLOSE')
       }
-      console.log(`Fees processed inline: ${feeDistribution.totalFee} SOL total (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
+      
+      console.log(`Fees included inline: ${totalFees} SOL total (Sell: ${sellFeeDistribution.totalFee} from ${result.totalReceived} SOL received, Close: ${closeFeeDistribution.totalFee})`)
     }
 
     // Operation is successful if we have successful sales OR successful closes
@@ -1171,7 +1261,8 @@ async function closeTokenAccounts(
   tokens: UserToken[],
   userPublicKey: string,
   connection: Connection,
-  signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
+  signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>,
+  sellData?: { successfulSwapsCount: number; totalSolReceived: number }
 ): Promise<{ successful: string[]; failed: Array<{ mintAddress: string; error: string }>; signatures: string[] }> {
   const result = {
     successful: [] as string[],
@@ -1302,14 +1393,23 @@ async function closeTokenAccounts(
 
     if (burnInstructions.length > 0 || closeInstructions.length > 0) {
       try {
-        // Add fee instructions for successful closes
-        const feeInstructions = createFeeTransferInstructions(
+        // Add fee instructions for successful closes (fixed fee per account)
+        const closeFeeInstructions = createFeeTransferInstructions(
           new PublicKey(userPublicKey),
+          'CLOSE',
           tokensToProcess.length
         )
         
+        // Add sell fee instructions if sell data is provided (0.5% of total SOL received)
+        const sellFeeInstructions = sellData ? createFeeTransferInstructions(
+          new PublicKey(userPublicKey),
+          'SELL',
+          sellData.successfulSwapsCount,
+          sellData.totalSolReceived
+        ) : []
+        
         // Combine burn, close, and fee instructions in the same transaction
-        const allInstructions = [...burnInstructions, ...closeInstructions, ...feeInstructions]
+        const allInstructions = [...burnInstructions, ...closeInstructions, ...closeFeeInstructions, ...sellFeeInstructions]
         
         // Create transaction with burn + close + fee instructions
         const { blockhash } = await connection.getLatestBlockhash('confirmed')
@@ -1397,8 +1497,9 @@ export async function executeBulkBuy(
       totalFees: 0,
       devFee: 0,
       referralFee: 0,
-      feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
+      feePerOperation: 0, // Will be calculated as 1% of SOL budget
       totalOperations: 0,
+      operationType: 'BUY' as FeeOperationType
     }
   }
 
@@ -1433,10 +1534,14 @@ export async function executeBulkBuy(
     for (const { mint, quote } of validQuotes) {
       if (!quote) continue
 
-      // Create fee instructions for this individual purchase
+      // Include fee instructions in the swap transaction
+      // For buy: 0.5% of total SOL budget divided by number of tokens
+      const feePerTransaction = (request.solAmount * FEE_CONFIG.FEES.BUY_PERCENTAGE) / (100 * request.tokenMints.length)
       const feeInstructions = createJupiterFeeInstructions(
         new PublicKey(userPublicKey),
-        1 // 1 successful operation per purchase
+        'BUY',
+        1, // 1 token per transaction
+        feePerTransaction
       )
 
       const swapTransaction = await getSwapTransaction(
@@ -1504,17 +1609,21 @@ export async function executeBulkBuy(
     result.totalSpent = (amountPerToken * result.successfulPurchases.length) / LAMPORTS_PER_SOL
     result.success = result.successfulPurchases.length > 0
 
-    // Calculate and populate fee information
+    // Calculate and populate fee information (fees are now included inline in transactions)
     if (result.successfulPurchases.length > 0) {
-      const feeDistribution = calculateFeeDistribution(result.successfulPurchases.length)
+      // For buy: 0.5% of total SOL budget (request.solAmount)
+      const feeDistribution = calculateFeeDistribution('BUY', result.successfulPurchases.length, request.solAmount)
+      
       result.feeInfo = {
         totalFees: feeDistribution.totalFee,
         devFee: feeDistribution.devFee,
         referralFee: feeDistribution.referralFee,
-        feePerOperation: FEE_CONFIG.FEE_PER_OPERATION,
+        feePerOperation: getFeeForOperation('BUY', request.solAmount),
         totalOperations: result.successfulPurchases.length,
+        operationType: 'BUY' as FeeOperationType
       }
-      console.log(`Fees processed inline: ${feeDistribution.totalFee} SOL total (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
+      
+      console.log(`Fees included inline: ${feeDistribution.totalFee} SOL total (0.5% of ${request.solAmount} SOL budget) (Dev: ${feeDistribution.devFee})`)
     }
 
     return result
@@ -1716,7 +1825,7 @@ export async function closeZeroBalanceTokens(
           console.log(`- Closed ${closeInstructions.length} accounts`)
           
           // Log fee summary (fees are now included in the transaction)
-          const feeDistribution = calculateFeeDistribution(tokensToProcess.length)
+          const feeDistribution = calculateFeeDistribution('CLOSE', tokensToProcess.length)
           console.log(`Fees processed inline: ${feeDistribution.totalFee} SOL total (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
         }
       } catch (transactionError) {
@@ -1738,3 +1847,4 @@ export async function closeZeroBalanceTokens(
     return result
   }
 }
+

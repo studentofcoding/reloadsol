@@ -5,17 +5,18 @@ import { useWallet, useConnection } from '../components/WalletProvider'
 import PhantomWalletButton from './PhantomWalletButton'
 import TrendingTokens from './TrendingTokens'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
-import { executeBulkBuy, parseMintAddresses, isValidMintAddress } from '@/utils/jupiter'
+import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
 import { trackBuyOperation } from '@/utils/trading-tracker'
+import { connection } from '../utils/connection'
 
 export default function BulkTokenBuyer() {
   const { publicKey, signAllTransactions, connected } = useWallet()
   const { connection } = useConnection()
   
   // Form state
-  const [solAmount, setSolAmount] = useState<string>('')
+  const [solAmount, setSolAmount] = useState<string>('0.1')
   const [tokenMints, setTokenMints] = useState<string>('')
   const [slippage, setSlippage] = useState<number>(100) // 1%
   const [priorityFee, setPriorityFee] = useState<number>(100000) // 0.0001 SOL
@@ -374,6 +375,8 @@ export default function BulkTokenBuyer() {
     }
   }
 
+  const feeRates = getAllFeeRates()
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
       {/* Trending Tokens Column */}
@@ -655,6 +658,28 @@ export default function BulkTokenBuyer() {
                   </select>
                 </div>
               </div>
+
+              {/* Fee Structure Display */}
+              {/* <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h3 className="text-sm font-semibold text-blue-800 mb-2">Fee Structure</h3>
+                <div className="grid grid-cols-3 gap-4 text-sm">
+                  <div className="text-center">
+                    <div className="font-medium text-blue-700">Buy Operations</div>
+                    <div className="text-blue-600">{feeRates.buyPercentage}% of SOL budget</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="font-medium text-orange-700">Sell Operations</div>
+                    <div className="text-orange-600">{feeRates.sellPercentage}% of SOL received</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="font-medium text-green-700">Close Operations</div>
+                    <div className="text-green-600">{feeRates.closeFixed} SOL per account</div>
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-gray-600 text-center">
+                  All fees go to dev wallet • No referral splits
+                </div>
+              </div> */}
 
               {/* Buy Button */}
               <button

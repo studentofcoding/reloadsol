@@ -11,6 +11,8 @@ import {
   closeZeroBalanceTokens,
   getTokenSolValue,
   isPumpFunToken,
+  getAllFeeRates,
+  getFeeForOperation,
   UserToken, 
   BulkSellRequest, 
   BulkSellResult 
@@ -55,6 +57,8 @@ export default function BulkTokenSeller() {
   const [solPriceUsd, setSolPriceUsd] = useState<number>(DEFAULT_SOL_PRICE_USD)
   const [isLoadingSolPrice, setIsLoadingSolPrice] = useState<boolean>(false)
   const [priceLastUpdated, setPriceLastUpdated] = useState<number>(0)
+
+  const feeRates = getAllFeeRates()
 
   // Fetch SOL price from our API endpoint
   const fetchSolPrice = useCallback(async () => {
@@ -438,7 +442,12 @@ export default function BulkTokenSeller() {
     return () => clearInterval(interval)
   }, [fetchSolPrice])
 
-  const estimatedSOL = selectedTokens.reduce((total, token) => total + token.solValue, 0)
+  // Calculate estimated SOL after fees
+  const grossSOL = selectedTokens.reduce((total, token) => total + token.solValue, 0)
+  const sellFee = getFeeForOperation('SELL', grossSOL) // 0.5% of SOL received
+  const closeFee = getFeeForOperation('CLOSE') * (selectedTokens.length + selectedZeroBalanceTokens.length) // Fixed fee per account
+  const rentRecovery = (selectedTokens.length + selectedZeroBalanceTokens.length) * 0.00203928 // Rent recovery
+  const estimatedSOL = grossSOL - sellFee - closeFee + rentRecovery
 
   // Handle token selection for chart display
   const handleSelectToken = useCallback((mintAddress: string) => {
@@ -471,6 +480,28 @@ export default function BulkTokenSeller() {
           <PhantomWalletButton />
         </div>
       </div>
+
+      {/* Fee Structure Display */}
+      {/* <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+        <h3 className="text-sm font-semibold text-blue-800 mb-2">Fee Structure</h3>
+        <div className="grid grid-cols-3 gap-4 text-sm">
+          <div className="text-center">
+            <div className="font-medium text-blue-700">Buy Operations</div>
+            <div className="text-blue-600">{feeRates.buyPercentage}% of SOL budget</div>
+          </div>
+          <div className="text-center">
+            <div className="font-medium text-orange-700">Sell Operations</div>
+            <div className="text-orange-600">{feeRates.sellPercentage}% of SOL received</div>
+          </div>
+          <div className="text-center">
+            <div className="font-medium text-green-700">Close Operations</div>
+            <div className="text-green-600">{feeRates.closeFixed} SOL per account</div>
+          </div>
+        </div>
+        <div className="mt-2 text-xs text-gray-600 text-center">
+          All fees go to dev wallet • No referral splits
+        </div>
+      </div> */}
 
       {connected && (
         <div className="space-y-8">
@@ -781,9 +812,9 @@ export default function BulkTokenSeller() {
                     <span className="text-xl font-bold text-white">{selectedTokens.length} Swap & {selectedTokens.length +selectedZeroBalanceTokens.length} Close</span>
                   </div>
                   <div>
-                    <span className="block text-gray-300 font-medium">Estimated SOL</span>
-                    <span className="text-xl font-bold text-white">{(estimatedSOL + ((selectedTokens.length + selectedZeroBalanceTokens.length) * 0.00203928)).toFixed(4)}</span>
-                    <span className="block text-gray-400 text-sm">≈ ${solToUsd(estimatedSOL + ((selectedTokens.length + selectedZeroBalanceTokens.length) * 0.00203928)).toFixed(2)}</span>
+                    <span className="block text-gray-300 font-medium">You'll receive</span>
+                    <span className="text-xl font-bold text-white">~ {estimatedSOL.toFixed(4)} SOL</span>
+                    <span className="block text-gray-400 text-sm">≈ ${solToUsd(estimatedSOL).toFixed(2)}</span>
                     <span className="block text-gray-500 text-xs mt-1">
                       {isLoadingSolPrice ? (
                         <span className="flex items-center">
@@ -792,7 +823,7 @@ export default function BulkTokenSeller() {
                         </span>
                       ) : (
                         <span>
-                          Price updated {priceLastUpdated ? `${Math.floor((Date.now() - priceLastUpdated) / 1000)}s ago` : 'on load'}
+                          After fees & with rent recovery
                         </span>
                       )}
                     </span>
@@ -946,7 +977,7 @@ export default function BulkTokenSeller() {
                     <span className="text-xl font-bold">{result.successfulCloses.length}</span>
                   </div>
                   <div className="text-white">
-                    <span className="block font-medium">SOL Received</span>
+                    <span className="block font-medium">Final SOL Received</span>
                     <span className="text-xl font-bold">{result.totalReceived.toFixed(4)}</span>
                     <span className="block text-sm text-gray-400">≈ ${solToUsd(result.totalReceived).toFixed(2)}</span>
                   </div>

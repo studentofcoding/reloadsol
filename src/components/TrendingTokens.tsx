@@ -229,33 +229,33 @@ export default function TrendingTokens({
 
   // Format timestamp as time ago (e.g. "2 hours ago", "3 days ago")
   const formatTimeAgo = (timestamp: number | undefined): string => {
-    console.log('Token timestamp received:', timestamp, typeof timestamp);
+    // console.log('Token timestamp received:', timestamp, typeof timestamp);
     
     if (!timestamp || isNaN(timestamp)) {
-      console.log('Invalid timestamp detected:', timestamp);
+      // console.log('Invalid timestamp detected:', timestamp);
       return "Unknown time"
     }
     
     // Since we've normalized timestamps to seconds in the API
     // We need to convert to milliseconds for JavaScript Date
     const date = new Date(timestamp * 1000)
-    console.log('Converted date:', date.toString(), 'Valid:', !isNaN(date.getTime()));
+    // console.log('Converted date:', date.toString(), 'Valid:', !isNaN(date.getTime()));
     
     // Check if date is valid
     if (isNaN(date.getTime())) {
-      console.log('Date is invalid after conversion:', timestamp);
+      // console.log('Date is invalid after conversion:', timestamp);
       return "Unknown time"
     }
     
     // Special case for future dates (invalid)
     const now = new Date()
     if (date > now) {
-      console.log('Date is in the future, likely invalid:', date);
+      // console.log('Date is in the future, likely invalid:', date);
       return "Recently"
     }
     
     const seconds = Math.floor((now.getTime() - date.getTime()) / 1000)
-    console.log('Time difference in seconds:', seconds);
+    // console.log('Time difference in seconds:', seconds);
     
     // Handle timestamps too far in the past (likely invalid)
     if (seconds > 10 * 365 * 24 * 60 * 60) { // More than 10 years
@@ -347,10 +347,10 @@ export default function TrendingTokens({
             <div className="text-gray-400 text-center py-6">No trending tokens found</div>
           ) : (
             trendingTokens.map((token, index) => {
-              console.log(`Token ${token.token_symbol} (${token.token_address}):`, {
-                created_at: token.created_at,
-                type: typeof token.created_at
-              });
+              // console.log(`Token ${token.token_symbol} (${token.token_address}):`, {
+              //   created_at: token.created_at,
+              //   type: typeof token.created_at
+              // });
               
               return (
               <div 
