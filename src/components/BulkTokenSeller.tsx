@@ -16,6 +16,7 @@ import {
   BulkSellResult 
 } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
+import { trackSellOperation, trackCloseOperation } from '@/utils/trading-tracker'
 
 // Default SOL to USD conversion rate (fallback if API fails)
 const DEFAULT_SOL_PRICE_USD = 145;
@@ -322,6 +323,68 @@ export default function BulkTokenSeller() {
       setBalanceAfter(balanceAfterSOL)
 
       setResult(sellResult)
+
+      // Track the sell operation
+      if (sellResult) {
+        // Track sell operations (swaps)
+        if (sellResult.successfulSwaps.length > 0 || sellResult.failedSwaps.length > 0) {
+          const sellTokenData = selectedTokens.map(token => ({
+            mintAddress: token.mintAddress,
+            symbol: token.symbol,
+            name: token.name,
+            logoURI: token.logoURI
+          }))
+
+          const sellErrors = sellResult.failedSwaps.length > 0 
+            ? sellResult.failedSwaps.map(f => f.error)
+            : undefined
+
+          trackSellOperation(
+            publicKey.toString(),
+            sellTokenData,
+            sellResult.totalReceived,
+            sellResult.successfulSwaps.length,
+            sellResult.failedSwaps.length,
+            sellResult.signatures,
+            sellResult.feeInfo.totalFees,
+            slippage,
+            priorityFee,
+            sellErrors
+          )
+        }
+
+        // Track close operations  
+        if (sellResult.successfulCloses.length > 0 || sellResult.failedCloses.length > 0) {
+          const allClosedTokens = [
+            ...selectedTokens.filter(token => 
+              sellResult.successfulCloses.includes(token.mintAddress) ||
+              sellResult.failedCloses.some(f => f.mintAddress === token.mintAddress)
+            ),
+            ...selectedZeroBalanceTokens
+          ]
+
+          const closeTokenData = allClosedTokens.map(token => ({
+            mintAddress: token.mintAddress,
+            symbol: token.symbol,
+            name: token.name,
+            logoURI: token.logoURI
+          }))
+
+          const closeErrors = sellResult.failedCloses.length > 0 
+            ? sellResult.failedCloses.map(f => f.error)
+            : undefined
+
+          trackCloseOperation(
+            publicKey.toString(),
+            closeTokenData,
+            sellResult.successfulCloses.length,
+            sellResult.failedCloses.length,
+            sellResult.signatures,
+            sellResult.feeInfo.totalFees,
+            closeErrors
+          )
+        }
+      }
 
       if (sellResult.success || sellResult.successfulCloses.length > 0) {
         // Refresh token list and clear selection

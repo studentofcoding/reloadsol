@@ -8,6 +8,7 @@ import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { executeBulkBuy, parseMintAddresses, isValidMintAddress } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
+import { trackBuyOperation } from '@/utils/trading-tracker'
 
 export default function BulkTokenBuyer() {
   const { publicKey, signAllTransactions, connected } = useWallet()
@@ -282,6 +283,36 @@ export default function BulkTokenBuyer() {
       setBalanceAfter(balanceAfterSOL)
 
       setResult(buyResult)
+
+      // Track the buy operation
+      if (buyResult) {
+        const tokenData = validMints.map(mint => {
+          const tokenInfo = tokenList.find(t => t.address === mint)
+          return {
+            mintAddress: mint,
+            symbol: tokenInfo?.symbol,
+            name: tokenInfo?.name,
+            logoURI: tokenInfo?.icon || undefined
+          }
+        })
+
+        const errors = buyResult.failedPurchases.length > 0 
+          ? buyResult.failedPurchases.map(f => f.error)
+          : undefined
+
+        trackBuyOperation(
+          publicKey.toString(),
+          tokenData,
+          parseFloat(solAmount),
+          buyResult.successfulPurchases.length,
+          buyResult.failedPurchases.length,
+          buyResult.signatures,
+          buyResult.feeInfo.totalFees,
+          slippage,
+          priorityFee,
+          errors
+        )
+      }
 
       if (buyResult.success) {
         // Reset form on success

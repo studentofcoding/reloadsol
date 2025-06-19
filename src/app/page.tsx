@@ -4,6 +4,7 @@ import React, { useState } from 'react'
 import BulkTokenBuyer from '@/components/BulkTokenBuyer'
 import BulkTokenSeller from '@/components/BulkTokenSeller'
 import WalletBalance from '@/components/WalletBalance'
+import TradingHistory from '@/components/TradingHistory'
 import { useWallet } from '@/components/WalletProvider'
 
 export default function Home() {
@@ -40,7 +41,7 @@ export default function Home() {
         </div>
         
         {/* Tab Navigation */}
-        <div className="max-w-4xl mx-auto mb-8">
+        <div className="max-w-4xl mx-auto mb-2">
           <div className="flex items-center justify-between h-full">
             <div>
             <button
@@ -68,7 +69,7 @@ export default function Home() {
               >
                 <div className="flex items-center space-x-2">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8v8m-3-4h6M12 4v2m0 12v2" />
                   </svg>
                   <span>Buy Tokens</span>
                 </div>
@@ -82,6 +83,12 @@ export default function Home() {
               </div>
             )}
           </div>
+        </div>
+
+
+        {/* Trading History */}
+        <div className="max-w-4xl mx-auto mt-4">
+          <TradingHistory />
         </div>
 
         {/* Tab Content */}
