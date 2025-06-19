@@ -6,6 +6,7 @@ import BulkTokenSeller from '@/components/BulkTokenSeller'
 import WalletBalance from '@/components/WalletBalance'
 import TradingHistory from '@/components/TradingHistory'
 import { useWallet } from '@/components/WalletProvider'
+import ConnectionStatus from '@/components/ConnectionStatus'
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'buy' | 'sell'>('sell')
@@ -14,7 +15,7 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-black py-8">
       <div className="container mx-auto px-4">
-        <div className="text-center mb-16">
+        <div className="text-center mb-12">
           <h1 className="text-5xl font-bold text-white mb-4">
             reloadSOL
           </h1>
@@ -24,19 +25,22 @@ export default function Home() {
             Powered by <img className="inline-block h-[1.25rem]" src="https://s3.coinmarketcap.com/static-gravity/image/4dc5810324c74688a5a1b805f7506ec5.jpg" alt="Jupiter Logo" /> Jupiter, <img className="inline-block h-[1.25rem]" src="https://pbs.twimg.com/profile_images/1902372646249234432/T4kNyTq0_400x400.jpg" alt="Superteam Logo" /> Superteam Indonesia and 
             a part of <img className="inline-block h-[1.25rem]" src="https://pbs.twimg.com/profile_images/1843973608378421248/CzmuKtDx_400x400.jpg" alt="Colosseum Breakout" />.
           </h2>
-          <div className="mt-6 flex items-center justify-center space-x-6 text-sm text-gray-500">
+          <div className="mt-6 flex items-center justify-center space-x-6 text-sm text-gray-400">
             <div className="flex items-center space-x-2">
-              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full"></div>
+              <div className="w-2 h-2 bg-gray-300 rounded-full"></div>
               <span>Buy and sell more than 10 tokens</span>
             </div>
             <div className="flex items-center space-x-2">
-              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full"></div>
+              <div className="w-2 h-2 bg-gray-300 rounded-full"></div>
               <span>Trending tokens insights</span>
             </div>
             <div className="flex items-center space-x-2">
-              <div className="w-1.5 h-1.5 bg-gray-500 rounded-full"></div>
+              <div className="w-2 h-2 bg-gray-300 rounded-full"></div>
               <span>Catch trend faster and smarter</span>
             </div>
+          </div>
+          <div className="mt-6 flex items-center justify-center space-x-4">
+            <ConnectionStatus />
           </div>
         </div>
         

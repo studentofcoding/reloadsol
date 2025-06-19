@@ -1,19 +1,11 @@
 import { Connection, clusterApiUrl } from '@solana/web3.js'
+import { createConnection, connection as defaultConnection } from './connection'
 
-// RPC endpoints
-export const RPC_ENDPOINTS = {
-  mainnet: process.env.NEXT_PUBLIC_RPC_URL || clusterApiUrl('mainnet-beta'),
-  devnet: clusterApiUrl('devnet'),
-  testnet: clusterApiUrl('testnet'),
-}
+// Re-export the connection utilities
+export { createConnection, RPC_ENDPOINTS } from './connection'
 
-// Create connection
-export const createConnection = (network: 'mainnet' | 'devnet' | 'testnet' = 'mainnet') => {
-  return new Connection(RPC_ENDPOINTS[network], 'confirmed')
-}
-
-// Default connection
-export const connection = createConnection('mainnet')
+// Default connection (re-exported)
+export const connection = defaultConnection
 
 // Jupiter API endpoints
 export const JUPITER_API = {

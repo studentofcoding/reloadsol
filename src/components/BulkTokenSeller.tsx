@@ -45,6 +45,7 @@ export default function BulkTokenSeller() {
   const [error, setError] = useState<string>('')
   const [selectedToken, setSelectedToken] = useState<string>('')
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
+  const [showDustOnly, setShowDustOnly] = useState<boolean>(false)
   
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0)
@@ -151,11 +152,12 @@ export default function BulkTokenSeller() {
 
   // Select all tokens
   const selectAllTokens = () => {
-    if (userTokens.length > 22) {
-      setSelectedTokens(userTokens.slice(0, 22))
+    const tokensToSelect = showDustOnly ? filteredUserTokens : userTokens
+    if (tokensToSelect.length > 22) {
+      setSelectedTokens(tokensToSelect.slice(0, 22))
       setError('Selection limited to first 22 tokens (Solana transaction limit)')
     } else {
-      setSelectedTokens([...userTokens])
+      setSelectedTokens([...tokensToSelect])
     }
   }
 
@@ -445,6 +447,18 @@ export default function BulkTokenSeller() {
     setIsChartLoading(true)
   }, [])
 
+  // Filter tokens based on dust filter
+  const filteredUserTokens = showDustOnly 
+    ? userTokens.filter(token => solToUsd(token.solValue) < 0.1)
+    : userTokens
+
+  // Toggle dust filter
+  const toggleDustFilter = () => {
+    setShowDustOnly(prev => !prev)
+    // Clear selection when toggling filter to avoid confusion
+    setSelectedTokens([])
+  }
+
   return (
     <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 space-y-8">
       {/* Header */}
@@ -494,10 +508,26 @@ export default function BulkTokenSeller() {
             <div>
               <h3 className="text-xl font-semibold text-white mb-1">Your Tokens</h3>
               <p className="text-gray-400 text-sm">
-                Select tokens to sell • {selectedTokens.length} of {userTokens.length} selected
+                Select tokens to sell • {selectedTokens.length} of {showDustOnly ? `${filteredUserTokens.length} dust` : filteredUserTokens.length} selected
+                {showDustOnly && filteredUserTokens.length !== userTokens.length && (
+                  <span className="text-gray-500"> ({userTokens.length} total)</span>
+                )}
               </p>
             </div>
             <div className="flex items-center space-x-3">
+              <button
+                onClick={toggleDustFilter}
+                className={`px-4 py-2 rounded-lg transition-colors text-sm flex items-center space-x-2 ${
+                  showDustOnly
+                    ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
+                    : 'bg-gray-600 hover:bg-gray-500 text-white'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                </svg>
+                <span>{showDustOnly ? 'Show All' : 'Dust < $0.1'}</span>
+              </button>
               <button
                 onClick={fetchTokens}
                 disabled={isLoadingTokens}
@@ -514,7 +544,7 @@ export default function BulkTokenSeller() {
               </button>
               <button
                 onClick={selectAllTokens}
-                disabled={userTokens.length === 0}
+                disabled={filteredUserTokens.length === 0}
                 className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors text-sm"
               >
                 Select All
@@ -564,9 +594,25 @@ export default function BulkTokenSeller() {
                 Refresh Tokens
               </button>
             </div>
+          ) : filteredUserTokens.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
+                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-300 mb-2">No dust tokens found</h3>
+              <p className="text-gray-400 mb-4">You don't have any tokens worth less than $0.1</p>
+              <button
+                onClick={toggleDustFilter}
+                className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
+              >
+                Show All Tokens
+              </button>
+            </div>
           ) : (
             <div className="grid gap-3 max-h-96 overflow-y-auto">
-              {userTokens.map((token) => {
+              {filteredUserTokens.map((token) => {
                 const isSelected = selectedTokens.some(t => t.mintAddress === token.mintAddress)
                 return (
                   <div

@@ -4,6 +4,7 @@ import React, { createContext, useContext, useEffect, useState, useMemo } from '
 import { Connection as SolanaConnection, PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js'
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base'
 import { clusterApiUrl } from '@solana/web3.js'
+import { createConnection } from '@/utils/connection'
 
 // Phantom wallet interface
 interface PhantomProvider {
@@ -49,15 +50,6 @@ export function WalletProvider({ children }: WalletProviderProps) {
   const [connected, setConnected] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [provider, setProvider] = useState<PhantomProvider | null>(null)
-
-  // Connection endpoint
-  const network = WalletAdapterNetwork.Mainnet
-  const endpoint = useMemo(() => {
-    if (process.env.NEXT_PUBLIC_RPC_URL) {
-      return process.env.NEXT_PUBLIC_RPC_URL
-    }
-    return clusterApiUrl(network)
-  }, [network])
 
   // Check for Phantom wallet
   useEffect(() => {
@@ -190,7 +182,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
   return (
     <WalletContext.Provider value={contextValue}>
-      <ConnectionProvider endpoint={endpoint}>
+      <ConnectionProvider>
         {children}
       </ConnectionProvider>
     </WalletContext.Provider>
@@ -206,16 +198,16 @@ export function useWallet(): WalletContextType {
   return context
 }
 
-// Connection context
-const ConnectionContext = createContext<SolanaConnection | null>(null)
+// Use our custom connection utility
+const ConnectionContext = createContext<any>(null)
 
 interface ConnectionProviderProps {
-  endpoint: string
   children: React.ReactNode
 }
 
-function ConnectionProvider({ endpoint, children }: ConnectionProviderProps) {
-  const connection = useMemo(() => new SolanaConnection(endpoint, 'confirmed'), [endpoint])
+function ConnectionProvider({ children }: ConnectionProviderProps) {
+  // Use our proxy-aware connection
+  const connection = useMemo(() => createConnection('mainnet'), [])
   
   return (
     <ConnectionContext.Provider value={connection}>
