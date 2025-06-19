@@ -107,6 +107,15 @@ export default function TradingHistory() {
     linkElement.click()
   }
 
+  const openTransactionOnSolscan = (signatures: string[]) => {
+    if (signatures && signatures.length > 0) {
+      // Open the first signature on Solscan
+      const signature = signatures[0]
+      const solscanUrl = `https://solscan.io/tx/${signature}`
+      window.open(solscanUrl, '_blank', 'noopener,noreferrer')
+    }
+  }
+
   return (
     <div className="">
 
@@ -116,19 +125,34 @@ export default function TradingHistory() {
           <p className="text-gray-400 text-sm">Trade on reloadsol to track your history</p>
         </div>
       ) : (
-        <div className="flex space-x-4 overflow-x-auto p-3 px-1">
+        <div className="flex space-x-4 overflow-x-auto mb-3">
           {records.slice(0, 10).map((record) => (
             <div
               key={record.id}
-              className="flex-shrink-0 p-0 hover:bg-gray-800/30 transition-colors min-w-[180px] rounded-lg"
+              className="flex-shrink-0 p-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group p-4"
+              onClick={() => openTransactionOnSolscan(record.signatures)}
+              title="Click to view transaction on Solscan"
             >
               {/* Line 1: Timestamp */}
-              <div className="text-xs text-gray-400 mb-1">
-                {formatRelativeTime(record.timestamp)}
+              <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
+                <span>{formatRelativeTime(record.timestamp)}</span>
+                <svg 
+                  className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity duration-200" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    strokeWidth={2} 
+                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
+                  />
+                </svg>
               </div>
               
               {/* Line 2: Operation type and amount */}
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   <span className="text-sm text-gray-400 capitalize font-medium flex items-center space-x-2">
                     {record.operationType}
