@@ -764,7 +764,7 @@ export default function BulkTokenBuyer() {
                       </div>
                       <div className="text-white md:col-span-1 col-span-2">
                         <span className="block font-medium">Total Spent</span>
-                        <span className="text-xl font-bold">{result.totalSpent.toFixed(4)} SOL</span>
+                        <span className="text-xl font-bold">{(balanceAfter - balanceBefore).toFixed(4)} SOL</span>
                       </div>
                     </div>
                   </div>
