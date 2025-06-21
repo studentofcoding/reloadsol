@@ -50,17 +50,6 @@ export default function TradingHistory() {
     }
   }, [loadRecords])
 
-  if (!connected) {
-    return (
-      <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8">
-        <div className="text-center">
-          <h3 className="text-xl font-semibold text-white mb-2">Trading History</h3>
-          <p className="text-gray-400">Connect your wallet to see trading history</p>
-        </div>
-      </div>
-    )
-  }
-
   const getOperationIcon = (type: string) => {
     switch (type) {
       case 'buy':
@@ -120,7 +109,7 @@ export default function TradingHistory() {
     <div className="">
 
       {/* Horizontal Records List */}
-      {records.length === 0 ? (
+      {connected && records.length === 0 ? (
         <div className="text-center py-4">
           <p className="text-gray-400 text-sm">Trade on reloadsol to track your history</p>
         </div>

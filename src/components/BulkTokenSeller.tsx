@@ -18,7 +18,7 @@ import {
   BulkSellResult 
 } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
-import { trackSellOperation, trackCloseOperation } from '@/utils/trading-tracker'
+import { trackSell, trackClose } from '@/utils/operations-api'
 
 // Default SOL to USD conversion rate (fallback if API fails)
 const DEFAULT_SOL_PRICE_USD = 145;
@@ -345,18 +345,22 @@ export default function BulkTokenSeller() {
             ? sellResult.failedSwaps.map(f => f.error)
             : undefined
 
-          trackSellOperation(
-            publicKey.toString(),
-            sellTokenData,
-            sellResult.totalReceived,
-            sellResult.successfulSwaps.length,
-            sellResult.failedSwaps.length,
-            sellResult.signatures,
-            sellResult.feeInfo.totalFees,
-            slippage,
-            priorityFee,
-            sellErrors
-          )
+          // Track sell operation securely via server route
+          try {
+            const trackResult = await trackSell(
+              publicKey.toString(),
+              sellResult.successfulSwaps.length,
+              {
+                failureCount: sellResult.failedSwaps.length,
+                solAmount: sellResult.totalReceived,
+                tokenMints: sellResult.successfulSwaps.map(s => s.mintAddress),
+                signatures: sellResult.signatures,
+              }
+            );
+            console.log(`🎉 Earned ${trackResult.pointsEarned} points from sell operation!`);
+          } catch (trackError) {
+            console.error('Failed to track sell operation:', trackError);
+          }
         }
 
         // Track close operations  
@@ -380,15 +384,21 @@ export default function BulkTokenSeller() {
             ? sellResult.failedCloses.map(f => f.error)
             : undefined
 
-          trackCloseOperation(
-            publicKey.toString(),
-            closeTokenData,
-            sellResult.successfulCloses.length,
-            sellResult.failedCloses.length,
-            sellResult.signatures,
-            sellResult.feeInfo.totalFees,
-            closeErrors
-          )
+          // Track close operation securely via server route
+          try {
+            const trackResult = await trackClose(
+              publicKey.toString(),
+              sellResult.successfulCloses.length,
+              {
+                failureCount: sellResult.failedCloses.length,
+                tokenMints: sellResult.successfulCloses,
+                signatures: sellResult.signatures,
+              }
+            );
+            console.log(`🎉 Earned ${trackResult.pointsEarned} points from close operation!`);
+          } catch (trackError) {
+            console.error('Failed to track close operation:', trackError);
+          }
         }
       }
 
@@ -1206,9 +1216,10 @@ export default function BulkTokenSeller() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
               </svg>
             </div>
-            <h3 className="text-xl font-semibold text-white mb-2">Connect Your Wallet</h3>
+            {/* <h3 className="text-xl font-semibold text-white mb-2">Connect Your Wallet</h3> */}
             <p className="text-slate-400 mb-6 max-w-md mx-auto">
-              Connect your Solana wallet to view and sell your tokens with automatic account closing
+              Sell any token with automatic account closing  <br />
+              and Reload your Solana
             </p>
             <PhantomWalletButton />
           </div>

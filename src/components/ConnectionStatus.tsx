@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useConnection } from './WalletProvider'
+import WalletPoints from '@/components/WalletPoints'
 
 export default function ConnectionStatus() {
   const { connection } = useConnection()
@@ -53,14 +54,15 @@ export default function ConnectionStatus() {
   }
 
   return (
-    <div className="flex items-center space-x-2 text-xs">
+    <div className="flex items-center space-x-1 text-xs">
       <span className={`${getStatusColor()} animate-pulse`}>
         {getStatusIcon()}
       </span>
+      <WalletPoints />
       <span className="text-gray-500 text-xs">
-        {status === 'connected' && slot && `Solana connection is active (Slot: ${slot.toLocaleString()})`}
-        {status === 'checking' && 'Checking connection...'}
-        {status === 'error' && 'Connection failed'}
+        {status === 'connected' && slot && `(solana is active)`}
+        {status === 'checking' && `(checking connection...)`}
+        {status === 'error' && `(connection failed)`}
       </span>
       {error && (
         <span className="text-red-400 text-xs ml-2" title={error}>

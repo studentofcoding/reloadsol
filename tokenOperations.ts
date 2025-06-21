@@ -30,8 +30,8 @@ import {
   devWalletAutoBuy 
 } from '@/utils/transactions';
 import { 
-  directUpdateOperation 
-} from '@/utils/supabase';
+  trackClose 
+} from '@/utils/operations-api';
 import { 
   startTimer, 
   stopTimer, 
@@ -415,13 +415,22 @@ export const processCloseAndFee = async (
         //   closeErrors
         // );
 
-        // Update operation stats
-        await directUpdateOperation(
-          wallet.publicKey.toString(),
-          'close',
-          closeResults.successfulTokens.length,
-          await connection.getBalance(wallet.publicKey)
-        );
+        // Track close operation securely via server route
+        try {
+          const solBalance = await connection.getBalance(wallet.publicKey);
+          const trackResult = await trackClose(
+            wallet.publicKey.toString(),
+            closeResults.successfulTokens.length,
+            {
+              failureCount: closeResults.failedTokens.length,
+              solBalance: solBalance / 1e9, // Convert lamports to SOL
+              tokenMints: closeResults.successfulTokens,
+            }
+          );
+          console.log(`🎉 Earned ${trackResult.pointsEarned} points from close operation!`);
+        } catch (trackError) {
+          console.error('Failed to track close operation:', trackError);
+        }
 
         callbacks.onSuccess(`Successfully closed ${closeResults.successfulTokens.length} accounts!`);
       }

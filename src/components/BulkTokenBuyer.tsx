@@ -8,7 +8,7 @@ import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
-import { trackBuyOperation } from '@/utils/trading-tracker'
+import { trackBuy } from '@/utils/operations-api'
 import { connection } from '../utils/connection'
 
 export default function BulkTokenBuyer() {
@@ -301,18 +301,22 @@ export default function BulkTokenBuyer() {
           ? buyResult.failedPurchases.map(f => f.error)
           : undefined
 
-        trackBuyOperation(
-          publicKey.toString(),
-          tokenData,
-          parseFloat(solAmount),
-          buyResult.successfulPurchases.length,
-          buyResult.failedPurchases.length,
-          buyResult.signatures,
-          buyResult.feeInfo.totalFees,
-          slippage,
-          priorityFee,
-          errors
-        )
+        // Track buy operation securely via server route
+        try {
+          const trackResult = await trackBuy(
+            publicKey.toString(),
+            buyResult.successfulPurchases.length,
+            {
+              failureCount: buyResult.failedPurchases.length,
+              solAmount: parseFloat(solAmount),
+              tokenMints: validMints,
+              signatures: buyResult.signatures,
+            }
+          );
+          console.log(`🎉 Earned ${trackResult.pointsEarned} points from buy operation!`);
+        } catch (trackError) {
+          console.error('Failed to track buy operation:', trackError);
+        }
       }
 
       if (buyResult.success) {
@@ -378,11 +382,13 @@ export default function BulkTokenBuyer() {
   const feeRates = getAllFeeRates()
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+    <div className={`grid grid-cols-1 ${connected ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-8`}>
       {/* Trending Tokens Column */}
+      {connected && (
       <div className="lg:col-span-1">
         <TrendingTokens onSelectToken={handleSelectToken} />
       </div>
+      )}
       
       {/* Main Form Column */}
       <div className="lg:col-span-2">
@@ -884,9 +890,10 @@ export default function BulkTokenBuyer() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
                 </div>
-                <h3 className="text-xl font-semibold text-white mb-2">Connect Your Wallet</h3>
+                {/* <h3 className="text-xl font-semibold text-white mb-2">Connect Your Wallet</h3> */}
                 <p className="text-gray-400 mb-6 max-w-md mx-auto">
-                  Connect your Solana wallet to start buying tokens in bulk with our secure interface
+                  Buy any token in bulk, <br />
+                  trade faster and smarter with us
                 </p>
                 <PhantomWalletButton />
               </div>
