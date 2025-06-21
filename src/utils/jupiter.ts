@@ -810,17 +810,11 @@ export async function fetchZeroBalanceTokens(
 // Simple token info lookup (streamlined - NFT checking handled upstream)
 async function getTokenInfo(mintAddress: string): Promise<{ decimals: number; symbol: string; name: string; logoURI?: string } | null> {
   try {
-    // Try Jupiter's Token API first
-    const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
+    // Try Jupiter's Token API first with rate limiting
+    const jupiterResult = await jupiterAPI.fetchTokenInfo(mintAddress)
     
-    if (response.ok) {
-      const tokenData = await response.json()
-      return {
-        decimals: tokenData.decimals,
-        symbol: tokenData.symbol,
-        name: tokenData.name,
-        logoURI: tokenData.logoURI
-      }
+    if (jupiterResult) {
+      return jupiterResult
     }
 
     // Fallback to common tokens
@@ -985,15 +979,9 @@ function isTokenAccountFrozen(accountData: Buffer): boolean {
 // Additional check with Jupiter API for frozen status
 async function checkTokenFrozenStatusWithJupiter(mintAddress: string): Promise<boolean> {
   try {
-    const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
-    
-    if (response.ok) {
-      const tokenData = await response.json()
-      // Jupiter API might have frozen status or we can infer from other properties
-      return tokenData.frozen === true || tokenData.status === 'frozen'
-    }
+    return await jupiterAPI.checkFrozenStatus(mintAddress)
   } catch (error) {
-    console.warn(`Failed to check frozen status with Jupiter for ${mintAddress}:`, error)
+    console.warn(`Failed to check frozen status with Jupiter for ${mintAddress}:`, error instanceof Error ? error.message : error)
   }
   
   return false
@@ -1002,14 +990,9 @@ async function checkTokenFrozenStatusWithJupiter(mintAddress: string): Promise<b
 // Check if a token is a fungible token using Jupiter API
 async function isFungibleTokenWithJupiter(mintAddress: string): Promise<boolean> {
   try {
-    const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
-    
-    if (response.ok) {
-      // If Jupiter API returns data for this token, it's likely a fungible token
-      return true
-    }
+    return await jupiterAPI.checkIfFungibleToken(mintAddress)
   } catch (error) {
-    console.warn(`Failed to check fungible status with Jupiter for ${mintAddress}:`, error)
+    console.warn(`Failed to check fungible status with Jupiter for ${mintAddress}:`, error instanceof Error ? error.message : error)
   }
   
   return false
@@ -1867,4 +1850,193 @@ export async function closeZeroBalanceTokens(
     return result
   }
 }
+
+// Rate limiting and caching for Jupiter API calls
+class JupiterAPIManager {
+  private cache = new Map<string, { data: any; timestamp: number }>()
+  private requestQueue: Array<() => Promise<void>> = []
+  private isProcessing = false
+  private lastRequestTime = 0
+  private readonly MIN_REQUEST_INTERVAL = 200 // 200ms between requests (5 requests per second)
+  private readonly CACHE_DURATION = 5 * 60 * 1000 // 5 minutes cache
+  private readonly MAX_RETRIES = 3
+  private readonly RETRY_DELAYS = [1000, 2000, 4000] // Progressive backoff
+
+  private async processQueue() {
+    if (this.isProcessing || this.requestQueue.length === 0) return
+    
+    this.isProcessing = true
+    
+    while (this.requestQueue.length > 0) {
+      const request = this.requestQueue.shift()
+      if (request) {
+        // Rate limiting: ensure minimum interval between requests
+        const now = Date.now()
+        const timeSinceLastRequest = now - this.lastRequestTime
+        
+        if (timeSinceLastRequest < this.MIN_REQUEST_INTERVAL) {
+          await new Promise(resolve => 
+            setTimeout(resolve, this.MIN_REQUEST_INTERVAL - timeSinceLastRequest)
+          )
+        }
+        
+        await request()
+        this.lastRequestTime = Date.now()
+      }
+    }
+    
+    this.isProcessing = false
+  }
+
+  private getCachedData(key: string): any | null {
+    const cached = this.cache.get(key)
+    if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
+      return cached.data
+    }
+    return null
+  }
+
+  private setCachedData(key: string, data: any) {
+    this.cache.set(key, { data, timestamp: Date.now() })
+  }
+
+  async fetchTokenInfo(mintAddress: string): Promise<{ decimals: number; symbol: string; name: string; logoURI?: string } | null> {
+    const cacheKey = `token_info_${mintAddress}`
+    const cached = this.getCachedData(cacheKey)
+    if (cached) return cached
+
+    return new Promise((resolve) => {
+      const request = async () => {
+        try {
+          const result = await this.makeJupiterRequest(mintAddress)
+          this.setCachedData(cacheKey, result)
+          resolve(result)
+                 } catch (error) {
+           console.warn(`Failed to fetch token info for ${mintAddress}:`, error instanceof Error ? error.message : error)
+           resolve(null)
+         }
+      }
+
+      this.requestQueue.push(request)
+      this.processQueue()
+    })
+  }
+
+  private async makeJupiterRequest(mintAddress: string, retryCount = 0): Promise<any> {
+    try {
+      const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
+      
+      if (response.status === 429) {
+        // Rate limited - implement exponential backoff
+        if (retryCount < this.MAX_RETRIES) {
+          const delay = this.RETRY_DELAYS[retryCount] || 4000
+          console.warn(`Rate limited for ${mintAddress}, retrying in ${delay}ms (attempt ${retryCount + 1}/${this.MAX_RETRIES})`)
+          
+          await new Promise(resolve => setTimeout(resolve, delay))
+          return this.makeJupiterRequest(mintAddress, retryCount + 1)
+        } else {
+          throw new Error(`Rate limit exceeded after ${this.MAX_RETRIES} retries`)
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      const tokenData = await response.json()
+      return {
+        decimals: tokenData.decimals,
+        symbol: tokenData.symbol,
+        name: tokenData.name,
+        logoURI: tokenData.logoURI
+      }
+    } catch (error) {
+      if (retryCount < this.MAX_RETRIES && error instanceof Error && error.message.includes('fetch')) {
+        // Network error - retry with backoff
+        const delay = this.RETRY_DELAYS[retryCount] || 4000
+        console.warn(`Network error for ${mintAddress}, retrying in ${delay}ms`)
+        
+        await new Promise(resolve => setTimeout(resolve, delay))
+        return this.makeJupiterRequest(mintAddress, retryCount + 1)
+      }
+      
+      throw error
+    }
+  }
+
+  async checkIfFungibleToken(mintAddress: string): Promise<boolean> {
+    const cacheKey = `fungible_${mintAddress}`
+    const cached = this.getCachedData(cacheKey)
+    if (cached !== null) return cached
+
+    return new Promise((resolve) => {
+      const request = async () => {
+        try {
+          const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
+          const isFungible = response.ok
+          this.setCachedData(cacheKey, isFungible)
+          resolve(isFungible)
+        } catch (error) {
+          console.warn(`Failed to check fungible status for ${mintAddress}:`, error)
+          this.setCachedData(cacheKey, false)
+          resolve(false)
+        }
+      }
+
+      this.requestQueue.push(request)
+      this.processQueue()
+    })
+  }
+
+  async checkFrozenStatus(mintAddress: string): Promise<boolean> {
+    const cacheKey = `frozen_${mintAddress}`
+    const cached = this.getCachedData(cacheKey)
+    if (cached !== null) return cached
+
+    return new Promise((resolve) => {
+      const request = async () => {
+        try {
+          const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
+          
+          if (response.ok) {
+            const tokenData = await response.json()
+            const isFrozen = tokenData.frozen === true || tokenData.status === 'frozen'
+            this.setCachedData(cacheKey, isFrozen)
+            resolve(isFrozen)
+          } else {
+            this.setCachedData(cacheKey, false)
+            resolve(false)
+          }
+        } catch (error) {
+          console.warn(`Failed to check frozen status for ${mintAddress}:`, error)
+          this.setCachedData(cacheKey, false)
+          resolve(false)
+        }
+      }
+
+      this.requestQueue.push(request)
+      this.processQueue()
+    })
+  }
+
+  // Clean up old cache entries
+  cleanup() {
+    const now = Date.now()
+    const keysToDelete: string[] = []
+    
+    this.cache.forEach((value, key) => {
+      if (now - value.timestamp > this.CACHE_DURATION) {
+        keysToDelete.push(key)
+      }
+    })
+    
+    keysToDelete.forEach(key => this.cache.delete(key))
+  }
+}
+
+// Global Jupiter API manager instance
+const jupiterAPI = new JupiterAPIManager()
+
+// Clean up cache every 10 minutes
+setInterval(() => jupiterAPI.cleanup(), 10 * 60 * 1000)
 
