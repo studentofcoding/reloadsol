@@ -4,6 +4,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useWallet, useConnection } from '../components/WalletProvider'
 import PhantomWalletButton from './PhantomWalletButton'
 import TrendingTokens from './TrendingTokens'
+import TransactionResultModal from './TransactionResultModal'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
@@ -34,6 +35,7 @@ export default function BulkTokenBuyer() {
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [result, setResult] = useState<BulkBuyResult | null>(null)
   const [error, setError] = useState<string>('')
+  const [showResultModal, setShowResultModal] = useState<boolean>(false)
   const [selectedToken, setSelectedToken] = useState<string>('')
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
   
@@ -284,6 +286,7 @@ export default function BulkTokenBuyer() {
       setBalanceAfter(balanceAfterSOL)
 
       setResult(buyResult)
+      setShowResultModal(true)
 
       // Track the buy operation
       if (buyResult) {
@@ -724,161 +727,16 @@ export default function BulkTokenBuyer() {
                 </div>
               )}
 
-              {/* Results Display */}
-              {result && (
-                <div className="space-y-6">
-                  <div className={`border rounded-xl p-6 ${
-                    result.success 
-                      ? 'bg-gray-800 border-gray-600' 
-                      : 'bg-gray-800 border-gray-600'
-                  }`}>
-                    <h3 className={`font-bold text-lg mb-3 ${result.success ? 'text-white' : 'text-gray-300'}`}>
-                      {result.success ? '✅ Purchase Completed!' : '❌ Purchase Failed'}
-                    </h3>
-                    
-                    {/* Balance Change Display */}
-                    {balanceBefore > 0 && balanceAfter > 0 && (
-                      <div className="mb-4 p-4 bg-gray-700 rounded-lg">
-                        <h4 className="text-sm font-semibold text-gray-200 mb-2">Wallet Balance Change</h4>
-                        <div className="grid grid-cols-3 gap-4 text-sm">
-                          <div>
-                            <span className="block text-gray-400">Before</span>
-                            <span className="text-white font-mono">{balanceBefore.toFixed(4)} SOL</span>
-                          </div>
-                          <div>
-                            <span className="block text-gray-400">After</span>
-                            <span className="text-white font-mono">{balanceAfter.toFixed(4)} SOL</span>
-                          </div>
-                          <div>
-                            <span className="block text-gray-400">Difference</span>
-                            <span className="text-white font-mono">
-                              {(balanceAfter - balanceBefore).toFixed(4)} SOL
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                      <div className="text-white">
-                        <span className="block font-medium">Successful</span>
-                        <span className="text-xl font-bold">{result.successfulPurchases.length}</span>
-                      </div>
-                      <div className="text-white">
-                        <span className="block font-medium">Failed</span>
-                        <span className="text-xl font-bold">{result.failedPurchases.length}</span>
-                      </div>
-                      <div className="text-white md:col-span-1 col-span-2">
-                        <span className="block font-medium">Total Spent</span>
-                        <span className="text-xl font-bold">{(balanceAfter - balanceBefore).toFixed(4)} SOL</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Successful Purchases */}
-                  {result.successfulPurchases.length > 0 && (
-                    <div className="bg-gray-800 border border-gray-600 rounded-xl p-6">
-                      <h4 className="font-semibold text-white mb-4 flex items-center">
-                        <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                        Successful Purchases ({result.successfulPurchases.length})
-                      </h4>
-                      <div className="space-y-2">
-                        {result.successfulPurchases.map((purchase, index) => (
-                          <div 
-                            key={index} 
-                            className="bg-gray-700 rounded-lg p-3 font-mono text-sm text-white border border-gray-600 cursor-pointer hover:border-gray-500"
-                            onClick={() => handleAddToken(purchase.mintAddress)}
-                          >
-                            <div className="flex justify-between items-center">
-                              <span>{purchase.mintAddress}</span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleSelectToken(purchase.mintAddress)
-                                }}
-                                className="p-1 bg-gray-600 rounded hover:bg-gray-500 transition-colors"
-                              >
-                                <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                                </svg>
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Failed Purchases */}
-                  {result.failedPurchases.length > 0 && (
-                    <div className="bg-gray-800 border border-gray-600 rounded-xl p-6">
-                      <h4 className="font-semibold text-gray-300 mb-4 flex items-center">
-                        <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                          <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                        </svg>
-                        Failed Purchases ({result.failedPurchases.length})
-                      </h4>
-                      <div className="space-y-3">
-                        {result.failedPurchases.map((failure, index) => (
-                          <div 
-                            key={index} 
-                            className="bg-gray-700 rounded-lg p-3 border border-gray-600 cursor-pointer hover:border-gray-500"
-                            onClick={() => handleAddToken(failure.mintAddress)}
-                          >
-                            <div className="font-mono text-sm text-white mb-1 flex justify-between items-center">
-                              <span>{failure.mintAddress}</span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleSelectToken(failure.mintAddress)
-                                }}
-                                className="p-1 bg-gray-600 rounded hover:bg-gray-500 transition-colors"
-                              >
-                                <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                                </svg>
-                              </button>
-                            </div>
-                            <div className="text-xs text-gray-400">{failure.error}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Transaction Signatures */}
-                  {result.signatures.length > 0 && (
-                    <div className="bg-gray-800 border border-gray-600 rounded-xl p-6">
-                      <h4 className="font-semibold text-white mb-4 flex items-center">
-                        <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
-                        Transaction Signatures ({result.signatures.length})
-                      </h4>
-                      <div className="space-y-2">
-                        {result.signatures.map((sig, index) => (
-                          <a
-                            key={index}
-                            href={`https://solscan.io/tx/${sig}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block bg-gray-700 hover:bg-gray-600 rounded-lg p-3 transition-colors border border-gray-600 hover:border-gray-400"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="font-mono text-sm text-gray-300 truncate mr-4">{sig}</span>
-                              <svg className="w-4 h-4 text-gray-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                              </svg>
-                            </div>
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+              {/* Transaction Result Modal */}
+              <TransactionResultModal
+                isOpen={showResultModal}
+                onClose={() => setShowResultModal(false)}
+                operation="buy"
+                result={result}
+                balanceBefore={balanceBefore}
+                balanceAfter={balanceAfter}
+                onSelectToken={handleSelectToken}
+              />
             </div>
           )}
 

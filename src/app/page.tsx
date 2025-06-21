@@ -9,6 +9,7 @@ import LastReloadTracker from '@/components/LastReloadTracker'
 import { useWallet } from '@/components/WalletProvider'
 import ConnectionStatus from '@/components/ConnectionStatus'
 import PhantomWalletButton from '@/components/PhantomWalletButton'
+import Footer from '@/components/Footer'
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'buy' | 'sell'>('sell')
@@ -168,6 +169,7 @@ export default function Home() {
           </>
         )}
       </div>
+      <Footer />
     </main>
   )
 } 

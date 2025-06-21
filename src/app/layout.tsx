@@ -1,6 +1,6 @@
 import './globals.css'
 import { WalletProvider } from '@/components/WalletProvider'
-import { PasswordGate } from '@/components/PasswordGate'
+// import { PasswordGate } from '@/components/PasswordGate'
 import { Metadata } from 'next';
 
 // This is needed for static export with App Router
@@ -54,9 +54,7 @@ export default function RootLayout({
     <html lang="en">
       <body>
         <WalletProvider>
-          <PasswordGate>
-            {children}
-          </PasswordGate>
+          {children}
         </WalletProvider>
       </body>
       <script async src="https://scripts.simpleanalyticscdn.com/latest.js"></script>

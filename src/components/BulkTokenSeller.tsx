@@ -3,35 +3,38 @@
 import React, { useState, useCallback, useEffect } from 'react'
 import { useWallet, useConnection } from '../components/WalletProvider'
 import PhantomWalletButton from './PhantomWalletButton'
+import TransactionResultModal from './TransactionResultModal'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { 
   executeBulkSell, 
   fetchUserTokens, 
+  fetchUserTokensEfficient,
+  refreshTokenPricesBatch,
   fetchZeroBalanceTokens,
   closeZeroBalanceTokens,
-  getTokenSolValue,
+  getTokenUsdValue,
   isPumpFunToken,
   getAllFeeRates,
   getFeeForOperation,
+  setMetadataUpdateCallback,
+  clearMetadataUpdateCallback,
   UserToken, 
+  TokenToSell,
   BulkSellRequest, 
   BulkSellResult 
 } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
 import { trackSell, trackClose } from '@/utils/operations-api'
 
-// Default SOL to USD conversion rate (fallback if API fails)
-const DEFAULT_SOL_PRICE_USD = 145;
-
-// Interval to refresh SOL price in milliseconds (30 seconds)
-const PRICE_REFRESH_INTERVAL = 30 * 1000;
+// SOL mint address for Jupiter API v2
+const SOL_MINT = 'So11111111111111111111111111111111111111112'
 
 export default function BulkTokenSeller() {
   const { publicKey, signAllTransactions, connected } = useWallet()
   const { connection } = useConnection()
   
-  // Form state
-  const [selectedTokens, setSelectedTokens] = useState<UserToken[]>([])
+  // Form state - Updated to use TokenToSell
+  const [selectedTokens, setSelectedTokens] = useState<TokenToSell[]>([])
   const [selectedZeroBalanceTokens, setSelectedZeroBalanceTokens] = useState<UserToken[]>([])
   const [slippage, setSlippage] = useState<number>(100) // 1%
   const [priorityFee, setPriorityFee] = useState<number>(100000) // 0.0001 SOL
@@ -45,6 +48,8 @@ export default function BulkTokenSeller() {
   const [result, setResult] = useState<BulkSellResult | null>(null)
   const [closeResult, setCloseResult] = useState<{ successful: string[]; failed: Array<{ mintAddress: string; error: string }>; signatures: string[] } | null>(null)
   const [error, setError] = useState<string>('')
+  const [showResultModal, setShowResultModal] = useState<boolean>(false)
+  const [showCloseResultModal, setShowCloseResultModal] = useState<boolean>(false)
   const [selectedToken, setSelectedToken] = useState<string>('')
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
   const [showDustOnly, setShowDustOnly] = useState<boolean>(false)
@@ -54,41 +59,57 @@ export default function BulkTokenSeller() {
   const [balanceAfter, setBalanceAfter] = useState<number>(0)
   
   // SOL price in USD
-  const [solPriceUsd, setSolPriceUsd] = useState<number>(DEFAULT_SOL_PRICE_USD)
-  const [isLoadingSolPrice, setIsLoadingSolPrice] = useState<boolean>(false)
-  const [priceLastUpdated, setPriceLastUpdated] = useState<number>(0)
+  const [solPriceUsd, setSolPriceUsd] = useState<number>(145) // Default fallback
 
   const feeRates = getAllFeeRates()
 
-  // Fetch SOL price from our API endpoint
+  // Fetch SOL price from Jupiter API v2
   const fetchSolPrice = useCallback(async () => {
     try {
-      setIsLoadingSolPrice(true)
-      
-      const response = await fetch('/api/solprice')
-      
+      const response = await fetch(`https://api.jup.ag/price/v2?ids=${SOL_MINT}`)
       if (!response.ok) {
-        throw new Error(`API responded with status: ${response.status}`)
+        throw new Error(`Jupiter API responded with status: ${response.status}`)
       }
-      
       const data = await response.json()
-      
-      if (data?.price) {
-        setSolPriceUsd(data.price)
-        setPriceLastUpdated(Date.now())
+      if (data?.data?.[SOL_MINT]?.price) {
+        const price = parseFloat(data.data[SOL_MINT].price)
+        setSolPriceUsd(price)
+        console.log(`SOL price updated: $${price}`)
       }
     } catch (error) {
       console.error('Error fetching SOL price:', error)
       // Keep using current price if fetch fails
-    } finally {
-      setIsLoadingSolPrice(false)
     }
   }, [])
 
-  // Convert SOL value to USD
-  const solToUsd = useCallback((solValue: number): number => {
-    return solValue * solPriceUsd
-  }, [solPriceUsd])
+  // Handle metadata updates from background enrichment
+  const handleMetadataUpdate = useCallback((updatedTokens: UserToken[]) => {
+    console.log(`Updating UI with enriched metadata for ${updatedTokens.length} tokens`)
+    
+    // Update userTokens state
+    setUserTokens(prev => prev.map(token => {
+      const updated = updatedTokens.find(u => u.mintAddress === token.mintAddress)
+      return updated || token
+    }))
+
+    // Update zeroBalanceTokens state
+    setZeroBalanceTokens(prev => prev.map(token => {
+      const updated = updatedTokens.find(u => u.mintAddress === token.mintAddress)
+      return updated || token
+    }))
+
+    // Update selectedTokens state
+    setSelectedTokens(prev => prev.map(token => {
+      const updated = updatedTokens.find(u => u.mintAddress === token.mintAddress)
+      return updated ? { ...updated, sellAmount: token.sellAmount, sellPercentage: token.sellPercentage } : token
+    }))
+
+    // Update selectedZeroBalanceTokens state
+    setSelectedZeroBalanceTokens(prev => prev.map(token => {
+      const updated = updatedTokens.find(u => u.mintAddress === token.mintAddress)
+      return updated || token
+    }))
+  }, [])
 
   const fetchTokens = useCallback(async () => {
     if (!publicKey) return
@@ -96,25 +117,42 @@ export default function BulkTokenSeller() {
     setIsLoadingTokens(true)
     setError('')
     try {
-      // Fetch all tokens including zero balance
-      const allTokens = await fetchUserTokens(connection, publicKey, true)
-      
-      // Separate sellable tokens from zero-balance/unsellable tokens
-      // Sellable tokens: have meaningful balance AND (SOL value >= 0.001 OR pump.fun token)
-      const sellableTokens = allTokens.filter(token => 
-        token.uiAmount > 0.000000000001 && (token.solValue >= 0.001 || isPumpFunToken(token.mintAddress))
+      // Fetch all tokens efficiently using Jupiter API v2 with progress callback
+      // Note: Removed clearAllCaches() to prevent redundant fetches - caching improves performance
+      const allTokens = await fetchUserTokensEfficient(
+        connection, 
+        publicKey, 
+        true, // Include zero balance
+        false, // Exclude NFTs
+        (progress) => {
+          // Optional: Add progress indicator in the future
+          console.log(`Token fetching progress: ${progress}%`)
+        }
       )
       
-      // Zero-balance/unsellable tokens: either zero balance OR (SOL value < 0.001 AND not pump.fun)
+      // Separate sellable tokens from zero-balance/unsellable tokens
+      // Sellable tokens: have meaningful balance AND (USD value >= 0.001 OR pump.fun token)
+      const sellableTokens = allTokens.filter(token => 
+        token.uiAmount > 0.000000000001 && (token.usdValue >= 0.001 || isPumpFunToken(token.mintAddress))
+      )
+      
+      // Zero-balance/unsellable tokens: either zero balance OR (USD value < 0.001 AND not pump.fun)
       const zeroTokens = allTokens.filter(token => 
-        token.uiAmount <= 0.000000000001 || (token.solValue < 0.001 && !isPumpFunToken(token.mintAddress))
+        token.uiAmount <= 0.000000000001 || (token.usdValue < 0.001 && !isPumpFunToken(token.mintAddress))
       )
       
       setUserTokens(sellableTokens)
       setZeroBalanceTokens(zeroTokens)
+      
+      console.log(`Efficiently fetched ${sellableTokens.length} sellable and ${zeroTokens.length} zero/unsellable tokens`)
     } catch (error) {
       console.error('Error fetching tokens:', error)
-      setError('Failed to fetch your tokens')
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      if (errorMessage.includes('Rate limit') || errorMessage.includes('429')) {
+        setError('Rate limit exceeded. Please wait a moment and try again.')
+      } else {
+        setError('Failed to fetch your tokens. Please try again.')
+      }
     } finally {
       setIsLoadingTokens(false)
     }
@@ -132,9 +170,30 @@ export default function BulkTokenSeller() {
           setError('Maximum 22 tokens can be selected for selling')
           return prev
         }
-        return [...prev, token]
+        // Convert UserToken to TokenToSell with default 100% sell amount
+        const tokenToSell: TokenToSell = {
+          ...token,
+          sellAmount: token.balance,
+          sellPercentage: 100
+        }
+        return [...prev, tokenToSell]
       }
     })
+  }
+
+  // Handle sell percentage change for a specific token
+  const updateTokenSellPercentage = (mintAddress: string, percentage: number) => {
+    setSelectedTokens(prev => prev.map(token => {
+      if (token.mintAddress === mintAddress) {
+        const sellAmount = Math.floor((token.balance * percentage) / 100)
+        return {
+          ...token,
+          sellPercentage: percentage,
+          sellAmount: sellAmount
+        }
+      }
+      return token
+    }))
   }
 
   // Handle zero-balance token selection
@@ -157,11 +216,17 @@ export default function BulkTokenSeller() {
   // Select all tokens
   const selectAllTokens = () => {
     const tokensToSelect = showDustOnly ? filteredUserTokens : userTokens
-    if (tokensToSelect.length > 22) {
-      setSelectedTokens(tokensToSelect.slice(0, 22))
+    const tokensToSell: TokenToSell[] = tokensToSelect.map(token => ({
+      ...token,
+      sellAmount: token.balance,
+      sellPercentage: 100
+    }))
+    
+    if (tokensToSell.length > 22) {
+      setSelectedTokens(tokensToSell.slice(0, 22))
       setError('Selection limited to first 22 tokens (Solana transaction limit)')
     } else {
-      setSelectedTokens([...tokensToSelect])
+      setSelectedTokens(tokensToSell)
     }
   }
 
@@ -185,7 +250,7 @@ export default function BulkTokenSeller() {
     setSelectedZeroBalanceTokens([])
   }
 
-  // Refresh all token prices
+  // Refresh all token prices efficiently
   const refreshAllPrices = useCallback(async () => {
     if (!publicKey || userTokens.length === 0) return
     
@@ -193,59 +258,38 @@ export default function BulkTokenSeller() {
     setUserTokens(prev => prev.map(token => ({ ...token, isLoadingPrice: true })))
     
     try {
-      // Update prices in batches
-      const BATCH_SIZE = 5
-      for (let i = 0; i < userTokens.length; i += BATCH_SIZE) {
-        const batch = userTokens.slice(i, i + BATCH_SIZE)
-        
-        const pricePromises = batch.map(async (token) => {
-          try {
-            const solValue = await getTokenSolValue(
-              token.mintAddress,
-              token.balance,
-              token.decimals
-            )
-            return { ...token, solValue, isLoadingPrice: false }
-          } catch (error) {
-            console.error(`Failed to get price for ${token.name}:`, error)
-            return { ...token, solValue: 0, isLoadingPrice: false }
-          }
-        })
-        
-        const updatedBatch = await Promise.all(pricePromises)
+      console.log('Starting efficient batch price refresh...')
+      
+      // Use efficient batch price refresh
+      const updatedTokens = await refreshTokenPricesBatch(userTokens)
         
         // Update tokens state
-        setUserTokens(prev => {
-          const newTokens = [...prev]
-          updatedBatch.forEach((updatedToken, batchIndex) => {
-            const originalIndex = i + batchIndex
-            if (originalIndex < newTokens.length) {
-              newTokens[originalIndex] = updatedToken
-            }
-          })
-          return newTokens
-        })
-        
-        // Update selected tokens
+      setUserTokens(updatedTokens)
+      
+      // Update selected tokens with new prices
         setSelectedTokens(prev => prev.map(selectedToken => {
-          const updatedToken = updatedBatch.find(t => t.mintAddress === selectedToken.mintAddress)
-          return updatedToken || selectedToken
-        }))
-        
-        // Small delay between batches
-        if (i + BATCH_SIZE < userTokens.length) {
-          await new Promise(resolve => setTimeout(resolve, 200))
+        const updatedToken = updatedTokens.find(t => t.mintAddress === selectedToken.mintAddress)
+        if (updatedToken) {
+          return {
+            ...updatedToken,
+            sellAmount: selectedToken.sellAmount,
+            sellPercentage: selectedToken.sellPercentage
+          }
         }
-      }
+        return selectedToken
+      }))
+      
+      console.log('Efficient batch price refresh completed')
     } catch (error) {
       console.error('Error refreshing all prices:', error)
       setError('Failed to refresh token prices')
+      
       // Clear loading states
       setUserTokens(prev => prev.map(token => ({ ...token, isLoadingPrice: false })))
     }
   }, [publicKey, userTokens])
 
-  // Refresh individual token price
+  // Refresh individual token price efficiently
   const refreshTokenPrice = useCallback(async (token: UserToken) => {
     if (!publicKey) return
     
@@ -257,25 +301,25 @@ export default function BulkTokenSeller() {
     ))
     
     try {
-      const solValue = await getTokenSolValue(
-        token.mintAddress,
-        token.balance,
-        token.decimals
-      )
+      // Use efficient batch refresh for single token (leverages caching)
+      const updatedTokens = await refreshTokenPricesBatch([token])
+      const updatedToken = updatedTokens[0]
       
+      if (updatedToken) {
       // Update the token with new price
       setUserTokens(prev => prev.map(t => 
         t.mintAddress === token.mintAddress 
-          ? { ...t, solValue, isLoadingPrice: false }
+            ? { ...updatedToken, isLoadingPrice: false }
           : t
       ))
       
       // Update selected tokens if this token is selected
       setSelectedTokens(prev => prev.map(t => 
         t.mintAddress === token.mintAddress 
-          ? { ...t, solValue, isLoadingPrice: false }
+            ? { ...t, usdValue: updatedToken.usdValue, isLoadingPrice: false }
           : t
       ))
+      }
     } catch (error) {
       console.error('Error refreshing token price:', error)
       setUserTokens(prev => prev.map(t => 
@@ -329,6 +373,7 @@ export default function BulkTokenSeller() {
       setBalanceAfter(balanceAfterSOL)
 
       setResult(sellResult)
+      setShowResultModal(true)
 
       // Track the sell operation
       if (sellResult) {
@@ -441,22 +486,28 @@ export default function BulkTokenSeller() {
     }
   }, [connected, publicKey, fetchTokens, fetchSolPrice])
   
-  // Set up interval to refresh SOL price
+  // Refresh SOL price periodically
   useEffect(() => {
-    // Set up interval
     const interval = setInterval(() => {
       fetchSolPrice()
-    }, PRICE_REFRESH_INTERVAL)
+    }, 30000) // Every 30 seconds
     
-    // Clean up on unmount
     return () => clearInterval(interval)
   }, [fetchSolPrice])
 
+  // Set up metadata update callback
+  useEffect(() => {
+    setMetadataUpdateCallback(handleMetadataUpdate)
+    return () => clearMetadataUpdateCallback()
+  }, [handleMetadataUpdate])
+
   // Calculate estimated SOL after fees
-  const grossSOL = selectedTokens.reduce((total, token) => total + token.solValue, 0)
+  const grossUSD = selectedTokens.reduce((total, token) => total + (token.usdValue * token.sellPercentage / 100), 0)
+  const grossSOL = grossUSD / solPriceUsd // Convert USD to SOL
   const sellFee = getFeeForOperation('SELL', grossSOL) // 0.5% of SOL received
-  const closeFee = getFeeForOperation('CLOSE') * (selectedTokens.length + selectedZeroBalanceTokens.length) // Fixed fee per account
-  const rentRecovery = (selectedTokens.length + selectedZeroBalanceTokens.length) * 0.00203928 // Rent recovery
+  const tokensToClose = selectedTokens.filter(token => token.sellPercentage >= 100).length + selectedZeroBalanceTokens.length
+  const closeFee = getFeeForOperation('CLOSE') * tokensToClose // Fixed fee per account
+  const rentRecovery = tokensToClose * 0.00203928 // Rent recovery
   const estimatedSOL = grossSOL - sellFee - closeFee + rentRecovery
 
   // Handle token selection for chart display
@@ -468,7 +519,7 @@ export default function BulkTokenSeller() {
 
   // Filter tokens based on dust filter
   const filteredUserTokens = showDustOnly 
-    ? userTokens.filter(token => solToUsd(token.solValue) < 0.1)
+    ? userTokens.filter(token => token.usdValue < 0.1)
     : userTokens
 
   // Toggle dust filter
@@ -655,17 +706,20 @@ export default function BulkTokenSeller() {
             <div className="grid gap-3 max-h-96 overflow-y-auto">
               {filteredUserTokens.map((token) => {
                 const isSelected = selectedTokens.some(t => t.mintAddress === token.mintAddress)
+                const selectedToken = selectedTokens.find(t => t.mintAddress === token.mintAddress)
                 return (
                   <div
                     key={token.mintAddress}
-                    onClick={() => toggleTokenSelection(token)}
-                    className={`group p-2 rounded-xl border cursor-pointer transition-all duration-200 ${
+                    className={`group p-4 rounded-xl border transition-all duration-200 ${
                       isSelected
                         ? 'bg-gray-700 border-gray-500'
                         : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-gray-500'
                     }`}
                   >
-                    <div className="flex items-center justify-between">
+                    <div 
+                      className="flex items-center justify-between cursor-pointer"
+                      onClick={() => toggleTokenSelection(token)}
+                    >
                       <div className="flex items-center space-x-3">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
                           isSelected ? 'bg-white text-black' : 'bg-gray-600'
@@ -675,7 +729,7 @@ export default function BulkTokenSeller() {
                         <div>
                           <div className="font-semibold text-white">
                             {token.name || token.symbol || 'Unknown'}
-                            {token.solValue > 0 && (
+                            {token.usdValue > 0 && (
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation()
@@ -702,7 +756,7 @@ export default function BulkTokenSeller() {
                             </div>
                           ) : (
                             <>
-                              <span className="ml-1 text-sm text-white">≈ ${solToUsd(token.solValue).toFixed(2)}</span>
+                              <span className="ml-1 text-sm text-white">≈ ${token.usdValue.toFixed(2)}</span>
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation()
@@ -720,6 +774,56 @@ export default function BulkTokenSeller() {
                         </div>
                       </div>
                     </div>
+                    
+                    {/* Sell Amount Controls (visible when selected) */}
+                    {isSelected && selectedToken && (
+                      <div className="mt-4 pt-3 border-t border-gray-600">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-medium text-gray-300">Sell Amount</span>
+                          <span className="text-sm text-gray-400">
+                            {selectedToken.sellPercentage}% = {(selectedToken.sellAmount / Math.pow(10, token.decimals)).toFixed(6)} tokens
+                          </span>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                          <input
+                            type="range"
+                            min="1"
+                            max="100"
+                            value={selectedToken.sellPercentage}
+                            onChange={(e) => {
+                              e.stopPropagation()
+                              updateTokenSellPercentage(token.mintAddress, parseInt(e.target.value))
+                            }}
+                            className="flex-1 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <input
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={selectedToken.sellPercentage}
+                            onChange={(e) => {
+                              e.stopPropagation()
+                              const value = Math.max(1, Math.min(100, parseInt(e.target.value) || 1))
+                              updateTokenSellPercentage(token.mintAddress, value)
+                            }}
+                            className="w-16 px-2 py-1 bg-gray-600 text-white text-sm rounded border border-gray-500 focus:border-gray-400"
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          <span className="text-sm text-gray-400">%</span>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
+                          <span>≈ ${(token.usdValue * selectedToken.sellPercentage / 100).toFixed(2)}</span>
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            selectedToken.sellPercentage === 100 
+                              ? 'bg-yellow-600 text-yellow-100' 
+                              : 'bg-blue-600 text-blue-100'
+                          }`}>
+                            {selectedToken.sellPercentage === 100 ? 'Sell & Close' : 'Sell Only'}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -796,7 +900,7 @@ export default function BulkTokenSeller() {
                             </div>
                             <div className="text-sm text-gray-400">
                               {token.uiAmount > 0.000000000001 
-                                ? (token.solValue > 0 ? `≈ $${solToUsd(token.solValue).toFixed(2)} (< $${solToUsd(0.001).toFixed(2)})` : 'No liquidity')
+                                ? (token.usdValue > 0 ? `≈ $${token.usdValue.toFixed(2)} (< $0.001)` : 'No liquidity')
                                 : 'Close for rent'
                               }
                             </div>
@@ -819,23 +923,14 @@ export default function BulkTokenSeller() {
                 <div className="grid grid-cols-3 gap-4 text-sm">
                   <div>
                     <span className="block text-gray-300 font-medium">Total Operations</span>
-                    <span className="text-xl font-bold text-white">{selectedTokens.length} Swap & {selectedTokens.length +selectedZeroBalanceTokens.length} Close</span>
+                    <span className="text-xl font-bold text-white">{selectedTokens.length} Swap & {tokensToClose} Close</span>
                   </div>
                   <div>
                     <span className="block text-gray-300 font-medium">You'll receive</span>
                     <span className="text-xl font-bold text-white">~ {estimatedSOL.toFixed(4)} SOL</span>
-                    <span className="block text-gray-400 text-sm">≈ ${solToUsd(estimatedSOL).toFixed(2)}</span>
+                    <span className="block text-gray-400 text-sm">≈ ${(estimatedSOL * solPriceUsd).toFixed(2)}</span>
                     <span className="block text-gray-500 text-xs mt-1">
-                      {isLoadingSolPrice ? (
-                        <span className="flex items-center">
-                          <div className="w-2 h-2 mr-1 border border-gray-400 border-t-white rounded-full animate-spin"></div>
-                          Updating price...
-                        </span>
-                      ) : (
-                        <span>
                           After fees & with rent recovery
-                        </span>
-                      )}
                     </span>
                   </div>
                 </div>
@@ -844,6 +939,14 @@ export default function BulkTokenSeller() {
                   <div className="mt-4 p-3 bg-gray-700 border border-gray-600 rounded-lg">
                     <p className="text-gray-200 text-sm">
                       <strong>{selectedZeroBalanceTokens.length} unsellable token{selectedZeroBalanceTokens.length !== 1 ? 's' : ''}</strong> will be burned (if needed) and closed to recover rent
+                    </p>
+                  </div>
+                )}
+                
+                {selectedTokens.some(token => token.sellPercentage < 100) && (
+                  <div className="mt-4 p-3 bg-blue-700 border border-blue-600 rounded-lg">
+                    <p className="text-blue-200 text-sm">
+                      <strong>{selectedTokens.filter(token => token.sellPercentage < 100).length} token{selectedTokens.filter(token => token.sellPercentage < 100).length !== 1 ? 's' : ''}</strong> will be partially sold (accounts remain open)
                     </p>
                   </div>
                 )}
@@ -911,9 +1014,9 @@ export default function BulkTokenSeller() {
                   <div className="flex items-center justify-center space-x-2">
                     <span>
                       {selectedTokens.length > 0 && selectedZeroBalanceTokens.length > 0
-                        ? `Sell ${selectedTokens.length} & Close ${selectedTokens.length + selectedZeroBalanceTokens.length} Accounts`
+                        ? `Sell ${selectedTokens.length} & Close ${tokensToClose} Accounts`
                         : selectedTokens.length > 0
-                        ? `Sell ${selectedTokens.length} Token${selectedTokens.length !== 1 ? 's' : ''} & Close`
+                        ? `Sell ${selectedTokens.length} Token${selectedTokens.length !== 1 ? 's' : ''} ${tokensToClose > 0 ? `& Close ${tokensToClose}` : ''}`
                         : `Close ${selectedZeroBalanceTokens.length} Account${selectedZeroBalanceTokens.length !== 1 ? 's' : ''}`
                       }
                     </span>
@@ -938,273 +1041,23 @@ export default function BulkTokenSeller() {
             </div>
           )}
 
-          {/* Results Display */}
-          {result && (
-            <div className="space-y-6">
-              <div className={`border rounded-xl p-6 ${
-                result.success 
-                  ? 'bg-gray-800 border-gray-600' 
-                  : 'bg-gray-800 border-gray-600'
-              }`}>
-                <h3 className={`font-bold text-lg mb-3 ${result.success ? 'text-white' : 'text-gray-300'}`}>
-                  {result.success ? '✅ Sale Completed!' : '❌ Sale Failed'}
-                </h3>
-                
-                {/* Balance Change Display */}
-                {balanceBefore > 0 && balanceAfter > 0 && (
-                  <div className="mb-4 p-4 bg-gray-700 rounded-lg">
-                    <h4 className="text-sm font-semibold text-gray-200 mb-2">Wallet Balance Change</h4>
-                    <div className="grid grid-cols-3 gap-4 text-sm">
-                      <div>
-                        <span className="block text-gray-400">Before</span>
-                        <span className="text-white font-mono">{balanceBefore.toFixed(4)} SOL</span>
-                      </div>
-                      <div>
-                        <span className="block text-gray-400">After</span>
-                        <span className="text-white font-mono">{balanceAfter.toFixed(4)} SOL</span>
-                      </div>
-                      <div>
-                        <span className="block text-gray-400">Difference</span>
-                        <span className="text-white font-mono">
-                          +{(balanceAfter - balanceBefore).toFixed(4)} SOL
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div className="text-white">
-                    <span className="block font-medium">Successful Sales</span>
-                    <span className="text-xl font-bold">{result.successfulSwaps.length}</span>
-                  </div>
-                  <div className="text-white">
-                    <span className="block font-medium">Failed Sales</span>
-                    <span className="text-xl font-bold">{result.failedSwaps.length}</span>
-                  </div>
-                  <div className="text-white">
-                    <span className="block font-medium">Accounts Closed</span>
-                    <span className="text-xl font-bold">{result.successfulCloses.length}</span>
-                  </div>
-                  <div className="text-white">
-                    <span className="block font-medium">Final SOL Received</span>
-                    <span className="text-xl font-bold">{result.totalReceived.toFixed(4)}</span>
-                    <span className="block text-sm text-gray-400">≈ ${solToUsd(result.totalReceived).toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
+          {/* Transaction Result Modal */}
+          <TransactionResultModal
+            isOpen={showResultModal}
+            onClose={() => setShowResultModal(false)}
+            operation="sell"
+            result={result}
+            balanceBefore={balanceBefore}
+            balanceAfter={balanceAfter}
+          />
 
-              {/* Successful Sales */}
-              {result.successfulSwaps.length > 0 && (
-                <div className="bg-gradient-to-r from-green-900/30 to-emerald-800/30 border border-green-500/30 rounded-xl p-6 backdrop-blur-sm">
-                  <h4 className="font-semibold text-green-200 mb-4 flex items-center">
-                    <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                    Successful Sales ({result.successfulSwaps.length})
-                  </h4>
-                  <div className="space-y-2">
-                    {result.successfulSwaps.map((sale, index) => (
-                      <div key={index} className="bg-green-900/20 rounded-lg p-3 border border-green-500/20">
-                        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center">
-                          <span className="font-mono text-sm text-green-100 mb-1 sm:mb-0">{sale.mintAddress}</span>
-                          <div className="flex flex-col items-end">
-                            <span className="text-green-200 font-semibold">{sale.solReceived.toFixed(6)} SOL</span>
-                            <span className="text-xs text-green-300">≈ ${solToUsd(sale.solReceived).toFixed(2)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Failed Sales */}
-              {result.failedSwaps.length > 0 && (
-                <div className="bg-gradient-to-r from-red-900/30 to-red-800/30 border border-red-500/30 rounded-xl p-6 backdrop-blur-sm">
-                  <h4 className="font-semibold text-red-200 mb-4 flex items-center">
-                    <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                    </svg>
-                    Failed Sales ({result.failedSwaps.length})
-                  </h4>
-                  <div className="space-y-3">
-                    {result.failedSwaps.map((failure, index) => (
-                      <div key={index} className="bg-red-900/20 rounded-lg p-3 border border-red-500/20">
-                        <div className="font-mono text-sm text-red-100 mb-1">{failure.mintAddress}</div>
-                        <div className="text-xs text-red-300">{failure.error}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Account Closing Results */}
-              {(result.successfulCloses.length > 0 || result.failedCloses.length > 0) && (
-                <div className="bg-gradient-to-r from-blue-900/30 to-indigo-800/30 border border-blue-500/30 rounded-xl p-6 backdrop-blur-sm">
-                  <h4 className="font-semibold text-blue-200 mb-4 flex items-center">
-                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                    Account Closing Results
-                  </h4>
-                  <div className="grid grid-cols-2 gap-4 text-sm mb-4">
-                    <div className="text-blue-300">
-                      <span className="block font-medium">Successfully Closed</span>
-                      <span className="text-xl font-bold text-blue-100">{result.successfulCloses.length}</span>
-                    </div>
-                    <div className="text-blue-300">
-                      <span className="block font-medium">Failed to Close</span>
-                      <span className="text-xl font-bold text-blue-100">{result.failedCloses.length}</span>
-                    </div>
-                  </div>
-                  {result.failedCloses.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-blue-200 text-sm font-medium">Failed to close:</p>
-                      {result.failedCloses.map((failure, index) => (
-                        <div key={index} className="bg-blue-900/20 rounded-lg p-2 border border-blue-500/20">
-                          <div className="font-mono text-xs text-blue-100">{failure.mintAddress}</div>
-                          <div className="text-xs text-blue-300">{failure.error}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Transaction Signatures */}
-              {result.signatures.length > 0 && (
-                <div className="bg-gradient-to-r from-slate-800/50 to-slate-700/50 border border-slate-600/50 rounded-xl p-6 backdrop-blur-sm">
-                  <h4 className="font-semibold text-slate-200 mb-4 flex items-center">
-                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Transaction Signatures ({result.signatures.length})
-                  </h4>
-                  <div className="space-y-2">
-                    {result.signatures.map((sig, index) => (
-                      <a
-                        key={index}
-                        href={`https://solscan.io/tx/${sig}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block bg-slate-700/30 hover:bg-slate-600/30 rounded-lg p-3 transition-colors border border-slate-600/30 hover:border-blue-500/30"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono text-sm text-slate-300 truncate mr-4">{sig}</span>
-                          <svg className="w-4 h-4 text-blue-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
-                        </div>
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Close Results Display */}
-          {closeResult && (
-            <div className="space-y-6 animate-slide-up">
-              <div className={`border rounded-xl p-6 backdrop-blur-sm ${
-                closeResult.successful.length > 0
-                  ? 'bg-gradient-to-r from-yellow-900/50 to-orange-800/50 border-yellow-500/50' 
-                  : 'bg-gradient-to-r from-red-900/50 to-red-800/50 border-red-500/50'
-              }`}>
-                <h3 className={`font-bold text-lg mb-3 ${closeResult.successful.length > 0 ? 'text-yellow-200' : 'text-red-200'}`}>
-                  {closeResult.successful.length > 0 ? '🎉 Accounts Closed!' : '❌ Account Closing Failed'}
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                  <div className={closeResult.successful.length > 0 ? 'text-yellow-300' : 'text-red-300'}>
-                    <span className="block font-medium">Accounts Closed</span>
-                    <span className="text-xl font-bold">{closeResult.successful.length}</span>
-                  </div>
-                  <div className={closeResult.successful.length > 0 ? 'text-yellow-300' : 'text-red-300'}>
-                    <span className="block font-medium">Failed to Close</span>
-                    <span className="text-xl font-bold">{closeResult.failed.length}</span>
-                  </div>
-                  <div className={closeResult.successful.length > 0 ? 'text-yellow-300' : 'text-red-300'}>
-                    <span className="block font-medium">Rent Recovered</span>
-                    <span className="text-xl font-bold">~{(closeResult.successful.length * 0.00203928).toFixed(6)} SOL</span>
-                    <span className="block text-sm text-yellow-400">≈ ${solToUsd(closeResult.successful.length * 0.00203928).toFixed(2)}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Successful Closes */}
-              {closeResult.successful.length > 0 && (
-                <div className="bg-gradient-to-r from-yellow-900/30 to-orange-800/30 border border-yellow-500/30 rounded-xl p-6 backdrop-blur-sm">
-                  <h4 className="font-semibold text-yellow-200 mb-4 flex items-center">
-                    <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                    </svg>
-                    Successfully Closed Accounts ({closeResult.successful.length})
-                  </h4>
-                  <div className="space-y-2">
-                    {closeResult.successful.map((mintAddress, index) => (
-                      <div key={index} className="bg-yellow-900/20 rounded-lg p-3 border border-yellow-500/20">
-                        <div className="flex justify-between items-center">
-                          <span className="font-mono text-sm text-yellow-100">{mintAddress}</span>
-                          <span className="text-yellow-200 text-xs">Account closed</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Failed Closes */}
-              {closeResult.failed.length > 0 && (
-                <div className="bg-gradient-to-r from-red-900/30 to-red-800/30 border border-red-500/30 rounded-xl p-6 backdrop-blur-sm">
-                  <h4 className="font-semibold text-red-200 mb-4 flex items-center">
-                    <svg className="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                    </svg>
-                    Failed to Close Accounts ({closeResult.failed.length})
-                  </h4>
-                  <div className="space-y-3">
-                    {closeResult.failed.map((failure, index) => (
-                      <div key={index} className="bg-red-900/20 rounded-lg p-3 border border-red-500/20">
-                        <div className="font-mono text-sm text-red-100 mb-1">{failure.mintAddress}</div>
-                        <div className="text-xs text-red-300">{failure.error}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Close Transaction Signatures */}
-              {closeResult.signatures.length > 0 && (
-                <div className="bg-gradient-to-r from-slate-800/50 to-slate-700/50 border border-slate-600/50 rounded-xl p-6 backdrop-blur-sm">
-                  <h4 className="font-semibold text-slate-200 mb-4 flex items-center">
-                    <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Close Transaction Signatures ({closeResult.signatures.length})
-                  </h4>
-                  <div className="space-y-2">
-                    {closeResult.signatures.map((sig, index) => (
-                      <a
-                        key={index}
-                        href={`https://solscan.io/tx/${sig}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block bg-slate-700/30 hover:bg-slate-600/30 rounded-lg p-3 transition-colors border border-slate-600/30 hover:border-yellow-500/30"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-mono text-sm text-slate-300 truncate mr-4">{sig}</span>
-                          <svg className="w-4 h-4 text-yellow-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
-                        </div>
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+          {/* Close Result Modal */}
+          <TransactionResultModal
+            isOpen={showCloseResultModal}
+            onClose={() => setShowCloseResultModal(false)}
+            operation="close"
+            result={closeResult}
+          />
         </div>
       )}
 
