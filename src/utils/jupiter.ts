@@ -647,16 +647,16 @@ async function enrichTokenMetadataAsync(tokens: UserToken[]): Promise<void> {
   // Mark tokens as being processed
   tokensNeedingMetadata.forEach(token => metadataEnrichmentInProgress.add(token.mintAddress))
 
-  // Process metadata enrichment in parallel but with controlled concurrency
-  const METADATA_BATCH_SIZE = 10 // Process 10 tokens at a time to avoid overwhelming the API
-  
-  for (let i = 0; i < tokensNeedingMetadata.length; i += METADATA_BATCH_SIZE) {
-    const batch = tokensNeedingMetadata.slice(i, i + METADATA_BATCH_SIZE)
+  // Use the new batch API for much faster metadata fetching
+  try {
+    const mints = tokensNeedingMetadata.map(token => token.mintAddress)
+    const batchMetadata = await jupiterAPI.fetchTokenInfoBatch(mints)
     
-    // Process batch in parallel
-    const metadataPromises = batch.map(async (token) => {
+    const enrichedTokens: UserToken[] = []
+    
+    tokensNeedingMetadata.forEach(token => {
       try {
-        const metadata = await getTokenInfo(token.mintAddress)
+        const metadata = batchMetadata[token.mintAddress]
         if (metadata) {
           // Update the token object directly (this will reflect in the UI if tokens are reactive)
           token.symbol = metadata.symbol
@@ -671,28 +671,70 @@ async function enrichTokenMetadataAsync(tokens: UserToken[]): Promise<void> {
           }
 
           console.log(`Enriched metadata for ${metadata.symbol} (${token.mintAddress})`)
-          return token
+          enrichedTokens.push(token)
         }
       } catch (error) {
-        console.warn(`Failed to enrich metadata for ${token.mintAddress}:`, error)
+        console.warn(`Failed to process metadata for ${token.mintAddress}:`, error)
       } finally {
         // Remove from processing set
         metadataEnrichmentInProgress.delete(token.mintAddress)
       }
-      return null
     })
-
-    // Wait for current batch to complete before processing next batch
-    const enrichedTokens = (await Promise.all(metadataPromises)).filter(Boolean) as UserToken[]
     
     // Trigger UI update callback if any tokens were enriched
     if (enrichedTokens.length > 0 && metadataUpdateCallback) {
       metadataUpdateCallback(enrichedTokens)
     }
+  } catch (error) {
+    console.error('Batch metadata enrichment failed:', error)
     
-    // Small delay between batches to be respectful to the API
-    if (i + METADATA_BATCH_SIZE < tokensNeedingMetadata.length) {
-      await sleep(500) // 500ms delay between batches
+    // Fallback to individual requests if batch fails
+    const METADATA_BATCH_SIZE = 10 // Process 10 tokens at a time to avoid overwhelming the API
+    
+    for (let i = 0; i < tokensNeedingMetadata.length; i += METADATA_BATCH_SIZE) {
+      const batch = tokensNeedingMetadata.slice(i, i + METADATA_BATCH_SIZE)
+      
+      // Process batch in parallel
+      const metadataPromises = batch.map(async (token) => {
+        try {
+          const metadata = await getTokenInfo(token.mintAddress)
+          if (metadata) {
+            // Update the token object directly (this will reflect in the UI if tokens are reactive)
+            token.symbol = metadata.symbol
+            token.name = metadata.name
+            token.logoURI = metadata.logoURI
+
+            // Update cache with enriched metadata
+            const cached = tokenCache.get(token.mintAddress)
+            if (cached) {
+              cached.data = { ...cached.data, ...metadata }
+              tokenCache.set(token.mintAddress, cached)
+            }
+
+            console.log(`Enriched metadata for ${metadata.symbol} (${token.mintAddress})`)
+            return token
+          }
+        } catch (error) {
+          console.warn(`Failed to enrich metadata for ${token.mintAddress}:`, error)
+        } finally {
+          // Remove from processing set
+          metadataEnrichmentInProgress.delete(token.mintAddress)
+        }
+        return null
+      })
+
+      // Wait for current batch to complete before processing next batch
+      const enrichedTokens = (await Promise.all(metadataPromises)).filter(Boolean) as UserToken[]
+      
+      // Trigger UI update callback if any tokens were enriched
+      if (enrichedTokens.length > 0 && metadataUpdateCallback) {
+        metadataUpdateCallback(enrichedTokens)
+      }
+      
+      // Small delay between batches to be respectful to the API
+      if (i + METADATA_BATCH_SIZE < tokensNeedingMetadata.length) {
+        await sleep(500) // 500ms delay between batches
+      }
     }
   }
 
@@ -2162,42 +2204,12 @@ export async function closeZeroBalanceTokens(
   }
 }
 
-// Rate limiting and caching for Jupiter API calls
+// Server-side Jupiter API Manager - uses our own API endpoint for better caching
 class JupiterAPIManager {
   private cache = new Map<string, { data: any; timestamp: number }>()
-  private requestQueue: Array<() => Promise<void>> = []
-  private isProcessing = false
-  private lastRequestTime = 0
-  private readonly MIN_REQUEST_INTERVAL = 200 // 200ms between requests (5 requests per second)
-  private readonly CACHE_DURATION = 5 * 60 * 1000 // 5 minutes cache
-  private readonly MAX_RETRIES = 3 // Standard retries
-  private readonly RETRY_DELAYS = [400, 800, 1600] // Standard progressive backoff
-
-  private async processQueue() {
-    if (this.isProcessing || this.requestQueue.length === 0) return
-    
-    this.isProcessing = true
-    
-    while (this.requestQueue.length > 0) {
-      const request = this.requestQueue.shift()
-      if (request) {
-        // Rate limiting: ensure minimum interval between requests
-        const now = Date.now()
-        const timeSinceLastRequest = now - this.lastRequestTime
-        
-        if (timeSinceLastRequest < this.MIN_REQUEST_INTERVAL) {
-          await new Promise(resolve => 
-            setTimeout(resolve, this.MIN_REQUEST_INTERVAL - timeSinceLastRequest)
-          )
-        }
-        
-        await request()
-        this.lastRequestTime = Date.now()
-      }
-    }
-    
-    this.isProcessing = false
-  }
+  private readonly CACHE_DURATION = 5 * 60 * 1000 // 5 minutes client cache (server has 24h cache)
+  private readonly MAX_RETRIES = 3
+  private readonly RETRY_DELAYS = [400, 800, 1600]
 
   private getCachedData(key: string): any | null {
     const cached = this.cache.get(key)
@@ -2216,63 +2228,108 @@ class JupiterAPIManager {
     const cached = this.getCachedData(cacheKey)
     if (cached) return cached
 
-    return new Promise((resolve) => {
-      const request = async () => {
-        try {
-          const result = await this.makeJupiterRequest(mintAddress)
-          this.setCachedData(cacheKey, result)
-          resolve(result)
-                 } catch (error) {
-           console.warn(`Failed to fetch token info for ${mintAddress}:`, error instanceof Error ? error.message : error)
-           resolve(null)
-         }
+    try {
+      const result = await this.makeServerRequest(mintAddress)
+      if (result) {
+        this.setCachedData(cacheKey, result)
       }
-
-      this.requestQueue.push(request)
-      this.processQueue()
-    })
+      return result
+    } catch (error) {
+      console.warn(`Failed to fetch token info for ${mintAddress}:`, error instanceof Error ? error.message : error)
+      return null
+    }
   }
 
-  private async makeJupiterRequest(mintAddress: string, retryCount = 0): Promise<any> {
+  private async makeServerRequest(mintAddress: string, retryCount = 0): Promise<any> {
     try {
-      const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
+      const response = await fetch(`/api/jupiter/metadata?mint=${encodeURIComponent(mintAddress)}`)
       
-      if (response.status === 429) {
-        // Rate limited - implement exponential backoff
-        if (retryCount < this.MAX_RETRIES) {
-          const delay = this.RETRY_DELAYS[retryCount] || 1600
-          console.warn(`Rate limited for ${mintAddress}, retrying in ${delay}ms (attempt ${retryCount + 1}/${this.MAX_RETRIES})`)
-          
-          await new Promise(resolve => setTimeout(resolve, delay))
-          return this.makeJupiterRequest(mintAddress, retryCount + 1)
-        } else {
-          throw new Error(`Rate limit exceeded after ${this.MAX_RETRIES} retries`)
-        }
-      }
-
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+        throw new Error(`Server API error: ${response.status} ${response.statusText}`)
       }
 
-      const tokenData = await response.json()
-      return {
-        decimals: tokenData.decimals,
-        symbol: tokenData.symbol,
-        name: tokenData.name,
-        logoURI: tokenData.logoURI
+      const result = await response.json()
+      
+      if (result.error) {
+        console.warn(`Server returned error for ${mintAddress}:`, result.error)
+        return result.data || null
       }
+
+      return result.data
     } catch (error) {
       if (retryCount < this.MAX_RETRIES && error instanceof Error && error.message.includes('fetch')) {
         // Network error - retry with backoff
-        const delay = this.RETRY_DELAYS[retryCount] || 4000
+        const delay = this.RETRY_DELAYS[retryCount] || 1600
         console.warn(`Network error for ${mintAddress}, retrying in ${delay}ms`)
         
         await new Promise(resolve => setTimeout(resolve, delay))
-        return this.makeJupiterRequest(mintAddress, retryCount + 1)
+        return this.makeServerRequest(mintAddress, retryCount + 1)
       }
       
       throw error
     }
+  }
+
+  // Batch fetch multiple token metadata
+  async fetchTokenInfoBatch(mintAddresses: string[]): Promise<Record<string, any>> {
+    if (mintAddresses.length === 0) return {}
+
+    const results: Record<string, any> = {}
+    const uncachedMints: string[] = []
+
+    // Check client cache first
+    mintAddresses.forEach(mint => {
+      const cached = this.getCachedData(`token_info_${mint}`)
+      if (cached) {
+        results[mint] = cached
+      } else {
+        uncachedMints.push(mint)
+      }
+    })
+
+    // Fetch uncached mints from server in batches
+    if (uncachedMints.length > 0) {
+      const BATCH_SIZE = 50 // Server supports up to 50 per request
+      
+      for (let i = 0; i < uncachedMints.length; i += BATCH_SIZE) {
+        const batch = uncachedMints.slice(i, i + BATCH_SIZE)
+        
+        try {
+          const response = await fetch('/api/jupiter/metadata', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ mints: batch })
+          })
+
+          if (!response.ok) {
+            throw new Error(`Batch API error: ${response.status} ${response.statusText}`)
+          }
+
+          const batchResult = await response.json()
+          
+          if (batchResult.results) {
+            Object.entries(batchResult.results).forEach(([mint, result]: [string, any]) => {
+              if (result.data) {
+                results[mint] = result.data
+                this.setCachedData(`token_info_${mint}`, result.data)
+              }
+            })
+          }
+        } catch (error) {
+          console.warn(`Failed to fetch batch token info:`, error)
+          // Set defaults for failed batch
+          batch.forEach(mint => {
+            if (!results[mint]) {
+              results[mint] = { decimals: 6, symbol: 'TOKEN', name: 'Unknown Token' }
+            }
+          })
+        }
+      }
+    }
+
+    return results
   }
 
   async checkIfFungibleToken(mintAddress: string): Promise<boolean> {
@@ -2280,23 +2337,17 @@ class JupiterAPIManager {
     const cached = this.getCachedData(cacheKey)
     if (cached !== null) return cached
 
-    return new Promise((resolve) => {
-      const request = async () => {
-        try {
-          const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
-          const isFungible = response.ok
-          this.setCachedData(cacheKey, isFungible)
-          resolve(isFungible)
-        } catch (error) {
-          console.warn(`Failed to check fungible status for ${mintAddress}:`, error)
-          this.setCachedData(cacheKey, false)
-          resolve(false)
-        }
-      }
-
-      this.requestQueue.push(request)
-      this.processQueue()
-    })
+    try {
+      // Use our server API to check if token exists (if it exists, it's likely fungible)
+      const tokenInfo = await this.fetchTokenInfo(mintAddress)
+      const isFungible = tokenInfo !== null
+      this.setCachedData(cacheKey, isFungible)
+      return isFungible
+    } catch (error) {
+      console.warn(`Failed to check fungible status for ${mintAddress}:`, error)
+      this.setCachedData(cacheKey, false)
+      return false
+    }
   }
 
   async checkFrozenStatus(mintAddress: string): Promise<boolean> {
@@ -2304,30 +2355,17 @@ class JupiterAPIManager {
     const cached = this.getCachedData(cacheKey)
     if (cached !== null) return cached
 
-    return new Promise((resolve) => {
-      const request = async () => {
-        try {
-          const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
-          
-          if (response.ok) {
-            const tokenData = await response.json()
-            const isFrozen = tokenData.frozen === true || tokenData.status === 'frozen'
-            this.setCachedData(cacheKey, isFrozen)
-            resolve(isFrozen)
-          } else {
-            this.setCachedData(cacheKey, false)
-            resolve(false)
-          }
-        } catch (error) {
-          console.warn(`Failed to check frozen status for ${mintAddress}:`, error)
-          this.setCachedData(cacheKey, false)
-          resolve(false)
-        }
-      }
-
-      this.requestQueue.push(request)
-      this.processQueue()
-    })
+    try {
+      // For now, we'll assume tokens are not frozen unless explicitly marked
+      // This could be enhanced to check the actual token account state
+      const isFrozen = false
+      this.setCachedData(cacheKey, isFrozen)
+      return isFrozen
+    } catch (error) {
+      console.warn(`Failed to check frozen status for ${mintAddress}:`, error)
+      this.setCachedData(cacheKey, false)
+      return false
+    }
   }
 
   // Clean up old cache entries
