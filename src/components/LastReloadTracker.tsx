@@ -19,9 +19,11 @@ export default function LastReloadTracker({
   className = '', 
   refreshInterval = 30000 // 30 seconds default
 }: LastReloadTrackerProps) {
-  const [lastReload, setLastReload] = useState<LastReloadData | null>(null)
+  const [lastReloads, setLastReloads] = useState<LastReloadData[]>([])
+  const [currentIndex, setCurrentIndex] = useState<number>(0)
   const [loading, setLoading] = useState<boolean>(true)
   const [error, setError] = useState<string>('')
+  const [isTransitioning, setIsTransitioning] = useState<boolean>(false)
 
   const fetchLastReload = async () => {
     try {
@@ -34,7 +36,7 @@ export default function LastReloadTracker({
 
       if (!response.ok) {
         if (response.status === 404) {
-          setLastReload(null);
+          setLastReloads([]);
           setError('');
           return;
         }
@@ -42,8 +44,9 @@ export default function LastReloadTracker({
         throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
       }
 
-      const result: LastReloadData = await response.json();
-      setLastReload(result);
+      const result: LastReloadData[] = await response.json();
+      setLastReloads(result);
+      setCurrentIndex(0); // Reset to first item when new data arrives
       setError('');
     } catch (err) {
       console.error('Failed to fetch last reload:', err);
@@ -66,24 +69,20 @@ export default function LastReloadTracker({
     }
   }, [refreshInterval]);
 
-  const formatTimeAgo = (dateString: string): string => {
-    const now = new Date();
-    const operationTime = new Date(dateString);
-    const diffMs = now.getTime() - operationTime.getTime();
-    const diffSeconds = Math.floor(diffMs / 1000);
-    const diffMinutes = Math.floor(diffSeconds / 60);
-    const diffHours = Math.floor(diffMinutes / 60);
-    const diffDays = Math.floor(diffHours / 24);
+  // Set up cycling through transactions every 2 seconds
+  useEffect(() => {
+    if (lastReloads.length > 1) {
+      const cycleInterval = setInterval(() => {
+        setIsTransitioning(true);
+        setTimeout(() => {
+          setCurrentIndex((prevIndex) => (prevIndex + 1) % lastReloads.length);
+          setIsTransitioning(false);
+        }, 150); // Brief transition delay
+      }, 5000); // Change every 5 seconds
 
-    if (diffSeconds < 60) return 'just now';
-    if (diffMinutes < 60) return `${diffMinutes}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    return `${diffDays}d ago`;
-  };
-
-  const getOperationIcon = (operationType: 'swap' | 'close') => {
-    return operationType === 'swap' ? '🔄' : '🔒';
-  };
+      return () => clearInterval(cycleInterval);
+    }
+  }, [lastReloads]);
 
   if (loading) {
     return (
@@ -109,9 +108,9 @@ export default function LastReloadTracker({
     );
   }
 
-  if (!lastReload) {
+  if (!lastReloads || lastReloads.length === 0) {
     return (
-      <div className={`bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-4 ${className}`}>
+      <div className={`${className}`}>
         <div className="text-center">
           <p className="text-gray-400 text-sm">No recent operations found</p>
         </div>
@@ -119,21 +118,29 @@ export default function LastReloadTracker({
     );
   }
 
+  const currentReload = lastReloads[currentIndex];
+
   return (
-    <div>
-      <div className="flex items-center justify-center space-x-3">
+    <div className={className}>
+      <div className="flex items-center justify-center space-x-3 text-sm font-mono">
         <div className="flex-1 min-w-0 text-center">
-          <div className="flex items-center justify-center space-x-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-            <span className="text-gray-300 text-sm font-mono">
-              {lastReload.shortWallet}
-            </span>
-            <span className="text-gray-300 text-sm">
-              just reloaded
-            </span>
-            <span className="text-white font-mono text-sm font-semibold">
-              {lastReload.totalSolRecovered.toFixed(4)} SOL
-            </span>
+          <div 
+            className="flex items-center justify-center space-x-2"
+          >
+            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+            <div className={`flex items-center justify-center space-x-2 transition-all duration-300 ${
+              isTransitioning ? 'opacity-50 scale-95' : 'opacity-100 scale-100'
+            }`}>
+              <span className="text-gray-300 text-sm">
+                {currentReload.shortWallet}
+              </span>
+              <span className="text-gray-300 text-sm">
+                just reloaded
+              </span>
+              <span className="text-white text-sm font-semibold">
+                {currentReload.totalSolRecovered.toFixed(4)} SOL
+              </span>
+            </div>
           </div>
         </div>
       </div>

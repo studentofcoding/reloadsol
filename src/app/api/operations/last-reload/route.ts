@@ -11,51 +11,49 @@ interface LastReloadResponse {
 
 export async function GET(request: NextRequest) {
   try {
-    // Get the most recent operation from all wallets
+    // Get the last 10 operations from all wallets, only those with close operations
     const { data, error } = await supabase
       .from('token_operations')
-      .select('wallet_address, sol_balance, last_operation_time, swap_count, close_count')
+      .select('wallet_address, sol_balance, last_operation_time, close_count')
       .not('last_operation_time', 'is', null)
+      .gt('close_count', 0) // Only operations with close count > 0
       .order('last_operation_time', { ascending: false })
-      .limit(1)
-      .single();
+      .limit(10);
 
     if (error) {
       console.error('Error fetching last reload:', error);
       return NextResponse.json(
-        { error: 'Failed to fetch last operation' },
+        { error: 'Failed to fetch last operations' },
         { status: 500 }
       );
     }
 
-    if (!data) {
+    if (!data || data.length === 0) {
       return NextResponse.json(
         { error: 'No operations found' },
         { status: 404 }
       );
     }
 
-    // Calculate total SOL recovered based on operation counts
-    // Assuming average of 0.1 SOL per swap and 0.002 SOL per close (rent recovery)
-    const avgSolPerSwap = 0.1;
-    const avgSolPerClose = 0.002;
-    const totalSolRecovered = (data.swap_count || 0) * avgSolPerSwap + (data.close_count || 0) * avgSolPerClose;
+    // Process each operation - only close operations
+    const operations = data.map(operation => {
+      // Calculate SOL recovered only from close operations (rent recovery)
+      const avgSolPerClose = 0.002;
+      const totalSolRecovered = (operation.close_count || 0) * avgSolPerClose;
 
-    // Determine the primary operation type based on counts
-    const operationType = (data.swap_count || 0) > (data.close_count || 0) ? 'swap' : 'close';
+      // Format wallet address (first 3 and last 3 characters)
+      const shortWallet = `${operation.wallet_address.slice(0, 3)}..${operation.wallet_address.slice(-3)}`;
 
-    // Format wallet address (first 3 and last 3 characters)
-    const shortWallet = `${data.wallet_address.slice(0, 3)}..${data.wallet_address.slice(-3)}`;
+      return {
+        walletAddress: operation.wallet_address,
+        totalSolRecovered,
+        lastOperationTime: operation.last_operation_time,
+        operationType: 'close' as const,
+        shortWallet
+      };
+    });
 
-    const response: LastReloadResponse = {
-      walletAddress: data.wallet_address,
-      totalSolRecovered,
-      lastOperationTime: data.last_operation_time,
-      operationType,
-      shortWallet
-    };
-
-    return NextResponse.json(response);
+    return NextResponse.json(operations);
 
   } catch (error) {
     console.error('Error in last-reload API:', error);
