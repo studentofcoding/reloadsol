@@ -50,7 +50,70 @@ export default function TradingHistory() {
     const allRecords = tradingTracker.getWalletRecords(walletAddress)
     const successfulRecords = allRecords.filter(record => record.successCount > 0)
 
-    setRecords(successfulRecords)
+    // Combine sell and close operations that happen within 30 seconds of each other
+    const combinedRecords: TrackingRecord[] = []
+    const processedRecordIds = new Set<string>()
+
+    successfulRecords.forEach(record => {
+      if (processedRecordIds.has(record.id)) return
+
+      if (record.operationType === 'sell') {
+        // Look for a close operation within 30 seconds
+        const closeRecord = successfulRecords.find(r => 
+          r.operationType === 'close' && 
+          !processedRecordIds.has(r.id) &&
+          Math.abs(r.timestamp - record.timestamp) <= 30000 // 30 seconds
+        )
+
+        if (closeRecord) {
+          // Combine sell and close into one record
+          const combinedRecord: TrackingRecord = {
+            ...record,
+            operationType: 'sell' as const, // Keep as 'sell' but it represents sell+close
+            tokens: [...record.tokens, ...closeRecord.tokens].filter((token, index, self) => 
+              index === self.findIndex(t => t.mintAddress === token.mintAddress)
+            ), // Remove duplicates
+            successCount: record.successCount + closeRecord.successCount,
+            failureCount: record.failureCount + closeRecord.failureCount,
+            totalTokens: record.totalTokens + closeRecord.totalTokens,
+            signatures: [...record.signatures, ...closeRecord.signatures],
+            feesPaid: record.feesPaid + closeRecord.feesPaid,
+            errors: [...(record.errors || []), ...(closeRecord.errors || [])]
+          }
+          
+          combinedRecords.push(combinedRecord)
+          processedRecordIds.add(record.id)
+          processedRecordIds.add(closeRecord.id)
+        } else {
+          // No matching close operation, keep sell as is
+          combinedRecords.push(record)
+          processedRecordIds.add(record.id)
+        }
+      } else if (record.operationType === 'close') {
+        // Check if this close wasn't already combined with a sell
+        const sellRecord = successfulRecords.find(r => 
+          r.operationType === 'sell' && 
+          !processedRecordIds.has(r.id) &&
+          Math.abs(r.timestamp - record.timestamp) <= 30000 // 30 seconds
+        )
+
+        if (!sellRecord) {
+          // Standalone close operation
+          combinedRecords.push(record)
+          processedRecordIds.add(record.id)
+        }
+        // If there's a matching sell, it will be handled when we process the sell record
+      } else {
+        // Buy operations and others - keep as is
+        combinedRecords.push(record)
+        processedRecordIds.add(record.id)
+      }
+    })
+
+    // Sort by timestamp (most recent first)
+    combinedRecords.sort((a, b) => b.timestamp - a.timestamp)
+
+    setRecords(combinedRecords)
     setStats(tradingTracker.getStats(walletAddress))
     } catch (err) {
       console.error('Error loading trading records:', err)
@@ -182,7 +245,10 @@ export default function TradingHistory() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   <span className="text-sm text-gray-400 capitalize font-medium flex items-center space-x-2">
-                    {record.operationType}
+                    {record.operationType === 'sell' && record.totalTokens > record.tokens.length 
+                      ? 'sell & close' 
+                      : record.operationType
+                    }
                     <div className="flex items-center ml-2 space-x-2">
                       <div className="relative flex items-center">
                         {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token, idx) => (
