@@ -4,6 +4,8 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { useWallet, useConnection } from '../components/WalletProvider'
 import PhantomWalletButton from './PhantomWalletButton'
 import TransactionResultModal from './TransactionResultModal'
+import TokenSkeleton from './TokenSkeleton'
+import ProgressiveTokenItem from './ProgressiveTokenItem'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { 
   executeBulkSell, 
@@ -23,6 +25,7 @@ import {
   BulkSellRequest, 
   BulkSellResult 
 } from '@/utils/jupiter'
+import { trackSellOperation, trackCloseOperation } from '@/utils/trading-tracker'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
 import { trackSell, trackClose } from '@/utils/operations-api'
 
@@ -43,6 +46,7 @@ export default function BulkTokenSeller() {
   const [userTokens, setUserTokens] = useState<UserToken[]>([])
   const [zeroBalanceTokens, setZeroBalanceTokens] = useState<UserToken[]>([])
   const [isLoadingTokens, setIsLoadingTokens] = useState<boolean>(false)
+  const [isInitialLoad, setIsInitialLoad] = useState<boolean>(true)
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [isClosingAccounts, setIsClosingAccounts] = useState<boolean>(false)
   const [result, setResult] = useState<BulkSellResult | null>(null)
@@ -143,6 +147,7 @@ export default function BulkTokenSeller() {
       
       setUserTokens(sellableTokens)
       setZeroBalanceTokens(zeroTokens)
+      setIsInitialLoad(false) // Mark initial load as complete
       
       console.log(`Efficiently fetched ${sellableTokens.length} sellable and ${zeroTokens.length} zero/unsellable tokens`)
     } catch (error) {
@@ -153,6 +158,7 @@ export default function BulkTokenSeller() {
       } else {
         setError('Failed to fetch your tokens. Please try again.')
       }
+      setIsInitialLoad(false) // Mark initial load as complete even on error
     } finally {
       setIsLoadingTokens(false)
     }
@@ -265,7 +271,7 @@ export default function BulkTokenSeller() {
         
         // Update tokens state
       setUserTokens(updatedTokens)
-      
+        
       // Update selected tokens with new prices
         setSelectedTokens(prev => prev.map(selectedToken => {
         const updatedToken = updatedTokens.find(t => t.mintAddress === selectedToken.mintAddress)
@@ -403,6 +409,20 @@ export default function BulkTokenSeller() {
               }
             );
             console.log(`🎉 Earned ${trackResult.pointsEarned} points from sell operation!`);
+
+            // Also track locally for TradingHistory component
+            trackSellOperation(
+              publicKey.toString(),
+              sellTokenData,
+              sellResult.totalReceived || 0,
+              sellResult.successfulSwaps.length,
+              sellResult.failedSwaps.length,
+              sellResult.signatures,
+              0, // feesPaid - we don't track this locally yet
+              slippage / 100,
+              priorityFee,
+              sellErrors
+            );
           } catch (trackError) {
             console.error('Failed to track sell operation:', trackError);
           }
@@ -441,6 +461,17 @@ export default function BulkTokenSeller() {
               }
             );
             console.log(`🎉 Earned ${trackResult.pointsEarned} points from close operation!`);
+
+            // Also track locally for TradingHistory component
+            trackCloseOperation(
+              publicKey.toString(),
+              closeTokenData,
+              sellResult.successfulCloses.length,
+              sellResult.failedCloses.length,
+              sellResult.signatures,
+              0, // feesPaid - we don't track this locally yet
+              closeErrors
+            );
           } catch (trackError) {
             console.error('Failed to track close operation:', trackError);
           }
@@ -476,6 +507,7 @@ export default function BulkTokenSeller() {
   // Fetch user tokens on wallet connection
   useEffect(() => {
     if (connected && publicKey) {
+      setIsInitialLoad(true) // Set initial load state before fetching
       fetchTokens()
       fetchSolPrice()
     } else {
@@ -483,6 +515,7 @@ export default function BulkTokenSeller() {
       setZeroBalanceTokens([])
       setSelectedTokens([])
       setSelectedZeroBalanceTokens([])
+      setIsInitialLoad(true) // Reset initial load state when wallet disconnects
     }
   }, [connected, publicKey, fetchTokens, fetchSolPrice])
   
@@ -541,28 +574,6 @@ export default function BulkTokenSeller() {
           <PhantomWalletButton />
         </div>
       </div>
-
-      {/* Fee Structure Display */}
-      {/* <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
-        <h3 className="text-sm font-semibold text-blue-800 mb-2">Fee Structure</h3>
-        <div className="grid grid-cols-3 gap-4 text-sm">
-          <div className="text-center">
-            <div className="font-medium text-blue-700">Buy Operations</div>
-            <div className="text-blue-600">{feeRates.buyPercentage}% of SOL budget</div>
-          </div>
-          <div className="text-center">
-            <div className="font-medium text-orange-700">Sell Operations</div>
-            <div className="text-orange-600">{feeRates.sellPercentage}% of SOL received</div>
-          </div>
-          <div className="text-center">
-            <div className="font-medium text-green-700">Close Operations</div>
-            <div className="text-green-600">{feeRates.closeFixed} SOL per account</div>
-          </div>
-        </div>
-        <div className="mt-2 text-xs text-gray-600 text-center">
-          All fees go to dev wallet • No referral splits
-        </div>
-      </div> */}
 
       {connected && (
         <div className="space-y-8">
@@ -664,12 +675,9 @@ export default function BulkTokenSeller() {
 
           {/* Token List */}
           {isLoadingTokens ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="flex items-center space-x-3 text-gray-400">
-                <div className="w-5 h-5 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
-                <span>Loading your tokens...</span>
-              </div>
-            </div>
+            <>
+              <TokenSkeleton count={3} variant="progressive" />
+            </>
           ) : userTokens.length === 0 ? (
             <div className="text-center py-12">
               <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
@@ -708,123 +716,17 @@ export default function BulkTokenSeller() {
                 const isSelected = selectedTokens.some(t => t.mintAddress === token.mintAddress)
                 const selectedToken = selectedTokens.find(t => t.mintAddress === token.mintAddress)
                 return (
-                  <div
+                  <ProgressiveTokenItem
                     key={token.mintAddress}
-                    className={`group p-4 rounded-xl border transition-all duration-200 ${
-                      isSelected
-                        ? 'bg-gray-700 border-gray-500'
-                        : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-gray-500'
-                    }`}
-                  >
-                    <div 
-                      className="flex items-center justify-between cursor-pointer"
-                      onClick={() => toggleTokenSelection(token)}
-                    >
-                      <div className="flex items-center space-x-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
-                          isSelected ? 'bg-white text-black' : 'bg-gray-600'
-                        }`}>
-                          {token.logoURI ? <img src={token.logoURI} alt={token.name} className="w-10 h-10 rounded-full" /> : 'T'}
-                        </div>
-                        <div>
-                          <div className="font-semibold text-white">
-                            {token.name || token.symbol || 'Unknown'}
-                            {token.usdValue > 0 && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    handleSelectToken(token.mintAddress)
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-600 rounded ml-2"
-                                  title="View Chart"
-                                >
-                                  <svg className="w-4 h-4 text-gray-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                                  </svg>
-                                </button>
-                              )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-semibold text-sm text-gray-400">
-                        {token.uiAmount.toFixed(6)} 
-                        {token.isLoadingPrice ? (
-                            <div className="flex items-center space-x-1">
-                              <div className="w-3 h-3 border border-gray-400 border-t-white rounded-full animate-spin"></div>
-                              <span>Loading...</span>
-                            </div>
-                          ) : (
-                            <>
-                              <span className="ml-1 text-sm text-white">≈ ${token.usdValue.toFixed(2)}</span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  refreshTokenPrice(token)
-                                }}
-                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-600 rounded"
-                                title="Refresh price"
-                              >
-                                <svg className="w-3 h-3 text-gray-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                </svg>
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Sell Amount Controls (visible when selected) */}
-                    {isSelected && selectedToken && (
-                      <div className="mt-4 pt-3 border-t border-gray-600">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-medium text-gray-300">Sell Amount</span>
-                          <span className="text-sm text-gray-400">
-                            {selectedToken.sellPercentage}% = {(selectedToken.sellAmount / Math.pow(10, token.decimals)).toFixed(6)} tokens
-                          </span>
-                        </div>
-                        <div className="flex items-center space-x-3">
-                          <input
-                            type="range"
-                            min="1"
-                            max="100"
-                            value={selectedToken.sellPercentage}
-                            onChange={(e) => {
-                              e.stopPropagation()
-                              updateTokenSellPercentage(token.mintAddress, parseInt(e.target.value))
-                            }}
-                            className="flex-1 h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer"
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                          <input
-                            type="number"
-                            min="1"
-                            max="100"
-                            value={selectedToken.sellPercentage}
-                            onChange={(e) => {
-                              e.stopPropagation()
-                              const value = Math.max(1, Math.min(100, parseInt(e.target.value) || 1))
-                              updateTokenSellPercentage(token.mintAddress, value)
-                            }}
-                            className="w-16 px-2 py-1 bg-gray-600 text-white text-sm rounded border border-gray-500 focus:border-gray-400"
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                          <span className="text-sm text-gray-400">%</span>
-                        </div>
-                        <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
-                          <span>≈ ${(token.usdValue * selectedToken.sellPercentage / 100).toFixed(2)}</span>
-                          <span className={`px-2 py-1 rounded text-xs font-medium ${
-                            selectedToken.sellPercentage === 100 
-                              ? 'bg-yellow-600 text-yellow-100' 
-                              : 'bg-blue-600 text-blue-100'
-                          }`}>
-                            {selectedToken.sellPercentage === 100 ? 'Sell & Close' : 'Sell Only'}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                    token={token}
+                    isSelected={isSelected}
+                    isLoading={false}
+                    onToggleSelection={toggleTokenSelection}
+                    onSelectToken={handleSelectToken}
+                    onRefreshPrice={refreshTokenPrice}
+                    selectedToken={selectedToken}
+                    onUpdateSellPercentage={updateTokenSellPercentage}
+                  />
                 )
               })}
             </div>

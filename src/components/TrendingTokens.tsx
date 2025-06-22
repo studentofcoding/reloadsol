@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react'
 import ChartOverview from './ChartOverview'
+import TokenSkeleton from './TokenSkeleton'
 
 interface TrendingToken {
   token_symbol: string
@@ -320,9 +321,7 @@ export default function TrendingTokens({
       <p className="text-xs text-gray-400 mb-4">disclaimer: Token information is for educational purposes only, not financial advice and always DYOR.</p>
       
       {isLoading && (
-        <div className="flex justify-center items-center py-10">
-          <div className="w-10 h-10 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-        </div>
+        <TokenSkeleton count={3} variant="trending" />
       )}
       
       {error && (

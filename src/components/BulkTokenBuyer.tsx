@@ -5,11 +5,13 @@ import { useWallet, useConnection } from '../components/WalletProvider'
 import PhantomWalletButton from './PhantomWalletButton'
 import TrendingTokens from './TrendingTokens'
 import TransactionResultModal from './TransactionResultModal'
+import TokenSkeleton from './TokenSkeleton'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
 import { trackBuy } from '@/utils/operations-api'
+import { trackBuyOperation } from '@/utils/trading-tracker'
 import { connection } from '../utils/connection'
 
 export default function BulkTokenBuyer() {
@@ -33,6 +35,7 @@ export default function BulkTokenBuyer() {
   
   // UI state
   const [isLoading, setIsLoading] = useState<boolean>(false)
+  const [isLoadingMetadata, setIsLoadingMetadata] = useState<boolean>(false)
   const [result, setResult] = useState<BulkBuyResult | null>(null)
   const [error, setError] = useState<string>('')
   const [showResultModal, setShowResultModal] = useState<boolean>(false)
@@ -64,6 +67,8 @@ export default function BulkTokenBuyer() {
       const addressesToFetch = addresses.filter(addr => !existingAddresses.has(addr) && isValidMintAddress(addr))
       
       if (addressesToFetch.length === 0) return
+      
+      setIsLoadingMetadata(true)
       
       // Create promises for each address
       const fetchPromises = addressesToFetch.map(async (address): Promise<TokenInfo | null> => {
@@ -106,11 +111,15 @@ export default function BulkTokenBuyer() {
       if (validResults.length > 0) {
         setTokenList(currentList => [...currentList, ...validResults])
       }
+      
+      setIsLoadingMetadata(false)
     }
     
     // Only update if there are valid mints that might not be in the list
     if (validMints.length > 0) {
       fetchTokenMetadata(validMints)
+    } else {
+      setIsLoadingMetadata(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenMints])
@@ -317,6 +326,20 @@ export default function BulkTokenBuyer() {
             }
           );
           console.log(`🎉 Earned ${trackResult.pointsEarned} points from buy operation!`);
+
+          // Also track locally for TradingHistory component
+          trackBuyOperation(
+            publicKey.toString(),
+            tokenData, // Use the existing tokenData variable
+            parseFloat(solAmount),
+            buyResult.successfulPurchases.length,
+            buyResult.failedPurchases.length,
+            buyResult.signatures,
+            0, // feesPaid - we don't track this locally yet
+            slippage / 100,
+            priorityFee,
+            errors
+          );
         } catch (trackError) {
           console.error('Failed to track buy operation:', trackError);
         }
@@ -570,7 +593,11 @@ export default function BulkTokenBuyer() {
                 </div>
                 
                 {/* Token List Display */}
-                {tokenList.length > 0 && (
+                {isLoadingMetadata ? (
+                  <div className="max-h-[200px] overflow-y-auto">
+                    <TokenSkeleton count={1} variant="token-chips" />
+                  </div>
+                ) : tokenList.length > 0 ? (
                   <div className="max-h-[200px] overflow-y-auto">
                     <div className="flex flex-wrap gap-2">
                       {tokenList.map((token) => (
@@ -596,7 +623,7 @@ export default function BulkTokenBuyer() {
                       ))}
                     </div>
                   </div>
-                )}
+                ) : null}
 
                 {/* Hidden textarea for internal state */}
                 <textarea

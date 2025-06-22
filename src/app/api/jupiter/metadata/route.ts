@@ -31,8 +31,19 @@ async function fetchTokenMetadataFromJupiter(mintAddress: string, retryCount = 0
       )
     }
     
-    const response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
-    lastRequestTime = Date.now()
+    // … previous logic …
+
+    // Wrap fetch in try/catch to handle network errors before status checks
+    let response: Response
+    try {
+      response = await fetch(`https://lite-api.jup.ag/tokens/v1/token/${mintAddress}`)
+      lastRequestTime = Date.now()
+    } catch (fetchError) {
+      // Network error - throw to trigger retry logic in outer catch
+      throw new Error(`Network error: ${fetchError}`)
+    }
+
+    // … subsequent logic (e.g. response.status check) …
     
     if (response.status === 429) {
       // Rate limited - implement exponential backoff
@@ -59,7 +70,11 @@ async function fetchTokenMetadataFromJupiter(mintAddress: string, retryCount = 0
       logoURI: tokenData.logoURI
     }
   } catch (error) {
-    if (retryCount < MAX_RETRIES && error instanceof Error && error.message.includes('fetch')) {
+    if (retryCount < MAX_RETRIES && error instanceof Error && 
+        (error.message.includes('Network error') ||
+         error.message.includes('ECONNREFUSED') ||
+         error.message.includes('ETIMEDOUT') ||
+         error.name === 'TypeError')) {
       // Network error - retry with backoff
       const delay = RETRY_DELAYS[retryCount] || 1600
       console.warn(`Network error for ${mintAddress}, retrying in ${delay}ms`)

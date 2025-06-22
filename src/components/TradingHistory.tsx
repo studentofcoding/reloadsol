@@ -3,21 +3,47 @@
 import React, { useState, useEffect } from 'react'
 import { tradingTracker, TrackingRecord, TrackingStats } from '@/utils/trading-tracker'
 import { useWallet } from './WalletProvider'
+import TokenSkeleton from './TokenSkeleton'
 
 export default function TradingHistory() {
   const { publicKey, connected } = useWallet()
   const [records, setRecords] = useState<TrackingRecord[]>([])
   const [stats, setStats] = useState<TrackingStats | null>(null)
   const [timeFilter, setTimeFilter] = useState<'all' | '24h' | '7d' | '30d'>('7d')
+  const [isLoading, setIsLoading] = useState<boolean>(false)
+  const [error, setError] = useState<string>('')
+  const [isLocalStorageAvailable, setIsLocalStorageAvailable] = useState<boolean>(true)
+
+  // Check if localStorage is available
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const testKey = '__localStorage_test__'
+        localStorage.setItem(testKey, 'test')
+        localStorage.removeItem(testKey)
+        setIsLocalStorageAvailable(true)
+      } else {
+        setIsLocalStorageAvailable(false)
+      }
+    } catch (e) {
+      console.warn('localStorage is not available:', e)
+      setIsLocalStorageAvailable(false)
+      setError('Browser storage is not available. Trading history will not be saved.')
+    }
+  }, [])
 
   // Function to load records and stats
   const loadRecords = React.useCallback(() => {
-    if (!connected || !publicKey) {
+    if (!connected || !publicKey || !isLocalStorageAvailable) {
       setRecords([])
       setStats(null)
       return
     }
 
+    setIsLoading(true)
+    setError('')
+
+    try {
     const walletAddress = publicKey.toString()
     
     // Get recent successful records only
@@ -26,7 +52,15 @@ export default function TradingHistory() {
 
     setRecords(successfulRecords)
     setStats(tradingTracker.getStats(walletAddress))
-  }, [connected, publicKey])
+    } catch (err) {
+      console.error('Error loading trading records:', err)
+      setError('Failed to load trading history')
+      setRecords([])
+      setStats(null)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [connected, publicKey, isLocalStorageAvailable])
 
   // Load records and stats
   useEffect(() => {
@@ -37,8 +71,8 @@ export default function TradingHistory() {
   useEffect(() => {
     const handleNewRecord = (event: CustomEvent) => {
       // Auto-refresh when a new trading record is added
-      console.log('🔄 New trading record detected, refreshing history...')
-      loadRecords()
+      console.log('🔄 New trading record detected, refreshing history...', event.detail)
+      setTimeout(() => loadRecords(), 100) // Small delay to ensure localStorage is updated
     }
 
     // Add event listener
@@ -76,26 +110,6 @@ export default function TradingHistory() {
     return `${days} day${days !== 1 ? 's' : ''} ago`
   }
 
-  const clearHistory = () => {
-    if (confirm('Are you sure you want to clear all trading history? This cannot be undone.')) {
-      tradingTracker.clearAllRecords()
-      setRecords([])
-      setStats(null)
-    }
-  }
-
-  const exportHistory = () => {
-    const dataStr = tradingTracker.exportRecords()
-    const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr)
-    
-    const exportFileDefaultName = `trading-history-${publicKey?.toString().slice(0, 8)}-${Date.now()}.json`
-    
-    const linkElement = document.createElement('a')
-    linkElement.setAttribute('href', dataUri)
-    linkElement.setAttribute('download', exportFileDefaultName)
-    linkElement.click()
-  }
-
   const openTransactionOnSolscan = (signatures: string[]) => {
     if (signatures && signatures.length > 0) {
       // Open the first signature on Solscan
@@ -105,8 +119,32 @@ export default function TradingHistory() {
     }
   }
 
+  // Show error state
+  if (error && !isLocalStorageAvailable) {
+    return (
+      <div className="bg-gray-800 border border-gray-600 rounded-xl p-4 text-center">
+        <p className="text-gray-400 text-sm">{error}</p>
+      </div>
+    )
+  }
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="">
+        <TokenSkeleton count={5} variant="trading-history" />
+      </div>
+    )
+  }
+
   return (
     <div className="">
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-3 mb-3 text-center">
+          <p className="text-red-400 text-sm">{error}</p>
+        </div>
+      )}
 
       {/* Horizontal Records List */}
       {connected && records.length === 0 ? (

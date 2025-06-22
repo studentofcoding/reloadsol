@@ -123,11 +123,16 @@ export default function Home() {
         </div>
         )}
 
+
         {/* Feature Cards */}
         {!connected && (
           <>
             <div className="max-w-4xl mx-auto mb-10">
+              <PhantomWalletButton />
+            </div>
+            <div className="max-w-4xl mx-auto mb-10">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+
                 <div className="bg-gray-900 rounded-xl p-6 border border-gray-700">
                   <div className="w-12 h-12 bg-gray-700 rounded-lg flex items-center justify-center mb-4">
                     <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -165,7 +170,6 @@ export default function Home() {
                 </div>
               </div>
             </div>
-            <PhantomWalletButton />
           </>
         )}
       </div>
