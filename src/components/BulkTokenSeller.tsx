@@ -26,11 +26,8 @@ import {
   BulkSellResult 
 } from '@/utils/jupiter'
 import { trackSellOperation, trackCloseOperation } from '@/utils/trading-tracker'
-import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
+import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS, getSolPriceUSD } from '@/utils/solana'
 import { trackSell, trackClose } from '@/utils/operations-api'
-
-// SOL mint address for Jupiter API v2
-const SOL_MINT = 'So11111111111111111111111111111111111111112'
 
 export default function BulkTokenSeller() {
   const { publicKey, signAllTransactions, connected } = useWallet()
@@ -67,19 +64,12 @@ export default function BulkTokenSeller() {
 
   const feeRates = getAllFeeRates()
 
-  // Fetch SOL price from Jupiter API v2
+  // Fetch SOL price using robust multi-API system
   const fetchSolPrice = useCallback(async () => {
     try {
-      const response = await fetch(`https://api.jup.ag/price/v2?ids=${SOL_MINT}`)
-      if (!response.ok) {
-        throw new Error(`Jupiter API responded with status: ${response.status}`)
-      }
-      const data = await response.json()
-      if (data?.data?.[SOL_MINT]?.price) {
-        const price = parseFloat(data.data[SOL_MINT].price)
-        setSolPriceUsd(price)
-        console.log(`SOL price updated: $${price}`)
-      }
+      const price = await getSolPriceUSD()
+      setSolPriceUsd(price)
+      console.log(`SOL price updated: $${price}`)
     } catch (error) {
       console.error('Error fetching SOL price:', error)
       // Keep using current price if fetch fails
