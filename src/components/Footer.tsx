@@ -4,8 +4,7 @@ import React from 'react'
 
 export default function Footer() {
   const handleDiscordClick = () => {
-    // You can replace this with the actual Discord invite link
-    window.open('https://discord.gg/your-discord-server', '_blank')
+    window.open('https://discord.gg/Z8fUwVJHjp', '_blank')
   }
 
   return (
@@ -23,7 +22,14 @@ export default function Footer() {
             team
           </p>
           <p className="text-gray-400 text-sm mt-2">
-            Kindly join our discord for any question, or collaboration
+            Kindly join our{' '}
+            <button
+              onClick={handleDiscordClick}
+              className="text-indigo-400 hover:text-indigo-300 transition-colors duration-200 underline decoration-indigo-600 hover:decoration-indigo-300"
+            >
+              Discord
+            </button>{' '}
+            for any question, bug reports, or collaboration
           </p>
           <p className="text-gray-400 text-sm mt-2">
             Happy degening! 🚀
