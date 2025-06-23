@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import BulkTokenBuyer from '@/components/BulkTokenBuyer'
 import BulkTokenSeller from '@/components/BulkTokenSeller'
 import WalletBalance from '@/components/WalletBalance'
@@ -10,10 +10,24 @@ import { useWallet } from '@/components/WalletProvider'
 import ConnectionStatus from '@/components/ConnectionStatus'
 import PhantomWalletButton from '@/components/PhantomWalletButton'
 import Footer from '@/components/Footer'
+import WelcomeModal from '@/components/WelcomeModal'
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'buy' | 'sell'>('sell')
+  const [showWelcome, setShowWelcome] = useState(false)
   const { connected } = useWallet()
+
+  // Check if user should see welcome modal
+  useEffect(() => {
+    const welcomeSeen = localStorage.getItem('buyBulkWelcomeSeen')
+    if (!welcomeSeen && connected) {
+      // Small delay to let the page load first
+      const timer = setTimeout(() => {
+        setShowWelcome(true)
+      }, 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [connected])
 
   return (
     <main className="min-h-screen bg-black py-8">
@@ -174,6 +188,12 @@ export default function Home() {
         )}
       </div>
       <Footer />
+      
+      {/* Welcome Modal */}
+      <WelcomeModal 
+        isOpen={showWelcome} 
+        onClose={() => setShowWelcome(false)} 
+      />
     </main>
   )
 } 
