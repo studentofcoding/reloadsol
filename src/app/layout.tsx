@@ -2,6 +2,7 @@ import './globals.css'
 import { WalletProvider } from '@/components/WalletProvider'
 // import { PasswordGate } from '@/components/PasswordGate'
 import { Metadata } from 'next';
+import { Analytics } from "@vercel/analytics/next"
 
 // This is needed for static export with App Router
 export function generateStaticParams() {
@@ -56,6 +57,7 @@ export default function RootLayout({
         <WalletProvider>
           {children}
         </WalletProvider>
+        <Analytics />
       </body>
       <script async src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
     </html>

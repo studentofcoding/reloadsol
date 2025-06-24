@@ -3,7 +3,12 @@ const nextConfig = {
   experimental: {
     appDir: true,
   },
-  webpack: (config) => {
+  compiler: {
+    removeConsole: {
+      exclude: ['error'],
+    },
+  },
+  webpack: (config, { dev, isServer }) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,
       fs: false,
