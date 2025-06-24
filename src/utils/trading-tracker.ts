@@ -7,12 +7,15 @@ export interface TrackingRecord {
   operationType: 'buy' | 'sell' | 'close'
   timestamp: number
   
-  // Token information
+  // Token information with prices
   tokens: Array<{
     mintAddress: string
     symbol?: string
     name?: string
     logoURI?: string
+    priceUsd?: number // USD price of token at operation time
+    solPrice?: number // SOL price in USD at operation time
+    tokenAmount?: number // Amount of tokens involved
   }>
   
   // Operation results
@@ -23,6 +26,10 @@ export interface TrackingRecord {
   // Financial data
   solAmount?: number // For buys: amount spent, For sells: amount received
   feesPaid: number
+  
+  // Price tracking for accurate PnL
+  solPriceUsd?: number // SOL price in USD at operation time
+  totalUsdValue?: number // Total USD value of operation
   
   // Transaction data
   signatures: string[]
@@ -245,10 +252,17 @@ class TradingTracker {
 // Create singleton instance
 export const tradingTracker = new TradingTracker()
 
-// Helper functions for easy integration
+// Helper functions for easy integration with price tracking
 export const trackBuyOperation = (
   walletAddress: string,
-  tokens: Array<{ mintAddress: string; symbol?: string; name?: string; logoURI?: string }>,
+  tokens: Array<{ 
+    mintAddress: string; 
+    symbol?: string; 
+    name?: string; 
+    logoURI?: string;
+    priceUsd?: number;
+    tokenAmount?: number;
+  }>,
   solAmount: number,
   successCount: number,
   failureCount: number,
@@ -256,12 +270,20 @@ export const trackBuyOperation = (
   feesPaid: number,
   slippage?: number,
   priorityFee?: number,
-  errors?: string[]
+  errors?: string[],
+  solPriceUsd?: number
 ) => {
+  const totalUsdValue = tokens.reduce((sum, token) => 
+    sum + ((token.priceUsd || 0) * (token.tokenAmount || 0)), 0
+  )
+  
   tradingTracker.trackOperation({
     walletAddress,
     operationType: 'buy',
-    tokens,
+    tokens: tokens.map(token => ({
+      ...token,
+      solPrice: solPriceUsd
+    })),
     totalTokens: tokens.length,
     successCount,
     failureCount,
@@ -270,13 +292,22 @@ export const trackBuyOperation = (
     signatures,
     slippage,
     priorityFee,
-    errors
+    errors,
+    solPriceUsd,
+    totalUsdValue
   })
 }
 
 export const trackSellOperation = (
   walletAddress: string,
-  tokens: Array<{ mintAddress: string; symbol?: string; name?: string; logoURI?: string }>,
+  tokens: Array<{ 
+    mintAddress: string; 
+    symbol?: string; 
+    name?: string; 
+    logoURI?: string;
+    priceUsd?: number;
+    tokenAmount?: number;
+  }>,
   solReceived: number,
   successCount: number,
   failureCount: number,
@@ -284,12 +315,20 @@ export const trackSellOperation = (
   feesPaid: number,
   slippage?: number,
   priorityFee?: number,
-  errors?: string[]
+  errors?: string[],
+  solPriceUsd?: number
 ) => {
+  const totalUsdValue = tokens.reduce((sum, token) => 
+    sum + ((token.priceUsd || 0) * (token.tokenAmount || 0)), 0
+  )
+  
   tradingTracker.trackOperation({
     walletAddress,
     operationType: 'sell',
-    tokens,
+    tokens: tokens.map(token => ({
+      ...token,
+      solPrice: solPriceUsd
+    })),
     totalTokens: tokens.length,
     successCount,
     failureCount,
@@ -298,7 +337,9 @@ export const trackSellOperation = (
     signatures,
     slippage,
     priorityFee,
-    errors
+    errors,
+    solPriceUsd,
+    totalUsdValue
   })
 }
 
@@ -309,17 +350,49 @@ export const trackCloseOperation = (
   failureCount: number,
   signatures: string[],
   feesPaid: number,
-  errors?: string[]
+  errors?: string[],
+  solPriceUsd?: number
 ) => {
   tradingTracker.trackOperation({
     walletAddress,
     operationType: 'close',
-    tokens,
+    tokens: tokens.map(token => ({
+      ...token,
+      solPrice: solPriceUsd
+    })),
     totalTokens: tokens.length,
     successCount,
     failureCount,
     feesPaid,
     signatures,
-    errors
+    errors,
+    solPriceUsd
   })
+}
+
+// Utility function to fetch current token prices for tracking
+export const fetchTokenPricesForTracking = async (mintAddresses: string[]): Promise<Record<string, number>> => {
+  if (mintAddresses.length === 0) return {}
+  
+  try {
+    const priceResponse = await fetch(`https://api.jup.ag/price/v2?ids=${mintAddresses.join(',')}`)
+    const priceData = await priceResponse.json()
+    
+    const prices: Record<string, number> = {}
+    
+    if (priceData?.data) {
+      Object.entries(priceData.data).forEach(([mint, data]: [string, any]) => {
+        if (data && data.price) {
+          prices[mint] = parseFloat(data.price)
+        } else {
+          prices[mint] = 0
+        }
+      })
+    }
+    
+    return prices
+  } catch (error) {
+    console.error('Failed to fetch token prices for tracking:', error)
+    return {}
+  }
 } 

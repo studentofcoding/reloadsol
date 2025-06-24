@@ -282,6 +282,45 @@ export default function TradingHistory() {
                   </span>
                 </div>
               </div>
+              
+              {/* Line 3: Enhanced info with P&L tracking indicator */}
+              <div className="flex items-center justify-between mt-2">
+                <div className="flex items-center space-x-2">
+                  {/* Price tracking indicator */}
+                  {record.tokens.some(token => token.priceUsd && token.priceUsd > 0) && (
+                    <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
+                  )}
+                  
+                  {/* Operation type specific info */}
+                  {record.operationType === 'buy' && (
+                    <span className="text-blue-400 text-xs">
+                      {record.successCount} token{record.successCount !== 1 ? 's' : ''} bought
+                    </span>
+                  )}
+                  
+                  {record.operationType === 'sell' && (
+                    <span className="text-orange-400 text-xs">
+                      {record.totalTokens > record.tokens.length 
+                        ? `${record.tokens.length} sold, ${record.totalTokens - record.tokens.length} closed`
+                        : `${record.successCount} token${record.successCount !== 1 ? 's' : ''} sold`
+                      }
+                    </span>
+                  )}
+                  
+                  {record.operationType === 'close' && (
+                    <span className="text-yellow-400 text-xs">
+                      {record.successCount} account{record.successCount !== 1 ? 's' : ''} closed
+                    </span>
+                  )}
+                </div>
+                
+                {/* Failure indicator */}
+                {record.failureCount > 0 && (
+                  <span className="text-red-400 text-xs">
+                    {record.failureCount} failed
+                  </span>
+                )}
+              </div>
             </div>
           ))}
         </div>

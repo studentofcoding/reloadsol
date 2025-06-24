@@ -133,7 +133,7 @@ const TokenSkeleton: React.FC<TokenSkeletonProps> = ({
                 <div className="relative flex items-center">
                   {Array.from({ length: Math.min(4, index + 1) }).map((_, idx) => (
                     <div 
-                      key={idx}
+                      key={`${index}-${idx}`}
                       className="w-3 h-3 bg-gray-700 rounded-full"
                       style={{ marginLeft: idx > 0 ? '-0.5rem' : '0' }}
                     />

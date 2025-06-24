@@ -5,8 +5,10 @@ import BulkTokenBuyer from '@/components/BulkTokenBuyer'
 import BulkTokenSeller from '@/components/BulkTokenSeller'
 import WalletBalance from '@/components/WalletBalance'
 import TradingHistory from '@/components/TradingHistory'
+import PnLTracker from '@/components/PnLTracker'
 import LastReloadTracker from '@/components/LastReloadTracker'
 import { useWallet } from '@/components/WalletProvider'
+import { isDevWallet } from '@/utils/dev-wallet'
 import ConnectionStatus from '@/components/ConnectionStatus'
 import PhantomWalletButton from '@/components/PhantomWalletButton'
 import Footer from '@/components/Footer'
@@ -15,7 +17,7 @@ import WelcomeModal from '@/components/WelcomeModal'
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'buy' | 'sell'>('sell')
   const [showWelcome, setShowWelcome] = useState(false)
-  const { connected } = useWallet()
+  const { connected, publicKey } = useWallet()
 
   // Check if user should see welcome modal
   useEffect(() => {
@@ -120,9 +122,25 @@ export default function Home() {
         )}
 
         {/* Trading History */}
+        {connected && (
         <div className="max-w-4xl mx-auto mt-4">
           <TradingHistory />
         </div>
+        )}
+
+        {/* PnL Tracker - Dev Wallet Only */}
+        {connected && isDevWallet(publicKey) && (
+        <div className="max-w-4xl mx-auto mt-6">
+          <div className="text-left mb-3">
+            <h3 className="text-lg font-semibold text-white">
+              PnL Performance 
+              <span className="ml-2 text-xs bg-yellow-600 text-yellow-100 px-2 py-1 rounded">DEV</span>
+            </h3>
+            <p className="text-sm text-gray-400">Track your profit and loss on completed trades (Developer Preview)</p>
+          </div>
+          <PnLTracker />
+        </div>
+        )}
 
         {/* Tab Content */}
         {connected && (

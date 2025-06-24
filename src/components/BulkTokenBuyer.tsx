@@ -332,10 +332,26 @@ export default function BulkTokenBuyer() {
           );
           console.log(`🎉 Earned ${trackResult.pointsEarned} points from buy operation!`);
 
-          // Also track locally for TradingHistory component
+          // Fetch current token prices and SOL price for accurate tracking
+          const { fetchTokenPricesForTracking } = await import('@/utils/trading-tracker')
+          const { getSolPriceUSD } = await import('@/utils/solana')
+          
+          const [tokenPrices, currentSolPrice] = await Promise.all([
+            fetchTokenPricesForTracking(validMints),
+            getSolPriceUSD()
+          ])
+
+          // Prepare enhanced token data with prices
+          const enhancedTokenData = tokenData.map(token => ({
+            ...token,
+            priceUsd: tokenPrices[token.mintAddress] || 0,
+            tokenAmount: 0 // We don't have exact token amounts from buy result
+          }))
+
+          // Also track locally for TradingHistory component with prices
           trackBuyOperation(
             publicKey.toString(),
-            tokenData, // Use the existing tokenData variable
+            enhancedTokenData,
             parseFloat(solAmount),
             buyResult.successfulPurchases.length,
             buyResult.failedPurchases.length,
@@ -343,7 +359,8 @@ export default function BulkTokenBuyer() {
             0, // feesPaid - we don't track this locally yet
             slippage / 100,
             priorityFee,
-            errors
+            errors,
+            currentSolPrice
           );
         } catch (trackError) {
           console.error('Failed to track buy operation:', trackError);
@@ -621,7 +638,6 @@ export default function BulkTokenBuyer() {
                             )
                             .slice(0, 5) // Limit to 5 owned tokens to not overwhelm
                             .map((token) => (
-                              <>
                               <button
                                 key={`owned-${token.mintAddress}`}
                                 type="button"
@@ -649,7 +665,6 @@ export default function BulkTokenBuyer() {
                                   </div>
                                 </div>
                               </button>
-                            </>
                           ))}
                         </>
                       )}

@@ -375,17 +375,6 @@ export default function BulkTokenSeller() {
       if (sellResult) {
         // Track sell operations (swaps)
         if (sellResult.successfulSwaps.length > 0 || sellResult.failedSwaps.length > 0) {
-          const sellTokenData = selectedTokens.map(token => ({
-            mintAddress: token.mintAddress,
-            symbol: token.symbol,
-            name: token.name,
-            logoURI: token.logoURI
-          }))
-
-          const sellErrors = sellResult.failedSwaps.length > 0 
-            ? sellResult.failedSwaps.map(f => f.error)
-            : undefined
-
           // Track sell operation securely via server route
           try {
             const trackResult = await trackSell(
@@ -400,10 +389,34 @@ export default function BulkTokenSeller() {
             );
             console.log(`🎉 Earned ${trackResult.pointsEarned} points from sell operation!`);
 
-            // Also track locally for TradingHistory component
+            // Fetch current token prices and SOL price for accurate tracking
+            const { fetchTokenPricesForTracking } = await import('@/utils/trading-tracker')
+            const { getSolPriceUSD } = await import('@/utils/solana')
+            
+            const tokenMints = selectedTokens.map(t => t.mintAddress)
+            const [tokenPrices, currentSolPrice] = await Promise.all([
+              fetchTokenPricesForTracking(tokenMints),
+              getSolPriceUSD()
+            ])
+
+            // Prepare enhanced token data with current prices and amounts
+            const enhancedTokenData = selectedTokens.map(token => ({
+              mintAddress: token.mintAddress,
+              symbol: token.symbol,
+              name: token.name,
+              logoURI: token.logoURI,
+              priceUsd: tokenPrices[token.mintAddress] || 0,
+              tokenAmount: token.sellAmount // Amount of tokens being sold
+            }))
+
+            const sellErrors = sellResult.failedSwaps.length > 0 
+              ? sellResult.failedSwaps.map(f => f.error)
+              : undefined
+
+            // Also track locally for TradingHistory component with prices
             trackSellOperation(
               publicKey.toString(),
-              sellTokenData,
+              enhancedTokenData,
               sellResult.totalReceived || 0,
               sellResult.successfulSwaps.length,
               sellResult.failedSwaps.length,
@@ -411,7 +424,8 @@ export default function BulkTokenSeller() {
               0, // feesPaid - we don't track this locally yet
               slippage / 100,
               priorityFee,
-              sellErrors
+              sellErrors,
+              currentSolPrice
             );
           } catch (trackError) {
             console.error('Failed to track sell operation:', trackError);
@@ -428,17 +442,6 @@ export default function BulkTokenSeller() {
             ...selectedZeroBalanceTokens
           ]
 
-          const closeTokenData = allClosedTokens.map(token => ({
-            mintAddress: token.mintAddress,
-            symbol: token.symbol,
-            name: token.name,
-            logoURI: token.logoURI
-          }))
-
-          const closeErrors = sellResult.failedCloses.length > 0 
-            ? sellResult.failedCloses.map(f => f.error)
-            : undefined
-
           // Track close operation securely via server route
           try {
             const trackResult = await trackClose(
@@ -452,6 +455,21 @@ export default function BulkTokenSeller() {
             );
             console.log(`🎉 Earned ${trackResult.pointsEarned} points from close operation!`);
 
+            // Get SOL price for tracking (close operations don't need token prices)
+            const { getSolPriceUSD } = await import('@/utils/solana')
+            const currentSolPrice = await getSolPriceUSD()
+
+            const closeTokenData = allClosedTokens.map(token => ({
+              mintAddress: token.mintAddress,
+              symbol: token.symbol,
+              name: token.name,
+              logoURI: token.logoURI
+            }))
+
+            const closeErrors = sellResult.failedCloses.length > 0 
+              ? sellResult.failedCloses.map(f => f.error)
+              : undefined
+
             // Also track locally for TradingHistory component
             trackCloseOperation(
               publicKey.toString(),
@@ -460,7 +478,8 @@ export default function BulkTokenSeller() {
               sellResult.failedCloses.length,
               sellResult.signatures,
               0, // feesPaid - we don't track this locally yet
-              closeErrors
+              closeErrors,
+              currentSolPrice
             );
           } catch (trackError) {
             console.error('Failed to track close operation:', trackError);
