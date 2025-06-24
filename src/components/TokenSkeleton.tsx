@@ -16,12 +16,12 @@ const TokenSkeleton: React.FC<TokenSkeletonProps> = ({
       {Array.from({ length: count }).map((_, index) => (
         <div
           key={index}
-          className="group p-4 rounded-xl border bg-gray-800 border-gray-600 animate-pulse"
+          className="group py-2 px-3 rounded-xl border bg-gray-800 border-gray-600 animate-pulse"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               {/* Logo skeleton */}
-              <div className="w-10 h-10 rounded-full bg-gray-600"></div>
+              <div className="w-8 h-8 rounded-full bg-gray-600"></div>
               <div>
                 {/* Token name skeleton */}
                 <div className="h-4 bg-gray-600 rounded w-24 mb-2"></div>
@@ -46,12 +46,12 @@ const TokenSkeleton: React.FC<TokenSkeletonProps> = ({
       {Array.from({ length: count }).map((_, index) => (
         <div
           key={index}
-          className="group p-4 rounded-xl border bg-gray-800 border-gray-600 animate-pulse"
+          className="group py-2 px-3 rounded-xl border bg-gray-800 border-gray-600 animate-pulse"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               {/* Logo skeleton */}
-              <div className="w-10 h-10 rounded-full bg-gray-600"></div>
+              <div className="w-8 h-8 rounded-full bg-gray-600"></div>
               <div>
                 {/* Token symbol skeleton */}
                 <div className="h-3 bg-gray-700 rounded w-20 mb-1"></div>
@@ -78,7 +78,7 @@ const TokenSkeleton: React.FC<TokenSkeletonProps> = ({
             <div className="flex items-center space-x-3">
               <div className="relative">
                 {/* Logo skeleton */}
-                <div className="w-10 h-10 bg-gray-600 rounded-full"></div>
+                <div className="w-8 h-8 bg-gray-600 rounded-full"></div>
                 {/* Rank badge skeleton */}
                 <div className="absolute -top-1 -right-1 w-5 h-5 bg-gray-700 rounded-full"></div>
               </div>

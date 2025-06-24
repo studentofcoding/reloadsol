@@ -53,7 +53,7 @@ export default function BulkTokenSeller() {
   const [showCloseResultModal, setShowCloseResultModal] = useState<boolean>(false)
   const [selectedToken, setSelectedToken] = useState<string>('')
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
-  const [showDustOnly, setShowDustOnly] = useState<boolean>(false)
+  const [showDustOnly, setShowDustOnly] = useState<boolean>(true)
   
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0)
@@ -543,7 +543,7 @@ export default function BulkTokenSeller() {
     return () => clearMetadataUpdateCallback()
   }, [handleMetadataUpdate])
 
-  // Calculate estimated SOL after fees
+  // Calculate estimated SOL after fees for selected tokens
   const grossUSD = selectedTokens.reduce((total, token) => total + (token.usdValue * token.sellPercentage / 100), 0)
   const grossSOL = grossUSD / solPriceUsd // Convert USD to SOL
   const sellFee = getFeeForOperation('SELL', grossSOL) // 0.5% of SOL received
@@ -551,6 +551,20 @@ export default function BulkTokenSeller() {
   const closeFee = getFeeForOperation('CLOSE') * tokensToClose // Fixed fee per account
   const rentRecovery = tokensToClose * 0.00203928 // Rent recovery
   const estimatedSOL = grossSOL - sellFee - closeFee + rentRecovery
+
+  // Calculate total reload estimation based on showDustOnly filter
+  const tokensForCalculation = showDustOnly 
+    ? userTokens.filter(token => token.usdValue < 0.1) // Only dust tokens
+    : userTokens.filter(token => token.usdValue >= 0.1) // Only non-dust tokens
+  
+  const totalGrossUSD = tokensForCalculation.reduce((total, token) => total + token.usdValue, 0)
+  // Include zero-balance tokens in calculation (they contribute to rent recovery)
+  const totalZeroTokens = zeroBalanceTokens.length
+  const totalGrossSOL = totalGrossUSD / solPriceUsd
+  const totalSellFee = getFeeForOperation('SELL', totalGrossSOL)
+  const totalCloseFee = getFeeForOperation('CLOSE') * (tokensForCalculation.length + totalZeroTokens)
+  const totalRentRecovery = (tokensForCalculation.length + totalZeroTokens) * 0.00203928
+  const totalReloadEstimate = totalGrossSOL - totalSellFee - totalCloseFee + totalRentRecovery
 
   // Handle token selection for chart display
   const handleSelectToken = useCallback((mintAddress: string) => {
@@ -576,8 +590,7 @@ export default function BulkTokenSeller() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-3xl font-bold text-white mb-2">Bulk Sell & Reload your SOL</h2>
-          <p className="text-gray-400">Sell your tokens - automatically close accounts & reload your SOL</p>
+          <h2 className="text-3xl font-bold text-white mb-2">Reload or Bulk Sell to SOL</h2>
         </div>
         <div className="shrink-0">
           <PhantomWalletButton />
@@ -598,7 +611,7 @@ export default function BulkTokenSeller() {
               <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
                 {isChartLoading && (
                   <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
-                    <div className="w-10 h-10 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+                    <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
                   </div>
                 )}
                 <iframe 
@@ -618,12 +631,12 @@ export default function BulkTokenSeller() {
           {/* Token Selection Header */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
-              <h3 className="text-xl font-semibold text-white mb-1">Your Tokens</h3>
+              <h3 className="text-xl font-light text-white mb-1">You have {userTokens.length > 0 && totalReloadEstimate > 0 
+              && <span className="font-bold">~ {(totalReloadEstimate).toFixed(3)} SOL</span>
+            } to reload 🚀</h3>
               <p className="text-gray-400 text-sm">
-                Select tokens to sell • {selectedTokens.length} of {showDustOnly ? `${filteredUserTokens.length} dust` : filteredUserTokens.length} selected
-                {showDustOnly && filteredUserTokens.length !== userTokens.length && (
-                  <span className="text-gray-500"> ({userTokens.length} total)</span>
-                )}
+                {selectedTokens.length} of {filteredUserTokens.length} {showDustOnly ? 'dust' : 'valuable'} tokens selected
+                {showDustOnly && filteredUserTokens.length !== userTokens.length}
               </p>
             </div>
             <div className="flex items-center space-x-3">
@@ -641,14 +654,11 @@ export default function BulkTokenSeller() {
                 onClick={toggleDustFilter}
                 className={`px-4 py-2 rounded-lg transition-colors text-sm flex items-center space-x-2 ${
                   showDustOnly
-                    ? 'bg-yellow-600 hover:bg-yellow-500 text-white'
-                    : 'bg-gray-600 hover:bg-gray-500 text-white'
+                    ? 'bg-gray-600 hover:bg-gray-500 text-white'
+                    : 'bg-yellow-600 hover:bg-yellow-500 text-white'
                 }`}
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                </svg>
-                <span>{showDustOnly ? 'Show All' : '< $0.1'}</span>
+                <span>{showDustOnly ? 'Show all' : 'Dust only' }</span>
               </button>
               <button
                 onClick={selectAllTokens}
@@ -773,7 +783,7 @@ export default function BulkTokenSeller() {
                       <div
                         key={token.mintAddress}
                         onClick={() => toggleZeroBalanceTokenSelection(token)}
-                        className={`group p-4 rounded-xl border cursor-pointer transition-all duration-200 ${
+                        className={`group py-2 px-3 rounded-xl border cursor-pointer transition-all duration-200 ${
                           isSelected
                             ? 'bg-gray-700 border-gray-500'
                             : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-gray-500'
@@ -781,7 +791,7 @@ export default function BulkTokenSeller() {
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-3">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
                               isSelected ? 'bg-white text-black' : 'bg-gray-600'
                             }`}>
                               {token.symbol?.charAt(0) || 'T'}

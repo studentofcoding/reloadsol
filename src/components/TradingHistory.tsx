@@ -219,28 +219,10 @@ export default function TradingHistory() {
           {records.slice(0, 10).map((record) => (
             <div
               key={record.id}
-              className="flex-shrink-0 p-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group p-4"
+              className="flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group py-2 px-3 mr-2"
               onClick={() => openTransactionOnSolscan(record.signatures)}
               title="Click to view transaction on Solscan"
-            >
-              {/* Line 1: Timestamp */}
-              <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                <span>{formatRelativeTime(record.timestamp)}</span>
-                <svg 
-                  className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity duration-200" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24"
-                >
-                  <path 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round" 
-                    strokeWidth={2} 
-                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
-                  />
-                </svg>
-              </div>
-              
+            > 
               {/* Line 2: Operation type and amount */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
@@ -282,16 +264,32 @@ export default function TradingHistory() {
                   </span>
                 </div>
               </div>
+
+              {/* Line 1: Timestamp */}
+              <div className="flex items-center justify-between text-xs text-gray-400 mt-1">
+                <span>{formatRelativeTime(record.timestamp)}</span>
+                <svg 
+                  className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity duration-200" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path 
+                    strokeLinecap="round" 
+                    strokeLinejoin="round" 
+                    strokeWidth={2} 
+                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
+                  />
+                </svg>
+              </div>
               
               {/* Line 3: Enhanced info with P&L tracking indicator */}
-              <div className="flex items-center justify-between mt-2">
+              {/* <div className="flex items-center justify-between mt-2">
                 <div className="flex items-center space-x-2">
-                  {/* Price tracking indicator */}
                   {record.tokens.some(token => token.priceUsd && token.priceUsd > 0) && (
                     <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
                   )}
                   
-                  {/* Operation type specific info */}
                   {record.operationType === 'buy' && (
                     <span className="text-blue-400 text-xs">
                       {record.successCount} token{record.successCount !== 1 ? 's' : ''} bought
@@ -314,13 +312,12 @@ export default function TradingHistory() {
                   )}
                 </div>
                 
-                {/* Failure indicator */}
                 {record.failureCount > 0 && (
                   <span className="text-red-400 text-xs">
                     {record.failureCount} failed
                   </span>
                 )}
-              </div>
+              </div> */}
             </div>
           ))}
         </div>

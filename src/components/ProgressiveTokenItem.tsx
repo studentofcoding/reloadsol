@@ -28,7 +28,7 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
   
   return (
     <div
-      className={`group p-4 rounded-xl border transition-all duration-200 ${
+      className={`group py-2 px-3 rounded-xl border transition-all duration-200 ${
         isSelected
           ? 'bg-gray-700 border-gray-500'
           : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-gray-500'
@@ -40,7 +40,7 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
       >
         <div className="flex items-center space-x-3">
           {/* Logo with progressive loading */}
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
             isSelected ? 'bg-white text-black' : 'bg-gray-600'
           }`}>
             {isLoading ? (
@@ -49,7 +49,7 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
               <img 
                 src={token.logoURI} 
                 alt={token.name} 
-                className="w-10 h-10 rounded-full"
+                className="w-8 h-8 rounded-full"
                 onError={(e) => {
                   // Fallback to letter if image fails to load
                   const target = e.target as HTMLImageElement
@@ -72,20 +72,6 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
               ) : hasBasicData ? (
                 <>
                   {token.symbol || 'Unknown'}
-                  {hasPrice && onSelectToken && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onSelectToken(token.mintAddress)
-                      }}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-600 rounded ml-2"
-                      title="View Chart"
-                    >
-                      <svg className="w-4 h-4 text-gray-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                      </svg>
-                    </button>
-                  )}
                 </>
               ) : (
                 <div className="flex items-center space-x-2">
@@ -114,20 +100,6 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
                 ) : hasPrice ? (
                   <>
                     <span className="ml-1 text-sm text-white">≈ ${token.usdValue.toFixed(2)}</span>
-                    {onRefreshPrice && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onRefreshPrice(token)
-                        }}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-gray-600 rounded"
-                        title="Refresh price"
-                      >
-                        <svg className="w-3 h-3 text-gray-400 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                      </button>
-                    )}
                   </>
                 ) : (
                   <div className="text-xs text-gray-500 mt-1 flex items-center">

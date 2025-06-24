@@ -2,9 +2,13 @@
 
 import React, { useState, useEffect } from 'react'
 import { tradingTracker, TrackingRecord } from '@/utils/trading-tracker'
-import { useWallet } from './WalletProvider'
+import { useWallet, useConnection } from './WalletProvider'
 import TokenSkeleton from './TokenSkeleton'
-import { getSolPriceUSD } from '@/utils/solana'
+import { getSolPriceUSD, SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
+import { fetchUserTokens, executeBulkSell, BulkSellRequest, UserToken, TokenToSell } from '@/utils/jupiter'
+import { trackSellOperation } from '@/utils/trading-tracker'
+import { trackSell } from '@/utils/operations-api'
+import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 
 interface PnLRecord {
   id: string
@@ -44,7 +48,8 @@ interface OpenPosition {
 }
 
 export default function PnLTracker() {
-  const { publicKey, connected } = useWallet()
+  const { publicKey, connected, signAllTransactions } = useWallet()
+  const { connection } = useConnection()
   const [pnlRecords, setPnlRecords] = useState<PnLRecord[]>([])
   const [openPositions, setOpenPositions] = useState<OpenPosition[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(false)
@@ -54,6 +59,11 @@ export default function PnLTracker() {
   const [activeTab, setActiveTab] = useState<'completed' | 'open'>('completed')
   const [isRefreshingPrices, setIsRefreshingPrices] = useState<boolean>(false)
   const [hasInitialPricesFetched, setHasInitialPricesFetched] = useState<boolean>(false)
+  
+  // Fast sell state
+  const [isSelling, setIsSelling] = useState<boolean>(false)
+  const [sellError, setSellError] = useState<string>('')
+  const [sellingTokenId, setSellingTokenId] = useState<string>('')
 
   // Check if localStorage is available
   useEffect(() => {
@@ -358,6 +368,119 @@ export default function PnLTracker() {
     }
   }, [openPositions, solPriceUsd])
 
+  // Fast sell function for open positions
+  const handleFastSell = React.useCallback(async (position: OpenPosition, event: React.MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (!connected || !publicKey || !signAllTransactions) {
+      setSellError('Please connect your wallet first')
+      return
+    }
+
+    setIsSelling(true)
+    setSellingTokenId(position.id)
+    setSellError('')
+
+    try {
+      // Fetch current user tokens to get the exact token data
+      const userTokens = await fetchUserTokens(connection, publicKey, false, false)
+      
+      // Find the specific token in user's wallet
+      const tokenToSell = userTokens.find(token => token.mintAddress === position.mintAddress)
+      
+      if (!tokenToSell || tokenToSell.uiAmount <= 0) {
+        throw new Error('Token not found in wallet or has zero balance')
+      }
+
+      // Convert to TokenToSell format for bulk sell
+      const tokenForSale: TokenToSell = {
+        ...tokenToSell,
+        sellAmount: tokenToSell.balance, // Sell 100% of the token
+        sellPercentage: 100
+      }
+
+      // Prepare bulk sell request
+      const sellRequest: BulkSellRequest = {
+        tokens: [tokenForSale],
+        slippage: 100, // 1% slippage (default)
+        priorityFee: 100000, // 0.0001 SOL priority fee (default)
+      }
+
+      // Execute the sell
+      const sellResult = await executeBulkSell(
+        sellRequest,
+        publicKey.toString(),
+        connection,
+        signAllTransactions
+      )
+
+      if (sellResult.success && sellResult.successfulSwaps.length > 0) {
+        // Track the successful sell operation
+        try {
+          const trackResult = await trackSell(
+            publicKey.toString(),
+            sellResult.successfulSwaps.length,
+            {
+              failureCount: sellResult.failedSwaps.length,
+              solAmount: sellResult.totalReceived || 0,
+              tokenMints: [position.mintAddress],
+              signatures: sellResult.signatures,
+            }
+          )
+          console.log(`🎉 Earned ${trackResult.pointsEarned} points from fast sell!`)
+
+          // Track locally for TradingHistory
+          const { fetchTokenPricesForTracking } = await import('@/utils/trading-tracker')
+          const tokenPrices = await fetchTokenPricesForTracking([position.mintAddress])
+          const currentSolPrice = await getSolPriceUSD()
+
+          const enhancedTokenData = [{
+            mintAddress: position.mintAddress,
+            symbol: position.symbol,
+            name: position.name,
+            logoURI: position.logoURI,
+            priceUsd: tokenPrices[position.mintAddress] || 0,
+            tokenAmount: tokenToSell.balance
+          }]
+
+          trackSellOperation(
+            publicKey.toString(),
+            enhancedTokenData,
+            sellResult.totalReceived || 0,
+            1, // successCount
+            0, // failureCount
+            sellResult.signatures,
+            0, // feesPaid
+            1, // slippage (1%)
+            100000, // priorityFee
+            undefined, // errors
+            currentSolPrice
+          )
+
+          // Refresh the P&L data to reflect the sale
+          setTimeout(() => {
+            calculatePnL()
+            setHasInitialPricesFetched(false) // Reset to refetch prices for remaining positions
+          }, 200)
+
+          // Show success message briefly
+          setSellError('')
+        } catch (trackError) {
+          console.error('Failed to track sell operation:', trackError)
+        }
+      } else {
+        throw new Error('Failed to sell token: ' + (sellResult.failedSwaps[0]?.error || 'Unknown error'))
+      }
+    } catch (err) {
+      console.error('Fast sell error:', err)
+      setSellError(err instanceof Error ? err.message : 'Failed to sell token')
+    } finally {
+      setIsSelling(false)
+      setSellingTokenId('')
+    }
+  }, [connected, publicKey, signAllTransactions, connection, calculatePnL])
+
   // Initial price fetch only - when open positions are first loaded
   useEffect(() => {
     if (openPositions.length > 0 && !hasInitialPricesFetched && !isRefreshingPrices) {
@@ -448,10 +571,17 @@ export default function PnLTracker() {
 
   return (
     <div className="">
-      {/* Error Display */}
+                {/* Error Display */}
       {error && (
         <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-3 mb-3 text-center">
           <p className="text-red-400 text-sm">{error}</p>
+        </div>
+      )}
+
+      {/* Sell Error Display */}
+      {sellError && (
+        <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-3 mb-3 text-center">
+          <p className="text-red-400 text-sm">Sell Error: {sellError}</p>
         </div>
       )}
 
@@ -477,7 +607,8 @@ export default function PnLTracker() {
                   : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
               }`}
             >
-              Open Positions ({openPositions.length})
+              Open Positions ({openPositions.length}) 
+              {openPositions.length > 0 && <span className="text-green-400 ml-1">⚡</span>}
             </button>
             {activeTab === 'open' && openPositions.length > 0 && (
               <button
@@ -598,32 +729,63 @@ export default function PnLTracker() {
                 <p className="text-gray-400 text-sm">No open positions. Buy tokens to start tracking.</p>
               </div>
             ) : (
-              <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
+              <>
+                <div className="text-center py-2 mb-2">
+                  <p className="text-gray-400 text-xs">💡 Click any position to instantly sell it with 1% slippage</p>
+                </div>
+                <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
                 {openPositions.slice(0, 10).map((position) => (
                   <div
                     key={position.id}
-                    className="flex-shrink-0 p-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group p-4"
-                    onClick={() => openTransactionOnSolscan(position.buySignatures)}
-                    title="Click to view buy transaction on Solscan"
+                    className={`flex-shrink-0 p-0 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group p-4 relative ${
+                      sellingTokenId === position.id 
+                        ? 'bg-red-800/30 border border-red-600' 
+                        : 'hover:bg-green-700/40 hover:border-green-600/50 border border-transparent'
+                    }`}
+                    onClick={(e) => handleFastSell(position, e)}
+                    title={sellingTokenId === position.id ? 'Selling...' : 'Click to sell this position'}
                   >
+                    {/* Loading spinner overlay for selling state */}
+                    {sellingTokenId === position.id && (
+                      <div className="absolute inset-0 bg-red-900/50 rounded-lg flex items-center justify-center z-10">
+                        <div className="w-6 h-6 border-2 border-red-400 border-t-red-200 rounded-full animate-spin"></div>
+                      </div>
+                    )}
                     {/* Line 1: Timestamp */}
                     <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
                       <span>{formatRelativeTime(position.buyTimestamp)}</span>
                       <div className="flex items-center space-x-1">
                         <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                        <svg 
-                          className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity duration-200" 
-                          fill="none" 
-                          stroke="currentColor" 
-                          viewBox="0 0 24 24"
-                        >
-                          <path 
-                            strokeLinecap="round" 
-                            strokeLinejoin="round" 
-                            strokeWidth={2} 
-                            d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
-                          />
-                        </svg>
+                        {sellingTokenId !== position.id && (
+                          <svg 
+                            className="w-3 h-3 opacity-0 group-hover:opacity-80 transition-opacity duration-200 text-green-400" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path 
+                              strokeLinecap="round" 
+                              strokeLinejoin="round" 
+                              strokeWidth={2} 
+                              d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" 
+                            />
+                          </svg>
+                        )}
+                        {sellingTokenId === position.id && (
+                          <svg 
+                            className="w-3 h-3 text-red-400 animate-pulse" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path 
+                              strokeLinecap="round" 
+                              strokeLinejoin="round" 
+                              strokeWidth={2} 
+                              d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" 
+                            />
+                          </svg>
+                        )}
                       </div>
                     </div>
                     
@@ -714,7 +876,8 @@ export default function PnLTracker() {
                     </div>
                   </div>
                 ))}
-              </div>
+                </div>
+              </>
             )
           )}
         </>

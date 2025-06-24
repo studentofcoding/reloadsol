@@ -13,7 +13,7 @@ export default function PhantomWalletButton() {
           onClick={disconnect}
           className="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium transition-colors border border-gray-600"
         >
-          Disconnect
+          X
         </button>
       </div>
     )
@@ -24,7 +24,7 @@ export default function PhantomWalletButton() {
       onClick={connect}
       disabled={connecting}
       className={`
-        flex items-center justify-center space-x-2 px-6 py-3 rounded-lg font-semibold transition-all duration-200 border mx-auto
+        flex items-center justify-center space-x-2 px-3 py-3 rounded-lg font-semibold transition-all duration-200 border mx-auto
         ${connecting 
           ? 'bg-gray-600 text-gray-400 cursor-not-allowed border-gray-500' 
           : 'bg-white hover:bg-gray-100 text-black border-gray-300 shadow-lg hover:shadow-xl'

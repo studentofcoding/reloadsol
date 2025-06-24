@@ -16,6 +16,7 @@ import WelcomeModal from '@/components/WelcomeModal'
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'buy' | 'sell'>('sell')
+  const [activeInfoTab, setActiveInfoTab] = useState<'history' | 'pnl' | null>('history')
   const [showWelcome, setShowWelcome] = useState(false)
   const { connected, publicKey } = useWallet()
 
@@ -79,11 +80,12 @@ export default function Home() {
         {/* Tab Navigation */}
         {connected && (
         <div className="max-w-4xl mx-auto mb-2">
-          <div className="flex items-center justify-between h-full">
-            <div>
+          <div className="flex items-center justify-between h-full mb-4">
+            <div className="flex items-center space-x-2">
+              {/* Main Trading Tabs */}
               <button
                 onClick={() => setActiveTab('sell')}
-                className={`px-6 py-3 mr-2 rounded-lg font-semibold transition-all duration-200 ${
+                className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
                   activeTab === 'sell'
                     ? 'bg-white text-black'
                     : 'text-gray-400 hover:text-white hover:bg-gray-700'
@@ -98,7 +100,7 @@ export default function Home() {
               </button>
               <button
                 onClick={() => setActiveTab('buy')}
-                className={`px-6 py-3 rounded-lg font-semibold transition-all duration-200 ${
+                className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
                   activeTab === 'buy'
                     ? 'bg-white text-black'
                     : 'text-gray-400 hover:text-white hover:bg-gray-700'
@@ -111,6 +113,38 @@ export default function Home() {
                   <span className="hidden md:block">Buy Tokens</span>
                 </div>
               </button>
+
+              {/* Info Tabs */}
+              <div className="border-l border-gray-600 pl-2 ml-2">
+                <button
+                  onClick={() => setActiveInfoTab(activeInfoTab === 'history' ? null : 'history')}
+                  className={`px-4 py-3 rounded-lg font-medium transition-all duration-200 ${
+                    activeInfoTab === 'history'
+                      ? 'bg-gray-700 text-white'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                  }`}
+                  title="Trading History"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </button>
+                {isDevWallet(publicKey) && (
+                <button
+                  onClick={() => setActiveInfoTab(activeInfoTab === 'pnl' ? null : 'pnl')}
+                  className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                    activeInfoTab === 'pnl'
+                      ? 'bg-gray-700 text-white'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                  }`}
+                  title="P&L Tracker"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                </button>
+                )}
+              </div>
             </div>
 
             {/* Wallet Balance Display */}
@@ -121,24 +155,28 @@ export default function Home() {
         </div>
         )}
 
-        {/* Trading History */}
-        {connected && (
+        {/* Info Tabs Content */}
+        {connected && activeInfoTab && (
         <div className="max-w-4xl mx-auto mt-4">
-          <TradingHistory />
-        </div>
-        )}
-
-        {/* PnL Tracker - Dev Wallet Only */}
-        {connected && isDevWallet(publicKey) && (
-        <div className="max-w-4xl mx-auto mt-6">
-          <div className="text-left mb-3">
-            <h3 className="text-lg font-semibold text-white">
-              PnL Performance 
-              <span className="ml-2 text-xs bg-yellow-600 text-yellow-100 px-2 py-1 rounded">DEV</span>
-            </h3>
-            <p className="text-sm text-gray-400">Track your profit and loss on completed trades (Developer Preview)</p>
-          </div>
-          <PnLTracker />
+          {activeInfoTab === 'history' && (
+            <div>
+              <TradingHistory />
+            </div>
+          )}
+          
+          {activeInfoTab === 'pnl' && isDevWallet(publicKey) && (
+            <div>
+              <div className="text-left mb-3">
+                <h3 className="text-lg font-semibold text-white">
+                  Your PnL Performance 
+                  {isDevWallet(publicKey) && (
+                    <span className="ml-2 text-xs bg-yellow-600 text-yellow-100 px-2 py-1 rounded">DEV</span>
+                  )}
+                </h3>
+              </div>
+              <PnLTracker />
+            </div>
+          )}
         </div>
         )}
 

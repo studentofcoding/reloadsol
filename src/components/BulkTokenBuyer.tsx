@@ -518,7 +518,7 @@ export default function BulkTokenBuyer() {
                   <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
                     {isChartLoading && (
                       <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
-                        <div className="w-10 h-10 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+                        <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
                       </div>
                     )}
                     <iframe 

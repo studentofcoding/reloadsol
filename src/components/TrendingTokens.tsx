@@ -364,7 +364,7 @@ export default function TrendingTokens({
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center space-x-3">
                     <div className="relative">
-                      <div className="w-10 h-10 bg-gray-700 rounded-full flex items-center justify-center text-white font-bold overflow-hidden">
+                      <div className="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center text-white font-bold overflow-hidden">
                         {token.logo_url ? (
                           <img 
                             src={token.logo_url} 
