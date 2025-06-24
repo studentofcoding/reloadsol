@@ -7,7 +7,7 @@ import TrendingTokens from './TrendingTokens'
 import TransactionResultModal from './TransactionResultModal'
 import TokenSkeleton from './TokenSkeleton'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
-import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates } from '@/utils/jupiter'
+import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates, fetchUserTokens, UserToken } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
 import { trackBuy } from '@/utils/operations-api'
@@ -46,6 +46,10 @@ export default function BulkTokenBuyer() {
   const [balanceBefore, setBalanceBefore] = useState<number>(0)
   const [balanceAfter, setBalanceAfter] = useState<number>(0)
   const [walletBalance, setWalletBalance] = useState<number | null>(null)
+
+  // User's current token holdings for search
+  const [userTokens, setUserTokens] = useState<UserToken[]>([])
+  const [isLoadingUserTokens, setIsLoadingUserTokens] = useState<boolean>(false)
 
   // Token search state
   const [searchTerm, setSearchTerm] = useState('')
@@ -180,7 +184,8 @@ export default function BulkTokenBuyer() {
   useEffect(() => {
     if (!searchTerm) {
       setSearchResults([])
-      setShowResults(false)
+      // Show owned tokens when search is empty if user has tokens
+      setShowResults(userTokens.length > 0)
       return
     }
     setIsSearching(true)
@@ -194,17 +199,17 @@ export default function BulkTokenBuyer() {
           setShowResults(true)
         } else {
           setSearchResults([])
-          setShowResults(false)
+          setShowResults(userTokens.length > 0) // Still show owned tokens if search fails
         }
       } catch {
         setSearchResults([])
-        setShowResults(false)
+        setShowResults(userTokens.length > 0) // Still show owned tokens if search fails
       } finally {
         setIsSearching(false)
       }
 }, 350)
    // eslint-disable-next-line
-   }, [searchTerm])
+   }, [searchTerm, userTokens.length])
 
   // Clear outstanding timeout on unmount
   useEffect(() => {
@@ -357,7 +362,7 @@ export default function BulkTokenBuyer() {
     }
   }, [connected, publicKey, signAllTransactions, connection, solAmount, validMints, slippage, priorityFee])
 
-  // Fetch wallet balance for slider
+  // Fetch wallet balance and user tokens
   useEffect(() => {
     async function fetchBalance() {
       if (connected && publicKey && connection) {
@@ -369,6 +374,38 @@ export default function BulkTokenBuyer() {
     }
     fetchBalance()
   }, [connected, publicKey, connection])
+
+  // Fetch user's current token holdings
+  const loadUserTokens = useCallback(async () => {
+    if (!connected || !publicKey) {
+      setUserTokens([])
+      return
+    }
+
+    setIsLoadingUserTokens(true)
+    try {
+      const tokens = await fetchUserTokens(connection, publicKey, false, false)
+      // Filter out tokens with very small values to avoid clutter
+      const significantTokens = tokens.filter(token => 
+        token.uiAmount > 0.000001 && !token.isNFT
+      )
+      setUserTokens(significantTokens)
+    } catch (error) {
+      console.error('Error fetching user tokens:', error)
+      setUserTokens([])
+    } finally {
+      setIsLoadingUserTokens(false)
+    }
+  }, [connected, publicKey, connection])
+
+  // Fetch user tokens when wallet connects
+  useEffect(() => {
+    if (connected && publicKey) {
+      loadUserTokens()
+    } else {
+      setUserTokens([])
+    }
+  }, [connected, publicKey, loadUserTokens])
 
   // Slider value (percentage of wallet balance)
   const maxPercent = 96
@@ -457,7 +494,7 @@ export default function BulkTokenBuyer() {
                 <div className="space-y-3">
                   <div className="flex justify-between items-center">
                     <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                      Token Chart
+                      Chart
                     </label>
                     <span className="text-xs font-mono text-gray-400">{selectedToken}</span>
                   </div>
@@ -484,7 +521,7 @@ export default function BulkTokenBuyer() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between mb-1">
                   <label htmlFor="solAmount" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                    Total SOL amount to spend
+                    SOL to spend
                   </label>
                   {walletBalance !== null && (
                   <div className="flex items-center space-x-3">
@@ -530,7 +567,7 @@ export default function BulkTokenBuyer() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <label htmlFor="tokenMints" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                    Token Mint Addresses (up to 10)
+                    Token to buy (up to 10)
                   </label>
                   {tokenList.length > 0 && (
                     <button 
@@ -551,6 +588,11 @@ export default function BulkTokenBuyer() {
                       type="text"
                       value={searchTerm}
                       onChange={e => setSearchTerm(e.target.value)}
+                      onFocus={() => {
+                        if (!searchTerm && userTokens.length > 0) {
+                          setShowResults(true)
+                        }
+                      }}
                       placeholder="Search token by name, symbol, or CA"
                       className="w-full pl-4 pr-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
                     />
@@ -560,34 +602,89 @@ export default function BulkTokenBuyer() {
                       </svg>
                     </div>
                   </div>
-                  {showResults && searchResults.length > 0 && (
+                  {showResults && (searchResults.length > 0 || userTokens.length > 0) && (
                     <div className="absolute z-20 mt-2 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-lg max-h-72 overflow-y-auto">
-                      {searchResults.map((token, idx) => (
-                        <button
-                          key={token.id}
-                          type="button"
-                          className="flex items-center w-full px-4 py-2 hover:bg-gray-800 text-left text-white"
-                          onClick={() => handleAddFromSearch(token.id)}
-                        >
-                          {token.icon && (
-                            <img src={token.icon} alt={token.symbol} className="w-6 h-6 mr-3 rounded-full" />
+                      {/* Your Tokens Section */}
+                      {userTokens.length > 0 && (
+                        <>
+                          {!searchTerm && (
+                            <div className="px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-700 bg-gray-800">
+                              Add your bag ({userTokens.length})
+                            </div>
                           )}
-                          <div className="flex-1">
-                            <div className="font-semibold">{token.name} <span className="text-xs text-gray-400">({token.symbol})</span></div>
-                            <div className="text-xs text-gray-400 font-mono truncate">{token.id}</div>
-                          </div>
-                        </button>
-                      ))}
+                          {userTokens
+                            .filter(token => 
+                              !searchTerm || 
+                              token.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              token.symbol?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              token.mintAddress.toLowerCase().includes(searchTerm.toLowerCase())
+                            )
+                            .slice(0, 5) // Limit to 5 owned tokens to not overwhelm
+                            .map((token) => (
+                              <>
+                              <button
+                                key={`owned-${token.mintAddress}`}
+                                type="button"
+                                className={`flex items-center w-full px-4 py-2 text-left transition-all ${
+                                  parsedMints.includes(token.mintAddress)
+                                    ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                                    : 'hover:bg-gray-800 text-white'
+                                }`}
+                                onClick={() => parsedMints.includes(token.mintAddress) ? null : handleAddFromSearch(token.mintAddress)}
+                                disabled={parsedMints.includes(token.mintAddress)}
+                              >
+                                {token.logoURI && (
+                                  <img src={token.logoURI} alt={token.symbol} className="w-6 h-6 mr-3 rounded-full" />
+                                )}
+                                <div className="flex-1">
+                                  <div className="font-semibold flex items-center">
+                                    {token.name} 
+                                    <span className="text-xs text-gray-400 ml-1">({token.symbol})</span>
+                                    {parsedMints.includes(token.mintAddress) && (
+                                      <span className="ml-2 text-xs bg-gray-600 text-gray-300 px-2 py-0.5 rounded">Added</span>
+                                    )}
+                                  </div>
+                                  <div className="text-xs text-gray-400 font-mono truncate flex justify-between">
+                                    <span>{token.mintAddress}</span>
+                                  </div>
+                                </div>
+                              </button>
+                            </>
+                          ))}
+                        </>
+                      )}
+                      
+                      {/* Search Results Section */}
+                      {searchResults.length > 0 && (
+                        <>
+                          {userTokens.length > 0 && (
+                            <div className="px-4 py-2 text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-700 bg-gray-800">
+                              Search Results
+                            </div>
+                          )}
+                          {searchResults.map((token, idx) => (
+                            <button
+                              key={`search-${token.id}`}
+                              type="button"
+                              className="flex items-center w-full px-4 py-2 hover:bg-gray-800 text-left text-white"
+                              onClick={() => handleAddFromSearch(token.id)}
+                            >
+                              {token.icon && (
+                                <img src={token.icon} alt={token.symbol} className="w-6 h-6 mr-3 rounded-full" />
+                              )}
+                              <div className="flex-1">
+                                <div className="font-semibold">{token.name} <span className="text-xs text-gray-400">({token.symbol})</span></div>
+                                <div className="text-xs text-gray-400 font-mono truncate">{token.id}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </>
+                      )}
                     </div>
                   )}
-                  {showResults && !isSearching && searchResults.length === 0 && (
+                  {showResults && !isSearching && (searchResults.length === 0 && userTokens.length === 0) && (
                     <div className="absolute z-20 mt-2 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-lg p-4 text-gray-400 text-sm">
                       No results found.
-                    </div>
-                  )}
-                  {isSearching && (
-                    <div className="absolute z-20 mt-2 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-lg p-4 text-gray-400 text-sm">
-                      Searching...
                     </div>
                   )}
                 </div>
