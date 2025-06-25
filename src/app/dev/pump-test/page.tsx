@@ -88,7 +88,7 @@ export default function PumpTestPage() {
       case 'dflow-intent': return '💎'
       case 'solana-tracker': return '📊'
       case 'gmgn': return '🔥'
-      case 'pumpfun': return '🚀'
+      case 'pump-fun': return '🚀'
       default: return '❓'
     }
   }
@@ -198,7 +198,7 @@ export default function PumpTestPage() {
               <div className="bg-purple-50 p-4 rounded-md">
                 <p className="text-sm text-gray-600">Pump.fun Status</p>
                 <p className="text-lg font-bold text-purple-700">
-                  {comparison.quotes.find(q => q.provider === 'pumpfun')?.success ? '✅ Success' : '❌ Failed'}
+                  {comparison.quotes.find(q => q.provider === 'pump-fun')?.success ? '✅ Success' : '❌ Failed'}
                 </p>
               </div>
               <div className="bg-blue-50 p-4 rounded-md">
@@ -231,7 +231,7 @@ export default function PumpTestPage() {
                   key={quote.provider}
                   className={`p-4 border-2 rounded-lg ${
                     quote.success 
-                      ? quote.provider === 'pumpfun' 
+                      ? quote.provider === 'pump-fun' 
                         ? 'bg-purple-50 border-purple-300' 
                         : 'bg-green-50 border-green-300'
                       : 'bg-red-50 border-red-300'
@@ -242,7 +242,7 @@ export default function PumpTestPage() {
                       <h4 className="text-lg font-bold flex items-center gap-2">
                         {getProviderIcon(quote.provider)} 
                         {quote.provider.charAt(0).toUpperCase() + quote.provider.slice(1)}
-                        {quote.provider === 'pumpfun' && (
+                        {quote.provider === 'pump-fun' && (
                           <span className="bg-purple-500 text-white px-2 py-1 rounded-full text-xs">PUMP.FUN</span>
                         )}
                       </h4>
@@ -266,25 +266,25 @@ export default function PumpTestPage() {
                       <div>
                         <p className="text-sm text-gray-600">Route</p>
                         <p className="font-bold">
-                          {quote.provider === 'pumpfun' ? '🚀 Bonding Curve' : `${quote.route?.length || 0} hops`}
+                          {quote.provider === 'pump-fun' ? '🚀 Bonding Curve' : `${quote.route?.length || 0} hops`}
                         </p>
                       </div>
                       
                       {/* Pump.fun specific data */}
-                      {quote.provider === 'pumpfun' && quote.providerData?.pumpfun && (
+                      {quote.provider === 'pump-fun' && quote.providerData?.['pump-fun'] && (
                         <div className="md:col-span-3 mt-2 p-3 bg-purple-100 rounded-md">
                           <h5 className="font-bold text-purple-800 mb-2">🚀 Pump.fun Details</h5>
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
                             <div>
-                              <span className="text-purple-600">Bonding Curve Price:</span>
+                              <span className="text-purple-600">Market Price:</span>
                               <span className="font-bold ml-1">
-                                ${quote.providerData.pumpfun.bondingCurvePrice?.toFixed(8) || 'N/A'}
+                                ${quote.providerData['pump-fun'].marketPrice?.toFixed(8) || 'N/A'}
                               </span>
                             </div>
                             <div>
-                              <span className="text-purple-600">Market Cap:</span>
+                              <span className="text-purple-600">Liquidity USD:</span>
                               <span className="font-bold ml-1">
-                                ${quote.providerData.pumpfun.marketCap?.toLocaleString() || 'N/A'}
+                                ${quote.providerData['pump-fun'].liquidityUsd?.toLocaleString() || 'N/A'}
                               </span>
                             </div>
                             <div>
