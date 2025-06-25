@@ -7,7 +7,7 @@ import TrendingTokens from './TrendingTokens'
 import TransactionResultModal from './TransactionResultModal'
 import TokenSkeleton from './TokenSkeleton'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
-import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates, fetchUserTokens, UserToken } from '@/utils/jupiter'
+import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates, fetchUserTokensEfficient, setMetadataUpdateCallback, clearMetadataUpdateCallback, UserToken } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
 import { trackBuy } from '@/utils/operations-api'
@@ -184,8 +184,7 @@ export default function BulkTokenBuyer() {
   useEffect(() => {
     if (!searchTerm) {
       setSearchResults([])
-      // Show owned tokens when search is empty if user has tokens
-      setShowResults(userTokens.length > 0)
+      setShowResults(false) // Don't auto-show when search is empty
       return
     }
     setIsSearching(true)
@@ -199,11 +198,11 @@ export default function BulkTokenBuyer() {
           setShowResults(true)
         } else {
           setSearchResults([])
-          setShowResults(userTokens.length > 0) // Still show owned tokens if search fails
+          setShowResults(false) // Don't show if search fails
         }
       } catch {
         setSearchResults([])
-        setShowResults(userTokens.length > 0) // Still show owned tokens if search fails
+        setShowResults(false) // Don't show if search fails
       } finally {
         setIsSearching(false)
       }
@@ -368,9 +367,10 @@ export default function BulkTokenBuyer() {
       }
 
       if (buyResult.success) {
-        // Reset form on success
+        // Reset form on success and refresh user tokens
         setSolAmount('')
         setTokenMints('')
+        loadUserTokens() // Refresh user token list
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred')
@@ -392,6 +392,17 @@ export default function BulkTokenBuyer() {
     fetchBalance()
   }, [connected, publicKey, connection])
 
+  // Handle metadata updates from background enrichment
+  const handleMetadataUpdate = useCallback((updatedTokens: UserToken[]) => {
+    console.log(`Updating UI with enriched metadata for ${updatedTokens.length} tokens`)
+    
+    // Update userTokens state
+    setUserTokens(prev => prev.map(token => {
+      const updated = updatedTokens.find(u => u.mintAddress === token.mintAddress)
+      return updated || token
+    }))
+  }, [])
+
   // Fetch user's current token holdings
   const loadUserTokens = useCallback(async () => {
     if (!connected || !publicKey) {
@@ -401,9 +412,18 @@ export default function BulkTokenBuyer() {
 
     setIsLoadingUserTokens(true)
     try {
-      const tokens = await fetchUserTokens(connection, publicKey, false, false)
+      // Use efficient batch fetching like in BulkTokenSeller
+      const tokens = await fetchUserTokensEfficient(
+        connection, 
+        publicKey, 
+        false, // Don't include zero balance
+        false, // Exclude NFTs
+        (progress) => {
+          console.log(`Token fetching progress: ${progress}%`)
+        }
+      )
       // Filter out tokens with very small values to avoid clutter
-      const significantTokens = tokens.filter(token => 
+      const significantTokens = tokens.filter((token: UserToken) => 
         token.uiAmount > 0.000001 && !token.isNFT
       )
       setUserTokens(significantTokens)
@@ -423,6 +443,12 @@ export default function BulkTokenBuyer() {
       setUserTokens([])
     }
   }, [connected, publicKey, loadUserTokens])
+
+  // Set up metadata update callback
+  useEffect(() => {
+    setMetadataUpdateCallback(handleMetadataUpdate)
+    return () => clearMetadataUpdateCallback()
+  }, [handleMetadataUpdate])
 
   // Slider value (percentage of wallet balance)
   const maxPercent = 96
@@ -606,7 +632,8 @@ export default function BulkTokenBuyer() {
                       value={searchTerm}
                       onChange={e => setSearchTerm(e.target.value)}
                       onFocus={() => {
-                        if (!searchTerm && userTokens.length > 0) {
+                        // Show owned tokens when focused, regardless of search term
+                        if (userTokens.length > 0) {
                           setShowResults(true)
                         }
                       }}
@@ -636,7 +663,6 @@ export default function BulkTokenBuyer() {
                               token.symbol?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                               token.mintAddress.toLowerCase().includes(searchTerm.toLowerCase())
                             )
-                            .slice(0, 5) // Limit to 5 owned tokens to not overwhelm
                             .map((token) => (
                               <button
                                 key={`owned-${token.mintAddress}`}

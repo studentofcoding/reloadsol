@@ -847,7 +847,7 @@ export default function BulkTokenSeller() {
                     <span className="text-xl font-bold text-white">~ {estimatedSOL.toFixed(4)} SOL</span>
                     <span className="block text-gray-400 text-sm">≈ ${(estimatedSOL * solPriceUsd).toFixed(2)}</span>
                     <span className="block text-gray-500 text-xs mt-1">
-                          After fees & with rent recovery
+                      After fees & with rent recovery
                     </span>
                   </div>
                 </div>
