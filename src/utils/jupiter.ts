@@ -84,7 +84,7 @@ async function batchFetchPrices(mints: string[]): Promise<Record<string, number>
     for (let retry = 0; retry < MAX_RETRIES; retry++) {
       try {
         const mintIds = chunk.join(',')
-        const response = await fetch(`https://api.jup.ag/price/v2?ids=${mintIds}`)
+        const response = await fetch(`https://lite-api.jup.ag/price/v2?ids=${mintIds}`)
         const priceData = await response.json()
         console.log(`Price data for chunk ${index + 1}:`, priceData)
         
@@ -136,9 +136,16 @@ async function getCachedPrice(mint: string): Promise<number> {
     return cached.price
   }
   
-  // Fetch single price if not cached
-  const prices = await batchFetchPrices([mint])
-  return prices[mint] || 0
+  // Use new price client for better rate limiting
+  try {
+    const { getTokenPrice } = await import('./price-client')
+    return await getTokenPrice(mint)
+  } catch (error) {
+    console.warn('Price client failed, falling back to direct fetch:', error)
+    // Fallback to original method
+    const prices = await batchFetchPrices([mint])
+    return prices[mint] || 0
+  }
 }
 
 // Clear price cache (use sparingly)

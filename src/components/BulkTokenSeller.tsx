@@ -843,41 +843,6 @@ export default function BulkTokenSeller() {
           {/* Settings and Summary */}
           {(selectedTokens.length > 0 || selectedZeroBalanceTokens.length > 0) && (
             <>
-              {/* Summary */}
-              <div className="bg-gray-800 border border-gray-600 rounded-xl p-6">
-                <h4 className="font-semibold text-white mb-4">Operation Summary</h4>
-                <div className="grid grid-cols-3 gap-4 text-sm">
-                  <div>
-                    <span className="block text-gray-300 font-medium">Total Operations</span>
-                    <span className="text-xl font-bold text-white">{selectedTokens.length} Swap & {tokensToClose} Close</span>
-                  </div>
-                  <div>
-                    <span className="block text-gray-300 font-medium">You'll receive</span>
-                    <span className="text-xl font-bold text-white">~ {estimatedSOL.toFixed(4)} SOL</span>
-                    <span className="block text-gray-400 text-sm">≈ ${(estimatedSOL * solPriceUsd).toFixed(2)}</span>
-                    <span className="block text-gray-500 text-xs mt-1">
-                      After fees & with rent recovery
-                    </span>
-                  </div>
-                </div>
-                
-                {selectedZeroBalanceTokens.length > 0 && (
-                  <div className="mt-4 p-3 bg-gray-700 border border-gray-600 rounded-lg">
-                    <p className="text-gray-200 text-sm">
-                      <strong>{selectedZeroBalanceTokens.length} unsellable token{selectedZeroBalanceTokens.length !== 1 ? 's' : ''}</strong> will be burned (if needed) and closed to recover rent
-                    </p>
-                  </div>
-                )}
-                
-                {selectedTokens.some(token => token.sellPercentage < 100) && (
-                  <div className="mt-4 p-3 bg-blue-700 border border-blue-600 rounded-lg">
-                    <p className="text-blue-200 text-sm">
-                      <strong>{selectedTokens.filter(token => token.sellPercentage < 100).length} token{selectedTokens.filter(token => token.sellPercentage < 100).length !== 1 ? 's' : ''}</strong> will be partially sold (accounts remain open)
-                    </p>
-                  </div>
-                )}
-              </div>
-
               {/* Settings Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Slippage */}
