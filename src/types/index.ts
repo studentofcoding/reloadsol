@@ -73,3 +73,168 @@ export interface WalletContextState {
   signAllTransactions?: (transactions: any[]) => Promise<any[]>
   sendTransaction?: (transaction: any, connection: any, options?: any) => Promise<string>
 } 
+
+// New types for trade comparison API
+export type TradeProvider = 'jupiter' | 'dflow' | 'solana-tracker' | 'gmgn' | 'dflow-intent' | 'pump-swap'
+
+export interface TradeQuoteRequest {
+  inputMint: string
+  outputMint: string
+  amount: string // Amount in smallest unit (lamports for SOL)
+  slippageBps: number
+  userPublicKey: string
+}
+
+export interface ProviderQuote {
+  provider: TradeProvider
+  inputMint: string
+  outputMint: string
+  inAmount: string
+  outAmount: string
+  otherAmountThreshold: string
+  slippageBps: number
+  priceImpactPct: string
+  responseTime: number // milliseconds
+  success: boolean
+  error?: string
+  route?: any[] // Provider-specific route information
+  fees?: {
+    totalFeeLamports: number
+    feePercentage: number
+  }
+  // Provider-specific data
+  providerData?: {
+    jupiter?: {
+      routePlan: any[]
+      contextSlot?: number
+      timeTaken?: number
+    }
+    dflow?: {
+      intentId?: string
+      guaranteedAmount?: string
+      estimatedTime?: number
+    }
+    'dflow-intent'?: {
+      intentId?: string
+      openTransaction?: string
+      lastValidBlockHeight?: number
+      expiry?: any
+      feeBudget?: number
+      timeTaken?: number
+    }
+    solanaTracker?: {
+      marketData?: any
+      liquidityScore?: number
+      txn?: string
+      type?: string
+      timeTaken?: number
+      executionPrice?: number
+      currentPrice?: number
+    }
+    gmgn?: {
+      routeData?: any
+      estimatedGas?: number
+      estimatedTime?: number
+      poolInfo?: any
+      timeTaken?: number
+    }
+    'pump-swap'?: {
+      poolData?: any
+      bondingCurvePrice?: number
+      marketCap?: number
+      liquidityUsd?: number
+      timeTaken?: number
+      rpcEndpoint?: string
+    }
+  }
+}
+
+export interface TradeComparison {
+  request: TradeQuoteRequest
+  quotes: ProviderQuote[]
+  bestQuote: ProviderQuote | null
+  comparison: {
+    bestPrice: {
+      provider: TradeProvider
+      outAmount: string
+      advantage: string // percentage advantage over others
+    }
+    fastestResponse: {
+      provider: TradeProvider
+      responseTime: number
+    }
+    lowestSlippage: {
+      provider: TradeProvider
+      priceImpactPct: string
+    }
+    mostReliable: {
+      provider: TradeProvider
+      successRate: number // based on historical data
+    }
+  }
+  summary: {
+    totalProvidersQueried: number
+    successfulQuotes: number
+    failedQuotes: number
+    averageResponseTime: number
+    recommendation: TradeProvider
+    recommendationReason: string
+  }
+  timestamp: number
+}
+
+export interface ProviderConfig {
+  jupiter: {
+    apiUrl: string
+    maxRetries: number
+    timeout: number
+  }
+  dflow: {
+    apiUrl: string
+    maxRetries: number
+    timeout: number
+  }
+  'dflow-intent': {
+    apiUrl: string
+    maxRetries: number
+    timeout: number
+  }
+  solanaTracker: {
+    apiUrl: string
+    maxRetries: number
+    timeout: number
+  }
+  gmgn: {
+    apiUrl: string
+    maxRetries: number
+    timeout: number
+  }
+  'pump-swap': {
+    apiUrl: string
+    rpcUrl: string
+    maxRetries: number
+    timeout: number
+  }
+}
+
+export interface TradeExecutionRequest {
+  provider: TradeProvider
+  quote: ProviderQuote
+  userPublicKey: string
+  priorityFeeLamports?: number
+}
+
+export interface TradeExecutionResult {
+  success: boolean
+  signature?: string
+  error?: string
+  provider: TradeProvider
+  actualAmountReceived?: string
+  actualSlippage?: string
+  executionTime: number
+  fees: {
+    priorityFee: number
+    protocolFee: number
+    totalFee: number
+  }
+} 
