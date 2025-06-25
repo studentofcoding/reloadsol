@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { tradingTracker, TrackingRecord } from '@/utils/trading-tracker'
 import { useWallet, useConnection } from './WalletProvider'
 import TokenSkeleton from './TokenSkeleton'
@@ -55,7 +55,6 @@ export default function PnLTracker() {
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [error, setError] = useState<string>('')
   const [solPriceUsd, setSolPriceUsd] = useState<number>(145)
-  const [isLocalStorageAvailable, setIsLocalStorageAvailable] = useState<boolean>(true)
   const [activeTab, setActiveTab] = useState<'completed' | 'open'>('completed')
   const [isRefreshingPrices, setIsRefreshingPrices] = useState<boolean>(false)
   const [hasInitialPricesFetched, setHasInitialPricesFetched] = useState<boolean>(false)
@@ -65,22 +64,9 @@ export default function PnLTracker() {
   const [sellError, setSellError] = useState<string>('')
   const [sellingTokenId, setSellingTokenId] = useState<string>('')
 
-  // Check if localStorage is available
+  // Clear old localStorage data on component mount
   useEffect(() => {
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        const testKey = '__localStorage_test__'
-        localStorage.setItem(testKey, 'test')
-        localStorage.removeItem(testKey)
-        setIsLocalStorageAvailable(true)
-      } else {
-        setIsLocalStorageAvailable(false)
-      }
-    } catch (e) {
-      console.warn('localStorage is not available:', e)
-      setIsLocalStorageAvailable(false)
-      setError('Browser storage is not available. PnL tracking will not work.')
-    }
+    console.log('🧹 PnLTracker: Cleared old localStorage data, now using Supabase!')
   }, [])
 
   // Fetch SOL price
@@ -94,8 +80,8 @@ export default function PnLTracker() {
   }, [])
 
   // Calculate PnL records by matching buy and sell operations
-  const calculatePnL = React.useCallback(() => {
-    if (!connected || !publicKey || !isLocalStorageAvailable) {
+  const calculatePnL = useCallback(async () => {
+    if (!connected || !publicKey) {
       setPnlRecords([])
       setOpenPositions([])
       return
@@ -106,7 +92,7 @@ export default function PnLTracker() {
 
     try {
       const walletAddress = publicKey.toString()
-      const allRecords = tradingTracker.getWalletRecords(walletAddress)
+      const allRecords = await tradingTracker.getWalletRecords(walletAddress)
       
       // Get successful buy and sell records
       const buyRecords = allRecords.filter(record => 
@@ -277,12 +263,29 @@ export default function PnLTracker() {
     } finally {
       setIsLoading(false)
     }
-  }, [connected, publicKey, isLocalStorageAvailable, solPriceUsd])
+  }, [connected, publicKey, solPriceUsd])
 
   // Load PnL data when wallet connects or records change
   useEffect(() => {
+    if (connected && publicKey) {
     calculatePnL()
-  }, [calculatePnL])
+    }
+  }, [calculatePnL, connected, publicKey])
+
+  // Set up real-time subscription for trading records
+  useEffect(() => {
+    if (!connected || !publicKey) return
+
+    const walletAddress = publicKey.toString()
+    
+    // Subscribe to real-time updates
+    const unsubscribe = tradingTracker.subscribeToWallet(walletAddress, () => {
+      console.log('📡 Real-time PnL update received')
+      calculatePnL() // Recalculate PnL when new records arrive
+    })
+
+    return unsubscribe
+  }, [connected, publicKey, calculatePnL])
 
   // Fetch SOL price on mount and periodically (reduced frequency)
   useEffect(() => {
@@ -552,7 +555,7 @@ export default function PnLTracker() {
   }
 
   // Show error state
-  if (error && !isLocalStorageAvailable) {
+  if (error && error.includes('Browser storage')) {
     return (
       <div className="bg-gray-800 border border-gray-600 rounded-xl p-4 text-center">
         <p className="text-gray-400 text-sm">{error}</p>

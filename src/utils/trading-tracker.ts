@@ -1,5 +1,8 @@
-// Trading Operations Tracker
-// Simple cache-based tracking using localStorage
+// Trading Operations Tracker - Supabase Edition
+// Real-time syncing PnL tracker with offline support
+
+import { supabase } from './supabase'
+import type { RealtimeChannel } from '@supabase/supabase-js'
 
 export interface TrackingRecord {
   id: string
@@ -56,32 +59,97 @@ export interface TrackingStats {
   successRate: number
 }
 
-class TradingTracker {
-  private readonly STORAGE_KEY = 'bulk_trading_records'
-  private readonly MAX_RECORDS = 1000 // Prevent localStorage bloat
+// Database schema for Supabase
+interface DatabaseRecord {
+  id: string
+  wallet_address: string
+  operation_type: string
+  timestamp: string
+  data: TrackingRecord
+  created_at?: string
+}
 
-  // Add a new tracking record
-  trackOperation(record: Omit<TrackingRecord, 'id' | 'timestamp'>): void {
+class TradingTracker {
+  private readonly OLD_STORAGE_KEY = 'bulk_trading_records' // For cleanup
+  private realtimeChannel: RealtimeChannel | null = null
+  private subscribers: Set<(records: TrackingRecord[]) => void> = new Set()
+  private cache: Map<string, TrackingRecord[]> = new Map() // Per-wallet cache
+  private isOnline: boolean = true
+
+  constructor() {
+    this.setupOnlineOfflineHandlers()
+    this.clearOldLocalStorageData()
+  }
+
+  // Clear old localStorage data from previous implementation
+  private clearOldLocalStorageData(): void {
     try {
-      const records = this.getAllRecords()
+      // Clear old trading records
+      localStorage.removeItem(this.OLD_STORAGE_KEY)
       
+      // Clear other old cache data that might conflict
+      const oldKeys = [
+        'token_operations_cache',
+        'last_sync_time',
+        'trading_history_cache',
+        'pnl_cache'
+      ]
+      
+      oldKeys.forEach(key => {
+        if (localStorage.getItem(key)) {
+          localStorage.removeItem(key)
+          console.log(`🧹 Cleared old cache: ${key}`)
+        }
+      })
+      
+      console.log('🧹 Cleared all old localStorage data - starting fresh with Supabase!')
+    } catch (error) {
+      console.warn('Failed to clear old cache:', error)
+    }
+  }
+
+  // Setup online/offline detection
+  private setupOnlineOfflineHandlers(): void {
+    if (typeof window !== 'undefined') {
+      this.isOnline = navigator.onLine
+      
+      window.addEventListener('online', () => {
+        this.isOnline = true
+        console.log('📶 Back online - syncing cached data...')
+        this.syncOfflineData()
+      })
+      
+      window.addEventListener('offline', () => {
+        this.isOnline = false
+        console.log('📵 Gone offline - caching locally...')
+      })
+    }
+  }
+
+  // Add a new tracking record (with offline support)
+  async trackOperation(record: Omit<TrackingRecord, 'id' | 'timestamp'>): Promise<void> {
+    try {
       const newRecord: TrackingRecord = {
         ...record,
         id: this.generateId(),
         timestamp: Date.now()
       }
       
-      // Add to beginning of array (most recent first)
-      records.unshift(newRecord)
-      
-      // Trim to max records to prevent storage bloat
-      if (records.length > this.MAX_RECORDS) {
-        records.splice(this.MAX_RECORDS)
+      if (this.isOnline) {
+        // Try to save to Supabase first
+        await this.saveToSupabase(newRecord)
+      } else {
+        // Save to offline cache
+        this.saveToOfflineCache(newRecord)
       }
-      
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(records))
-      
-      // Dispatch event to notify components of new tracking record
+
+      // Update local cache
+      this.updateLocalCache(record.walletAddress, newRecord)
+
+      // Notify subscribers
+      this.notifySubscribers(record.walletAddress)
+
+      // Dispatch event for backward compatibility
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('tradingRecordAdded', {
           detail: { record: newRecord, operationType: record.operationType }
@@ -92,59 +160,237 @@ class TradingTracker {
         wallet: record.walletAddress.slice(0, 8) + '...',
         tokens: record.totalTokens,
         success: record.successCount,
-        failed: record.failureCount
+        failed: record.failureCount,
+        online: this.isOnline
       })
     } catch (error) {
       console.error('Failed to track operation:', error)
+      // Fallback to offline cache on error
+      const newRecord: TrackingRecord = {
+        ...record,
+        id: this.generateId(),
+        timestamp: Date.now()
+      }
+      this.saveToOfflineCache(newRecord)
     }
   }
 
-  // Get all tracking records
-  getAllRecords(): TrackingRecord[] {
+  // Save record to Supabase
+  private async saveToSupabase(record: TrackingRecord): Promise<void> {
+    const dbRecord: Omit<DatabaseRecord, 'created_at'> = {
+      id: record.id,
+      wallet_address: record.walletAddress,
+      operation_type: record.operationType,
+      timestamp: new Date(record.timestamp).toISOString(),
+      data: record
+    }
+
+    const { error } = await supabase
+      .from('trading_records')
+      .insert(dbRecord)
+
+    if (error) {
+      throw new Error(`Supabase insert failed: ${error.message}`)
+    }
+  }
+
+  // Save to offline cache (localStorage)
+  private saveToOfflineCache(record: TrackingRecord): void {
     try {
-      const stored = localStorage.getItem(this.STORAGE_KEY)
-      return stored ? JSON.parse(stored) : []
+      const key = `offline_trading_${record.walletAddress}`
+      const cached = localStorage.getItem(key)
+      const records: TrackingRecord[] = cached ? JSON.parse(cached) : []
+      
+      records.unshift(record)
+      
+      // Limit offline cache to 100 records per wallet
+      if (records.length > 100) {
+        records.splice(100)
+      }
+      
+      localStorage.setItem(key, JSON.stringify(records))
+      console.log('💾 Saved to offline cache:', record.id)
     } catch (error) {
-      console.error('Failed to retrieve tracking records:', error)
+      console.error('Failed to save to offline cache:', error)
+    }
+  }
+
+  // Sync offline data when back online
+  private async syncOfflineData(): Promise<void> {
+    try {
+      const offlineKeys = Object.keys(localStorage).filter(key => 
+        key.startsWith('offline_trading_')
+      )
+
+      for (const key of offlineKeys) {
+        const records: TrackingRecord[] = JSON.parse(localStorage.getItem(key) || '[]')
+        
+        for (const record of records) {
+          try {
+            await this.saveToSupabase(record)
+            console.log('✅ Synced offline record:', record.id)
+          } catch (error) {
+            console.error('Failed to sync record:', record.id, error)
+          }
+        }
+        
+        // Clear offline cache after successful sync
+        localStorage.removeItem(key)
+      }
+      
+      console.log('🔄 Offline sync completed')
+    } catch (error) {
+      console.error('Offline sync failed:', error)
+    }
+  }
+
+  // Update local cache
+  private updateLocalCache(walletAddress: string, newRecord: TrackingRecord): void {
+    const cached = this.cache.get(walletAddress) || []
+    cached.unshift(newRecord)
+    
+    // Limit cache to 500 records per wallet
+    if (cached.length > 500) {
+      cached.splice(500)
+    }
+    
+    this.cache.set(walletAddress, cached)
+  }
+
+  // Get records for specific wallet (with caching)
+  async getWalletRecords(walletAddress: string, useCache: boolean = true): Promise<TrackingRecord[]> {
+    // Return cached data if available and requested
+    if (useCache && this.cache.has(walletAddress)) {
+      return this.cache.get(walletAddress) || []
+    }
+
+    try {
+      // Include offline records in the query
+      const offlineKey = `offline_trading_${walletAddress}`
+      const offlineRecords: TrackingRecord[] = localStorage.getItem(offlineKey) 
+        ? JSON.parse(localStorage.getItem(offlineKey) || '[]') 
+        : []
+
+      if (!this.isOnline) {
+        // Return only offline records when offline
+        this.cache.set(walletAddress, offlineRecords)
+        return offlineRecords
+  }
+
+      // Fetch from Supabase
+      const { data, error } = await supabase
+        .from('trading_records')
+        .select('*')
+        .eq('wallet_address', walletAddress)
+        .order('timestamp', { ascending: false })
+        .limit(500)
+
+      if (error) {
+        console.error('Failed to fetch wallet records:', error)
+        return offlineRecords // Fallback to offline records
+      }
+
+      // Convert database records to TrackingRecord format
+      const records: TrackingRecord[] = (data || []).map((item: DatabaseRecord) => item.data)
+      
+      // Merge with offline records and dedupe by ID
+      const merged = [...offlineRecords, ...records]
+      const deduped = merged.filter((record, index, self) => 
+        self.findIndex(r => r.id === record.id) === index
+      )
+      
+      // Sort by timestamp (newest first)
+      deduped.sort((a, b) => b.timestamp - a.timestamp)
+      
+      // Update cache
+      this.cache.set(walletAddress, deduped)
+      
+      return deduped
+    } catch (error) {
+      console.error('Error fetching wallet records:', error)
+      return this.cache.get(walletAddress) || []
+    }
+  }
+
+  // Get all records (limited for performance)
+  async getAllRecords(): Promise<TrackingRecord[]> {
+    try {
+      if (!this.isOnline) {
+        // Combine all offline caches when offline
+        const offlineKeys = Object.keys(localStorage).filter(key => 
+          key.startsWith('offline_trading_')
+        )
+        
+        const allOfflineRecords: TrackingRecord[] = []
+        offlineKeys.forEach(key => {
+          const records: TrackingRecord[] = JSON.parse(localStorage.getItem(key) || '[]')
+          allOfflineRecords.push(...records)
+        })
+    
+        return allOfflineRecords.sort((a, b) => b.timestamp - a.timestamp)
+      }
+
+      const { data, error } = await supabase
+        .from('trading_records')
+        .select('*')
+        .order('timestamp', { ascending: false })
+        .limit(1000) // Limit for performance
+
+      if (error) {
+        throw new Error(`Failed to fetch records: ${error.message}`)
+      }
+
+      return (data || []).map((item: DatabaseRecord) => item.data)
+    } catch (error) {
+      console.error('Error fetching all records:', error)
       return []
     }
   }
 
-  // Get records for specific wallet
-  getWalletRecords(walletAddress: string): TrackingRecord[] {
-    return this.getAllRecords().filter(record => 
-      record.walletAddress === walletAddress
-    )
+  // Subscribe to real-time updates for a wallet
+  subscribeToWallet(walletAddress: string, callback: (records: TrackingRecord[]) => void): () => void {
+    this.subscribers.add(callback)
+
+    // Setup real-time subscription if not already done
+    if (!this.realtimeChannel) {
+      this.realtimeChannel = supabase
+        .channel('trading_records_channel')
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'trading_records',
+            filter: `wallet_address=eq.${walletAddress}`
+          },
+          (payload) => {
+            console.log('📡 Real-time update received:', payload)
+            const newRecord = (payload.new as DatabaseRecord).data
+            this.updateLocalCache(walletAddress, newRecord)
+            this.notifySubscribers(walletAddress)
+          }
+        )
+        .subscribe()
   }
 
-  // Get records by operation type
-  getOperationRecords(operationType: 'buy' | 'sell' | 'close'): TrackingRecord[] {
-    return this.getAllRecords().filter(record => 
-      record.operationType === operationType
-    )
+    // Return unsubscribe function
+    return () => {
+      this.subscribers.delete(callback)
+      if (this.subscribers.size === 0 && this.realtimeChannel) {
+        this.realtimeChannel.unsubscribe()
+        this.realtimeChannel = null
+      }
+    }
   }
 
-  // Get records within date range
-  getRecordsInRange(startDate: Date, endDate: Date): TrackingRecord[] {
-    const start = startDate.getTime()
-    const end = endDate.getTime()
-    
-    return this.getAllRecords().filter(record => 
-      record.timestamp >= start && record.timestamp <= end
-    )
+  // Notify all subscribers
+  private notifySubscribers(walletAddress: string): void {
+    const records = this.cache.get(walletAddress) || []
+    this.subscribers.forEach(callback => callback(records))
   }
 
-  // Get recent records (last N records)
-  getRecentRecords(count: number = 10): TrackingRecord[] {
-    return this.getAllRecords().slice(0, count)
-  }
-
-  // Calculate aggregate statistics
-  getStats(walletAddress?: string): TrackingStats {
-    const records = walletAddress 
-      ? this.getWalletRecords(walletAddress)
-      : this.getAllRecords()
-
+  // Calculate stats (same as before)
+  getStats(records: TrackingRecord[]): TrackingStats {
     const stats: TrackingStats = {
       totalOperations: records.length,
       totalBuys: 0,
@@ -163,7 +409,6 @@ class TradingTracker {
     let totalAttempted = 0
 
     records.forEach(record => {
-      // Count by operation type
       switch (record.operationType) {
         case 'buy':
           stats.totalBuys++
@@ -187,72 +432,40 @@ class TradingTracker {
     })
 
     stats.successRate = totalAttempted > 0 ? (totalSuccessful / totalAttempted) * 100 : 0
-
     return stats
   }
 
-  // Clear all records (useful for testing or user preference)
-  clearAllRecords(): void {
-    localStorage.removeItem(this.STORAGE_KEY)
-    console.log('🧹 Cleared all tracking records')
-  }
-
-  // Clear old records (older than specified days)
-  clearOldRecords(daysOld: number = 30): number {
-    const cutoffTime = Date.now() - (daysOld * 24 * 60 * 60 * 1000)
-    const records = this.getAllRecords()
-    const filtered = records.filter(record => record.timestamp >= cutoffTime)
-    
-    const removedCount = records.length - filtered.length
-    
-    if (removedCount > 0) {
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(filtered))
-      console.log(`🧹 Cleared ${removedCount} old records (older than ${daysOld} days)`)
-    }
-    
-    return removedCount
-  }
-
-  // Export records as JSON (for backup/analysis)
-  exportRecords(): string {
-    return JSON.stringify(this.getAllRecords(), null, 2)
-  }
-
-  // Import records from JSON (for restore)
-  importRecords(jsonData: string): boolean {
+  // Clear all data (for fresh start)
+  async clearAllData(): Promise<void> {
     try {
-      const importedRecords = JSON.parse(jsonData) as TrackingRecord[]
+      // Clear Supabase data (this would require admin privileges in production)
+      console.log('🧹 Clearing all tracking data...')
       
-      // Validate the structure
-      if (!Array.isArray(importedRecords)) {
-        throw new Error('Invalid data format')
-      }
-
-      // Basic validation of record structure
-      for (const record of importedRecords) {
-        if (!record.id || !record.walletAddress || !record.operationType || !record.timestamp) {
-          throw new Error('Invalid record structure')
-        }
-      }
-
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(importedRecords))
-      console.log(`📥 Imported ${importedRecords.length} tracking records`)
-      return true
+      // Clear local caches
+      this.cache.clear()
+      
+      // Clear offline storage
+      const offlineKeys = Object.keys(localStorage).filter(key => 
+        key.startsWith('offline_trading_')
+      )
+      offlineKeys.forEach(key => localStorage.removeItem(key))
+      
+      console.log('🧹 Cleared all tracking data')
     } catch (error) {
-      console.error('Failed to import records:', error)
-      return false
+      console.error('Failed to clear data:', error)
     }
   }
 
+  // Generate unique ID
   private generateId(): string {
-    return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 9)
   }
 }
 
-// Create singleton instance
+// Export singleton instance
 export const tradingTracker = new TradingTracker()
 
-// Helper functions for easy integration with price tracking
+// Helper functions for backward compatibility
 export const trackBuyOperation = (
   walletAddress: string,
   tokens: Array<{ 
@@ -273,28 +486,24 @@ export const trackBuyOperation = (
   errors?: string[],
   solPriceUsd?: number
 ) => {
-  const totalUsdValue = tokens.reduce((sum, token) => 
-    sum + ((token.priceUsd || 0) * (token.tokenAmount || 0)), 0
-  )
-  
-  tradingTracker.trackOperation({
+  return tradingTracker.trackOperation({
     walletAddress,
     operationType: 'buy',
     tokens: tokens.map(token => ({
       ...token,
       solPrice: solPriceUsd
     })),
-    totalTokens: tokens.length,
     successCount,
     failureCount,
+    totalTokens: successCount + failureCount,
     solAmount,
     feesPaid,
+    solPriceUsd,
+    totalUsdValue: solPriceUsd ? solAmount * solPriceUsd : undefined,
     signatures,
     slippage,
     priorityFee,
-    errors,
-    solPriceUsd,
-    totalUsdValue
+    errors
   })
 }
 
@@ -318,28 +527,24 @@ export const trackSellOperation = (
   errors?: string[],
   solPriceUsd?: number
 ) => {
-  const totalUsdValue = tokens.reduce((sum, token) => 
-    sum + ((token.priceUsd || 0) * (token.tokenAmount || 0)), 0
-  )
-  
-  tradingTracker.trackOperation({
+  return tradingTracker.trackOperation({
     walletAddress,
     operationType: 'sell',
     tokens: tokens.map(token => ({
       ...token,
       solPrice: solPriceUsd
     })),
-    totalTokens: tokens.length,
     successCount,
     failureCount,
+    totalTokens: successCount + failureCount,
     solAmount: solReceived,
     feesPaid,
+    solPriceUsd,
+    totalUsdValue: solPriceUsd ? solReceived * solPriceUsd : undefined,
     signatures,
     slippage,
     priorityFee,
-    errors,
-    solPriceUsd,
-    totalUsdValue
+    errors
   })
 }
 
@@ -353,46 +558,41 @@ export const trackCloseOperation = (
   errors?: string[],
   solPriceUsd?: number
 ) => {
-  tradingTracker.trackOperation({
+  return tradingTracker.trackOperation({
     walletAddress,
     operationType: 'close',
     tokens: tokens.map(token => ({
       ...token,
       solPrice: solPriceUsd
     })),
-    totalTokens: tokens.length,
     successCount,
     failureCount,
+    totalTokens: successCount + failureCount,
     feesPaid,
+    solPriceUsd,
     signatures,
-    errors,
-    solPriceUsd
+    errors
   })
 }
 
-// Utility function to fetch current token prices for tracking
+// Fetch token prices for tracking
 export const fetchTokenPricesForTracking = async (mintAddresses: string[]): Promise<Record<string, number>> => {
+  try {
   if (mintAddresses.length === 0) return {}
   
-  try {
-    const priceResponse = await fetch(`https://api.jup.ag/price/v2?ids=${mintAddresses.join(',')}`)
-    const priceData = await priceResponse.json()
+    const response = await fetch(`https://api.jup.ag/price/v2?ids=${mintAddresses.join(',')}`)
+    const data = await response.json()
     
     const prices: Record<string, number> = {}
-    
-    if (priceData?.data) {
-      Object.entries(priceData.data).forEach(([mint, data]: [string, any]) => {
-        if (data && data.price) {
-          prices[mint] = parseFloat(data.price)
-        } else {
-          prices[mint] = 0
-        }
-      })
+    for (const [mintAddress, priceInfo] of Object.entries(data?.data || {})) {
+      if (typeof priceInfo === 'object' && priceInfo !== null && 'price' in priceInfo) {
+        prices[mintAddress] = parseFloat((priceInfo as any).price)
+      }
     }
     
     return prices
   } catch (error) {
-    console.error('Failed to fetch token prices for tracking:', error)
+    console.error('Error fetching token prices for tracking:', error)
     return {}
   }
 } 

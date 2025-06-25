@@ -33,8 +33,8 @@ export default function TradingHistory() {
   }, [])
 
   // Function to load records and stats
-  const loadRecords = React.useCallback(() => {
-    if (!connected || !publicKey || !isLocalStorageAvailable) {
+  const loadRecords = React.useCallback(async () => {
+    if (!connected || !publicKey) {
       setRecords([])
       setStats(null)
       return
@@ -47,7 +47,7 @@ export default function TradingHistory() {
     const walletAddress = publicKey.toString()
     
     // Get recent successful records only
-    const allRecords = tradingTracker.getWalletRecords(walletAddress)
+    const allRecords = await tradingTracker.getWalletRecords(walletAddress)
     const successfulRecords = allRecords.filter(record => record.successCount > 0)
 
     // Combine sell and close operations that happen within 30 seconds of each other
@@ -114,7 +114,7 @@ export default function TradingHistory() {
     combinedRecords.sort((a, b) => b.timestamp - a.timestamp)
 
     setRecords(combinedRecords)
-    setStats(tradingTracker.getStats(walletAddress))
+    setStats(tradingTracker.getStats(combinedRecords))
     } catch (err) {
       console.error('Error loading trading records:', err)
       setError('Failed to load trading history')
@@ -123,7 +123,7 @@ export default function TradingHistory() {
     } finally {
       setIsLoading(false)
     }
-  }, [connected, publicKey, isLocalStorageAvailable])
+  }, [connected, publicKey])
 
   // Load records and stats
   useEffect(() => {
@@ -183,7 +183,7 @@ export default function TradingHistory() {
   }
 
   // Show error state
-  if (error && !isLocalStorageAvailable) {
+  if (error && error.includes('Browser storage')) {
     return (
       <div className="bg-gray-800 border border-gray-600 rounded-xl p-4 text-center">
         <p className="text-gray-400 text-sm">{error}</p>
