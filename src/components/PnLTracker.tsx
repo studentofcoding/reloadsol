@@ -272,19 +272,34 @@ export default function PnLTracker() {
     }
   }, [calculatePnL, connected, publicKey])
 
-  // Set up real-time subscription for trading records
+  // Set up real-time subscription for trading records (debounced to prevent duplicate calls)
   useEffect(() => {
     if (!connected || !publicKey) return
 
     const walletAddress = publicKey.toString()
+    let debounceTimeout: NodeJS.Timeout | null = null
     
-    // Subscribe to real-time updates
+    // Subscribe to real-time updates with debouncing
     const unsubscribe = tradingTracker.subscribeToWallet(walletAddress, () => {
       console.log('📡 Real-time PnL update received')
-      calculatePnL() // Recalculate PnL when new records arrive
+      
+      // Clear existing timeout
+      if (debounceTimeout) {
+        clearTimeout(debounceTimeout)
+      }
+      
+      // Debounce rapid updates (wait 500ms after last update before recalculating)
+      debounceTimeout = setTimeout(() => {
+        calculatePnL() // Recalculate PnL when new records arrive
+      }, 500)
     })
 
-    return unsubscribe
+    return () => {
+      if (debounceTimeout) {
+        clearTimeout(debounceTimeout)
+      }
+      unsubscribe()
+    }
   }, [connected, publicKey, calculatePnL])
 
   // Fetch SOL price on mount and periodically (reduced frequency)
@@ -484,7 +499,7 @@ export default function PnLTracker() {
     }
   }, [connected, publicKey, signAllTransactions, connection, calculatePnL])
 
-  // Initial price fetch only - when open positions are first loaded
+  // Initial price fetch and automatic refresh every 30 seconds
   useEffect(() => {
     if (openPositions.length > 0 && !hasInitialPricesFetched && !isRefreshingPrices) {
       console.log('📊 Initial price fetch for open positions...')
@@ -496,19 +511,49 @@ export default function PnLTracker() {
     }
   }, [openPositions.length, hasInitialPricesFetched, refreshOpenPositionPrices, isRefreshingPrices])
 
-  // Listen for new trading records and auto-refresh
+  // Auto-refresh prices every 30 seconds for open positions
   useEffect(() => {
+    if (openPositions.length === 0) return
+
+    console.log('⏰ Setting up 30s auto-refresh for open position prices')
+    const interval = setInterval(() => {
+      if (!isRefreshingPrices) {
+        console.log('🔄 Auto-refreshing open position prices (30s interval)')
+        refreshOpenPositionPrices()
+      }
+    }, 30000) // 30 seconds
+
+    return () => {
+      console.log('⏰ Clearing auto-refresh interval')
+      clearInterval(interval)
+    }
+  }, [openPositions.length, refreshOpenPositionPrices, isRefreshingPrices])
+
+  // Listen for new trading records and auto-refresh (debounced to prevent duplicates)
+  useEffect(() => {
+    let eventDebounceTimeout: NodeJS.Timeout | null = null
+
     const handleNewRecord = (event: CustomEvent) => {
       console.log('🔄 New trading record detected, refreshing PnL...', event.detail)
-      setTimeout(() => {
+      
+      // Clear existing timeout to prevent duplicate refreshes
+      if (eventDebounceTimeout) {
+        clearTimeout(eventDebounceTimeout)
+      }
+      
+      // Debounce the PnL calculation to prevent duplicate calls
+      eventDebounceTimeout = setTimeout(() => {
         calculatePnL()
         // Reset price fetch flag so new positions get initial prices
         setHasInitialPricesFetched(false)
-      }, 200) // Small delay to ensure localStorage is updated
+      }, 1000) // 1 second debounce for event-based updates
     }
 
     window.addEventListener('tradingRecordAdded', handleNewRecord as EventListener)
     return () => {
+      if (eventDebounceTimeout) {
+        clearTimeout(eventDebounceTimeout)
+      }
       window.removeEventListener('tradingRecordAdded', handleNewRecord as EventListener)
     }
   }, [calculatePnL])

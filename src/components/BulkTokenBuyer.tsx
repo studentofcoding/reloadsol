@@ -299,7 +299,11 @@ export default function BulkTokenBuyer() {
       setBalanceAfter(balanceAfterSOL)
 
       setResult(buyResult)
-      setShowResultModal(true)
+      
+      // Only show modal if there were actual transaction attempts (success or failure)
+      if (buyResult && (buyResult.successfulPurchases.length > 0 || buyResult.failedPurchases.length > 0)) {
+        setShowResultModal(true)
+      }
 
       // Track the buy operation
       if (buyResult) {

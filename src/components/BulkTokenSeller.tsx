@@ -369,7 +369,16 @@ export default function BulkTokenSeller() {
       setBalanceAfter(balanceAfterSOL)
 
       setResult(sellResult)
-      setShowResultModal(true)
+      
+      // Only show modal if there were actual transaction attempts (success or failure)
+      if (sellResult && (
+        sellResult.successfulSwaps.length > 0 || 
+        sellResult.failedSwaps.length > 0 || 
+        sellResult.successfulCloses.length > 0 || 
+        sellResult.failedCloses.length > 0
+      )) {
+        setShowResultModal(true)
+      }
 
       // Track the sell operation
       if (sellResult) {

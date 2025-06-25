@@ -103,17 +103,6 @@ export default function TransactionResultModal({
               )}
             </div>
           )}
-
-          {/* SOL Spent Summary */}
-          {balanceBefore && balanceAfter && balanceBefore > 0 && balanceAfter > 0 && buyResult.success && (
-            <div className="bg-black/20 rounded-lg p-4 inline-block">
-              <p className="text-blue-300 text-sm mb-1">SOL Invested</p>
-              <p className="text-blue-100 font-mono text-xl font-bold">
-                {(balanceBefore - balanceAfter).toFixed(4)} SOL
-              </p>
-              <p className="text-blue-300 text-sm">≈ ${solToUsd(balanceBefore - balanceAfter).toFixed(2)}</p>
-            </div>
-          )}
         </div>
 
         {/* Failed Purchases (if any) */}
