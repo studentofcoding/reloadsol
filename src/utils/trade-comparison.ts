@@ -34,7 +34,7 @@ const PROVIDER_CONFIG: ProviderConfig = {
     maxRetries: 3,
     timeout: 12000
   },
-  'pump-swap': {
+  'pump-fun': {
     apiUrl: 'https://pumpportal.fun/api',
     rpcUrl: 'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
     maxRetries: 3,
@@ -433,14 +433,14 @@ async function getGmgnQuote(request: TradeQuoteRequest): Promise<ProviderQuote> 
 }
 
 // Pump.fun quote fetcher (using PumpPortal API)
-async function getPumpSwapQuote(request: TradeQuoteRequest): Promise<ProviderQuote> {
+async function getPumpFunQuote(request: TradeQuoteRequest): Promise<ProviderQuote> {
   try {
     const { result: quote, time } = await measureTime(async () => {
-      // Convert amount to SOL for pump swap calculation
+      // Convert amount to SOL for pump.fun calculation
       const amountInSol = parseFloat(request.amount) / 1e9
       
       // Get quote using PumpPortal local trade API
-      const response = await fetch(`${PROVIDER_CONFIG['pump-swap'].apiUrl}/trade-local`, {
+      const response = await fetch(`${PROVIDER_CONFIG['pump-fun'].apiUrl}/trade-local`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -456,7 +456,7 @@ async function getPumpSwapQuote(request: TradeQuoteRequest): Promise<ProviderQuo
           priorityFee: 0.00001,
           pool: 'pump'
         }),
-        signal: AbortSignal.timeout(PROVIDER_CONFIG['pump-swap'].timeout)
+        signal: AbortSignal.timeout(PROVIDER_CONFIG['pump-fun'].timeout)
       })
 
       if (!response.ok) {
@@ -469,7 +469,7 @@ async function getPumpSwapQuote(request: TradeQuoteRequest): Promise<ProviderQuo
       
       // Fallback to market estimation since PumpPortal returns transaction data
       // This is a simplified calculation - in production you'd parse the transaction
-      const estimatedPrice = 0.00001 // Placeholder price for pump swap tokens
+      const estimatedPrice = 0.00001 // Placeholder price for pump.fun tokens
       const estimatedOutput = Math.floor(amountInSol / estimatedPrice)
       const priceImpact = Math.min((amountInSol / 1000) * 100, 15) // Estimate based on trade size
       
@@ -483,7 +483,7 @@ async function getPumpSwapQuote(request: TradeQuoteRequest): Promise<ProviderQuo
     })
 
     return {
-      provider: 'pump-swap',
+      provider: 'pump-fun',
       inputMint: request.inputMint,
       outputMint: request.outputMint,
       inAmount: request.amount,
@@ -494,7 +494,7 @@ async function getPumpSwapQuote(request: TradeQuoteRequest): Promise<ProviderQuo
       responseTime: time,
       success: true,
       route: [{
-        type: 'pump-swap-bonding-curve',
+        type: 'pump-fun-bonding-curve',
         tokenAddress: request.outputMint,
         price: quote.estimatedPrice
       }],
@@ -503,19 +503,22 @@ async function getPumpSwapQuote(request: TradeQuoteRequest): Promise<ProviderQuo
         feePercentage: 0.5
       },
       providerData: {
-        'pump-swap': {
-          poolData: { transactionReady: quote.transactionReady },
-          bondingCurvePrice: quote.estimatedPrice,
-          marketCap: 0, // Not available in this API
+        'pump-fun': {
+          routePlan: [{
+            type: 'pump-fun-bonding-curve',
+            tokenAddress: request.outputMint,
+            price: quote.estimatedPrice
+          }],
+          marketPrice: quote.estimatedPrice,
           liquidityUsd: 0, // Not available in this API
           timeTaken: time,
-          rpcEndpoint: PROVIDER_CONFIG['pump-swap'].rpcUrl
+          rpcEndpoint: PROVIDER_CONFIG['pump-fun'].rpcUrl
         }
       }
     }
   } catch (error) {
     return {
-      provider: 'pump-swap',
+      provider: 'pump-fun',
       inputMint: request.inputMint,
       outputMint: request.outputMint,
       inAmount: request.amount,
@@ -540,16 +543,16 @@ export async function compareTradeQuotes(request: TradeQuoteRequest): Promise<Tr
   })
 
   // Fetch quotes from all providers in parallel
-  const [jupiterQuote, dflowQuote, dflowIntentQuote, solanaTrackerQuote, gmgnQuote, pumpfunQuote] = await Promise.all([
+  const [jupiterQuote, dflowQuote, dflowIntentQuote, solanaTrackerQuote, gmgnQuote, pumpFunQuote] = await Promise.all([
     getJupiterQuote(request),
     getDflowQuote(request),
     getDflowIntentQuote(request),
     getSolanaTrackerQuote(request),
     getGmgnQuote(request),
-    getPumpfunQuote(request)
+    getPumpFunQuote(request)
   ])
 
-  const quotes = [jupiterQuote, dflowQuote, dflowIntentQuote, solanaTrackerQuote, gmgnQuote, pumpfunQuote]
+  const quotes = [jupiterQuote, dflowQuote, dflowIntentQuote, solanaTrackerQuote, gmgnQuote, pumpFunQuote]
   const successfulQuotes = quotes.filter(q => q.success)
 
   // Find best quote by output amount
@@ -686,7 +689,7 @@ export async function checkProviderHealth(): Promise<Record<TradeProvider, boole
     checkDflowIntentHealth(),
     checkSolanaTrackerHealth(),
     checkGmgnHealth(),
-    checkPumpfunHealth()
+    checkPumpFunHealth()
   ])
 
   return {
@@ -695,7 +698,7 @@ export async function checkProviderHealth(): Promise<Record<TradeProvider, boole
     'dflow-intent': healthChecks[2],
     'solana-tracker': healthChecks[3],
     gmgn: healthChecks[4],
-    pumpfun: healthChecks[5]
+    'pump-fun': healthChecks[5]
   }
 }
 
@@ -756,10 +759,10 @@ async function checkGmgnHealth(): Promise<boolean> {
   }
 }
 
-async function checkPumpfunHealth(): Promise<boolean> {
+async function checkPumpFunHealth(): Promise<boolean> {
   try {
     // Check if PumpPortal API is accessible with a simple test request
-    const response = await fetch(`${PROVIDER_CONFIG.pumpfun.apiUrl}/trade-local`, {
+    const response = await fetch(`${PROVIDER_CONFIG['pump-fun'].apiUrl}/trade-local`, {
       method: 'POST',
       headers: {
         'Accept': 'application/json',
