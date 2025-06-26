@@ -1,12 +1,1 @@
-{
-  "crons": [
-    {
-      "path": "/api/pnl/update",
-      "schedule": "0 2 * * *"
-    },
-    {
-      "path": "/api/trending/track",
-      "schedule": "*/5 * * * *"
-    }
-  ]
-} 
+{} 

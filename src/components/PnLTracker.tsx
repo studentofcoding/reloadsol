@@ -341,38 +341,28 @@ export default function PnLTracker() {
           pnlData.push(pnlRecord)
         }
         
-        // If position has remaining tokens or remaining SOL investment, check if token is actually in wallet
-        const remainingSolInvested = position.totalSolBought - position.totalSolSold
-        const hasRemainingTokens = position.remainingTokenAmount > 0.001 // Small threshold to handle rounding
-        const hasRemainingInvestment = remainingSolInvested > 0.001 // Small threshold for SOL
-        
-        if (hasRemainingTokens || hasRemainingInvestment) {
-          // Find the token in current wallet
-          const walletToken = currentWalletTokens.find(token => token.mintAddress === position.mintAddress)
-          
-          if (walletToken && walletToken.uiAmount > 0) {
-            // Token is actually in wallet with positive balance
-            const openPosition: OpenPosition = {
-              id: `open-${mintAddress}`,
-              mintAddress: position.mintAddress,
-              symbol: position.symbol || walletToken.symbol,
-              name: position.name || walletToken.name,
-              logoURI: position.logoURI || walletToken.logoURI,
-              buyTimestamp: position.firstBuyTimestamp,
-              solAmountBought: Math.max(remainingSolInvested, 0.001), // Ensure positive value
-              buySignatures: position.buySignatures,
-              isOpen: true,
-              buyPriceUsd: position.weightedAvgBuyPrice,
-              buyTokenAmount: position.remainingTokenAmount,
-              actualWalletBalance: walletToken.uiAmount,
-              walletTokenData: walletToken
-            }
-
-            openData.push(openPosition)
-            console.log(`✅ Verified open position: ${position.symbol || walletToken.symbol} - Historical: ${position.remainingTokenAmount.toFixed(4)}, Wallet: ${walletToken.uiAmount.toFixed(4)}`)
-          } else {
-            console.log(`❌ Skipping open position: ${position.symbol} - Token not found in wallet or zero balance`)
+        // Only show as open if the wallet has a positive token balance
+        const walletToken = currentWalletTokens.find(token => token.mintAddress === position.mintAddress)
+        if (walletToken && walletToken.uiAmount > 0) {
+          const openPosition: OpenPosition = {
+            id: `open-${mintAddress}`,
+            mintAddress: position.mintAddress,
+            symbol: position.symbol || walletToken.symbol,
+            name: position.name || walletToken.name,
+            logoURI: position.logoURI || walletToken.logoURI,
+            buyTimestamp: position.firstBuyTimestamp,
+            solAmountBought: Math.max(position.totalSolBought - position.totalSolSold, 0.001), // Ensure positive value
+            buySignatures: position.buySignatures,
+            isOpen: true,
+            buyPriceUsd: position.weightedAvgBuyPrice,
+            buyTokenAmount: position.remainingTokenAmount,
+            actualWalletBalance: walletToken.uiAmount,
+            walletTokenData: walletToken
           }
+          openData.push(openPosition)
+          console.log(`✅ Verified open position: ${position.symbol || walletToken.symbol} - Historical: ${position.remainingTokenAmount.toFixed(4)}, Wallet: ${walletToken.uiAmount.toFixed(4)}`)
+        } else {
+          console.log(`❌ Skipping open position: ${position.symbol} - Token not found in wallet or zero balance`)
         }
       })
 
