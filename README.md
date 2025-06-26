@@ -4,6 +4,7 @@ A Next.js application for buying multiple Solana tokens in bulk with a single tr
 
 ## Features
 
+### Core Trading Features
 - 🚀 **Bulk Token Purchase**: Buy up to 10 different tokens in one transaction flow
 - 💰 **Equal Distribution**: Automatically splits your SOL amount equally among selected tokens
 - 🔗 **Jupiter Integration**: Uses Jupiter API for optimal swap routes and pricing
@@ -11,7 +12,15 @@ A Next.js application for buying multiple Solana tokens in bulk with a single tr
 - ⚙️ **Customizable Settings**: Adjust slippage tolerance and priority fees
 - 📱 **Responsive Design**: Works on desktop and mobile devices
 - 🔐 **Wallet Integration**: Supports Phantom, Solflare, Torus, and Ledger wallets
-- 🔔 **Discord Notifications**: Receive token updates in your Discord channel
+
+### Analytics & Tracking
+- 📊 **Trending Token Tracker**: Automated 24/7 monitoring of trending tokens with win/loss tracking
+- 🎯 **Win Rate Analysis**: Track performance of trending tokens with automated summaries
+- 🏆 **Leaderboards**: Top 5 performers identified every 24 hours
+- 📈 **Real-time Dashboard**: Live P&L tracking for monitored tokens with manual price refresh
+- 💰 **Enhanced Price Updates**: Smart caching system with rate limiting protection
+- 🔧 **Debug Mode**: Comprehensive API testing and logging tools
+- 🔔 **Discord Notifications**: Receive token updates and summaries in your Discord channel
 
 ## How It Works
 
@@ -117,6 +126,7 @@ DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263 So111111111111111111111111111111111
 - `NEXT_PUBLIC_RPC_URL`: Custom Solana RPC endpoint (optional)
 - `DISCORD_WEBHOOK_URL`: Discord webhook URL for token update notifications
 - `ENABLE_DISCORD_NOTIFICATIONS`: Set to 'true' to enable Discord notifications
+- `TRENDING_TRACKER_SECRET`: Secret key for trending tracker API endpoints (optional)
 
 ### Discord Integration
 
@@ -169,6 +179,38 @@ The application can send token updates to a Discord channel using webhooks:
 - Verify transactions on [Solscan](https://solscan.io)
 - Ensure your wallet is connected to Mainnet
 
+## Trending Token Tracker
+
+### Overview
+The Trending Token Tracker is an automated system that monitors trending tokens from Jupiter API, tracks their price performance over 24-hour periods, and generates comprehensive win/loss statistics.
+
+### Key Features
+- **5-minute price updates**: Automatic tracking of token prices every 5 minutes
+- **Manual price refresh**: "Refresh Stats + Prices" button for on-demand updates
+- **Smart caching**: Rate-limited price API with 2-minute cache and batch processing
+- **Loss detection**: Tokens dropping >50% are automatically marked as "lost"
+- **Winner identification**: Top 5 performers each 24 hours are marked as "won"
+- **Win rate calculation**: `wins / (wins + losses) * 100`
+- **Real-time dashboard**: Live monitoring at `/dev/trending-tracker`
+- **Debug tools**: Testing buttons and detailed console logging
+
+### Quick Setup
+1. **Database Setup**: Run `trending_tracker_migration.sql` in Supabase SQL Editor
+2. **Deploy**: System runs automatically via Vercel cron jobs
+3. **Access Dashboard**: Navigate to `/dev/trending-tracker`
+
+### API Endpoints
+- `/api/trending/track` - 5-minute price updates (automated)
+- `/api/trending/summary` - 24-hour summaries (automated)
+- `/api/trending/stats` - Frontend data source (public)
+
+### Manual Testing
+```bash
+node scripts/test-trending-tracker.js all
+```
+
+For complete setup instructions, see [TRENDING_TRACKER_SETUP.md](./TRENDING_TRACKER_SETUP.md).
+
 ## Development
 
 ### Project Structure
@@ -176,6 +218,8 @@ The application can send token updates to a Discord channel using webhooks:
 ```
 src/
 ├── app/                 # Next.js app router
+│   ├── api/trending/    # Trending tracker APIs
+│   └── dev/             # Development tools & dashboards
 ├── components/          # React components
 ├── types/              # TypeScript type definitions
 ├── utils/              # Utility functions

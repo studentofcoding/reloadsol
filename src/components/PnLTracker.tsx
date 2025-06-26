@@ -142,116 +142,249 @@ export default function PnLTracker() {
         }
       })
 
-      const pnlData: PnLRecord[] = []
-      const openData: OpenPosition[] = []
-      const soldTokens = new Set<string>()
+      // Create position tracking maps to combine multiple buys/sells
+      const tokenPositions = new Map<string, {
+        mintAddress: string
+        symbol?: string
+        name?: string
+        logoURI?: string
+        totalSolBought: number
+        totalSolSold: number
+        totalTokenAmount: number
+        remainingTokenAmount: number
+        weightedAvgBuyPrice: number
+        weightedAvgSellPrice: number
+        firstBuyTimestamp: number
+        lastSellTimestamp?: number
+        buySignatures: string[]
+        sellSignatures: string[]
+        transactions: Array<{
+          type: 'buy' | 'sell'
+          timestamp: number
+          solAmount: number
+          tokenAmount: number
+          priceUsd?: number
+          signatures: string[]
+        }>
+      }>()
 
-      // For each processed sell record, try to find matching buy records
-      processedSellRecords.forEach(sellRecord => {
-        sellRecord.tokens.forEach(soldToken => {
-          soldTokens.add(soldToken.mintAddress)
-          
-          // Find the most recent buy record for this token before the sell
-          const matchingBuy = buyRecords
-            .filter(buyRecord => 
-              buyRecord.timestamp < sellRecord.timestamp &&
-              buyRecord.tokens.some(buyToken => buyToken.mintAddress === soldToken.mintAddress)
-            )
-            .sort((a, b) => b.timestamp - a.timestamp)[0] // Most recent buy
-
-          if (matchingBuy && matchingBuy.solAmount && sellRecord.solAmount) {
-            // Get the corresponding buy token data
-            const buyToken = matchingBuy.tokens.find(t => t.mintAddress === soldToken.mintAddress)
-            
-            // Use actual prices if available, otherwise fall back to SOL amount calculations
-            let pnlSOL: number
-            let pnlPercentage: number
-            let pnlUSD: number
-            let buyPriceUsd: number
-            let sellPriceUsd: number
-
-            if (buyToken?.priceUsd && soldToken.priceUsd) {
-              // Use actual token prices for accurate calculation
-              buyPriceUsd = buyToken.priceUsd
-              sellPriceUsd = soldToken.priceUsd
-              
-              // Calculate P&L percentage based on token price change
-              pnlPercentage = ((sellPriceUsd - buyPriceUsd) / buyPriceUsd) * 100
-              
-              // Calculate SOL P&L based on the SOL amounts and success counts
-              const solPerTokenBuy = matchingBuy.solAmount / matchingBuy.successCount
-              const solPerTokenSell = sellRecord.solAmount / sellRecord.successCount
-              pnlSOL = solPerTokenSell - solPerTokenBuy
-              
-              // Calculate USD P&L
-              pnlUSD = pnlSOL * (sellRecord.solPriceUsd || solPriceUsd)
-            } else {
-              // Fallback to SOL amount calculations
-              const solPerTokenBuy = matchingBuy.solAmount / matchingBuy.successCount
-              const solPerTokenSell = sellRecord.solAmount / sellRecord.successCount
-              
-              pnlSOL = solPerTokenSell - solPerTokenBuy
-              pnlPercentage = ((solPerTokenSell - solPerTokenBuy) / solPerTokenBuy) * 100
-              pnlUSD = pnlSOL * solPriceUsd
-              
-              buyPriceUsd = matchingBuy.solPriceUsd || solPriceUsd
-              sellPriceUsd = sellRecord.solPriceUsd || solPriceUsd
-            }
-
-            const pnlRecord: PnLRecord = {
-              id: `${matchingBuy.id}-${sellRecord.id}-${soldToken.mintAddress}`,
-              mintAddress: soldToken.mintAddress,
-              symbol: soldToken.symbol,
-              name: soldToken.name,
-              logoURI: soldToken.logoURI,
-              buyTimestamp: matchingBuy.timestamp,
-              sellTimestamp: sellRecord.timestamp,
-              buyPrice: buyPriceUsd,
-              sellPrice: sellPriceUsd,
-              solAmountBought: matchingBuy.solAmount / matchingBuy.successCount,
-              solAmountSold: sellRecord.solAmount / sellRecord.successCount,
-              pnlSOL,
-              pnlUSD,
-              pnlPercentage,
-              buySignatures: matchingBuy.signatures,
-              sellSignatures: sellRecord.signatures
-            }
-
-            pnlData.push(pnlRecord)
-          }
-        })
-      })
-
-      // Calculate open positions (bought but not sold tokens)
+      // Process all buy records to build positions
       buyRecords.forEach(buyRecord => {
         buyRecord.tokens.forEach(buyToken => {
-          // Check if this token hasn't been sold yet
-          if (!soldTokens.has(buyToken.mintAddress) && buyRecord.solAmount) {
-            const solPerToken = buyRecord.solAmount / buyRecord.successCount
+          if (!buyRecord.solAmount) return
+          
+          const solPerToken = buyRecord.solAmount / buyRecord.successCount
+          const position = tokenPositions.get(buyToken.mintAddress)
+          
+          if (position) {
+            // Add to existing position
+            const newTotalSol = position.totalSolBought + solPerToken
+            const newTotalTokens = position.totalTokenAmount + (buyToken.tokenAmount || 0)
             
-            const openPosition: OpenPosition = {
-              id: `${buyRecord.id}-${buyToken.mintAddress}`,
+            // Update weighted average buy price
+            if (buyToken.priceUsd && buyToken.priceUsd > 0) {
+              const currentWeight = position.totalSolBought
+              const newWeight = solPerToken
+              const totalWeight = currentWeight + newWeight
+              
+              if (position.weightedAvgBuyPrice > 0) {
+                position.weightedAvgBuyPrice = 
+                  (position.weightedAvgBuyPrice * currentWeight + buyToken.priceUsd * newWeight) / totalWeight
+              } else {
+                position.weightedAvgBuyPrice = buyToken.priceUsd
+              }
+            }
+            
+            position.totalSolBought = newTotalSol
+            position.totalTokenAmount = newTotalTokens
+            position.remainingTokenAmount = newTotalTokens
+            position.buySignatures.push(...buyRecord.signatures)
+            position.transactions.push({
+              type: 'buy',
+              timestamp: buyRecord.timestamp,
+              solAmount: solPerToken,
+              tokenAmount: buyToken.tokenAmount || 0,
+              priceUsd: buyToken.priceUsd,
+              signatures: buyRecord.signatures
+            })
+          } else {
+            // Create new position
+            tokenPositions.set(buyToken.mintAddress, {
               mintAddress: buyToken.mintAddress,
               symbol: buyToken.symbol,
               name: buyToken.name,
               logoURI: buyToken.logoURI,
-              buyTimestamp: buyRecord.timestamp,
-              solAmountBought: solPerToken,
-              buySignatures: buyRecord.signatures,
-              isOpen: true,
-              // Store buy price for later comparison
-              buyPriceUsd: buyToken.priceUsd,
-              buyTokenAmount: buyToken.tokenAmount
-            }
-
-            openData.push(openPosition)
+              totalSolBought: solPerToken,
+              totalSolSold: 0,
+              totalTokenAmount: buyToken.tokenAmount || 0,
+              remainingTokenAmount: buyToken.tokenAmount || 0,
+              weightedAvgBuyPrice: buyToken.priceUsd || 0,
+              weightedAvgSellPrice: 0,
+              firstBuyTimestamp: buyRecord.timestamp,
+              buySignatures: [...buyRecord.signatures],
+              sellSignatures: [],
+              transactions: [{
+                type: 'buy',
+                timestamp: buyRecord.timestamp,
+                solAmount: solPerToken,
+                tokenAmount: buyToken.tokenAmount || 0,
+                priceUsd: buyToken.priceUsd,
+                signatures: buyRecord.signatures
+              }]
+            })
           }
         })
+      })
+
+      // Process sell records to update positions
+      processedSellRecords.forEach(sellRecord => {
+        sellRecord.tokens.forEach(soldToken => {
+          const position = tokenPositions.get(soldToken.mintAddress)
+          if (!position || !sellRecord.solAmount) return
+          
+          const solPerToken = sellRecord.solAmount / sellRecord.successCount
+          
+          // Update weighted average sell price
+          if (soldToken.priceUsd && soldToken.priceUsd > 0) {
+            const currentSolSold = position.totalSolSold
+            const newSolSold = solPerToken
+            const totalSolSold = currentSolSold + newSolSold
+            
+            if (position.weightedAvgSellPrice > 0 && currentSolSold > 0) {
+              position.weightedAvgSellPrice = 
+                (position.weightedAvgSellPrice * currentSolSold + soldToken.priceUsd * newSolSold) / totalSolSold
+            } else {
+              position.weightedAvgSellPrice = soldToken.priceUsd
+            }
+          }
+          
+          position.totalSolSold += solPerToken
+          position.lastSellTimestamp = sellRecord.timestamp
+          position.sellSignatures.push(...sellRecord.signatures)
+          position.transactions.push({
+            type: 'sell',
+            timestamp: sellRecord.timestamp,
+            solAmount: solPerToken,
+            tokenAmount: soldToken.tokenAmount || 0,
+            priceUsd: soldToken.priceUsd,
+            signatures: sellRecord.signatures
+          })
+          
+          // Reduce remaining token amount using actual token amounts sold
+          if (soldToken.tokenAmount && soldToken.tokenAmount > 0) {
+            // Use actual token amount sold for accurate remaining calculation
+            position.remainingTokenAmount = Math.max(0, 
+              position.remainingTokenAmount - soldToken.tokenAmount
+            )
+          } else if (position.totalSolBought > 0) {
+            // Fallback to SOL proportion only if token amount is not available
+            const sellProportion = Math.min(1, solPerToken / position.totalSolBought)
+            const estimatedTokensSold = position.totalTokenAmount * sellProportion
+            position.remainingTokenAmount = Math.max(0, 
+              position.remainingTokenAmount - estimatedTokensSold
+            )
+          }
+        })
+      })
+
+      const pnlData: PnLRecord[] = []
+      const openData: OpenPosition[] = []
+
+      // Generate PnL records and open positions from combined positions
+      tokenPositions.forEach((position, mintAddress) => {
+        // If position has sells, create PnL record
+        if (position.totalSolSold > 0) {
+          let pnlSOL = position.totalSolSold - position.totalSolBought
+          let pnlPercentage = 0
+          let pnlUSD = 0
+          
+          // Calculate percentage using weighted average prices if available
+          if (position.weightedAvgBuyPrice > 0 && position.weightedAvgSellPrice > 0) {
+            pnlPercentage = ((position.weightedAvgSellPrice - position.weightedAvgBuyPrice) / position.weightedAvgBuyPrice) * 100
+          } else if (position.totalSolBought > 0) {
+            pnlPercentage = ((position.totalSolSold - position.totalSolBought) / position.totalSolBought) * 100
+          }
+          
+          pnlUSD = pnlSOL * solPriceUsd
+          
+          const pnlRecord: PnLRecord = {
+            id: `combined-${mintAddress}`,
+            mintAddress: position.mintAddress,
+            symbol: position.symbol,
+            name: position.name,
+            logoURI: position.logoURI,
+            buyTimestamp: position.firstBuyTimestamp,
+            sellTimestamp: position.lastSellTimestamp || Date.now(),
+            buyPrice: position.weightedAvgBuyPrice || (position.totalSolBought > 0 ? position.totalSolBought * solPriceUsd / position.totalTokenAmount : 0),
+            sellPrice: position.weightedAvgSellPrice || (position.totalSolSold > 0 ? position.totalSolSold * solPriceUsd / position.totalTokenAmount : 0),
+            solAmountBought: position.totalSolBought,
+            solAmountSold: position.totalSolSold,
+            pnlSOL,
+            pnlUSD,
+            pnlPercentage,
+            buySignatures: position.buySignatures,
+            sellSignatures: position.sellSignatures
+          }
+
+          pnlData.push(pnlRecord)
+        }
+        
+        // If position has remaining tokens or remaining SOL investment, create open position
+        const remainingSolInvested = position.totalSolBought - position.totalSolSold
+        const hasRemainingTokens = position.remainingTokenAmount > 0.001 // Small threshold to handle rounding
+        const hasRemainingInvestment = remainingSolInvested > 0.001 // Small threshold for SOL
+        
+        if (hasRemainingTokens || hasRemainingInvestment) {
+          const openPosition: OpenPosition = {
+            id: `open-${mintAddress}`,
+            mintAddress: position.mintAddress,
+            symbol: position.symbol,
+            name: position.name,
+            logoURI: position.logoURI,
+            buyTimestamp: position.firstBuyTimestamp,
+            solAmountBought: Math.max(remainingSolInvested, 0.001), // Ensure positive value
+            buySignatures: position.buySignatures,
+            isOpen: true,
+            buyPriceUsd: position.weightedAvgBuyPrice,
+            buyTokenAmount: position.remainingTokenAmount
+          }
+
+          openData.push(openPosition)
+        }
       })
 
       // Sort by timestamp (most recent first)
       pnlData.sort((a, b) => b.sellTimestamp - a.sellTimestamp)
       openData.sort((a, b) => b.buyTimestamp - a.buyTimestamp)
+      
+      // Debug logging for position combination
+      console.log('📊 PnL Calculation Summary:', {
+        totalPositions: tokenPositions.size,
+        completedTrades: pnlData.length,
+        openPositions: openData.length,
+        positionsDetails: Array.from(tokenPositions.entries()).map(([mint, pos]) => {
+          const remainingSol = pos.totalSolBought - pos.totalSolSold
+          const hasTokens = pos.remainingTokenAmount > 0.001
+          const hasSol = remainingSol > 0.001
+          
+          return {
+            token: pos.symbol || mint.slice(0, 8) + '...',
+            buys: pos.transactions.filter(t => t.type === 'buy').length,
+            sells: pos.transactions.filter(t => t.type === 'sell').length,
+            totalSolBought: pos.totalSolBought.toFixed(4),
+            totalSolSold: pos.totalSolSold.toFixed(4),
+            remainingSol: remainingSol.toFixed(4),
+            avgBuyPrice: pos.weightedAvgBuyPrice.toFixed(6),
+            avgSellPrice: pos.weightedAvgSellPrice.toFixed(6),
+            totalTokens: pos.totalTokenAmount.toFixed(2),
+            remainingTokens: pos.remainingTokenAmount.toFixed(2),
+            shouldBeOpen: hasTokens || hasSol,
+            isOpen: openData.some(op => op.mintAddress === mint),
+            status: pos.totalSolSold > 0 ? 
+              (hasTokens || hasSol ? 'partial' : 'closed') : 'open'
+          }
+        })
+      })
       
       setPnlRecords(pnlData)
       setOpenPositions(openData)
@@ -692,6 +825,7 @@ export default function PnLTracker() {
             pnlRecords.length === 0 ? (
               <div className="text-center py-4">
                 <p className="text-gray-400 text-sm">Buy and sell tokens to track your completed trades</p>
+                <p className="text-gray-500 text-xs mt-1">💡 Multiple buys/sells of the same token are automatically combined</p>
               </div>
             ) : (
               <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
@@ -762,9 +896,14 @@ export default function PnLTracker() {
                     {/* Line 4: USD Value */}
                     <div className="text-xs text-gray-400 mt-0.5 flex justify-between items-center">
                       <span>{record.pnlUSD > 0 ? '+' : ''}${Math.abs(record.pnlUSD).toFixed(2)}</span>
-                      {record.buyPrice && record.sellPrice && record.buyPrice > 0 && record.sellPrice > 0 && (
-                        <span className="text-green-400 text-xs">✓</span>
-                      )}
+                      <div className="flex items-center space-x-1">
+                        {record.id.startsWith('combined-') && (
+                          <span className="text-blue-400 text-xs" title="Combined from multiple buy/sell operations">🔗</span>
+                        )}
+                        {record.buyPrice && record.sellPrice && record.buyPrice > 0 && record.sellPrice > 0 && (
+                          <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -775,6 +914,7 @@ export default function PnLTracker() {
             openPositions.length === 0 ? (
               <div className="text-center py-4">
                 <p className="text-gray-400 text-sm">No open positions. Buy tokens to start tracking.</p>
+                <p className="text-gray-500 text-xs mt-1">🔄 Positions are combined when you buy the same token multiple times</p>
               </div>
             ) : (
               <>
@@ -909,16 +1049,26 @@ export default function PnLTracker() {
                               →${position.currentUsdValue.toFixed(2)}
                             </span>
                           </div>
-                          {position.buyPriceUsd && position.buyPriceUsd > 0 && (
-                            <span className="text-green-400 text-xs ml-1">✓</span>
-                          )}
+                          <div className="flex items-center space-x-1 ml-1">
+                            {position.id.startsWith('open-') && (
+                              <span className="text-blue-400 text-xs" title="Combined position from multiple buys">🔗</span>
+                            )}
+                            {position.buyPriceUsd && position.buyPriceUsd > 0 && (
+                              <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <div className="flex justify-between items-center">
                           <span>~${(position.solAmountBought * solPriceUsd).toFixed(2)}</span>
-                          {position.buyPriceUsd && position.buyPriceUsd > 0 && (
-                            <span className="text-green-400 text-xs">✓</span>
-                          )}
+                          <div className="flex items-center space-x-1">
+                            {position.id.startsWith('open-') && (
+                              <span className="text-blue-400 text-xs" title="Combined position from multiple buys">🔗</span>
+                            )}
+                            {position.buyPriceUsd && position.buyPriceUsd > 0 && (
+                              <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>

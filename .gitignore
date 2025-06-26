@@ -11,6 +11,9 @@
 .env.test
 .env.production
 
+# TypeScript build cache
+tsconfig.tsbuildinfo
+
 /trending_api
 /venv
 /__pycache__
