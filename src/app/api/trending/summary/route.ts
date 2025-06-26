@@ -1,3 +1,5 @@
+// NOTE: This endpoint is no longer used as a Vercel cron job (moved to /api/trending/track)
+// It's kept for manual testing and potential future standalone use
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'

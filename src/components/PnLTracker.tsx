@@ -45,6 +45,8 @@ interface OpenPosition {
   buyPriceUsd?: number // Buy price in USD
   buyTokenAmount?: number // Amount of the bought token
   currentTokenPriceUsd?: number // Current token price in USD
+  actualWalletBalance?: number // Actual balance in wallet
+  walletTokenData?: UserToken // Full wallet token data for selling
 }
 
 export default function PnLTracker() {
@@ -288,7 +290,17 @@ export default function PnLTracker() {
       })
 
       const pnlData: PnLRecord[] = []
-      const openData: OpenPosition[] = []
+      let openData: OpenPosition[] = []
+
+      // Fetch current wallet tokens to verify open positions
+      let currentWalletTokens: UserToken[] = []
+      try {
+        currentWalletTokens = await fetchUserTokens(connection, publicKey, false, false)
+        console.log('🔍 Fetched current wallet tokens:', currentWalletTokens.length, 'tokens found')
+      } catch (error) {
+        console.error('⚠️ Failed to fetch wallet tokens for position verification:', error)
+        // Continue with empty array - will filter out all open positions
+      }
 
       // Generate PnL records and open positions from combined positions
       tokenPositions.forEach((position, mintAddress) => {
@@ -329,27 +341,38 @@ export default function PnLTracker() {
           pnlData.push(pnlRecord)
         }
         
-        // If position has remaining tokens or remaining SOL investment, create open position
+        // If position has remaining tokens or remaining SOL investment, check if token is actually in wallet
         const remainingSolInvested = position.totalSolBought - position.totalSolSold
         const hasRemainingTokens = position.remainingTokenAmount > 0.001 // Small threshold to handle rounding
         const hasRemainingInvestment = remainingSolInvested > 0.001 // Small threshold for SOL
         
         if (hasRemainingTokens || hasRemainingInvestment) {
-          const openPosition: OpenPosition = {
-            id: `open-${mintAddress}`,
-            mintAddress: position.mintAddress,
-            symbol: position.symbol,
-            name: position.name,
-            logoURI: position.logoURI,
-            buyTimestamp: position.firstBuyTimestamp,
-            solAmountBought: Math.max(remainingSolInvested, 0.001), // Ensure positive value
-            buySignatures: position.buySignatures,
-            isOpen: true,
-            buyPriceUsd: position.weightedAvgBuyPrice,
-            buyTokenAmount: position.remainingTokenAmount
-          }
+          // Find the token in current wallet
+          const walletToken = currentWalletTokens.find(token => token.mintAddress === position.mintAddress)
+          
+          if (walletToken && walletToken.uiAmount > 0) {
+            // Token is actually in wallet with positive balance
+            const openPosition: OpenPosition = {
+              id: `open-${mintAddress}`,
+              mintAddress: position.mintAddress,
+              symbol: position.symbol || walletToken.symbol,
+              name: position.name || walletToken.name,
+              logoURI: position.logoURI || walletToken.logoURI,
+              buyTimestamp: position.firstBuyTimestamp,
+              solAmountBought: Math.max(remainingSolInvested, 0.001), // Ensure positive value
+              buySignatures: position.buySignatures,
+              isOpen: true,
+              buyPriceUsd: position.weightedAvgBuyPrice,
+              buyTokenAmount: position.remainingTokenAmount,
+              actualWalletBalance: walletToken.uiAmount,
+              walletTokenData: walletToken
+            }
 
-          openData.push(openPosition)
+            openData.push(openPosition)
+            console.log(`✅ Verified open position: ${position.symbol || walletToken.symbol} - Historical: ${position.remainingTokenAmount.toFixed(4)}, Wallet: ${walletToken.uiAmount.toFixed(4)}`)
+          } else {
+            console.log(`❌ Skipping open position: ${position.symbol} - Token not found in wallet or zero balance`)
+          }
         }
       })
 
@@ -443,6 +466,33 @@ export default function PnLTracker() {
     return () => clearInterval(interval)
   }, [fetchSolPrice])
 
+  // Function to refresh wallet balances for open positions
+  const refreshWalletBalances = React.useCallback(async () => {
+    if (openPositions.length === 0) return
+
+    try {
+      const walletTokens = await fetchUserTokens(connection, publicKey!, false, false)
+      
+      setOpenPositions(prev => prev.map(position => {
+        const walletToken = walletTokens.find(token => token.mintAddress === position.mintAddress)
+        
+        if (walletToken && walletToken.uiAmount > 0) {
+          return {
+            ...position,
+            actualWalletBalance: walletToken.uiAmount,
+            walletTokenData: walletToken
+          }
+        } else {
+          // Token no longer in wallet, should be filtered out on next PnL calculation
+          console.log(`⚠️ Token ${position.symbol} no longer in wallet`)
+          return position
+        }
+      }))
+    } catch (error) {
+      console.error('Error refreshing wallet balances:', error)
+    }
+  }, [openPositions, connection, publicKey])
+
   // Function to fetch current prices for open positions
   const refreshOpenPositionPrices = React.useCallback(async () => {
     if (openPositions.length === 0) return
@@ -534,15 +584,22 @@ export default function PnLTracker() {
     setSellError('')
 
     try {
-      // Fetch current user tokens to get the exact token data
-      const userTokens = await fetchUserTokens(connection, publicKey, false, false)
+      // Use the pre-verified wallet token data from the position
+      let tokenToSell = position.walletTokenData
       
-      // Find the specific token in user's wallet
-      const tokenToSell = userTokens.find(token => token.mintAddress === position.mintAddress)
+      if (!tokenToSell) {
+        // Fallback: fetch current user tokens if wallet data is not available
+        console.log('⚠️ No wallet token data in position, fetching fresh...')
+        const userTokens = await fetchUserTokens(connection, publicKey, false, false)
+        tokenToSell = userTokens.find(token => token.mintAddress === position.mintAddress)
+      }
       
       if (!tokenToSell || tokenToSell.uiAmount <= 0) {
-        throw new Error('Token not found in wallet or has zero balance')
+        throw new Error(`Token not found in wallet or has zero balance. Expected: ${position.actualWalletBalance?.toFixed(4) || 'unknown'} tokens`)
       }
+
+      console.log(`💰 Selling ${tokenToSell.symbol}: ${tokenToSell.uiAmount} tokens (balance verified: ${position.actualWalletBalance?.toFixed(4) || 'unknown'})`)
+      
 
       // Convert to TokenToSell format for bulk sell
       const tokenForSale: TokenToSell = {
@@ -793,13 +850,14 @@ export default function PnLTracker() {
             </button>
             {activeTab === 'open' && openPositions.length > 0 && (
               <button
-                onClick={() => {
+                onClick={async () => {
                   console.log('🔄 Manual refresh triggered by user')
+                  await refreshWalletBalances()
                   refreshOpenPositionPrices()
                 }}
                 disabled={isRefreshingPrices}
                 className="px-3 py-1.5 text-xs font-medium rounded-md transition-all bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
-                title="Manually refresh current prices for open positions"
+                title="Refresh wallet balances and current prices for open positions"
               >
                 <svg 
                   className={`w-3 h-3 ${isRefreshingPrices ? 'animate-spin' : ''}`} 
@@ -814,7 +872,7 @@ export default function PnLTracker() {
                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
                   />
                 </svg>
-                <span>{isRefreshingPrices ? 'Updating...' : 'Refresh Prices'}</span>
+                <span>{isRefreshingPrices ? 'Updating...' : 'Refresh All'}</span>
               </button>
             )}
           </div>
@@ -1033,7 +1091,7 @@ export default function PnLTracker() {
                       </div>
                     </div>
                     
-                    {/* Line 4: USD Value */}
+                    {/* Line 4: USD Value and Wallet Balance */}
                     <div className="text-xs text-gray-400 mt-0.5">
                       {position.currentUsdValue !== undefined ? (
                         <div className="flex justify-between items-center">
@@ -1053,22 +1111,11 @@ export default function PnLTracker() {
                             {position.id.startsWith('open-') && (
                               <span className="text-blue-400 text-xs" title="Combined position from multiple buys">🔗</span>
                             )}
-                            {position.buyPriceUsd && position.buyPriceUsd > 0 && (
-                              <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
-                            )}
                           </div>
                         </div>
                       ) : (
                         <div className="flex justify-between items-center">
                           <span>~${(position.solAmountBought * solPriceUsd).toFixed(2)}</span>
-                          <div className="flex items-center space-x-1">
-                            {position.id.startsWith('open-') && (
-                              <span className="text-blue-400 text-xs" title="Combined position from multiple buys">🔗</span>
-                            )}
-                            {position.buyPriceUsd && position.buyPriceUsd > 0 && (
-                              <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
-                            )}
-                          </div>
                         </div>
                       )}
                     </div>

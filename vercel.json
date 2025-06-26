@@ -7,10 +7,6 @@
     {
       "path": "/api/trending/track",
       "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/trending/summary",
-      "schedule": "0 0 * * *"
     }
   ]
 } 
