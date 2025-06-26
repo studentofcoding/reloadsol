@@ -87,6 +87,9 @@ interface TrendingStats {
     latest_summary_age_hours: number | null
     last_updated: string
   }
+  cached: boolean
+  cache_age: number
+  expires_in: number
 }
 
 export default function TrendingTrackerPage() {
@@ -177,12 +180,21 @@ export default function TrendingTrackerPage() {
   }
 
   // Fetch stats from API
-  const fetchStats = async (updatePrices: boolean = false) => {
+  const fetchStats = async (updatePrices: boolean = false, forceRefresh: boolean = false) => {
     try {
       setError('')
       console.log('🔄 Fetching trending stats from /api/trending/stats...')
       
-      const response = await fetch('/api/trending/stats')
+      // Add cache-busting parameters when force refreshing
+      const url = forceRefresh 
+        ? `/api/trending/stats?refresh=true&nocache=true&t=${Date.now()}`
+        : '/api/trending/stats'
+      
+      console.log('📡 API URL:', url)
+      
+      const response = await fetch(url, {
+        cache: forceRefresh ? 'no-store' : 'default'
+      })
       console.log('📡 API Response status:', response.status)
       console.log('📡 API Response headers:', Object.fromEntries(response.headers))
       
@@ -210,7 +222,10 @@ export default function TrendingTrackerPage() {
           winners_count: data.recent_completed?.winners?.length || 0,
           losers_count: data.recent_completed?.losers?.length || 0
         },
-        data_freshness: data.data_freshness
+        data_freshness: data.data_freshness,
+        cached: data.cached || false,
+        cache_age: data.cache_age,
+        expires_in: data.expires_in
       })
       
       // Log detailed tracking tokens info
@@ -279,7 +294,8 @@ export default function TrendingTrackerPage() {
 
   // Enhanced refresh function for manual button clicks
   const handleRefreshStats = async () => {
-    await fetchStats(true) // Update prices when manually refreshing
+    setLoading(true)
+    await fetchStats(true, true) // Update prices and force refresh when manually refreshing
   }
 
   // Debug function to manually test tracking API (development mode only)
@@ -299,6 +315,11 @@ export default function TrendingTrackerPage() {
       
       const data = await response.json()
       console.log('✅ Tracking API response:', data)
+      
+      // Refresh stats after manual tracking test
+      setTimeout(() => {
+        fetchStats(false, true) // Force refresh after manual tracking
+      }, 2000)
     } catch (err) {
       console.error('❌ Error testing tracking API:', err)
     }
@@ -440,72 +461,68 @@ export default function TrendingTrackerPage() {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
+        <h1 className="text-3xl font-bold mb-8">Trending Token Tracker</h1>
+        
         {/* Header */}
         <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0 mb-8">
-          <h1 className="text-2xl md:text-3xl font-bold">Trending Token Tracker</h1>
-          <div className="text-left md:text-right space-y-2">
-            <p className="text-sm text-gray-400">Last updated: {formatRelativeTime(lastRefresh.toISOString())}</p>
-            <div className="flex flex-wrap gap-2">
-              <button 
-                onClick={handleRefreshStats}
-                className={`text-blue-400 hover:text-blue-300 text-sm transition-colors ${isRefreshingPrices ? 'opacity-50' : ''}`}
-                disabled={isRefreshingPrices}
-              >
-                {isRefreshingPrices ? 'Updating...' : 'Refresh'}
-              </button>
-              <button 
-                onClick={testTrackingAPI}
-                className="text-yellow-400 hover:text-yellow-300 text-sm transition-colors"
-              >
-                Test Track
-              </button>
-              <button 
-                onClick={testSummaryAPI}
-                className="text-green-400 hover:text-green-300 text-sm transition-colors"
-              >
-                Test Summary
-              </button>
-              <button 
-                onClick={() => setDebugMode(!debugMode)}
-                className="text-purple-400 hover:text-purple-300 text-sm transition-colors"
-              >
-                Debug: {debugMode ? 'ON' : 'OFF'}
-              </button>
-            </div>
+          <div>
+            <h1 className="text-3xl font-bold">Trending Token Tracker</h1>
+            <p className="text-gray-400 mt-2">
+              Live tracking of trending tokens with real-time price updates
+            </p>
+          </div>
+          <div className="flex items-center space-x-3">
+            <span className="text-gray-400 text-sm">
+              Last updated: {formatRelativeTime(lastRefresh.toISOString())}
+            </span>
+            {isRefreshingPrices && (
+              <span className="text-blue-400 text-sm">💰 Updating prices...</span>
+            )}
+            <button
+              onClick={handleRefreshStats}
+              disabled={loading || isRefreshingPrices}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed rounded-lg font-medium"
+            >
+              {loading || isRefreshingPrices ? 'Refreshing...' : 'Refresh Data'}
+            </button>
           </div>
         </div>
 
-        {/* Debug Info */}
+        {/* Debug Controls (Development Only) */}
         {debugMode && (
-          <div className="bg-purple-900/20 border border-purple-600/30 rounded-xl p-4 mb-8">
-            <h3 className="text-lg font-semibold mb-3 text-purple-400">🔧 Debug Information</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              <div>
-                <p className="text-gray-400">API Base URL:</p>
-                <p className="text-white font-mono">{window.location.origin}</p>
-              </div>
-              <div>
-                <p className="text-gray-400">Current Time:</p>
-                <p className="text-white font-mono">{new Date().toISOString()}</p>
-              </div>
-              <div>
-                <p className="text-gray-400">Last Refresh:</p>
-                <p className="text-white font-mono">{lastRefresh.toISOString()}</p>
-              </div>
-              <div>
-                <p className="text-gray-400">Stats Response:</p>
-                <p className="text-white font-mono">{stats ? 'Loaded' : 'No data'}</p>
-              </div>
+          <div className="bg-gray-800 rounded-xl p-4 mb-6">
+            <h3 className="text-lg font-semibold mb-3">🧪 Debug Controls</h3>
+            <div className="flex flex-wrap gap-3">
+              <button
+                onClick={testTrackingAPI}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm"
+              >
+                Test Tracking API
+              </button>
+              <button
+                onClick={testSummaryAPI}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-sm"
+              >
+                Test Summary API
+              </button>
+              <button
+                onClick={() => setDebugMode(!debugMode)}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg text-sm"
+              >
+                Hide Debug
+              </button>
             </div>
-            <div className="mt-4 p-3 bg-gray-800 rounded-lg">
-              <p className="text-xs text-gray-400 mb-2">Console Commands (open browser dev tools):</p>
-              <div className="space-y-1 text-xs font-mono">
-                <p className="text-green-400">• Check all console logs for detailed API responses</p>
-                <p className="text-yellow-400">• Click "Test Tracking" to manually trigger 5-min update</p>
-                <p className="text-blue-400">• Click "Test Summary" to manually trigger 24h summary</p>
-                <p className="text-purple-400">• Watch for Jupiter API calls and Supabase operations</p>
-              </div>
-            </div>
+          </div>
+        )}
+
+        {!debugMode && (
+          <div className="mb-6">
+            <button
+              onClick={() => setDebugMode(true)}
+              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm"
+            >
+              🐛 Show Debug
+            </button>
           </div>
         )}
 
