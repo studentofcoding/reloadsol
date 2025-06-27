@@ -8,15 +8,16 @@ import TransactionResultModal from './TransactionResultModal'
 import TokenSkeleton from './TokenSkeleton'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates, fetchUserTokensEfficient, setMetadataUpdateCallback, clearMetadataUpdateCallback, UserToken } from '@/utils/jupiter'
-import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
+import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS, getSolPriceUSD } from '@/utils/solana'
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
 import { trackBuy } from '@/utils/operations-api'
-import { trackBuyOperation } from '@/utils/trading-tracker'
+import { useTradingData } from './TradingDataProvider'
 import { connection } from '../utils/connection'
 
 export default function BulkTokenBuyer() {
   const { publicKey, signAllTransactions, connected } = useWallet()
   const { connection } = useConnection()
+  const { trackOperation } = useTradingData()
   
   // Form state
   const [solAmount, setSolAmount] = useState<string>('0.1')
@@ -40,6 +41,7 @@ export default function BulkTokenBuyer() {
   const [error, setError] = useState<string>('')
   const [showResultModal, setShowResultModal] = useState<boolean>(false)
   const [selectedToken, setSelectedToken] = useState<string>('')
+  const [selectedTokenInfo, setSelectedTokenInfo] = useState<TokenInfo | null>(null)
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
   
   // Balance tracking
@@ -157,11 +159,58 @@ export default function BulkTokenBuyer() {
   }
   
   // Handle token selection for chart display
-  const handleSelectToken = useCallback((mintAddress: string) => {
+  const handleSelectToken = useCallback(async (mintAddress: string) => {
     // Show chart for the selected token
     setSelectedToken(mintAddress)
     setIsChartLoading(true)
-  }, [])
+    
+    // Try to find token info from existing sources first
+    const searchToken = searchResults.find(token => token.id === mintAddress)
+    const listToken = tokenList.find(token => token.address === mintAddress)
+    const userToken = userTokens.find(token => token.mintAddress === mintAddress)
+    
+    let tokenInfo = null
+    
+    if (searchToken) {
+      tokenInfo = {
+        address: mintAddress,
+        name: searchToken.name,
+        symbol: searchToken.symbol,
+        icon: searchToken.icon
+      }
+    } else if (listToken) {
+      tokenInfo = listToken
+    } else if (userToken) {
+      tokenInfo = {
+        address: mintAddress,
+        name: userToken.name || 'Unknown',
+        symbol: userToken.symbol || '???',
+        icon: userToken.logoURI
+      }
+    } else {
+      // Fetch token metadata if not found anywhere
+      try {
+        const res = await fetch(`/api/trending/search?query=${mintAddress}`)
+        if (res.ok) {
+          const data = await res.json()
+          const fetchedToken = Array.isArray(data) ? data.find(t => t.id === mintAddress) : null
+          
+          if (fetchedToken) {
+            tokenInfo = {
+              address: mintAddress,
+              name: fetchedToken.name || 'Unknown Token',
+              symbol: fetchedToken.symbol || '???',
+              icon: fetchedToken.icon
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Failed to fetch token info:', error)
+      }
+    }
+    
+    setSelectedTokenInfo(tokenInfo)
+  }, [searchResults, tokenList, userTokens])
 
   // Listen for custom event to add token to list
   useEffect(() => {
@@ -321,7 +370,7 @@ export default function BulkTokenBuyer() {
           ? buyResult.failedPurchases.map(f => f.error)
           : undefined
 
-        // Track buy operation securely via server route
+        // Track buy operation securely via server route for points
         try {
           const trackResult = await trackBuy(
             publicKey.toString(),
@@ -334,10 +383,14 @@ export default function BulkTokenBuyer() {
             }
           );
           console.log(`🎉 Earned ${trackResult.pointsEarned} points from buy operation!`);
+        } catch (trackError) {
+          console.error('Failed to track buy operation for points:', trackError);
+        }
 
+        // Track operation for PnL and history via React Query
+        try {
           // Fetch current token prices and SOL price for accurate tracking
           const { fetchTokenPricesForTracking } = await import('@/utils/trading-tracker')
-          const { getSolPriceUSD } = await import('@/utils/solana')
           
           const [tokenPrices, currentSolPrice] = await Promise.all([
             fetchTokenPricesForTracking(validMints),
@@ -351,22 +404,28 @@ export default function BulkTokenBuyer() {
             tokenAmount: 0 // We don't have exact token amounts from buy result
           }))
 
-          // Also track locally for TradingHistory component with prices
-          trackBuyOperation(
-            publicKey.toString(),
-            enhancedTokenData,
-            parseFloat(solAmount),
-            buyResult.successfulPurchases.length,
-            buyResult.failedPurchases.length,
-            buyResult.signatures,
-            0, // feesPaid - we don't track this locally yet
-            slippage / 100,
+          // Track via centralized React Query system
+          await trackOperation({
+            walletAddress: publicKey.toString(),
+            operationType: 'buy',
+            tokens: enhancedTokenData.map(token => ({
+              ...token,
+              solPrice: currentSolPrice
+            })),
+            successCount: buyResult.successfulPurchases.length,
+            failureCount: buyResult.failedPurchases.length,
+            totalTokens: buyResult.successfulPurchases.length + buyResult.failedPurchases.length,
+            solAmount: parseFloat(solAmount),
+            feesPaid: 0, // We don't track this locally yet
+            solPriceUsd: currentSolPrice,
+            totalUsdValue: currentSolPrice ? parseFloat(solAmount) * currentSolPrice : undefined,
+            signatures: buyResult.signatures,
+            slippage: slippage / 100,
             priorityFee,
-            errors,
-            currentSolPrice
-          );
+            errors
+          })
         } catch (trackError) {
-          console.error('Failed to track buy operation:', trackError);
+          console.error('Failed to track buy operation for history/PnL:', trackError);
         }
       }
 
@@ -540,10 +599,56 @@ export default function BulkTokenBuyer() {
               {selectedToken && (
                 <div className="space-y-3">
                   <div className="flex justify-between items-center">
-                    <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                      Chart
-                    </label>
-                    <span className="text-xs font-mono text-gray-400">{selectedToken}</span>
+                    {(() => {
+                      const selectedTokenData = userTokens.find(token => token.mintAddress === selectedToken)
+                      
+                      if (selectedTokenData) {
+                        return (
+                          <>
+                            <div className="flex items-center space-x-2">
+                              <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                                Add your {selectedTokenData.symbol || selectedTokenData.name || 'Token'}
+                              </label>
+                              {selectedTokenData.logoURI && (
+                                <img 
+                                  src={selectedTokenData.logoURI} 
+                                  alt={selectedTokenData.symbol || selectedTokenData.name || 'Token'} 
+                                  className="w-5 h-5 rounded-full" 
+                                />
+                              )}
+                            </div>
+                            <div className="text-right">
+                              <div className="text-sm text-gray-400">
+                               you have {selectedTokenData.uiAmount.toLocaleString(undefined, { 
+                                  minimumFractionDigits: 0, 
+                                  maximumFractionDigits: 6 
+                                })} <span className="text-green-400">~ ${selectedTokenData.usdValue.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          </>
+                        )
+                                                                    } else {
+                         return (
+                           <>
+                             <div className="flex items-center space-x-2">
+                               <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                                 Buy {selectedTokenInfo?.symbol || selectedTokenInfo?.name || 'Token'}
+                               </label>
+                               {selectedTokenInfo?.icon && (
+                                 <img 
+                                   src={selectedTokenInfo.icon} 
+                                   alt={selectedTokenInfo.symbol || selectedTokenInfo.name || 'Token'} 
+                                   className="w-5 h-5 rounded-full" 
+                                 />
+                               )}
+                             </div>
+                             <div className="text-right">
+                               <div className="text-xs text-gray-400">Not in wallet</div>
+                             </div>
+                           </>
+                         )
+                       }
+                    })()}
                   </div>
                   <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
                     {isChartLoading && (

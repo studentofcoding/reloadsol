@@ -4,9 +4,9 @@ const nextConfig = {
     appDir: true,
   },
   compiler: {
-    removeConsole: {
+    removeConsole: process.env.NODE_ENV === 'production' ? {
       exclude: ['error'],
-    },
+    } : false,
   },
   webpack: (config, { dev, isServer }) => {
     config.resolve.fallback = {

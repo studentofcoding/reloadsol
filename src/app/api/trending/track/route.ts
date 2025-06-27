@@ -492,7 +492,16 @@ export async function POST(request: NextRequest) {
 
     console.log('✅ 5-minute tracking completed:', summary)
     
-    return NextResponse.json(summary)
+    // Set a timestamp for cache invalidation (could be used by other APIs)
+    const headers: Record<string, string> = {
+      'X-Data-Updated': new Date().toISOString(),
+      'Cache-Control': 'no-cache' // Track route should never be cached
+    }
+    
+    return NextResponse.json(summary, { 
+      status: 200, 
+      headers 
+    })
     
   } catch (error) {
     console.error('❌ Error in trending token tracking:', error)

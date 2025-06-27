@@ -4,7 +4,11 @@ import { supabase } from '@/utils/supabase'
 
 export async function GET(request: NextRequest) {
   try {
-    console.log('📊 Fetching trending token statistics...')
+    const searchParams = request.nextUrl.searchParams
+    const refresh = searchParams.get('refresh') === 'true'
+    const nocache = searchParams.get('nocache') === 'true'
+    
+    console.log(`📊 Fetching trending token statistics... ${refresh ? '(forced refresh)' : ''}${nocache ? '(no cache)' : ''}`)
     
     // Get the most recent summary
     const { data: summaries, error: summaryError } = await supabase
@@ -131,11 +135,32 @@ export async function GET(request: NextRequest) {
 
     console.log(`✅ Stats fetched: ${currentStats.total_tracking} tracking, ${recentWinners.length} recent winners, ${recentLosers.length} recent losers`)
     
-    return NextResponse.json(response, {
+    // Add cache metadata to response
+    const enhancedResponse = {
+      ...response,
+      cached: false, // Always false for fresh data
+      cache_age: 0,  // Fresh data
+      expires_in: nocache ? 0 : 300 // 5 minutes unless nocache is requested
+    }
+    
+    // Determine cache headers based on parameters
+    const cacheHeaders: Record<string, string> = nocache 
+      ? {
+          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      : refresh
+      ? {
+          'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30' // Shorter cache for refresh
+        }
+      : {
+          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60' // 5-minute cache
+        }
+    
+    return NextResponse.json(enhancedResponse, {
       status: 200,
-      headers: {
-        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60' // 5-minute cache
-      }
+      headers: cacheHeaders
     })
     
   } catch (error) {

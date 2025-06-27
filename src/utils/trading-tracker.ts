@@ -83,6 +83,11 @@ class TradingTracker {
 
   // Clear old localStorage data from previous implementation
   private clearOldLocalStorageData(): void {
+    // Only run in browser environment
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+      return
+    }
+    
     try {
       // Clear old trading records
       localStorage.removeItem(this.OLD_STORAGE_KEY)
@@ -196,6 +201,11 @@ class TradingTracker {
 
   // Save to offline cache (localStorage)
   private saveToOfflineCache(record: TrackingRecord): void {
+    // Only run in browser environment
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+      return
+    }
+    
     try {
       const key = `offline_trading_${record.walletAddress}`
       const cached = localStorage.getItem(key)
@@ -217,6 +227,11 @@ class TradingTracker {
 
   // Sync offline data when back online
   private async syncOfflineData(): Promise<void> {
+    // Only run in browser environment
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+      return
+    }
+    
     try {
       const offlineKeys = Object.keys(localStorage).filter(key => 
         key.startsWith('offline_trading_')
@@ -265,17 +280,20 @@ class TradingTracker {
     }
 
     try {
-      // Include offline records in the query
-      const offlineKey = `offline_trading_${walletAddress}`
-      const offlineRecords: TrackingRecord[] = localStorage.getItem(offlineKey) 
-        ? JSON.parse(localStorage.getItem(offlineKey) || '[]') 
-        : []
+      // Include offline records in the query (only in browser)
+      let offlineRecords: TrackingRecord[] = []
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        const offlineKey = `offline_trading_${walletAddress}`
+        offlineRecords = localStorage.getItem(offlineKey) 
+          ? JSON.parse(localStorage.getItem(offlineKey) || '[]') 
+          : []
+      }
 
       if (!this.isOnline) {
         // Return only offline records when offline
         this.cache.set(walletAddress, offlineRecords)
         return offlineRecords
-  }
+      }
 
       // Fetch from Supabase
       const { data, error } = await supabase
@@ -316,16 +334,18 @@ class TradingTracker {
   async getAllRecords(): Promise<TrackingRecord[]> {
     try {
       if (!this.isOnline) {
-        // Combine all offline caches when offline
-        const offlineKeys = Object.keys(localStorage).filter(key => 
-          key.startsWith('offline_trading_')
-        )
-        
-        const allOfflineRecords: TrackingRecord[] = []
-        offlineKeys.forEach(key => {
-          const records: TrackingRecord[] = JSON.parse(localStorage.getItem(key) || '[]')
-          allOfflineRecords.push(...records)
-        })
+        // Combine all offline caches when offline (only in browser)
+        let allOfflineRecords: TrackingRecord[] = []
+        if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+          const offlineKeys = Object.keys(localStorage).filter(key => 
+            key.startsWith('offline_trading_')
+          )
+          
+          offlineKeys.forEach(key => {
+            const records: TrackingRecord[] = JSON.parse(localStorage.getItem(key) || '[]')
+            allOfflineRecords.push(...records)
+          })
+        }
     
         return allOfflineRecords.sort((a, b) => b.timestamp - a.timestamp)
       }
@@ -444,11 +464,13 @@ class TradingTracker {
       // Clear local caches
       this.cache.clear()
       
-      // Clear offline storage
-      const offlineKeys = Object.keys(localStorage).filter(key => 
-        key.startsWith('offline_trading_')
-      )
-      offlineKeys.forEach(key => localStorage.removeItem(key))
+      // Clear offline storage (only in browser)
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        const offlineKeys = Object.keys(localStorage).filter(key => 
+          key.startsWith('offline_trading_')
+        )
+        offlineKeys.forEach(key => localStorage.removeItem(key))
+      }
       
       console.log('🧹 Cleared all tracking data')
     } catch (error) {

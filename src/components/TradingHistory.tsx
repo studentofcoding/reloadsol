@@ -1,16 +1,17 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { tradingTracker, TrackingRecord, TrackingStats } from '@/utils/trading-tracker'
+import { TrackingRecord, TrackingStats } from '@/utils/trading-tracker'
 import { useWallet } from './WalletProvider'
+import { useTradingData } from './TradingDataProvider'
 import TokenSkeleton from './TokenSkeleton'
 
 export default function TradingHistory() {
   const { publicKey, connected } = useWallet()
-  const [records, setRecords] = useState<TrackingRecord[]>([])
+  const { records: rawRecords, isLoadingRecords } = useTradingData()
+  const [processedRecords, setProcessedRecords] = useState<TrackingRecord[]>([])
   const [stats, setStats] = useState<TrackingStats | null>(null)
   const [timeFilter, setTimeFilter] = useState<'all' | '24h' | '7d' | '30d'>('7d')
-  const [isLoading, setIsLoading] = useState<boolean>(false)
   const [error, setError] = useState<string>('')
   const [isLocalStorageAvailable, setIsLocalStorageAvailable] = useState<boolean>(true)
 
@@ -32,120 +33,118 @@ export default function TradingHistory() {
     }
   }, [])
 
-  // Function to load records and stats
-  const loadRecords = React.useCallback(async () => {
-    if (!connected || !publicKey) {
-      setRecords([])
+  // Function to process raw records and stats
+  const processRecords = React.useCallback(() => {
+    if (!connected || !publicKey || !rawRecords) {
+      setProcessedRecords([])
       setStats(null)
       return
     }
 
-    setIsLoading(true)
-    setError('')
-
     try {
-    const walletAddress = publicKey.toString()
-    
-    // Get recent successful records only
-    const allRecords = await tradingTracker.getWalletRecords(walletAddress)
-    const successfulRecords = allRecords.filter(record => record.successCount > 0)
+      // Get recent successful records only
+      const successfulRecords = rawRecords.filter(record => record.successCount > 0)
 
-    // Combine sell and close operations that happen within 30 seconds of each other
-    const combinedRecords: TrackingRecord[] = []
-    const processedRecordIds = new Set<string>()
+      // Combine sell and close operations that happen within 30 seconds of each other
+      const combinedRecords: TrackingRecord[] = []
+      const processedRecordIds = new Set<string>()
 
-    successfulRecords.forEach(record => {
-      if (processedRecordIds.has(record.id)) return
+      successfulRecords.forEach((record: TrackingRecord) => {
+        if (processedRecordIds.has(record.id)) return
 
-      if (record.operationType === 'sell') {
-        // Look for a close operation within 30 seconds
-        const closeRecord = successfulRecords.find(r => 
-          r.operationType === 'close' && 
-          !processedRecordIds.has(r.id) &&
-          Math.abs(r.timestamp - record.timestamp) <= 30000 // 30 seconds
-        )
+        if (record.operationType === 'sell') {
+          // Look for a close operation within 30 seconds
+          const closeRecord = successfulRecords.find((r: TrackingRecord) => 
+            r.operationType === 'close' && 
+            !processedRecordIds.has(r.id) &&
+            Math.abs(r.timestamp - record.timestamp) <= 30000 // 30 seconds
+          )
 
-        if (closeRecord) {
-          // Combine sell and close into one record
-          const combinedRecord: TrackingRecord = {
-            ...record,
-            operationType: 'sell' as const, // Keep as 'sell' but it represents sell+close
-            tokens: [...record.tokens, ...closeRecord.tokens].filter((token, index, self) => 
-              index === self.findIndex(t => t.mintAddress === token.mintAddress)
-            ), // Remove duplicates
-            successCount: record.successCount + closeRecord.successCount,
-            failureCount: record.failureCount + closeRecord.failureCount,
-            totalTokens: record.totalTokens + closeRecord.totalTokens,
-            signatures: [...record.signatures, ...closeRecord.signatures],
-            feesPaid: record.feesPaid + closeRecord.feesPaid,
-            errors: [...(record.errors || []), ...(closeRecord.errors || [])]
+          if (closeRecord) {
+            // Combine sell and close into one record
+            const combinedRecord: TrackingRecord = {
+              ...record,
+              operationType: 'sell' as const, // Keep as 'sell' but it represents sell+close
+              tokens: [...record.tokens, ...closeRecord.tokens].filter((token, index, self) => 
+                index === self.findIndex(t => t.mintAddress === token.mintAddress)
+              ), // Remove duplicates
+              successCount: record.successCount + closeRecord.successCount,
+              failureCount: record.failureCount + closeRecord.failureCount,
+              totalTokens: record.totalTokens + closeRecord.totalTokens,
+              signatures: [...record.signatures, ...closeRecord.signatures],
+              feesPaid: record.feesPaid + closeRecord.feesPaid,
+              errors: [...(record.errors || []), ...(closeRecord.errors || [])]
+            }
+            
+            combinedRecords.push(combinedRecord)
+            processedRecordIds.add(record.id)
+            processedRecordIds.add(closeRecord.id)
+          } else {
+            // No matching close operation, keep sell as is
+            combinedRecords.push(record)
+            processedRecordIds.add(record.id)
           }
-          
-          combinedRecords.push(combinedRecord)
-          processedRecordIds.add(record.id)
-          processedRecordIds.add(closeRecord.id)
+        } else if (record.operationType === 'close') {
+          // Check if this close wasn't already combined with a sell
+          const sellRecord = successfulRecords.find((r: TrackingRecord) => 
+            r.operationType === 'sell' && 
+            !processedRecordIds.has(r.id) &&
+            Math.abs(r.timestamp - record.timestamp) <= 30000 // 30 seconds
+          )
+
+          if (!sellRecord) {
+            // Standalone close operation
+            combinedRecords.push(record)
+            processedRecordIds.add(record.id)
+          }
+          // If there's a matching sell, it will be handled when we process the sell record
         } else {
-          // No matching close operation, keep sell as is
+          // Buy operations and others - keep as is
           combinedRecords.push(record)
           processedRecordIds.add(record.id)
         }
-      } else if (record.operationType === 'close') {
-        // Check if this close wasn't already combined with a sell
-        const sellRecord = successfulRecords.find(r => 
-          r.operationType === 'sell' && 
-          !processedRecordIds.has(r.id) &&
-          Math.abs(r.timestamp - record.timestamp) <= 30000 // 30 seconds
-        )
+      })
 
-        if (!sellRecord) {
-          // Standalone close operation
-          combinedRecords.push(record)
-          processedRecordIds.add(record.id)
-        }
-        // If there's a matching sell, it will be handled when we process the sell record
-      } else {
-        // Buy operations and others - keep as is
-        combinedRecords.push(record)
-        processedRecordIds.add(record.id)
-      }
-    })
+      // Sort by timestamp (most recent first)
+      combinedRecords.sort((a, b) => b.timestamp - a.timestamp)
 
-    // Sort by timestamp (most recent first)
-    combinedRecords.sort((a, b) => b.timestamp - a.timestamp)
-
-    setRecords(combinedRecords)
-    setStats(tradingTracker.getStats(combinedRecords))
+      setProcessedRecords(combinedRecords)
+      
+      // Calculate stats (simplified version without tradingTracker.getStats)
+      const buyCount = combinedRecords.filter(r => r.operationType === 'buy').length
+      const sellCount = combinedRecords.filter(r => r.operationType === 'sell').length
+      const closeCount = combinedRecords.filter(r => r.operationType === 'close').length
+      
+      setStats({
+        totalOperations: combinedRecords.length,
+        totalBuys: buyCount,
+        totalSells: sellCount,
+        totalCloses: closeCount,
+        totalSolSpent: combinedRecords.filter(r => r.operationType === 'buy').reduce((sum, r) => sum + (r.solAmount || 0), 0),
+        totalSolReceived: combinedRecords.filter(r => r.operationType === 'sell').reduce((sum, r) => sum + (r.solAmount || 0), 0),
+        totalFeesPaid: combinedRecords.reduce((sum, r) => sum + r.feesPaid, 0),
+        totalTokensBought: combinedRecords.filter(r => r.operationType === 'buy').reduce((sum, r) => sum + r.successCount, 0),
+        totalTokensSold: combinedRecords.filter(r => r.operationType === 'sell').reduce((sum, r) => sum + r.successCount, 0),
+        totalAccountsClosed: combinedRecords.filter(r => r.operationType === 'close').reduce((sum, r) => sum + r.successCount, 0),
+        successRate: combinedRecords.length > 0 
+          ? combinedRecords.reduce((sum, r) => sum + r.successCount, 0) / 
+            combinedRecords.reduce((sum, r) => sum + r.successCount + r.failureCount, 0) * 100 
+          : 0
+      })
     } catch (err) {
-      console.error('Error loading trading records:', err)
-      setError('Failed to load trading history')
-      setRecords([])
+      console.error('Error processing trading records:', err)
+      setError('Failed to process trading history')
+      setProcessedRecords([])
       setStats(null)
-    } finally {
-      setIsLoading(false)
     }
-  }, [connected, publicKey])
+  }, [connected, publicKey, rawRecords])
 
-  // Load records and stats
+  // Process records when data changes
   useEffect(() => {
-    loadRecords()
-  }, [loadRecords])
+    processRecords()
+  }, [processRecords])
 
-  // Listen for new trading records and auto-refresh
-  useEffect(() => {
-    const handleNewRecord = (event: CustomEvent) => {
-      // Auto-refresh when a new trading record is added
-      console.log('🔄 New trading record detected, refreshing history...', event.detail)
-      setTimeout(() => loadRecords(), 100) // Small delay to ensure localStorage is updated
-    }
-
-    // Add event listener
-    window.addEventListener('tradingRecordAdded', handleNewRecord as EventListener)
-
-    // Clean up
-    return () => {
-      window.removeEventListener('tradingRecordAdded', handleNewRecord as EventListener)
-    }
-  }, [loadRecords])
+  // No need for event listeners since React Query handles real-time updates
 
   const getOperationIcon = (type: string) => {
     switch (type) {
@@ -192,7 +191,7 @@ export default function TradingHistory() {
   }
 
   // Show loading state
-  if (isLoading) {
+  if (isLoadingRecords) {
     return (
       <div className="">
         <TokenSkeleton count={5} variant="trading-history" />
@@ -210,13 +209,13 @@ export default function TradingHistory() {
       )}
 
       {/* Horizontal Records List */}
-      {connected && records.length === 0 ? (
+      {connected && processedRecords.length === 0 ? (
         <div className="text-center py-4">
           <p className="text-gray-400 text-sm">Trade on reloadsol to track your history</p>
         </div>
       ) : (
         <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
-          {records.slice(0, 10).map((record) => (
+          {processedRecords.slice(0, 10).map((record: TrackingRecord) => (
             <div
               key={record.id}
               className="flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group py-2 px-3 mr-2"
@@ -233,7 +232,7 @@ export default function TradingHistory() {
                     }
                     <div className="flex items-center ml-2 space-x-2">
                       <div className="relative flex items-center">
-                        {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token, idx) => (
+                        {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token: any, idx: number) => (
                           <div 
                             key={idx} 
                             className="w-3 h-3 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden"
@@ -246,7 +245,7 @@ export default function TradingHistory() {
                         ))}
                       </div>
                       <div className="flex items-center space-x-1">
-                        {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token, idx) => (
+                        {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token: any, idx: number) => (
                           <span key={idx} className="text-xs text-gray-300 font-medium">
                             {token.symbol || token.name || 'Unknown'}
                             {idx < Math.min(record.successCount, 4) - 1 ? ',' : ''}

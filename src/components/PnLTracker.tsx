@@ -1,12 +1,12 @@
 'use client'
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { tradingTracker, TrackingRecord } from '@/utils/trading-tracker'
+import { TrackingRecord } from '@/utils/trading-tracker'
 import { useWallet, useConnection } from './WalletProvider'
+import { useTradingData } from './TradingDataProvider'
 import TokenSkeleton from './TokenSkeleton'
 import { getSolPriceUSD, SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
 import { fetchUserTokens, executeBulkSell, BulkSellRequest, UserToken, TokenToSell } from '@/utils/jupiter'
-import { trackSellOperation } from '@/utils/trading-tracker'
 import { trackSell } from '@/utils/operations-api'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 
@@ -20,13 +20,15 @@ interface PnLRecord {
   sellTimestamp: number
   buyPrice: number // SOL price when bought
   sellPrice: number // SOL price when sold
-  solAmountBought: number // SOL spent on buying
+  solAmountBought: number // SOL spent on buying (proportional for this sell)
   solAmountSold: number // SOL received from selling
   pnlSOL: number // Profit/Loss in SOL
   pnlUSD: number // Profit/Loss in USD
   pnlPercentage: number // Percentage gain/loss
   buySignatures: string[]
   sellSignatures: string[]
+  isPartialSell: boolean // New field to indicate if this was a partial sell
+  sellTransactionId: string // Unique ID for the sell transaction
 }
 
 interface OpenPosition {
@@ -52,6 +54,7 @@ interface OpenPosition {
 export default function PnLTracker() {
   const { publicKey, connected, signAllTransactions } = useWallet()
   const { connection } = useConnection()
+  const { records, trackOperation, isLoadingRecords } = useTradingData()
   const [pnlRecords, setPnlRecords] = useState<PnLRecord[]>([])
   const [openPositions, setOpenPositions] = useState<OpenPosition[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(false)
@@ -94,7 +97,7 @@ export default function PnLTracker() {
 
     try {
       const walletAddress = publicKey.toString()
-      const allRecords = await tradingTracker.getWalletRecords(walletAddress)
+      const allRecords = records // Use records from React Query
       
       // Get successful buy and sell records
       const buyRecords = allRecords.filter(record => 
@@ -304,46 +307,67 @@ export default function PnLTracker() {
 
       // Generate PnL records and open positions from combined positions
       tokenPositions.forEach((position, mintAddress) => {
-        // If position has sells, create PnL record
-        if (position.totalSolSold > 0) {
-          let pnlSOL = position.totalSolSold - position.totalSolBought
-          let pnlPercentage = 0
-          let pnlUSD = 0
-          
-          // Calculate percentage using weighted average prices if available
-          if (position.weightedAvgBuyPrice > 0 && position.weightedAvgSellPrice > 0) {
-            pnlPercentage = ((position.weightedAvgSellPrice - position.weightedAvgBuyPrice) / position.weightedAvgBuyPrice) * 100
-          } else if (position.totalSolBought > 0) {
-            pnlPercentage = ((position.totalSolSold - position.totalSolBought) / position.totalSolBought) * 100
-          }
-          
-          pnlUSD = pnlSOL * solPriceUsd
-          
-          const pnlRecord: PnLRecord = {
-            id: `combined-${mintAddress}`,
-            mintAddress: position.mintAddress,
-            symbol: position.symbol,
-            name: position.name,
-            logoURI: position.logoURI,
-            buyTimestamp: position.firstBuyTimestamp,
-            sellTimestamp: position.lastSellTimestamp || Date.now(),
-            buyPrice: position.weightedAvgBuyPrice || (position.totalSolBought > 0 ? position.totalSolBought * solPriceUsd / position.totalTokenAmount : 0),
-            sellPrice: position.weightedAvgSellPrice || (position.totalSolSold > 0 ? position.totalSolSold * solPriceUsd / position.totalTokenAmount : 0),
-            solAmountBought: position.totalSolBought,
-            solAmountSold: position.totalSolSold,
-            pnlSOL,
-            pnlUSD,
-            pnlPercentage,
-            buySignatures: position.buySignatures,
-            sellSignatures: position.sellSignatures
-          }
+                 // Create individual PnL records for each sell transaction
+         position.transactions.forEach(transaction => {
+           if (transaction.type === 'sell') {
+             // Calculate proportional buy cost for this sell
+             // Ensure we don't divide by zero
+             const sellProportion = position.totalSolSold > 0 ? 
+               transaction.solAmount / position.totalSolSold : 0
+             const proportionalBuyCost = position.totalSolBought * sellProportion
+            
+            let pnlSOL = transaction.solAmount - proportionalBuyCost
+            let pnlPercentage = 0
+            let pnlUSD = 0
+            
+            // Calculate percentage P&L for this specific sell
+            if (proportionalBuyCost > 0) {
+              pnlPercentage = ((transaction.solAmount - proportionalBuyCost) / proportionalBuyCost) * 100
+            }
+            
+            // Use individual transaction prices if available, otherwise fall back to weighted averages
+            const buyPrice = transaction.priceUsd || position.weightedAvgBuyPrice || 0
+            const sellPrice = transaction.priceUsd || position.weightedAvgSellPrice || 0
+            
+            pnlUSD = pnlSOL * solPriceUsd
+            
+            // Determine if this was a partial sell by checking remaining tokens
+            const isPartialSell = position.remainingTokenAmount > 0.001 || 
+                                (position.totalSolBought - position.totalSolSold) > 0.001
+            
+            const pnlRecord: PnLRecord = {
+              id: `${mintAddress}-${transaction.timestamp}`,
+              mintAddress: position.mintAddress,
+              symbol: position.symbol,
+              name: position.name,
+              logoURI: position.logoURI,
+              buyTimestamp: position.firstBuyTimestamp,
+              sellTimestamp: transaction.timestamp,
+              buyPrice: buyPrice,
+              sellPrice: sellPrice,
+              solAmountBought: proportionalBuyCost,
+              solAmountSold: transaction.solAmount,
+              pnlSOL,
+              pnlUSD,
+              pnlPercentage,
+              buySignatures: position.buySignatures,
+              sellSignatures: transaction.signatures,
+              isPartialSell,
+              sellTransactionId: `${mintAddress}-${transaction.timestamp}`
+            }
 
-          pnlData.push(pnlRecord)
-        }
+            pnlData.push(pnlRecord)
+          }
+        })
         
         // Only show as open if the wallet has a positive token balance
         const walletToken = currentWalletTokens.find(token => token.mintAddress === position.mintAddress)
-        if (walletToken && walletToken.uiAmount > 0) {
+                 if (walletToken && walletToken.uiAmount > 0) {
+           // Calculate remaining SOL investment (proportional to remaining tokens)
+           const remainingProportion = position.totalTokenAmount > 0 ? 
+             position.remainingTokenAmount / position.totalTokenAmount : 0
+           const remainingSolInvestment = Math.max(position.totalSolBought * remainingProportion, 0.001)
+          
           const openPosition: OpenPosition = {
             id: `open-${mintAddress}`,
             mintAddress: position.mintAddress,
@@ -351,7 +375,7 @@ export default function PnLTracker() {
             name: position.name || walletToken.name,
             logoURI: position.logoURI || walletToken.logoURI,
             buyTimestamp: position.firstBuyTimestamp,
-            solAmountBought: Math.max(position.totalSolBought - position.totalSolSold, 0.001), // Ensure positive value
+            solAmountBought: remainingSolInvestment,
             buySignatures: position.buySignatures,
             isOpen: true,
             buyPriceUsd: position.weightedAvgBuyPrice,
@@ -413,40 +437,13 @@ export default function PnLTracker() {
 
   // Load PnL data when wallet connects or records change
   useEffect(() => {
-    if (connected && publicKey) {
-    calculatePnL()
+    if (connected && publicKey && records.length >= 0) { // Allow for empty records array
+      calculatePnL()
     }
-  }, [calculatePnL, connected, publicKey])
+  }, [calculatePnL, connected, publicKey, records])
 
-  // Set up real-time subscription for trading records (debounced to prevent duplicate calls)
-  useEffect(() => {
-    if (!connected || !publicKey) return
-
-    const walletAddress = publicKey.toString()
-    let debounceTimeout: NodeJS.Timeout | null = null
-    
-    // Subscribe to real-time updates with debouncing
-    const unsubscribe = tradingTracker.subscribeToWallet(walletAddress, () => {
-      console.log('📡 Real-time PnL update received')
-      
-      // Clear existing timeout
-      if (debounceTimeout) {
-        clearTimeout(debounceTimeout)
-      }
-      
-      // Debounce rapid updates (wait 500ms after last update before recalculating)
-      debounceTimeout = setTimeout(() => {
-        calculatePnL() // Recalculate PnL when new records arrive
-      }, 500)
-    })
-
-    return () => {
-      if (debounceTimeout) {
-        clearTimeout(debounceTimeout)
-      }
-      unsubscribe()
-    }
-  }, [connected, publicKey, calculatePnL])
+  // Real-time updates are now handled by React Query in TradingDataProvider
+  // No need for manual subscription here
 
   // Fetch SOL price on mount and periodically (reduced frequency)
   useEffect(() => {
@@ -614,7 +611,7 @@ export default function PnLTracker() {
       )
 
       if (sellResult.success && sellResult.successfulSwaps.length > 0) {
-        // Track the successful sell operation
+        // Track the successful sell operation for points
         try {
           const trackResult = await trackSell(
             publicKey.toString(),
@@ -627,45 +624,58 @@ export default function PnLTracker() {
             }
           )
           console.log(`🎉 Earned ${trackResult.pointsEarned} points from fast sell!`)
+        } catch (trackError) {
+          console.error('Failed to track sell operation for points:', trackError)
+        }
 
-          // Track locally for TradingHistory
+        // Track operation for PnL and history via React Query system
+        // Note: This will automatically trigger PnL recalculation via real-time subscription
+        try {
           const { fetchTokenPricesForTracking } = await import('@/utils/trading-tracker')
           const tokenPrices = await fetchTokenPricesForTracking([position.mintAddress])
           const currentSolPrice = await getSolPriceUSD()
 
-          const enhancedTokenData = [{
+          const enhancedTokenData = {
             mintAddress: position.mintAddress,
             symbol: position.symbol,
             name: position.name,
             logoURI: position.logoURI,
             priceUsd: tokenPrices[position.mintAddress] || 0,
-            tokenAmount: tokenToSell.balance
-          }]
+            tokenAmount: tokenToSell.balance,
+            solPrice: currentSolPrice
+          }
 
-          trackSellOperation(
-            publicKey.toString(),
-            enhancedTokenData,
-            sellResult.totalReceived || 0,
-            1, // successCount
-            0, // failureCount
-            sellResult.signatures,
-            0, // feesPaid
-            1, // slippage (1%)
-            100000, // priorityFee
-            undefined, // errors
-            currentSolPrice
-          )
-
-          // Refresh the P&L data to reflect the sale
-          setTimeout(() => {
-            calculatePnL()
-            setHasInitialPricesFetched(false) // Reset to refetch prices for remaining positions
-          }, 200)
+          // Track via centralized system - this will trigger automatic PnL refresh
+          await trackOperation({
+            walletAddress: publicKey.toString(),
+            operationType: 'sell',
+            tokens: [enhancedTokenData],
+            successCount: 1,
+            failureCount: 0,
+            totalTokens: 1,
+            solAmount: sellResult.totalReceived || 0,
+            feesPaid: 0,
+            solPriceUsd: currentSolPrice,
+            totalUsdValue: currentSolPrice ? (sellResult.totalReceived || 0) * currentSolPrice : undefined,
+            signatures: sellResult.signatures,
+            slippage: 1, // 1% slippage
+            priorityFee: 100000,
+            errors: undefined
+          })
 
           // Show success message briefly
           setSellError('')
+          
+          // The PnL will refresh automatically via React Query subscription
+          // No need for manual calculatePnL() call
         } catch (trackError) {
-          console.error('Failed to track sell operation:', trackError)
+          console.error('Failed to track sell operation for history/PnL:', trackError)
+          
+          // Fallback: manual refresh if tracking fails
+          setTimeout(() => {
+            calculatePnL()
+            setHasInitialPricesFetched(false)
+          }, 200)
         }
       } else {
         throw new Error('Failed to sell token: ' + (sellResult.failedSwaps[0]?.error || 'Unknown error'))
@@ -709,34 +719,8 @@ export default function PnLTracker() {
     }
   }, [openPositions.length, refreshOpenPositionPrices, isRefreshingPrices])
 
-  // Listen for new trading records and auto-refresh (debounced to prevent duplicates)
-  useEffect(() => {
-    let eventDebounceTimeout: NodeJS.Timeout | null = null
-
-    const handleNewRecord = (event: CustomEvent) => {
-      console.log('🔄 New trading record detected, refreshing PnL...', event.detail)
-      
-      // Clear existing timeout to prevent duplicate refreshes
-      if (eventDebounceTimeout) {
-        clearTimeout(eventDebounceTimeout)
-      }
-      
-      // Debounce the PnL calculation to prevent duplicate calls
-      eventDebounceTimeout = setTimeout(() => {
-        calculatePnL()
-        // Reset price fetch flag so new positions get initial prices
-        setHasInitialPricesFetched(false)
-      }, 1000) // 1 second debounce for event-based updates
-    }
-
-    window.addEventListener('tradingRecordAdded', handleNewRecord as EventListener)
-    return () => {
-      if (eventDebounceTimeout) {
-        clearTimeout(eventDebounceTimeout)
-      }
-      window.removeEventListener('tradingRecordAdded', handleNewRecord as EventListener)
-    }
-  }, [calculatePnL])
+  // Event-based updates are no longer needed - React Query handles all updates
+  // The records dependency in the calculatePnL useEffect will trigger recalculation
 
   const formatRelativeTime = (timestamp: number) => {
     const now = Date.now()
@@ -825,7 +809,7 @@ export default function PnLTracker() {
                   : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
               }`}
             >
-              Closed P&L ({pnlRecords.length})
+              Realized P&L ({pnlRecords.length})
             </button>
             <button
               onClick={() => setActiveTab('open')}
@@ -873,7 +857,7 @@ export default function PnLTracker() {
             pnlRecords.length === 0 ? (
               <div className="text-center py-4">
                 <p className="text-gray-400 text-sm">Buy and sell tokens to track your completed trades</p>
-                <p className="text-gray-500 text-xs mt-1">💡 Multiple buys/sells of the same token are automatically combined</p>
+                <p className="text-gray-500 text-xs mt-1">💡 Each sell creates a separate P&L record, including partial sells</p>
               </div>
             ) : (
               <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
@@ -941,12 +925,15 @@ export default function PnLTracker() {
                       </div>
                     </div>
                     
-                    {/* Line 4: USD Value */}
+                    {/* Line 4: USD Value and Indicators */}
                     <div className="text-xs text-gray-400 mt-0.5 flex justify-between items-center">
                       <span>{record.pnlUSD > 0 ? '+' : ''}${Math.abs(record.pnlUSD).toFixed(2)}</span>
                       <div className="flex items-center space-x-1">
-                        {record.id.startsWith('combined-') && (
-                          <span className="text-blue-400 text-xs" title="Combined from multiple buy/sell operations">🔗</span>
+                        {record.isPartialSell && (
+                          <span className="text-orange-400 text-xs" title="Partial sell - some tokens remain">⚡</span>
+                        )}
+                        {!record.isPartialSell && (
+                          <span className="text-blue-400 text-xs" title="Complete position closed">🎯</span>
                         )}
                         {record.buyPrice && record.sellPrice && record.buyPrice > 0 && record.sellPrice > 0 && (
                           <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>

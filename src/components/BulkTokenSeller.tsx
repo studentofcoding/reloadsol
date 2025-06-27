@@ -25,13 +25,14 @@ import {
   BulkSellRequest, 
   BulkSellResult 
 } from '@/utils/jupiter'
-import { trackSellOperation, trackCloseOperation } from '@/utils/trading-tracker'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS, getSolPriceUSD } from '@/utils/solana'
 import { trackSell, trackClose } from '@/utils/operations-api'
+import { useTradingData } from './TradingDataProvider'
 
 export default function BulkTokenSeller() {
   const { publicKey, signAllTransactions, connected } = useWallet()
   const { connection } = useConnection()
+  const { trackOperation } = useTradingData()
   
   // Form state - Updated to use TokenToSell
   const [selectedTokens, setSelectedTokens] = useState<TokenToSell[]>([])
@@ -384,7 +385,7 @@ export default function BulkTokenSeller() {
       if (sellResult) {
         // Track sell operations (swaps)
         if (sellResult.successfulSwaps.length > 0 || sellResult.failedSwaps.length > 0) {
-          // Track sell operation securely via server route
+          // Track sell operation securely via server route for points
           try {
             const trackResult = await trackSell(
               publicKey.toString(),
@@ -397,10 +398,14 @@ export default function BulkTokenSeller() {
               }
             );
             console.log(`🎉 Earned ${trackResult.pointsEarned} points from sell operation!`);
+          } catch (trackError) {
+            console.error('Failed to track sell operation for points:', trackError);
+          }
 
+          // Track operation for PnL and history via React Query
+          try {
             // Fetch current token prices and SOL price for accurate tracking
             const { fetchTokenPricesForTracking } = await import('@/utils/trading-tracker')
-            const { getSolPriceUSD } = await import('@/utils/solana')
             
             const tokenMints = selectedTokens.map(t => t.mintAddress)
             const [tokenPrices, currentSolPrice] = await Promise.all([
@@ -422,22 +427,28 @@ export default function BulkTokenSeller() {
               ? sellResult.failedSwaps.map(f => f.error)
               : undefined
 
-            // Also track locally for TradingHistory component with prices
-            trackSellOperation(
-              publicKey.toString(),
-              enhancedTokenData,
-              sellResult.totalReceived || 0,
-              sellResult.successfulSwaps.length,
-              sellResult.failedSwaps.length,
-              sellResult.signatures,
-              0, // feesPaid - we don't track this locally yet
-              slippage / 100,
+            // Track via centralized React Query system
+            await trackOperation({
+              walletAddress: publicKey.toString(),
+              operationType: 'sell',
+              tokens: enhancedTokenData.map(token => ({
+                ...token,
+                solPrice: currentSolPrice
+              })),
+              successCount: sellResult.successfulSwaps.length,
+              failureCount: sellResult.failedSwaps.length,
+              totalTokens: sellResult.successfulSwaps.length + sellResult.failedSwaps.length,
+              solAmount: sellResult.totalReceived || 0,
+              feesPaid: 0, // We don't track this locally yet
+              solPriceUsd: currentSolPrice,
+              totalUsdValue: currentSolPrice ? (sellResult.totalReceived || 0) * currentSolPrice : undefined,
+              signatures: sellResult.signatures,
+              slippage: slippage / 100,
               priorityFee,
-              sellErrors,
-              currentSolPrice
-            );
+              errors: sellErrors
+            })
           } catch (trackError) {
-            console.error('Failed to track sell operation:', trackError);
+            console.error('Failed to track sell operation for history/PnL:', trackError);
           }
         }
 
@@ -451,7 +462,7 @@ export default function BulkTokenSeller() {
             ...selectedZeroBalanceTokens
           ]
 
-          // Track close operation securely via server route
+          // Track close operation securely via server route for points
           try {
             const trackResult = await trackClose(
               publicKey.toString(),
@@ -463,9 +474,13 @@ export default function BulkTokenSeller() {
               }
             );
             console.log(`🎉 Earned ${trackResult.pointsEarned} points from close operation!`);
+          } catch (trackError) {
+            console.error('Failed to track close operation for points:', trackError);
+          }
 
+          // Track operation for PnL and history via React Query
+          try {
             // Get SOL price for tracking (close operations don't need token prices)
-            const { getSolPriceUSD } = await import('@/utils/solana')
             const currentSolPrice = await getSolPriceUSD()
 
             const closeTokenData = allClosedTokens.map(token => ({
@@ -479,19 +494,24 @@ export default function BulkTokenSeller() {
               ? sellResult.failedCloses.map(f => f.error)
               : undefined
 
-            // Also track locally for TradingHistory component
-            trackCloseOperation(
-              publicKey.toString(),
-              closeTokenData,
-              sellResult.successfulCloses.length,
-              sellResult.failedCloses.length,
-              sellResult.signatures,
-              0, // feesPaid - we don't track this locally yet
-              closeErrors,
-              currentSolPrice
-            );
+            // Track via centralized React Query system
+            await trackOperation({
+              walletAddress: publicKey.toString(),
+              operationType: 'close',
+              tokens: closeTokenData.map(token => ({
+                ...token,
+                solPrice: currentSolPrice
+              })),
+              successCount: sellResult.successfulCloses.length,
+              failureCount: sellResult.failedCloses.length,
+              totalTokens: sellResult.successfulCloses.length + sellResult.failedCloses.length,
+              feesPaid: 0, // We don't track this locally yet
+              solPriceUsd: currentSolPrice,
+              signatures: sellResult.signatures,
+              errors: closeErrors
+            })
           } catch (trackError) {
-            console.error('Failed to track close operation:', trackError);
+            console.error('Failed to track close operation for history/PnL:', trackError);
           }
         }
       }

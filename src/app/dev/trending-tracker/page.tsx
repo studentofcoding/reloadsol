@@ -351,8 +351,16 @@ export default function TrendingTrackerPage() {
   useEffect(() => {
     fetchStats(false) // Initial load without price updates
     
+    let refreshCount = 0
     const interval = setInterval(() => {
-      fetchStats(false) // Auto-refresh without price updates
+      refreshCount++
+      // Force refresh every 10th auto-refresh (every 5 minutes) to bypass cache
+      const shouldForceRefresh = refreshCount % 10 === 0
+      fetchStats(false, shouldForceRefresh) // Force refresh every 5 minutes to bypass cache
+      
+      if (shouldForceRefresh) {
+        console.log('🔄 Periodic cache-busting refresh triggered')
+      }
     }, 30000) // 30 seconds
     
     return () => clearInterval(interval)
