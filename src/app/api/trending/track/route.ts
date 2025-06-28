@@ -167,9 +167,19 @@ interface TradingSimulation {
   token_symbol: string | null
   simulation_started_at: string
   buy_operation: BuyOperation | null
-  sell_operation: SellOperation | null
+  sell_operations: SellOperation[]
   current_status: 'buying' | 'holding' | 'selling' | 'completed' | 'failed'
-  target_gain_percentage: number
+  remaining_token_amount: string
+  initial_token_amount: string
+  is_simulated: boolean
+  keypair_path?: string
+  take_profit_levels: {
+    tp1_percentage: number
+    tp1_sell_percentage: number
+    tp2_percentage: number
+    tp3_percentage: number
+    tp3_enabled: boolean
+  }
   stop_loss_percentage: number
   max_hold_hours: number
   final_result: {
@@ -187,14 +197,14 @@ interface TradingSimulation {
       total_fees: number
       rpc_used: string
     }
-    best_sell_config: {
+    best_sell_configs: {
       slippage: number
       provider: string
       sol_amount: string
       response_time: number
       total_fees: number
       rpc_used: string
-    }
+    }[]
   } | null
 }
 
@@ -587,19 +597,25 @@ async function performBuySimulation(token: any): Promise<BuyOperation | null> {
 }
 
 // Helper function to perform sell simulation
-async function performSellSimulation(token: any, buyOperation: BuyOperation): Promise<SellOperation | null> {
+async function performSellSimulation(
+  token: any, 
+  simulation: TradingSimulation,
+  sellPercentage: number
+): Promise<SellOperation | null> {
   try {
-    console.log(`💸 Performing sell simulation for ${token.token_symbol} (${token.token_address})`)
+    console.log(`💸 Performing ${sellPercentage}% sell simulation for ${token.token_symbol} (${token.token_address})`)
     
     // SOL mint address
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
-    const tokenAmountToSell = buyOperation.token_amount_received
+    
+    // Calculate token amount to sell based on percentage
+    const totalTokenAmount = simulation.remaining_token_amount || simulation.buy_operation?.token_amount_received || '0'
+    const tokenAmountToSell = (parseFloat(totalTokenAmount) * (sellPercentage / 100)).toString()
     
     // Test different RPCs and configurations
     const rpcConfigs = [
       { name: 'Helius', url: 'https://mainnet.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b' },
-      { name: 'QuickNode', url: 'https://api.mainnet-beta.solana.com' },
-      { name: 'Alchemy', url: 'https://solana-mainnet.g.alchemy.com/v2/demo' }
+      { name: 'Shyft', url: 'https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn' },
     ]
     
     const slippageConfigs = [
@@ -625,7 +641,7 @@ async function performSellSimulation(token: any, buyOperation: BuyOperation): Pr
             outputMint: SOL_MINT,
             amount: tokenAmountToSell,
             slippageBps: config.bps,
-            userPublicKey: '11111111111111111111111111111111'
+            userPublicKey: simulation.is_simulated ? '11111111111111111111111111111111' : simulation.keypair_path || '11111111111111111111111111111111'
           })
           
           if (comparison.bestQuote && comparison.bestQuote.success) {
@@ -720,28 +736,25 @@ async function performSellSimulation(token: any, buyOperation: BuyOperation): Pr
       return null
     }
     
-    // Calculate final results
-    const buyTime = new Date(buyOperation.timestamp)
-    const sellTime = new Date()
-    const holdDurationHours = (sellTime.getTime() - buyTime.getTime()) / (1000 * 60 * 60)
-    
-    const buyAmountSol = buyOperation.buy_amount_sol
-    const sellAmountSol = parseFloat(bestSellConfig.sol_amount)
-    const finalGainPercentage = ((sellAmountSol - buyAmountSol) / buyAmountSol) * 100
+    // Calculate remaining token amount after this sell
+    const remainingTokens = (parseFloat(totalTokenAmount) * (1 - sellPercentage / 100)).toString()
     
     const sellOperation: SellOperation = {
-      timestamp: sellTime.toISOString(),
+      timestamp: new Date().toISOString(),
       sell_amount_tokens: tokenAmountToSell,
       sol_received: bestSellConfig.sol_amount,
       sell_price_usd: token.current_price,
       configurations,
       best_sell_config: bestSellConfig,
       rpc_used: bestSellConfig.rpc_used,
-      final_gain_percentage: finalGainPercentage,
-      hold_duration_hours: holdDurationHours
+      final_gain_percentage: token.current_gain_percentage,
+      hold_duration_hours: (new Date().getTime() - new Date(simulation.simulation_started_at).getTime()) / (1000 * 60 * 60)
     }
     
-    console.log(`✅ Sell simulation completed for ${token.token_symbol}: ${bestSellConfig.sol_amount} SOL (${finalGainPercentage.toFixed(2)}% gain)`)
+    // Update simulation's remaining token amount
+    simulation.remaining_token_amount = remainingTokens
+    
+    console.log(`✅ ${sellPercentage}% sell simulation completed for ${token.token_symbol}: ${bestSellConfig.sol_amount} SOL received, ${remainingTokens} tokens remaining`)
     return sellOperation
     
   } catch (error) {
@@ -751,20 +764,45 @@ async function performSellSimulation(token: any, buyOperation: BuyOperation): Pr
 }
 
 // Helper function to check if token should be sold
-function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): boolean {
+function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { shouldSell: boolean, sellPercentage: number, reason: string } {
   const currentGain = token.current_gain_percentage
   const peakGain = token.peak_gain_percentage
+  const hasTP1 = simulation.sell_operations.some(op => op.final_gain_percentage >= simulation.take_profit_levels.tp1_percentage)
   
-  // Check target gain reached
-  if (currentGain >= simulation.target_gain_percentage) {
-    console.log(`🎯 Target gain reached for ${token.token_symbol}: ${currentGain.toFixed(2)}% >= ${simulation.target_gain_percentage}%`)
-    return true
+  // Check stop loss (-50%)
+  if (currentGain <= simulation.stop_loss_percentage) {
+    return {
+      shouldSell: true,
+      sellPercentage: 100, // Sell everything
+      reason: `🛑 Stop loss triggered: ${currentGain.toFixed(2)}% <= ${simulation.stop_loss_percentage}%`
+    }
   }
   
-  // Check stop loss
-  if (currentGain <= simulation.stop_loss_percentage) {
-    console.log(`🛑 Stop loss triggered for ${token.token_symbol}: ${currentGain.toFixed(2)}% <= ${simulation.stop_loss_percentage}%`)
-    return true
+  // Check TP1 (80%) - Sell 80% of position
+  if (!hasTP1 && currentGain >= simulation.take_profit_levels.tp1_percentage) {
+    return {
+      shouldSell: true,
+      sellPercentage: simulation.take_profit_levels.tp1_sell_percentage,
+      reason: `🎯 TP1 reached: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp1_percentage}%`
+    }
+  }
+  
+  // Check TP2 (100%) - Sell remaining position
+  if (hasTP1 && currentGain >= simulation.take_profit_levels.tp2_percentage) {
+    return {
+      shouldSell: true,
+      sellPercentage: 100,
+      reason: `🎯 TP2 reached: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp2_percentage}%`
+    }
+  }
+  
+  // Check TP3 (30% after TP1) - Sell remaining position
+  if (hasTP1 && simulation.take_profit_levels.tp3_enabled && currentGain <= simulation.take_profit_levels.tp3_percentage) {
+    return {
+      shouldSell: true,
+      sellPercentage: 100,
+      reason: `📉 TP3 triggered: ${currentGain.toFixed(2)}% <= ${simulation.take_profit_levels.tp3_percentage}% after TP1`
+    }
   }
   
   // Check max hold time
@@ -773,17 +811,95 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): bo
   const holdDurationHours = (now.getTime() - simulationStart.getTime()) / (1000 * 60 * 60)
   
   if (holdDurationHours >= simulation.max_hold_hours) {
-    console.log(`⏰ Max hold time reached for ${token.token_symbol}: ${holdDurationHours.toFixed(1)}h >= ${simulation.max_hold_hours}h`)
-    return true
+    return {
+      shouldSell: true,
+      sellPercentage: 100,
+      reason: `⏰ Max hold time reached: ${holdDurationHours.toFixed(1)}h >= ${simulation.max_hold_hours}h`
+    }
   }
   
-  // Check if token has dropped significantly from peak
-  if (peakGain > 20 && currentGain < peakGain * 0.5) {
-    console.log(`📉 Significant drop from peak for ${token.token_symbol}: ${currentGain.toFixed(2)}% < ${(peakGain * 0.5).toFixed(2)}%`)
-    return true
+  return {
+    shouldSell: false,
+    sellPercentage: 0,
+    reason: ''
   }
-  
-  return false
+}
+
+// Add function to toggle trading mode
+async function setTradingMode(isSimulated: boolean, keypairPath?: string): Promise<void> {
+  try {
+    // Update all active simulations
+    const { data: activeSimulations, error: fetchError } = await supabase
+      .from('trending_token_tracker')
+      .select('*')
+      .eq('status', 'tracking')
+      .not('trading_simulation', 'is', null)
+
+    if (fetchError) {
+      throw new Error(`Failed to fetch active simulations: ${fetchError.message}`)
+    }
+
+    // Update each simulation's trading mode
+    for (const token of activeSimulations || []) {
+      if (token.trading_simulation) {
+        const simulation = token.trading_simulation as TradingSimulation
+        simulation.is_simulated = isSimulated
+        simulation.keypair_path = keypairPath
+
+        const { error: updateError } = await supabase
+          .from('trending_token_tracker')
+          .update({
+            trading_simulation: simulation
+          })
+          .eq('id', token.id)
+
+        if (updateError) {
+          console.error(`Failed to update trading mode for ${token.token_symbol}:`, updateError)
+        } else {
+          console.log(`✅ Updated trading mode for ${token.token_symbol}: ${isSimulated ? 'Simulated' : 'Real'} trading`)
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to set trading mode:', error)
+    throw error
+  }
+}
+
+// Add endpoint to toggle trading mode
+export async function PUT(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const secretKey = searchParams.get('key')
+    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'trending-track-secret'
+    
+    if (secretKey !== expectedSecretKey) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const body = await request.json()
+    const { isSimulated, keypairPath } = body
+
+    if (typeof isSimulated !== 'boolean') {
+      return NextResponse.json({ error: 'isSimulated must be a boolean' }, { status: 400 })
+    }
+
+    if (!isSimulated && !keypairPath) {
+      return NextResponse.json({ error: 'keypairPath is required for real trading' }, { status: 400 })
+    }
+
+    await setTradingMode(isSimulated, keypairPath)
+
+    return NextResponse.json({
+      success: true,
+      mode: isSimulated ? 'simulated' : 'real',
+      message: `Successfully switched to ${isSimulated ? 'simulated' : 'real'} trading mode`
+    })
+
+  } catch (error) {
+    console.error('Error in PUT /api/trending/track:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -920,11 +1036,20 @@ export async function POST(request: NextRequest) {
               token_symbol: token.token_symbol,
               simulation_started_at: new Date().toISOString(),
               buy_operation: buyOperation,
-              sell_operation: null,
+              sell_operations: [],
               current_status: 'holding',
-              target_gain_percentage: 50, // 50% target gain
-              stop_loss_percentage: -30, // 30% stop loss
-              max_hold_hours: 24, // Max 24 hours hold
+              remaining_token_amount: buyOperation.token_amount_received,
+              initial_token_amount: buyOperation.token_amount_received,
+              is_simulated: true,
+              take_profit_levels: {
+                tp1_percentage: 80,
+                tp1_sell_percentage: 80,
+                tp2_percentage: 100,
+                tp3_percentage: 30,
+                tp3_enabled: false
+              },
+              stop_loss_percentage: -50,
+              max_hold_hours: 24,
               final_result: null
             }
             
@@ -979,50 +1104,57 @@ export async function POST(request: NextRequest) {
         let sellOperation = null
         
         if (existingToken.trading_simulation && existingToken.trading_simulation.current_status === 'holding') {
-          shouldSell = shouldSellToken({
-            ...existingToken,
-            current_gain_percentage: currentGain,
-            peak_gain_percentage: peakGain,
-            last_price_usd: token.current_price,
-            peak_price_usd: newPeakPrice
-          }, existingToken.trading_simulation)
+          const sellDecision = shouldSellToken(existingToken, existingToken.trading_simulation)
           
-          if (shouldSell && existingToken.trading_simulation.buy_operation) {
-            try {
-              console.log(`💸 Triggering sell simulation for ${token.token_symbol} (${currentGain.toFixed(2)}% gain)`)
-              
-              sellOperation = await performSellSimulation({
+          if (sellDecision.shouldSell) {
+            console.log(sellDecision.reason)
+            
+            // Perform sell simulation with the specified percentage
+            const sellOperation = await performSellSimulation(
+              {
                 ...token,
                 current_price: token.current_price
-              }, existingToken.trading_simulation.buy_operation)
+              }, 
+              existingToken.trading_simulation,
+              sellDecision.sellPercentage
+            )
+            
+            if (sellOperation) {
+              // Calculate total gain in SOL
+              const totalGainSol = parseFloat(sellOperation.sol_received) - 
+                (existingToken.trading_simulation.buy_operation?.buy_amount_sol || 0)
               
-              if (sellOperation) {
-                // Calculate final results
-                const buyAmountSol = existingToken.trading_simulation.buy_operation!.buy_amount_sol
-                const sellAmountSol = parseFloat(sellOperation.sol_received)
-                const totalGainSol = sellAmountSol - buyAmountSol
-                const totalGainPercentage = ((sellAmountSol - buyAmountSol) / buyAmountSol) * 100
-                
-                const finalResult = {
-                  success: true,
-                  total_gain_percentage: totalGainPercentage,
-                  total_gain_sol: totalGainSol,
-                  buy_price_usd: existingToken.trading_simulation.buy_operation!.buy_price_usd,
-                  sell_price_usd: token.current_price,
-                  hold_duration_hours: sellOperation.hold_duration_hours,
-                  best_buy_config: existingToken.trading_simulation.buy_operation!.best_buy_config,
-                  best_sell_config: sellOperation.best_sell_config
-                }
-                
-                console.log(`✅ Sell simulation completed for ${token.token_symbol}: ${totalGainPercentage.toFixed(2)}% gain (${totalGainSol.toFixed(6)} SOL)`)
-                
-                // Update simulation status
-                existingToken.trading_simulation.sell_operation = sellOperation
+              // Create final result
+              const finalResult = {
+                success: true,
+                total_gain_percentage: sellOperation.final_gain_percentage,
+                total_gain_sol: totalGainSol,
+                buy_price_usd: existingToken.trading_simulation.buy_operation!.buy_price_usd,
+                sell_price_usd: sellOperation.sell_price_usd,
+                hold_duration_hours: sellOperation.hold_duration_hours,
+                best_buy_config: existingToken.trading_simulation.buy_operation!.best_buy_config,
+                best_sell_configs: [...(existingToken.trading_simulation.final_result?.best_sell_configs || []), sellOperation.best_sell_config]
+              }
+              
+              console.log(`✅ Sell simulation completed for ${token.token_symbol}: ${sellOperation.final_gain_percentage.toFixed(2)}% gain (${totalGainSol.toFixed(6)} SOL)`)
+              
+              // Update simulation status
+              existingToken.trading_simulation.sell_operations.push(sellOperation)
+              
+              // Enable TP3 if this was TP1
+              if (sellOperation.final_gain_percentage >= existingToken.trading_simulation.take_profit_levels.tp1_percentage) {
+                existingToken.trading_simulation.take_profit_levels.tp3_enabled = true
+              }
+              
+              // Update simulation status based on remaining tokens
+              if (parseFloat(existingToken.trading_simulation.remaining_token_amount) <= 0) {
                 existingToken.trading_simulation.current_status = 'completed'
                 existingToken.trading_simulation.final_result = finalResult
               }
-            } catch (error) {
-              console.error(`❌ Sell simulation error for ${token.token_symbol}:`, error)
+              
+              // Update token status
+              existingToken.status = 'won'
+              existingToken.status_changed_at = new Date().toISOString()
             }
           }
         }

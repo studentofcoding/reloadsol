@@ -96,6 +96,14 @@ interface TrendingStats {
   expires_in: number
 }
 
+// Add new interfaces for trading configuration
+interface TradingConfig {
+  isSimulated: boolean
+  keypairPath: string
+  discordWebhook: string
+  notifyOnTrigger: boolean
+}
+
 export default function TrendingTrackerPage() {
   const [stats, setStats] = useState<TrendingStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -109,6 +117,15 @@ export default function TrendingTrackerPage() {
   const [simulationModalOpen, setSimulationModalOpen] = useState(false)
   const [tradeComparisonModalOpen, setTradeComparisonModalOpen] = useState(false)
   const [selectedToken, setSelectedToken] = useState<TrackedToken | null>(null)
+
+  // Trading config state
+  const [tradingConfig, setTradingConfig] = useState<TradingConfig>({
+    isSimulated: true,
+    keypairPath: '',
+    discordWebhook: '',
+    notifyOnTrigger: true
+  })
+  const [showConfigModal, setShowConfigModal] = useState(false)
 
   // Update prices for currently tracked tokens
   const updateTokenPrices = async (tokens: TrackedToken[]): Promise<boolean> => {
@@ -400,6 +417,147 @@ export default function TrendingTrackerPage() {
     return () => clearInterval(interval)
   }, [])
 
+  // Function to save trading config to localStorage
+  const saveTradingConfig = (config: TradingConfig) => {
+    localStorage.setItem('tradingConfig', JSON.stringify(config))
+    setTradingConfig(config)
+  }
+
+  // Load trading config from localStorage on mount
+  useEffect(() => {
+    const savedConfig = localStorage.getItem('tradingConfig')
+    if (savedConfig) {
+      try {
+        const config = JSON.parse(savedConfig)
+        setTradingConfig(config)
+      } catch (error) {
+        console.error('Failed to parse saved trading config:', error)
+      }
+    }
+  }, [])
+
+  // Function to send Discord notification
+  const sendDiscordNotification = async (message: string) => {
+    if (!tradingConfig.discordWebhook) return
+
+    try {
+      await fetch(tradingConfig.discordWebhook, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          content: message,
+          username: 'Trading Bot',
+          avatar_url: 'https://i.imgur.com/4M34hi2.png'
+        })
+      })
+    } catch (error) {
+      console.error('Failed to send Discord notification:', error)
+    }
+  }
+
+  // Configuration Modal Component
+  const ConfigModal = () => {
+    const [tempConfig, setTempConfig] = useState(tradingConfig)
+
+    return (
+      <div className={`fixed inset-0 bg-black/50 flex items-center justify-center z-50 ${showConfigModal ? '' : 'hidden'}`}>
+        <div className="bg-gray-800 rounded-xl p-6 max-w-md w-full mx-4">
+          <h3 className="text-xl font-semibold mb-4">Trading Configuration</h3>
+          
+          {/* Trading Mode Toggle */}
+          <div className="mb-4">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-sm font-medium text-gray-300">Trading Mode</span>
+              <div className="relative">
+                <input
+                  type="checkbox"
+                  className="sr-only"
+                  checked={!tempConfig.isSimulated}
+                  onChange={() => setTempConfig({...tempConfig, isSimulated: !tempConfig.isSimulated})}
+                />
+                <div className={`block w-14 h-8 rounded-full transition-colors ${tempConfig.isSimulated ? 'bg-gray-600' : 'bg-green-600'}`}></div>
+                <div className={`absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform transform ${tempConfig.isSimulated ? '' : 'translate-x-6'}`}></div>
+              </div>
+            </label>
+            <p className="text-sm text-gray-400 mt-1">
+              {tempConfig.isSimulated ? '🤖 Simulation Mode' : '🚀 Real Trading Mode'}
+            </p>
+          </div>
+
+          {/* Keypair Path Input */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Keypair Path {!tempConfig.isSimulated && <span className="text-red-400">*</span>}
+            </label>
+            <input
+              type="text"
+              value={tempConfig.keypairPath}
+              onChange={(e) => setTempConfig({...tempConfig, keypairPath: e.target.value})}
+              placeholder="/path/to/keypair.json"
+              className="w-full px-3 py-2 bg-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              required={!tempConfig.isSimulated}
+            />
+            <p className="text-xs text-gray-400 mt-1">Required for real trading mode</p>
+          </div>
+
+          {/* Discord Webhook Input */}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Discord Webhook URL
+            </label>
+            <input
+              type="text"
+              value={tempConfig.discordWebhook}
+              onChange={(e) => setTempConfig({...tempConfig, discordWebhook: e.target.value})}
+              placeholder="https://discord.com/api/webhooks/..."
+              className="w-full px-3 py-2 bg-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Notification Toggle */}
+          <div className="mb-6">
+            <label className="flex items-center space-x-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={tempConfig.notifyOnTrigger}
+                onChange={() => setTempConfig({...tempConfig, notifyOnTrigger: !tempConfig.notifyOnTrigger})}
+                className="form-checkbox h-5 w-5 text-blue-600 rounded bg-gray-700 border-gray-500"
+              />
+              <span className="text-sm font-medium text-gray-300">
+                Send Discord notifications on trade triggers
+              </span>
+            </label>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex space-x-3">
+            <button
+              onClick={() => {
+                if (!tempConfig.isSimulated && !tempConfig.keypairPath) {
+                  alert('Keypair path is required for real trading mode')
+                  return
+                }
+                saveTradingConfig(tempConfig)
+                setShowConfigModal(false)
+              }}
+              className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition-colors"
+            >
+              Save Changes
+            </button>
+            <button
+              onClick={() => setShowConfigModal(false)}
+              className="flex-1 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const formatTime = (dateString: string) => {
     return new Date(dateString).toLocaleString()
   }
@@ -501,8 +659,50 @@ export default function TrendingTrackerPage() {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8">reloadSOL Algo tester</h1>
-        
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-3xl font-bold">reloadSOL Algo tester</h1>
+          <button
+            onClick={() => setShowConfigModal(true)}
+            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg font-medium flex items-center space-x-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span>Trading Config</span>
+            {!tradingConfig.isSimulated && (
+              <span className="ml-2 px-2 py-0.5 bg-green-600 rounded-full text-xs font-bold">LIVE</span>
+            )}
+          </button>
+        </div>
+
+        {/* Trading Mode Banner */}
+        <div className={`mb-6 p-4 rounded-xl ${tradingConfig.isSimulated ? 'bg-blue-900/20 border border-blue-600/30' : 'bg-green-900/20 border border-green-600/30'}`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <span className="text-2xl">{tradingConfig.isSimulated ? '🤖' : '🚀'}</span>
+              <div>
+                <h3 className="font-semibold">
+                  {tradingConfig.isSimulated ? 'Simulation Mode' : 'Real Trading Mode'}
+                </h3>
+                <p className="text-sm text-gray-400">
+                  {tradingConfig.isSimulated 
+                    ? 'Testing trading strategies without real transactions' 
+                    : 'Live trading with real transactions'}
+                </p>
+              </div>
+            </div>
+            {tradingConfig.notifyOnTrigger && tradingConfig.discordWebhook && (
+              <div className="flex items-center space-x-2 text-sm text-gray-400">
+                <svg className="w-4 h-4" viewBox="0 0 71 55" fill="currentColor">
+                  <path d="M60.1045 4.8978C55.5792 2.8214 50.7265 1.2916 45.6527 0.41542C45.5603 0.39851 45.468 0.440769 45.4204 0.525289C44.7963 1.6353 44.105 3.0834 43.6209 4.2216C38.1637 3.4046 32.7345 3.4046 27.3892 4.2216C26.905 3.0581 26.1886 1.6353 25.5617 0.525289C25.5141 0.443589 25.4218 0.40133 25.3294 0.41542C20.2584 1.2888 15.4057 2.8186 10.8776 4.8978C10.8384 4.9147 10.8048 4.9429 10.7825 4.9795C1.57795 18.7309 -0.943561 32.1443 0.293408 45.3914C0.299005 45.4562 0.335386 45.5182 0.385761 45.5576C6.45866 50.0174 12.3413 52.7249 18.1147 54.5195C18.2071 54.5477 18.305 54.5139 18.3638 54.4378C19.7295 52.5728 20.9469 50.6063 21.9907 48.5383C22.0523 48.4172 21.9935 48.2735 21.8676 48.2256C19.9366 47.4931 18.0979 46.6 16.3292 45.5858C16.1893 45.5041 16.1781 45.304 16.3068 45.2082C16.679 44.9293 17.0513 44.6391 17.4067 44.3461C17.471 44.2926 17.5606 44.2813 17.6362 44.3151C29.2558 49.6202 41.8354 49.6202 53.3179 44.3151C53.3935 44.2785 53.4831 44.2898 53.5502 44.3433C53.9057 44.6363 54.2779 44.9293 54.6529 45.2082C54.7816 45.304 54.7732 45.5041 54.6333 45.5858C52.8646 46.6197 51.0259 47.4931 49.0921 48.2228C48.9662 48.2707 48.9102 48.4172 48.9718 48.5383C50.038 50.6034 51.2554 52.5699 52.5959 54.435C52.6519 54.5139 52.7526 54.5477 52.845 54.5195C58.6464 52.7249 64.529 50.0174 70.6019 45.5576C70.6551 45.5182 70.6887 45.459 70.6943 45.3942C72.1747 30.0791 68.2147 16.7757 60.1968 4.9823C60.1772 4.9429 60.1437 4.9147 60.1045 4.8978ZM23.7259 37.3253C20.2276 37.3253 17.3451 34.1136 17.3451 30.1693C17.3451 26.225 20.1717 23.0133 23.7259 23.0133C27.308 23.0133 30.1626 26.2532 30.1066 30.1693C30.1066 34.1136 27.28 37.3253 23.7259 37.3253ZM47.3178 37.3253C43.8196 37.3253 40.9371 34.1136 40.9371 30.1693C40.9371 26.225 43.7636 23.0133 47.3178 23.0133C50.9 23.0133 53.7545 26.2532 53.6986 30.1693C53.6986 34.1136 50.9 37.3253 47.3178 37.3253Z"/>
+                </svg>
+                <span>Discord notifications enabled</span>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Header */}
         <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0 mb-8">
           <div>
@@ -975,6 +1175,9 @@ export default function TrendingTrackerPage() {
         )}
       </div>
 
+      {/* Configuration Modal */}
+      <ConfigModal />
+
       {/* Trading Simulation Modal */}
       {selectedToken && (
         <TradingSimulationModal
@@ -984,6 +1187,22 @@ export default function TrendingTrackerPage() {
           tokenSymbol={selectedToken.token_symbol}
           tokenName={selectedToken.token_name}
           logoUrl={selectedToken.logo_url}
+          isSimulated={tradingConfig.isSimulated}
+          keypairPath={tradingConfig.keypairPath}
+          onTradeTriggered={async (type: string, details: any) => {
+            if (tradingConfig.notifyOnTrigger && tradingConfig.discordWebhook) {
+              const message = `🔔 Trade Alert (${tradingConfig.isSimulated ? 'Simulation' : 'LIVE'})\n` +
+                `${type} triggered for ${selectedToken.token_symbol}\n` +
+                `Current Gain: ${details.currentGain}%\n` +
+                `Peak Gain: ${details.peakGain}%\n` +
+                `Price: ${details.price}\n` +
+                `Provider: ${details.provider || 'Unknown'}\n` +
+                `RPC: ${details.rpc || 'Default'}\n` +
+                `Response Time: ${details.responseTime ? `${details.responseTime}ms` : 'N/A'}\n` +
+                `Time: ${new Date().toLocaleString()}`
+              await sendDiscordNotification(message)
+            }
+          }}
         />
       )}
 
