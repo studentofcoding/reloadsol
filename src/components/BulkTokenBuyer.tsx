@@ -397,12 +397,19 @@ export default function BulkTokenBuyer() {
             getSolPriceUSD()
           ])
 
-          // Prepare enhanced token data with prices
-          const enhancedTokenData = tokenData.map(token => ({
-            ...token,
-            priceUsd: tokenPrices[token.mintAddress] || 0,
-            tokenAmount: 0 // We don't have exact token amounts from buy result
-          }))
+          // Calculate individual SOL amount per successful token purchase
+          const successfulTokenCount = buyResult.successfulPurchases.length
+          const solAmountPerToken = successfulTokenCount > 0 ? parseFloat(solAmount) / successfulTokenCount : 0
+
+          // Prepare enhanced token data with prices and individual SOL amounts
+          const enhancedTokenData = tokenData
+            .filter(token => buyResult.successfulPurchases.some(p => p.mintAddress === token.mintAddress))
+            .map(token => ({
+              ...token,
+              priceUsd: tokenPrices[token.mintAddress] || 0,
+              tokenAmount: 0, // We don't have exact token amounts from buy result
+              solAmount: solAmountPerToken // Individual SOL amount for this token
+            }))
 
           // Track via centralized React Query system
           await trackOperation({
@@ -415,7 +422,7 @@ export default function BulkTokenBuyer() {
             successCount: buyResult.successfulPurchases.length,
             failureCount: buyResult.failedPurchases.length,
             totalTokens: buyResult.successfulPurchases.length + buyResult.failedPurchases.length,
-            solAmount: parseFloat(solAmount),
+            solAmount: parseFloat(solAmount), // Keep total for backward compatibility
             feesPaid: 0, // We don't track this locally yet
             solPriceUsd: currentSolPrice,
             totalUsdValue: currentSolPrice ? parseFloat(solAmount) * currentSolPrice : undefined,

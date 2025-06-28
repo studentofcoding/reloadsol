@@ -19,6 +19,7 @@ interface TradingRecord {
       mintAddress: string
       priceUsd?: number
       tokenAmount?: number
+      solAmount?: number
     }>
   }
 }
@@ -40,8 +41,8 @@ function calculateWalletPnL(records: TradingRecord[]): number {
   records.forEach(record => {
     const data = record.data
     
-    if (data.operationType === 'buy' && data.solAmount && data.solPriceUsd) {
-      // Record buy operations
+    if (data.operationType === 'buy' && (data.solAmount || data.tokens.some(t => t.solAmount))) {
+      // Record buy operations using individual token SOL amounts if available
       data.tokens.forEach(token => {
         if (token.priceUsd && token.tokenAmount) {
           const key = token.mintAddress
@@ -54,8 +55,8 @@ function calculateWalletPnL(records: TradingRecord[]): number {
           }
         }
       })
-    } else if (data.operationType === 'sell' && data.solAmount && data.solPriceUsd) {
-      // Calculate PnL for sell operations
+    } else if (data.operationType === 'sell' && (data.solAmount || data.tokens.some(t => t.solAmount))) {
+      // Calculate PnL for sell operations using individual SOL amounts if available
       data.tokens.forEach(token => {
         if (token.priceUsd && token.tokenAmount) {
           const key = token.mintAddress

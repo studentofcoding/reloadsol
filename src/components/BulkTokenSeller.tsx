@@ -413,15 +413,33 @@ export default function BulkTokenSeller() {
               getSolPriceUSD()
             ])
 
-            // Prepare enhanced token data with current prices and amounts
-            const enhancedTokenData = selectedTokens.map(token => ({
-              mintAddress: token.mintAddress,
-              symbol: token.symbol,
-              name: token.name,
-              logoURI: token.logoURI,
-              priceUsd: tokenPrices[token.mintAddress] || 0,
-              tokenAmount: token.sellAmount // Amount of tokens being sold
-            }))
+            // Calculate individual SOL amounts based on token USD values and proportions
+            const totalUsdValueSold = selectedTokens.reduce((sum, token) => {
+              return sum + (token.usdValue * token.sellPercentage / 100)
+            }, 0)
+            
+            const totalSolReceived = sellResult.totalReceived || 0
+            
+            // Prepare enhanced token data with current prices, amounts, and individual SOL amounts
+            const enhancedTokenData = selectedTokens
+              .filter(token => sellResult.successfulSwaps.some(s => s.mintAddress === token.mintAddress))
+              .map(token => {
+                // Calculate proportional SOL amount based on this token's USD value relative to total
+                const tokenUsdValue = token.usdValue * token.sellPercentage / 100
+                const solAmountForThisToken = totalUsdValueSold > 0 
+                  ? (tokenUsdValue / totalUsdValueSold) * totalSolReceived 
+                  : totalSolReceived / sellResult.successfulSwaps.length // Fallback to equal split
+
+                return {
+                  mintAddress: token.mintAddress,
+                  symbol: token.symbol,
+                  name: token.name,
+                  logoURI: token.logoURI,
+                  priceUsd: tokenPrices[token.mintAddress] || 0,
+                  tokenAmount: token.sellAmount, // Amount of tokens being sold
+                  solAmount: solAmountForThisToken // Individual SOL amount for this token
+                }
+              })
 
             const sellErrors = sellResult.failedSwaps.length > 0 
               ? sellResult.failedSwaps.map(f => f.error)
@@ -438,7 +456,7 @@ export default function BulkTokenSeller() {
               successCount: sellResult.successfulSwaps.length,
               failureCount: sellResult.failedSwaps.length,
               totalTokens: sellResult.successfulSwaps.length + sellResult.failedSwaps.length,
-              solAmount: sellResult.totalReceived || 0,
+              solAmount: sellResult.totalReceived || 0, // Keep total for backward compatibility
               feesPaid: 0, // We don't track this locally yet
               solPriceUsd: currentSolPrice,
               totalUsdValue: currentSolPrice ? (sellResult.totalReceived || 0) * currentSolPrice : undefined,

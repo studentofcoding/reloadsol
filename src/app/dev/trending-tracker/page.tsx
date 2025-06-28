@@ -439,7 +439,6 @@ export default function TrendingTrackerPage() {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-6">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold mb-8">Trending Token Tracker</h1>
           <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-6 text-center">
             <p className="text-red-400 text-lg mb-4">Error loading data</p>
             <p className="text-red-300 text-sm mb-4">{error}</p>
@@ -459,7 +458,6 @@ export default function TrendingTrackerPage() {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-6">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold mb-8">Trending Token Tracker</h1>
           <p className="text-gray-400">No data available</p>
         </div>
       </div>
@@ -469,12 +467,11 @@ export default function TrendingTrackerPage() {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8">Trending Token Tracker</h1>
+        <h1 className="text-3xl font-bold mb-8">reloadSOL Algo tester</h1>
         
         {/* Header */}
         <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0 mb-8">
           <div>
-            <h1 className="text-3xl font-bold">Trending Token Tracker</h1>
             <p className="text-gray-400 mt-2">
               Live tracking of trending tokens with real-time price updates
             </p>

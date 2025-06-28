@@ -10,7 +10,7 @@ export interface TrackingRecord {
   operationType: 'buy' | 'sell' | 'close'
   timestamp: number
   
-  // Token information with prices
+  // Token information with prices and individual SOL amounts
   tokens: Array<{
     mintAddress: string
     symbol?: string
@@ -19,6 +19,7 @@ export interface TrackingRecord {
     priceUsd?: number // USD price of token at operation time
     solPrice?: number // SOL price in USD at operation time
     tokenAmount?: number // Amount of tokens involved
+    solAmount?: number // Individual SOL amount for this specific token (NEW)
   }>
   
   // Operation results
@@ -27,7 +28,7 @@ export interface TrackingRecord {
   totalTokens: number
   
   // Financial data
-  solAmount?: number // For buys: amount spent, For sells: amount received
+  solAmount?: number // For buys: total amount spent, For sells: total amount received (kept for backward compatibility)
   feesPaid: number
   
   // Price tracking for accurate PnL
@@ -391,7 +392,7 @@ class TradingTracker {
           }
         )
         .subscribe()
-  }
+    }
 
     // Return unsubscribe function
     return () => {
