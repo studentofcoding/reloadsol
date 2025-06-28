@@ -208,6 +208,62 @@ interface TradingSimulation {
   } | null
 }
 
+// ===== Discord Trade Alert Helper =====
+const DISCORD_WEBHOOK_URL = process.env.NEXT_PUBLIC_DISCORD_WEBHOOK_AUTO_TRADE
+const ENABLE_DISCORD_NOTIFICATIONS = process.env.NEXT_PUBLIC_ENABLE_DISCORD_NOTIFICATIONS === 'true'
+
+async function sendTradeAlertDiscord(params: {
+  tokenSymbol: string | null
+  status: 'buy' | 'partial-sell' | 'completed'
+  isSimulated: boolean
+  currentGain: number
+  peakGain: number
+  priceUsd: number
+  provider?: string
+  rpcUsed?: string
+  responseTime?: number
+}) {
+  try {
+    if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) return
+
+    const {
+      tokenSymbol,
+      status,
+      isSimulated,
+      currentGain,
+      peakGain,
+      priceUsd,
+      provider,
+      rpcUsed,
+      responseTime
+    } = params
+
+    const title = `🔔 Trade Alert (${isSimulated ? 'Simulation' : 'LIVE'})`
+
+    const lines = [
+      `${status} triggered for ${tokenSymbol ?? 'UNKNOWN'}`,
+      `Current Gain: ${currentGain.toFixed(4)}%`,
+      `Peak Gain: ${peakGain.toFixed(4)}%`,
+      `Price: ${priceUsd.toFixed(6)}`
+    ]
+
+    if (provider) lines.push(`Provider: ${provider}`)
+    if (rpcUsed) lines.push(`RPC: ${rpcUsed}`)
+    if (responseTime !== undefined) lines.push(`Response Time: ${responseTime}ms`)
+    lines.push(`Time: ${new Date().toLocaleString()}`)
+
+    const content = [title, ...lines].join('\n')
+
+    await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    })
+  } catch (err) {
+    console.error('Failed to send Discord trade alert:', err)
+  }
+}
+
 // Helper function to check when last summary was run
 async function checkLastSummaryTime(): Promise<Date | null> {
   try {
@@ -1213,6 +1269,22 @@ export async function POST(request: NextRequest) {
           if (shouldSell && sellOperation) {
             console.log(`🎯 Token sold via simulation (${currentGain.toFixed(2)}%): ${token.token_symbol}`)
           }
+        }
+
+        // After updating simulation and before DB update
+        if (ENABLE_DISCORD_NOTIFICATIONS && sellOperation) {
+          const bestCfg: any = (sellOperation as any).best_sell_config || {}
+          await sendTradeAlertDiscord({
+            tokenSymbol: token.token_symbol,
+            status: existingToken.trading_simulation!.current_status === 'completed' ? 'completed' : 'partial-sell',
+            isSimulated: existingToken.trading_simulation!.is_simulated,
+            currentGain: existingToken.current_gain_percentage,
+            peakGain: existingToken.peak_gain_percentage,
+            priceUsd: token.current_price,
+            provider: bestCfg.provider,
+            rpcUsed: bestCfg.rpc_used,
+            responseTime: bestCfg.response_time
+          })
         }
       }
     }
