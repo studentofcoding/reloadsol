@@ -48,6 +48,8 @@ export default function BulkTokenSeller() {
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [isClosingAccounts, setIsClosingAccounts] = useState<boolean>(false)
   const [result, setResult] = useState<BulkSellResult | null>(null)
+  const [sellPointsEarned, setSellPointsEarned] = useState<number | null>(null)
+  const [closePointsEarned, setClosePointsEarned] = useState<number | null>(null)
   const [closeResult, setCloseResult] = useState<{ successful: string[]; failed: Array<{ mintAddress: string; error: string }>; signatures: string[] } | null>(null)
   const [error, setError] = useState<string>('')
   const [showResultModal, setShowResultModal] = useState<boolean>(false)
@@ -342,6 +344,8 @@ export default function BulkTokenSeller() {
     setIsLoading(true)
     setError('')
     setResult(null)
+    setSellPointsEarned(null)
+    setClosePointsEarned(null)
     setCloseResult(null) // Clear any previous close-only results
 
     try {
@@ -398,6 +402,7 @@ export default function BulkTokenSeller() {
               }
             );
             console.log(`🎉 Earned ${trackResult.pointsEarned} points from sell operation!`);
+            setSellPointsEarned(trackResult.pointsEarned);
           } catch (trackError) {
             console.error('Failed to track sell operation for points:', trackError);
           }
@@ -492,6 +497,7 @@ export default function BulkTokenSeller() {
               }
             );
             console.log(`🎉 Earned ${trackResult.pointsEarned} points from close operation!`);
+            setClosePointsEarned(trackResult.pointsEarned);
           } catch (trackError) {
             console.error('Failed to track close operation for points:', trackError);
           }
@@ -978,6 +984,7 @@ export default function BulkTokenSeller() {
             result={result}
             balanceBefore={balanceBefore}
             balanceAfter={balanceAfter}
+            pointsEarned={sellPointsEarned ?? undefined}
           />
 
           {/* Close Result Modal */}
@@ -986,6 +993,7 @@ export default function BulkTokenSeller() {
             onClose={() => setShowCloseResultModal(false)}
             operation="close"
             result={closeResult}
+            pointsEarned={closePointsEarned ?? undefined}
           />
         </div>
       )}

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import { BulkBuyResult } from '@/types'
 import { BulkSellResult } from '@/utils/jupiter'
 
@@ -19,6 +19,7 @@ type TransactionResultModalProps = {
   balanceAfter?: number
   solToUsd?: (solValue: number) => number
   onSelectToken?: (mintAddress: string) => void
+  pointsEarned?: number
 }
 
 export default function TransactionResultModal({
@@ -29,8 +30,59 @@ export default function TransactionResultModal({
   balanceBefore,
   balanceAfter,
   solToUsd = (sol) => sol * 145, // Default fallback
-  onSelectToken
+  onSelectToken,
+  pointsEarned
 }: TransactionResultModalProps) {
+  // Local cache for token metadata (symbol/name) to avoid redundant requests
+  const [tokenNames, setTokenNames] = useState<Record<string, string>>({})
+
+  // Helper to get a user-friendly token identifier
+  const getTokenName = (mint: string): string => {
+    const cached = tokenNames[mint]
+    if (cached) return cached
+    // Fallback to truncated address if we have no metadata yet
+    return `${mint.slice(0, 4)}...${mint.slice(-4)}`
+  }
+
+  // When the modal opens for a close operation, fetch metadata for all involved tokens
+  useEffect(() => {
+    if (!isOpen || operation !== 'close' || !result || !('successful' in result)) return
+
+    const closeResult = result as CloseResult
+    const mints = Array.from(
+      new Set([
+        ...closeResult.successful,
+        ...closeResult.failed.map(f => f.mintAddress)
+      ])
+    )
+
+    const mintsToFetch = mints.filter(m => !tokenNames[m])
+    if (mintsToFetch.length === 0) return
+
+    // Fetch metadata in parallel but limit concurrency implicitly via browser
+    ;(async () => {
+      const updates: Record<string, string> = {}
+      await Promise.all(
+        mintsToFetch.map(async (mint) => {
+          try {
+            const res = await fetch(`/api/jupiter/metadata?mint=${mint}`)
+            if (!res.ok) return
+            const json = await res.json()
+            const symbol = json?.data?.symbol || json?.data?.name
+            if (symbol) {
+              updates[mint] = symbol
+            }
+          } catch {
+            /* silent */
+          }
+        })
+      )
+      if (Object.keys(updates).length > 0) {
+        setTokenNames(prev => ({ ...prev, ...updates }))
+      }
+    })()
+  }, [isOpen, operation, result, tokenNames])
+
   // Helper function to check if the error is a user rejection
   const isUserRejection = (error: string): boolean => {
     const rejectionPhrases = [
@@ -70,8 +122,8 @@ export default function TransactionResultModal({
     return false
   }
 
-  // Don't show modal for user rejections or if modal is closed/no result
-  if (!isOpen || !result || checkForUserRejection()) return null
+  // Determine if we should hide the modal (but still run hooks for consistent order)
+  const shouldHide = !isOpen || !result || checkForUserRejection()
 
   // Close modal on escape key
   useEffect(() => {
@@ -92,16 +144,21 @@ export default function TransactionResultModal({
     }
   }, [isOpen, onClose])
 
+  // After running the necessary hooks, short-circuit render if we shouldn't show the modal
+  if (shouldHide) {
+    return null
+  }
+
   const renderBuyResult = (buyResult: BulkBuyResult) => {
     // Extract successful token names/symbols for display
     const successfulTokens = buyResult.successfulPurchases.map(purchase => {
-      // Try to extract token symbol from mint address (simplified approach)
-      const shortAddress = purchase.mintAddress.substring(0, 4) + '...' + purchase.mintAddress.substring(-4)
+      if (purchase.symbol) return purchase.symbol
+      if (purchase.name) return purchase.name
+      const shortAddress = purchase.mintAddress.slice(0, 4) + '...' + purchase.mintAddress.slice(-4)
       return shortAddress
     })
 
-    // Calculate total points earned (simplified: 1 point per successful purchase)
-    const totalPoints = buyResult.successfulPurchases.length
+    // pointsEarned handled via prop
 
     return (
       <div className="space-y-6">
@@ -133,14 +190,12 @@ export default function TransactionResultModal({
                   </span>
                 )}
               </div>
-              
-              {totalPoints > 0 && (
-                <div className="bg-yellow-900/30 border border-yellow-500/30 rounded-lg p-4 inline-block">
-                  <p className="text-yellow-200 text-lg font-semibold">
-                    🏆 You earned <span className="text-2xl font-bold text-yellow-100">{totalPoints}</span> points!
-                  </p>
-                </div>
-              )}
+            </div>
+          )}
+
+          {buyResult.success && typeof pointsEarned === 'number' && (
+            <div className="mt-4 text-blue-300 text-lg font-semibold">
+              🎯 Points Earned: {pointsEarned}
             </div>
           )}
         </div>
@@ -163,7 +218,7 @@ export default function TransactionResultModal({
                 >
                   <div className="font-mono text-sm text-red-100 mb-1 flex justify-between items-center">
                     <span className="truncate mr-2">
-                      {failure.mintAddress.substring(0, 4)}...{failure.mintAddress.substring(-4)}
+                      {failure.mintAddress.substring(0, 4)}...{failure.mintAddress.slice(-4)}
                     </span>
                     <button
                       onClick={(e) => {
@@ -192,12 +247,11 @@ export default function TransactionResultModal({
     const successfulTokens = sellResult.successfulSwaps.map(swap => {
       // Try to extract token symbol from mint address (simplified approach)
       // In a real app, you'd have token metadata to get proper names
-      const shortAddress = swap.mintAddress.substring(0, 4) + '...' + swap.mintAddress.substring(-4)
+      const shortAddress = swap.mintAddress.substring(0, 4) + '...' + swap.mintAddress.slice(-4)
       return shortAddress
     })
 
-    // Calculate total points earned (simplified: 1 point per successful swap + close)
-    const totalPoints = sellResult.successfulSwaps.length + sellResult.successfulCloses.length
+    // pointsEarned handled via prop
 
     return (
       <div className="space-y-6">
@@ -229,14 +283,6 @@ export default function TransactionResultModal({
                   </span>
                 )}
               </div>
-              
-              {totalPoints > 0 && (
-                <div className="bg-yellow-900/30 border border-yellow-500/30 rounded-lg p-4 inline-block">
-                  <p className="text-yellow-200 text-lg font-semibold">
-                    🏆 You earned <span className="text-2xl font-bold text-yellow-100">{totalPoints}</span> points!
-                  </p>
-                </div>
-              )}
             </div>
           )}
 
@@ -248,6 +294,12 @@ export default function TransactionResultModal({
                 +{(balanceAfter - balanceBefore).toFixed(4)} SOL
               </p>
               <p className="text-green-300 text-sm">≈ ${solToUsd(balanceAfter - balanceBefore).toFixed(2)}</p>
+            </div>
+          )}
+
+          {sellResult.success && typeof pointsEarned === 'number' && (
+            <div className="mt-4 text-green-300 text-lg font-semibold">
+              🎯 Points Earned: {pointsEarned}
             </div>
           )}
         </div>
@@ -265,7 +317,7 @@ export default function TransactionResultModal({
               {sellResult.failedSwaps.map((failure, index) => (
                 <div key={index} className="bg-red-900/20 rounded-lg p-3 border border-red-500/20">
                   <div className="font-mono text-sm text-red-100 mb-1 truncate">
-                    {failure.mintAddress.substring(0, 4)}...{failure.mintAddress.substring(-4)}
+                    {failure.mintAddress.substring(0, 4)}...{failure.mintAddress.slice(-4)}
                   </div>
                   <div className="text-xs text-red-300">{failure.error}</div>
                 </div>
@@ -317,7 +369,7 @@ export default function TransactionResultModal({
             {closeResult.successful.map((mintAddress, index) => (
               <div key={index} className="bg-yellow-900/20 rounded-lg p-3 border border-yellow-500/20">
                 <div className="flex justify-between items-center">
-                  <span className="font-mono text-sm text-yellow-100 truncate mr-2">{mintAddress}</span>
+                  <span className="font-mono text-sm text-yellow-100 truncate mr-2">{getTokenName(mintAddress)}</span>
                   <span className="text-yellow-200 text-xs">Account closed</span>
                 </div>
               </div>
@@ -338,17 +390,23 @@ export default function TransactionResultModal({
           <div className="space-y-3 max-h-48 overflow-y-auto">
             {closeResult.failed.map((failure, index) => (
               <div key={index} className="bg-red-900/20 rounded-lg p-3 border border-red-500/20">
-                <div className="font-mono text-sm text-red-100 mb-1 truncate">{failure.mintAddress}</div>
+                <div className="font-mono text-sm text-red-100 mb-1 truncate">{getTokenName(failure.mintAddress)}</div>
                 <div className="text-xs text-red-300">{failure.error}</div>
               </div>
             ))}
           </div>
         </div>
       )}
+
+      {typeof pointsEarned === 'number' && (
+        <div className="text-center mt-4 text-yellow-300 text-lg font-semibold">
+          🎯 Points Earned: {pointsEarned}
+        </div>
+      )}
     </div>
   )
 
-  const signatures = result.signatures || []
+  const signatures: string[] = result ? (result as any).signatures ?? [] : []
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -385,7 +443,7 @@ export default function TransactionResultModal({
                   Check the transaction signatures here
                 </h4>
                 <div className="space-y-2 max-h-32 overflow-y-auto">
-                  {signatures.map((sig, index) => (
+                  {signatures.map((sig: string, index: number) => (
                     <a
                       key={index}
                       href={`https://solscan.io/tx/${sig}`}
@@ -395,7 +453,7 @@ export default function TransactionResultModal({
                     >
                       <div className="flex items-center justify-between">
                         <span className="font-mono text-sm text-slate-300 truncate mr-4">
-                          {sig.substring(0, 8)}...{sig.substring(-8)}
+                          {sig.substring(0, 8)}...{sig.slice(-8)}
                         </span>
                         <div className="flex items-center text-blue-400 text-sm">
                           <span className="mr-2">View on Solscan</span>

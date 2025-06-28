@@ -38,6 +38,7 @@ export default function BulkTokenBuyer() {
   const [isLoading, setIsLoading] = useState<boolean>(false)
   const [isLoadingMetadata, setIsLoadingMetadata] = useState<boolean>(false)
   const [result, setResult] = useState<BulkBuyResult | null>(null)
+  const [pointsEarned, setPointsEarned] = useState<number | null>(null)
   const [error, setError] = useState<string>('')
   const [showResultModal, setShowResultModal] = useState<boolean>(false)
   const [selectedToken, setSelectedToken] = useState<string>('')
@@ -313,6 +314,7 @@ export default function BulkTokenBuyer() {
     }
 
     setIsLoading(true)
+    setPointsEarned(null)
     setError('')
     setResult(null)
 
@@ -383,6 +385,7 @@ export default function BulkTokenBuyer() {
             }
           );
           console.log(`🎉 Earned ${trackResult.pointsEarned} points from buy operation!`);
+          setPointsEarned(trackResult.pointsEarned);
         } catch (trackError) {
           console.error('Failed to track buy operation for points:', trackError);
         }
@@ -1017,6 +1020,7 @@ export default function BulkTokenBuyer() {
                 balanceBefore={balanceBefore}
                 balanceAfter={balanceAfter}
                 onSelectToken={handleSelectToken}
+                pointsEarned={pointsEarned ?? undefined}
               />
             </div>
           )}
