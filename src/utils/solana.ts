@@ -33,9 +33,9 @@ export const SLIPPAGE_OPTIONS = [
 // Priority fee options (in lamports)
 export const PRIORITY_FEE_OPTIONS = [
   { label: 'None', value: 0 },
-  { label: 'Low (0.00001 SOL)', value: 10000 },
-  { label: 'Medium (0.0001 SOL)', value: 100000 },
-  { label: 'High (0.001 SOL)', value: 1000000 },
+  { label: 'Low (0.00005 SOL)', value: 5000 },
+  { label: 'Medium (0.0003 SOL)', value: 30000 },
+  { label: 'High (0.0015 SOL)', value: 150000 },
 ]
 
 // Utility function to get SOL price with caching and fallback

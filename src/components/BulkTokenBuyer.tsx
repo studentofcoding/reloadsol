@@ -22,8 +22,8 @@ export default function BulkTokenBuyer() {
   // Form state
   const [solAmount, setSolAmount] = useState<string>('0.1')
   const [tokenMints, setTokenMints] = useState<string>('')
-  const [slippage, setSlippage] = useState<number>(100) // 1%
-  const [priorityFee, setPriorityFee] = useState<number>(100000) // 0.0001 SOL
+  const [slippage, setSlippage] = useState<number>(200) // 1%
+  const [priorityFee, setPriorityFee] = useState<number>(30000) // 0.0003 SOL
   
   // Token metadata state
   type TokenInfo = {

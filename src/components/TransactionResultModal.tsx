@@ -31,6 +31,48 @@ export default function TransactionResultModal({
   solToUsd = (sol) => sol * 145, // Default fallback
   onSelectToken
 }: TransactionResultModalProps) {
+  // Helper function to check if the error is a user rejection
+  const isUserRejection = (error: string): boolean => {
+    const rejectionPhrases = [
+      'user rejected',
+      'user denied',
+      'user cancelled',
+      'user canceled',
+      'transaction was not confirmed',
+      'rejected by user',
+      'declined by user'
+    ]
+    return rejectionPhrases.some(phrase => 
+      error.toLowerCase().includes(phrase.toLowerCase())
+    )
+  }
+
+  // Check if the result contains user rejection
+  const checkForUserRejection = (): boolean => {
+    if (!result) return false
+
+    if ('failedPurchases' in result) {
+      // BulkBuyResult
+      return result.failedPurchases.some(failure => 
+        isUserRejection(failure.error)
+      )
+    } else if ('failedSwaps' in result) {
+      // BulkSellResult
+      return result.failedSwaps.some(failure => 
+        isUserRejection(failure.error)
+      )
+    } else if ('failed' in result) {
+      // CloseResult
+      return result.failed.some(failure => 
+        isUserRejection(failure.error)
+      )
+    }
+    return false
+  }
+
+  // Don't show modal for user rejections or if modal is closed/no result
+  if (!isOpen || !result || checkForUserRejection()) return null
+
   // Close modal on escape key
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -49,8 +91,6 @@ export default function TransactionResultModal({
       document.body.style.overflow = 'unset'
     }
   }, [isOpen, onClose])
-
-  if (!isOpen || !result) return null
 
   const renderBuyResult = (buyResult: BulkBuyResult) => {
     // Extract successful token names/symbols for display

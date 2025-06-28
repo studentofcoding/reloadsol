@@ -37,8 +37,8 @@ export default function BulkTokenSeller() {
   // Form state - Updated to use TokenToSell
   const [selectedTokens, setSelectedTokens] = useState<TokenToSell[]>([])
   const [selectedZeroBalanceTokens, setSelectedZeroBalanceTokens] = useState<UserToken[]>([])
-  const [slippage, setSlippage] = useState<number>(100) // 1%
-  const [priorityFee, setPriorityFee] = useState<number>(100000) // 0.0001 SOL
+  const [slippage, setSlippage] = useState<number>(200) // 2%
+  const [priorityFee, setPriorityFee] = useState<number>(30000) // 0.00003 SOL
   
   // UI state
   const [userTokens, setUserTokens] = useState<UserToken[]>([])

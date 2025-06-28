@@ -155,7 +155,7 @@ async function getDflowQuote(request: TradeQuoteRequest): Promise<ProviderQuote>
 
       const swapData = await swapResponse.json()
 
-      return {
+    return {
         quote: quoteData,
         swap: swapData
       }
@@ -243,7 +243,7 @@ async function getDflowIntentQuote(request: TradeQuoteRequest): Promise<Provider
           quoteResponse: intentData,
           signedOpenTransaction: '', // This will be signed by the client
         })
-      })
+    })
 
       if (!submitResponse.ok) {
         throw new Error(`DFlow Submit Intent error: ${submitResponse.status} ${submitResponse.statusText}`)
@@ -251,7 +251,7 @@ async function getDflowIntentQuote(request: TradeQuoteRequest): Promise<Provider
 
       const submitData = await submitResponse.json()
 
-      return {
+    return {
         intent: intentData,
         submit: submitData
       }
@@ -667,7 +667,7 @@ function calculateComparison(quotes: ProviderQuote[]) {
   const nextBestAmount = successfulQuotes
     .filter(q => q.provider !== bestQuote.provider)
     .reduce((max, current) => Math.max(max, parseFloat(current.outAmount)), 0)
-
+  
   const advantage = nextBestAmount > 0
     ? ((bestAmount - nextBestAmount) / nextBestAmount * 100).toFixed(2)
     : '0'

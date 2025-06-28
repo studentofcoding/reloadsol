@@ -364,9 +364,22 @@ export default function PnLTracker() {
         const walletToken = currentWalletTokens.find(token => token.mintAddress === position.mintAddress)
                  if (walletToken && walletToken.uiAmount > 0) {
            // Calculate remaining SOL investment (proportional to remaining tokens)
-           const remainingProportion = position.totalTokenAmount > 0 ? 
-             position.remainingTokenAmount / position.totalTokenAmount : 0
-           const remainingSolInvestment = Math.max(position.totalSolBought * remainingProportion, 0.001)
+           let remainingSolInvestment: number;
+           if (position.totalSolSold === 0) {
+             // No sells for this position yet, so the remaining investment is the total buy-in amount.
+             // This fixes the bug where new buys without token-amount data defaulted to 0.001.
+             remainingSolInvestment = position.totalSolBought;
+           } else {
+             // Sells have occurred. We must calculate the remaining investment based on the proportion of tokens left.
+             if (position.totalTokenAmount > 0) {
+               const remainingProportion = position.remainingTokenAmount / position.totalTokenAmount;
+               remainingSolInvestment = position.totalSolBought * remainingProportion;
+             } else {
+               // If there have been sells but we have no token data, we cannot accurately calculate
+               // the remaining investment. Defaulting to 0 is the safest option.
+               remainingSolInvestment = 0;
+             }
+           }
           
           const openPosition: OpenPosition = {
             id: `open-${mintAddress}`,
@@ -598,8 +611,8 @@ export default function PnLTracker() {
       // Prepare bulk sell request
       const sellRequest: BulkSellRequest = {
         tokens: [tokenForSale],
-        slippage: 100, // 1% slippage (default)
-        priorityFee: 100000, // 0.0001 SOL priority fee (default)
+        slippage: 300, // 3% slippage (default)
+        priorityFee: 30000, // 0.0003 SOL priority fee (default)
       }
 
       // Execute the sell
@@ -658,8 +671,8 @@ export default function PnLTracker() {
             solPriceUsd: currentSolPrice,
             totalUsdValue: currentSolPrice ? (sellResult.totalReceived || 0) * currentSolPrice : undefined,
             signatures: sellResult.signatures,
-            slippage: 1, // 1% slippage
-            priorityFee: 100000,
+            slippage: 2, // 2% slippage
+            priorityFee: 300000,
             errors: undefined
           })
 
@@ -954,13 +967,13 @@ export default function PnLTracker() {
             ) : (
               <>
                 <div className="text-center py-2 mb-2">
-                  <p className="text-gray-400 text-xs">💡 Click any position to instantly sell it with 1% slippage</p>
+                  <p className="text-gray-400 text-xs">💡 Click any position to instantly sell it with 3% slippage</p>
                 </div>
                 <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
                 {openPositions.slice(0, 10).map((position) => (
                   <div
                     key={position.id}
-                    className={`flex-shrink-0 p-0 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group p-4 relative ${
+                    className={`flex-shrink-0 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group p-4 relative ${
                       sellingTokenId === position.id 
                         ? 'bg-red-800/30 border border-red-600' 
                         : 'hover:bg-green-700/40 hover:border-green-600/50 border border-transparent'
