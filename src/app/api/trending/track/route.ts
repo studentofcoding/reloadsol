@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
-import { compareTradeQuotes } from '@/utils/trade-comparison'
+import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 
 interface JupiterBaseAsset {
   id: string
@@ -76,31 +76,14 @@ interface TradeComparisonResult {
   timestamp: string
   buy_amount_sol: number
   comparisons: {
-    slippage_1: {
+    [key: string]: {
       success: boolean
       response_time: number
       token_amount: string
       total_fees: number
       price_impact: string
       best_provider: string
-      error?: string
-    }
-    slippage_2: {
-      success: boolean
-      response_time: number
-      token_amount: string
-      total_fees: number
-      price_impact: string
-      best_provider: string
-      error?: string
-    }
-    slippage_5: {
-      success: boolean
-      response_time: number
-      token_amount: string
-      total_fees: number
-      price_impact: string
-      best_provider: string
+      rpc_used?: string
       error?: string
     }
   }
@@ -110,6 +93,7 @@ interface TradeComparisonResult {
     token_amount: string
     response_time: number
     total_fees: number
+    rpc_used?: string
   }
 }
 
@@ -282,115 +266,26 @@ async function runPnLUpdate(): Promise<void> {
   }
 }
 
-// Helper function to perform trade comparison for a token
+// Helper function to perform enhanced trade comparison for a token
 async function performTradeComparison(token: any): Promise<TradeComparisonResult | null> {
   try {
-    console.log(`🔄 Performing trade comparison for ${token.token_symbol} (${token.token_address})`)
+    console.log(`🚀 Performing enhanced trade comparison for ${token.token_symbol} (${token.token_address})`)
     
-    // SOL mint address
-    const SOL_MINT = 'So11111111111111111111111111111111111111112'
-    const BUY_AMOUNT_SOL = 0.1 // 0.1 SOL
-    const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9) // Convert to lamports
+    // Use the new enhanced trade comparison function
+    const enhancedResult = await performEnhancedTradeComparison(
+      token.token_address,
+      token.token_symbol,
+      0.1 // 0.1 SOL
+    )
     
-    // Test slippage configurations: 1%, 2%, 5%
-    const slippageConfigs = [
-      { key: 'slippage_1', bps: 100 },
-      { key: 'slippage_2', bps: 200 },
-      { key: 'slippage_5', bps: 500 }
-    ]
-    
-    const comparisons: any = {}
-    const results: any[] = []
-    
-    // Perform comparisons for each slippage configuration
-    for (const config of slippageConfigs) {
-      try {
-        console.log(`  📊 Testing ${config.key} (${config.bps/100}% slippage)...`)
-        
-        const comparison = await compareTradeQuotes({
-          inputMint: SOL_MINT,
-          outputMint: token.token_address,
-          amount: BUY_AMOUNT_LAMPORTS.toString(),
-          slippageBps: config.bps,
-          userPublicKey: '11111111111111111111111111111111' // Dummy key for comparison
-        })
-        
-        if (comparison.bestQuote && comparison.bestQuote.success) {
-          const bestQuote = comparison.bestQuote
-          const totalFees = bestQuote.fees?.totalFeeLamports || 0
-          
-          comparisons[config.key] = {
-            success: true,
-            response_time: bestQuote.responseTime,
-            token_amount: bestQuote.outAmount,
-            total_fees: totalFees / 1e9, // Convert to SOL
-            price_impact: bestQuote.priceImpactPct,
-            best_provider: bestQuote.provider
-          }
-          
-          results.push({
-            slippage: config.bps / 100,
-            provider: bestQuote.provider,
-            token_amount: bestQuote.outAmount,
-            response_time: bestQuote.responseTime,
-            total_fees: totalFees / 1e9
-          })
-          
-          console.log(`    ✅ ${config.key}: ${bestQuote.provider} - ${bestQuote.outAmount} tokens, ${bestQuote.responseTime}ms`)
-        } else {
-          comparisons[config.key] = {
-            success: false,
-            response_time: 0,
-            token_amount: '0',
-            total_fees: 0,
-            price_impact: '0',
-            best_provider: 'none',
-            error: 'No successful quotes'
-          }
-          console.log(`    ❌ ${config.key}: No successful quotes`)
-        }
-      } catch (error) {
-        console.error(`    ❌ ${config.key} error:`, error)
-        comparisons[config.key] = {
-          success: false,
-          response_time: 0,
-          token_amount: '0',
-          total_fees: 0,
-          price_impact: '0',
-          best_provider: 'none',
-          error: error instanceof Error ? error.message : 'Unknown error'
-        }
-      }
-      
-      // Small delay between requests to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 500))
-    }
-    
-    // Determine best configuration based on token amount received
-    let bestConfig = null
-    if (results.length > 0) {
-      const bestResult = results.reduce((best, current) => {
-        const bestAmount = parseFloat(best.token_amount)
-        const currentAmount = parseFloat(current.token_amount)
-        return currentAmount > bestAmount ? current : best
-      })
-      
-      bestConfig = {
-        slippage: bestResult.slippage,
-        provider: bestResult.provider,
-        token_amount: bestResult.token_amount,
-        response_time: bestResult.response_time,
-        total_fees: bestResult.total_fees
-      }
-    }
-    
+    // Convert enhanced result to the expected TradeComparisonResult format for backward compatibility
     const tradeResult: TradeComparisonResult = {
-      token_address: token.token_address,
-      token_symbol: token.token_symbol,
-      timestamp: new Date().toISOString(),
-      buy_amount_sol: BUY_AMOUNT_SOL,
-      comparisons,
-      best_config: bestConfig || {
+      token_address: enhancedResult.token_address,
+      token_symbol: enhancedResult.token_symbol,
+      timestamp: enhancedResult.timestamp,
+      buy_amount_sol: enhancedResult.buy_amount_sol,
+      comparisons: enhancedResult.configurations,
+      best_config: enhancedResult.best_config || {
         slippage: 0,
         provider: 'none',
         token_amount: '0',
@@ -399,11 +294,19 @@ async function performTradeComparison(token: any): Promise<TradeComparisonResult
       }
     }
     
-    console.log(`✅ Trade comparison completed for ${token.token_symbol}`)
+    console.log(`✅ Enhanced trade comparison completed for ${token.token_symbol}:`, {
+      successful_configs: Object.values(enhancedResult.configurations).filter(c => c.success).length,
+      best_provider: enhancedResult.best_config?.provider,
+      best_rpc: enhancedResult.best_config?.rpc_used,
+      provider_performance: Object.entries(enhancedResult.provider_performance)
+        .map(([p, perf]) => `${p}: ${perf.success_rate.toFixed(1)}%`)
+        .join(', ')
+    })
+    
     return tradeResult
     
   } catch (error) {
-    console.error(`❌ Error performing trade comparison for ${token.token_symbol}:`, error)
+    console.error(`❌ Error performing enhanced trade comparison for ${token.token_symbol}:`, error)
     return null
   }
 }
@@ -543,8 +446,7 @@ async function performBuySimulation(token: any): Promise<BuyOperation | null> {
     // Test different RPCs and configurations
     const rpcConfigs = [
       { name: 'Helius', url: 'https://mainnet.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b' },
-      { name: 'QuickNode', url: 'https://api.mainnet-beta.solana.com' },
-      { name: 'Alchemy', url: 'https://solana-mainnet.g.alchemy.com/v2/demo' }
+      { name: 'Shyft', url: 'https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn' },
     ]
     
     const slippageConfigs = [

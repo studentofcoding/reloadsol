@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import TradingSimulationModal from '@/components/TradingSimulationModal'
+import TradeComparisonModal from '@/components/TradeComparisonModal'
 
 interface TopWinner {
   token_address: string
@@ -104,8 +105,9 @@ export default function TrendingTrackerPage() {
   const [debugMode, setDebugMode] = useState(false)
   const [isRefreshingPrices, setIsRefreshingPrices] = useState(false)
   
-  // Simulation modal state
+  // Modal state
   const [simulationModalOpen, setSimulationModalOpen] = useState(false)
+  const [tradeComparisonModalOpen, setTradeComparisonModalOpen] = useState(false)
   const [selectedToken, setSelectedToken] = useState<TrackedToken | null>(null)
 
   // Update prices for currently tracked tokens
@@ -357,15 +359,25 @@ export default function TrendingTrackerPage() {
     }
   }
 
-  // Handler to open simulation modal
+  // Handler to open appropriate modal based on available data
   const handleTokenClick = (token: TrackedToken) => {
     setSelectedToken(token)
-    setSimulationModalOpen(true)
+    
+    // Prioritize trading simulation data over trade comparison data
+    if (token.trading_simulation) {
+      setSimulationModalOpen(true)
+    } else if (token.trade_comparison_data) {
+      setTradeComparisonModalOpen(true)
+    } else {
+      // No data available - still open simulation modal to show "no data" message
+      setSimulationModalOpen(true)
+    }
   }
 
-  // Handler to close simulation modal
+  // Handler to close modals
   const handleCloseModal = () => {
     setSimulationModalOpen(false)
+    setTradeComparisonModalOpen(false)
     setSelectedToken(null)
   }
 
@@ -967,6 +979,18 @@ export default function TrendingTrackerPage() {
       {selectedToken && (
         <TradingSimulationModal
           isOpen={simulationModalOpen}
+          onClose={handleCloseModal}
+          tokenAddress={selectedToken.token_address}
+          tokenSymbol={selectedToken.token_symbol}
+          tokenName={selectedToken.token_name}
+          logoUrl={selectedToken.logo_url}
+        />
+      )}
+
+      {/* Trade Comparison Modal */}
+      {selectedToken && (
+        <TradeComparisonModal
+          isOpen={tradeComparisonModalOpen}
           onClose={handleCloseModal}
           tokenAddress={selectedToken.token_address}
           tokenSymbol={selectedToken.token_symbol}
