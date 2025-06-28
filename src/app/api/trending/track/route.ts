@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
+import { compareTradeQuotes } from '@/utils/trade-comparison'
 
 interface JupiterBaseAsset {
   id: string
@@ -51,6 +52,8 @@ interface TrackedToken {
   status_changed_at: string | null
   created_at: string
   updated_at: string
+  trade_comparison_data?: TradeComparisonResult | null
+  trading_simulation?: TradingSimulation | null
 }
 
 // Add TopWinner interface for summary functionality
@@ -64,6 +67,151 @@ interface TopWinner {
   peak_gain_percentage: number
   tracking_duration_hours: number
   status_changed_at: string
+}
+
+// Add TradeComparisonResult interface for trade analysis
+interface TradeComparisonResult {
+  token_address: string
+  token_symbol: string | null
+  timestamp: string
+  buy_amount_sol: number
+  comparisons: {
+    slippage_1: {
+      success: boolean
+      response_time: number
+      token_amount: string
+      total_fees: number
+      price_impact: string
+      best_provider: string
+      error?: string
+    }
+    slippage_2: {
+      success: boolean
+      response_time: number
+      token_amount: string
+      total_fees: number
+      price_impact: string
+      best_provider: string
+      error?: string
+    }
+    slippage_5: {
+      success: boolean
+      response_time: number
+      token_amount: string
+      total_fees: number
+      price_impact: string
+      best_provider: string
+      error?: string
+    }
+  }
+  best_config: {
+    slippage: number
+    provider: string
+    token_amount: string
+    response_time: number
+    total_fees: number
+  }
+}
+
+// Add TradingSimulation interfaces
+interface BuyOperation {
+  timestamp: string
+  buy_amount_sol: number
+  token_amount_received: string
+  buy_price_usd: number
+  configurations: {
+    slippage_1: BuyConfigResult
+    slippage_2: BuyConfigResult
+    slippage_5: BuyConfigResult
+  }
+  best_buy_config: {
+    slippage: number
+    provider: string
+    token_amount: string
+    response_time: number
+    total_fees: number
+    rpc_used: string
+  }
+  rpc_used: string
+}
+
+interface SellOperation {
+  timestamp: string
+  sell_amount_tokens: string
+  sol_received: string
+  sell_price_usd: number
+  configurations: {
+    slippage_1: SellConfigResult
+    slippage_2: SellConfigResult
+    slippage_5: SellConfigResult
+  }
+  best_sell_config: {
+    slippage: number
+    provider: string
+    sol_amount: string
+    response_time: number
+    total_fees: number
+    rpc_used: string
+  }
+  rpc_used: string
+  final_gain_percentage: number
+  hold_duration_hours: number
+}
+
+interface BuyConfigResult {
+  success: boolean
+  response_time: number
+  token_amount: string
+  total_fees: number
+  price_impact: string
+  best_provider: string
+  error?: string
+}
+
+interface SellConfigResult {
+  success: boolean
+  response_time: number
+  sol_amount: string
+  total_fees: number
+  price_impact: string
+  best_provider: string
+  error?: string
+}
+
+interface TradingSimulation {
+  token_address: string
+  token_symbol: string | null
+  simulation_started_at: string
+  buy_operation: BuyOperation | null
+  sell_operation: SellOperation | null
+  current_status: 'buying' | 'holding' | 'selling' | 'completed' | 'failed'
+  target_gain_percentage: number
+  stop_loss_percentage: number
+  max_hold_hours: number
+  final_result: {
+    success: boolean
+    total_gain_percentage: number
+    total_gain_sol: number
+    buy_price_usd: number
+    sell_price_usd: number
+    hold_duration_hours: number
+    best_buy_config: {
+      slippage: number
+      provider: string
+      token_amount: string
+      response_time: number
+      total_fees: number
+      rpc_used: string
+    }
+    best_sell_config: {
+      slippage: number
+      provider: string
+      sol_amount: string
+      response_time: number
+      total_fees: number
+      rpc_used: string
+    }
+  } | null
 }
 
 // Helper function to check when last summary was run
@@ -131,6 +279,132 @@ async function runPnLUpdate(): Promise<void> {
   } catch (error) {
     console.error('❌ Error running PnL update:', error)
     // Don't throw - let tracking continue even if PnL update fails
+  }
+}
+
+// Helper function to perform trade comparison for a token
+async function performTradeComparison(token: any): Promise<TradeComparisonResult | null> {
+  try {
+    console.log(`🔄 Performing trade comparison for ${token.token_symbol} (${token.token_address})`)
+    
+    // SOL mint address
+    const SOL_MINT = 'So11111111111111111111111111111111111111112'
+    const BUY_AMOUNT_SOL = 0.1 // 0.1 SOL
+    const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9) // Convert to lamports
+    
+    // Test slippage configurations: 1%, 2%, 5%
+    const slippageConfigs = [
+      { key: 'slippage_1', bps: 100 },
+      { key: 'slippage_2', bps: 200 },
+      { key: 'slippage_5', bps: 500 }
+    ]
+    
+    const comparisons: any = {}
+    const results: any[] = []
+    
+    // Perform comparisons for each slippage configuration
+    for (const config of slippageConfigs) {
+      try {
+        console.log(`  📊 Testing ${config.key} (${config.bps/100}% slippage)...`)
+        
+        const comparison = await compareTradeQuotes({
+          inputMint: SOL_MINT,
+          outputMint: token.token_address,
+          amount: BUY_AMOUNT_LAMPORTS.toString(),
+          slippageBps: config.bps,
+          userPublicKey: '11111111111111111111111111111111' // Dummy key for comparison
+        })
+        
+        if (comparison.bestQuote && comparison.bestQuote.success) {
+          const bestQuote = comparison.bestQuote
+          const totalFees = bestQuote.fees?.totalFeeLamports || 0
+          
+          comparisons[config.key] = {
+            success: true,
+            response_time: bestQuote.responseTime,
+            token_amount: bestQuote.outAmount,
+            total_fees: totalFees / 1e9, // Convert to SOL
+            price_impact: bestQuote.priceImpactPct,
+            best_provider: bestQuote.provider
+          }
+          
+          results.push({
+            slippage: config.bps / 100,
+            provider: bestQuote.provider,
+            token_amount: bestQuote.outAmount,
+            response_time: bestQuote.responseTime,
+            total_fees: totalFees / 1e9
+          })
+          
+          console.log(`    ✅ ${config.key}: ${bestQuote.provider} - ${bestQuote.outAmount} tokens, ${bestQuote.responseTime}ms`)
+        } else {
+          comparisons[config.key] = {
+            success: false,
+            response_time: 0,
+            token_amount: '0',
+            total_fees: 0,
+            price_impact: '0',
+            best_provider: 'none',
+            error: 'No successful quotes'
+          }
+          console.log(`    ❌ ${config.key}: No successful quotes`)
+        }
+      } catch (error) {
+        console.error(`    ❌ ${config.key} error:`, error)
+        comparisons[config.key] = {
+          success: false,
+          response_time: 0,
+          token_amount: '0',
+          total_fees: 0,
+          price_impact: '0',
+          best_provider: 'none',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }
+      }
+      
+      // Small delay between requests to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 500))
+    }
+    
+    // Determine best configuration based on token amount received
+    let bestConfig = null
+    if (results.length > 0) {
+      const bestResult = results.reduce((best, current) => {
+        const bestAmount = parseFloat(best.token_amount)
+        const currentAmount = parseFloat(current.token_amount)
+        return currentAmount > bestAmount ? current : best
+      })
+      
+      bestConfig = {
+        slippage: bestResult.slippage,
+        provider: bestResult.provider,
+        token_amount: bestResult.token_amount,
+        response_time: bestResult.response_time,
+        total_fees: bestResult.total_fees
+      }
+    }
+    
+    const tradeResult: TradeComparisonResult = {
+      token_address: token.token_address,
+      token_symbol: token.token_symbol,
+      timestamp: new Date().toISOString(),
+      buy_amount_sol: BUY_AMOUNT_SOL,
+      comparisons,
+      best_config: bestConfig || {
+        slippage: 0,
+        provider: 'none',
+        token_amount: '0',
+        response_time: 0,
+        total_fees: 0
+      }
+    }
+    
+    console.log(`✅ Trade comparison completed for ${token.token_symbol}`)
+    return tradeResult
+    
+  } catch (error) {
+    console.error(`❌ Error performing trade comparison for ${token.token_symbol}:`, error)
+    return null
   }
 }
 
@@ -256,6 +530,360 @@ async function runDailySummary(currentTime: Date): Promise<void> {
   }
 }
 
+// Helper function to perform buy simulation
+async function performBuySimulation(token: any): Promise<BuyOperation | null> {
+  try {
+    console.log(`💰 Performing buy simulation for ${token.token_symbol} (${token.token_address})`)
+    
+    // SOL mint address
+    const SOL_MINT = 'So11111111111111111111111111111111111111112'
+    const BUY_AMOUNT_SOL = 0.1 // 0.1 SOL
+    const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9)
+    
+    // Test different RPCs and configurations
+    const rpcConfigs = [
+      { name: 'Helius', url: 'https://mainnet.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b' },
+      { name: 'QuickNode', url: 'https://api.mainnet-beta.solana.com' },
+      { name: 'Alchemy', url: 'https://solana-mainnet.g.alchemy.com/v2/demo' }
+    ]
+    
+    const slippageConfigs = [
+      { key: 'slippage_1', bps: 100 },
+      { key: 'slippage_2', bps: 200 },
+      { key: 'slippage_5', bps: 500 }
+    ]
+    
+    const configurations: any = {}
+    const allResults: any[] = []
+    
+    // Test each slippage configuration
+    for (const config of slippageConfigs) {
+      const rpcResults: any[] = []
+      
+      // Test with different RPCs in parallel
+      const rpcPromises = rpcConfigs.map(async (rpc) => {
+        try {
+          console.log(`  📊 Testing ${config.key} with ${rpc.name}...`)
+          
+          const comparison = await compareTradeQuotes({
+            inputMint: SOL_MINT,
+            outputMint: token.token_address,
+            amount: BUY_AMOUNT_LAMPORTS.toString(),
+            slippageBps: config.bps,
+            userPublicKey: '11111111111111111111111111111111'
+          })
+          
+          if (comparison.bestQuote && comparison.bestQuote.success) {
+            const bestQuote = comparison.bestQuote
+            const totalFees = bestQuote.fees?.totalFeeLamports || 0
+            
+            const result = {
+              rpc: rpc.name,
+              success: true,
+              response_time: bestQuote.responseTime,
+              token_amount: bestQuote.outAmount,
+              total_fees: totalFees / 1e9,
+              price_impact: bestQuote.priceImpactPct,
+              best_provider: bestQuote.provider
+            }
+            
+            rpcResults.push(result)
+            allResults.push({ ...result, slippage: config.bps / 100 })
+            
+            console.log(`    ✅ ${rpc.name}: ${bestQuote.provider} - ${bestQuote.outAmount} tokens, ${bestQuote.responseTime}ms`)
+            return result
+          } else {
+            console.log(`    ❌ ${rpc.name}: No successful quotes`)
+            return null
+          }
+        } catch (error) {
+          console.error(`    ❌ ${rpc.name} error:`, error)
+          return null
+        }
+      })
+      
+      // Wait for all RPC tests to complete
+      const rpcResultsCompleted = await Promise.allSettled(rpcPromises)
+      const successfulResults = rpcResultsCompleted
+        .filter(result => result.status === 'fulfilled' && result.value)
+        .map(result => (result as PromiseFulfilledResult<any>).value)
+      
+      if (successfulResults.length > 0) {
+        // Find best result for this slippage configuration
+        const bestResult = successfulResults.reduce((best, current) => {
+          const bestAmount = parseFloat(best.token_amount)
+          const currentAmount = parseFloat(current.token_amount)
+          return currentAmount > bestAmount ? current : best
+        })
+        
+        configurations[config.key] = {
+          success: true,
+          response_time: bestResult.response_time,
+          token_amount: bestResult.token_amount,
+          total_fees: bestResult.total_fees,
+          price_impact: bestResult.price_impact,
+          best_provider: bestResult.best_provider,
+          rpc_used: bestResult.rpc
+        }
+      } else {
+        configurations[config.key] = {
+          success: false,
+          response_time: 0,
+          token_amount: '0',
+          total_fees: 0,
+          price_impact: '0',
+          best_provider: 'none',
+          error: 'No successful quotes across all RPCs'
+        }
+      }
+      
+      // Small delay between configurations
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    
+    // Determine overall best configuration
+    let bestBuyConfig = null
+    if (allResults.length > 0) {
+      const bestResult = allResults.reduce((best, current) => {
+        const bestAmount = parseFloat(best.token_amount)
+        const currentAmount = parseFloat(current.token_amount)
+        return currentAmount > bestAmount ? current : best
+      })
+      
+      bestBuyConfig = {
+        slippage: bestResult.slippage,
+        provider: bestResult.best_provider,
+        token_amount: bestResult.token_amount,
+        response_time: bestResult.response_time,
+        total_fees: bestResult.total_fees,
+        rpc_used: bestResult.rpc
+      }
+    }
+    
+    if (!bestBuyConfig) {
+      console.log(`❌ No successful buy configurations for ${token.token_symbol}`)
+      return null
+    }
+    
+    const buyOperation: BuyOperation = {
+      timestamp: new Date().toISOString(),
+      buy_amount_sol: BUY_AMOUNT_SOL,
+      token_amount_received: bestBuyConfig.token_amount,
+      buy_price_usd: token.current_price,
+      configurations,
+      best_buy_config: bestBuyConfig,
+      rpc_used: bestBuyConfig.rpc_used
+    }
+    
+    console.log(`✅ Buy simulation completed for ${token.token_symbol}: ${bestBuyConfig.token_amount} tokens via ${bestBuyConfig.provider}`)
+    return buyOperation
+    
+  } catch (error) {
+    console.error(`❌ Error performing buy simulation for ${token.token_symbol}:`, error)
+    return null
+  }
+}
+
+// Helper function to perform sell simulation
+async function performSellSimulation(token: any, buyOperation: BuyOperation): Promise<SellOperation | null> {
+  try {
+    console.log(`💸 Performing sell simulation for ${token.token_symbol} (${token.token_address})`)
+    
+    // SOL mint address
+    const SOL_MINT = 'So11111111111111111111111111111111111111112'
+    const tokenAmountToSell = buyOperation.token_amount_received
+    
+    // Test different RPCs and configurations
+    const rpcConfigs = [
+      { name: 'Helius', url: 'https://mainnet.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b' },
+      { name: 'QuickNode', url: 'https://api.mainnet-beta.solana.com' },
+      { name: 'Alchemy', url: 'https://solana-mainnet.g.alchemy.com/v2/demo' }
+    ]
+    
+    const slippageConfigs = [
+      { key: 'slippage_1', bps: 100 },
+      { key: 'slippage_2', bps: 200 },
+      { key: 'slippage_5', bps: 500 }
+    ]
+    
+    const configurations: any = {}
+    const allResults: any[] = []
+    
+    // Test each slippage configuration
+    for (const config of slippageConfigs) {
+      const rpcResults: any[] = []
+      
+      // Test with different RPCs in parallel
+      const rpcPromises = rpcConfigs.map(async (rpc) => {
+        try {
+          console.log(`  📊 Testing sell ${config.key} with ${rpc.name}...`)
+          
+          const comparison = await compareTradeQuotes({
+            inputMint: token.token_address,
+            outputMint: SOL_MINT,
+            amount: tokenAmountToSell,
+            slippageBps: config.bps,
+            userPublicKey: '11111111111111111111111111111111'
+          })
+          
+          if (comparison.bestQuote && comparison.bestQuote.success) {
+            const bestQuote = comparison.bestQuote
+            const totalFees = bestQuote.fees?.totalFeeLamports || 0
+            
+            const result = {
+              rpc: rpc.name,
+              success: true,
+              response_time: bestQuote.responseTime,
+              sol_amount: bestQuote.outAmount,
+              total_fees: totalFees / 1e9,
+              price_impact: bestQuote.priceImpactPct,
+              best_provider: bestQuote.provider
+            }
+            
+            rpcResults.push(result)
+            allResults.push({ ...result, slippage: config.bps / 100 })
+            
+            console.log(`    ✅ ${rpc.name}: ${bestQuote.provider} - ${bestQuote.outAmount} SOL, ${bestQuote.responseTime}ms`)
+            return result
+          } else {
+            console.log(`    ❌ ${rpc.name}: No successful quotes`)
+            return null
+          }
+        } catch (error) {
+          console.error(`    ❌ ${rpc.name} error:`, error)
+          return null
+        }
+      })
+      
+      // Wait for all RPC tests to complete
+      const rpcResultsCompleted = await Promise.allSettled(rpcPromises)
+      const successfulResults = rpcResultsCompleted
+        .filter(result => result.status === 'fulfilled' && result.value)
+        .map(result => (result as PromiseFulfilledResult<any>).value)
+      
+      if (successfulResults.length > 0) {
+        // Find best result for this slippage configuration
+        const bestResult = successfulResults.reduce((best, current) => {
+          const bestAmount = parseFloat(best.sol_amount)
+          const currentAmount = parseFloat(current.sol_amount)
+          return currentAmount > bestAmount ? current : best
+        })
+        
+        configurations[config.key] = {
+          success: true,
+          response_time: bestResult.response_time,
+          sol_amount: bestResult.sol_amount,
+          total_fees: bestResult.total_fees,
+          price_impact: bestResult.price_impact,
+          best_provider: bestResult.best_provider,
+          rpc_used: bestResult.rpc
+        }
+      } else {
+        configurations[config.key] = {
+          success: false,
+          response_time: 0,
+          sol_amount: '0',
+          total_fees: 0,
+          price_impact: '0',
+          best_provider: 'none',
+          error: 'No successful quotes across all RPCs'
+        }
+      }
+      
+      // Small delay between configurations
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+    
+    // Determine overall best configuration
+    let bestSellConfig = null
+    if (allResults.length > 0) {
+      const bestResult = allResults.reduce((best, current) => {
+        const bestAmount = parseFloat(best.sol_amount)
+        const currentAmount = parseFloat(current.sol_amount)
+        return currentAmount > bestAmount ? current : best
+      })
+      
+      bestSellConfig = {
+        slippage: bestResult.slippage,
+        provider: bestResult.best_provider,
+        sol_amount: bestResult.sol_amount,
+        response_time: bestResult.response_time,
+        total_fees: bestResult.total_fees,
+        rpc_used: bestResult.rpc
+      }
+    }
+    
+    if (!bestSellConfig) {
+      console.log(`❌ No successful sell configurations for ${token.token_symbol}`)
+      return null
+    }
+    
+    // Calculate final results
+    const buyTime = new Date(buyOperation.timestamp)
+    const sellTime = new Date()
+    const holdDurationHours = (sellTime.getTime() - buyTime.getTime()) / (1000 * 60 * 60)
+    
+    const buyAmountSol = buyOperation.buy_amount_sol
+    const sellAmountSol = parseFloat(bestSellConfig.sol_amount)
+    const finalGainPercentage = ((sellAmountSol - buyAmountSol) / buyAmountSol) * 100
+    
+    const sellOperation: SellOperation = {
+      timestamp: sellTime.toISOString(),
+      sell_amount_tokens: tokenAmountToSell,
+      sol_received: bestSellConfig.sol_amount,
+      sell_price_usd: token.current_price,
+      configurations,
+      best_sell_config: bestSellConfig,
+      rpc_used: bestSellConfig.rpc_used,
+      final_gain_percentage: finalGainPercentage,
+      hold_duration_hours: holdDurationHours
+    }
+    
+    console.log(`✅ Sell simulation completed for ${token.token_symbol}: ${bestSellConfig.sol_amount} SOL (${finalGainPercentage.toFixed(2)}% gain)`)
+    return sellOperation
+    
+  } catch (error) {
+    console.error(`❌ Error performing sell simulation for ${token.token_symbol}:`, error)
+    return null
+  }
+}
+
+// Helper function to check if token should be sold
+function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): boolean {
+  const currentGain = token.current_gain_percentage
+  const peakGain = token.peak_gain_percentage
+  
+  // Check target gain reached
+  if (currentGain >= simulation.target_gain_percentage) {
+    console.log(`🎯 Target gain reached for ${token.token_symbol}: ${currentGain.toFixed(2)}% >= ${simulation.target_gain_percentage}%`)
+    return true
+  }
+  
+  // Check stop loss
+  if (currentGain <= simulation.stop_loss_percentage) {
+    console.log(`🛑 Stop loss triggered for ${token.token_symbol}: ${currentGain.toFixed(2)}% <= ${simulation.stop_loss_percentage}%`)
+    return true
+  }
+  
+  // Check max hold time
+  const simulationStart = new Date(simulation.simulation_started_at)
+  const now = new Date()
+  const holdDurationHours = (now.getTime() - simulationStart.getTime()) / (1000 * 60 * 60)
+  
+  if (holdDurationHours >= simulation.max_hold_hours) {
+    console.log(`⏰ Max hold time reached for ${token.token_symbol}: ${holdDurationHours.toFixed(1)}h >= ${simulation.max_hold_hours}h`)
+    return true
+  }
+  
+  // Check if token has dropped significantly from peak
+  if (peakGain > 20 && currentGain < peakGain * 0.5) {
+    console.log(`📉 Significant drop from peak for ${token.token_symbol}: ${currentGain.toFixed(2)}% < ${(peakGain * 0.5).toFixed(2)}%`)
+    return true
+  }
+  
+  return false
+}
+
 export async function POST(request: NextRequest) {
   try {
     // Validate authentication (server-side only)
@@ -364,8 +992,47 @@ export async function POST(request: NextRequest) {
       const existingToken = trackedTokensMap.get(token.token_address)
       
       if (!existingToken) {
-        // New token - start tracking it
+        // New token - start tracking it and perform trading simulation
         const tokenId = `track_${token.token_address}_${Date.now()}`
+        
+        // Perform trade comparison for new tokens
+        let tradeComparisonData = null
+        try {
+          tradeComparisonData = await performTradeComparison(token)
+          console.log(`📊 Trade comparison for new token ${token.token_symbol}:`, {
+            best_config: tradeComparisonData?.best_config,
+            successful_comparisons: Object.values(tradeComparisonData?.comparisons || {}).filter((c: any) => c.success).length
+          })
+        } catch (error) {
+          console.error(`❌ Trade comparison failed for ${token.token_symbol}:`, error)
+        }
+        
+        // Perform buy simulation for new tokens
+        let tradingSimulation: TradingSimulation | null = null
+        try {
+          const buyOperation = await performBuySimulation(token)
+          
+          if (buyOperation) {
+            tradingSimulation = {
+              token_address: token.token_address,
+              token_symbol: token.token_symbol,
+              simulation_started_at: new Date().toISOString(),
+              buy_operation: buyOperation,
+              sell_operation: null,
+              current_status: 'holding',
+              target_gain_percentage: 50, // 50% target gain
+              stop_loss_percentage: -30, // 30% stop loss
+              max_hold_hours: 24, // Max 24 hours hold
+              final_result: null
+            }
+            
+            console.log(`💰 Buy simulation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens`)
+          } else {
+            console.log(`❌ Buy simulation failed for ${token.token_symbol}`)
+          }
+        } catch (error) {
+          console.error(`❌ Buy simulation error for ${token.token_symbol}:`, error)
+        }
         
         updatesPromises.push(
           (async () => {
@@ -386,7 +1053,9 @@ export async function POST(request: NextRequest) {
                 organic_score: token.organic_score,
                 market_cap: token.market_cap,
                 volume_1h: token.volume_1h,
-                tracking_started_at: new Date().toISOString()
+                tracking_started_at: new Date().toISOString(),
+                trade_comparison_data: tradeComparisonData,
+                trading_simulation: tradingSimulation
               })
             if (error) throw error
           })()
@@ -395,16 +1064,69 @@ export async function POST(request: NextRequest) {
         newTokensAdded++
         console.log(`✅ Adding new token to track: ${token.token_symbol} (${token.token_address})`)
       } else {
-        // Existing token - update price and check for loss
+        // Existing token - update price and check for sell conditions
         const currentGain = ((token.current_price - existingToken.initial_price_usd) / existingToken.initial_price_usd) * 100
         const newPeakPrice = Math.max(existingToken.peak_price_usd, token.current_price)
         const peakGain = ((newPeakPrice - existingToken.initial_price_usd) / existingToken.initial_price_usd) * 100
         
-        // Check if token has dropped more than 50% from initial price
+        // Check if token has dropped more than 50% from initial price (original loss condition)
         const isLost = currentGain <= -50
         
+        // Check if trading simulation should sell
+        let shouldSell = false
+        let sellOperation = null
+        
+        if (existingToken.trading_simulation && existingToken.trading_simulation.current_status === 'holding') {
+          shouldSell = shouldSellToken({
+            ...existingToken,
+            current_gain_percentage: currentGain,
+            peak_gain_percentage: peakGain,
+            last_price_usd: token.current_price,
+            peak_price_usd: newPeakPrice
+          }, existingToken.trading_simulation)
+          
+          if (shouldSell && existingToken.trading_simulation.buy_operation) {
+            try {
+              console.log(`💸 Triggering sell simulation for ${token.token_symbol} (${currentGain.toFixed(2)}% gain)`)
+              
+              sellOperation = await performSellSimulation({
+                ...token,
+                current_price: token.current_price
+              }, existingToken.trading_simulation.buy_operation)
+              
+              if (sellOperation) {
+                // Calculate final results
+                const buyAmountSol = existingToken.trading_simulation.buy_operation!.buy_amount_sol
+                const sellAmountSol = parseFloat(sellOperation.sol_received)
+                const totalGainSol = sellAmountSol - buyAmountSol
+                const totalGainPercentage = ((sellAmountSol - buyAmountSol) / buyAmountSol) * 100
+                
+                const finalResult = {
+                  success: true,
+                  total_gain_percentage: totalGainPercentage,
+                  total_gain_sol: totalGainSol,
+                  buy_price_usd: existingToken.trading_simulation.buy_operation!.buy_price_usd,
+                  sell_price_usd: token.current_price,
+                  hold_duration_hours: sellOperation.hold_duration_hours,
+                  best_buy_config: existingToken.trading_simulation.buy_operation!.best_buy_config,
+                  best_sell_config: sellOperation.best_sell_config
+                }
+                
+                console.log(`✅ Sell simulation completed for ${token.token_symbol}: ${totalGainPercentage.toFixed(2)}% gain (${totalGainSol.toFixed(6)} SOL)`)
+                
+                // Update simulation status
+                existingToken.trading_simulation.sell_operation = sellOperation
+                existingToken.trading_simulation.current_status = 'completed'
+                existingToken.trading_simulation.final_result = finalResult
+              }
+            } catch (error) {
+              console.error(`❌ Sell simulation error for ${token.token_symbol}:`, error)
+            }
+          }
+        }
+        
         if (isLost && existingToken.status === 'tracking') {
-          // Mark as lost
+          // Mark as lost (original logic)
           updatesPromises.push(
             (async () => {
               const { error } = await supabase
@@ -418,7 +1140,8 @@ export async function POST(request: NextRequest) {
                   status_changed_at: new Date().toISOString(),
                   organic_score: token.organic_score,
                   market_cap: token.market_cap,
-                  volume_1h: token.volume_1h
+                  volume_1h: token.volume_1h,
+                  trading_simulation: existingToken.trading_simulation
                 })
                 .eq('id', existingToken.id)
               if (error) throw error
@@ -428,7 +1151,7 @@ export async function POST(request: NextRequest) {
           tokensLost++
           console.log(`❌ Token lost (${currentGain.toFixed(2)}%): ${token.token_symbol} (${token.token_address})`)
         } else if (existingToken.status === 'tracking') {
-          // Update tracking token with new price data
+          // Update tracking token with new price data and simulation results
           updatesPromises.push(
             (async () => {
               const { error } = await supabase
@@ -440,7 +1163,8 @@ export async function POST(request: NextRequest) {
                   peak_gain_percentage: peakGain,
                   organic_score: token.organic_score,
                   market_cap: token.market_cap,
-                  volume_1h: token.volume_1h
+                  volume_1h: token.volume_1h,
+                  trading_simulation: existingToken.trading_simulation
                 })
                 .eq('id', existingToken.id)
               if (error) throw error
@@ -450,6 +1174,10 @@ export async function POST(request: NextRequest) {
           tokensUpdated++
           if (currentGain > 10) {
             console.log(`📈 Token performing well (${currentGain.toFixed(2)}%): ${token.token_symbol}`)
+          }
+          
+          if (shouldSell && sellOperation) {
+            console.log(`🎯 Token sold via simulation (${currentGain.toFixed(2)}%): ${token.token_symbol}`)
           }
         }
       }
@@ -507,6 +1235,95 @@ export async function POST(request: NextRequest) {
     console.error('❌ Error in trending token tracking:', error)
     return NextResponse.json({
       error: 'Failed to track trending tokens',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: new Date().toISOString()
+    }, { status: 500 })
+  }
+}
+
+// GET method to retrieve trade comparison data for a specific token
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const tokenAddress = searchParams.get('token')
+    
+    if (!tokenAddress) {
+      return NextResponse.json({
+        error: 'Token address is required',
+        example: '/api/trending/track?token=TOKEN_ADDRESS'
+      }, { status: 400 })
+    }
+    
+    // Get token data with trade comparison
+    const { data: token, error } = await supabase
+      .from('trending_token_tracker')
+      .select('*')
+      .eq('token_address', tokenAddress)
+      .single()
+    
+    if (error || !token) {
+      return NextResponse.json({
+        error: 'Token not found',
+        token_address: tokenAddress
+      }, { status: 404 })
+    }
+    
+    // If no trade comparison data exists, perform it now
+    if (!token.trade_comparison_data) {
+      console.log(`🔄 No trade comparison data found for ${token.token_symbol}, performing now...`)
+      
+      const tradeComparisonData = await performTradeComparison({
+        token_address: token.token_address,
+        token_symbol: token.token_symbol,
+        token_name: token.token_name
+      })
+      
+      if (tradeComparisonData) {
+        // Update the token with trade comparison data
+        const { error: updateError } = await supabase
+          .from('trending_token_tracker')
+          .update({
+            trade_comparison_data: tradeComparisonData
+          })
+          .eq('id', token.id)
+        
+        if (updateError) {
+          console.error('❌ Failed to update token with trade comparison data:', updateError)
+        } else {
+          token.trade_comparison_data = tradeComparisonData
+        }
+      }
+    }
+    
+    return NextResponse.json({
+      success: true,
+      token: {
+        id: token.id,
+        token_address: token.token_address,
+        token_symbol: token.token_symbol,
+        token_name: token.token_name,
+        logo_url: token.logo_url,
+        initial_price_usd: token.initial_price_usd,
+        last_price_usd: token.last_price_usd,
+        peak_price_usd: token.peak_price_usd,
+        current_gain_percentage: token.current_gain_percentage,
+        peak_gain_percentage: token.peak_gain_percentage,
+        status: token.status,
+        organic_score: token.organic_score,
+        market_cap: token.market_cap,
+        volume_1h: token.volume_1h,
+        tracking_started_at: token.tracking_started_at,
+        status_changed_at: token.status_changed_at,
+        trade_comparison_data: token.trade_comparison_data,
+        trading_simulation: token.trading_simulation
+      },
+      timestamp: new Date().toISOString()
+    })
+    
+  } catch (error) {
+    console.error('❌ Error retrieving token trade comparison:', error)
+    return NextResponse.json({
+      error: 'Failed to retrieve token trade comparison',
       message: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString()
     }, { status: 500 })

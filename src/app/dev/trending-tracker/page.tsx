@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import TradingSimulationModal from '@/components/TradingSimulationModal'
 
 interface TopWinner {
   token_address: string
@@ -33,6 +34,8 @@ interface TrackedToken {
   status_changed_at: string | null
   created_at: string
   updated_at: string
+  trade_comparison_data?: any | null
+  trading_simulation?: any | null
 }
 
 interface Summary {
@@ -100,6 +103,10 @@ export default function TrendingTrackerPage() {
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date())
   const [debugMode, setDebugMode] = useState(false)
   const [isRefreshingPrices, setIsRefreshingPrices] = useState(false)
+  
+  // Simulation modal state
+  const [simulationModalOpen, setSimulationModalOpen] = useState(false)
+  const [selectedToken, setSelectedToken] = useState<TrackedToken | null>(null)
 
   // Update prices for currently tracked tokens
   const updateTokenPrices = async (tokens: TrackedToken[]): Promise<boolean> => {
@@ -327,24 +334,39 @@ export default function TrendingTrackerPage() {
 
   // Debug function to manually test summary API (development mode only)
   const testSummaryAPI = async () => {
-    console.log('🧪 Testing summary API manually...')
     try {
+      console.log('🧪 Testing summary API...')
       const response = await fetch('/api/trending/summary', {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
       })
-      console.log('📊 Summary API response status:', response.status)
       
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error('❌ Summary API Error:', errorText)
-        return
+      const result = await response.json()
+      console.log('📊 Summary API result:', result)
+      
+      if (response.ok) {
+        alert(`✅ Summary API test successful!\n\nPeriod: ${result.period_start} to ${result.period_end}\nTokens tracked: ${result.total_tokens_tracked}\nWon: ${result.won_tokens}\nLost: ${result.lost_tokens}\nWin rate: ${result.win_rate.toFixed(1)}%`)
+      } else {
+        alert(`❌ Summary API test failed: ${result.error || 'Unknown error'}`)
       }
-      
-      const data = await response.json()
-      console.log('✅ Summary API response:', data)
-    } catch (err) {
-      console.error('❌ Error testing summary API:', err)
+    } catch (error) {
+      console.error('❌ Summary API test error:', error)
+      alert(`❌ Summary API test error: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
+  }
+
+  // Handler to open simulation modal
+  const handleTokenClick = (token: TrackedToken) => {
+    setSelectedToken(token)
+    setSimulationModalOpen(true)
+  }
+
+  // Handler to close simulation modal
+  const handleCloseModal = () => {
+    setSimulationModalOpen(false)
+    setSelectedToken(null)
   }
 
   // Auto-refresh every 30 seconds (without price updates to avoid rate limiting)
@@ -745,7 +767,11 @@ export default function TrendingTrackerPage() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {stats.current_tracking.tokens.slice(0, 20).map(token => (
-                  <div key={token.id} className="p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 transition-all duration-200">
+                  <div 
+                    key={token.id} 
+                    className="p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 transition-all duration-200 cursor-pointer"
+                    onClick={() => handleTokenClick(token)}
+                  >
                     <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center space-x-3">
                       <TokenIcon token={token} />
@@ -777,6 +803,18 @@ export default function TrendingTrackerPage() {
                         <span className="text-white">{formatRelativeTime(token.tracking_started_at)}</span>
                       </div>
                     </div>
+                    {/* Trade comparison indicator */}
+                    {token.trade_comparison_data && !token.trading_simulation && (
+                      <div className="mt-2 text-xs text-blue-400">
+                        📊 Trade data available
+                      </div>
+                    )}
+                    {/* Trading simulation indicator */}
+                    {token.trading_simulation && (
+                      <div className="mt-2 text-xs text-green-400">
+                        🤖 Simulation data available
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -792,7 +830,11 @@ export default function TrendingTrackerPage() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {stats.recent_completed.winners.map(token => (
-                  <div key={token.id} className="p-4 bg-gray-800 rounded-xl border border-green-600/30 hover:border-green-500/50 transition-all duration-200">
+                  <div 
+                    key={token.id} 
+                    className="p-4 bg-gray-800 rounded-xl border border-green-600/30 hover:border-green-500/50 transition-all duration-200 cursor-pointer"
+                    onClick={() => handleTokenClick(token)}
+                  >
                     <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center space-x-3">
                         <div className="relative">
@@ -831,6 +873,18 @@ export default function TrendingTrackerPage() {
                         <span className="text-white">{formatRelativeTime(token.status_changed_at || token.updated_at)}</span>
                       </div>
                     </div>
+                    {/* Trade comparison indicator */}
+                    {token.trade_comparison_data && !token.trading_simulation && (
+                      <div className="mt-2 text-xs text-blue-400">
+                        📊 Trade data available
+                      </div>
+                    )}
+                    {/* Trading simulation indicator */}
+                    {token.trading_simulation && (
+                      <div className="mt-2 text-xs text-green-400">
+                        🤖 Simulation data available
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -846,7 +900,11 @@ export default function TrendingTrackerPage() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {stats.recent_completed.losers.map(token => (
-                  <div key={token.id} className="p-4 bg-gray-800 rounded-xl border border-red-600/30 hover:border-red-500/50 transition-all duration-200">
+                  <div 
+                    key={token.id} 
+                    className="p-4 bg-gray-800 rounded-xl border border-red-600/30 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
+                    onClick={() => handleTokenClick(token)}
+                  >
                     <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center space-x-3">
                         <div className="relative">
@@ -885,6 +943,18 @@ export default function TrendingTrackerPage() {
                         <span className="text-white">{formatRelativeTime(token.status_changed_at || token.updated_at)}</span>
                       </div>
                     </div>
+                    {/* Trade comparison indicator */}
+                    {token.trade_comparison_data && !token.trading_simulation && (
+                      <div className="mt-2 text-xs text-blue-400">
+                        📊 Trade data available
+                      </div>
+                    )}
+                    {/* Trading simulation indicator */}
+                    {token.trading_simulation && (
+                      <div className="mt-2 text-xs text-green-400">
+                        🤖 Simulation data available
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -892,6 +962,18 @@ export default function TrendingTrackerPage() {
           </div>
         )}
       </div>
+
+      {/* Trading Simulation Modal */}
+      {selectedToken && (
+        <TradingSimulationModal
+          isOpen={simulationModalOpen}
+          onClose={handleCloseModal}
+          tokenAddress={selectedToken.token_address}
+          tokenSymbol={selectedToken.token_symbol}
+          tokenName={selectedToken.token_name}
+          logoUrl={selectedToken.logo_url}
+        />
+      )}
     </div>
   )
 } 
