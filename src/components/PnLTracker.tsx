@@ -375,9 +375,20 @@ export default function PnLTracker() {
                const remainingProportion = position.remainingTokenAmount / position.totalTokenAmount;
                remainingSolInvestment = position.totalSolBought * remainingProportion;
              } else {
-               // If there have been sells but we have no token data, we cannot accurately calculate
-               // the remaining investment. Defaulting to 0 is the safest option.
-               remainingSolInvestment = 0;
+               // If there have been sells but we have no token data, estimate based on SOL difference
+               // and wallet token presence. Since the user has tokens in wallet, there must be some investment.
+               const netSolDifference = position.totalSolBought - position.totalSolSold;
+               
+               if (netSolDifference > 0.001) {
+                 // Use the net SOL difference as remaining investment
+                 remainingSolInvestment = netSolDifference;
+               } else {
+                 // Fallback: estimate based on original buy amount and wallet token presence
+                 // If user has tokens but we can't calculate precisely, assume at least 10% of original investment remains
+                 remainingSolInvestment = Math.max(0.001, position.totalSolBought * 0.1);
+               }
+               
+               console.log(`⚠️ Token ${position.symbol}: Missing token amount data, estimated remaining SOL investment: ${remainingSolInvestment.toFixed(4)} (netDiff: ${netSolDifference.toFixed(4)})`);
              }
            }
           
@@ -397,7 +408,7 @@ export default function PnLTracker() {
             walletTokenData: walletToken
           }
           openData.push(openPosition)
-          console.log(`✅ Verified open position: ${position.symbol || walletToken.symbol} - Historical: ${position.remainingTokenAmount.toFixed(4)}, Wallet: ${walletToken.uiAmount.toFixed(4)}`)
+          console.log(`✅ Verified open position: ${position.symbol || walletToken.symbol} - SOL Investment: ${remainingSolInvestment.toFixed(4)}, Historical: ${position.remainingTokenAmount.toFixed(4)}, Wallet: ${walletToken.uiAmount.toFixed(4)}, Total Bought: ${position.totalSolBought.toFixed(4)}, Total Sold: ${position.totalSolSold.toFixed(4)}`)
         } else {
           console.log(`❌ Skipping open position: ${position.symbol} - Token not found in wallet or zero balance`)
         }

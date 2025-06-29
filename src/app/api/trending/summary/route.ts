@@ -45,7 +45,13 @@ export async function POST(request: NextRequest) {
     // Validate authentication (server-side only)
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
-    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'trending-track-secret'
+    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET
+    if (!expectedSecretKey) {
+      return NextResponse.json(
+        { error: 'Server configuration error: missing TRENDING_TRACKER_SECRET' },
+        { status: 500 }
+      )
+    }
     
     // Check if this is a Vercel cron job (has special headers)
     const isVercelCron = request.headers.get('vercel-cron') === '1' || 

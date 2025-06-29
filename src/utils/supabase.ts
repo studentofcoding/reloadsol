@@ -1,30 +1,63 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Prefer server-side env vars (SUPABASE_URL / SUPABASE_ANON_KEY) but fall back to
-// NEXT_PUBLIC_ variants when running in the browser. This avoids build-time
-// failures when the client bundle tries to access server-only variables while
-// still allowing you to keep the default "safe" public values if desired.
+// Environment detection
+const isServer = typeof window === 'undefined';
 
-const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL)!;
-const supabaseAnonKey = (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)!;
+// Server-side configuration (private env vars only)
+const getServerSupabaseConfig = () => {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY;
+  
+  if (!url || !key) {
+    throw new Error('Server supabase config missing: SUPABASE_URL and SUPABASE_ANON_KEY must be set');
+  }
+  
+  return { url, key };
+};
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+// Client-side configuration (will use API proxy instead of direct connection)
+const getClientSupabaseConfig = () => {
+  // For client-side, we'll create a minimal client that errors on direct use
+  // This forces all client-side operations to go through API routes
+  return {
+    url: 'https://placeholder.supabase.co', // Placeholder URL
+    key: 'placeholder-key' // Placeholder key
+  };
+};
+
+// Create appropriate configuration based on environment
+const config = isServer ? getServerSupabaseConfig() : getClientSupabaseConfig();
+
+// Main supabase client - only works properly on server
+export const supabase = createClient(config.url, config.key, {
   auth: {
-    persistSession: true,
-    autoRefreshToken: true,
+    persistSession: !isServer, // Only persist session on client
+    autoRefreshToken: !isServer,
   }
 });
 
-export const adminSupabase = createClient(
-  supabaseUrl!,
-  supabaseAnonKey!,
-  {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  }
-);
+// Admin supabase client - server only
+export const adminSupabase = isServer 
+  ? createClient(config.url, config.key, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    })
+  : supabase; // Fallback to main client on browser (will error appropriately)
+
+// Client-side operations should go through API routes instead
+if (!isServer) {
+  // Override supabase methods to throw helpful errors on client
+  const clientError = () => {
+    throw new Error('Direct supabase access not allowed on client. Use API routes instead.');
+  };
+  
+  // We'll keep the client creation for typing but override dangerous methods
+  supabase.from = () => {
+    throw new Error('Direct supabase.from() not allowed on client. Use fetch("/api/...") instead.');
+  };
+}
 
 // Telegram Constants
 export const TELEGRAM_LINKS = {
@@ -59,6 +92,11 @@ const LAST_SYNC_KEY = 'last_sync_time';
 
 // Get cached operations
 export const getCachedOperations = (): TokenOperations[] => {
+  // Only run in browser environment
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+    return []
+  }
+  
   try {
     const cached = localStorage.getItem(OPERATIONS_CACHE_KEY);
     return cached ? JSON.parse(cached) : [];
@@ -69,6 +107,11 @@ export const getCachedOperations = (): TokenOperations[] => {
 
 // Add operation to cache
 export const cacheOperation = (walletAddress: string, type: 'close' | 'swap', count: number) => {
+  // Only run in browser environment
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+    return
+  }
+  
   const operations = getCachedOperations();
   const timestamp = new Date().toISOString();
   const existing = operations.find(op => op.wallet_address === walletAddress);
@@ -107,6 +150,11 @@ export const cacheOperation = (walletAddress: string, type: 'close' | 'swap', co
 
 // Check if 5 minutes have passed since last sync
 const shouldSync = (): boolean => {
+  // Only run in browser environment
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+    return false
+  }
+  
   const lastSync = localStorage.getItem(LAST_SYNC_KEY);
   if (!lastSync) return true;
 
@@ -121,41 +169,26 @@ export const syncOperationsToSupabase = async () => {
   const operations = getCachedOperations();
   if (operations.length === 0) return;
 
+  // Use API instead of direct supabase call
   try {
-    for (const operation of operations) {
-      // First get existing counts
-      const { data: existing } = await supabase
-        .from('token_operations')
-        .select('swap_count, close_count')
-        .eq('wallet_address', operation.wallet_address)
-        .single();
+    // Sync via API
+    const response = await fetch('/api/operations/sync', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ operations })
+    })
 
-      // Add new counts to existing counts (or start from 0 if no existing record)
-      const newCounts = {
-        swap_count: (existing?.swap_count || 0) + operation.swap_count,
-        close_count: (existing?.close_count || 0) + operation.close_count,
-      };
-
-      // Update with combined counts
-      const { error } = await supabase
-        .from('token_operations')
-        .upsert({
-          wallet_address: operation.wallet_address,
-          swap_count: newCounts.swap_count,
-          close_count: newCounts.close_count,
-          sol_balance: operation.sol_balance,
-          last_operation_time: operation.last_operation_time,
-          last_balance_update: operation.last_balance_update
-        }, {
-          onConflict: 'wallet_address'
-        });
-
-      if (error) throw error;
+    if (!response.ok) {
+      throw new Error(`Sync failed: ${response.statusText}`)
     }
 
-    // Update last sync time and clear cache after successful sync
-    localStorage.setItem(LAST_SYNC_KEY, new Date().toISOString());
-    localStorage.setItem(OPERATIONS_CACHE_KEY, '[]');
+    // Only clear cache if we're in browser environment
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      localStorage.setItem(LAST_SYNC_KEY, new Date().toISOString());
+      localStorage.setItem(OPERATIONS_CACHE_KEY, '[]');
+    }
     
     console.log('Successfully synced operations at:', new Date().toISOString());
   } catch (error) {
@@ -171,43 +204,47 @@ export const directUpdateOperation = async (
   solBalance?: number,
 ) => {
   try {
-    // First get existing counts
-    const { data: existing } = await supabase
-      .from('token_operations')
-      .select('swap_count, close_count')
-      .eq('wallet_address', walletAddress)
-      .single();
+    // Use API for direct updates
+    const response = await fetch('/api/operations/track', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        walletAddress,
+        type,
+        count,
+        solBalance
+      })
+    })
 
-    const timestamp = new Date().toISOString();
-    const updates = {
-      wallet_address: walletAddress,
-      close_count: type === 'close' ? (existing?.close_count || 0) + count : (existing?.close_count || 0),
-      swap_count: type === 'swap' ? (existing?.swap_count || 0) + count : (existing?.swap_count || 0),
-      last_operation_time: timestamp,
-      ...(solBalance !== undefined && { sol_balance: solBalance, last_balance_update: timestamp }),
-    };
+    if (!response.ok) {
+      throw new Error(`Direct update failed: ${response.statusText}`)
+    }
 
-    const { error } = await supabase
-      .from('token_operations')
-      .upsert(updates, {
-        onConflict: 'wallet_address'
-      });
+    const result = await response.json()
+    if (!result.success) {
+      throw new Error(result.error || 'Update failed')
+    }
 
-    if (error) throw error;
-
-    // console.log(`Updated ${type} operation directly in database. Batch results:
-    //   - Operation: ${type}
-    //   - Successful: ${count}/${options?.totalTokens || count}
-    //   - Total ${type} count: ${type === 'close' ? updates.close_count : updates.swap_count}
-    // `);
-    
     // Don't call cacheOperation after successful direct update to avoid double counting
-    // when syncOperationsToSupabase is called
   } catch (error) {
     console.error('Failed to update database directly:', error);
     // Fallback to cache-only if direct update fails
     cacheOperation(walletAddress, type, count);
   }
+};
+
+// Helper function to prepare update data (used by API)
+export const prepareOperationUpdate = (walletAddress: string, type: 'close' | 'swap', count: number, solBalance?: number) => {
+  const timestamp = new Date().toISOString();
+  return {
+    wallet_address: walletAddress,
+    type,
+    count,
+    last_operation_time: timestamp,
+    ...(solBalance !== undefined && { sol_balance: solBalance, last_balance_update: timestamp }),
+  };
 };
 
 // Set up interval to sync operations to Supabase

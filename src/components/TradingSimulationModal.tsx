@@ -361,21 +361,21 @@ export default function TradingSimulationModal({
 
               {/* Quick stats */}
               {priceStats && (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
-                  <div>
-                    <p className="text-gray-400">Latest Price</p>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
+                <div>
+                  <p className="text-gray-400">Latest Price</p>
                     <p className="font-medium text-white">${priceStats.latestPrice.toFixed(6)}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400">Peak Price</p>
+                </div>
+                <div>
+                  <p className="text-gray-400">Peak Price</p>
                     <p className="font-medium text-green-400">${priceStats.peakPrice.toFixed(6)}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400">Volatility (σ)</p>
+                </div>
+                <div>
+                  <p className="text-gray-400">Volatility (σ)</p>
                     <p className="font-medium text-white">{priceStats.volatility.toFixed(6)}</p>
-                  </div>
-                  <div>
-                    <p className="text-gray-400">Total Volume</p>
+                </div>
+                <div>
+                  <p className="text-gray-400">Total Volume</p>
                     <p className="font-medium text-blue-400">{priceStats.totalVolume.toLocaleString()}</p>
                   </div>
                 </div>
