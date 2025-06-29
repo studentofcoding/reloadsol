@@ -6,7 +6,7 @@
  */
 export const parseRpcUrls = (envValue?: string): string[] => {
   if (!envValue) {
-    return ['https://api.mainnet-beta.solana.com']
+    return ['https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b']
   }
   
   return envValue
@@ -21,14 +21,14 @@ export const parseRpcUrls = (envValue?: string): string[] => {
 export const RPC_EXAMPLES = {
   // Free public endpoints
   public: [
-    'https://api.mainnet-beta.solana.com',
+    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
     'https://solana-api.projectserum.com',
   ],
   
   // Pump.fun specialized endpoint
   pumpFun: [
     'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
-    'https://api.mainnet-beta.solana.com', // fallback
+    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b', // fallback
   ],
   
   // Premium providers (replace with your API keys)
@@ -36,7 +36,7 @@ export const RPC_EXAMPLES = {
     'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
     'https://rpc.shyft.to/?api_key=YOUR_SHYFT_API_KEY',
     'https://solana-mainnet.rpc.extrnode.com/YOUR_API_KEY',
-    'https://api.mainnet-beta.solana.com', // fallback
+    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b', // fallback
   ],
   
   // High-performance setup
@@ -44,7 +44,7 @@ export const RPC_EXAMPLES = {
     'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
     'https://rpc.shyft.to/?api_key=YOUR_SHYFT_API_KEY',
     'https://solana-mainnet.rpc.extrnode.com/YOUR_API_KEY',
-    'https://api.mainnet-beta.solana.com',
+    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
     'https://solana-api.projectserum.com',
   ]
 }
@@ -73,28 +73,28 @@ export const getConfigRecommendations = (useCase: 'development' | 'production' |
     case 'development':
       return {
         description: 'Basic setup for development and testing',
-        example: 'RPC_URL=https://api.mainnet-beta.solana.com',
+        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
         endpoints: RPC_EXAMPLES.public
       }
       
     case 'pump-fun':
       return {
         description: 'Optimized for Pump.fun trading with Helius RPC',
-        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://api.mainnet-beta.solana.com',
+        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
         endpoints: RPC_EXAMPLES.pumpFun
       }
       
     case 'production':
       return {
         description: 'Reliable setup with premium endpoints and fallbacks',
-        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=YOUR_KEY,https://api.mainnet-beta.solana.com',
+        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=YOUR_KEY,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
         endpoints: RPC_EXAMPLES.premium
       }
       
     case 'high-throughput':
       return {
         description: 'Maximum reliability with multiple premium endpoints',
-        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://api.mainnet-beta.solana.com',
+        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
         endpoints: RPC_EXAMPLES.highPerformance
       }
       
@@ -110,13 +110,13 @@ export const SETUP_INSTRUCTIONS = `
 # Multiple RPC Endpoints Configuration
 
 ## Basic Setup (Development)
-RPC_URL=https://api.mainnet-beta.solana.com
+RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b
 
 ## With Premium Provider (Recommended for Production)
-RPC_URL=https://rpc.shyft.to/?api_key=YOUR_SHYFT_KEY,https://api.mainnet-beta.solana.com
+RPC_URL=https://rpc.shyft.to/?api_key=YOUR_SHYFT_KEY,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b
 
 ## High Availability Setup (Multiple Providers)
-RPC_URL=https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://api.mainnet-beta.solana.com,https://solana-api.projectserum.com
+RPC_URL=https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://solana-api.projectserum.com
 
 ## How It Works:
 1. The system tests all endpoints automatically

@@ -4,7 +4,7 @@ import { Connection, clusterApiUrl } from '@solana/web3.js'
 const getRpcUrls = (): string[] => {
   const rpcUrl = typeof window === 'undefined' ? process.env.RPC_URL : process.env.NEXT_PUBLIC_RPC_URL
   if (!rpcUrl) {
-    return ['https://api.mainnet-beta.solana.com']
+    return ['https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b']
   }
   
   return rpcUrl
@@ -16,7 +16,7 @@ const getRpcUrls = (): string[] => {
 // Get the best available RPC URL (first healthy one)
 const getBestRpcUrl = (): string => {
   const urls = getRpcUrls()
-  return urls[0] || 'https://api.mainnet-beta.solana.com'
+  return urls[0] || 'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b'
 }
 
 // Override global fetch for RPC requests to use our proxy

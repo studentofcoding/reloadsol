@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 const getRpcUrls = (): string[] => {
   const rpcUrl = typeof window === 'undefined' ? process.env.RPC_URL : process.env.NEXT_PUBLIC_RPC_URL
   if (!rpcUrl) {
-    return ['https://api.mainnet-beta.solana.com']
+    return ['https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b']
   }
   
   // Split by comma and trim whitespace
