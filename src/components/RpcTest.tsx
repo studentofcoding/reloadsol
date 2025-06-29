@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useConnection } from './WalletProvider'
+import { getRpcHealth, makeClientRpcRequest } from '@/utils/rpc-config'
 
 interface HealthResult {
   url: string
@@ -50,11 +51,7 @@ export default function RpcTest() {
   const checkHealth = async () => {
     setIsHealthLoading(true)
     try {
-      const response = await fetch('/api/rpc/health')
-      if (!response.ok) {
-        throw new Error(`Health check failed: ${response.status}`)
-      }
-      const data = await response.json()
+      const data = await getRpcHealth()
       setHealthData(data)
     } catch (err) {
       console.error('Health check failed:', err)

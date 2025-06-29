@@ -1,18 +1,61 @@
 // RPC Configuration utility for multiple endpoints
 
+// Environment detection
+const isServer = typeof window === 'undefined'
+
 /**
  * Parse RPC URLs from environment variable
  * Supports comma-separated list of URLs
  */
 export const parseRpcUrls = (envValue?: string): string[] => {
   if (!envValue) {
-    return ['https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b']
+    return ['https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn']
   }
   
   return envValue
     .split(',')
     .map(url => url.trim())
     .filter(url => url.length > 0)
+}
+
+/**
+ * Client-side RPC proxy function
+ * All client-side RPC requests should use this instead of direct connections
+ */
+export const makeClientRpcRequest = async (body: any): Promise<any> => {
+  if (isServer) {
+    throw new Error('makeClientRpcRequest should only be used on client side. Use direct connection on server.')
+  }
+  
+  const response = await fetch('/api/rpc', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  
+  if (!response.ok) {
+    throw new Error(`RPC proxy request failed: ${response.statusText}`)
+  }
+  
+  return response.json()
+}
+
+/**
+ * Get RPC health status (client-side)
+ */
+export const getRpcHealth = async (): Promise<any> => {
+  if (isServer) {
+    throw new Error('getRpcHealth should only be used on client side.')
+  }
+  
+  const response = await fetch('/api/rpc/health')
+  if (!response.ok) {
+    throw new Error(`Health check failed: ${response.statusText}`)
+  }
+  
+  return response.json()
 }
 
 /**

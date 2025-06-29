@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 
 // Parse RPC URLs from environment variable (comma-separated)
 const getRpcUrls = (): string[] => {
-  const rpcUrl = typeof window === 'undefined' ? process.env.RPC_URL : process.env.NEXT_PUBLIC_RPC_URL
+  const rpcUrl = process.env.RPC_URL
   if (!rpcUrl) {
-    return ['https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b']
+    return ['https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn']
   }
   
   // Split by comma and trim whitespace

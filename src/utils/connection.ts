@@ -1,10 +1,13 @@
 import { Connection, clusterApiUrl } from '@solana/web3.js'
 
-// Parse RPC URLs from environment variable
-const getRpcUrls = (): string[] => {
-  const rpcUrl = typeof window === 'undefined' ? process.env.RPC_URL : process.env.NEXT_PUBLIC_RPC_URL
+// Environment detection
+const isServer = typeof window === 'undefined'
+
+// Server-side RPC configuration (private env vars only)
+const getServerRpcUrls = (): string[] => {
+  const rpcUrl = process.env.RPC_URL
   if (!rpcUrl) {
-    return ['https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b']
+    return ['https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn']
   }
   
   return rpcUrl
@@ -13,43 +16,43 @@ const getRpcUrls = (): string[] => {
     .filter(url => url.length > 0)
 }
 
+// Client-side RPC configuration (placeholder - forces API proxy usage)
+const getClientRpcUrls = (): string[] => {
+  // Client should use API proxy for all RPC requests
+  // Placeholder URL for WebSocket connections (they'll mostly fail gracefully)
+  return ['https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn']
+}
+
+// Get RPC URLs based on environment
+const getRpcUrls = (): string[] => {
+  return isServer ? getServerRpcUrls() : getClientRpcUrls()
+}
+
 // Get the best available RPC URL (first healthy one)
 const getBestRpcUrl = (): string => {
   const urls = getRpcUrls()
-  return urls[0] || 'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b'
+  return urls[0] || 'https://placeholder-rpc.solana.com'
 }
 
-// Override global fetch for RPC requests to use our proxy
-const originalFetch = typeof window !== 'undefined' ? window.fetch : null
-
-if (typeof window !== 'undefined' && originalFetch) {
-  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    // Check if this is an RPC request to our configured endpoints
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-    const rpcUrls = getRpcUrls()
-    
-    // If it's a POST request to one of our RPC URLs, proxy it
-    if (init?.method === 'POST' && rpcUrls.some(rpcUrl => url.includes(rpcUrl.split('?')[0]))) {
-      try {
-        const response = await originalFetch('/api/rpc', {
-          ...init,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...init.headers,
-          },
-        })
-        return response
-      } catch (error) {
-        console.warn('Proxy request failed, falling back to direct:', error)
-        // Fallback to original fetch
-        return originalFetch(input, init)
-      }
-    }
-    
-    // For all other requests (including WebSocket upgrades), use original fetch
-    return originalFetch(input, init)
+// Client-side RPC proxy function
+export const makeRpcRequest = async (body: any): Promise<any> => {
+  if (isServer) {
+    throw new Error('makeRpcRequest should only be used on client side. Use direct connection on server.')
   }
+  
+  const response = await fetch('/api/rpc', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  
+  if (!response.ok) {
+    throw new Error(`RPC proxy request failed: ${response.statusText}`)
+  }
+  
+  return response.json()
 }
 
 // RPC endpoints - use direct URLs so WebSocket connections work
