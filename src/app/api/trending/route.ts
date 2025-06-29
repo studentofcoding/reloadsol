@@ -2,7 +2,10 @@ import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 
 // Environment variable for Discord webhook URL
-const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
+const DISCORD_WEBHOOK_URL =
+  process.env.NODE_ENV === 'development'
+    ? process.env.NEXT_PUBLIC_DISCORD_WEBHOOK_URL_DEV || process.env.NEXT_PUBLIC_DISCORD_WEBHOOK_URL
+    : process.env.NEXT_PUBLIC_DISCORD_WEBHOOK_URL;
 const ENABLE_DISCORD_NOTIFICATIONS = process.env.ENABLE_DISCORD_NOTIFICATIONS === 'true';
 
 // Add auto-notification interval (default 10 minute = 600000ms)

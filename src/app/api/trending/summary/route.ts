@@ -4,6 +4,9 @@ import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
 
+const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
+const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
+
 interface TrackedToken {
   id: string
   token_address: string
@@ -71,7 +74,7 @@ export async function POST(request: NextRequest) {
     
     // Get all tokens that were tracked in the last 24 hours
     const { data: allTokens, error: fetchError } = await supabase
-      .from('trending_token_tracker')
+      .from(TRACKER_TABLE)
       .select('*')
       .gte('tracking_started_at', periodStart.toISOString())
 
@@ -117,7 +120,7 @@ export async function POST(request: NextRequest) {
       updatePromises.push(
         (async () => {
           const { error } = await supabase
-            .from('trending_token_tracker')
+            .from(TRACKER_TABLE)
             .update({
               status: 'won',
               status_changed_at: currentTime.toISOString()
@@ -170,7 +173,7 @@ export async function POST(request: NextRequest) {
     // Create summary record
     const summaryId = `summary_${Date.now()}`
     const { error: summaryError } = await supabase
-      .from('trending_token_summary')
+      .from(SUMMARY_TABLE)
       .insert({
         id: summaryId,
         period_start: periodStart.toISOString(),
@@ -201,7 +204,7 @@ export async function POST(request: NextRequest) {
       // Uncomment below if you want to delete completed records:
       /*
       const { error: cleanupError } = await supabase
-        .from('trending_token_tracker')
+        .from(TRACKER_TABLE)
         .delete()
         .in('id', completedTokenIds)
       

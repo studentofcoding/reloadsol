@@ -3,6 +3,10 @@ import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 
+// === Table selection (use alternate tables in local development to avoid prod collisions) ===
+const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
+const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
+
 interface JupiterBaseAsset {
   id: string
   name: string
@@ -17,6 +21,8 @@ interface JupiterBaseAsset {
   }
   stats5m: {
     priceChange: number
+    numNetBuyers: number | null
+    buyVolume: number | null
   }
   mcap: number
   organicScore: number
@@ -31,6 +37,13 @@ interface JupiterPool {
 
 interface JupiterResponse {
   pools: JupiterPool[]
+}
+
+// Add PriceRecord interface for price history
+interface PriceRecord {
+  timestamp: string
+  price_usd: number
+  volume: number | null
 }
 
 interface TrackedToken {
@@ -48,12 +61,14 @@ interface TrackedToken {
   organic_score: number | null
   market_cap: number | null
   volume_1h: number | null
+  volume_5m: number | null
   tracking_started_at: string
   status_changed_at: string | null
   created_at: string
   updated_at: string
   trade_comparison_data?: TradeComparisonResult | null
   trading_simulation?: TradingSimulation | null
+  price_history?: PriceRecord[] | null
 }
 
 // Add TopWinner interface for summary functionality
@@ -209,8 +224,11 @@ interface TradingSimulation {
 }
 
 // ===== Discord Trade Alert Helper =====
-const DISCORD_WEBHOOK_URL = process.env.NEXT_PUBLIC_DISCORD_WEBHOOK_AUTO_TRADE
-const ENABLE_DISCORD_NOTIFICATIONS = process.env.NEXT_PUBLIC_ENABLE_DISCORD_NOTIFICATIONS === 'true'
+const DISCORD_WEBHOOK_URL =
+  process.env.NODE_ENV === 'development'
+    ? process.env.DISCORD_WEBHOOK_AUTO_TRADE_DEV || process.env.DISCORD_WEBHOOK_AUTO_TRADE
+    : process.env.DISCORD_WEBHOOK_AUTO_TRADE
+const ENABLE_DISCORD_NOTIFICATIONS = process.env.ENABLE_DISCORD_NOTIFICATIONS === 'true'
 
 async function sendTradeAlertDiscord(params: {
   tokenSymbol: string | null
@@ -268,7 +286,7 @@ async function sendTradeAlertDiscord(params: {
 async function checkLastSummaryTime(): Promise<Date | null> {
   try {
     const { data, error } = await supabase
-      .from('trending_token_summary')
+      .from(SUMMARY_TABLE)
       .select('created_at')
       .order('created_at', { ascending: false })
       .limit(1)
@@ -384,7 +402,7 @@ async function runDailySummary(currentTime: Date): Promise<void> {
     
     // Get all tokens that were tracked in the last 24 hours
     const { data: allTokens, error: fetchError } = await supabase
-      .from('trending_token_tracker')
+      .from(TRACKER_TABLE)
       .select('*')
       .gte('tracking_started_at', periodStart.toISOString())
 
@@ -419,7 +437,7 @@ async function runDailySummary(currentTime: Date): Promise<void> {
       updatePromises.push(
         (async () => {
           const { error } = await supabase
-            .from('trending_token_tracker')
+            .from(TRACKER_TABLE)
             .update({
               status: 'won',
               status_changed_at: currentTime.toISOString()
@@ -472,7 +490,7 @@ async function runDailySummary(currentTime: Date): Promise<void> {
     // Create summary record
     const summaryId = `summary_${Date.now()}`
     const { error: summaryError } = await supabase
-      .from('trending_token_summary')
+      .from(SUMMARY_TABLE)
       .insert({
         id: summaryId,
         period_start: periodStart.toISOString(),

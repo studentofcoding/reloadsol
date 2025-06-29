@@ -1,7 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+// Prefer server-side env vars (SUPABASE_URL / SUPABASE_ANON_KEY) but fall back to
+// NEXT_PUBLIC_ variants when running in the browser. This avoids build-time
+// failures when the client bundle tries to access server-only variables while
+// still allowing you to keep the default "safe" public values if desired.
+
+const supabaseUrl = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL)!;
+const supabaseAnonKey = (process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)!;
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
@@ -11,8 +16,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 });
 
 export const adminSupabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  supabaseUrl!,
+  supabaseAnonKey!,
   {
     auth: {
       autoRefreshToken: false,

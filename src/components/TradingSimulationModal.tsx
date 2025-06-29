@@ -1,6 +1,23 @@
 'use client'
 
+// @ts-nocheck
+
 import React, { useState, useEffect } from 'react'
+// @ts-ignore - external library types may not be present
+import { Line } from 'react-chartjs-2'
+// @ts-ignore - external library types may not be present
+import {
+  Chart as ChartJS,
+  LineElement,
+  PointElement,
+  LinearScale,
+  CategoryScale,
+  BarElement,
+  Tooltip,
+  Legend
+} from 'chart.js'
+
+ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale, BarElement, Tooltip, Legend)
 
 interface TradingSimulationData {
   token_address: string
@@ -86,6 +103,12 @@ interface SellConfigResult {
   error?: string
 }
 
+interface PriceRecord {
+  timestamp: string
+  price_usd: number
+  volume: number | null
+}
+
 interface TradingSimulationModalProps {
   isOpen: boolean
   onClose: () => void
@@ -110,6 +133,7 @@ export default function TradingSimulationModal({
   onTradeTriggered
 }: TradingSimulationModalProps) {
   const [simulationData, setSimulationData] = useState<TradingSimulationData | null>(null)
+  const [priceHistory, setPriceHistory] = useState<PriceRecord[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
   const lastNotifiedStatusRef = React.useRef<string | null>(null)
@@ -132,6 +156,10 @@ export default function TradingSimulationModal({
       }
       
       const data = await response.json()
+      
+      if (data.success && data.token) {
+        setPriceHistory(data.token.price_history || [])
+      }
       
       if (data.success && data.token.trading_simulation) {
         setSimulationData(data.token.trading_simulation)
@@ -279,7 +307,7 @@ export default function TradingSimulationModal({
         </div>
 
         {/* Content */}
-        <div className="p-6">
+        <div className="p-6 space-y-6">
           {loading && (
             <div className="flex items-center justify-center py-8 text-gray-300">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-400"></div>
@@ -293,6 +321,91 @@ export default function TradingSimulationModal({
             </div>
           )}
 
+          {/* Price history chart is always shown if we have enough data */}
+          {priceHistory.length > 1 && (
+            <div className="bg-gray-800/30 border border-gray-700 rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-4 text-white">📈 Price History (24h)</h3>
+              <Line
+                data={{
+                  labels: priceHistory.map(p => new Date(p.timestamp).toLocaleTimeString()),
+                  datasets: [
+                    {
+                      label: 'Price (USD)',
+                      data: priceHistory.map(p => p.price_usd),
+                      borderColor: '#4ade80',
+                      backgroundColor: 'rgba(74,222,128,0.2)',
+                      yAxisID: 'y'
+                    },
+                    {
+                      // @ts-ignore mixed chart type
+                      type: 'bar',
+                      label: 'Volume',
+                      data: priceHistory.map(p => p.volume || 0),
+                      backgroundColor: 'rgba(59,130,246,0.4)',
+                      borderColor: '#3b82f6',
+                      yAxisID: 'y1'
+                    }
+                  ]
+                }}
+                // @ts-ignore option typing
+                options={{
+                  responsive: true,
+                  interaction: {
+                    mode: 'index',
+                    intersect: false
+                  },
+                  scales: {
+                    y: {
+                      type: 'linear',
+                      display: true,
+                      position: 'left',
+                      ticks: { color: '#4ade80' }
+                    },
+                    y1: {
+                      type: 'linear',
+                      display: true,
+                      position: 'right',
+                      grid: { drawOnChartArea: false },
+                      ticks: { color: '#3b82f6' }
+                    },
+                    x: {
+                      ticks: { color: '#d1d5db' }
+                    }
+                  },
+                  plugins: {
+                    legend: { labels: { color: '#d1d5db' } },
+                    tooltip: { mode: 'index', intersect: false }
+                  }
+                }}
+              />
+
+              {/* Quick stats */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
+                <div>
+                  <p className="text-gray-400">Latest Price</p>
+                  <p className="font-medium text-white">${priceHistory[priceHistory.length - 1].price_usd.toFixed(6)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400">Peak Price</p>
+                  <p className="font-medium text-green-400">${Math.max(...priceHistory.map(p => p.price_usd)).toFixed(6)}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400">Volatility (σ)</p>
+                  <p className="font-medium text-white">{(() => {
+                    const avg = priceHistory.reduce((sum, p) => sum + p.price_usd, 0) / priceHistory.length
+                    const variance = priceHistory.reduce((sum, p) => sum + Math.pow(p.price_usd - avg, 2), 0) / priceHistory.length
+                    return Math.sqrt(variance).toFixed(6)
+                  })()}</p>
+                </div>
+                <div>
+                  <p className="text-gray-400">Total Volume</p>
+                  <p className="font-medium text-blue-400">{priceHistory.reduce((sum, p) => sum + (p.volume || 0), 0).toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Simulation sections rendered below if data available */}
           {simulationData && (
             <div className="space-y-6">
               {/* Simulation Status */}

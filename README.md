@@ -123,7 +123,7 @@ DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263 So111111111111111111111111111111111
 
 ### Environment Variables
 
-- `NEXT_PUBLIC_RPC_URL`: Custom Solana RPC endpoint (optional)
+- `RPC_URL`: Custom Solana RPC endpoint (optional)
 - `DISCORD_WEBHOOK_URL`: Discord webhook URL for token update notifications
 - `ENABLE_DISCORD_NOTIFICATIONS`: Set to 'true' to enable Discord notifications
 - `TRENDING_TRACKER_SECRET`: Secret key for trending tracker API endpoints (optional)

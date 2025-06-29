@@ -2,7 +2,7 @@ import { Connection, clusterApiUrl } from '@solana/web3.js'
 
 // Parse RPC URLs from environment variable
 const getRpcUrls = (): string[] => {
-  const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL
+  const rpcUrl = typeof window === 'undefined' ? process.env.RPC_URL : process.env.NEXT_PUBLIC_RPC_URL
   if (!rpcUrl) {
     return ['https://api.mainnet-beta.solana.com']
   }

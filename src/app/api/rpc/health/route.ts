@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 // Parse RPC URLs from environment variable (comma-separated)
 const getRpcUrls = (): string[] => {
-  const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL
+  const rpcUrl = typeof window === 'undefined' ? process.env.RPC_URL : process.env.NEXT_PUBLIC_RPC_URL
   if (!rpcUrl) {
     return ['https://api.mainnet-beta.solana.com']
   }

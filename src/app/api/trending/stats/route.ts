@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
 
+// Dev vs prod table selection
+const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
+const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
@@ -12,7 +16,7 @@ export async function GET(request: NextRequest) {
     
     // Get the most recent summary
     const { data: summaries, error: summaryError } = await supabase
-      .from('trending_token_summary')
+      .from(SUMMARY_TABLE)
       .select('*')
       .order('created_at', { ascending: false })
       .limit(1)
@@ -23,7 +27,7 @@ export async function GET(request: NextRequest) {
 
     // Get currently tracked tokens (active tracking status)
     const { data: trackingTokens, error: trackingError } = await supabase
-      .from('trending_token_tracker')
+      .from(TRACKER_TABLE)
       .select('*')
       .eq('status', 'tracking')
       .order('peak_gain_percentage', { ascending: false })
@@ -34,7 +38,7 @@ export async function GET(request: NextRequest) {
 
     // Get recent winners and losers for additional context
     const { data: recentCompleted, error: completedError } = await supabase
-      .from('trending_token_tracker')
+      .from(TRACKER_TABLE)
       .select('*')
       .in('status', ['won', 'lost'])
       .gte('status_changed_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()) // Last 7 days
@@ -47,7 +51,7 @@ export async function GET(request: NextRequest) {
 
     // Get historical summaries for trends (last 7 days)
     const { data: historicalSummaries, error: historicalError } = await supabase
-      .from('trending_token_summary')
+      .from(SUMMARY_TABLE)
       .select('*')
       .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
       .order('created_at', { ascending: false })

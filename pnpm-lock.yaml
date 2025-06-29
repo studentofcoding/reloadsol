@@ -47,6 +47,9 @@ dependencies:
   browserify-zlib:
     specifier: ^0.2.0
     version: 0.2.0
+  chart.js:
+    specifier: ^4.5.0
+    version: 4.5.0
   crypto-browserify:
     specifier: ^3.12.0
     version: 3.12.1
@@ -68,6 +71,9 @@ dependencies:
   react:
     specifier: ^18.0.0
     version: 18.3.1
+  react-chartjs-2:
+    specifier: ^5.3.0
+    version: 5.3.0(chart.js@4.5.0)(react@18.3.1)
   react-dom:
     specifier: ^18.0.0
     version: 18.3.1(react@18.3.1)
@@ -770,6 +776,10 @@ packages:
       - react-dom
       - typescript
       - utf-8-validate
+    dev: false
+
+  /@kurkle/color@0.3.4:
+    resolution: {integrity: sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w==}
     dev: false
 
   /@ledgerhq/devices@8.4.5:
@@ -5563,6 +5573,13 @@ packages:
     engines: {node: ^12.17.0 || ^14.13 || >=16.0.0}
     dev: false
 
+  /chart.js@4.5.0:
+    resolution: {integrity: sha512-aYeC/jDgSEx8SHWZvANYMioYMZ2KX02W6f6uVfyteuCGcadDLcYVHdfdygsTQkQ4TKn5lghoojAsPj5pu0SnvQ==}
+    engines: {pnpm: '>=8'}
+    dependencies:
+      '@kurkle/color': 0.3.4
+    dev: false
+
   /chokidar@3.6.0:
     resolution: {integrity: sha512-7VT13fmjotKpGipCW9JEQAusEPE+Ei8nl6/g4FBAmIm0GOOLMua9NDDo/DWp0ZAxCr3cPq5ZpBqmPAQgDda2Pw==}
     engines: {node: '>= 8.10.0'}
@@ -8997,6 +9014,16 @@ packages:
   /range-parser@1.2.1:
     resolution: {integrity: sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==}
     engines: {node: '>= 0.6'}
+    dev: false
+
+  /react-chartjs-2@5.3.0(chart.js@4.5.0)(react@18.3.1):
+    resolution: {integrity: sha512-UfZZFnDsERI3c3CZGxzvNJd02SHjaSJ8kgW1djn65H1KK8rehwTjyrRKOG3VTMG8wtHZ5rgAO5oTHtHi9GCCmw==}
+    peerDependencies:
+      chart.js: ^4.1.1
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+    dependencies:
+      chart.js: 4.5.0
+      react: 18.3.1
     dev: false
 
   /react-devtools-core@6.1.2:

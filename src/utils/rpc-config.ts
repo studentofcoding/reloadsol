@@ -73,28 +73,28 @@ export const getConfigRecommendations = (useCase: 'development' | 'production' |
     case 'development':
       return {
         description: 'Basic setup for development and testing',
-        example: 'NEXT_PUBLIC_RPC_URL=https://api.mainnet-beta.solana.com',
+        example: 'RPC_URL=https://api.mainnet-beta.solana.com',
         endpoints: RPC_EXAMPLES.public
       }
       
     case 'pump-fun':
       return {
         description: 'Optimized for Pump.fun trading with Helius RPC',
-        example: 'NEXT_PUBLIC_RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://api.mainnet-beta.solana.com',
+        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://api.mainnet-beta.solana.com',
         endpoints: RPC_EXAMPLES.pumpFun
       }
       
     case 'production':
       return {
         description: 'Reliable setup with premium endpoints and fallbacks',
-        example: 'NEXT_PUBLIC_RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=YOUR_KEY,https://api.mainnet-beta.solana.com',
+        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=YOUR_KEY,https://api.mainnet-beta.solana.com',
         endpoints: RPC_EXAMPLES.premium
       }
       
     case 'high-throughput':
       return {
         description: 'Maximum reliability with multiple premium endpoints',
-        example: 'NEXT_PUBLIC_RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://api.mainnet-beta.solana.com',
+        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://api.mainnet-beta.solana.com',
         endpoints: RPC_EXAMPLES.highPerformance
       }
       
@@ -110,13 +110,13 @@ export const SETUP_INSTRUCTIONS = `
 # Multiple RPC Endpoints Configuration
 
 ## Basic Setup (Development)
-NEXT_PUBLIC_RPC_URL=https://api.mainnet-beta.solana.com
+RPC_URL=https://api.mainnet-beta.solana.com
 
 ## With Premium Provider (Recommended for Production)
-NEXT_PUBLIC_RPC_URL=https://rpc.shyft.to/?api_key=YOUR_SHYFT_KEY,https://api.mainnet-beta.solana.com
+RPC_URL=https://rpc.shyft.to/?api_key=YOUR_SHYFT_KEY,https://api.mainnet-beta.solana.com
 
 ## High Availability Setup (Multiple Providers)
-NEXT_PUBLIC_RPC_URL=https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://api.mainnet-beta.solana.com,https://solana-api.projectserum.com
+RPC_URL=https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://api.mainnet-beta.solana.com,https://solana-api.projectserum.com
 
 ## How It Works:
 1. The system tests all endpoints automatically
