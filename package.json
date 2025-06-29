@@ -20,6 +20,8 @@
     "@solana/web3.js": "^1.87.6",
     "@supabase/supabase-js": "^2.50.0",
     "@tanstack/react-query": "^5.81.2",
+    "@types/chart.js": "^4.0.1",
+    "@types/react-chartjs-2": "^2.5.7",
     "@vercel/analytics": "^1.5.0",
     "assert": "^2.0.0",
     "browserify-zlib": "^0.2.0",

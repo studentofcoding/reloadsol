@@ -1,11 +1,8 @@
 'use client'
 
-// @ts-nocheck
 
 import React, { useState, useEffect } from 'react'
-// @ts-ignore - external library types may not be present
 import { Line } from 'react-chartjs-2'
-// @ts-ignore - external library types may not be present
 import {
   Chart as ChartJS,
   LineElement,
@@ -16,6 +13,8 @@ import {
   Tooltip,
   Legend
 } from 'chart.js'
+
+import type { ChartData, ChartOptions, ChartDataset } from 'chart.js'
 
 ChartJS.register(LineElement, PointElement, LinearScale, CategoryScale, BarElement, Tooltip, Legend)
 
@@ -266,6 +265,34 @@ export default function TradingSimulationModal({
     return soldSol - boughtAmount
   }
 
+  // ----- Memoised calculations for performance -----
+
+  const priceStats = React.useMemo(() => {
+    if (priceHistory.length === 0) return null
+
+    const latestPrice = priceHistory[priceHistory.length - 1].price_usd
+    const peakPrice = Math.max(...priceHistory.map((p) => p.price_usd))
+
+    const avg =
+      priceHistory.reduce((sum, p) => sum + p.price_usd, 0) / priceHistory.length
+    const variance =
+      priceHistory.reduce((sum, p) => sum + Math.pow(p.price_usd - avg, 2), 0) /
+      priceHistory.length
+    const volatility = Math.sqrt(variance)
+
+    const totalVolume = priceHistory.reduce(
+      (sum, p) => sum + (p.volume || 0),
+      0
+    )
+
+    return { latestPrice, peakPrice, volatility, totalVolume }
+  }, [priceHistory])
+
+  const chartConfig = React.useMemo(
+    () => getPriceHistoryChartConfig(priceHistory),
+    [priceHistory]
+  )
+
   if (!isOpen) return null
 
   return (
@@ -325,83 +352,34 @@ export default function TradingSimulationModal({
           {priceHistory.length > 1 && (
             <div className="bg-gray-800/30 border border-gray-700 rounded-lg p-4">
               <h3 className="text-lg font-semibold mb-4 text-white">📈 Price History (24h)</h3>
+
+              {/* Chart */}
               <Line
-                data={{
-                  labels: priceHistory.map(p => new Date(p.timestamp).toLocaleTimeString()),
-                  datasets: [
-                    {
-                      label: 'Price (USD)',
-                      data: priceHistory.map(p => p.price_usd),
-                      borderColor: '#4ade80',
-                      backgroundColor: 'rgba(74,222,128,0.2)',
-                      yAxisID: 'y'
-                    },
-                    {
-                      // @ts-ignore mixed chart type
-                      type: 'bar',
-                      label: 'Volume',
-                      data: priceHistory.map(p => p.volume || 0),
-                      backgroundColor: 'rgba(59,130,246,0.4)',
-                      borderColor: '#3b82f6',
-                      yAxisID: 'y1'
-                    }
-                  ]
-                }}
-                // @ts-ignore option typing
-                options={{
-                  responsive: true,
-                  interaction: {
-                    mode: 'index',
-                    intersect: false
-                  },
-                  scales: {
-                    y: {
-                      type: 'linear',
-                      display: true,
-                      position: 'left',
-                      ticks: { color: '#4ade80' }
-                    },
-                    y1: {
-                      type: 'linear',
-                      display: true,
-                      position: 'right',
-                      grid: { drawOnChartArea: false },
-                      ticks: { color: '#3b82f6' }
-                    },
-                    x: {
-                      ticks: { color: '#d1d5db' }
-                    }
-                  },
-                  plugins: {
-                    legend: { labels: { color: '#d1d5db' } },
-                    tooltip: { mode: 'index', intersect: false }
-                  }
-                }}
+                data={chartConfig.data as any}
+                options={chartConfig.options as any}
               />
 
               {/* Quick stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
-                <div>
-                  <p className="text-gray-400">Latest Price</p>
-                  <p className="font-medium text-white">${priceHistory[priceHistory.length - 1].price_usd.toFixed(6)}</p>
+              {priceStats && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4 text-sm">
+                  <div>
+                    <p className="text-gray-400">Latest Price</p>
+                    <p className="font-medium text-white">${priceStats.latestPrice.toFixed(6)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400">Peak Price</p>
+                    <p className="font-medium text-green-400">${priceStats.peakPrice.toFixed(6)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400">Volatility (σ)</p>
+                    <p className="font-medium text-white">{priceStats.volatility.toFixed(6)}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400">Total Volume</p>
+                    <p className="font-medium text-blue-400">{priceStats.totalVolume.toLocaleString()}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-gray-400">Peak Price</p>
-                  <p className="font-medium text-green-400">${Math.max(...priceHistory.map(p => p.price_usd)).toFixed(6)}</p>
-                </div>
-                <div>
-                  <p className="text-gray-400">Volatility (σ)</p>
-                  <p className="font-medium text-white">{(() => {
-                    const avg = priceHistory.reduce((sum, p) => sum + p.price_usd, 0) / priceHistory.length
-                    const variance = priceHistory.reduce((sum, p) => sum + Math.pow(p.price_usd - avg, 2), 0) / priceHistory.length
-                    return Math.sqrt(variance).toFixed(6)
-                  })()}</p>
-                </div>
-                <div>
-                  <p className="text-gray-400">Total Volume</p>
-                  <p className="font-medium text-blue-400">{priceHistory.reduce((sum, p) => sum + (p.volume || 0), 0).toLocaleString()}</p>
-                </div>
-              </div>
+              )}
             </div>
           )}
 
@@ -642,4 +620,71 @@ export default function TradingSimulationModal({
       </div>
     </div>
   )
+}
+
+// ----- Shared chart configuration helpers -----
+
+interface PriceChartConfig {
+  data: ChartData<'line' | 'bar', (number | null)[], string>
+  options: ChartOptions<'line' | 'bar'>
+}
+
+// Build chart.js compatible config for the price/volume mixed chart
+const getPriceHistoryChartConfig = (priceHistory: PriceRecord[]): PriceChartConfig => {
+  const labels = priceHistory.map((p) => new Date(p.timestamp).toLocaleTimeString())
+
+  const priceDataset: ChartDataset<'line' | 'bar', (number | null)[]> = {
+    type: 'line',
+    label: 'Price (USD)',
+    data: priceHistory.map((p) => p.price_usd),
+    borderColor: '#4ade80',
+    backgroundColor: 'rgba(74,222,128,0.2)',
+    yAxisID: 'y',
+  }
+
+  const volumeDataset: ChartDataset<'line' | 'bar', (number | null)[]> = {
+    type: 'bar',
+    label: 'Volume',
+    data: priceHistory.map((p) => p.volume || 0),
+    backgroundColor: 'rgba(59,130,246,0.4)',
+    borderColor: '#3b82f6',
+    yAxisID: 'y1',
+  }
+
+  const data: ChartData<'line' | 'bar', (number | null)[], string> = {
+    labels,
+    datasets: [priceDataset, volumeDataset],
+  }
+
+  const options: ChartOptions<'line' | 'bar'> = {
+    responsive: true,
+    interaction: {
+      mode: 'index',
+      intersect: false,
+    },
+    scales: {
+      y: {
+        type: 'linear',
+        display: true,
+        position: 'left',
+        ticks: { color: '#4ade80' },
+      },
+      y1: {
+        type: 'linear',
+        display: true,
+        position: 'right',
+        grid: { drawOnChartArea: false },
+        ticks: { color: '#3b82f6' },
+      },
+      x: {
+        ticks: { color: '#d1d5db' },
+      },
+    },
+    plugins: {
+      legend: { labels: { color: '#d1d5db' } },
+      tooltip: { mode: 'index', intersect: false },
+    },
+  }
+
+  return { data, options }
 } 
