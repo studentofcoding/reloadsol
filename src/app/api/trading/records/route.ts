@@ -70,6 +70,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Skip records with errors
+    if (
+      (record.errors && record.errors.length > 0) || 
+      (record.failureCount > 0 && record.successCount === 0)
+    ) {
+      return NextResponse.json({ 
+        success: true,
+        skipped: true,
+        reason: 'Record contains errors or represents failed operation'
+      })
+    }
+
     const dbRecord: Omit<DatabaseRecord, 'created_at'> = {
       id: record.id,
       wallet_address: record.walletAddress,
