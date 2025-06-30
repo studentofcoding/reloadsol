@@ -57,6 +57,19 @@ if (!isServer) {
   supabase.from = () => {
     throw new Error('Direct supabase.from() not allowed on client. Use fetch("/api/...") instead.');
   };
+  
+  // Block other direct access methods
+  supabase.auth = new Proxy({} as any, {
+    get: () => {
+      throw new Error('Direct supabase.auth not allowed on client. Use auth API routes instead.');
+    }
+  });
+  
+  supabase.realtime = new Proxy({} as any, {
+    get: () => {
+      throw new Error('Direct supabase.realtime not allowed on client. Use SSE/WebSocket API routes instead.');
+    }
+  });
 }
 
 // Telegram Constants

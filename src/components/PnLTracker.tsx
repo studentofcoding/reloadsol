@@ -69,6 +69,10 @@ export default function PnLTracker() {
   const [sellError, setSellError] = useState<string>('')
   const [sellingTokenId, setSellingTokenId] = useState<string>('')
 
+  // Token chart state
+  const [selectedToken, setSelectedToken] = useState<string>('')
+  const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
+
   // Clear old localStorage data on component mount
   useEffect(() => {
     console.log('🧹 PnLTracker: Cleared old localStorage data, now using Supabase!')
@@ -580,6 +584,12 @@ export default function PnLTracker() {
     }
   }, [openPositions, solPriceUsd])
 
+  // Handle token selection for chart display
+  const handleSelectToken = useCallback((mintAddress: string) => {
+    setSelectedToken(mintAddress)
+    setIsChartLoading(true)
+  }, [])
+
   // Fast sell function for open positions
   const handleFastSell = React.useCallback(async (position: OpenPosition, event: React.MouseEvent) => {
     event.preventDefault()
@@ -807,7 +817,7 @@ export default function PnLTracker() {
 
   return (
     <div className="">
-                {/* Error Display */}
+      {/* Error Display */}
       {error && (
         <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-3 mb-3 text-center">
           <p className="text-red-400 text-sm">{error}</p>
@@ -818,6 +828,46 @@ export default function PnLTracker() {
       {sellError && (
         <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-3 mb-3 text-center">
           <p className="text-red-400 text-sm">Sell Error: {sellError}</p>
+        </div>
+      )}
+
+      {/* Token Chart Section */}
+      {selectedToken && (
+        <div className="space-y-3 mb-6">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-2">
+              <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                Token Chart
+              </label>
+              <button
+                onClick={() => setSelectedToken('')}
+                className="text-xs text-gray-400 hover:text-white flex items-center"
+              >
+                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+                Close
+              </button>
+            </div>
+            <span className="text-xs font-mono text-gray-400">{selectedToken}</span>
+          </div>
+          <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
+            {isChartLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
+                <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+              </div>
+            )}
+            <iframe 
+              src={`https://birdeye.so/tv-widget/${selectedToken}?chain=solana&viewMode=pair&chartInterval=1D&chartType=CANDLE&chartTimezone=Asia%2FSingapore&chartLeftToolbar=show&theme=dark`}
+              height="400"
+              className="w-full"
+              style={{ border: 'none' }}
+              title={`Birdeye Chart - ${selectedToken}`}
+              onLoad={() => setIsChartLoading(false)}
+              allowFullScreen
+              frameBorder="0"
+            />
+          </div>
         </div>
       )}
 
@@ -888,26 +938,43 @@ export default function PnLTracker() {
                 {pnlRecords.slice(0, 10).map((record) => (
                   <div
                     key={record.id}
-                    className="flex-shrink-0 p-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group p-4"
-                    onClick={() => openTransactionOnSolscan(record.sellSignatures)}
-                    title="Click to view sell transaction on Solscan"
+                    className="flex-shrink-0 p-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg group p-4 relative"
                   >
+                    {/* Action buttons overlay */}
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-2 sm:space-x-3">
+                      <button
+                        onClick={() => handleSelectToken(record.mintAddress)}
+                        className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
+                        title="View chart"
+                      >
+                        <svg className="w-8 h-8 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => openTransactionOnSolscan(record.sellSignatures)}
+                        className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
+                        title="View on Solscan"
+                      >
+                        <svg 
+                          className="w-8 h-8 sm:w-3 sm:h-3" 
+                          fill="none" 
+                          stroke="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round" 
+                            strokeWidth={2} 
+                            d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
+                          />
+                        </svg>
+                      </button>
+                    </div>
+
                     {/* Line 1: Timestamp */}
                     <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
                       <span>{formatRelativeTime(record.sellTimestamp)}</span>
-                      <svg 
-                        className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity duration-200" 
-                        fill="none" 
-                        stroke="currentColor" 
-                        viewBox="0 0 24 24"
-                      >
-                        <path 
-                          strokeLinecap="round" 
-                          strokeLinejoin="round" 
-                          strokeWidth={2} 
-                          d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
-                        />
-                      </svg>
                     </div>
                     
                     {/* Line 2: Token and PnL */}
@@ -978,61 +1045,62 @@ export default function PnLTracker() {
             ) : (
               <>
                 <div className="text-center py-2 mb-2">
-                  <p className="text-gray-400 text-xs">💡 Click any position to instantly sell it with 3% slippage</p>
+                  <p className="text-gray-400 text-xs">💡 Hover over positions to see chart and sell options</p>
                 </div>
                 <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
                 {openPositions.slice(0, 10).map((position) => (
                   <div
                     key={position.id}
-                    className={`flex-shrink-0 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group p-4 relative ${
+                    className={`flex-shrink-0 transition-all duration-200 min-w-[180px] rounded-lg group p-4 relative ${
                       sellingTokenId === position.id 
                         ? 'bg-red-800/30 border border-red-600' 
-                        : 'hover:bg-green-700/40 hover:border-green-600/50 border border-transparent'
+                        : 'hover:bg-gray-700/40 border border-transparent'
                     }`}
-                    onClick={(e) => handleFastSell(position, e)}
-                    title={sellingTokenId === position.id ? 'Selling...' : 'Click to sell this position'}
                   >
+                    {/* Action buttons overlay */}
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-1 z-20">
+                      <button
+                        onClick={() => handleSelectToken(position.mintAddress)}
+                        className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
+                        title="View chart"
+                        disabled={sellingTokenId === position.id}
+                      >
+                        <svg className="w-4 h-4 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => handleFastSell(position, e)}
+                        className={`p-1.5 sm:p-1 rounded text-white transition-colors ${
+                          sellingTokenId === position.id 
+                            ? 'bg-red-600 cursor-not-allowed' 
+                            : 'bg-red-500 hover:bg-red-600'
+                        }`}
+                        title={sellingTokenId === position.id ? 'Selling...' : 'Sell position'}
+                        disabled={sellingTokenId === position.id}
+                      >
+                        {sellingTokenId === position.id ? (
+                          <div className="w-4 h-4 sm:w-3 sm:h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
+                        ) : (
+                          <svg className="w-4 h-4 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+
                     {/* Loading spinner overlay for selling state */}
                     {sellingTokenId === position.id && (
                       <div className="absolute inset-0 bg-red-900/50 rounded-lg flex items-center justify-center z-10">
                         <div className="w-6 h-6 border-2 border-red-400 border-t-red-200 rounded-full animate-spin"></div>
                       </div>
                     )}
+
                     {/* Line 1: Timestamp */}
                     <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
                       <span>{formatRelativeTime(position.buyTimestamp)}</span>
                       <div className="flex items-center space-x-1">
                         <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                        {sellingTokenId !== position.id && (
-                          <svg 
-                            className="w-3 h-3 opacity-0 group-hover:opacity-80 transition-opacity duration-200 text-green-400" 
-                            fill="none" 
-                            stroke="currentColor" 
-                            viewBox="0 0 24 24"
-                          >
-                            <path 
-                              strokeLinecap="round" 
-                              strokeLinejoin="round" 
-                              strokeWidth={2} 
-                              d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" 
-                            />
-                          </svg>
-                        )}
-                        {sellingTokenId === position.id && (
-                          <svg 
-                            className="w-3 h-3 text-red-400 animate-pulse" 
-                            fill="none" 
-                            stroke="currentColor" 
-                            viewBox="0 0 24 24"
-                          >
-                            <path 
-                              strokeLinecap="round" 
-                              strokeLinejoin="round" 
-                              strokeWidth={2} 
-                              d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" 
-                            />
-                          </svg>
-                        )}
                       </div>
                     </div>
                     

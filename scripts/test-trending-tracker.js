@@ -21,7 +21,7 @@ const BASE_URL = process.env.VERCEL_URL
 const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET || 'trending-track-secret';
 
 // Helper function to make HTTP requests
-function makeRequest(url, method = 'GET') {
+function makeRequest(url, method = 'GET', data = null) {
   return new Promise((resolve, reject) => {
     const isHttps = url.startsWith('https');
     const lib = isHttps ? https : http;
@@ -35,15 +35,15 @@ function makeRequest(url, method = 'GET') {
     };
 
     const req = lib.request(url, options, (res) => {
-      let data = '';
+      let responseData = '';
       
       res.on('data', (chunk) => {
-        data += chunk;
+        responseData += chunk;
       });
       
       res.on('end', () => {
         try {
-          const jsonData = JSON.parse(data);
+          const jsonData = JSON.parse(responseData);
           resolve({
             status: res.statusCode,
             headers: res.headers,
@@ -53,7 +53,7 @@ function makeRequest(url, method = 'GET') {
           resolve({
             status: res.statusCode,
             headers: res.headers,
-            data: data
+            data: responseData
           });
         }
       });
@@ -63,6 +63,10 @@ function makeRequest(url, method = 'GET') {
       reject(error);
     });
 
+    if (data) {
+      req.write(JSON.stringify(data));
+    }
+    
     req.end();
   });
 }
@@ -200,11 +204,207 @@ async function testStats() {
   console.log('');
 }
 
+// Add new test functions for specific features
+async function testGainCalculations() {
+  console.log('📊 Testing gain calculations...');
+  
+  const testCases = [
+    {
+      name: 'Basic gain calculation',
+      initial: 1.0,
+      current: 1.5,
+      expected: 50
+    },
+    {
+      name: 'Zero initial price',
+      initial: 0,
+      current: 1.0,
+      expected: 0 // Should handle zero initial price gracefully
+    },
+    {
+      name: 'Negative gain',
+      initial: 2.0,
+      current: 1.0,
+      expected: -50
+    },
+    {
+      name: 'Peak price update',
+      initial: 1.0,
+      current: 2.0,
+      peak: 1.5,
+      expectedPeak: 2.0
+    }
+  ];
+
+  let passed = 0;
+  let failed = 0;
+
+  for (const test of testCases) {
+    console.log(`\n🧪 Testing: ${test.name}`);
+    
+    try {
+      const result = await makeRequest(`${BASE_URL}/api/trending/track/test-gains`, 'POST', {
+        initial_price: test.initial,
+        current_price: test.current,
+        peak_price: test.peak
+      });
+
+      if (result.status === 200) {
+        const data = result.data;
+        let testPassed = true;
+
+        if ('gain_percentage' in data) {
+          const gainDiff = Math.abs(data.gain_percentage - test.expected);
+          if (gainDiff > 0.01) {
+            console.log('❌ Gain calculation failed');
+            console.log(`  Expected: ${test.expected}%`);
+            console.log(`  Got: ${data.gain_percentage}%`);
+            testPassed = false;
+          }
+        }
+
+        if (test.peak !== undefined && 'new_peak_price' in data) {
+          if (data.new_peak_price !== test.expectedPeak) {
+            console.log('❌ Peak price calculation failed');
+            console.log(`  Expected: ${test.expectedPeak}`);
+            console.log(`  Got: ${data.new_peak_price}`);
+            testPassed = false;
+          }
+        }
+
+        if (testPassed) {
+          console.log('✅ Test passed');
+          passed++;
+        } else {
+          failed++;
+        }
+      } else {
+        console.log('❌ Test failed - Bad response');
+        console.log('Error:', result.data);
+        failed++;
+      }
+    } catch (error) {
+      console.log('❌ Test failed - Request error:', error.message);
+      failed++;
+    }
+  }
+
+  console.log(`\n📝 Results: ${passed} passed, ${failed} failed\n`);
+}
+
+async function testErrorHandling() {
+  console.log('🔬 Testing error handling...');
+
+  const testCases = [
+    {
+      name: 'Missing auth key',
+      url: '/api/trending/track',
+      method: 'POST',
+      expectedStatus: 401
+    },
+    {
+      name: 'Invalid auth key',
+      url: '/api/trending/track?key=invalid',
+      method: 'POST',
+      expectedStatus: 401
+    },
+    {
+      name: 'Invalid endpoint',
+      url: '/api/trending/invalid',
+      method: 'GET',
+      expectedStatus: 404
+    }
+  ];
+
+  let passed = 0;
+  let failed = 0;
+
+  for (const test of testCases) {
+    console.log(`\n🧪 Testing: ${test.name}`);
+    
+    try {
+      const result = await makeRequest(`${BASE_URL}${test.url}`, test.method);
+      
+      if (result.status === test.expectedStatus) {
+        console.log('✅ Test passed');
+        console.log(`  Expected status: ${test.expectedStatus}`);
+        console.log(`  Got status: ${result.status}`);
+        passed++;
+      } else {
+        console.log('❌ Test failed - Unexpected status code');
+        console.log(`  Expected: ${test.expectedStatus}`);
+        console.log(`  Got: ${result.status}`);
+        failed++;
+      }
+    } catch (error) {
+      if (test.expectedStatus >= 400) {
+        console.log('✅ Test passed - Expected error');
+        passed++;
+      } else {
+        console.log('❌ Test failed - Unexpected error:', error.message);
+        failed++;
+      }
+    }
+  }
+
+  console.log(`\n📝 Results: ${passed} passed, ${failed} failed\n`);
+}
+
+async function testLogging() {
+  console.log('📝 Testing logging functionality...');
+
+  const testCases = [
+    {
+      name: 'Normal operation logging',
+      operation: 'track',
+      params: { simulate: true }
+    },
+    {
+      name: 'Error logging',
+      operation: 'track',
+      params: { simulate: true, force_error: true }
+    }
+  ];
+
+  let passed = 0;
+  let failed = 0;
+
+  for (const test of testCases) {
+    console.log(`\n🧪 Testing: ${test.name}`);
+    
+    try {
+      const result = await makeRequest(
+        `${BASE_URL}/api/trending/${test.operation}?key=${SECRET_KEY}`,
+        'POST',
+        test.params
+      );
+
+      // Check if logs field exists in response
+      if (result.data.logs) {
+        console.log('✅ Logging test passed');
+        console.log('📋 Sample logs:');
+        result.data.logs.slice(0, 3).forEach(log => {
+          console.log(`  • ${log.operation}: ${log.message}`);
+        });
+        passed++;
+      } else {
+        console.log('❌ Logging test failed - No logs in response');
+        failed++;
+      }
+    } catch (error) {
+      console.log('❌ Logging test failed:', error.message);
+      failed++;
+    }
+  }
+
+  console.log(`\n📝 Results: ${passed} passed, ${failed} failed\n`);
+}
+
 // Main execution
 async function main() {
   const command = process.argv[2] || 'help';
   
-  console.log('🚀 Trending Token Tracker - Test Script');
+  console.log('🚀 Trending Token Tracker - Test Suite');
   console.log(`📡 Base URL: ${BASE_URL}`);
   console.log(`🔑 Using secret key: ${SECRET_KEY}`);
   console.log('');
@@ -223,6 +423,28 @@ async function main() {
       await testStats();
       break;
       
+    case 'gains':
+      await testGainCalculations();
+      break;
+      
+    case 'errors':
+      await testErrorHandling();
+      break;
+      
+    case 'logs':
+      await testLogging();
+      break;
+      
+    case 'full':
+      console.log('🔬 Running full test suite...\n');
+      await testGainCalculations();
+      await testErrorHandling();
+      await testLogging();
+      await testStats();
+      await testTracking();
+      await testSummary();
+      break;
+      
     case 'all':
       await testStats();
       await testTracking();
@@ -235,7 +457,11 @@ async function main() {
       console.log('  node scripts/test-trending-tracker.js track     # Test 5-minute tracking');
       console.log('  node scripts/test-trending-tracker.js summary   # Test 24-hour summary');
       console.log('  node scripts/test-trending-tracker.js stats     # Test stats endpoint');
-      console.log('  node scripts/test-trending-tracker.js all       # Test all endpoints');
+      console.log('  node scripts/test-trending-tracker.js gains     # Test gain calculations');
+      console.log('  node scripts/test-trending-tracker.js errors    # Test error handling');
+      console.log('  node scripts/test-trending-tracker.js logs      # Test logging functionality');
+      console.log('  node scripts/test-trending-tracker.js full      # Run full test suite');
+      console.log('  node scripts/test-trending-tracker.js all       # Test basic endpoints');
       console.log('');
       console.log('💡 Environment variables:');
       console.log('  VERCEL_URL                - Base URL (default: localhost:3000)');

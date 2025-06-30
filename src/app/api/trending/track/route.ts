@@ -177,13 +177,16 @@ interface SellConfigResult {
   error?: string
 }
 
+// Add type definition for trading simulation status
+type TradingSimulationStatus = 'buying' | 'holding' | 'selling' | 'completed' | 'failed'
+
 interface TradingSimulation {
   token_address: string
   token_symbol: string | null
   simulation_started_at: string
   buy_operation: BuyOperation | null
   sell_operations: SellOperation[]
-  current_status: 'buying' | 'holding' | 'selling' | 'completed' | 'failed'
+  current_status: TradingSimulationStatus
   remaining_token_amount: string
   initial_token_amount: string
   is_simulated: boolean
@@ -223,16 +226,73 @@ interface TradingSimulation {
   } | null
 }
 
-// ===== Discord Trade Alert Helper =====
-const DISCORD_WEBHOOK_URL =
-  process.env.NODE_ENV === 'development'
-    ? process.env.DISCORD_WEBHOOK_AUTO_TRADE_DEV || process.env.DISCORD_WEBHOOK_AUTO_TRADE
-    : process.env.DISCORD_WEBHOOK_AUTO_TRADE
-const ENABLE_DISCORD_NOTIFICATIONS = process.env.ENABLE_DISCORD_NOTIFICATIONS === 'true'
+// Add helper functions for gain calculations
+function calculateGainPercentage(currentPrice: number, initialPrice: number): number {
+  if (!initialPrice || initialPrice <= 0) {
+    console.warn('Invalid initial price for gain calculation:', initialPrice)
+    return 0
+  }
+  
+  // Round to 4 decimal places to avoid floating point precision issues
+  return Math.round(((currentPrice - initialPrice) / initialPrice) * 10000) / 100
+}
 
+function calculatePeakPrice(currentPrice: number, existingPeakPrice: number): number {
+  // Ensure we don't store invalid peak prices
+  if (currentPrice <= 0) return existingPeakPrice
+  
+  // If no existing peak price (0), set current as peak
+  if (!existingPeakPrice) return currentPrice
+  
+  // Only update peak if current is higher
+  return currentPrice > existingPeakPrice ? currentPrice : existingPeakPrice
+}
+
+// Add interface for price tracking
+interface PriceTracking {
+  initialPrice: number
+  currentPrice: number
+  peakPrice: number
+  currentGain: number
+  peakGain: number
+  lastUpdated: string
+}
+
+// === Discord Trade Alert Configuration ===
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_AUTO_TRADE || ''
+
+// Enhanced logging helper
+function logTradeOperation(operation: string, data: any, error?: Error) {
+  const timestamp = new Date().toISOString()
+  const logData = {
+    timestamp,
+    operation,
+    ...data,
+    error: error ? {
+      message: error.message,
+      stack: error.stack
+    } : undefined
+  }
+  console.log(`[${timestamp}] ${operation}:`, JSON.stringify(logData, null, 2))
+}
+
+// Helper to determine if notifications should be enabled
+function shouldEnableNotifications(): boolean {
+  const enabled = DISCORD_WEBHOOK_URL !== ''
+  logTradeOperation('Discord Status Check', {
+    enabled,
+    webhookConfigured: !!DISCORD_WEBHOOK_URL
+  })
+  return enabled
+}
+
+// Update the Discord notification parameter types
+type TradeAlertStatus = 'buy' | 'partial-sell' | 'completed'
+
+// Updated Discord alert function with enhanced error handling
 async function sendTradeAlertDiscord(params: {
   tokenSymbol: string | null
-  status: 'buy' | 'partial-sell' | 'completed'
+  status: TradeAlertStatus
   isSimulated: boolean
   currentGain: number
   peakGain: number
@@ -242,7 +302,14 @@ async function sendTradeAlertDiscord(params: {
   responseTime?: number
 }) {
   try {
-    if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) return
+    // Check if Discord notifications are enabled
+    if (!shouldEnableNotifications()) {
+      logTradeOperation('Discord Notification Skipped', {
+        reason: 'Notifications disabled',
+        webhookStatus: 'not configured'
+      })
+      return
+    }
 
     const {
       tokenSymbol,
@@ -256,12 +323,22 @@ async function sendTradeAlertDiscord(params: {
       responseTime
     } = params
 
+    // Log notification attempt
+    logTradeOperation('Discord Notification Attempt', {
+      tokenSymbol,
+      status,
+      isSimulated,
+      currentGain,
+      peakGain,
+      provider
+    })
+
     const title = `🔔 Trade Alert (${isSimulated ? 'Simulation' : 'LIVE'})`
 
     const lines = [
       `${status} triggered for ${tokenSymbol ?? 'UNKNOWN'}`,
-      `Current Gain: ${currentGain.toFixed(4)}%`,
-      `Peak Gain: ${peakGain.toFixed(4)}%`,
+      `Current Gain: ${currentGain.toFixed(2)}%`,
+      `Peak Gain: ${peakGain.toFixed(2)}%`,
       `Price: ${priceUsd.toFixed(6)}`
     ]
 
@@ -272,13 +349,38 @@ async function sendTradeAlertDiscord(params: {
 
     const content = [title, ...lines].join('\n')
 
-    await fetch(DISCORD_WEBHOOK_URL, {
+    // Add request timing
+    const fetchStartTime = Date.now()
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content })
     })
+
+    const webhookResponseTime = Date.now() - fetchStartTime
+
+    if (!response.ok) {
+      const responseText = await response.text()
+      throw new Error(`Discord webhook failed: ${response.status} ${response.statusText}\nResponse: ${responseText}`)
+    }
+
+    // Log successful notification
+    logTradeOperation('Discord Notification Success', {
+      tokenSymbol,
+      status,
+      responseTime: webhookResponseTime,
+      httpStatus: response.status
+    })
   } catch (err) {
-    console.error('Failed to send Discord trade alert:', err)
+    // Enhanced error logging
+    logTradeOperation('Discord Notification Error', {
+      tokenSymbol: params.tokenSymbol,
+      status: params.status,
+      currentGain: params.currentGain
+    }, err as Error)
+    
+    // Re-throw for upstream handling if needed
+    throw err
   }
 }
 
@@ -821,8 +923,8 @@ async function performSellSimulation(
       configurations,
       best_sell_config: bestSellConfig,
       rpc_used: bestSellConfig.rpc_used,
-      final_gain_percentage: token.current_gain_percentage,
-      hold_duration_hours: (new Date().getTime() - new Date(simulation.simulation_started_at).getTime()) / (1000 * 60 * 60)
+      final_gain_percentage: 0,
+      hold_duration_hours: 0
     }
     
     // Update simulation's remaining token amount
@@ -839,8 +941,7 @@ async function performSellSimulation(
 
 // Helper function to check if token should be sold
 function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { shouldSell: boolean, sellPercentage: number, reason: string } {
-  const currentGain = token.current_gain_percentage
-  const peakGain = token.peak_gain_percentage
+  const currentGain = calculateGainPercentage(token.last_price_usd, token.initial_price_usd)
   const hasTP1 = simulation.sell_operations.some(op => op.final_gain_percentage >= simulation.take_profit_levels.tp1_percentage)
   
   // Check stop loss (-50%)
@@ -977,7 +1078,17 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const requestStartTime = Date.now()
+  const requestId = Math.random().toString(36).substring(7)
+
   try {
+    // Log incoming request
+    logTradeOperation('Tracking Request Started', {
+      requestId,
+      userAgent: request.headers.get('user-agent'),
+      source: request.headers.get('user-agent')?.includes('reloadsol-cron-service') ? 'cron' : 'browser'
+    })
+
     // Validate authentication (server-side only)
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
@@ -1147,7 +1258,7 @@ export async function POST(request: NextRequest) {
                 logo_url: token.logo_url,
                 initial_price_usd: token.current_price,
                 last_price_usd: token.current_price,
-                peak_price_usd: token.current_price,
+                peak_price_usd: 0,
                 current_gain_percentage: 0,
                 peak_gain_percentage: 0,
                 status: 'tracking',
@@ -1165,11 +1276,31 @@ export async function POST(request: NextRequest) {
         newTokensAdded++
         console.log(`✅ Adding new token to track: ${token.token_symbol} (${token.token_address})`)
       } else {
-        // Existing token - update price and check for sell conditions
-        const currentGain = ((token.current_price - existingToken.initial_price_usd) / existingToken.initial_price_usd) * 100
-        const newPeakPrice = Math.max(existingToken.peak_price_usd, token.current_price)
-        const peakGain = ((newPeakPrice - existingToken.initial_price_usd) / existingToken.initial_price_usd) * 100
+        // Validate prices
+        if (token.current_price <= 0) {
+          console.warn(`Invalid current price for ${token.token_symbol}:`, token.current_price)
+          continue
+        }
+
+        // Calculate current gain
+        const currentGain = calculateGainPercentage(token.current_price, existingToken.initial_price_usd)
         
+        // Only update peak price and gain if current price is higher than existing peak
+        const newPeakPrice = calculatePeakPrice(token.current_price, existingToken.peak_price_usd)
+        const peakGain = newPeakPrice > existingToken.peak_price_usd ? 
+          calculateGainPercentage(newPeakPrice, existingToken.initial_price_usd) :
+          existingToken.peak_gain_percentage
+
+        // Store price tracking data for analysis
+        const priceTracking: PriceTracking = {
+          initialPrice: existingToken.initial_price_usd,
+          currentPrice: token.current_price,
+          peakPrice: newPeakPrice,
+          currentGain,
+          peakGain,
+          lastUpdated: new Date().toISOString()
+        }
+
         // Check if token has dropped more than 50% from initial price (original loss condition)
         const isLost = currentGain <= -50
         
@@ -1194,41 +1325,61 @@ export async function POST(request: NextRequest) {
             )
             
             if (sellOperation) {
-              // Calculate total gain in SOL
-              const totalGainSol = parseFloat(sellOperation.sol_received) - 
-                (existingToken.trading_simulation.buy_operation?.buy_amount_sol || 0)
-              
-              // Create final result
-              const finalResult = {
-                success: true,
-                total_gain_percentage: sellOperation.final_gain_percentage,
-                total_gain_sol: totalGainSol,
-                buy_price_usd: existingToken.trading_simulation.buy_operation!.buy_price_usd,
-                sell_price_usd: sellOperation.sell_price_usd,
-                hold_duration_hours: sellOperation.hold_duration_hours,
-                best_buy_config: existingToken.trading_simulation.buy_operation!.best_buy_config,
-                best_sell_configs: [...(existingToken.trading_simulation.final_result?.best_sell_configs || []), sellOperation.best_sell_config]
+              try {
+                // Calculate gains using our helper function
+                const finalGain = calculateGainPercentage(token.current_price, existingToken.initial_price_usd)
+                
+                // Log sell operation details
+                logTradeOperation('Sell Operation', {
+                  requestId,
+                  tokenSymbol: token.token_symbol,
+                  finalGain,
+                  operationType: existingToken.trading_simulation.current_status
+                })
+
+                // Send Discord notification if enabled
+                if (shouldEnableNotifications()) {
+                  const bestCfg = sellOperation.best_sell_config
+                  const notificationStatus = getNotificationStatus(existingToken.trading_simulation.current_status)
+                  
+                  await sendTradeAlertDiscord({
+                    tokenSymbol: token.token_symbol,
+                    status: notificationStatus,
+                    isSimulated: existingToken.trading_simulation.is_simulated,
+                    currentGain: finalGain,
+                    peakGain: existingToken.peak_gain_percentage,
+                    priceUsd: token.current_price,
+                    provider: bestCfg.provider,
+                    rpcUsed: bestCfg.rpc_used,
+                    responseTime: bestCfg.response_time
+                  }).catch(error => {
+                    // Log Discord error but don't fail the operation
+                    logTradeOperation('Discord Notification Failed', {
+                      requestId,
+                      tokenSymbol: token.token_symbol,
+                      finalGain
+                    }, error)
+                  })
+                }
+
+                // Log successful completion
+                logTradeOperation('Tracking Request Completed', {
+                  requestId,
+                  duration: Date.now() - requestStartTime,
+                  tokenSymbol: token.token_symbol,
+                  status: 'success'
+                })
+              } catch (error) {
+                // Log sell operation error
+                logTradeOperation('Sell Operation Error', {
+                  requestId,
+                  tokenSymbol: token.token_symbol,
+                  operationType: existingToken.trading_simulation.current_status
+                }, error as Error)
+                
+                // Continue processing other tokens
+                console.error('Error in sell operation:', error)
               }
-              
-              console.log(`✅ Sell simulation completed for ${token.token_symbol}: ${sellOperation.final_gain_percentage.toFixed(2)}% gain (${totalGainSol.toFixed(6)} SOL)`)
-              
-              // Update simulation status
-              existingToken.trading_simulation.sell_operations.push(sellOperation)
-              
-              // Enable TP3 if this was TP1
-              if (sellOperation.final_gain_percentage >= existingToken.trading_simulation.take_profit_levels.tp1_percentage) {
-                existingToken.trading_simulation.take_profit_levels.tp3_enabled = true
-              }
-              
-              // Update simulation status based on remaining tokens
-              if (parseFloat(existingToken.trading_simulation.remaining_token_amount) <= 0) {
-                existingToken.trading_simulation.current_status = 'completed'
-                existingToken.trading_simulation.final_result = finalResult
-              }
-              
-              // Update token status
-              existingToken.status = 'won'
-              existingToken.status_changed_at = new Date().toISOString()
             }
           }
         }
@@ -1288,22 +1439,6 @@ export async function POST(request: NextRequest) {
             console.log(`🎯 Token sold via simulation (${currentGain.toFixed(2)}%): ${token.token_symbol}`)
           }
         }
-
-        // After updating simulation and before DB update
-        if (ENABLE_DISCORD_NOTIFICATIONS && sellOperation) {
-          const bestCfg: any = (sellOperation as any).best_sell_config || {}
-          await sendTradeAlertDiscord({
-            tokenSymbol: token.token_symbol,
-            status: existingToken.trading_simulation!.current_status === 'completed' ? 'completed' : 'partial-sell',
-            isSimulated: existingToken.trading_simulation!.is_simulated,
-            currentGain: existingToken.current_gain_percentage,
-            peakGain: existingToken.peak_gain_percentage,
-            priceUsd: token.current_price,
-            provider: bestCfg.provider,
-            rpcUsed: bestCfg.rpc_used,
-            responseTime: bestCfg.response_time
-          })
-        }
       }
     }
 
@@ -1356,10 +1491,17 @@ export async function POST(request: NextRequest) {
     })
     
   } catch (error) {
-    console.error('❌ Error in trending token tracking:', error)
+    // Log complete request failure
+    logTradeOperation('Tracking Request Failed', {
+      requestId,
+      duration: Date.now() - requestStartTime,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    }, error as Error)
+
     return NextResponse.json({
       error: 'Failed to track trending tokens',
       message: error instanceof Error ? error.message : 'Unknown error',
+      requestId,
       timestamp: new Date().toISOString()
     }, { status: 500 })
   }
@@ -1452,4 +1594,9 @@ export async function GET(request: NextRequest) {
       timestamp: new Date().toISOString()
     }, { status: 500 })
   }
+}
+
+// Helper function to determine notification status
+function getNotificationStatus(simulationStatus: TradingSimulationStatus): TradeAlertStatus {
+  return simulationStatus === 'completed' ? 'completed' : 'partial-sell'
 } 
