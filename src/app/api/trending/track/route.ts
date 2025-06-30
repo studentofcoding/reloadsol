@@ -1246,6 +1246,13 @@ export async function POST(request: NextRequest) {
           console.error(`❌ Buy simulation error for ${token.token_symbol}:`, error)
         }
         
+        // Create initial price history record for new token
+        const initialPriceRecord: PriceRecord = {
+          timestamp: new Date().toISOString(),
+          price_usd: token.current_price,
+          volume: token.volume_1h
+        }
+
         updatesPromises.push(
           (async () => {
             const { error } = await supabase
@@ -1267,7 +1274,8 @@ export async function POST(request: NextRequest) {
                 volume_1h: token.volume_1h,
                 tracking_started_at: new Date().toISOString(),
                 trade_comparison_data: tradeComparisonData,
-                trading_simulation: tradingSimulation
+                trading_simulation: tradingSimulation,
+                price_history: [initialPriceRecord]
               })
             if (error) throw error
           })()
@@ -1329,11 +1337,55 @@ export async function POST(request: NextRequest) {
                 // Calculate gains using our helper function
                 const finalGain = calculateGainPercentage(token.current_price, existingToken.initial_price_usd)
                 
+                // Calculate hold duration
+                const simulationStart = new Date(existingToken.trading_simulation.simulation_started_at)
+                const now = new Date()
+                const holdDurationHours = (now.getTime() - simulationStart.getTime()) / (1000 * 60 * 60)
+                
+                // Set final gain and hold duration on sell operation
+                sellOperation.final_gain_percentage = finalGain
+                sellOperation.hold_duration_hours = holdDurationHours
+                
+                // Add sell operation to the simulation
+                existingToken.trading_simulation.sell_operations.push(sellOperation)
+                
+                // Check if position is fully closed (100% sell or remaining tokens ~ 0)
+                const remainingTokens = parseFloat(existingToken.trading_simulation.remaining_token_amount || '0')
+                const isPositionClosed = sellDecision.sellPercentage === 100 || remainingTokens < 1000 // Less than 0.001 tokens remaining
+                
+                if (isPositionClosed) {
+                  // Update simulation status to completed
+                  existingToken.trading_simulation.current_status = 'completed'
+                  existingToken.trading_simulation.remaining_token_amount = '0'
+                  
+                  // Calculate final result
+                  const buyOperation = existingToken.trading_simulation.buy_operation
+                  if (buyOperation) {
+                    const totalSolReceived = existingToken.trading_simulation.sell_operations.reduce(
+                      (total, op) => total + (parseFloat(op.sol_received) / 1e9), 0
+                    )
+                    const totalSolGain = totalSolReceived - buyOperation.buy_amount_sol
+                    
+                    existingToken.trading_simulation.final_result = {
+                      success: finalGain > 0,
+                      total_gain_percentage: finalGain,
+                      total_gain_sol: totalSolGain,
+                      buy_price_usd: buyOperation.buy_price_usd,
+                      sell_price_usd: token.current_price,
+                      hold_duration_hours: holdDurationHours,
+                      best_buy_config: buyOperation.best_buy_config,
+                      best_sell_configs: existingToken.trading_simulation.sell_operations.map(op => op.best_sell_config)
+                    }
+                  }
+                }
+                
                 // Log sell operation details
                 logTradeOperation('Sell Operation', {
                   requestId,
                   tokenSymbol: token.token_symbol,
                   finalGain,
+                  sellPercentage: sellDecision.sellPercentage,
+                  isPositionClosed,
                   operationType: existingToken.trading_simulation.current_status
                 })
 
@@ -1384,6 +1436,23 @@ export async function POST(request: NextRequest) {
           }
         }
         
+        // Create new price record for history
+        const newPriceRecord: PriceRecord = {
+          timestamp: new Date().toISOString(),
+          price_usd: token.current_price,
+          volume: token.volume_1h
+        }
+        
+        // Update price history (keep last 24 hours, max 288 records for 5-minute intervals)
+        const existingPriceHistory = existingToken.price_history || []
+        const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000) // 24 hours ago
+        
+        // Filter old records and add new one
+        const updatedPriceHistory = [
+          ...existingPriceHistory.filter(record => new Date(record.timestamp) > cutoffTime),
+          newPriceRecord
+        ].slice(-288) // Keep max 288 records (24h * 12 records per hour)
+
         if (isLost && existingToken.status === 'tracking') {
           // Mark as lost (original logic)
           updatesPromises.push(
@@ -1400,7 +1469,8 @@ export async function POST(request: NextRequest) {
                   organic_score: token.organic_score,
                   market_cap: token.market_cap,
                   volume_1h: token.volume_1h,
-                  trading_simulation: existingToken.trading_simulation
+                  trading_simulation: existingToken.trading_simulation,
+                  price_history: updatedPriceHistory
                 })
                 .eq('id', existingToken.id)
               if (error) throw error
@@ -1423,7 +1493,8 @@ export async function POST(request: NextRequest) {
                   organic_score: token.organic_score,
                   market_cap: token.market_cap,
                   volume_1h: token.volume_1h,
-                  trading_simulation: existingToken.trading_simulation
+                  trading_simulation: existingToken.trading_simulation,
+                  price_history: updatedPriceHistory
                 })
                 .eq('id', existingToken.id)
               if (error) throw error
@@ -1581,7 +1652,8 @@ export async function GET(request: NextRequest) {
         tracking_started_at: token.tracking_started_at,
         status_changed_at: token.status_changed_at,
         trade_comparison_data: token.trade_comparison_data,
-        trading_simulation: token.trading_simulation
+        trading_simulation: token.trading_simulation,
+        price_history: token.price_history || []
       },
       timestamp: new Date().toISOString()
     })

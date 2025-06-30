@@ -157,7 +157,9 @@ export default function TradingSimulationModal({
       const data = await response.json()
       
       if (data.success && data.token) {
-        setPriceHistory(data.token.price_history || [])
+        const priceHistoryData = data.token.price_history || []
+        console.log(`📊 Price history for ${tokenAddress}:`, priceHistoryData.length, 'records')
+        setPriceHistory(priceHistoryData)
       }
       
       if (data.success && data.token.trading_simulation) {
@@ -379,6 +381,24 @@ export default function TradingSimulationModal({
                     <p className="font-medium text-blue-400">{priceStats.totalVolume.toLocaleString()}</p>
                   </div>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Show message when insufficient price history */}
+          {priceHistory.length <= 1 && (
+            <div className="bg-blue-900/20 border border-blue-600/30 rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-2 text-blue-400">📈 Price History (24h)</h3>
+              <p className="text-blue-400/80">
+                {priceHistory.length === 0 
+                  ? 'No price history data available yet. Price tracking will begin on the next update cycle.'
+                  : 'Insufficient data for chart display. Need at least 2 data points to show price trends.'
+                }
+              </p>
+              {priceHistory.length === 1 && (
+                <p className="text-blue-400/60 text-sm mt-2">
+                  Current price: ${priceHistory[0].price_usd.toFixed(6)} • Volume: {priceHistory[0].volume?.toLocaleString() || 'N/A'}
+                </p>
               )}
             </div>
           )}
