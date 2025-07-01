@@ -2,7 +2,7 @@
 
 
 import React, { useState, useEffect } from 'react'
-import { Line } from 'react-chartjs-2'
+import { Line, Bar } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
   LineElement,
@@ -267,6 +267,90 @@ export default function TradingSimulationModal({
     return soldSol - boughtAmount
   }
 
+  // ----- Helper functions for configuration analysis -----
+
+  interface ConfigurationResult {
+    type: string;
+    slippage: string;
+    time: number;
+    provider: string;
+  }
+
+  const getFastestConfiguration = React.useCallback((simulationData: TradingSimulationData): ConfigurationResult | null => {
+    let fastestConfig: ConfigurationResult | null = null;
+    let fastestTime = Infinity;
+    
+    // Check buy configurations
+    if (simulationData.buy_operation?.configurations) {
+      Object.entries(simulationData.buy_operation.configurations).forEach(([key, config]) => {
+        if (config.success && config.response_time < fastestTime) {
+          fastestTime = config.response_time;
+          const slippage = key.includes('1') ? '1%' : key.includes('2') ? '2%' : '5%';
+          fastestConfig = { type: 'Buy', slippage, time: config.response_time, provider: config.best_provider };
+        }
+      });
+    }
+    
+    // Check sell configurations
+    if (simulationData.sell_operation?.configurations) {
+      Object.entries(simulationData.sell_operation.configurations).forEach(([key, config]) => {
+        if (config.success && config.response_time < fastestTime) {
+          fastestTime = config.response_time;
+          const slippage = key.includes('1') ? '1%' : key.includes('2') ? '2%' : '5%';
+          fastestConfig = { type: 'Sell', slippage, time: config.response_time, provider: config.best_provider };
+        }
+      });
+    }
+    
+    return fastestConfig;
+  }, []);
+
+  const getSuccessRate = React.useCallback((simulationData: TradingSimulationData) => {
+    let successCount = 0;
+    let totalCount = 0;
+    
+    if (simulationData.buy_operation?.configurations) {
+      Object.values(simulationData.buy_operation.configurations).forEach(config => {
+        totalCount++;
+        if (config.success) successCount++;
+      });
+    }
+    
+    if (simulationData.sell_operation?.configurations) {
+      Object.values(simulationData.sell_operation.configurations).forEach(config => {
+        totalCount++;
+        if (config.success) successCount++;
+      });
+    }
+    
+    return { successCount, totalCount, rate: totalCount > 0 ? (successCount / totalCount * 100) : 0 };
+  }, []);
+
+  const getAverageResponseTime = React.useCallback((simulationData: TradingSimulationData) => {
+    let totalTime = 0;
+    let successCount = 0;
+    
+    if (simulationData.buy_operation?.configurations) {
+      Object.values(simulationData.buy_operation.configurations).forEach(config => {
+        if (config.success) {
+          totalTime += config.response_time;
+          successCount++;
+        }
+      });
+    }
+    
+    if (simulationData.sell_operation?.configurations) {
+      Object.values(simulationData.sell_operation.configurations).forEach(config => {
+        if (config.success) {
+          totalTime += config.response_time;
+          successCount++;
+        }
+      });
+    }
+    
+    return { avgTime: successCount > 0 ? (totalTime / successCount) : 0, successCount };
+  }, []);
+
   // ----- Memoised calculations for performance -----
 
   const priceStats = React.useMemo(() => {
@@ -293,6 +377,11 @@ export default function TradingSimulationModal({
   const chartConfig = React.useMemo(
     () => getPriceHistoryChartConfig(priceHistory),
     [priceHistory]
+  )
+
+  const configPerformanceChart = React.useMemo(
+    () => simulationData ? getConfigurationPerformanceChartConfig(simulationData) : null,
+    [simulationData]
   )
 
   if (!isOpen) return null
@@ -347,6 +436,63 @@ export default function TradingSimulationModal({
           {error && (
             <div className="bg-red-900/20 border border-red-600/30 rounded-lg p-4 mb-6">
               <p className="text-red-400">{error}</p>
+            </div>
+          )}
+
+          {/* Configuration Performance Chart */}
+          {configPerformanceChart && simulationData && (simulationData.buy_operation || simulationData.sell_operation) && (
+            <div className="bg-gray-800/30 border border-gray-700 rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-4 text-white">⚡ Configuration Performance</h3>
+              
+              {/* Chart */}
+              <Bar
+                data={configPerformanceChart.data as any}
+                options={configPerformanceChart.options as any}
+              />
+              
+                             {/* Performance summary */}
+               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4 text-sm">
+                 <div className="bg-gray-700/50 rounded-lg p-3">
+                   <p className="text-gray-400 mb-1">Fastest Configuration</p>
+                   {simulationData && (() => {
+                     const fastest: ConfigurationResult | null = getFastestConfiguration(simulationData);
+                     return fastest ? (
+                       <div>
+                         <p className="font-medium text-green-400">{fastest.type} {fastest.slippage}</p>
+                         <p className="text-xs text-gray-400">{fastest.time}ms • {fastest.provider}</p>
+                       </div>
+                     ) : (
+                       <p className="text-gray-500">No successful configs</p>
+                     );
+                   })()}
+                 </div>
+                 
+                 <div className="bg-gray-700/50 rounded-lg p-3">
+                   <p className="text-gray-400 mb-1">Success Rate</p>
+                   {simulationData && (() => {
+                     const { successCount, totalCount, rate } = getSuccessRate(simulationData);
+                     return (
+                       <div>
+                         <p className="font-medium text-blue-400">{rate.toFixed(1)}%</p>
+                         <p className="text-xs text-gray-400">{successCount}/{totalCount} configurations</p>
+                       </div>
+                     );
+                   })()}
+                 </div>
+                 
+                 <div className="bg-gray-700/50 rounded-lg p-3">
+                   <p className="text-gray-400 mb-1">Average Response Time</p>
+                   {simulationData && (() => {
+                     const { avgTime, successCount } = getAverageResponseTime(simulationData);
+                     return (
+                       <div>
+                         <p className="font-medium text-purple-400">{avgTime.toFixed(0)}ms</p>
+                         <p className="text-xs text-gray-400">Across {successCount} successful configs</p>
+                       </div>
+                     );
+                   })()}
+                 </div>
+               </div>
             </div>
           )}
 
@@ -703,6 +849,152 @@ const getPriceHistoryChartConfig = (priceHistory: PriceRecord[]): PriceChartConf
     plugins: {
       legend: { labels: { color: '#d1d5db' } },
       tooltip: { mode: 'index', intersect: false },
+    },
+  }
+
+  return { data, options }
+}
+
+// Build chart.js compatible config for trading configuration performance comparison
+const getConfigurationPerformanceChartConfig = (simulationData: TradingSimulationData): PriceChartConfig => {
+  const configData: Array<{
+    label: string
+    responseTime: number
+    success: boolean
+    fees: number
+    provider: string
+    operation: 'buy' | 'sell'
+    slippage: string
+  }> = []
+
+  // Extract buy operation configurations
+  if (simulationData.buy_operation?.configurations) {
+    Object.entries(simulationData.buy_operation.configurations).forEach(([key, config]) => {
+      const slippage = key.includes('1') ? '1%' : key.includes('2') ? '2%' : '5%'
+      configData.push({
+        label: `Buy ${slippage}`,
+        responseTime: config.response_time,
+        success: config.success,
+        fees: config.total_fees,
+        provider: config.best_provider,
+        operation: 'buy',
+        slippage
+      })
+    })
+  }
+
+  // Extract sell operation configurations
+  if (simulationData.sell_operation?.configurations) {
+    Object.entries(simulationData.sell_operation.configurations).forEach(([key, config]) => {
+      const slippage = key.includes('1') ? '1%' : key.includes('2') ? '2%' : '5%'
+      configData.push({
+        label: `Sell ${slippage}`,
+        responseTime: config.response_time,
+        success: config.success,
+        fees: config.total_fees,
+        provider: config.best_provider,
+        operation: 'sell',
+        slippage
+      })
+    })
+  }
+
+  const labels = configData.map(item => item.label)
+
+  // Response time dataset (primary)
+  const responseTimeDataset: ChartDataset<'bar', (number | null)[]> = {
+    type: 'bar',
+    label: 'Response Time (ms)',
+    data: configData.map(item => item.success ? item.responseTime : 0),
+    backgroundColor: configData.map(item => {
+      if (!item.success) return 'rgba(239, 68, 68, 0.8)' // Red for failed
+      if (item.operation === 'buy') return 'rgba(34, 197, 94, 0.8)' // Green for buy
+      return 'rgba(59, 130, 246, 0.8)' // Blue for sell
+    }),
+    borderColor: configData.map(item => {
+      if (!item.success) return 'rgb(239, 68, 68)'
+      if (item.operation === 'buy') return 'rgb(34, 197, 94)'
+      return 'rgb(59, 130, 246)'
+    }),
+    borderWidth: 1,
+    yAxisID: 'y',
+  }
+
+  // Fees dataset (secondary axis)
+  const feesDataset: ChartDataset<'bar', (number | null)[]> = {
+    type: 'bar',
+    label: 'Total Fees (SOL)',
+    data: configData.map(item => item.success ? item.fees : 0),
+    backgroundColor: 'rgba(168, 85, 247, 0.4)',
+    borderColor: 'rgb(168, 85, 247)',
+    borderWidth: 1,
+    yAxisID: 'y1',
+  }
+
+  const data: ChartData<'bar', (number | null)[], string> = {
+    labels,
+    datasets: [responseTimeDataset, feesDataset],
+  }
+
+  const options: ChartOptions<'bar'> = {
+    responsive: true,
+    interaction: {
+      mode: 'index',
+      intersect: false,
+    },
+    indexAxis: 'x',
+    scales: {
+      y: {
+        type: 'linear',
+        display: true,
+        position: 'left',
+        title: {
+          display: true,
+          text: 'Response Time (ms)',
+          color: '#d1d5db'
+        },
+        ticks: { color: '#d1d5db' },
+        grid: { color: 'rgba(209, 213, 219, 0.1)' }
+      },
+      y1: {
+        type: 'linear',
+        display: true,
+        position: 'right',
+        title: {
+          display: true,
+          text: 'Fees (SOL)',
+          color: '#a855f7'
+        },
+        grid: { drawOnChartArea: false },
+        ticks: { color: '#a855f7' },
+      },
+      x: {
+        ticks: { color: '#d1d5db' },
+        grid: { color: 'rgba(209, 213, 219, 0.1)' }
+      },
+    },
+    plugins: {
+      legend: { 
+        labels: { color: '#d1d5db' },
+        position: 'top'
+      },
+      tooltip: { 
+        mode: 'index', 
+        intersect: false,
+        callbacks: {
+          afterLabel: function(context) {
+            const index = context.dataIndex
+            const config = configData[index]
+            if (!config) return ''
+            
+            return [
+              `Provider: ${config.provider}`,
+              `Status: ${config.success ? '✅ Success' : '❌ Failed'}`,
+              `Slippage: ${config.slippage}`
+            ]
+          }
+        }
+      },
     },
   }
 

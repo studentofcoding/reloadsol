@@ -1005,7 +1005,7 @@ async function setTradingMode(isSimulated: boolean, keypairPath?: string): Promi
   try {
     // Update all active simulations
     const { data: activeSimulations, error: fetchError } = await supabase
-      .from('trending_token_tracker')
+      .from(TRACKER_TABLE)
       .select('*')
       .eq('status', 'tracking')
       .not('trading_simulation', 'is', null)
@@ -1022,7 +1022,7 @@ async function setTradingMode(isSimulated: boolean, keypairPath?: string): Promi
         simulation.keypair_path = keypairPath
 
         const { error: updateError } = await supabase
-          .from('trending_token_tracker')
+          .from(TRACKER_TABLE)
           .update({
             trading_simulation: simulation
           })
@@ -1172,7 +1172,7 @@ export async function POST(request: NextRequest) {
 
     // Get currently tracked tokens
     const { data: trackedTokens, error: fetchError } = await supabase
-      .from('trending_token_tracker')
+      .from(TRACKER_TABLE)
       .select('*')
       .eq('status', 'tracking')
 
@@ -1256,7 +1256,7 @@ export async function POST(request: NextRequest) {
         updatesPromises.push(
           (async () => {
             const { error } = await supabase
-              .from('trending_token_tracker')
+              .from(TRACKER_TABLE)
               .insert({
                 id: tokenId,
                 token_address: token.token_address,
@@ -1458,7 +1458,7 @@ export async function POST(request: NextRequest) {
           updatesPromises.push(
             (async () => {
               const { error } = await supabase
-                .from('trending_token_tracker')
+                .from(TRACKER_TABLE)
                 .update({
                   last_price_usd: token.current_price,
                   peak_price_usd: newPeakPrice,
@@ -1484,7 +1484,7 @@ export async function POST(request: NextRequest) {
           updatesPromises.push(
             (async () => {
               const { error } = await supabase
-                .from('trending_token_tracker')
+                .from(TRACKER_TABLE)
                 .update({
                   last_price_usd: token.current_price,
                   peak_price_usd: newPeakPrice,
@@ -1523,7 +1523,7 @@ export async function POST(request: NextRequest) {
 
     // Get updated statistics
     const { data: currentStats, error: statsError } = await supabase
-      .from('trending_token_tracker')
+      .from(TRACKER_TABLE)
       .select('status')
     
     if (statsError) {
@@ -1593,7 +1593,7 @@ export async function GET(request: NextRequest) {
     
     // Get token data with trade comparison
     const { data: token, error } = await supabase
-      .from('trending_token_tracker')
+      .from(TRACKER_TABLE)
       .select('*')
       .eq('token_address', tokenAddress)
       .single()
@@ -1618,7 +1618,7 @@ export async function GET(request: NextRequest) {
       if (tradeComparisonData) {
         // Update the token with trade comparison data
         const { error: updateError } = await supabase
-          .from('trending_token_tracker')
+          .from(TRACKER_TABLE)
           .update({
             trade_comparison_data: tradeComparisonData
           })

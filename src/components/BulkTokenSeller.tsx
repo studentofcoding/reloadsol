@@ -668,7 +668,7 @@ export default function BulkTokenSeller() {
                   </div>
                 )}
                 <iframe 
-                  src={`https://birdeye.so/tv-widget/${selectedToken}?chain=solana&viewMode=pair&chartInterval=1D&chartType=CANDLE&chartTimezone=Asia%2FSingapore&chartLeftToolbar=show&theme=dark`}
+                  src={`https://www.gmgn.cc/kline/sol/${selectedToken}?interval=1D`}
                   height="400"
                   className="w-full"
                   style={{ border: 'none' }}

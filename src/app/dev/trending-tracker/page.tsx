@@ -4,6 +4,9 @@ import React, { useState, useEffect } from 'react'
 import TradingSimulationModal from '@/components/TradingSimulationModal'
 import TradeComparisonModal from '@/components/TradeComparisonModal'
 
+// Use alternate tables in local development to avoid prod collisions
+const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
+
 interface TopWinner {
   token_address: string
   token_symbol: string | null
@@ -175,7 +178,7 @@ export default function TrendingTrackerPage() {
             // Update token in database (import supabase client)
             const { supabase } = await import('@/utils/supabase')
             const { error } = await supabase
-              .from('trending_token_tracker')
+              .from(TRACKER_TABLE)
               .update({
                 last_price_usd: newPrice,
                 peak_price_usd: newPeakPrice,

@@ -309,92 +309,60 @@ export default function PnLTracker() {
         // Continue with empty array - will filter out all open positions
       }
 
-      // Generate PnL records and open positions from combined positions
+            // Generate P&L records and open positions using DIRECT SOL amounts (like TradingHistory)
       tokenPositions.forEach((position, mintAddress) => {
-                 // Create individual PnL records for each sell transaction
-         position.transactions.forEach(transaction => {
-           if (transaction.type === 'sell') {
-             // Calculate proportional buy cost for this sell
-             // Ensure we don't divide by zero
-             const sellProportion = position.totalSolSold > 0 ? 
-               transaction.solAmount / position.totalSolSold : 0
-             const proportionalBuyCost = position.totalSolBought * sellProportion
-            
-            let pnlSOL = transaction.solAmount - proportionalBuyCost
-            let pnlPercentage = 0
-            let pnlUSD = 0
-            
-            // Calculate percentage P&L for this specific sell
-            if (proportionalBuyCost > 0) {
-              pnlPercentage = ((transaction.solAmount - proportionalBuyCost) / proportionalBuyCost) * 100
-            }
-            
-            // Use individual transaction prices if available, otherwise fall back to weighted averages
-            const buyPrice = transaction.priceUsd || position.weightedAvgBuyPrice || 0
-            const sellPrice = transaction.priceUsd || position.weightedAvgSellPrice || 0
-            
-            pnlUSD = pnlSOL * solPriceUsd
-            
-            // Determine if this was a partial sell by checking remaining tokens
-            const isPartialSell = position.remainingTokenAmount > 0.001 || 
-                                (position.totalSolBought - position.totalSolSold) > 0.001
-            
-            const pnlRecord: PnLRecord = {
-              id: `${mintAddress}-${transaction.timestamp}`,
-              mintAddress: position.mintAddress,
-              symbol: position.symbol,
-              name: position.name,
-              logoURI: position.logoURI,
-              buyTimestamp: position.firstBuyTimestamp,
-              sellTimestamp: transaction.timestamp,
-              buyPrice: buyPrice,
-              sellPrice: sellPrice,
-              solAmountBought: proportionalBuyCost,
-              solAmountSold: transaction.solAmount,
-              pnlSOL,
-              pnlUSD,
-              pnlPercentage,
-              buySignatures: position.buySignatures,
-              sellSignatures: transaction.signatures,
-              isPartialSell,
-              sellTransactionId: `${mintAddress}-${transaction.timestamp}`
-            }
-
-            pnlData.push(pnlRecord)
-          }
-        })
+        const totalSolBought = position.totalSolBought
+        const totalSolSold = position.totalSolSold
         
-        // Only show as open if the wallet has a positive token balance
+        console.log(`📊 Position ${position.symbol}: ${totalSolBought.toFixed(4)} SOL invested, ${totalSolSold.toFixed(4)} SOL received`)
+        
+        // Create P&L record using ACTUAL SOL amounts (no proportional calculations)
+        if (totalSolSold > 0) {
+          // Simple, accurate P&L calculation using actual transaction SOL amounts
+          const pnlSOL = totalSolSold - totalSolBought
+          const pnlPercentage = totalSolBought > 0 ? (pnlSOL / totalSolBought) * 100 : 0
+          const pnlUSD = pnlSOL * solPriceUsd
+          
+          // Determine if partial sell by checking wallet for remaining tokens
+          const walletToken = currentWalletTokens.find(token => token.mintAddress === position.mintAddress)
+          const hasRemainingTokens = !!(walletToken && walletToken.uiAmount > 0.001)
+          
+          // Use the most recent sell transaction for timestamps and signatures
+          const sellTransactions = position.transactions.filter(t => t.type === 'sell')
+          const mostRecentSell = sellTransactions[sellTransactions.length - 1]
+          
+          const pnlRecord: PnLRecord = {
+            id: `${mintAddress}-direct`,
+            mintAddress: position.mintAddress,
+            symbol: position.symbol,
+            name: position.name,
+            logoURI: position.logoURI,
+            buyTimestamp: position.firstBuyTimestamp,
+            sellTimestamp: mostRecentSell.timestamp,
+            buyPrice: position.weightedAvgBuyPrice || 0,
+            sellPrice: position.weightedAvgSellPrice || 0,
+            solAmountBought: totalSolBought,     // ACTUAL total SOL spent
+            solAmountSold: totalSolSold,         // ACTUAL total SOL received
+            pnlSOL,                              // Simple: received - spent
+            pnlUSD,
+            pnlPercentage,
+            buySignatures: position.buySignatures,
+            sellSignatures: position.sellSignatures,
+            isPartialSell: hasRemainingTokens,   // Based on actual wallet balance
+            sellTransactionId: `${mintAddress}-direct-${mostRecentSell.timestamp}`
+          }
+
+          pnlData.push(pnlRecord)
+          
+          console.log(`💰 Direct P&L for ${position.symbol}: ${totalSolSold.toFixed(4)} - ${totalSolBought.toFixed(4)} = ${pnlSOL.toFixed(4)} SOL (${pnlPercentage.toFixed(1)}%)`)
+        }
+        
+        // Show as open position ONLY if user has tokens in wallet AND no sells have occurred
+        // For partial sells, the P&L record shows the complete transaction history
         const walletToken = currentWalletTokens.find(token => token.mintAddress === position.mintAddress)
-                 if (walletToken && walletToken.uiAmount > 0) {
-           // Calculate remaining SOL investment (proportional to remaining tokens)
-           let remainingSolInvestment: number;
-           if (position.totalSolSold === 0) {
-             // No sells for this position yet, so the remaining investment is the total buy-in amount.
-             // This fixes the bug where new buys without token-amount data defaulted to 0.001.
-             remainingSolInvestment = position.totalSolBought;
-           } else {
-             // Sells have occurred. We must calculate the remaining investment based on the proportion of tokens left.
-             if (position.totalTokenAmount > 0) {
-               const remainingProportion = position.remainingTokenAmount / position.totalTokenAmount;
-               remainingSolInvestment = position.totalSolBought * remainingProportion;
-             } else {
-               // If there have been sells but we have no token data, estimate based on SOL difference
-               // and wallet token presence. Since the user has tokens in wallet, there must be some investment.
-               const netSolDifference = position.totalSolBought - position.totalSolSold;
-               
-               if (netSolDifference > 0.001) {
-                 // Use the net SOL difference as remaining investment
-                 remainingSolInvestment = netSolDifference;
-               } else {
-                 // Fallback: estimate based on original buy amount and wallet token presence
-                 // If user has tokens but we can't calculate precisely, assume at least 10% of original investment remains
-                 remainingSolInvestment = Math.max(0.001, position.totalSolBought * 0.1);
-               }
-               
-               console.log(`⚠️ Token ${position.symbol}: Missing token amount data, estimated remaining SOL investment: ${remainingSolInvestment.toFixed(4)} (netDiff: ${netSolDifference.toFixed(4)})`);
-             }
-           }
+        if (walletToken && walletToken.uiAmount > 0.001 && totalSolSold === 0) {
+          // This is a pure open position (bought but never sold)
+          console.log(`✅ Open position for ${position.symbol}: ${totalSolBought.toFixed(4)} SOL invested, no sells yet`)
           
           const openPosition: OpenPosition = {
             id: `open-${mintAddress}`,
@@ -403,16 +371,18 @@ export default function PnLTracker() {
             name: position.name || walletToken.name,
             logoURI: position.logoURI || walletToken.logoURI,
             buyTimestamp: position.firstBuyTimestamp,
-            solAmountBought: remainingSolInvestment,
+            solAmountBought: totalSolBought,  // Full original investment
             buySignatures: position.buySignatures,
             isOpen: true,
             buyPriceUsd: position.weightedAvgBuyPrice,
-            buyTokenAmount: position.remainingTokenAmount,
+            buyTokenAmount: position.totalTokenAmount,
             actualWalletBalance: walletToken.uiAmount,
             walletTokenData: walletToken
           }
           openData.push(openPosition)
-          console.log(`✅ Verified open position: ${position.symbol || walletToken.symbol} - SOL Investment: ${remainingSolInvestment.toFixed(4)}, Historical: ${position.remainingTokenAmount.toFixed(4)}, Wallet: ${walletToken.uiAmount.toFixed(4)}, Total Bought: ${position.totalSolBought.toFixed(4)}, Total Sold: ${position.totalSolSold.toFixed(4)}`)
+          console.log(`✅ Pure open position: ${position.symbol || walletToken.symbol} - SOL Investment: ${totalSolBought.toFixed(4)}, Wallet: ${walletToken.uiAmount.toFixed(4)}`)
+        } else if (walletToken && walletToken.uiAmount > 0.001 && totalSolSold > 0) {
+          console.log(`ℹ️ ${position.symbol} has remaining tokens but is tracked in P&L (partial sell completed)`)
         } else {
           console.log(`❌ Skipping open position: ${position.symbol} - Token not found in wallet or zero balance`)
         }
@@ -422,34 +392,29 @@ export default function PnLTracker() {
       pnlData.sort((a, b) => b.sellTimestamp - a.sellTimestamp)
       openData.sort((a, b) => b.buyTimestamp - a.buyTimestamp)
       
-      // Debug logging for position combination
-      console.log('📊 PnL Calculation Summary:', {
+      // Summary and validation
+      const positionSummary = Array.from(tokenPositions.entries()).map(([mint, pos]) => {
+        const pnlRecord = pnlData.find(p => p.mintAddress === mint)
+        const openPosition = openData.find(o => o.mintAddress === mint)
+        
+        return {
+          token: pos.symbol || mint.slice(0, 8) + '...',
+          totalBought: pos.totalSolBought.toFixed(4),
+          totalSold: pos.totalSolSold.toFixed(4),
+          hasPnL: !!pnlRecord,
+          isOpen: !!openPosition,
+          status: pos.totalSolSold > 0 ? 'sold' : 'holding'
+        }
+      })
+      
+      console.log('📊 Direct P&L Calculation Summary:', {
         totalPositions: tokenPositions.size,
         completedTrades: pnlData.length,
         openPositions: openData.length,
-        positionsDetails: Array.from(tokenPositions.entries()).map(([mint, pos]) => {
-          const remainingSol = pos.totalSolBought - pos.totalSolSold
-          const hasTokens = pos.remainingTokenAmount > 0.001
-          const hasSol = remainingSol > 0.001
-          
-          return {
-            token: pos.symbol || mint.slice(0, 8) + '...',
-            buys: pos.transactions.filter(t => t.type === 'buy').length,
-            sells: pos.transactions.filter(t => t.type === 'sell').length,
-            totalSolBought: pos.totalSolBought.toFixed(4),
-            totalSolSold: pos.totalSolSold.toFixed(4),
-            remainingSol: remainingSol.toFixed(4),
-            avgBuyPrice: pos.weightedAvgBuyPrice.toFixed(6),
-            avgSellPrice: pos.weightedAvgSellPrice.toFixed(6),
-            totalTokens: pos.totalTokenAmount.toFixed(2),
-            remainingTokens: pos.remainingTokenAmount.toFixed(2),
-            shouldBeOpen: hasTokens || hasSol,
-            isOpen: openData.some(op => op.mintAddress === mint),
-            status: pos.totalSolSold > 0 ? 
-              (hasTokens || hasSol ? 'partial' : 'closed') : 'open'
-          }
-        })
+        positionSummary
       })
+      
+      console.log('✅ Using direct SOL amounts - no allocation math needed!')
       
       setPnlRecords(pnlData)
       setOpenPositions(openData)
@@ -858,7 +823,7 @@ export default function PnLTracker() {
               </div>
             )}
             <iframe 
-              src={`https://birdeye.so/tv-widget/${selectedToken}?chain=solana&viewMode=pair&chartInterval=1D&chartType=CANDLE&chartTimezone=Asia%2FSingapore&chartLeftToolbar=show&theme=dark`}
+              src={`https://www.gmgn.cc/kline/sol/${selectedToken}?interval=1D`}
               height="400"
               className="w-full"
               style={{ border: 'none' }}
