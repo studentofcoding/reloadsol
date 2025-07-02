@@ -848,7 +848,7 @@ export default function PnLTracker() {
                   : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
               }`}
             >
-              Realized P&L ({pnlRecords.length})
+              Closed P&L ({pnlRecords.length})
             </button>
             <button
               onClick={() => setActiveTab('open')}
@@ -902,106 +902,111 @@ export default function PnLTracker() {
                 <p className="text-gray-500 text-xs mt-1">💡 Each sell creates a separate P&L record, including partial sells</p>
               </div>
             ) : (
-              <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
-                {pnlRecords.slice(0, 10).map((record) => (
-                  <div
-                    key={record.id}
-                    className="flex-shrink-0 p-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg group p-4 relative"
-                  >
-                    {/* Action buttons overlay */}
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-2 sm:space-x-3">
-                      <button
-                        onClick={() => handleSelectToken(record.mintAddress)}
-                        className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
-                        title="View chart"
-                      >
-                        <svg className="w-8 h-8 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={() => openTransactionOnSolscan(record.sellSignatures)}
-                        className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
-                        title="View on Solscan"
-                      >
-                        <svg 
-                          className="w-8 h-8 sm:w-3 sm:h-3" 
-                          fill="none" 
-                          stroke="currentColor" 
-                          viewBox="0 0 24 24"
+              <>
+                <div className="text-center py-2 mb-2">
+                  <p className="text-gray-400 text-xs">💡 Below is your Closed Positions for the past 7 days</p>
+                </div>
+                <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
+                  {pnlRecords.slice(0, 10).map((record) => (
+                    <div
+                      key={record.id}
+                      className="flex-shrink-0 p-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg group p-4 relative"
+                    >
+                      {/* Action buttons overlay */}
+                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-2 sm:space-x-3">
+                        <button
+                          onClick={() => handleSelectToken(record.mintAddress)}
+                          className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
+                          title="View chart"
                         >
-                          <path 
-                            strokeLinecap="round" 
-                            strokeLinejoin="round" 
-                            strokeWidth={2} 
-                            d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
-                          />
-                        </svg>
-                      </button>
-                    </div>
-
-                    {/* Line 1: Timestamp */}
-                    <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                      <span>{formatRelativeTime(record.sellTimestamp)}</span>
-                    </div>
-                    
-                    {/* Line 2: Token and PnL */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center overflow-hidden">
-                          {record.logoURI ? (
-                            <img 
-                              src={record.logoURI} 
-                              alt={record.symbol || record.name || 'Token'} 
-                              className="w-full h-full object-cover" 
-                              onError={(e) => {
-                                e.currentTarget.onerror = null
-                                e.currentTarget.src = ''
-                                if (e.currentTarget.parentElement) {
-                                  e.currentTarget.parentElement.textContent = (record.symbol || record.name || '?').charAt(0).toUpperCase()
-                                }
-                              }} 
+                          <svg className="w-8 h-8 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => openTransactionOnSolscan(record.sellSignatures)}
+                          className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
+                          title="View on Solscan"
+                        >
+                          <svg 
+                            className="w-8 h-8 sm:w-3 sm:h-3" 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                          >
+                            <path 
+                              strokeLinecap="round" 
+                              strokeLinejoin="round" 
+                              strokeWidth={2} 
+                              d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
                             />
-                          ) : (
-                            <span className="text-white text-xs font-bold">
-                              {(record.symbol || record.name || '?').charAt(0).toUpperCase()}
-                            </span>
+                          </svg>
+                        </button>
+                      </div>
+
+                      {/* Line 1: Timestamp */}
+                      <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
+                        <span>{formatRelativeTime(record.sellTimestamp)}</span>
+                      </div>
+                      
+                      {/* Line 2: Token and PnL */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center overflow-hidden">
+                            {record.logoURI ? (
+                              <img 
+                                src={record.logoURI} 
+                                alt={record.symbol || record.name || 'Token'} 
+                                className="w-full h-full object-cover" 
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null
+                                  e.currentTarget.src = ''
+                                  if (e.currentTarget.parentElement) {
+                                    e.currentTarget.parentElement.textContent = (record.symbol || record.name || '?').charAt(0).toUpperCase()
+                                  }
+                                }} 
+                              />
+                            ) : (
+                              <span className="text-white text-xs font-bold">
+                                {(record.symbol || record.name || '?').charAt(0).toUpperCase()}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-sm text-white font-medium">
+                            {record.symbol || record.name || 'Token'}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* Line 3: PnL Amount and Percentage */}
+                      <div className="flex items-center justify-between mt-1">
+                        <div className="text-xs">
+                          {formatPnL(record.pnlSOL)}
+                        </div>
+                        <div className="text-xs">
+                          {formatPnL(record.pnlPercentage, true)}
+                        </div>
+                      </div>
+                      
+                      {/* Line 4: USD Value and Indicators */}
+                      <div className="text-xs text-gray-400 mt-0.5 flex justify-between items-center">
+                        <span>{record.pnlUSD > 0 ? '+' : ''}${Math.abs(record.pnlUSD).toFixed(2)}</span>
+                        <div className="flex items-center space-x-1">
+                          {record.isPartialSell && (
+                            <span className="text-orange-400 text-xs" title="Partial sell - some tokens remain">⚡</span>
+                          )}
+                          {!record.isPartialSell && (
+                            <span className="text-blue-400 text-xs" title="Complete position closed">🎯</span>
+                          )}
+                          {record.buyPrice && record.sellPrice && record.buyPrice > 0 && record.sellPrice > 0 && (
+                            <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
                           )}
                         </div>
-                        <span className="text-sm text-white font-medium">
-                          {record.symbol || record.name || 'Token'}
-                        </span>
                       </div>
                     </div>
-                    
-                    {/* Line 3: PnL Amount and Percentage */}
-                    <div className="flex items-center justify-between mt-1">
-                      <div className="text-xs">
-                        {formatPnL(record.pnlSOL)}
-                      </div>
-                      <div className="text-xs">
-                        {formatPnL(record.pnlPercentage, true)}
-                      </div>
-                    </div>
-                    
-                    {/* Line 4: USD Value and Indicators */}
-                    <div className="text-xs text-gray-400 mt-0.5 flex justify-between items-center">
-                      <span>{record.pnlUSD > 0 ? '+' : ''}${Math.abs(record.pnlUSD).toFixed(2)}</span>
-                      <div className="flex items-center space-x-1">
-                        {record.isPartialSell && (
-                          <span className="text-orange-400 text-xs" title="Partial sell - some tokens remain">⚡</span>
-                        )}
-                        {!record.isPartialSell && (
-                          <span className="text-blue-400 text-xs" title="Complete position closed">🎯</span>
-                        )}
-                        {record.buyPrice && record.sellPrice && record.buyPrice > 0 && record.sellPrice > 0 && (
-                          <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </>
             )
           ) : (
             // Open Positions
