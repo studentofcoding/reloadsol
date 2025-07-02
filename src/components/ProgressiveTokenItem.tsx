@@ -28,7 +28,7 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
   
   return (
     <div
-      className={`group p-2 m-1 rounded-xl transition-all duration-200 ${
+      className={`group p-2 m-1 rounded-lg transition-all duration-200 border-b-2 pb-3 border-gray-800 ${
         isSelected
           ? 'bg-gray-700'
           : 'bg-gray-900'
@@ -125,7 +125,6 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
                 {token.isLoadingPrice ? (
                   <div className="flex items-center space-x-1 mt-1">
                     <div className="w-3 h-3 border border-gray-400 border-t-white rounded-full animate-spin"></div>
-                    <span className="text-xs">Loading price...</span>
                   </div>
                 ) : hasPrice ? (
                   <>

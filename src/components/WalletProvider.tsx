@@ -70,9 +70,9 @@ export function WalletProvider({ children }: WalletProviderProps) {
       // Only try to auto-connect if we haven't explicitly disconnected
       const hasDisconnected = sessionStorage.getItem('hasDisconnected')
       if (!hasDisconnected) {
-        phantom.connect({ onlyIfTrusted: true }).catch(() => {
-          // Ignore error - user hasn't connected before
-        })
+      phantom.connect({ onlyIfTrusted: true }).catch(() => {
+        // Ignore error - user hasn't connected before
+      })
       }
     }
   }, [])
