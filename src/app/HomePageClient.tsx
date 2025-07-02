@@ -15,6 +15,9 @@ function HomeContent() {
 
   // Auto-redirect connected users to sell page, but only on fresh connections
   useEffect(() => {
+    // Prevent redirect if user explicitly disconnected earlier
+    const hasDisconnected = sessionStorage.getItem('hasDisconnected')
+
     // Check if we just disconnected to prevent redirect loop
     const justDisconnected = sessionStorage.getItem('justDisconnected')
     if (justDisconnected) {
@@ -22,7 +25,7 @@ function HomeContent() {
       return
     }
 
-    if (connected) {
+    if (connected && !hasDisconnected) {
       // Small delay to ensure wallet connection is stable
       const timer = setTimeout(() => {
         window.location.href = '/sell'
@@ -84,9 +87,11 @@ function HomeContent() {
           </div>
 
           {/* Get Started Section */}
+          {!connected && (
           <div className="max-w-4xl mx-auto mb-10 text-center">
             <PhantomWalletButton />
           </div>
+          )}
 
           {/* Feature Cards */}
           <div className="max-w-4xl mx-auto mb-10">
