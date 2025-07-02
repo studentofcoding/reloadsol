@@ -138,68 +138,63 @@ export default function TrendingTrackerPage() {
       console.log('💰 Updating prices for tracked tokens...')
       setIsRefreshingPrices(true)
       
-      // Extract token addresses
-      const tokenAddresses = tokens.map(token => token.token_address)
-      
-      // Fetch fresh prices from our price API
-      const priceResponse = await fetch('/api/tokens/prices', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ tokens: tokenAddresses })
+      // Fetch fresh trending data (same source as Discord notifications)
+      const trendingResponse = await fetch(`/api/trending?nocache=true&t=${Date.now()}`, {
+        cache: 'no-store'
       })
       
-      if (!priceResponse.ok) {
-        console.warn('⚠️ Price API failed, skipping price updates')
+      if (!trendingResponse.ok) {
+        console.warn('⚠️ Trending API failed, skipping price updates')
         return false
       }
       
-      const priceData = await priceResponse.json()
-      console.log('💰 Fresh prices received:', {
-        total_tokens: tokenAddresses.length,
-        cached_tokens: priceData.cached_tokens,
-        fresh_tokens: priceData.fresh_tokens,
-        rate_limit_remaining: priceData.rate_limit_remaining
+      const trendingData = await trendingResponse.json()
+      
+      if (!trendingData.tokens || trendingData.tokens.length === 0) {
+        console.warn('⚠️ No trending tokens returned, skipping price updates')
+        return false
+      }
+      
+      // Create a map for quick lookup
+      const priceMap: Record<string, { price: number }> = {}
+      trendingData.tokens.forEach((t: any) => {
+        priceMap[t.token_address] = { price: t.price }
       })
       
       // Update each token's price if we got fresh data
-      if (priceData.prices && Object.keys(priceData.prices).length > 0) {
-        const updatePromises = tokens.map(async (token) => {
-          const newPrice = priceData.prices[token.token_address]
-          if (newPrice && newPrice > 0 && newPrice !== token.last_price_usd) {
-            // Calculate new gain percentages
-            const currentGain = ((newPrice - token.initial_price_usd) / token.initial_price_usd) * 100
-            const newPeakPrice = Math.max(token.peak_price_usd, newPrice)
-            const peakGain = ((newPeakPrice - token.initial_price_usd) / token.initial_price_usd) * 100
-            
-            console.log(`📈 Updating ${token.token_symbol}: $${token.last_price_usd.toFixed(6)} → $${newPrice.toFixed(6)} (${currentGain.toFixed(2)}%)`)
-            
-            // Update token in database (import supabase client)
-            const { supabase } = await import('@/utils/supabase')
-            const { error } = await supabase
-              .from(TRACKER_TABLE)
-              .update({
-                last_price_usd: newPrice,
-                peak_price_usd: newPeakPrice,
-                current_gain_percentage: currentGain,
-                peak_gain_percentage: peakGain,
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', token.id)
-            
-            if (error) {
-              console.error(`❌ Failed to update ${token.token_symbol}:`, error)
-            }
+      const updatePromises = tokens.map(async (token) => {
+        const match = priceMap[token.token_address]
+        if (match && match.price > 0 && match.price !== token.last_price_usd) {
+          const newPrice = match.price
+          // Calculate new gain percentages
+          const currentGain = ((newPrice - token.initial_price_usd) / token.initial_price_usd) * 100
+          const newPeakPrice = Math.max(token.peak_price_usd, newPrice)
+          const peakGain = ((newPeakPrice - token.initial_price_usd) / token.initial_price_usd) * 100
+          
+          console.log(`📈 Updating ${token.token_symbol}: $${token.last_price_usd.toFixed(6)} → $${newPrice.toFixed(6)} (${currentGain.toFixed(2)}%)`)
+          
+          // Update token in database (import supabase client)
+          const { supabase } = await import('@/utils/supabase')
+          const { error } = await supabase
+            .from(TRACKER_TABLE)
+            .update({
+              last_price_usd: newPrice,
+              peak_price_usd: newPeakPrice,
+              current_gain_percentage: currentGain,
+              peak_gain_percentage: peakGain,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', token.id)
+          
+          if (error) {
+            console.error(`❌ Failed to update ${token.token_symbol}:`, error)
           }
-        })
-        
-        await Promise.allSettled(updatePromises)
-        console.log('✅ Price updates completed')
-        return true
-      }
+        }
+      })
       
-      return false
+      await Promise.allSettled(updatePromises)
+      console.log('✅ Price updates completed')
+      return true
     } catch (error) {
       console.error('❌ Error updating token prices:', error)
       return false
@@ -324,7 +319,7 @@ export default function TrendingTrackerPage() {
   // Enhanced refresh function for manual button clicks
   const handleRefreshStats = async () => {
     setLoading(true)
-    await fetchStats(true, true) // Update prices and force refresh when manually refreshing
+    await fetchStats(true, true)
   }
 
   // Debug function to manually test tracking API (development mode only)
@@ -408,14 +403,14 @@ export default function TrendingTrackerPage() {
     let refreshCount = 0
     const interval = setInterval(() => {
       refreshCount++
-      // Force refresh every 10th auto-refresh (every 5 minutes) to bypass cache
-      const shouldForceRefresh = refreshCount % 10 === 0
-      fetchStats(false, shouldForceRefresh) // Force refresh every 5 minutes to bypass cache
+      // Force refresh every 5th auto-refresh (every 2.5 minutes)
+      const shouldForceRefresh = refreshCount % 5 === 0
+      fetchStats(false, shouldForceRefresh)
       
       if (shouldForceRefresh) {
-        console.log('🔄 Periodic cache-busting refresh triggered')
+        console.log('🔄 Periodic refresh to match Discord data timing')
       }
-    }, 30000) // 30 seconds
+    }, 30000)
     
     return () => clearInterval(interval)
   }, [])
@@ -620,7 +615,7 @@ export default function TrendingTrackerPage() {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-6">
         <div className="max-w-7xl mx-auto">
-          <h1 className="text-3xl font-bold mb-8">Trending Token Tracker</h1>
+          <h1 className="text-3xl font-bold mb-8">reloadSOL Algo tester</h1>
           <div className="flex items-center justify-center h-64">
             <div className="w-8 h-8 border-2 border-blue-400 border-t-blue-200 rounded-full animate-spin"></div>
             <span className="ml-3 text-gray-400">Loading tracking data...</span>
@@ -710,7 +705,7 @@ export default function TrendingTrackerPage() {
         <div className="flex flex-col space-y-4 md:flex-row md:items-center md:justify-between md:space-y-0 mb-8">
           <div>
             <p className="text-gray-400 mt-2">
-              Live tracking of trending tokens with real-time price updates
+              Live tracking of trending tokens with real-time price updates from Jupiter API
             </p>
           </div>
           <div className="flex items-center space-x-3">
@@ -725,7 +720,7 @@ export default function TrendingTrackerPage() {
               disabled={loading || isRefreshingPrices}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed rounded-lg font-medium"
             >
-              {loading || isRefreshingPrices ? 'Refreshing...' : 'Refresh Data'}
+              {(loading || isRefreshingPrices) ? 'Refreshing...' : 'Refresh Data'}
             </button>
           </div>
         </div>

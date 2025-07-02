@@ -858,7 +858,7 @@ export default function PnLTracker() {
                   : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
               }`}
             >
-              Open Positions ({openPositions.length}) 
+              Positions ({openPositions.length}) 
               {openPositions.length > 0 && <span className="text-green-400 ml-1">⚡</span>}
             </button>
             {activeTab === 'open' && openPositions.length > 0 && (
@@ -869,7 +869,11 @@ export default function PnLTracker() {
                   refreshOpenPositionPrices()
                 }}
                 disabled={isRefreshingPrices}
-                className="px-3 py-1.5 text-xs font-medium rounded-md transition-all bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                  isRefreshingPrices 
+                    ? 'bg-gray-600 text-white opacity-50 cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                } flex items-center space-x-1`}
                 title="Refresh wallet balances and current prices for open positions"
               >
                 <svg 
@@ -885,7 +889,6 @@ export default function PnLTracker() {
                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
                   />
                 </svg>
-                <span>{isRefreshingPrices ? 'Updating...' : 'Refresh All'}</span>
               </button>
             )}
           </div>

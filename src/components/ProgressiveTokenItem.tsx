@@ -28,10 +28,10 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
   
   return (
     <div
-      className={`group py-2 px-3 rounded-xl border transition-all duration-200 ${
+      className={`group p-2 m-1 rounded-xl transition-all duration-200 ${
         isSelected
-          ? 'bg-gray-700 border-gray-500'
-          : 'bg-gray-800 border-gray-600 hover:bg-gray-700 hover:border-gray-500'
+          ? 'bg-gray-700'
+          : 'bg-gray-900'
       }`}
     >
       <div 
@@ -39,17 +39,32 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
         onClick={() => onToggleSelection(token)}
       >
         <div className="flex items-center space-x-3">
+          {/* Checkbox */}
+          <div className="flex items-center justify-center">
+            <div className={`w-4 h-4 sm:w-4 sm:h-4 rounded border-2 flex items-center justify-center transition-colors ${
+              isSelected 
+                ? 'bg-blue-500 border-blue-500' 
+                : 'border-gray-500 hover:border-gray-400'
+            }`}>
+              {isSelected && (
+                <svg className="w-3 h-3 text-white" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              )}
+            </div>
+          </div>
+
           {/* Logo with progressive loading */}
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
+          <div className={`w-4 h-4 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-white font-bold ${
             isSelected ? 'bg-white text-black' : 'bg-gray-600'
           }`}>
             {isLoading ? (
-              <div className="w-6 h-6 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+              <div className="w-3 h-3 sm:w-6 sm:h-6 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
             ) : hasLogo ? (
               <img 
                 src={token.logoURI} 
                 alt={token.name} 
-                className="w-8 h-8 rounded-full"
+                className="w-4 h-4 sm:w-8 sm:h-8 rounded-full"
                 onError={(e) => {
                   // Fallback to letter if image fails to load
                   const target = e.target as HTMLImageElement
@@ -104,7 +119,8 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
               <div className="h-4 bg-gray-600 rounded w-20 animate-pulse"></div>
             ) : (
               <>
-                {token.uiAmount.toFixed(6)}
+                <span className="hidden sm:inline">{token.uiAmount.toFixed(6)}</span>
+                {/* <span className="sm:hidden">{token.uiAmount.toFixed(0)}</span> */}
                 {/* Price with progressive loading */}
                 {token.isLoadingPrice ? (
                   <div className="flex items-center space-x-1 mt-1">

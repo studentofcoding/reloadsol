@@ -42,11 +42,11 @@ const TokenSkeleton: React.FC<TokenSkeletonProps> = ({
   )
 
   const renderProgressiveSkeleton = () => (
-    <div className={`grid gap-3 max-h-96 overflow-y-auto ${className}`}>
+    <div className={`grid gap-1 max-h-96 overflow-y-auto ${className}`}>
       {Array.from({ length: count }).map((_, index) => (
         <div
           key={index}
-          className="group py-2 px-3 rounded-xl border bg-gray-800 border-gray-600 animate-pulse"
+          className="group p-2 m-1 rounded-xl transition-all duration-200 bg-gray-900"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">

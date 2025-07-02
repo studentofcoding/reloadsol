@@ -54,7 +54,6 @@ export default function WalletBalance({ onBalanceChange }: WalletBalanceProps) {
           {isLoading ? (
             <div className="flex items-center space-x-1">
               <div className="w-3 h-3 border border-gray-400 border-t-white rounded-full animate-spin"></div>
-              <span>Loading...</span>
             </div>
           ) : (
             `${balance.toFixed(4)} SOL`
