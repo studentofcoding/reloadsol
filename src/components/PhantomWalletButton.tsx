@@ -10,10 +10,14 @@ export default function PhantomWalletButton() {
     return (
       <div className="flex items-center space-x-3">
         <button
-          onClick={disconnect}
+          onClick={async () => {
+            await disconnect()
+            // Force redirect to home and clear any cached state
+            window.location.href = '/'
+          }}
           className="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium transition-colors border border-gray-600"
         >
-          X
+          Disconnect
         </button>
       </div>
     )

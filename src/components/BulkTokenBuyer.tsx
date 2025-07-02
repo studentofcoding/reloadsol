@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { useWallet, useConnection } from '../components/WalletProvider'
 import PhantomWalletButton from './PhantomWalletButton'
 import TrendingTokens from './TrendingTokens'
@@ -18,12 +19,16 @@ export default function BulkTokenBuyer() {
   const { publicKey, signAllTransactions, connected } = useWallet()
   const { connection } = useConnection()
   const { trackOperation } = useTradingData()
+  const searchParams = useSearchParams()
   
   // Form state
   const [solAmount, setSolAmount] = useState<string>('0.1')
   const [tokenMints, setTokenMints] = useState<string>('')
   const [slippage, setSlippage] = useState<number>(200) // 1%
   const [priorityFee, setPriorityFee] = useState<number>(30000) // 0.0003 SOL
+  
+  // URL parameter initialization state
+  const [initialized, setInitialized] = useState<boolean>(false)
   
   // Token metadata state
   type TokenInfo = {
@@ -65,6 +70,29 @@ export default function BulkTokenBuyer() {
   // Parse and validate mint addresses
   const parsedMints = parseMintAddresses(tokenMints)
   const validMints = parsedMints.filter(isValidMintAddress)
+  
+  // Initialize from URL parameters (run once)
+  useEffect(() => {
+    if (initialized) return
+
+    const sol = searchParams.get('sol')
+    const mints = searchParams.get('mints')
+
+    if (sol && !Number.isNaN(+sol) && +sol > 0) {
+      setSolAmount(sol)
+    }
+
+    if (mints) {
+      const tokenStr = mints
+        .split(',')
+        .slice(0, 10)              // enforce limit
+        .filter(Boolean)           // remove empty strings
+        .join('\n')
+      setTokenMints(tokenStr)
+    }
+
+    setInitialized(true)
+  }, [initialized, searchParams])
   
   // When tokenMints changes, update tokenList
   useEffect(() => {
