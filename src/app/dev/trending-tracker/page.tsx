@@ -116,6 +116,11 @@ export default function TrendingTrackerPage() {
   const [debugMode, setDebugMode] = useState(false)
   const [isRefreshingPrices, setIsRefreshingPrices] = useState(false)
   
+  // Pagination and search state
+  const [searchQuery, setSearchQuery] = useState<string>('')
+  const [currentPage, setCurrentPage] = useState<number>(1)
+  const [itemsPerPage, setItemsPerPage] = useState<number>(12)
+  
   // Modal state
   const [simulationModalOpen, setSimulationModalOpen] = useState(false)
   const [tradeComparisonModalOpen, setTradeComparisonModalOpen] = useState(false)
@@ -129,6 +134,40 @@ export default function TrendingTrackerPage() {
     notifyOnTrigger: true
   })
   const [showConfigModal, setShowConfigModal] = useState(false)
+
+  // Helper functions for search and pagination
+  const filterTokens = (tokens: TrackedToken[], query: string): TrackedToken[] => {
+    if (!query.trim()) return tokens
+    
+    const lowercaseQuery = query.toLowerCase()
+    return tokens.filter(token => 
+      token.token_symbol?.toLowerCase().includes(lowercaseQuery) ||
+      token.token_name?.toLowerCase().includes(lowercaseQuery) ||
+      token.token_address.toLowerCase().includes(lowercaseQuery)
+    )
+  }
+
+  const paginateTokens = (tokens: TrackedToken[], page: number, perPage: number): TrackedToken[] => {
+    const startIndex = (page - 1) * perPage
+    const endIndex = startIndex + perPage
+    return tokens.slice(startIndex, endIndex)
+  }
+
+  const getTotalPages = (totalItems: number, perPage: number): number => {
+    return Math.ceil(totalItems / perPage)
+  }
+
+  // Reset pagination when search changes
+  const handleSearchChange = (query: string) => {
+    setSearchQuery(query)
+    setCurrentPage(1)
+  }
+
+  // Clear search and reset pagination
+  const clearSearch = () => {
+    setSearchQuery('')
+    setCurrentPage(1)
+  }
 
   // Update prices for currently tracked tokens
   const updateTokenPrices = async (tokens: TrackedToken[]): Promise<boolean> => {
@@ -971,64 +1010,218 @@ export default function TrendingTrackerPage() {
 
         {activeTab === 'tracking' && (
           <div className="bg-gray-800 rounded-xl p-6">
-            <h3 className="text-xl font-semibold mb-4">Currently Tracking ({stats.current_tracking.tokens.length})</h3>
-            {stats.current_tracking.tokens.length === 0 ? (
-              <p className="text-gray-400 text-center py-8">No tokens currently being tracked</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {stats.current_tracking.tokens.slice(0, 20).map(token => (
-                  <div 
-                    key={token.id} 
-                    className="p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 transition-all duration-200 cursor-pointer"
-                    onClick={() => handleTokenClick(token)}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center space-x-3">
-                      <TokenIcon token={token} />
-                      <div>
-                          <div className="font-semibold text-white">{token.token_symbol || 'Unknown'}</div>
-                          <div className="text-xs text-gray-400 truncate max-w-32">
-                            {token.token_name}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-white font-medium">
-                          {formatPrice(token.last_price_usd)}
-                        </div>
-                        <div className={`text-xs ${token.current_gain_percentage >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          {formatPercentage(token.current_gain_percentage, true)}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex justify-between text-xs mt-2">
-                      <div>
-                        <span className="text-gray-400">Peak: </span>
-                        <span className={token.peak_gain_percentage >= 0 ? 'text-green-400' : 'text-red-400'}>
-                          {formatPercentage(token.peak_gain_percentage, true)}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-gray-400">Since: </span>
-                        <span className="text-white">{formatRelativeTime(token.tracking_started_at)}</span>
-                      </div>
-                    </div>
-                    {/* Trade comparison indicator */}
-                    {token.trade_comparison_data && !token.trading_simulation && (
-                      <div className="mt-2 text-xs text-blue-400">
-                        📊 Trade data available
-                      </div>
-                    )}
-                    {/* Trading simulation indicator */}
-                    {token.trading_simulation && (
-                      <div className="mt-2 text-xs text-green-400">
-                        🤖 Simulation data available
-                      </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
+              <h3 className="text-xl font-semibold mb-4 md:mb-0">
+                Currently Tracking ({stats.current_tracking.tokens.length})
+              </h3>
+              
+              {/* Search and Controls */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center space-y-3 sm:space-y-0 sm:space-x-4">
+                {/* Search Input */}
+                <div className="relative w-full sm:w-auto">
+                  <input
+                    type="text"
+                    placeholder="Search by symbol, name, or address..."
+                    value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    className="w-full sm:w-64 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={clearSearch}
+                      className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-white"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+                
+                {/* Items per page selector */}
+                <select
+                  value={itemsPerPage}
+                  onChange={(e) => {
+                    setItemsPerPage(Number(e.target.value))
+                    setCurrentPage(1)
+                  }}
+                  className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value={6}>6 per page</option>
+                  <option value={12}>12 per page</option>
+                  <option value={24}>24 per page</option>
+                  <option value={48}>48 per page</option>
+                </select>
+              </div>
+            </div>
+
+            {(() => {
+              const filteredTokens = filterTokens(stats.current_tracking.tokens, searchQuery)
+              const totalPages = getTotalPages(filteredTokens.length, itemsPerPage)
+              const paginatedTokens = paginateTokens(filteredTokens, currentPage, itemsPerPage)
+              
+              if (stats.current_tracking.tokens.length === 0) {
+                return (
+                  <p className="text-gray-400 text-center py-8">No tokens currently being tracked</p>
+                )
+              }
+              
+              if (filteredTokens.length === 0) {
+                return (
+                  <div className="text-center py-8">
+                    <p className="text-gray-400 mb-2">No tokens found matching "{searchQuery}"</p>
+                    <button
+                      onClick={clearSearch}
+                      className="text-blue-400 hover:text-blue-300 text-sm"
+                    >
+                      Clear search
+                    </button>
+                  </div>
+                )
+              }
+              
+              return (
+                <>
+                  {/* Results summary */}
+                  <div className="flex justify-between items-center mb-4 text-sm text-gray-400">
+                    <span>
+                      Showing {paginatedTokens.length} of {filteredTokens.length} tokens
+                      {searchQuery && ` matching "${searchQuery}"`}
+                    </span>
+                    {totalPages > 1 && (
+                      <span>
+                        Page {currentPage} of {totalPages}
+                      </span>
                     )}
                   </div>
-                ))}
-              </div>
-            )}
+
+                  {/* Token Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                    {paginatedTokens.map(token => (
+                      <div 
+                        key={token.id} 
+                        className="p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 transition-all duration-200 cursor-pointer"
+                        onClick={() => handleTokenClick(token)}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center space-x-3">
+                            <TokenIcon token={token} />
+                            <div>
+                              <div className="font-semibold text-white">{token.token_symbol || 'Unknown'}</div>
+                              <div className="text-xs text-gray-400 truncate max-w-32">
+                                {token.token_name}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-white font-medium">
+                              {formatPrice(token.last_price_usd)}
+                            </div>
+                            <div className={`text-xs ${token.current_gain_percentage >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {formatPercentage(token.current_gain_percentage, true)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-xs mt-2">
+                          <div>
+                            <span className="text-gray-400">Peak: </span>
+                            <span className={token.peak_gain_percentage >= 0 ? 'text-green-400' : 'text-red-400'}>
+                              {formatPercentage(token.peak_gain_percentage, true)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Since: </span>
+                            <span className="text-white">{formatRelativeTime(token.tracking_started_at)}</span>
+                          </div>
+                        </div>
+                        {/* Trade comparison indicator */}
+                        {token.trade_comparison_data && !token.trading_simulation && (
+                          <div className="mt-2 text-xs text-blue-400">
+                            📊 Trade data available
+                          </div>
+                        )}
+                        {/* Trading simulation indicator */}
+                        {token.trading_simulation && (
+                          <div className="mt-2 text-xs text-green-400">
+                            🤖 Simulation data available
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Pagination Controls */}
+                  {totalPages > 1 && (
+                    <div className="flex flex-col sm:flex-row items-center justify-between space-y-4 sm:space-y-0">
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => setCurrentPage(1)}
+                          disabled={currentPage === 1}
+                          className="px-3 py-2 text-sm bg-gray-700 border border-gray-600 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-600"
+                        >
+                          First
+                        </button>
+                        <button
+                          onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                          disabled={currentPage === 1}
+                          className="px-3 py-2 text-sm bg-gray-700 border border-gray-600 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-600"
+                        >
+                          Previous
+                        </button>
+                      </div>
+
+                      <div className="flex items-center space-x-1">
+                        {(() => {
+                          const pageNumbers = []
+                          const showPages = 5
+                          let startPage = Math.max(1, currentPage - Math.floor(showPages / 2))
+                          let endPage = Math.min(totalPages, startPage + showPages - 1)
+                          
+                          if (endPage - startPage + 1 < showPages) {
+                            startPage = Math.max(1, endPage - showPages + 1)
+                          }
+                          
+                          for (let i = startPage; i <= endPage; i++) {
+                            pageNumbers.push(i)
+                          }
+                          
+                          return pageNumbers.map(pageNum => (
+                            <button
+                              key={pageNum}
+                              onClick={() => setCurrentPage(pageNum)}
+                              className={`px-3 py-2 text-sm border rounded-lg ${
+                                currentPage === pageNum
+                                  ? 'bg-blue-600 border-blue-600 text-white'
+                                  : 'bg-gray-700 border-gray-600 text-gray-300 hover:bg-gray-600'
+                              }`}
+                            >
+                              {pageNum}
+                            </button>
+                          ))
+                        })()}
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                          disabled={currentPage === totalPages}
+                          className="px-3 py-2 text-sm bg-gray-700 border border-gray-600 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-600"
+                        >
+                          Next
+                        </button>
+                        <button
+                          onClick={() => setCurrentPage(totalPages)}
+                          disabled={currentPage === totalPages}
+                          className="px-3 py-2 text-sm bg-gray-700 border border-gray-600 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-600"
+                        >
+                          Last
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )
+            })()}
           </div>
         )}
 
