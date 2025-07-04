@@ -126,6 +126,10 @@ export default function TrendingTrackerPage() {
   const [tradeComparisonModalOpen, setTradeComparisonModalOpen] = useState(false)
   const [selectedToken, setSelectedToken] = useState<TrackedToken | null>(null)
 
+  // Latest 24h Summary state
+  const [showAllSummaryTokens, setShowAllSummaryTokens] = useState(false)
+  const [selectedSummaryToken, setSelectedSummaryToken] = useState<TopWinner | null>(null)
+
   // Trading config state
   const [tradingConfig, setTradingConfig] = useState<TradingConfig>({
     isSimulated: true,
@@ -435,6 +439,18 @@ export default function TrendingTrackerPage() {
     setSelectedToken(null)
   }
 
+  // Handler for summary token clicks
+  const handleSummaryTokenClick = (summaryToken: TopWinner) => {
+    setSelectedSummaryToken(summaryToken)
+    setSimulationModalOpen(true)
+  }
+
+  // Handler to close summary token modal
+  const handleCloseSummaryModal = () => {
+    setSimulationModalOpen(false)
+    setSelectedSummaryToken(null)
+  }
+
   // Auto-refresh every 30 seconds (without price updates to avoid rate limiting)
   useEffect(() => {
     fetchStats(false) // Initial load without price updates
@@ -593,6 +609,34 @@ export default function TrendingTrackerPage() {
         </div>
       </div>
     )
+  }
+
+  // Calculate total PnL percentage from all tokens in summary
+  const calculateTotalPnL = (summary: Summary | null): number => {
+    if (!summary) {
+      return 0
+    }
+    
+    // Calculate weighted average based on all tracked tokens
+    // Winners contribute their peak gains, losers contribute their average loss
+    let totalPnL = 0
+    let totalTokens = 0
+    
+    // Add winners' gains
+    if (summary.top_winners && summary.top_winners.length > 0) {
+      const winnersTotal = summary.top_winners.reduce((sum, winner) => sum + winner.peak_gain_percentage, 0)
+      totalPnL += winnersTotal
+      totalTokens += summary.top_winners.length
+    }
+    
+    // Add losers' losses (negative contribution)
+    if (summary.lost_tokens > 0 && summary.avg_loss) {
+      totalPnL -= (summary.avg_loss * summary.lost_tokens)
+      totalTokens += summary.lost_tokens
+    }
+    
+    // Return average PnL across all tokens
+    return totalTokens > 0 ? totalPnL / totalTokens : 0
   }
 
   const formatTime = (dateString: string) => {
@@ -945,7 +989,7 @@ export default function TrendingTrackerPage() {
             {stats.latest_summary && (
               <div className="bg-gray-800 rounded-xl p-6">
                 <h3 className="text-xl font-semibold mb-4">Latest 24h Summary</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                   <div>
                     <p className="text-sm text-gray-400">Period</p>
                     <p className="text-white">{formatTime(stats.latest_summary.period_start)} - {formatTime(stats.latest_summary.period_end)}</p>
@@ -958,15 +1002,33 @@ export default function TrendingTrackerPage() {
                     <p className="text-sm text-gray-400">Win Rate</p>
                     <p className="text-green-400 font-semibold">{stats.latest_summary.win_rate}%</p>
                   </div>
+                  <div>
+                    <p className="text-sm text-gray-400">Total PnL %</p>
+                    <p className={`font-semibold ${calculateTotalPnL(stats.latest_summary) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {formatPercentage(calculateTotalPnL(stats.latest_summary))}
+                    </p>
+                  </div>
                 </div>
 
                 {/* Top Winners from Summary */}
                 {stats.latest_summary.top_winners && stats.latest_summary.top_winners.length > 0 && (
                   <div>
-                    <h4 className="text-lg font-semibold mb-3">🏆 Top 5 Winners</h4>
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-lg font-semibold">🏆 Top Winners</h4>
+                      <button
+                        onClick={() => setShowAllSummaryTokens(!showAllSummaryTokens)}
+                        className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors"
+                      >
+                        {showAllSummaryTokens ? 'Show Top 5' : `Show All (${stats.latest_summary.top_winners.length})`}
+                      </button>
+                    </div>
                     <div className="space-y-2">
-                      {stats.latest_summary.top_winners.map((winner, index) => (
-                        <div key={winner.token_address} className="flex items-center justify-between p-3 bg-gray-700 rounded-lg">
+                      {(showAllSummaryTokens ? stats.latest_summary.top_winners : stats.latest_summary.top_winners.slice(0, 5)).map((winner, index) => (
+                        <div 
+                          key={winner.token_address} 
+                          className="flex items-center justify-between p-3 bg-gray-700 rounded-lg hover:bg-gray-600 transition-all duration-200 cursor-pointer"
+                          onClick={() => handleSummaryTokenClick(winner)}
+                        >
                           <div className="flex items-center space-x-3">
                             <span className="text-yellow-400 font-bold">#{index + 1}</span>
                             <TokenIcon token={winner} />
@@ -978,6 +1040,7 @@ export default function TrendingTrackerPage() {
                           <div className="text-right">
                             <p className="text-green-400 font-semibold">+{winner.peak_gain_percentage.toFixed(2)}%</p>
                             <p className="text-sm text-gray-400">{winner.tracking_duration_hours.toFixed(1)}h tracked</p>
+                            <p className="text-xs text-blue-400">Click to view trades</p>
                           </div>
                         </div>
                       ))}
@@ -1406,6 +1469,34 @@ export default function TrendingTrackerPage() {
           tokenSymbol={selectedToken.token_symbol}
           tokenName={selectedToken.token_name}
           logoUrl={selectedToken.logo_url}
+        />
+      )}
+
+      {/* Summary Token Trading Simulation Modal */}
+      {selectedSummaryToken && (
+        <TradingSimulationModal
+          isOpen={simulationModalOpen && !!selectedSummaryToken}
+          onClose={handleCloseSummaryModal}
+          tokenAddress={selectedSummaryToken.token_address}
+          tokenSymbol={selectedSummaryToken.token_symbol}
+          tokenName={selectedSummaryToken.token_name}
+          logoUrl={selectedSummaryToken.logo_url}
+          isSimulated={tradingConfig.isSimulated}
+          keypairPath={tradingConfig.keypairPath}
+          onTradeTriggered={async (type: string, details: any) => {
+            if (tradingConfig.notifyOnTrigger && tradingConfig.discordWebhook) {
+              const message = `🔔 Trade Alert (${tradingConfig.isSimulated ? 'Simulation' : 'LIVE'})\n` +
+                `${type} triggered for ${selectedSummaryToken.token_symbol}\n` +
+                `Current Gain: ${details.currentGain}%\n` +
+                `Peak Gain: ${details.peakGain}%\n` +
+                `Price: ${details.price}\n` +
+                `Provider: ${details.provider || 'Unknown'}\n` +
+                `RPC: ${details.rpc || 'Default'}\n` +
+                `Response Time: ${details.responseTime ? `${details.responseTime}ms` : 'N/A'}\n` +
+                `Time: ${new Date().toLocaleString()}`
+              await sendDiscordNotification(message)
+            }
+          }}
         />
       )}
     </div>

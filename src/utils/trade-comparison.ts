@@ -923,7 +923,8 @@ interface EnhancedComparisonResult {
 const RPC_ENDPOINTS = [
   { name: 'Helius', url: 'https://mainnet.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b' },
   { name: 'Shyft', url: 'https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn' },
-  { name: 'SolanaTracker', url: 'https://rpc-mainnet.solanatracker.io/?api_key=3efd278f-9f1d-4888-ac0e-8d24014714d5' }
+  { name: 'SolanaTracker', url: 'https://rpc-mainnet.solanatracker.io/?api_key=3efd278f-9f1d-4888-ac0e-8d24014714d5' },
+  { name: 'FluxBeam', url: 'https://eu.rpc.fluxbeam.xyz?key=94a42d66-8cc7-454a-9d33-513cff867307' }
 ]
 
 // Cache for recent quotes (5 minute TTL)
