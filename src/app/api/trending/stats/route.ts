@@ -25,6 +25,45 @@ export async function GET(request: NextRequest) {
       throw new Error(`Failed to fetch summaries: ${summaryError.message}`)
     }
 
+    // If we have a recent summary, get ALL tokens from that period (not just top 5)
+    let allSummaryTokens = null
+    if (summaries && summaries.length > 0) {
+      const latestSummary = summaries[0]
+      
+      // Fetch all tokens that were tracked during the summary period
+      const { data: summaryPeriodTokens, error: summaryTokensError } = await supabase
+        .from(TRACKER_TABLE)
+        .select('*')
+        .gte('tracking_started_at', latestSummary.period_start)
+        .lte('tracking_started_at', latestSummary.period_end)
+        .order('peak_gain_percentage', { ascending: false })
+
+      if (!summaryTokensError && summaryPeriodTokens) {
+        // Convert to TopWinner format for consistency
+        allSummaryTokens = summaryPeriodTokens.map(token => {
+          const trackingStart = new Date(token.tracking_started_at)
+          const periodEnd = new Date(latestSummary.period_end)
+          const trackingDuration = (periodEnd.getTime() - trackingStart.getTime()) / (1000 * 60 * 60)
+          
+          return {
+            token_address: token.token_address,
+            token_symbol: token.token_symbol,
+            token_name: token.token_name,
+            logo_url: token.logo_url,
+            initial_price_usd: token.initial_price_usd,
+            peak_price_usd: token.peak_price_usd,
+            peak_gain_percentage: token.peak_gain_percentage,
+            tracking_duration_hours: Math.round(trackingDuration * 100) / 100,
+            status_changed_at: token.status_changed_at || latestSummary.period_end,
+            status: token.status,
+            current_gain_percentage: token.current_gain_percentage
+          }
+        })
+        
+        console.log(`📊 Fetched ${allSummaryTokens.length} tokens from summary period (${latestSummary.period_start} to ${latestSummary.period_end})`)
+      }
+    }
+
     // Get currently tracked tokens (active tracking status)
     const { data: trackingTokens, error: trackingError } = await supabase
       .from(TRACKER_TABLE)
@@ -98,12 +137,22 @@ export async function GET(request: NextRequest) {
       winRateTrend = latestWinRate - previousWinRate
     }
 
+    // Enhance the latest summary with all tokens data
+    let enhancedLatestSummary = null
+    if (summaries && summaries.length > 0) {
+      enhancedLatestSummary = {
+        ...summaries[0],
+        // Replace the limited top_winners with all tokens from the period
+        top_winners: allSummaryTokens || summaries[0].top_winners
+      }
+    }
+
     const response = {
       success: true,
       timestamp: new Date().toISOString(),
       
-      // Latest 24-hour summary
-      latest_summary: summaries && summaries.length > 0 ? summaries[0] : null,
+      // Latest 24-hour summary (enhanced with all tokens)
+      latest_summary: enhancedLatestSummary,
       
       // Current tracking status
       current_tracking: {

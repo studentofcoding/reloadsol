@@ -17,6 +17,8 @@ interface TopWinner {
   peak_gain_percentage: number
   tracking_duration_hours: number
   status_changed_at: string
+  status?: 'tracking' | 'won' | 'lost'
+  current_gain_percentage?: number
 }
 
 interface TrackedToken {
@@ -1010,11 +1012,11 @@ export default function TrendingTrackerPage() {
                   </div>
                 </div>
 
-                {/* Top Winners from Summary */}
+                {/* All Tracked Tokens from Summary */}
                 {stats.latest_summary.top_winners && stats.latest_summary.top_winners.length > 0 && (
                   <div>
                     <div className="flex items-center justify-between mb-3">
-                      <h4 className="text-lg font-semibold">🏆 Top Winners</h4>
+                      <h4 className="text-lg font-semibold">📊 Tracked Tokens</h4>
                       <button
                         onClick={() => setShowAllSummaryTokens(!showAllSummaryTokens)}
                         className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors"
@@ -1023,27 +1025,60 @@ export default function TrendingTrackerPage() {
                       </button>
                     </div>
                     <div className="space-y-2">
-                      {(showAllSummaryTokens ? stats.latest_summary.top_winners : stats.latest_summary.top_winners.slice(0, 5)).map((winner, index) => (
-                        <div 
-                          key={winner.token_address} 
-                          className="flex items-center justify-between p-3 bg-gray-700 rounded-lg hover:bg-gray-600 transition-all duration-200 cursor-pointer"
-                          onClick={() => handleSummaryTokenClick(winner)}
-                        >
-                          <div className="flex items-center space-x-3">
-                            <span className="text-yellow-400 font-bold">#{index + 1}</span>
-                            <TokenIcon token={winner} />
-                            <div>
-                              <p className="font-semibold">{winner.token_symbol || 'Unknown'}</p>
-                              <p className="text-sm text-gray-400">{winner.token_name}</p>
+                      {(showAllSummaryTokens ? stats.latest_summary.top_winners : stats.latest_summary.top_winners.filter(w => w.peak_gain_percentage > 0).slice(0, 5)).map((token, index) => {
+                        const isWinner = token.peak_gain_percentage > 0
+                        const currentGain = token.current_gain_percentage ?? token.peak_gain_percentage
+                        const isLoser = currentGain < -50 || (token.status && token.status === 'lost')
+                        const displayGain = isLoser ? currentGain : token.peak_gain_percentage
+                        
+                        return (
+                          <div 
+                            key={token.token_address} 
+                            className={`flex items-center justify-between p-3 rounded-lg hover:bg-gray-600 transition-all duration-200 cursor-pointer ${
+                              isWinner ? 'bg-gray-700 border border-green-600/20' : 
+                              isLoser ? 'bg-gray-700 border border-red-600/20' : 
+                              'bg-gray-700'
+                            }`}
+                            onClick={() => handleSummaryTokenClick(token)}
+                          >
+                            <div className="flex items-center space-x-3">
+                              <span className="text-yellow-400 font-bold">#{index + 1}</span>
+                              <div className="relative">
+                                <TokenIcon token={token} />
+                                {isWinner && (
+                                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-600 rounded-full flex items-center justify-center">
+                                    <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                    </svg>
+                                  </div>
+                                )}
+                                {isLoser && (
+                                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full flex items-center justify-center">
+                                    <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                    </svg>
+                                  </div>
+                                )}
+                              </div>
+                              <div>
+                                <p className="font-semibold">{token.token_symbol || 'Unknown'}</p>
+                                <p className="text-sm text-gray-400">{token.token_name}</p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className={`font-semibold ${
+                                displayGain > 0 ? 'text-green-400' : 
+                                displayGain < 0 ? 'text-red-400' : 
+                                'text-gray-400'
+                              }`}>
+                                {displayGain > 0 ? '+' : ''}{displayGain.toFixed(2)}%
+                              </p>
+                              <p className="text-sm text-gray-400">{token.tracking_duration_hours.toFixed(1)}h tracked</p>
+                              <p className="text-xs text-blue-400">Click to view trades</p>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-green-400 font-semibold">+{winner.peak_gain_percentage.toFixed(2)}%</p>
-                            <p className="text-sm text-gray-400">{winner.tracking_duration_hours.toFixed(1)}h tracked</p>
-                            <p className="text-xs text-blue-400">Click to view trades</p>
-                          </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   </div>
                 )}
