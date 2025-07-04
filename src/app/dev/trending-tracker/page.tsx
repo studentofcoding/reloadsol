@@ -613,32 +613,42 @@ export default function TrendingTrackerPage() {
     )
   }
 
-  // Calculate total PnL percentage from all tokens in summary
-  const calculateTotalPnL = (summary: Summary | null): number => {
+  // Calculate total and average PnL percentage from all tokens in summary
+  const calculatePnL = (summary: Summary | null): { totalPnL: number, averagePnL: number } => {
     if (!summary) {
-      return 0
+      return { totalPnL: 0, averagePnL: 0 }
     }
     
-    // Calculate weighted average based on all tracked tokens
-    // Winners contribute their peak gains, losers contribute their average loss
     let totalPnL = 0
     let totalTokens = 0
     
-    // Add winners' gains
+    // Process all tokens in top_winners array
     if (summary.top_winners && summary.top_winners.length > 0) {
-      const winnersTotal = summary.top_winners.reduce((sum, winner) => sum + winner.peak_gain_percentage, 0)
-      totalPnL += winnersTotal
-      totalTokens += summary.top_winners.length
+      summary.top_winners.forEach(winner => {
+        // Use current_gain_percentage if available, otherwise use peak_gain_percentage
+        const gainPercentage = typeof winner.current_gain_percentage !== 'undefined' 
+          ? winner.current_gain_percentage 
+          : winner.peak_gain_percentage
+        
+        totalPnL += gainPercentage
+        totalTokens++
+      })
     }
     
-    // Add losers' losses (negative contribution)
-    if (summary.lost_tokens > 0 && summary.avg_loss) {
-      totalPnL -= (summary.avg_loss * summary.lost_tokens)
-      totalTokens += summary.lost_tokens
+    // Add remaining lost tokens that aren't in top_winners
+    // Only count lost tokens that aren't already counted in top_winners
+    const lostTokensNotInTopWinners = summary.lost_tokens - 
+      (summary.top_winners?.filter(w => w.current_gain_percentage !== undefined && w.current_gain_percentage < -50).length || 0)
+    
+    if (lostTokensNotInTopWinners > 0 && summary.avg_loss) {
+      totalPnL += (summary.avg_loss * lostTokensNotInTopWinners)
+      totalTokens += lostTokensNotInTopWinners
     }
     
-    // Return average PnL across all tokens
-    return totalTokens > 0 ? totalPnL / totalTokens : 0
+    return {
+      totalPnL,
+      averagePnL: totalTokens > 0 ? totalPnL / totalTokens : 0
+    }
   }
 
   const formatTime = (dateString: string) => {
@@ -1005,10 +1015,20 @@ export default function TrendingTrackerPage() {
                     <p className="text-green-400 font-semibold">{stats.latest_summary.win_rate}%</p>
                   </div>
                   <div>
-                    <p className="text-sm text-gray-400">Total PnL %</p>
-                    <p className={`font-semibold ${calculateTotalPnL(stats.latest_summary) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {formatPercentage(calculateTotalPnL(stats.latest_summary))}
-                    </p>
+                    <div className="space-y-2">
+                      <div>
+                        <p className="text-sm text-gray-400">Total PnL</p>
+                        <p className={`font-semibold ${calculatePnL(stats.latest_summary).totalPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {formatPercentage(calculatePnL(stats.latest_summary).totalPnL)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-400">Average PnL</p>
+                        <p className={`font-semibold ${calculatePnL(stats.latest_summary).averagePnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {formatPercentage(calculatePnL(stats.latest_summary).averagePnL)}
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
