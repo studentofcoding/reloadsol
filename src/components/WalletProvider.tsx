@@ -67,10 +67,13 @@ export function WalletProvider({ children }: WalletProviderProps) {
     const phantom = getProvider()
     
     if (phantom) {
-      // Try to auto-connect if previously connected
+      // Only try to auto-connect if we haven't explicitly disconnected
+      const hasDisconnected = sessionStorage.getItem('hasDisconnected')
+      if (!hasDisconnected) {
       phantom.connect({ onlyIfTrusted: true }).catch(() => {
         // Ignore error - user hasn't connected before
       })
+      }
     }
   }, [])
 
@@ -88,6 +91,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
       setPublicKey(null)
       setConnected(false)
       setConnecting(false)
+
+      // Set flags to prevent auto-connect and redirect loop
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('justDisconnected', 'true')
+        sessionStorage.setItem('hasDisconnected', 'true')
+      }
     }
 
     const handleAccountChanged = (publicKey: PublicKey | null) => {
@@ -103,8 +112,9 @@ export function WalletProvider({ children }: WalletProviderProps) {
     provider.on('disconnect', handleDisconnect)
     provider.on('accountChanged', handleAccountChanged)
 
-    // Check if already connected
-    if (provider.isConnected && provider.publicKey) {
+    // Check if already connected, but respect disconnect state
+    const hasDisconnected = sessionStorage.getItem('hasDisconnected')
+    if (!hasDisconnected && provider.isConnected && provider.publicKey) {
       handleConnect(provider.publicKey)
     }
 
@@ -123,6 +133,9 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
     setConnecting(true)
     try {
+      // Clear any previous disconnect state when explicitly connecting
+      sessionStorage.removeItem('hasDisconnected')
+      
       const response = await provider.connect()
       setPublicKey(response.publicKey)
       setConnected(true)

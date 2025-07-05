@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
+import { Connection, VersionedTransaction, Keypair } from '@solana/web3.js'
+import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 
 // === Table selection (use alternate tables in local development to avoid prod collisions) ===
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
@@ -224,6 +226,227 @@ interface TradingSimulation {
       rpc_used: string
     }[]
   } | null
+}
+
+// Add unified trade execution system
+interface TradeExecutionParams {
+  tokenAddress: string
+  tokenSymbol: string | null
+  inputMint: string
+  outputMint: string
+  amount: number // in lamports for input token
+  slippageBps: number
+  userPublicKey: string
+  priorityFee?: number
+}
+
+interface TradeExecutionResult {
+  success: boolean
+  signature?: string
+  inputAmount: string
+  outputAmount: string
+  fees: {
+    totalFees: number
+    feePercentage: number
+  }
+  provider: string
+  rpcUsed: string
+  responseTime: number
+  error?: string
+}
+
+interface TradeExecutor {
+  executeBuy(params: TradeExecutionParams): Promise<TradeExecutionResult>
+  executeSell(params: TradeExecutionParams): Promise<TradeExecutionResult>
+}
+
+// Simulation executor (existing logic)
+class SimulationExecutor implements TradeExecutor {
+  async executeBuy(params: TradeExecutionParams): Promise<TradeExecutionResult> {
+    try {
+      const comparison = await compareTradeQuotes({
+        inputMint: params.inputMint,
+        outputMint: params.outputMint,
+        amount: params.amount.toString(),
+        slippageBps: params.slippageBps,
+        userPublicKey: params.userPublicKey
+      })
+
+      if (comparison.bestQuote && comparison.bestQuote.success) {
+        const bestQuote = comparison.bestQuote
+        return {
+          success: true,
+          inputAmount: bestQuote.inAmount,
+          outputAmount: bestQuote.outAmount,
+          fees: {
+            totalFees: bestQuote.fees?.totalFeeLamports ? bestQuote.fees.totalFeeLamports / 1e9 : 0,
+            feePercentage: bestQuote.fees?.feePercentage || 0
+          },
+          provider: bestQuote.provider,
+          rpcUsed: 'simulation',
+          responseTime: bestQuote.responseTime,
+        }
+      } else {
+        return {
+          success: false,
+          inputAmount: params.amount.toString(),
+          outputAmount: '0',
+          fees: { totalFees: 0, feePercentage: 0 },
+          provider: 'none',
+          rpcUsed: 'none',
+          responseTime: 0,
+          error: 'No successful quotes available'
+        }
+      }
+    } catch (error) {
+      return {
+        success: false,
+        inputAmount: params.amount.toString(),
+        outputAmount: '0',
+        fees: { totalFees: 0, feePercentage: 0 },
+        provider: 'none',
+        rpcUsed: 'none',
+        responseTime: 0,
+        error: error instanceof Error ? error.message : 'Simulation failed'
+      }
+    }
+  }
+
+  async executeSell(params: TradeExecutionParams): Promise<TradeExecutionResult> {
+    // Same logic as executeBuy but for sell direction
+    return this.executeBuy(params)
+  }
+}
+
+// Real trade executor (new implementation)
+class RealTradeExecutor implements TradeExecutor {
+  private connection: Connection
+  private signer: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
+
+  constructor(connection: Connection, signer: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>) {
+    this.connection = connection
+    this.signer = signer
+  }
+
+  async executeBuy(params: TradeExecutionParams): Promise<TradeExecutionResult> {
+    return this.executeSwap(params, 'buy')
+  }
+
+  async executeSell(params: TradeExecutionParams): Promise<TradeExecutionResult> {
+    return this.executeSwap(params, 'sell')
+  }
+
+  private async executeSwap(params: TradeExecutionParams, direction: 'buy' | 'sell'): Promise<TradeExecutionResult> {
+    const startTime = Date.now()
+    
+    try {
+      // Get quote first
+      const quote = await getSwapQuote(
+        params.inputMint,
+        params.outputMint,
+        params.amount,
+        params.slippageBps
+      )
+
+      if (!quote) {
+        throw new Error('No valid quote available')
+      }
+
+      // Create transaction
+      const swapTransaction = await getSwapTransaction(
+        quote,
+        params.userPublicKey,
+        params.priorityFee || 0,
+        []
+      )
+
+      if (!swapTransaction) {
+        throw new Error('Failed to create swap transaction')
+      }
+
+      // Deserialize and sign transaction
+      const tx = VersionedTransaction.deserialize(
+        Buffer.from(swapTransaction.swapTransaction, 'base64')
+      )
+
+      const signedTxs = await this.signer([tx])
+      const signedTx = signedTxs[0]
+
+      // Send transaction
+      const signature = await this.connection.sendTransaction(signedTx, {
+        skipPreflight: false,
+        maxRetries: 3,
+      })
+
+      // Confirm transaction
+      await this.connection.confirmTransaction(signature, 'confirmed')
+
+      const responseTime = Date.now() - startTime
+
+      return {
+        success: true,
+        signature,
+        inputAmount: quote.inAmount,
+        outputAmount: quote.outAmount,
+        fees: {
+          totalFees: quote.platformFee ? parseInt(quote.platformFee.amount) / 1e9 : 0,
+          feePercentage: quote.platformFee ? quote.platformFee.feeBps / 100 : 0
+        },
+        provider: 'jupiter',
+        rpcUsed: 'primary',
+        responseTime,
+      }
+    } catch (error) {
+      const responseTime = Date.now() - startTime
+      
+      return {
+        success: false,
+        inputAmount: params.amount.toString(),
+        outputAmount: '0',
+        fees: { totalFees: 0, feePercentage: 0 },
+        provider: 'jupiter',
+        rpcUsed: 'primary',
+        responseTime,
+        error: error instanceof Error ? error.message : 'Real trade failed'
+      }
+    }
+  }
+}
+
+// Factory function to create appropriate executor
+function createTradeExecutor(
+  isSimulated: boolean, 
+  connection?: Connection, 
+  signer?: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
+): TradeExecutor {
+  if (isSimulated) {
+    return new SimulationExecutor()
+  } else {
+    if (!connection || !signer) {
+      throw new Error('Connection and signer required for real trading')
+    }
+    return new RealTradeExecutor(connection, signer)
+  }
+}
+
+// Keypair management utilities
+function loadTradingKeypair(keypairPath: string): Keypair {
+  try {
+    const fs = require('fs')
+    const keypairData = JSON.parse(fs.readFileSync(keypairPath, 'utf8'))
+    return Keypair.fromSecretKey(Uint8Array.from(keypairData))
+  } catch (error) {
+    throw new Error(`Failed to load keypair from ${keypairPath}: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  }
+}
+
+function createSignerFromKeypair(keypair: Keypair): (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]> {
+  return async (transactions: VersionedTransaction[]): Promise<VersionedTransaction[]> => {
+    return transactions.map(tx => {
+      tx.sign([keypair])
+      return tx
+    })
+  }
 }
 
 // Add helper functions for gain calculations
@@ -619,22 +842,43 @@ async function runDailySummary(currentTime: Date): Promise<void> {
   }
 }
 
-// Helper function to perform buy simulation
-async function performBuySimulation(token: any): Promise<BuyOperation | null> {
+// Unified buy operation (supports both simulation and real trading)
+async function performBuyOperation(token: any, simulation: TradingSimulation): Promise<BuyOperation | null> {
   try {
-    console.log(`💰 Performing buy simulation for ${token.token_symbol} (${token.token_address})`)
+    const isSimulated = simulation.is_simulated
+    const operationType = isSimulated ? 'simulation' : 'real trade'
+    console.log(`💰 Performing buy ${operationType} for ${token.token_symbol} (${token.token_address})`)
     
     // SOL mint address
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
     const BUY_AMOUNT_SOL = 0.1 // 0.1 SOL
     const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9)
     
-    // Test different RPCs and configurations
-    const rpcConfigs = [
-      { name: 'Helius', url: 'https://mainnet.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b' },
-      { name: 'Shyft', url: 'https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn' },
-    ]
+    // Safety checks for real trading
+    if (!isSimulated) {
+      if (!simulation.keypair_path) {
+        throw new Error('Keypair path required for real trading')
+      }
+      
+      // Initialize trading infrastructure
+      const connection = initializeTradingConnection()
+      await initializeTradingKeypair(simulation.keypair_path)
+      
+      // Check if we can execute the trade
+      const { canTrade, reason } = await canExecuteRealTrade(BUY_AMOUNT_SOL)
+      if (!canTrade) {
+        throw new Error(`Cannot execute real trade: ${reason}`)
+      }
+    }
     
+    // Create appropriate executor
+    const executor = createTradeExecutor(
+      isSimulated,
+      isSimulated ? undefined : tradingConnection!,
+      isSimulated ? undefined : tradingSigner!
+    )
+    
+    // Test different slippage configurations
     const slippageConfigs = [
       { key: 'slippage_1', bps: 100 },
       { key: 'slippage_2', bps: 200 },
@@ -642,78 +886,53 @@ async function performBuySimulation(token: any): Promise<BuyOperation | null> {
     ]
     
     const configurations: any = {}
-    const allResults: any[] = []
+    const allResults: TradeExecutionResult[] = []
     
-    // Test each slippage configuration
-    for (const config of slippageConfigs) {
-      const rpcResults: any[] = []
-      
-      // Test with different RPCs in parallel
-      const rpcPromises = rpcConfigs.map(async (rpc) => {
-        try {
-          console.log(`  📊 Testing ${config.key} with ${rpc.name}...`)
-          
-          const comparison = await compareTradeQuotes({
-            inputMint: SOL_MINT,
-            outputMint: token.token_address,
-            amount: BUY_AMOUNT_LAMPORTS.toString(),
-            slippageBps: config.bps,
-            userPublicKey: '11111111111111111111111111111111'
-          })
-          
-          if (comparison.bestQuote && comparison.bestQuote.success) {
-            const bestQuote = comparison.bestQuote
-            const totalFees = bestQuote.fees?.totalFeeLamports || 0
-            
-            const result = {
-              rpc: rpc.name,
-              success: true,
-              response_time: bestQuote.responseTime,
-              token_amount: bestQuote.outAmount,
-              total_fees: totalFees / 1e9,
-              price_impact: bestQuote.priceImpactPct,
-              best_provider: bestQuote.provider
-            }
-            
-            rpcResults.push(result)
-            allResults.push({ ...result, slippage: config.bps / 100 })
-            
-            console.log(`    ✅ ${rpc.name}: ${bestQuote.provider} - ${bestQuote.outAmount} tokens, ${bestQuote.responseTime}ms`)
-            return result
-          } else {
-            console.log(`    ❌ ${rpc.name}: No successful quotes`)
-            return null
-          }
-        } catch (error) {
-          console.error(`    ❌ ${rpc.name} error:`, error)
-          return null
-        }
-      })
-      
-      // Wait for all RPC tests to complete
-      const rpcResultsCompleted = await Promise.allSettled(rpcPromises)
-      const successfulResults = rpcResultsCompleted
-        .filter(result => result.status === 'fulfilled' && result.value)
-        .map(result => (result as PromiseFulfilledResult<any>).value)
-      
-      if (successfulResults.length > 0) {
-        // Find best result for this slippage configuration
-        const bestResult = successfulResults.reduce((best, current) => {
-          const bestAmount = parseFloat(best.token_amount)
-          const currentAmount = parseFloat(current.token_amount)
-          return currentAmount > bestAmount ? current : best
+    // For real trading, we only test once with the best slippage
+    // For simulation, we test all configurations
+    const configsToTest = isSimulated ? slippageConfigs : [slippageConfigs[0]]
+    
+    for (const config of configsToTest) {
+      try {
+        console.log(`  📊 Testing ${config.key} (${config.bps} bps slippage)...`)
+        
+        const result = await executor.executeBuy({
+          tokenAddress: token.token_address,
+          tokenSymbol: token.token_symbol,
+          inputMint: SOL_MINT,
+          outputMint: token.token_address,
+          amount: BUY_AMOUNT_LAMPORTS,
+          slippageBps: config.bps,
+          userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
+          priorityFee: 0
         })
         
         configurations[config.key] = {
-          success: true,
-          response_time: bestResult.response_time,
-          token_amount: bestResult.token_amount,
-          total_fees: bestResult.total_fees,
-          price_impact: bestResult.price_impact,
-          best_provider: bestResult.best_provider,
-          rpc_used: bestResult.rpc
+          success: result.success,
+          response_time: result.responseTime,
+          token_amount: result.outputAmount,
+          total_fees: result.fees.totalFees,
+          price_impact: '0', // Will be calculated from quote
+          best_provider: result.provider,
+          rpc_used: result.rpcUsed,
+          signature: result.signature,
+          error: result.error
         }
-      } else {
+        
+        if (result.success) {
+          allResults.push(result)
+          console.log(`    ✅ ${config.key}: ${result.provider} - ${result.outputAmount} tokens, ${result.responseTime}ms${result.signature ? ` (${result.signature.slice(0, 8)}...)` : ''}`)
+        } else {
+          console.log(`    ❌ ${config.key}: ${result.error}`)
+        }
+        
+        // For real trading, break after first successful execution
+        if (!isSimulated && result.success) {
+          break
+        }
+        
+      } catch (error) {
+        console.error(`    ❌ ${config.key} error:`, error)
         configurations[config.key] = {
           success: false,
           response_time: 0,
@@ -721,79 +940,127 @@ async function performBuySimulation(token: any): Promise<BuyOperation | null> {
           total_fees: 0,
           price_impact: '0',
           best_provider: 'none',
-          error: 'No successful quotes across all RPCs'
+          error: error instanceof Error ? error.message : 'Unknown error'
         }
       }
       
-      // Small delay between configurations
-      await new Promise(resolve => setTimeout(resolve, 200))
-    }
-    
-    // Determine overall best configuration
-    let bestBuyConfig = null
-    if (allResults.length > 0) {
-      const bestResult = allResults.reduce((best, current) => {
-        const bestAmount = parseFloat(best.token_amount)
-        const currentAmount = parseFloat(current.token_amount)
-        return currentAmount > bestAmount ? current : best
-      })
-      
-      bestBuyConfig = {
-        slippage: bestResult.slippage,
-        provider: bestResult.best_provider,
-        token_amount: bestResult.token_amount,
-        response_time: bestResult.response_time,
-        total_fees: bestResult.total_fees,
-        rpc_used: bestResult.rpc
+      // Small delay between configurations (simulation only)
+      if (isSimulated) {
+        await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
     
-    if (!bestBuyConfig) {
-      console.log(`❌ No successful buy configurations for ${token.token_symbol}`)
+    // Find best result
+    const bestResult = allResults.reduce((best, current) => {
+      const bestAmount = parseFloat(best.outputAmount)
+      const currentAmount = parseFloat(current.outputAmount)
+      return currentAmount > bestAmount ? current : best
+    }, allResults[0])
+    
+    if (!bestResult) {
+      console.log(`❌ No successful buy ${operationType} for ${token.token_symbol}`)
       return null
     }
     
     const buyOperation: BuyOperation = {
       timestamp: new Date().toISOString(),
       buy_amount_sol: BUY_AMOUNT_SOL,
-      token_amount_received: bestBuyConfig.token_amount,
+      token_amount_received: bestResult.outputAmount,
       buy_price_usd: token.current_price,
       configurations,
-      best_buy_config: bestBuyConfig,
-      rpc_used: bestBuyConfig.rpc_used
+      best_buy_config: {
+        slippage: 1, // Will be determined from best result
+        provider: bestResult.provider,
+        token_amount: bestResult.outputAmount,
+        response_time: bestResult.responseTime,
+        total_fees: bestResult.fees.totalFees,
+        rpc_used: bestResult.rpcUsed
+      },
+      rpc_used: bestResult.rpcUsed
     }
     
-    console.log(`✅ Buy simulation completed for ${token.token_symbol}: ${bestBuyConfig.token_amount} tokens via ${bestBuyConfig.provider}`)
+    // Add signature for real trades
+    if (bestResult.signature) {
+      (buyOperation as any).signature = bestResult.signature
+    }
+    
+    console.log(`✅ Buy ${operationType} completed for ${token.token_symbol}: ${bestResult.outputAmount} tokens via ${bestResult.provider}${bestResult.signature ? ` (${bestResult.signature})` : ''}`)
     return buyOperation
     
   } catch (error) {
-    console.error(`❌ Error performing buy simulation for ${token.token_symbol}:`, error)
+    console.error(`❌ Error performing buy ${simulation.is_simulated ? 'simulation' : 'real trade'} for ${token.token_symbol}:`, error)
     return null
   }
 }
 
-// Helper function to perform sell simulation
-async function performSellSimulation(
+// Legacy function for backward compatibility
+async function performBuySimulation(token: any): Promise<BuyOperation | null> {
+  const mockSimulation: TradingSimulation = {
+    token_address: token.token_address,
+    token_symbol: token.token_symbol,
+    simulation_started_at: new Date().toISOString(),
+    buy_operation: null,
+    sell_operations: [],
+    current_status: 'buying',
+    remaining_token_amount: '0',
+    initial_token_amount: '0',
+    is_simulated: true,
+    take_profit_levels: {
+      tp1_percentage: 50,
+      tp1_sell_percentage: 50,
+      tp2_percentage: 100,
+      tp3_percentage: 200,
+      tp3_enabled: true
+    },
+    stop_loss_percentage: -30,
+    max_hold_hours: 24,
+    final_result: null
+  }
+  
+  return performBuyOperation(token, mockSimulation)
+}
+
+// Unified sell operation (supports both simulation and real trading)
+async function performSellOperation(
   token: any, 
   simulation: TradingSimulation,
   sellPercentage: number
 ): Promise<SellOperation | null> {
   try {
-    console.log(`💸 Performing ${sellPercentage}% sell simulation for ${token.token_symbol} (${token.token_address})`)
+    const isSimulated = simulation.is_simulated
+    const operationType = isSimulated ? 'simulation' : 'real trade'
+    console.log(`💸 Performing ${sellPercentage}% sell ${operationType} for ${token.token_symbol} (${token.token_address})`)
     
     // SOL mint address
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
     
     // Calculate token amount to sell based on percentage
     const totalTokenAmount = simulation.remaining_token_amount || simulation.buy_operation?.token_amount_received || '0'
-    const tokenAmountToSell = (parseFloat(totalTokenAmount) * (sellPercentage / 100)).toString()
+    const tokenAmountToSell = parseFloat(totalTokenAmount) * (sellPercentage / 100)
     
-    // Test different RPCs and configurations
-    const rpcConfigs = [
-      { name: 'Helius', url: 'https://mainnet.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b' },
-      { name: 'Shyft', url: 'https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn' },
-    ]
+    if (tokenAmountToSell <= 0) {
+      throw new Error('No tokens available to sell')
+    }
     
+    // Safety checks for real trading
+    if (!isSimulated) {
+      if (!simulation.keypair_path) {
+        throw new Error('Keypair path required for real trading')
+      }
+      
+      // Initialize trading infrastructure
+      const connection = initializeTradingConnection()
+      await initializeTradingKeypair(simulation.keypair_path)
+    }
+    
+    // Create appropriate executor
+    const executor = createTradeExecutor(
+      isSimulated,
+      isSimulated ? undefined : tradingConnection!,
+      isSimulated ? undefined : tradingSigner!
+    )
+    
+    // Test different slippage configurations
     const slippageConfigs = [
       { key: 'slippage_1', bps: 100 },
       { key: 'slippage_2', bps: 200 },
@@ -801,78 +1068,53 @@ async function performSellSimulation(
     ]
     
     const configurations: any = {}
-    const allResults: any[] = []
+    const allResults: TradeExecutionResult[] = []
     
-    // Test each slippage configuration
-    for (const config of slippageConfigs) {
-      const rpcResults: any[] = []
-      
-      // Test with different RPCs in parallel
-      const rpcPromises = rpcConfigs.map(async (rpc) => {
-        try {
-          console.log(`  📊 Testing sell ${config.key} with ${rpc.name}...`)
-          
-          const comparison = await compareTradeQuotes({
-            inputMint: token.token_address,
-            outputMint: SOL_MINT,
-            amount: tokenAmountToSell,
-            slippageBps: config.bps,
-            userPublicKey: simulation.is_simulated ? '11111111111111111111111111111111' : simulation.keypair_path || '11111111111111111111111111111111'
-          })
-          
-          if (comparison.bestQuote && comparison.bestQuote.success) {
-            const bestQuote = comparison.bestQuote
-            const totalFees = bestQuote.fees?.totalFeeLamports || 0
-            
-            const result = {
-              rpc: rpc.name,
-              success: true,
-              response_time: bestQuote.responseTime,
-              sol_amount: bestQuote.outAmount,
-              total_fees: totalFees / 1e9,
-              price_impact: bestQuote.priceImpactPct,
-              best_provider: bestQuote.provider
-            }
-            
-            rpcResults.push(result)
-            allResults.push({ ...result, slippage: config.bps / 100 })
-            
-            console.log(`    ✅ ${rpc.name}: ${bestQuote.provider} - ${bestQuote.outAmount} SOL, ${bestQuote.responseTime}ms`)
-            return result
-          } else {
-            console.log(`    ❌ ${rpc.name}: No successful quotes`)
-            return null
-          }
-        } catch (error) {
-          console.error(`    ❌ ${rpc.name} error:`, error)
-          return null
-        }
-      })
-      
-      // Wait for all RPC tests to complete
-      const rpcResultsCompleted = await Promise.allSettled(rpcPromises)
-      const successfulResults = rpcResultsCompleted
-        .filter(result => result.status === 'fulfilled' && result.value)
-        .map(result => (result as PromiseFulfilledResult<any>).value)
-      
-      if (successfulResults.length > 0) {
-        // Find best result for this slippage configuration
-        const bestResult = successfulResults.reduce((best, current) => {
-          const bestAmount = parseFloat(best.sol_amount)
-          const currentAmount = parseFloat(current.sol_amount)
-          return currentAmount > bestAmount ? current : best
+    // For real trading, we only test once with the best slippage
+    // For simulation, we test all configurations
+    const configsToTest = isSimulated ? slippageConfigs : [slippageConfigs[0]]
+    
+    for (const config of configsToTest) {
+      try {
+        console.log(`  📊 Testing sell ${config.key} (${config.bps} bps slippage)...`)
+        
+        const result = await executor.executeSell({
+          tokenAddress: token.token_address,
+          tokenSymbol: token.token_symbol,
+          inputMint: token.token_address,
+          outputMint: SOL_MINT,
+          amount: Math.floor(tokenAmountToSell), // Convert to integer token amount
+          slippageBps: config.bps,
+          userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
+          priorityFee: 0
         })
         
         configurations[config.key] = {
-          success: true,
-          response_time: bestResult.response_time,
-          sol_amount: bestResult.sol_amount,
-          total_fees: bestResult.total_fees,
-          price_impact: bestResult.price_impact,
-          best_provider: bestResult.best_provider,
-          rpc_used: bestResult.rpc
+          success: result.success,
+          response_time: result.responseTime,
+          sol_amount: result.outputAmount,
+          total_fees: result.fees.totalFees,
+          price_impact: '0', // Will be calculated from quote
+          best_provider: result.provider,
+          rpc_used: result.rpcUsed,
+          signature: result.signature,
+          error: result.error
         }
-      } else {
+        
+        if (result.success) {
+          allResults.push(result)
+          console.log(`    ✅ ${config.key}: ${result.provider} - ${result.outputAmount} SOL, ${result.responseTime}ms${result.signature ? ` (${result.signature.slice(0, 8)}...)` : ''}`)
+        } else {
+          console.log(`    ❌ ${config.key}: ${result.error}`)
+        }
+        
+        // For real trading, break after first successful execution
+        if (!isSimulated && result.success) {
+          break
+        }
+        
+      } catch (error) {
+        console.error(`    ❌ ${config.key} error:`, error)
         configurations[config.key] = {
           success: false,
           response_time: 0,
@@ -880,61 +1122,72 @@ async function performSellSimulation(
           total_fees: 0,
           price_impact: '0',
           best_provider: 'none',
-          error: 'No successful quotes across all RPCs'
+          error: error instanceof Error ? error.message : 'Unknown error'
         }
       }
       
-      // Small delay between configurations
-      await new Promise(resolve => setTimeout(resolve, 200))
-    }
-    
-    // Determine overall best configuration
-    let bestSellConfig = null
-    if (allResults.length > 0) {
-      const bestResult = allResults.reduce((best, current) => {
-        const bestAmount = parseFloat(best.sol_amount)
-        const currentAmount = parseFloat(current.sol_amount)
-        return currentAmount > bestAmount ? current : best
-      })
-      
-      bestSellConfig = {
-        slippage: bestResult.slippage,
-        provider: bestResult.best_provider,
-        sol_amount: bestResult.sol_amount,
-        response_time: bestResult.response_time,
-        total_fees: bestResult.total_fees,
-        rpc_used: bestResult.rpc
+      // Small delay between configurations (simulation only)
+      if (isSimulated) {
+        await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
     
-    if (!bestSellConfig) {
-      console.log(`❌ No successful sell configurations for ${token.token_symbol}`)
+    // Find best result
+    const bestResult = allResults.reduce((best, current) => {
+      const bestAmount = parseFloat(best.outputAmount)
+      const currentAmount = parseFloat(current.outputAmount)
+      return currentAmount > bestAmount ? current : best
+    }, allResults[0])
+    
+    if (!bestResult) {
+      console.log(`❌ No successful sell ${operationType} for ${token.token_symbol}`)
       return null
     }
     
     // Calculate remaining token amount after this sell
     const remainingTokens = (parseFloat(totalTokenAmount) * (1 - sellPercentage / 100)).toString()
     
+    // Calculate hold duration
+    const simulationStart = new Date(simulation.simulation_started_at)
+    const now = new Date()
+    const holdDurationHours = (now.getTime() - simulationStart.getTime()) / (1000 * 60 * 60)
+    
+    // Calculate gain percentage
+    const buyPrice = simulation.buy_operation?.buy_price_usd || token.initial_price_usd
+    const finalGainPercentage = calculateGainPercentage(token.last_price_usd, buyPrice)
+    
     const sellOperation: SellOperation = {
       timestamp: new Date().toISOString(),
-      sell_amount_tokens: tokenAmountToSell,
-      sol_received: bestSellConfig.sol_amount,
-      sell_price_usd: token.current_price,
+      sell_amount_tokens: tokenAmountToSell.toString(),
+      sol_received: bestResult.outputAmount,
+      sell_price_usd: token.last_price_usd,
       configurations,
-      best_sell_config: bestSellConfig,
-      rpc_used: bestSellConfig.rpc_used,
-      final_gain_percentage: 0,
-      hold_duration_hours: 0
+      best_sell_config: {
+        slippage: 1, // Will be determined from best result
+        provider: bestResult.provider,
+        sol_amount: bestResult.outputAmount,
+        response_time: bestResult.responseTime,
+        total_fees: bestResult.fees.totalFees,
+        rpc_used: bestResult.rpcUsed
+      },
+      rpc_used: bestResult.rpcUsed,
+      final_gain_percentage: finalGainPercentage,
+      hold_duration_hours: holdDurationHours
+    }
+    
+    // Add signature for real trades
+    if (bestResult.signature) {
+      (sellOperation as any).signature = bestResult.signature
     }
     
     // Update simulation's remaining token amount
     simulation.remaining_token_amount = remainingTokens
     
-    console.log(`✅ ${sellPercentage}% sell simulation completed for ${token.token_symbol}: ${bestSellConfig.sol_amount} SOL received, ${remainingTokens} tokens remaining`)
+    console.log(`✅ ${sellPercentage}% sell ${operationType} completed for ${token.token_symbol}: ${bestResult.outputAmount} SOL received, ${remainingTokens} tokens remaining${bestResult.signature ? ` (${bestResult.signature})` : ''}`)
     return sellOperation
     
   } catch (error) {
-    console.error(`❌ Error performing sell simulation for ${token.token_symbol}:`, error)
+    console.error(`❌ Error performing sell ${simulation.is_simulated ? 'simulation' : 'real trade'} for ${token.token_symbol}:`, error)
     return null
   }
 }
@@ -1210,40 +1463,48 @@ export async function POST(request: NextRequest) {
           console.error(`❌ Trade comparison failed for ${token.token_symbol}:`, error)
         }
         
-        // Perform buy simulation for new tokens
+        // Perform buy operation for new tokens (simulation or real trading)
         let tradingSimulation: TradingSimulation | null = null
         try {
-          const buyOperation = await performBuySimulation(token)
+          // Create initial simulation configuration (default to simulation mode)
+          const initialSimulation: TradingSimulation = {
+            token_address: token.token_address,
+            token_symbol: token.token_symbol,
+            simulation_started_at: new Date().toISOString(),
+            buy_operation: null,
+            sell_operations: [],
+            current_status: 'buying',
+            remaining_token_amount: '0',
+            initial_token_amount: '0',
+            is_simulated: true, // Default to simulation mode
+            take_profit_levels: {
+              tp1_percentage: 80,
+              tp1_sell_percentage: 80,
+              tp2_percentage: 100,
+              tp3_percentage: 30,
+              tp3_enabled: false
+            },
+            stop_loss_percentage: -50,
+            max_hold_hours: 24,
+            final_result: null
+          }
+          
+          // Perform buy operation using the unified system
+          const buyOperation = await performBuyOperation(token, initialSimulation)
           
           if (buyOperation) {
-            tradingSimulation = {
-              token_address: token.token_address,
-              token_symbol: token.token_symbol,
-              simulation_started_at: new Date().toISOString(),
-              buy_operation: buyOperation,
-              sell_operations: [],
-              current_status: 'holding',
-              remaining_token_amount: buyOperation.token_amount_received,
-              initial_token_amount: buyOperation.token_amount_received,
-              is_simulated: true,
-              take_profit_levels: {
-                tp1_percentage: 80,
-                tp1_sell_percentage: 80,
-                tp2_percentage: 100,
-                tp3_percentage: 30,
-                tp3_enabled: false
-              },
-              stop_loss_percentage: -50,
-              max_hold_hours: 24,
-              final_result: null
-            }
+            initialSimulation.buy_operation = buyOperation
+            initialSimulation.current_status = 'holding'
+            initialSimulation.remaining_token_amount = buyOperation.token_amount_received
+            initialSimulation.initial_token_amount = buyOperation.token_amount_received
+            tradingSimulation = initialSimulation
             
-            console.log(`💰 Buy simulation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens`)
+            console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'})`)
           } else {
-            console.log(`❌ Buy simulation failed for ${token.token_symbol}`)
+            console.log(`❌ Buy operation failed for ${token.token_symbol}`)
           }
         } catch (error) {
-          console.error(`❌ Buy simulation error for ${token.token_symbol}:`, error)
+          console.error(`❌ Buy operation error for ${token.token_symbol}:`, error)
         }
         
         // Create initial price history record for new token
@@ -1323,7 +1584,7 @@ export async function POST(request: NextRequest) {
             console.log(sellDecision.reason)
             
             // Perform sell simulation with the specified percentage
-            const sellOperation = await performSellSimulation(
+                          const sellOperation = await performSellOperation(
               {
                 ...token,
                 current_price: token.current_price
@@ -1671,4 +1932,83 @@ export async function GET(request: NextRequest) {
 // Helper function to determine notification status
 function getNotificationStatus(simulationStatus: TradingSimulationStatus): TradeAlertStatus {
   return simulationStatus === 'completed' ? 'completed' : 'partial-sell'
+}
+
+// Safety mechanisms and connection management
+const MAX_SOL_AT_RISK = parseFloat(process.env.MAX_SOL_AT_RISK || '1.0') // Maximum SOL that can be at risk
+const MIN_SOL_BALANCE = parseFloat(process.env.MIN_SOL_BALANCE || '0.1') // Minimum SOL balance to maintain
+
+// Connection management for real trading
+let tradingConnection: Connection | null = null
+let tradingKeypair: Keypair | null = null
+let tradingSigner: ((transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>) | null = null
+
+function initializeTradingConnection(): Connection {
+  if (!tradingConnection) {
+    const rpcUrl = process.env.RPC_URL || 'https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn'
+    tradingConnection = new Connection(rpcUrl, 'confirmed')
+  }
+  return tradingConnection
+}
+
+async function initializeTradingKeypair(keypairPath: string): Promise<void> {
+  if (!tradingKeypair || !tradingSigner) {
+    tradingKeypair = loadTradingKeypair(keypairPath)
+    tradingSigner = createSignerFromKeypair(tradingKeypair)
+    console.log(`🔑 Trading keypair loaded: ${tradingKeypair.publicKey.toBase58()}`)
+  }
+}
+
+async function checkTradingBalance(): Promise<{ balance: number, canTrade: boolean }> {
+  if (!tradingConnection || !tradingKeypair) {
+    return { balance: 0, canTrade: false }
+  }
+
+  const balance = await tradingConnection.getBalance(tradingKeypair.publicKey)
+  const balanceSOL = balance / 1e9
+  const canTrade = balanceSOL >= MIN_SOL_BALANCE
+
+  return { balance: balanceSOL, canTrade }
+}
+
+async function getTotalSOLAtRisk(): Promise<number> {
+  // Calculate total SOL currently at risk across all active real trades
+  const { data: activeRealTrades } = await supabase
+    .from(TRACKER_TABLE)
+    .select('trading_simulation')
+    .eq('status', 'tracking')
+    .not('trading_simulation', 'is', null)
+
+  let totalAtRisk = 0
+  
+  for (const trade of activeRealTrades || []) {
+    const simulation = trade.trading_simulation as TradingSimulation
+    if (!simulation.is_simulated && simulation.buy_operation) {
+      totalAtRisk += simulation.buy_operation.buy_amount_sol
+    }
+  }
+
+  return totalAtRisk
+}
+
+async function canExecuteRealTrade(buyAmountSOL: number): Promise<{ canTrade: boolean, reason?: string }> {
+  // Check if we can execute a real trade
+  const { balance, canTrade: hasBalance } = await checkTradingBalance()
+  
+  if (!hasBalance) {
+    return { canTrade: false, reason: `Insufficient balance: ${balance.toFixed(4)} SOL < ${MIN_SOL_BALANCE} SOL minimum` }
+  }
+
+  const totalAtRisk = await getTotalSOLAtRisk()
+  const newTotalAtRisk = totalAtRisk + buyAmountSOL
+
+  if (newTotalAtRisk > MAX_SOL_AT_RISK) {
+    return { canTrade: false, reason: `Risk limit exceeded: ${newTotalAtRisk.toFixed(4)} SOL > ${MAX_SOL_AT_RISK} SOL maximum` }
+  }
+
+  if (balance < buyAmountSOL + MIN_SOL_BALANCE) {
+    return { canTrade: false, reason: `Insufficient balance for trade: need ${(buyAmountSOL + MIN_SOL_BALANCE).toFixed(4)} SOL, have ${balance.toFixed(4)} SOL` }
+  }
+
+  return { canTrade: true }
 } 

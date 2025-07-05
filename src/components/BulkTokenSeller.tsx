@@ -649,370 +649,352 @@ export default function BulkTokenSeller() {
           </div>
         </div>
       </div>
-
-      {connected && (
-        <div className="space-y-8">
-          {/* Token Chart Section */}
-          {selectedToken && (
-            <div className="space-y-3">
-              <div className="flex justify-between items-center">
-                <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                  Token Chart
-                </label>
-                <span className="text-xs font-mono text-gray-400">{selectedToken}</span>
-              </div>
-              <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
-                {isChartLoading && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
-                    <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
-                  </div>
-                )}
-                <iframe 
-                  src={`https://www.gmgn.cc/kline/sol/${selectedToken}?interval=1D`}
-                  height="400"
-                  className="w-full"
-                  style={{ border: 'none' }}
-                  title={`Birdeye Chart - ${selectedToken}`}
-                  onLoad={() => setIsChartLoading(false)}
-                  allowFullScreen
-                  frameBorder="0"
-                />
-              </div>
+      <div className="space-y-8">
+        {/* Token Chart Section */}
+        {selectedToken && (
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                Token Chart
+              </label>
+              <span className="text-xs font-mono text-gray-400">{selectedToken}</span>
             </div>
-          )}
-          
-          {/* Token Selection Header */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-            <div>
-              <h3 className="text-xl font-light text-white mb-1">You have {userTokens.length > 0 && totalReloadEstimate > 0 
-              && <span className="font-bold">~ {(totalReloadEstimate).toFixed(3)} SOL</span>
-            } to reload 🚀</h3>
-              <p className="text-gray-400 text-sm">
-                {selectedTokens.length} of {filteredUserTokens.length} {showDustOnly ? 'dust' : 'valuable'} tokens selected
-                {showDustOnly && filteredUserTokens.length !== userTokens.length}
-              </p>
-            </div>
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={refreshAllPrices}
-                disabled={isLoadingTokens || userTokens.length === 0}
-                className="p-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                title="Refresh Prices"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
-              <button
-                onClick={toggleDustFilter}
-                className={`px-4 py-2 rounded-lg transition-colors text-sm flex items-center space-x-2 ${
-                  showDustOnly
-                    ? 'bg-gray-600 hover:bg-gray-500 text-white'
-                    : 'bg-yellow-600 hover:bg-yellow-500 text-white'
-                }`}
-              >
-                <span>{showDustOnly ? 'Show all' : 'Dust only' }</span>
-              </button>
-              <button
-                onClick={selectAllTokens}
-                disabled={filteredUserTokens.length === 0}
-                className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors text-sm"
-              >
-                Select All
-              </button>
-              <button
-                onClick={clearSelection}
-                disabled={selectedTokens.length === 0}
-                className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors text-sm"
-              >
-                Clear
-              </button>
+            <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
+              {isChartLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
+                  <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+                </div>
+              )}
+              <iframe 
+                src={`https://www.gmgn.cc/kline/sol/${selectedToken}?interval=1D`}
+                height="400"
+                className="w-full"
+                style={{ border: 'none' }}
+                title={`Birdeye Chart - ${selectedToken}`}
+                onLoad={() => setIsChartLoading(false)}
+                allowFullScreen
+                frameBorder="0"
+              />
             </div>
           </div>
-
-          <div className="flex justify-between items-center">
-            <p className="text-xs text-gray-400 flex items-center">
-              <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-              </svg>
-              Hover over a token and click on the  <svg className="w-4 h-4 mx-1 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                </svg> icon to view price charts
+        )}
+        
+        {/* Token Selection Header */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h3 className="text-xl font-light text-white mb-1">You have {userTokens.length > 0 && totalReloadEstimate > 0 
+            && <span className="font-bold">~ {(totalReloadEstimate).toFixed(3)} SOL</span>
+          } to reload 🚀</h3>
+            <p className="text-gray-400 text-sm">
+              {selectedTokens.length} of {filteredUserTokens.length} {showDustOnly ? 'dust' : 'valuable'} tokens selected
+              {showDustOnly && filteredUserTokens.length !== userTokens.length}
             </p>
           </div>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={refreshAllPrices}
+              disabled={isLoadingTokens || userTokens.length === 0}
+              className="p-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Refresh Prices"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+            </button>
+            <button
+              onClick={toggleDustFilter}
+              className={`px-4 py-2 rounded-lg transition-colors text-sm flex items-center space-x-2 ${
+                showDustOnly
+                  ? 'bg-gray-600 hover:bg-gray-500 text-white'
+                  : 'bg-yellow-600 hover:bg-yellow-500 text-white'
+              }`}
+            >
+              <span>{showDustOnly ? 'Show all' : 'Dust only' }</span>
+            </button>
+            <button
+              onClick={selectAllTokens}
+              disabled={filteredUserTokens.length === 0}
+              className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors text-sm"
+            >
+              Select All
+            </button>
+            <button
+              onClick={clearSelection}
+              disabled={selectedTokens.length === 0}
+              className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors text-sm"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
 
-          {/* Token List */}
-          {isLoadingTokens ? (
-            <>
-              <TokenSkeleton count={3} variant="progressive" />
-            </>
-          ) : userTokens.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
-                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-300 mb-2">No tokens found</h3>
-              <p className="text-gray-400 mb-4">You don't have any tokens to sell</p>
-              <button
-                onClick={fetchTokens}
-                className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
-              >
-                Refresh Tokens
-              </button>
-            </div>
-          ) : filteredUserTokens.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
-                <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                </svg>
-              </div>
-              <h3 className="text-lg font-semibold text-gray-300 mb-2">No dust tokens found</h3>
-              <p className="text-gray-400 mb-4">You don't have any tokens worth less than $0.1</p>
-              <button
-                onClick={toggleDustFilter}
-                className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
-              >
-                Show All Tokens
-              </button>
-            </div>
-          ) : (
-            <div className="grid max-h-96 overflow-y-auto border border-gray-600 rounded-xl">
-              {filteredUserTokens.map((token) => {
-                const isSelected = selectedTokens.some(t => t.mintAddress === token.mintAddress)
-                const selectedToken = selectedTokens.find(t => t.mintAddress === token.mintAddress)
-                return (
-                  <ProgressiveTokenItem
-                    key={token.mintAddress}
-                    token={token}
-                    isSelected={isSelected}
-                    isLoading={false}
-                    onToggleSelection={toggleTokenSelection}
-                    onSelectToken={handleSelectToken}
-                    onRefreshPrice={refreshTokenPrice}
-                    selectedToken={selectedToken}
-                    onUpdateSellPercentage={updateTokenSellPercentage}
-                  />
-                )
-              })}
-            </div>
-          )}
+        <div className="flex justify-between items-center">
+          <p className="text-xs text-gray-400 flex items-center">
+            <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+            </svg>
+            Hover over a token and click on the  <svg className="w-4 h-4 mx-1 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+              </svg> icon to view price charts
+          </p>
+        </div>
 
-          {/* Zero-Balance Tokens Section */}
-          {zeroBalanceTokens.length > 0 && (
-            <>
-              <div className="border-t border-gray-600 pt-8">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-                  <div>
-                    <h3 className="text-xl font-semibold text-white mb-1">Unsellable Tokens</h3>
-                    <p className="text-gray-400 text-sm">
-                      Zero balance or no liquidity • Close accounts to recover rent • {selectedZeroBalanceTokens.length} of {zeroBalanceTokens.length} selected
-                    </p>
-                  </div>
-                  <div className="flex items-center space-x-3">
-                    <button
-                      onClick={selectAllZeroBalanceTokens}
-                      disabled={zeroBalanceTokens.length === 0}
-                      className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors text-sm"
-                    >
-                      Select All
-                    </button>
-                    <button
-                      onClick={clearZeroBalanceSelection}
-                      disabled={selectedZeroBalanceTokens.length === 0}
-                      className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors text-sm"
-                    >
-                      Clear
-                    </button>
-                  </div>
+        {/* Token List */}
+        {isLoadingTokens ? (
+          <>
+            <TokenSkeleton count={3} variant="progressive" />
+          </>
+        ) : userTokens.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
+              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-300 mb-2">No tokens found</h3>
+            <p className="text-gray-400 mb-4">You don't have any tokens to sell</p>
+            <button
+              onClick={fetchTokens}
+              className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
+            >
+              Refresh Tokens
+            </button>
+          </div>
+        ) : filteredUserTokens.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
+              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-300 mb-2">No dust tokens found</h3>
+            <p className="text-gray-400 mb-4">You don't have any tokens worth less than $0.1</p>
+            <button
+              onClick={toggleDustFilter}
+              className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
+            >
+              Show All Tokens
+            </button>
+          </div>
+        ) : (
+          <div className="grid max-h-96 overflow-y-auto border border-gray-600 rounded-xl">
+            {filteredUserTokens.map((token) => {
+              const isSelected = selectedTokens.some(t => t.mintAddress === token.mintAddress)
+              const selectedToken = selectedTokens.find(t => t.mintAddress === token.mintAddress)
+              return (
+                <ProgressiveTokenItem
+                  key={token.mintAddress}
+                  token={token}
+                  isSelected={isSelected}
+                  isLoading={false}
+                  onToggleSelection={toggleTokenSelection}
+                  onSelectToken={handleSelectToken}
+                  onRefreshPrice={refreshTokenPrice}
+                  selectedToken={selectedToken}
+                  onUpdateSellPercentage={updateTokenSellPercentage}
+                />
+              )
+            })}
+          </div>
+        )}
+
+        {/* Zero-Balance Tokens Section */}
+        {zeroBalanceTokens.length > 0 && (
+          <>
+            <div className="border-t border-gray-600 pt-8">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                <div>
+                  <h3 className="text-xl font-semibold text-white mb-1">Unsellable Tokens</h3>
+                  <p className="text-gray-400 text-sm">
+                    Zero balance or no liquidity • Close accounts to recover rent • {selectedZeroBalanceTokens.length} of {zeroBalanceTokens.length} selected
+                  </p>
                 </div>
+                <div className="flex items-center space-x-3">
+                  <button
+                    onClick={selectAllZeroBalanceTokens}
+                    disabled={zeroBalanceTokens.length === 0}
+                    className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors text-sm"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={clearZeroBalanceSelection}
+                    disabled={selectedZeroBalanceTokens.length === 0}
+                    className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors text-sm"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
 
-                <div className="grid max-h-96 overflow-y-auto border border-gray-600 rounded-xl">
-                  {zeroBalanceTokens.map((token) => {
-                    const isSelected = selectedZeroBalanceTokens.some(t => t.mintAddress === token.mintAddress)
-                    return (
-                      <div
-                        key={token.mintAddress}
-                        className={`group p-2 m-1 rounded-xl transition-all duration-200 ${
-                          isSelected
-                            ? 'bg-gray-700'
-                            : 'bg-gray-900'
-                        }`}
+              <div className="grid max-h-96 overflow-y-auto border border-gray-600 rounded-xl">
+                {zeroBalanceTokens.map((token) => {
+                  const isSelected = selectedZeroBalanceTokens.some(t => t.mintAddress === token.mintAddress)
+                  return (
+                    <div
+                      key={token.mintAddress}
+                      className={`group p-2 m-1 rounded-xl transition-all duration-200 ${
+                        isSelected
+                          ? 'bg-gray-700'
+                          : 'bg-gray-900'
+                      }`}
+                    >
+                      <div 
+                        className="flex items-center justify-between cursor-pointer"
+                        onClick={() => toggleZeroBalanceTokenSelection(token)}
                       >
-                        <div 
-                          className="flex items-center justify-between cursor-pointer"
-                          onClick={() => toggleZeroBalanceTokenSelection(token)}
-                        >
-                          <div className="flex items-center space-x-3">
-                            {/* Checkbox */}
-                            <div className="flex items-center justify-center">
-                              <div className={`w-4 h-4 sm:w-4 sm:h-4 rounded border-2 flex items-center justify-center transition-colors ${
-                                isSelected 
-                                  ? 'bg-blue-500 border-blue-500' 
-                                  : 'border-gray-500 hover:border-gray-400'
-                              }`}>
-                                {isSelected && (
-                                  <svg className="w-3 h-3 text-white" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                  </svg>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Token Icon */}
-                            <div className={`w-4 h-4 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-white font-bold ${
-                              isSelected ? 'bg-white text-black' : 'bg-gray-600'
+                        <div className="flex items-center space-x-3">
+                          {/* Checkbox */}
+                          <div className="flex items-center justify-center">
+                            <div className={`w-4 h-4 sm:w-4 sm:h-4 rounded border-2 flex items-center justify-center transition-colors ${
+                              isSelected 
+                                ? 'bg-blue-500 border-blue-500' 
+                                : 'border-gray-500 hover:border-gray-400'
                             }`}>
-                              <span>{token.symbol?.charAt(0) || 'T'}</span>
+                              {isSelected && (
+                                <svg className="w-3 h-3 text-white" viewBox="0 0 20 20" fill="currentColor">
+                                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                                </svg>
+                              )}
                             </div>
+                          </div>
 
-                            {/* Token Name */}
-                            <div className="font-semibold text-gray-300">
-                              {token.name || token.symbol || 'Unknown'}
-                            </div>
+                          {/* Token Icon */}
+                          <div className={`w-4 h-4 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-white font-bold ${
+                            isSelected ? 'bg-white text-black' : 'bg-gray-600'
+                          }`}>
+                            <span>{token.symbol?.charAt(0) || 'T'}</span>
+                          </div>
+
+                          {/* Token Name */}
+                          <div className="font-semibold text-gray-300">
+                            {token.name || token.symbol || 'Unknown'}
                           </div>
                         </div>
                       </div>
-                    )
-                  })}
-                </div>
-              </div>
-            </>
-          )}
-
-          {/* Settings and Summary */}
-          {(selectedTokens.length > 0 || selectedZeroBalanceTokens.length > 0) && (
-            <>
-              {/* Settings Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Slippage */}
-                <div className="space-y-3">
-                  <label htmlFor="slippage" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                    Slippage Tolerance
-                  </label>
-                  <select
-                    id="slippage"
-                    value={slippage}
-                    onChange={(e) => setSlippage(Number(e.target.value))}
-                    className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
-                    disabled={isLoading}
-                  >
-                    {SLIPPAGE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value} className="bg-gray-800">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Priority Fee */}
-                <div className="space-y-3">
-                  <label htmlFor="priorityFee" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                    Priority Fee
-                  </label>
-                  <select
-                    id="priorityFee"
-                    value={priorityFee}
-                    onChange={(e) => setPriorityFee(Number(e.target.value))}
-                    className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
-                    disabled={isLoading}
-                  >
-                    {PRIORITY_FEE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value} className="bg-gray-800">
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Sell Button */}
-              <button
-                onClick={handleBulkSell}
-                disabled={isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)}
-                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
-                  isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)
-                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                    : 'bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl'
-                }`}
-              >
-                {isLoading ? (
-                  <div className="flex items-center justify-center space-x-3">
-                    <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
-                    <span>Processing...</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center space-x-2">
-                    <span>
-                      {selectedTokens.length > 0 && selectedZeroBalanceTokens.length > 0
-                        ? `Sell ${selectedTokens.length} & Close ${tokensToClose} Accounts`
-                        : selectedTokens.length > 0
-                        ? `Sell ${selectedTokens.length} Token${selectedTokens.length !== 1 ? 's' : ''} ${tokensToClose > 0 ? `& Close ${tokensToClose}` : ''}`
-                        : `Close ${selectedZeroBalanceTokens.length} Account${selectedZeroBalanceTokens.length !== 1 ? 's' : ''}`
-                      }
-                    </span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
-                    </svg>
-                  </div>
-                )}
-              </button>
-            </>
-          )}
-
-          {/* Error Display */}
-          {error && (
-            <div className="bg-gradient-to-r from-red-900/50 to-red-800/50 border border-red-500/50 text-red-200 px-4 py-3 rounded-xl backdrop-blur-sm animate-slide-up">
-              <div className="flex items-start space-x-3">
-                <svg className="w-5 h-5 mt-0.5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                </svg>
-                <p className="text-sm">{error}</p>
+                    </div>
+                  )
+                })}
               </div>
             </div>
-          )}
+          </>
+        )}
 
-          {/* Transaction Result Modal */}
-          <TransactionResultModal
-            isOpen={showResultModal}
-            onClose={() => setShowResultModal(false)}
-            operation="sell"
-            result={result}
-            balanceBefore={balanceBefore}
-            balanceAfter={balanceAfter}
-            pointsEarned={sellPointsEarned ?? undefined}
-          />
+        {/* Settings and Summary */}
+        {(selectedTokens.length > 0 || selectedZeroBalanceTokens.length > 0) && (
+          <>
+            {/* Settings Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Slippage */}
+              <div className="space-y-3">
+                <label htmlFor="slippage" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                  Slippage Tolerance
+                </label>
+                <select
+                  id="slippage"
+                  value={slippage}
+                  onChange={(e) => setSlippage(Number(e.target.value))}
+                  className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+                  disabled={isLoading}
+                >
+                  {SLIPPAGE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value} className="bg-gray-800">
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          {/* Close Result Modal */}
-          <TransactionResultModal
-            isOpen={showCloseResultModal}
-            onClose={() => setShowCloseResultModal(false)}
-            operation="close"
-            result={closeResult}
-            pointsEarned={closePointsEarned ?? undefined}
-          />
-        </div>
-      )}
+              {/* Priority Fee */}
+              <div className="space-y-3">
+                <label htmlFor="priorityFee" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                  Priority Fee
+                </label>
+                <select
+                  id="priorityFee"
+                  value={priorityFee}
+                  onChange={(e) => setPriorityFee(Number(e.target.value))}
+                  className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+                  disabled={isLoading}
+                >
+                  {PRIORITY_FEE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value} className="bg-gray-800">
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
-      {!connected && (
-        <div className="text-center py-12">
-          <div className="bg-gradient-to-br from-slate-700/30 to-slate-800/30 border border-slate-600/50 rounded-2xl p-8 backdrop-blur-sm">
-            <div className="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-red-500 to-orange-600 rounded-full flex items-center justify-center">
-              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
+            {/* Sell Button */}
+            <button
+              onClick={handleBulkSell}
+              disabled={isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)}
+              className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
+                isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)
+                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                  : 'bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl'
+              }`}
+            >
+              {isLoading ? (
+                <div className="flex items-center justify-center space-x-3">
+                  <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
+                  <span>Processing...</span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center space-x-2">
+                  <span>
+                    {selectedTokens.length > 0 && selectedZeroBalanceTokens.length > 0
+                      ? `Sell ${selectedTokens.length} & Close ${tokensToClose} Accounts`
+                      : selectedTokens.length > 0
+                      ? `Sell ${selectedTokens.length} Token${selectedTokens.length !== 1 ? 's' : ''} ${tokensToClose > 0 ? `& Close ${tokensToClose}` : ''}`
+                      : `Close ${selectedZeroBalanceTokens.length} Account${selectedZeroBalanceTokens.length !== 1 ? 's' : ''}`
+                    }
+                  </span>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
+                  </svg>
+                </div>
+              )}
+            </button>
+          </>
+        )}
+
+        {/* Error Display */}
+        {error && (
+          <div className="bg-gradient-to-r from-red-900/50 to-red-800/50 border border-red-500/50 text-red-200 px-4 py-3 rounded-xl backdrop-blur-sm animate-slide-up">
+            <div className="flex items-start space-x-3">
+              <svg className="w-5 h-5 mt-0.5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
               </svg>
+              <p className="text-sm">{error}</p>
             </div>
-            {/* <h3 className="text-xl font-semibold text-white mb-2">Connect Your Wallet</h3> */}
-            <p className="text-slate-400 mb-6 max-w-md mx-auto">
-              Sell any token with automatic account closing  <br />
-              and Reload your Solana
-            </p>
-            <PhantomWalletButton />
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Transaction Result Modal */}
+        <TransactionResultModal
+          isOpen={showResultModal}
+          onClose={() => setShowResultModal(false)}
+          operation="sell"
+          result={result}
+          balanceBefore={balanceBefore}
+          balanceAfter={balanceAfter}
+          pointsEarned={sellPointsEarned ?? undefined}
+        />
+
+        {/* Close Result Modal */}
+        <TransactionResultModal
+          isOpen={showCloseResultModal}
+          onClose={() => setShowCloseResultModal(false)}
+          operation="close"
+          result={closeResult}
+          pointsEarned={closePointsEarned ?? undefined}
+        />
+      </div>
+
+      {/* {connected && (
+      )} */}
     </div>
   )
 } 
