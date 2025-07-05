@@ -5,6 +5,7 @@ import { publicKey } from "@metaplex-foundation/umi"
 import { fetchAllDigitalAssetWithTokenByOwner } from "@metaplex-foundation/mpl-token-metadata"
 import { JUPITER_API, TOKENS } from './solana'
 import { SwapQuote, SwapTransaction, BulkBuyRequest, BulkBuyResult, TokenPurchase } from '@/types'
+import { fetchSwapTxn } from './swap-client'
 
 // Add BigInt JSON serialization support
 declare global {
@@ -1410,10 +1411,9 @@ export async function executeBulkSell(
         // Get latest blockhash for all transactions
         const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
 
-        // Batch quote fetching and transaction creation (similar to executeBulkBuy)
+        // Batch transaction creation using swap client
         const transactions: VersionedTransaction[] = []
         const transactionTokens: TokenToSell[] = []
-        const transactionQuotes: SwapQuote[] = []
         const BATCH_SIZE = 10 // Process 10 tokens per batch for API calls
         const batches: TokenToSell[][] = []
         
@@ -1431,63 +1431,47 @@ export async function executeBulkSell(
             const batchStart = batchIndex * BATCH_SIZE
             console.log(`Processing sell batch ${batchStart}-${batchStart + batch.length} of ${nonFrozenTokens.length} tokens`)
             
-            // Process tokens in this batch in parallel
-            const batchPromises = batch.map(async (token) => {
-              try {
-                // Get quote for this token
-                const quote = await getSwapQuote(
-                  token.mintAddress,
-                  TOKENS.SOL,
-                  token.sellAmount,
-                  request.slippage
-                )
-
-                if (!quote) {
-                  return { success: false, token, error: new Error('No valid quote available') }
-                }
-
-                // Create transaction for this quote
-                const feeInstructions: any[] = []
-                const swapTransaction = await getSwapTransaction(
-                  quote,
-                  userPublicKey,
-                  request.priorityFee,
-                  feeInstructions
-                )
-
-                if (!swapTransaction) {
-                  return { success: false, token, error: new Error('Failed to create swap transaction') }
-                }
-
-                // Deserialize and update blockhash
-                const tx = VersionedTransaction.deserialize(
-                  Buffer.from(swapTransaction.swapTransaction, 'base64')
-                )
-                tx.message.recentBlockhash = blockhash
-                
-                return { success: true, token, tx, quote }
-              } catch (error) {
-                console.error(`Failed to prepare sell for ${token.mintAddress}:`, error)
-                return { success: false, token, error }
-              }
+                    // Process tokens in this batch in parallel
+        const batchPromises = batch.map(async (token) => {
+          try {
+            // Use the new swap client instead of Jupiter quote/swap API
+            const txnBase64 = await fetchSwapTxn({
+              direction: 'sell',
+              mint: token.mintAddress,
+              amount: token.sellAmount / Math.pow(10, token.decimals), // Convert to token units
+              slippage: request.slippage,
+              payer: userPublicKey,
+              priorityFee: request.priorityFee
             })
+
+            // Deserialize and update blockhash
+            const tx = VersionedTransaction.deserialize(
+              Buffer.from(txnBase64, 'base64')
+            )
+            tx.message.recentBlockhash = blockhash
+            
+            return { success: true, token, tx }
+          } catch (error) {
+            console.error(`Failed to prepare sell for ${token.mintAddress}:`, error)
+            return { success: false, token, error }
+          }
+        })
 
             // Wait for all transactions in this batch
             const results = await Promise.all(batchPromises)
             
-            // Collect successful transactions and failed ones
-            results.forEach(batchResult => {
-              if (batchResult.success && batchResult.tx && batchResult.quote) {
-                transactions.push(batchResult.tx)
-                transactionTokens.push(batchResult.token)
-                transactionQuotes.push(batchResult.quote)
-              } else {
-                result.failedSwaps.push({
-                  mintAddress: batchResult.token.mintAddress,
-                  error: batchResult.error instanceof Error ? batchResult.error.message : 'Unknown error creating transaction'
-                })
-              }
+                    // Collect successful transactions and failed ones
+        results.forEach(batchResult => {
+          if (batchResult.success && batchResult.tx) {
+            transactions.push(batchResult.tx)
+            transactionTokens.push(batchResult.token)
+          } else {
+            result.failedSwaps.push({
+              mintAddress: batchResult.token.mintAddress,
+              error: batchResult.error instanceof Error ? batchResult.error.message : 'Unknown error creating transaction'
             })
+          }
+        })
 
             console.log(`Sell batch ${batchStart}-${batchStart + batch.length} completed: ${results.filter(r => r.success).length} successful`)
           }))
@@ -1507,88 +1491,87 @@ export async function executeBulkSell(
           const SEND_BATCH_SIZE = 6 // Send 6 transactions at a time
           const swapSignatures: string[] = []
           
-          for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
-            const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE)
-            const batchTokens = transactionTokens.slice(i, i + SEND_BATCH_SIZE)
-            const batchQuotes = transactionQuotes.slice(i, i + SEND_BATCH_SIZE)
+                  for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
+          const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE)
+          const batchTokens = transactionTokens.slice(i, i + SEND_BATCH_SIZE)
             
-            // Send batch transactions in parallel
-            const sendPromises = batch.map(async (tx, idx) => {
-              try {
-                const signature = await connection.sendTransaction(tx, {
-                  skipPreflight: true,
-                  maxRetries: 2
-                })
-                return { success: true, signature, tokenIdx: i + idx }
-              } catch (error) {
-                console.error(`Failed to send sell transaction for token ${batchTokens[idx].mintAddress}:`, error)
-                return { success: false, tokenIdx: i + idx, error }
-              }
+                    // Send batch transactions in parallel
+        const sendPromises = batch.map(async (tx, idx) => {
+          try {
+            const signature = await connection.sendTransaction(tx, {
+              skipPreflight: true,
+              maxRetries: 2
             })
+            return { success: true, signature, tokenIdx: i + idx }
+          } catch (error) {
+            console.error(`Failed to send sell transaction for token ${batchTokens[idx].mintAddress}:`, error)
+            return { success: false, tokenIdx: i + idx, error }
+          }
+        })
 
-            const sendResults = await Promise.all(sendPromises)
+        const sendResults = await Promise.all(sendPromises)
 
-            // Process confirmations for successful sends in parallel
-            const confirmPromises = sendResults.map(async (sendResult) => {
-              if (!sendResult.success) {
+        // Process confirmations for successful sends in parallel
+        const confirmPromises = sendResults.map(async (sendResult) => {
+          if (!sendResult.success) {
+            result.failedSwaps.push({
+              mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
+              error: sendResult.error instanceof Error ? sendResult.error.message : 'Failed to send transaction'
+            })
+            return
+          }
+
+          try {
+            const confirmation = await connection.confirmTransaction({
+              signature: sendResult.signature!,
+              lastValidBlockHeight,
+              blockhash
+            }, 'confirmed')
+
+            if (confirmation.value.err) {
+              console.error(`Sell transaction failed: ${sendResult.signature}`, confirmation.value.err)
+              result.failedSwaps.push({
+                mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
+                error: `Transaction failed: ${confirmation.value.err}`
+              })
+            } else {
+              // Verify transaction success on chain
+              const txInfo = await connection.getTransaction(sendResult.signature!, {
+                commitment: 'confirmed',
+                maxSupportedTransactionVersion: 0
+              })
+
+              if (txInfo?.meta?.err) {
                 result.failedSwaps.push({
                   mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                  error: sendResult.error instanceof Error ? sendResult.error.message : 'Failed to send transaction'
+                  error: 'Transaction failed on chain'
                 })
-                return
-              }
-
-              try {
-                const confirmation = await connection.confirmTransaction({
-                  signature: sendResult.signature!,
-                  lastValidBlockHeight,
-                  blockhash
-                }, 'confirmed')
-
-                if (confirmation.value.err) {
-                  console.error(`Sell transaction failed: ${sendResult.signature}`, confirmation.value.err)
-                  result.failedSwaps.push({
-                    mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                    error: `Transaction failed: ${confirmation.value.err}`
-                  })
-                } else {
-                  // Verify transaction success on chain
-                  const txInfo = await connection.getTransaction(sendResult.signature!, {
-                    commitment: 'confirmed',
-                    maxSupportedTransactionVersion: 0
-                  })
-
-                  if (txInfo?.meta?.err) {
-                    result.failedSwaps.push({
-                      mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                      error: 'Transaction failed on chain'
-                    })
-                  } else {
-                    swapSignatures.push(sendResult.signature!)
-                    successfulSwaps.push(transactionTokens[sendResult.tokenIdx])
-                    
-                    // Calculate actual SOL received from the quote
-                    const quote = batchQuotes[sendResult.tokenIdx - i]
-                    const solReceived = parseInt(quote.outAmount) / LAMPORTS_PER_SOL
-                    
-                    result.successfulSwaps.push({
-                      mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                      solReceived: solReceived
-                    })
-                    result.totalReceived += solReceived
-                    console.log(`✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress}`)
-                  }
-                }
-              } catch (error: any) {
-                console.error(`Confirmation failed for ${sendResult.signature}:`, error)
-                result.failedSwaps.push({
+              } else {
+                swapSignatures.push(sendResult.signature!)
+                successfulSwaps.push(transactionTokens[sendResult.tokenIdx])
+                
+                // Estimate SOL received based on token's USD value
+                const token = transactionTokens[sendResult.tokenIdx]
+                const estimatedSolReceived = token.usdValue || 0.001 // Fallback to minimal value
+                
+                result.successfulSwaps.push({
                   mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                  error: error.message && error.message.includes('TransactionExpiredBlockheightExceededError') 
-                    ? 'Transaction expired' 
-                    : `Confirmation failed: ${error.message || 'Unknown error'}`
+                  solReceived: estimatedSolReceived
                 })
+                result.totalReceived += estimatedSolReceived
+                console.log(`✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress}`)
               }
+            }
+          } catch (error: any) {
+            console.error(`Confirmation failed for ${sendResult.signature}:`, error)
+            result.failedSwaps.push({
+              mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
+              error: error.message && error.message.includes('TransactionExpiredBlockheightExceededError') 
+                ? 'Transaction expired' 
+                : `Confirmation failed: ${error.message || 'Unknown error'}`
             })
+          }
+        })
 
             await Promise.all(confirmPromises)
             console.log(`Processed sell batch ${i / SEND_BATCH_SIZE + 1}/${Math.ceil(signedTransactions.length / SEND_BATCH_SIZE)}`)
@@ -1944,15 +1927,15 @@ export async function executeBulkBuy(
     // Track start time for performance measurement
     const start = Date.now()
     
-    // Calculate amount per token in lamports
-    const amountPerToken = Math.floor((request.solAmount * LAMPORTS_PER_SOL) / request.tokenMints.length)
+    // Calculate amount per token in SOL
+    const amountPerToken = request.solAmount / request.tokenMints.length
     
-    console.log(`Executing bulk buy: ${request.tokenMints.length} tokens, ${amountPerToken} lamports per token`)
+    console.log(`Executing bulk buy: ${request.tokenMints.length} tokens, ${amountPerToken} SOL per token`)
 
     // Get latest blockhash for all transactions
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
 
-    // Batch transaction creation (similar to Swap function)
+    // Batch transaction creation using swap client
     const transactions: VersionedTransaction[] = []
     const transactionMints: string[] = []
     const BATCH_SIZE = 10 // Process 10 tokens per batch for API calls
@@ -1975,42 +1958,19 @@ export async function executeBulkBuy(
         // Process tokens in this batch in parallel
         const batchPromises = batch.map(async (mint) => {
           try {
-            // Prepare swap API body for BUY (SOL -> Token)
-            const swapApiBody = {
-              from: NATIVE_MINT.toBase58(), // SOL (Native mint for buy operations)
-              to: mint,                     // Target token
-              amount: amountPerToken/1000000000,       // Amount in SOL
-              slippage: request.slippage/100,   // Slippage tolerance
-              payer: userPublicKey,         // User's wallet
-              priorityFee: request.priorityFee/1000000000, // Priority fee in SOL
-              fee: `${FEE_CONFIG.DEV_WALLET}:0.5` // Dev wallet with 0.5% fee
-            }
-
-            // Call Solana Tracker swap API with timeout
-            const response = await fetch("https://swap-v2.solanatracker.io/swap", {
-              method: "POST",
-              headers: { 
-                "Content-Type": "application/json",
-                "Connection": "keep-alive"
-              },
-              body: JSON.stringify(swapApiBody),
-              signal: controller.signal,
-              keepalive: true
+            // Use the new swap client instead of direct API call
+            const txnBase64 = await fetchSwapTxn({
+              direction: 'buy',
+              mint: mint,
+              amount: amountPerToken,
+              slippage: request.slippage,
+              payer: userPublicKey,
+              priorityFee: request.priorityFee
             })
-
-            if (!response.ok) {
-              throw new Error(`Quote failed: ${response.status} ${response.statusText}`)
-            }
-
-            const swapResult = await response.json()
-            
-            if (!swapResult.txn) {
-              throw new Error('No transaction returned from swap API')
-            }
 
             // Deserialize and update blockhash
             const tx = VersionedTransaction.deserialize(
-              Buffer.from(swapResult.txn, 'base64')
+              Buffer.from(txnBase64, 'base64')
             )
             tx.message.recentBlockhash = blockhash
             
@@ -2024,18 +1984,18 @@ export async function executeBulkBuy(
         // Wait for all transactions in this batch
         const results = await Promise.all(batchPromises)
         
-                 // Collect successful transactions and failed ones
-         results.forEach(batchResult => {
-           if (batchResult.success && batchResult.tx) {
-             transactions.push(batchResult.tx)
-             transactionMints.push(batchResult.mint)
-           } else {
-             result.failedPurchases.push({
-               mintAddress: batchResult.mint,
-               error: batchResult.error instanceof Error ? batchResult.error.message : 'Unknown error creating transaction'
-             })
-           }
-         })
+        // Collect successful transactions and failed ones
+        results.forEach(batchResult => {
+          if (batchResult.success && batchResult.tx) {
+            transactions.push(batchResult.tx)
+            transactionMints.push(batchResult.mint)
+          } else {
+            result.failedPurchases.push({
+              mintAddress: batchResult.mint,
+              error: batchResult.error instanceof Error ? batchResult.error.message : 'Unknown error creating transaction'
+            })
+          }
+        })
 
         console.log(`Batch ${batchStart}-${batchStart + batch.length} completed: ${results.filter(r => r.success).length} successful`)
       }))
@@ -2052,7 +2012,7 @@ export async function executeBulkBuy(
     // Sign all transactions at once
     const signedTransactions = await signAllTransactions(transactions)
 
-    // Send and confirm transactions using batched approach (like sendTransactions)
+    // Send and confirm transactions using batched approach
     const SEND_BATCH_SIZE = 6 // Send 6 transactions at a time
     const signatures: string[] = []
     
@@ -2115,7 +2075,7 @@ export async function executeBulkBuy(
               signatures.push(sendResult.signature!)
               result.successfulPurchases.push({
                 mintAddress: transactionMints[sendResult.mintIdx],
-                amount: amountPerToken,
+                amount: Math.floor(amountPerToken * LAMPORTS_PER_SOL),
               })
               console.log(`✅ Successfully bought ${transactionMints[sendResult.mintIdx]}`)
             }
@@ -2136,10 +2096,10 @@ export async function executeBulkBuy(
     }
 
     result.signatures = signatures
-    result.totalSpent = (amountPerToken * result.successfulPurchases.length) / LAMPORTS_PER_SOL
+    result.totalSpent = amountPerToken * result.successfulPurchases.length
     result.success = result.successfulPurchases.length > 0
 
-    // Calculate fee information (fees are included in Solana Tracker API)
+    // Calculate fee information (fees are included in swap worker)
     if (result.successfulPurchases.length > 0) {
       // For buy: 0.5% of total SOL budget (request.solAmount)
       const feeDistribution = calculateFeeDistribution('BUY', result.successfulPurchases.length, request.solAmount)

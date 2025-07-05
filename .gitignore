@@ -17,3 +17,5 @@ tsconfig.tsbuildinfo
 /trending_api
 /venv
 /__pycache__
+
+/swap-worker/*
