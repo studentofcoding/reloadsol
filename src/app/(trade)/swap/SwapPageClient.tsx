@@ -19,7 +19,12 @@ interface TokenOption {
   usdValue?: number
 }
 
-export default function SwapPageClient() {
+interface SwapPageClientProps {
+  initialInputMint?: string
+  initialOutputMint?: string
+}
+
+export default function SwapPageClient({ initialInputMint, initialOutputMint }: SwapPageClientProps) {
   // Wallet & connection
   const { publicKey, connected, signAllTransactions } = useWallet()
   const { connection } = useConnection()
@@ -65,6 +70,28 @@ export default function SwapPageClient() {
   // Refs for timers
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
   const refreshRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Update URL when tokens change
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const params = new URLSearchParams()
+    if (inputMint) params.set('input', inputMint)
+    if (outputMint) params.set('output', outputMint)
+
+    const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`
+    window.history.replaceState({}, '', newUrl)
+  }, [inputMint, outputMint])
+
+  // Initialize tokens from URL params
+  useEffect(() => {
+    if (initialInputMint && isValidMintAddress(initialInputMint)) {
+      setInputMint(initialInputMint)
+    }
+    if (initialOutputMint && isValidMintAddress(initialOutputMint)) {
+      setOutputMint(initialOutputMint)
+    }
+  }, [initialInputMint, initialOutputMint])
 
   // Load user tokens when wallet connects
   useEffect(() => {

@@ -1,6 +1,15 @@
 import React from 'react'
 import { Metadata } from 'next'
 import SwapPageClient from './SwapPageClient'
+import { Suspense } from 'react'
+import TokenSkeleton from '@/components/TokenSkeleton'
+
+type Props = {
+  searchParams: {
+    input?: string
+    output?: string
+  }
+}
 
 export const metadata: Metadata = {
   title: 'Swap Tokens - ReloadSOL',
@@ -11,6 +20,10 @@ export const metadata: Metadata = {
   },
 }
 
-export default function SwapPage() {
-  return <SwapPageClient />
+export default function SwapPage({ searchParams }: Props) {
+  return (
+    <Suspense fallback={<TokenSkeleton count={3} variant="progressive" />}>
+      <SwapPageClient initialInputMint={searchParams.input} initialOutputMint={searchParams.output} />
+    </Suspense>
+  )
 } 
