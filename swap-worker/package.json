@@ -1,0 +1,19 @@
+{
+  "name": "swap-worker",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker for handling swap transactions",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.87.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240605.0",
+    "typescript": "^5.4.5",
+    "wrangler": "^4.23.0"
+  }
+}

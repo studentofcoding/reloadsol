@@ -1,0 +1,17 @@
+    name = "swap-worker"
+    main = "src/index.ts"
+    compatibility_date = "2024-06-30"
+
+    [vars]
+    DEV_FEE_WALLET = "3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX"   # same as code
+
+    # FLUXBEAM_KEY is stored as a variable for future RPC usage
+    # Currently we use SolanaTracker API which doesn't need RPC
+    # But keeping it ready for direct Solana RPC calls if needed
+    FLUXBEAM_KEY = "94a42d66-8cc7-454a-9d33-513cff867307"
+
+    # For production, move sensitive keys to secrets:
+    # wrangler secret put FLUXBEAM_KEY
+    # wrangler secret put DEV_FEE_WALLET
+
+    # add more RPC keys here if you rotate later

@@ -18,4 +18,4 @@ tsconfig.tsbuildinfo
 /venv
 /__pycache__
 
-/swap-worker/*
+/swap-worker/node_modules
