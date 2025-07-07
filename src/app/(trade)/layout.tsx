@@ -178,33 +178,9 @@ export default function TradeLayout({
             )}
           </div>
         )}
-
-        {/* Main Content with fixed minimum height to prevent layout shift */}
+        
         <div className="max-w-4xl mx-auto min-h-[600px]">
         {children}
-          {/* {!connected ? (
-            <div className="text-center py-12">
-              <div className="bg-gray-900 rounded-2xl p-8 border border-gray-700">
-                <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
-                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                  </svg>
-                </div>
-                <h3 className="text-xl font-semibold text-white mb-2">Connect Your Wallet</h3>
-                <p className="text-gray-400 mb-6 max-w-md mx-auto">
-                  Connect your wallet to start trading
-                </p>
-                <div className="flex gap-4 justify-center mb-6">
-                  <a href="/" className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors">
-                    Back to Home
-                  </a>
-                </div>
-                <PhantomWalletButton />
-              </div>
-            </div>
-          ) : (
-            children
-          )} */}
         </div>
       </div>
       
