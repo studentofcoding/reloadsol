@@ -45,7 +45,7 @@ Accept the current limitation and rename to reflect reality:
 
 ```typescript
 // 1. Update type system
-export type TradeProvider = 'jupiter' | 'dflow' | 'solana-tracker' | 'gmgn' | 'dflow-intent' | 'pump-fun'
+export type TradeProvider = 'jupiter' | 'dflow' | 'solana-tracker' | 'gmgn' | 'pump-fun'
 
 // 2. Update provider config
 'pump-fun': {
@@ -122,7 +122,7 @@ The most pragmatic solution is **Option 1: Honest Renaming**
 #### **Code Changes Required:**
 ```typescript
 // src/types/index.ts
-export type TradeProvider = 'jupiter' | 'dflow' | 'solana-tracker' | 'gmgn' | 'dflow-intent' | 'pump-fun'
+export type TradeProvider = 'jupiter' | 'dflow' | 'solana-tracker' | 'gmgn' | 'pump-fun'
 
 // src/utils/trade-comparison.ts
 'pump-fun': {

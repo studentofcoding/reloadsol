@@ -166,7 +166,7 @@ export async function runTradeComparisonTests(): Promise<{
 
   // Calculate provider reliability
   const providerReliability: Record<string, number> = {}
-  const providers = ['jupiter', 'dflow', 'dflow-intent', 'solana-tracker', 'gmgn']
+  const providers = ['jupiter', 'dflow', 'solana-tracker', 'gmgn']
   
   providers.forEach(provider => {
     const successCount = results.reduce((acc, result) => 
