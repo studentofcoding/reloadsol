@@ -12,10 +12,10 @@ type Props = {
 }
 
 export const metadata: Metadata = {
-  title: 'Swap Tokens - ReloadSOL',
+  title: 'Swap individual token - ReloadSOL',
   description: 'Swap individual tokens quickly and efficiently.',
   openGraph: {
-    title: 'Swap Tokens - ReloadSOL',
+    title: 'Swap individual token - ReloadSOL',
     description: 'Swap individual tokens quickly and efficiently.',
   },
 }

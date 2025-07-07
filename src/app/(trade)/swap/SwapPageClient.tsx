@@ -459,81 +459,241 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
         <div className="flex space-x-4">
           
           {/* Swap Interface - 3/4 width */}
-          <div className="flex-[3] space-y-4">
+          <div className="flex flex-col lg:flex-row w-full gap-4">
+            {/* Main Swap Interface */}
+            <div className="w-full lg:flex-[3] space-y-4">
             
-            {/* Selling Section */}
-            <div className="relative">
-              <div className="border border-gray-600 rounded-lg p-3 space-y-2">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide">Selling</h3>
-                  <div className="flex space-x-1">
-                    <button 
-                      onClick={() => {
-                        if (inputToken?.uiAmount) {
-                          setInputAmount((inputToken.uiAmount / 2).toString())
-                        }
-                      }}
-                      className="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded text-xs font-medium transition-colors"
-                      disabled={!inputToken?.uiAmount}
-                    >
-                      HALF
-                    </button>
-                    <button 
-                      onClick={() => {
-                        if (inputToken?.uiAmount) {
-                          // Leave small amount for fees if it's SOL
-                          const maxAmount = inputToken.mintAddress === NATIVE_MINT.toBase58() 
-                            ? Math.max(0, inputToken.uiAmount - 0.01)
-                            : inputToken.uiAmount
-                          setInputAmount(maxAmount.toString())
-                        }
-                      }}
-                      className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-medium transition-colors"
-                      disabled={!inputToken?.uiAmount}
-                    >
-                      MAX
-                    </button>
+              {/* Selling Section */}
+              <div className="relative">
+                <div className="border border-gray-600 rounded-lg p-3 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide">Selling</h3>
+                    <div className="flex space-x-1">
+                      <button 
+                        onClick={() => {
+                          if (inputToken?.uiAmount) {
+                            setInputAmount((inputToken.uiAmount / 2).toString())
+                          }
+                        }}
+                        className="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded text-xs font-medium transition-colors"
+                        disabled={!inputToken?.uiAmount}
+                      >
+                        HALF
+                      </button>
+                      <button 
+                        onClick={() => {
+                          if (inputToken?.uiAmount) {
+                            // Leave small amount for fees if it's SOL
+                            const maxAmount = inputToken.mintAddress === NATIVE_MINT.toBase58() 
+                              ? Math.max(0, inputToken.uiAmount - 0.01)
+                              : inputToken.uiAmount
+                            setInputAmount(maxAmount.toString())
+                          }
+                        }}
+                        className="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-medium transition-colors"
+                        disabled={!inputToken?.uiAmount}
+                      >
+                        MAX
+                      </button>
+                    </div>
                   </div>
+                  
+                  <div className="flex space-x-2">
+                    <div className="flex-1 relative">
+                      {/* Token Logo */}
+                      {inputToken?.logoURI && (
+                        <div className="absolute top-1 right-2 z-10">
+                          <img 
+                            src={inputToken.logoURI} 
+                            alt={inputToken.symbol} 
+                            className="w-5 h-5 rounded-full border border-gray-600" 
+                          />
+                        </div>
+                      )}
+                      <input
+                        type="number"
+                        step="0.001"
+                        min="0"
+                        value={inputAmount}
+                        onChange={(e) => setInputAmount(e.target.value)}
+                        placeholder="0.1"
+                        className="w-full px-2 py-2 pr-8 bg-gray-800 border border-gray-600 rounded text-white text-lg font-semibold placeholder-gray-500 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+                        disabled={isSwapping}
+                      />
+                    </div>
+                    
+                    {/* Input Token Search */}
+                    <div className="relative w-32" ref={inputSearchBoxRef}>
+                      <input
+                        type="text"
+                        value={inputToken ? `${inputToken.symbol}` : inputSearchTerm}
+                        onChange={(e) => {
+                          setInputSearchTerm(e.target.value)
+                          if (inputToken) {
+                            setInputMint('')
+                          }
+                        }}
+                        onFocus={() => {
+                          if (availableTokens.length > 0) {
+                            setShowInputResults(true)
+                          }
+                        }}
+                        placeholder="Search..."
+                        className="w-full px-2 py-2 bg-gray-800 border border-gray-600 rounded text-white text-xs placeholder-gray-500 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+                        disabled={isSwapping || isLoadingTokens}
+                      />
+                      
+                      {showInputResults && (inputSearchResults.length > 0 || availableTokens.length > 0) && (
+                        <div className="absolute z-30 mt-1 w-full bg-gray-800 border border-gray-600 rounded shadow-lg max-h-40 overflow-y-auto">
+                          {/* User Tokens */}
+                          {availableTokens
+                            .filter(token => 
+                              !inputSearchTerm || 
+                              token.name?.toLowerCase().includes(inputSearchTerm.toLowerCase()) ||
+                              token.symbol?.toLowerCase().includes(inputSearchTerm.toLowerCase()) ||
+                              token.mintAddress.toLowerCase().includes(inputSearchTerm.toLowerCase())
+                            )
+                            .filter(token => token.mintAddress !== outputMint)
+                            .map((token) => (
+                              <button
+                                key={`input-${token.mintAddress}`}
+                                type="button"
+                                className="flex items-center w-full px-2 py-1.5 text-left hover:bg-gray-700 text-white text-xs"
+                                onClick={async () => {
+                                  setInputMint(token.mintAddress)
+                                  setInputSearchTerm('')
+                                  setShowInputResults(false)
+                                  
+                                  // Fetch metadata if not available
+                                  if (!token.logoURI && token.mintAddress !== NATIVE_MINT.toBase58()) {
+                                    try {
+                                      const res = await fetch(`/api/trending/search?query=${token.mintAddress}`)
+                                      if (res.ok) {
+                                        const data = await res.json()
+                                        const tokenInfo = Array.isArray(data) ? data.find(t => t.id === token.mintAddress) : null
+                                        if (tokenInfo?.icon) {
+                                          // Update the token in availableTokens
+                                          setAvailableTokens(prev => prev.map(t => 
+                                            t.mintAddress === token.mintAddress 
+                                              ? { ...t, logoURI: tokenInfo.icon, name: tokenInfo.name || t.name, symbol: tokenInfo.symbol || t.symbol }
+                                              : t
+                                          ))
+                                        }
+                                      }
+                                    } catch (error) {
+                                      console.warn('Failed to fetch token metadata:', error)
+                                    }
+                                  }
+                                }}
+                              >
+                                {token.logoURI && (
+                                  <img src={token.logoURI} alt={token.symbol} className="w-3 h-3 mr-1.5 rounded-full" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium truncate">{token.symbol}</div>
+                                  <div className="text-gray-400 truncate text-xs">{token.name}</div>
+                                </div>
+                                <div className="text-right text-gray-400 text-xs">
+                                  <div>${token.usdValue?.toFixed(2) || '0'}</div>
+                                </div>
+                              </button>
+                          ))}
+                          
+                          {/* Search Results */}
+                          {inputSearchResults
+                            .filter(token => token.id !== outputMint && token.id !== inputMint)
+                            .map((token) => (
+                              <button
+                                key={`input-search-${token.id}`}
+                                type="button"
+                                className="flex items-center w-full px-2 py-1.5 text-left hover:bg-gray-700 text-white text-xs"
+                                onClick={() => handleInputTokenSelect(token)}
+                              >
+                                {token.icon && (
+                                  <img src={token.icon} alt={token.symbol} className="w-3 h-3 mr-1.5 rounded-full" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium truncate">{token.symbol}</div>
+                                  <div className="text-gray-400 truncate text-xs">{token.name}</div>
+                                </div>
+                              </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {inputToken && (
+                    <div className="flex items-center justify-between text-xs text-gray-500">
+                      <div className="flex items-center space-x-1">
+                        <span>Bal: {inputToken.uiAmount?.toFixed(4) || '0'}</span>
+                      </div>
+                      <span>${inputToken.usdValue?.toFixed(2) || '0.00'}</span>
+                    </div>
+                  )}
                 </div>
+
+                {/* Switch Button - Positioned to overlap */}
+                <div className="absolute left-1/2 transform -translate-x-1/2 -bottom-3 z-20">
+                  <button
+                    type="button"
+                    onClick={handleSwitchMints}
+                    className="p-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-full transition-colors shadow-lg"
+                    disabled={isSwapping || !outputMint || !inputMint}
+                  >
+                    <svg className="w-3 h-3 text-white transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              {/* Buying Section */}
+              <div className="border border-gray-600 rounded-lg p-3 space-y-2 mt-6">
+                <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide">Buying</h3>
                 
                 <div className="flex space-x-2">
                   <div className="flex-1 relative">
                     {/* Token Logo */}
-                    {inputToken?.logoURI && (
+                    {outputToken?.logoURI && (
                       <div className="absolute top-1 right-2 z-10">
                         <img 
-                          src={inputToken.logoURI} 
-                          alt={inputToken.symbol} 
+                          src={outputToken.logoURI} 
+                          alt={outputToken.symbol} 
                           className="w-5 h-5 rounded-full border border-gray-600" 
                         />
                       </div>
                     )}
-                    <input
-                      type="number"
-                      step="0.001"
-                      min="0"
-                      value={inputAmount}
-                      onChange={(e) => setInputAmount(e.target.value)}
-                      placeholder="0.1"
-                      className="w-full px-2 py-2 pr-8 bg-gray-800 border border-gray-600 rounded text-white text-lg font-semibold placeholder-gray-500 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
-                      disabled={isSwapping}
-                    />
+                    <div className="px-2 py-2 pr-8 bg-gray-800 border border-gray-600 rounded">
+                      <div className="text-lg font-semibold text-white">
+                        {quoteFetching ? (
+                          <div className="flex items-center space-x-1">
+                            <div className="w-6 h-6 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+                            <span className="text-lg">Getting quote...</span>
+                          </div>
+                        ) : quoteOutAmount !== null ? (
+                          quoteOutAmount.toFixed(6)
+                        ) : (
+                          '0'
+                        )}
+                      </div>
+                    </div>
                   </div>
                   
-                  {/* Input Token Search */}
-                  <div className="relative w-32" ref={inputSearchBoxRef}>
+                  {/* Output Token Search */}
+                  <div className="relative w-32" ref={outputSearchBoxRef}>
                     <input
                       type="text"
-                      value={inputToken ? `${inputToken.symbol}` : inputSearchTerm}
+                      value={outputToken ? `${outputToken.symbol}` : outputSearchTerm}
                       onChange={(e) => {
-                        setInputSearchTerm(e.target.value)
-                        if (inputToken) {
-                          setInputMint('')
+                        setOutputSearchTerm(e.target.value)
+                        if (outputToken) {
+                          setOutputMint('')
                         }
                       }}
                       onFocus={() => {
                         if (availableTokens.length > 0) {
-                          setShowInputResults(true)
+                          setShowOutputResults(true)
                         }
                       }}
                       placeholder="Search..."
@@ -541,26 +701,26 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
                       disabled={isSwapping || isLoadingTokens}
                     />
                     
-                    {showInputResults && (inputSearchResults.length > 0 || availableTokens.length > 0) && (
+                    {showOutputResults && (outputSearchResults.length > 0 || availableTokens.length > 0) && (
                       <div className="absolute z-30 mt-1 w-full bg-gray-800 border border-gray-600 rounded shadow-lg max-h-40 overflow-y-auto">
                         {/* User Tokens */}
                         {availableTokens
                           .filter(token => 
-                            !inputSearchTerm || 
-                            token.name?.toLowerCase().includes(inputSearchTerm.toLowerCase()) ||
-                            token.symbol?.toLowerCase().includes(inputSearchTerm.toLowerCase()) ||
-                            token.mintAddress.toLowerCase().includes(inputSearchTerm.toLowerCase())
+                            !outputSearchTerm || 
+                            token.name?.toLowerCase().includes(outputSearchTerm.toLowerCase()) ||
+                            token.symbol?.toLowerCase().includes(outputSearchTerm.toLowerCase()) ||
+                            token.mintAddress.toLowerCase().includes(outputSearchTerm.toLowerCase())
                           )
-                          .filter(token => token.mintAddress !== outputMint)
+                          .filter(token => token.mintAddress !== inputMint)
                           .map((token) => (
                             <button
-                              key={`input-${token.mintAddress}`}
+                              key={`output-${token.mintAddress}`}
                               type="button"
                               className="flex items-center w-full px-2 py-1.5 text-left hover:bg-gray-700 text-white text-xs"
                               onClick={async () => {
-                                setInputMint(token.mintAddress)
-                                setInputSearchTerm('')
-                                setShowInputResults(false)
+                                setOutputMint(token.mintAddress)
+                                setOutputSearchTerm('')
+                                setShowOutputResults(false)
                                 
                                 // Fetch metadata if not available
                                 if (!token.logoURI && token.mintAddress !== NATIVE_MINT.toBase58()) {
@@ -598,14 +758,14 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
                         ))}
                         
                         {/* Search Results */}
-                        {inputSearchResults
-                          .filter(token => token.id !== outputMint && token.id !== inputMint)
+                        {outputSearchResults
+                          .filter(token => token.id !== inputMint && token.id !== outputMint)
                           .map((token) => (
                             <button
-                              key={`input-search-${token.id}`}
+                              key={`output-search-${token.id}`}
                               type="button"
                               className="flex items-center w-full px-2 py-1.5 text-left hover:bg-gray-700 text-white text-xs"
-                              onClick={() => handleInputTokenSelect(token)}
+                              onClick={() => handleOutputTokenSelect(token)}
                             >
                               {token.icon && (
                                 <img src={token.icon} alt={token.symbol} className="w-3 h-3 mr-1.5 rounded-full" />
@@ -621,262 +781,105 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
                   </div>
                 </div>
                 
-                {inputToken && (
+                {outputToken && (
                   <div className="flex items-center justify-between text-xs text-gray-500">
                     <div className="flex items-center space-x-1">
-                      <span>Bal: {inputToken.uiAmount?.toFixed(4) || '0'}</span>
+                      <span>Bal: {outputToken.uiAmount?.toFixed(4) || '0'}</span>
                     </div>
-                    <span>${inputToken.usdValue?.toFixed(2) || '0.00'}</span>
+                    <span>${outputToken.usdValue?.toFixed(2) || '0.00'}</span>
                   </div>
                 )}
               </div>
 
-              {/* Switch Button - Positioned to overlap */}
-              <div className="absolute left-1/2 transform -translate-x-1/2 -bottom-3 z-20">
-                <button
-                  type="button"
-                  onClick={handleSwitchMints}
-                  className="p-1.5 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-full transition-colors shadow-lg"
-                  disabled={isSwapping || !outputMint || !inputMint}
+              {/* Settings */}
+              <div className="flex justify-between items-center py-2">
+                <label className="text-xs font-medium text-gray-400">Slippage</label>
+                <select
+                  value={slippage}
+                  onChange={(e) => setSlippage(Number(e.target.value))}
+                  className="px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-xs focus:bg-gray-700 focus:border-gray-400 transition-all"
+                  disabled={isSwapping}
                 >
-                  <svg className="w-3 h-3 text-white transform rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                  </svg>
-                </button>
+                  {SLIPPAGE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value} className="bg-gray-800">
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-            </div>
 
-            {/* Buying Section */}
-            <div className="border border-gray-600 rounded-lg p-3 space-y-2 mt-6">
-              <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide">Buying</h3>
-              
-              <div className="flex space-x-2">
-                <div className="flex-1 relative">
-                  {/* Token Logo */}
-                  {outputToken?.logoURI && (
-                    <div className="absolute top-1 right-2 z-10">
-                      <img 
-                        src={outputToken.logoURI} 
-                        alt={outputToken.symbol} 
-                        className="w-5 h-5 rounded-full border border-gray-600" 
+              {/* Error */}
+              {error && (
+                <div className="bg-red-900/20 border border-red-600 text-red-300 px-3 py-2 rounded text-xs">
+                  <div className="flex items-start space-x-2">
+                    <svg className="w-3 h-3 mt-0.5 text-red-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path
+                        fillRule="evenodd"
+                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                        clipRule="evenodd"
                       />
-                    </div>
-                  )}
-                  <div className="px-2 py-2 pr-8 bg-gray-800 border border-gray-600 rounded">
-                    <div className="text-lg font-semibold text-white">
-                      {quoteFetching ? (
-                        <div className="flex items-center space-x-1">
-                          <div className="w-3 h-3 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
-                          <span className="text-xs">Getting quote...</span>
-                        </div>
-                      ) : quoteOutAmount !== null ? (
-                        quoteOutAmount.toFixed(6)
-                      ) : (
-                        '0'
-                      )}
-                    </div>
+                    </svg>
+                    <p>{error}</p>
                   </div>
                 </div>
-                
-                {/* Output Token Search */}
-                <div className="relative w-32" ref={outputSearchBoxRef}>
-                  <input
-                    type="text"
-                    value={outputToken ? `${outputToken.symbol}` : outputSearchTerm}
-                    onChange={(e) => {
-                      setOutputSearchTerm(e.target.value)
-                      if (outputToken) {
-                        setOutputMint('')
-                      }
-                    }}
-                    onFocus={() => {
-                      if (availableTokens.length > 0) {
-                        setShowOutputResults(true)
-                      }
-                    }}
-                    placeholder="Search..."
-                    className="w-full px-2 py-2 bg-gray-800 border border-gray-600 rounded text-white text-xs placeholder-gray-500 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
-                    disabled={isSwapping || isLoadingTokens}
-                  />
-                  
-                  {showOutputResults && (outputSearchResults.length > 0 || availableTokens.length > 0) && (
-                    <div className="absolute z-30 mt-1 w-full bg-gray-800 border border-gray-600 rounded shadow-lg max-h-40 overflow-y-auto">
-                      {/* User Tokens */}
-                      {availableTokens
-                        .filter(token => 
-                          !outputSearchTerm || 
-                          token.name?.toLowerCase().includes(outputSearchTerm.toLowerCase()) ||
-                          token.symbol?.toLowerCase().includes(outputSearchTerm.toLowerCase()) ||
-                          token.mintAddress.toLowerCase().includes(outputSearchTerm.toLowerCase())
-                        )
-                        .filter(token => token.mintAddress !== inputMint)
-                        .map((token) => (
-                          <button
-                            key={`output-${token.mintAddress}`}
-                            type="button"
-                            className="flex items-center w-full px-2 py-1.5 text-left hover:bg-gray-700 text-white text-xs"
-                            onClick={async () => {
-                              setOutputMint(token.mintAddress)
-                              setOutputSearchTerm('')
-                              setShowOutputResults(false)
-                              
-                              // Fetch metadata if not available
-                              if (!token.logoURI && token.mintAddress !== NATIVE_MINT.toBase58()) {
-                                try {
-                                  const res = await fetch(`/api/trending/search?query=${token.mintAddress}`)
-                                  if (res.ok) {
-                                    const data = await res.json()
-                                    const tokenInfo = Array.isArray(data) ? data.find(t => t.id === token.mintAddress) : null
-                                    if (tokenInfo?.icon) {
-                                      // Update the token in availableTokens
-                                      setAvailableTokens(prev => prev.map(t => 
-                                        t.mintAddress === token.mintAddress 
-                                          ? { ...t, logoURI: tokenInfo.icon, name: tokenInfo.name || t.name, symbol: tokenInfo.symbol || t.symbol }
-                                          : t
-                                      ))
-                                    }
-                                  }
-                                } catch (error) {
-                                  console.warn('Failed to fetch token metadata:', error)
-                                }
-                              }
-                            }}
-                          >
-                            {token.logoURI && (
-                              <img src={token.logoURI} alt={token.symbol} className="w-3 h-3 mr-1.5 rounded-full" />
-                            )}
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium truncate">{token.symbol}</div>
-                              <div className="text-gray-400 truncate text-xs">{token.name}</div>
-                            </div>
-                            <div className="text-right text-gray-400 text-xs">
-                              <div>${token.usdValue?.toFixed(2) || '0'}</div>
-                            </div>
-                          </button>
-                      ))}
-                      
-                      {/* Search Results */}
-                      {outputSearchResults
-                        .filter(token => token.id !== inputMint && token.id !== outputMint)
-                        .map((token) => (
-                          <button
-                            key={`output-search-${token.id}`}
-                            type="button"
-                            className="flex items-center w-full px-2 py-1.5 text-left hover:bg-gray-700 text-white text-xs"
-                            onClick={() => handleOutputTokenSelect(token)}
-                          >
-                            {token.icon && (
-                              <img src={token.icon} alt={token.symbol} className="w-3 h-3 mr-1.5 rounded-full" />
-                            )}
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium truncate">{token.symbol}</div>
-                              <div className="text-gray-400 truncate text-xs">{token.name}</div>
-                            </div>
-                          </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-              
-              {outputToken && (
-                <div className="flex items-center justify-between text-xs text-gray-500">
-                  <div className="flex items-center space-x-1">
-                    <span>Bal: {outputToken.uiAmount?.toFixed(4) || '0'}</span>
-                  </div>
-                  <span>${outputToken.usdValue?.toFixed(2) || '0.00'}</span>
+              )}
+
+              {/* Success */}
+              {txSignature && (
+                <div className="bg-green-900/20 border border-green-600 text-green-300 px-3 py-2 rounded text-xs">
+                  <p className="break-all">
+                    Success:&nbsp;
+                    <a
+                      href={`https://solscan.io/tx/${txSignature}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-green-200"
+                    >
+                      {txSignature.slice(0, 16)}...
+                    </a>
+                  </p>
                 </div>
               )}
             </div>
 
-            {/* Settings */}
-            <div className="flex justify-between items-center py-2">
-              <label className="text-xs font-medium text-gray-400">Slippage</label>
-              <select
-                value={slippage}
-                onChange={(e) => setSlippage(Number(e.target.value))}
-                className="px-2 py-1 bg-gray-800 border border-gray-600 rounded text-white text-xs focus:bg-gray-700 focus:border-gray-400 transition-all"
-                disabled={isSwapping}
+            {/* Swap Button - full width on mobile, 1/4 width on desktop */}
+            <div className="w-full lg:flex-1">
+              <button
+                onClick={handleSwap}
+                disabled={
+                  isSwapping ||
+                  !connected ||
+                  !inputAmount ||
+                  !outputMint ||
+                  !inputMint ||
+                  quoteOutAmount === null
+                }
+                className={`w-full lg:h-full min-h-[80px] lg:min-h-[200px] rounded-lg font-bold text-lg transition-all duration-200 ${
+                  isSwapping ||
+                  !connected ||
+                  !inputAmount ||
+                  !outputMint ||
+                  !inputMint ||
+                  quoteOutAmount === null
+                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                    : 'bg-pink-600 hover:bg-pink-700 text-white shadow-lg hover:shadow-xl'
+                }`}
               >
-                {SLIPPAGE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value} className="bg-gray-800">
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
+                {isSwapping ? (
+                  <div className="flex flex-col items-center justify-center space-y-3">
+                    <div className="w-8 h-8 border-3 border-gray-400 border-t-white rounded-full animate-spin"></div>
+                    <span className="text-sm">Swapping...</span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center space-y-2">
+                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                    </svg>
+                    <span>SWAP</span>
+                  </div>
+                )}
+              </button>
             </div>
-
-            {/* Error */}
-            {error && (
-              <div className="bg-red-900/20 border border-red-600 text-red-300 px-3 py-2 rounded text-xs">
-                <div className="flex items-start space-x-2">
-                  <svg className="w-3 h-3 mt-0.5 text-red-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                    <path
-                      fillRule="evenodd"
-                      d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  <p>{error}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Success */}
-            {txSignature && (
-              <div className="bg-green-900/20 border border-green-600 text-green-300 px-3 py-2 rounded text-xs">
-                <p className="break-all">
-                  Success:&nbsp;
-                  <a
-                    href={`https://solscan.io/tx/${txSignature}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline hover:text-green-200"
-                  >
-                    {txSignature.slice(0, 16)}...
-                  </a>
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Swap Button - 1/4 width, full height */}
-          <div className="flex-1 min-h-full">
-            <button
-              onClick={handleSwap}
-              disabled={
-                isSwapping ||
-                !connected ||
-                !inputAmount ||
-                !outputMint ||
-                !inputMint ||
-                quoteOutAmount === null
-              }
-              className={`w-full h-full min-h-[200px] rounded-lg font-bold text-lg transition-all duration-200 ${
-                isSwapping ||
-                !connected ||
-                !inputAmount ||
-                !outputMint ||
-                !inputMint ||
-                quoteOutAmount === null
-                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                  : 'bg-pink-600 hover:bg-pink-700 text-white shadow-lg hover:shadow-xl'
-              }`}
-            >
-              {isSwapping ? (
-                <div className="flex flex-col items-center justify-center space-y-3">
-                  <div className="w-8 h-8 border-3 border-gray-400 border-t-white rounded-full animate-spin"></div>
-                  <span className="text-sm">Swapping...</span>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center space-y-2">
-                  <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                  </svg>
-                  <span>SWAP</span>
-                </div>
-              )}
-            </button>
           </div>
         </div>
       </div>
