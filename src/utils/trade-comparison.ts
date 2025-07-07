@@ -700,18 +700,6 @@ async function checkDflowHealth(): Promise<boolean> {
   }
 }
 
-async function checkDflowIntentHealth(): Promise<boolean> {
-  try {
-    // Test with a simple intent request to check if the endpoint is working
-    const response = await fetch(`${PROVIDER_CONFIG['dflow-intent'].apiUrl}/intent?userPublicKey=11111111111111111111111111111111&inputMint=So11111111111111111111111111111111111111112&outputMint=EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v&amount=1000000&slippageBps=50`, {
-      signal: AbortSignal.timeout(5000)
-    })
-    return response.ok
-  } catch {
-    return false
-  }
-}
-
 async function checkSolanaTrackerHealth(): Promise<boolean> {
   try {
     const response = await fetch(`${PROVIDER_CONFIG.solanaTracker.apiUrl}/health`, {

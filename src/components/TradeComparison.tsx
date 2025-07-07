@@ -119,7 +119,6 @@ export default function TradeComparison({ userPublicKey }: TradeComparisonProps)
     switch (provider) {
       case 'jupiter': return '🪐'
       case 'dflow': return '🌊'
-      case 'dflow-intent': return '💎'
       case 'solana-tracker': return '📊'
       case 'gmgn': return '🔥'
       case 'pump-fun': return '🚀'
