@@ -75,7 +75,7 @@ export interface WalletContextState {
 } 
 
 // New types for trade comparison API
-export type TradeProvider = 'jupiter' | 'dflow' | 'solana-tracker' | 'gmgn' | 'dflow-intent' | 'pump-fun'
+export type TradeProvider = 'jupiter' | 'dflow' | 'solana-tracker' | 'gmgn' | 'pump-fun'
 
 export interface TradeQuoteRequest {
   inputMint: string
@@ -113,14 +113,6 @@ export interface ProviderQuote {
       intentId?: string
       guaranteedAmount?: string
       estimatedTime?: number
-    }
-    'dflow-intent'?: {
-      intentId?: string
-      openTransaction?: string
-      lastValidBlockHeight?: number
-      expiry?: any
-      feeBudget?: number
-      timeTaken?: number
     }
     solanaTracker?: {
       marketData?: any
@@ -189,11 +181,6 @@ export interface ProviderConfig {
     timeout: number
   }
   dflow: {
-    apiUrl: string
-    maxRetries: number
-    timeout: number
-  }
-  'dflow-intent': {
     apiUrl: string
     maxRetries: number
     timeout: number

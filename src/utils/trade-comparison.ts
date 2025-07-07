@@ -19,11 +19,6 @@ const PROVIDER_CONFIG: ProviderConfig = {
     maxRetries: 3,
     timeout: 15000
   },
-  'dflow-intent': {
-    apiUrl: 'https://quote-api.dflow.net',
-    maxRetries: 3,
-    timeout: 15000
-  },
   solanaTracker: {
     apiUrl: 'https://swap-v2.solanatracker.io',
     maxRetries: 3,
@@ -199,105 +194,6 @@ async function getDflowQuote(request: TradeQuoteRequest): Promise<ProviderQuote>
       responseTime: 0,
       success: false,
       error: error instanceof Error ? error.message : 'Unknown DFlow error'
-    }
-  }
-}
-
-// DFlow Intent quote fetcher (using intent API endpoint)
-async function getDflowIntentQuote(request: TradeQuoteRequest): Promise<ProviderQuote> {
-  try {
-    const { result: quote, time } = await measureTime(async () => {
-      // Get intent quote
-      const queryParams = new URLSearchParams()
-      queryParams.append('userPublicKey', request.userPublicKey || '')
-      queryParams.append('inputMint', request.inputMint)
-      queryParams.append('outputMint', request.outputMint)
-      queryParams.append('amount', request.amount)
-      queryParams.append('slippageBps', request.slippageBps.toString())
-      queryParams.append('wrapAndUnwrapSol', 'true')
-
-      const intentResponse = await fetch(
-        `https://quote-api.dflow.net/intent?${queryParams.toString()}`,
-        {
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          },
-          signal: AbortSignal.timeout(PROVIDER_CONFIG['dflow-intent'].timeout)
-        }
-      )
-
-      if (!intentResponse.ok) {
-        throw new Error(`DFlow Intent error: ${intentResponse.status} ${intentResponse.statusText}`)
-      }
-
-      const intentData = await intentResponse.json()
-
-      // Submit intent
-      const submitResponse = await fetch('https://quote-api.dflow.net/submit-intent', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          quoteResponse: intentData,
-          signedOpenTransaction: '', // This will be signed by the client
-        })
-    })
-
-      if (!submitResponse.ok) {
-        throw new Error(`DFlow Submit Intent error: ${submitResponse.status} ${submitResponse.statusText}`)
-      }
-
-      const submitData = await submitResponse.json()
-
-    return {
-        intent: intentData,
-        submit: submitData
-      }
-    })
-
-    return {
-      provider: 'dflow-intent' as TradeProvider,
-      inputMint: request.inputMint,
-      outputMint: request.outputMint,
-      inAmount: quote.intent.inAmount || request.amount,
-      outAmount: quote.intent.outAmount || '0',
-      otherAmountThreshold: quote.intent.minOutAmount || '0',
-      slippageBps: request.slippageBps,
-      priceImpactPct: quote.intent.priceImpactPct || '0',
-      responseTime: time,
-      success: true,
-      route: [],
-      fees: {
-        totalFeeLamports: quote.intent.feeBudget || 0,
-        feePercentage: 0
-      },
-      providerData: {
-        'dflow-intent': {
-          intentId: quote.intent.intentId,
-          openTransaction: quote.intent.openTransaction,
-          lastValidBlockHeight: quote.intent.lastValidBlockHeight,
-          expiry: quote.intent.expiry,
-          feeBudget: quote.intent.feeBudget,
-          timeTaken: time
-        }
-      }
-    }
-  } catch (error) {
-    console.error('DFlow Intent error:', error)
-    return {
-      provider: 'dflow-intent' as TradeProvider,
-      inputMint: request.inputMint,
-      outputMint: request.outputMint,
-      inAmount: request.amount,
-      outAmount: '0',
-      otherAmountThreshold: '0',
-      slippageBps: request.slippageBps,
-      priceImpactPct: '0',
-      responseTime: 0,
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown DFlow Intent error'
     }
   }
 }
@@ -592,16 +488,15 @@ export async function compareTradeQuotes(request: TradeQuoteRequest): Promise<Tr
   })
 
   // Fetch quotes from all providers in parallel
-  const [jupiterQuote, dflowQuote, dflowIntentQuote, solanaTrackerQuote, gmgnQuote, pumpFunQuote] = await Promise.all([
+  const [jupiterQuote, dflowQuote, solanaTrackerQuote, gmgnQuote, pumpFunQuote] = await Promise.all([
     getJupiterQuote(request),
     getDflowQuote(request),
-    getDflowIntentQuote(request),
     getSolanaTrackerQuote(request),
     getGmgnQuote(request),
     getPumpFunQuote(request)
   ])
 
-  const quotes = [jupiterQuote, dflowQuote, dflowIntentQuote, solanaTrackerQuote, gmgnQuote, pumpFunQuote]
+  const quotes = [jupiterQuote, dflowQuote, solanaTrackerQuote, gmgnQuote, pumpFunQuote]
   const successfulQuotes = quotes.filter(q => q.success)
 
   // Find best quote by output amount
@@ -768,8 +663,7 @@ function calculateSummary(quotes: ProviderQuote[], bestQuote: ProviderQuote | nu
 export async function checkProviderHealth(): Promise<Record<TradeProvider, boolean>> {
   const healthChecks = await Promise.all([
     checkJupiterHealth(),
-    checkDflowHealth(), 
-    checkDflowIntentHealth(),
+    checkDflowHealth(),
     checkSolanaTrackerHealth(),
     checkGmgnHealth(),
     checkPumpFunHealth()
@@ -778,10 +672,9 @@ export async function checkProviderHealth(): Promise<Record<TradeProvider, boole
   return {
     jupiter: healthChecks[0],
     dflow: healthChecks[1],
-    'dflow-intent': healthChecks[2],
-    'solana-tracker': healthChecks[3],
-    gmgn: healthChecks[4],
-    'pump-fun': healthChecks[5]
+    'solana-tracker': healthChecks[2],
+    gmgn: healthChecks[3],
+    'pump-fun': healthChecks[4]
   }
 }
 
@@ -1001,9 +894,6 @@ async function getEnhancedQuote(
         case 'dflow':
           quote = await getDflowQuote(request)
           break
-        case 'dflow-intent':
-          quote = await getDflowIntentQuote(request)
-          break
         case 'solana-tracker':
           quote = await getSolanaTrackerQuote(request)
           break
@@ -1065,7 +955,7 @@ export async function performEnhancedTradeComparison(
   
   // Test configurations
   const slippageConfigs = [1, 2, 5] // 1%, 2%, 5%
-  const providers: TradeProvider[] = ['jupiter', 'dflow', 'dflow-intent', 'solana-tracker', 'gmgn', 'pump-fun']
+  const providers: TradeProvider[] = ['jupiter', 'dflow', 'solana-tracker', 'gmgn', 'pump-fun']
   const rpcs = RPC_ENDPOINTS
   
   // Build all test combinations
