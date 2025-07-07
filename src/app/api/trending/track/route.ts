@@ -5,6 +5,9 @@ import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trad
 import { Connection, VersionedTransaction, Keypair } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 
+// Lightweight toggle for verbose logging
+const DEBUG_LOG = process.env.DEBUG === '1' || process.env.DEBUG === 'true'
+
 // === Table selection (use alternate tables in local development to avoid prod collisions) ===
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
@@ -901,7 +904,7 @@ async function runDailySummary(currentTime: Date): Promise<void> {
     // Get all tokens that were tracked in the last 24 hours
     const { data: allTokens, error: fetchError } = await supabase
       .from(TRACKER_TABLE)
-      .select('*')
+      .select(`id, token_address, token_symbol, token_name, logo_url, initial_price_usd, peak_price_usd, peak_gain_percentage, current_gain_percentage, status, tracking_started_at`)
       .gte('tracking_started_at', periodStart.toISOString())
 
     if (fetchError) {
@@ -1706,7 +1709,7 @@ export async function POST(request: NextRequest) {
     // Get currently tracked tokens
     const { data: trackedTokens, error: fetchError } = await supabase
       .from(TRACKER_TABLE)
-      .select('*')
+      .select(`id, token_address, token_symbol, token_name, logo_url, initial_price_usd, last_price_usd, peak_price_usd, current_gain_percentage, peak_gain_percentage, status, organic_score, market_cap, volume_1h, tracking_started_at, trading_simulation, price_history`)
       .eq('status', 'tracking')
 
     if (fetchError) {
@@ -1721,7 +1724,7 @@ export async function POST(request: NextRequest) {
     let newTokensAdded = 0
     let tokensUpdated = 0
     let tokensLost = 0
-    const updatesPromises: Promise<any>[] = []
+    let updatesPromises: Promise<any>[] = []
 
     // Process each trending token
     for (const token of filteredTokens) {
@@ -2126,7 +2129,11 @@ export async function POST(request: NextRequest) {
       message: `Tracked ${filteredTokens.length} tokens: ${newTokensAdded} new, ${tokensUpdated} updated, ${tokensLost} lost`
     }
 
-    console.log('✅ 5-minute tracking completed:', summary)
+    if (DEBUG_LOG) {
+      console.debug('✅ 5-minute tracking completed:', summary)
+    } else {
+      console.log(`✅ 5-minute tracking completed: processed ${summary.processed} tokens; new ${summary.new_tokens_added}, updated ${summary.tokens_updated}`)
+    }
     
     // Set a timestamp for cache invalidation (could be used by other APIs)
     const headers: Record<string, string> = {
