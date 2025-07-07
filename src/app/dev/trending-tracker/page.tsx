@@ -123,6 +123,13 @@ export default function TrendingTrackerPage() {
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [itemsPerPage, setItemsPerPage] = useState<number>(12)
   
+  // Advanced filter state
+  const [sinceFilter, setSinceFilter] = useState<string>('all') // 'all', '1', '4', '12', '24', '48' (hours)
+  const [priceMin, setPriceMin] = useState<string>('')
+  const [priceMax, setPriceMax] = useState<string>('')
+  const [pctMin, setPctMin] = useState<string>('')
+  const [pctMax, setPctMax] = useState<string>('')
+  
   // Modal state
   const [simulationModalOpen, setSimulationModalOpen] = useState(false)
   const [tradeComparisonModalOpen, setTradeComparisonModalOpen] = useState(false)
@@ -151,6 +158,45 @@ export default function TrendingTrackerPage() {
       token.token_name?.toLowerCase().includes(lowercaseQuery) ||
       token.token_address.toLowerCase().includes(lowercaseQuery)
     )
+  }
+
+  // Apply advanced filters
+  const applyFilters = (tokens: TrackedToken[]): TrackedToken[] => {
+    let result = filterTokens(tokens, searchQuery)
+
+    // Since filter (hours)
+    if (sinceFilter !== 'all') {
+      const hours = parseInt(sinceFilter)
+      if (!isNaN(hours)) {
+        const now = Date.now()
+        result = result.filter(token => {
+          const ageHours = (now - new Date(token.tracking_started_at).getTime()) / 3600000
+          return ageHours <= hours
+        })
+      }
+    }
+
+    // Price filters
+    const minPrice = parseFloat(priceMin)
+    const maxPrice = parseFloat(priceMax)
+    if (!isNaN(minPrice)) {
+      result = result.filter(token => token.last_price_usd >= minPrice)
+    }
+    if (!isNaN(maxPrice)) {
+      result = result.filter(token => token.last_price_usd <= maxPrice)
+    }
+
+    // Percentage filters (current gain percentage)
+    const minPct = parseFloat(pctMin)
+    const maxPct = parseFloat(pctMax)
+    if (!isNaN(minPct)) {
+      result = result.filter(token => token.current_gain_percentage >= minPct)
+    }
+    if (!isNaN(maxPct)) {
+      result = result.filter(token => token.current_gain_percentage <= maxPct)
+    }
+
+    return result
   }
 
   const paginateTokens = (tokens: TrackedToken[], page: number, perPage: number): TrackedToken[] => {
@@ -1170,11 +1216,82 @@ export default function TrendingTrackerPage() {
                   <option value={24}>24 per page</option>
                   <option value={48}>48 per page</option>
                 </select>
+
+                {/* Since filter */}
+                <select
+                  value={sinceFilter}
+                  onChange={(e) => {
+                    setSinceFilter(e.target.value)
+                    setCurrentPage(1)
+                  }}
+                  className="px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="all">All time</option>
+                  <option value="1">&lt; 1h</option>
+                  <option value="4">&lt; 4h</option>
+                  <option value="12">&lt; 12h</option>
+                  <option value="24">&lt; 24h</option>
+                  <option value="48">&lt; 48h</option>
+                </select>
+
+                {/* Price filter */}
+                <div className="flex items-center space-x-1">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    placeholder="Price min"
+                    value={priceMin}
+                    onChange={(e) => {
+                      setPriceMin(e.target.value)
+                      setCurrentPage(1)
+                    }}
+                    className="w-24 px-2 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-gray-400">-</span>
+                  <input
+                    type="number"
+                    step="0.0001"
+                    placeholder="max"
+                    value={priceMax}
+                    onChange={(e) => {
+                      setPriceMax(e.target.value)
+                      setCurrentPage(1)
+                    }}
+                    className="w-24 px-2 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                {/* Percentage filter */}
+                <div className="flex items-center space-x-1">
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="% min"
+                    value={pctMin}
+                    onChange={(e) => {
+                      setPctMin(e.target.value)
+                      setCurrentPage(1)
+                    }}
+                    className="w-24 px-2 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-gray-400">-</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="max"
+                    value={pctMax}
+                    onChange={(e) => {
+                      setPctMax(e.target.value)
+                      setCurrentPage(1)
+                    }}
+                    className="w-24 px-2 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
               </div>
             </div>
 
             {(() => {
-              const filteredTokens = filterTokens(stats.current_tracking.tokens, searchQuery)
+              const filteredTokens = applyFilters(stats.current_tracking.tokens)
               const totalPages = getTotalPages(filteredTokens.length, itemsPerPage)
               const paginatedTokens = paginateTokens(filteredTokens, currentPage, itemsPerPage)
               
