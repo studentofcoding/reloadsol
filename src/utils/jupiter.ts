@@ -606,8 +606,7 @@ export async function getTokenUsdValue(
 
 // Add excluded and problematic token lists like reference
 const EXCLUDED_MINTS = [
-  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
-  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+  'CfP4fzhbkCW86YtTofzMQFBPxg5YyW9LZt1KgBcMEtAL', // CRAZY FORG RUG
 ]
 
 const PROBLEMATIC_MINTS = [
