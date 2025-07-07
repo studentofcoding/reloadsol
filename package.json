@@ -6,7 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "logs": "node scripts/tail-logs.js",
+    "logs:follow": "node scripts/tail-logs.js -f",
+    "logs:errors": "node scripts/tail-logs.js -l error",
+    "logs:trending": "node scripts/tail-logs.js -e /api/trending",
+    "logs:stats": "node scripts/tail-logs.js -s"
   },
   "dependencies": {
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
