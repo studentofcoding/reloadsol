@@ -19,6 +19,14 @@ interface TokenOption {
   usdValue?: number
 }
 
+interface TokenSearchResult {
+  id: string;
+  symbol: string;
+  name: string;
+  icon?: string;
+  decimals: number;
+}
+
 interface SwapPageClientProps {
   initialInputMint?: string
   initialOutputMint?: string
@@ -42,8 +50,8 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
   // Token search state
   const [inputSearchTerm, setInputSearchTerm] = useState('')
   const [outputSearchTerm, setOutputSearchTerm] = useState('')
-  const [inputSearchResults, setInputSearchResults] = useState<any[]>([])
-  const [outputSearchResults, setOutputSearchResults] = useState<any[]>([])
+  const [inputSearchResults, setInputSearchResults] = useState<TokenSearchResult[]>([])
+  const [outputSearchResults, setOutputSearchResults] = useState<TokenSearchResult[]>([])
   const [isInputSearching, setIsInputSearching] = useState(false)
   const [isOutputSearching, setIsOutputSearching] = useState(false)
   const [showInputResults, setShowInputResults] = useState(false)
@@ -181,7 +189,7 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
         const res = await fetch(`/api/trending/search?query=${encodeURIComponent(inputSearchTerm)}`)
         if (res.ok) {
           const data = await res.json()
-          setInputSearchResults(Array.isArray(data) ? data : [])
+          setInputSearchResults(Array.isArray(data) ? data.map(d => ({ ...d, id: d.mintAddress })) : [])
           setShowInputResults(true)
         } else {
           setInputSearchResults([])
@@ -210,7 +218,7 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
         const res = await fetch(`/api/trending/search?query=${encodeURIComponent(outputSearchTerm)}`)
         if (res.ok) {
           const data = await res.json()
-          setOutputSearchResults(Array.isArray(data) ? data : [])
+          setOutputSearchResults(Array.isArray(data) ? data.map(d => ({ ...d, id: d.mintAddress })) : [])
           setShowOutputResults(true)
         } else {
           setOutputSearchResults([])
@@ -370,16 +378,44 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
   }
 
   // Handle token selection from search
-  const handleInputTokenSelect = (token: any) => {
+  const handleInputTokenSelect = (token: TokenSearchResult) => {
     setInputMint(token.id)
     setInputSearchTerm('')
     setShowInputResults(false)
+
+    // Add token to availableTokens if not present, so it can be resolved by getTokenInfo
+    if (!availableTokens.find(t => t.mintAddress === token.id)) {
+      const newToken: TokenOption = {
+        mintAddress: token.id,
+        symbol: token.symbol,
+        name: token.name,
+        logoURI: token.icon,
+        decimals: token.decimals,
+        uiAmount: 0, // Not in wallet
+        usdValue: 0  // Not in wallet
+      };
+      setAvailableTokens(prev => [...prev, newToken]);
+    }
   }
 
-  const handleOutputTokenSelect = (token: any) => {
+  const handleOutputTokenSelect = (token: TokenSearchResult) => {
     setOutputMint(token.id)
     setOutputSearchTerm('')
     setShowOutputResults(false)
+
+    // Add token to availableTokens if not present
+    if (!availableTokens.find(t => t.mintAddress === token.id)) {
+      const newToken: TokenOption = {
+        mintAddress: token.id,
+        symbol: token.symbol,
+        name: token.name,
+        logoURI: token.icon,
+        decimals: token.decimals,
+        uiAmount: 0,
+        usdValue: 0
+      };
+      setAvailableTokens(prev => [...prev, newToken]);
+    }
   }
 
   // Get display token for chart - always show the non-SOL token
@@ -533,10 +569,11 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
                             setInputMint('')
                           }
                         }}
-                        onFocus={() => {
+                        onFocus={(e) => {
                           if (availableTokens.length > 0) {
                             setShowInputResults(true)
                           }
+                          e.target.select()
                         }}
                         placeholder="Search..."
                         className="w-full px-2 py-2 bg-gray-800 border border-gray-600 rounded text-white text-xs placeholder-gray-500 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
@@ -602,7 +639,7 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
                           {/* Search Results */}
                           {inputSearchResults
                             .filter(token => token.id !== outputMint && token.id !== inputMint)
-                            .map((token) => (
+                            .map((token: TokenSearchResult) => (
                               <button
                                 key={`input-search-${token.id}`}
                                 type="button"
@@ -691,10 +728,11 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
                           setOutputMint('')
                         }
                       }}
-                      onFocus={() => {
+                      onFocus={(e) => {
                         if (availableTokens.length > 0) {
                           setShowOutputResults(true)
                         }
+                        e.target.select()
                       }}
                       placeholder="Search..."
                       className="w-full px-2 py-2 bg-gray-800 border border-gray-600 rounded text-white text-xs placeholder-gray-500 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
@@ -760,7 +798,7 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
                         {/* Search Results */}
                         {outputSearchResults
                           .filter(token => token.id !== inputMint && token.id !== outputMint)
-                          .map((token) => (
+                          .map((token: TokenSearchResult) => (
                             <button
                               key={`output-search-${token.id}`}
                               type="button"
