@@ -1357,6 +1357,32 @@ export async function PUT(request: NextRequest) {
 
     await setTradingMode(isSimulated, keypairPath)
 
+    // Send Discord notification about trading mode change
+    if (shouldEnableNotifications()) {
+      try {
+        const mode = isSimulated ? 'SIMULATION' : 'LIVE TRADING'
+        const emoji = isSimulated ? '💻' : '🔥'
+        const content = [
+          `${emoji} Trading Mode Changed`,
+          `Mode: ${mode}`,
+          `Keypair: ${keypairPath || 'Not specified'}`,
+          `Time: ${new Date().toLocaleString()}`,
+          `Status: Successfully activated`
+        ].join('\n')
+
+        await fetch(DISCORD_WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content })
+        })
+
+        console.log(`✅ Discord notification sent for trading mode change: ${mode}`)
+      } catch (discordError) {
+        console.error('❌ Failed to send Discord notification for trading mode change:', discordError)
+        // Don't fail the operation if Discord fails
+      }
+    }
+
     return NextResponse.json({
       success: true,
       mode: isSimulated ? 'simulated' : 'real',
