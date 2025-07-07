@@ -496,14 +496,21 @@ function createTradeExecutor(
 }
 
 // Keypair management utilities
-function loadTradingKeypair(keypairPath: string): Keypair {
-  try {
+function loadTradingKeypair(keypairPath?: string): Keypair {
+  // Prefer env-var when running in serverless environments (e.g. Vercel)
+  const envJson = process.env.TRADING_KEYPAIR_JSON
+  if (envJson) {
+    return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(envJson)))
+  }
+
+  // Fallback to reading from file for local development / self-hosted runs
+  if (keypairPath) {
     const fs = require('fs')
     const keypairData = JSON.parse(fs.readFileSync(keypairPath, 'utf8'))
     return Keypair.fromSecretKey(Uint8Array.from(keypairData))
-  } catch (error) {
-    throw new Error(`Failed to load keypair from ${keypairPath}: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
+
+  throw new Error('Trading keypair not provided. Set TRADING_KEYPAIR_JSON env or supply keypairPath.')
 }
 
 function createSignerFromKeypair(keypair: Keypair): (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]> {
@@ -1025,7 +1032,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     // Safety checks for real trading
     if (!isSimulated) {
       if (!simulation.keypair_path) {
-        throw new Error('Keypair path required for real trading')
+        throw new Error('Trading keypair not configured (set TRADING_KEYPAIR_JSON or provide keypair_path)')
       }
       
       // Check RPC health before trading
@@ -1263,7 +1270,7 @@ async function performSellOperation(
     // Safety checks for real trading
     if (!isSimulated) {
       if (!simulation.keypair_path) {
-        throw new Error('Keypair path required for real trading')
+        throw new Error('Trading keypair not configured (set TRADING_KEYPAIR_JSON or provide keypair_path)')
       }
       
       // Initialize trading infrastructure
@@ -1559,8 +1566,8 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'isSimulated must be a boolean' }, { status: 400 })
     }
 
-    if (!isSimulated && !keypairPath) {
-      return NextResponse.json({ error: 'keypairPath is required for real trading' }, { status: 400 })
+    if (!isSimulated && !keypairPath && !process.env.TRADING_KEYPAIR_JSON) {
+      return NextResponse.json({ error: 'Trading keypair not configured. Provide keypairPath or set TRADING_KEYPAIR_JSON' }, { status: 400 })
     }
 
     await setTradingMode(isSimulated, keypairPath)
@@ -2287,7 +2294,7 @@ async function checkRpcHealth(): Promise<{ healthy: boolean, latency?: number, e
   }
 }
 
-async function initializeTradingKeypair(keypairPath: string): Promise<void> {
+async function initializeTradingKeypair(keypairPath?: string): Promise<void> {
   if (!tradingKeypair || !tradingSigner) {
     tradingKeypair = loadTradingKeypair(keypairPath)
     tradingSigner = createSignerFromKeypair(tradingKeypair)
