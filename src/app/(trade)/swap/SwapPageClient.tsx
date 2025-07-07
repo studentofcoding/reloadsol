@@ -8,6 +8,7 @@ import { useWallet, useConnection } from '@/components/WalletProvider'
 import { SLIPPAGE_OPTIONS } from '@/utils/solana'
 import { getSwapQuote, getSwapTransaction, isValidMintAddress, fetchUserTokensEfficient, UserToken } from '@/utils/jupiter'
 import TokenSkeleton from '@/components/TokenSkeleton'
+import { trackBuy } from '@/utils/operations-api'
 
 interface TokenOption {
   mintAddress: string
@@ -20,11 +21,11 @@ interface TokenOption {
 }
 
 interface TokenSearchResult {
-  id: string;
-  symbol: string;
-  name: string;
-  icon?: string;
-  decimals: number;
+  id: string
+  symbol: string
+  name: string
+  icon?: string
+  decimals?: number
 }
 
 interface SwapPageClientProps {
@@ -40,6 +41,9 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
   // Token options state
   const [availableTokens, setAvailableTokens] = useState<TokenOption[]>([])
   const [isLoadingTokens, setIsLoadingTokens] = useState<boolean>(false)
+
+  // Wallet balance (SOL)
+  const [walletBalance, setWalletBalance] = useState<number | null>(null)
 
   // Form state
   const [inputAmount, setInputAmount] = useState<string>('0.1')
@@ -79,6 +83,15 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
   const debounceRef = useRef<NodeJS.Timeout | null>(null)
   const refreshRef = useRef<NodeJS.Timeout | null>(null)
 
+  // Track whether we have already auto-selected a default output token. This prevents
+  // the effect that loads wallet tokens from overriding the user's manual choice
+  // every time they clear the search box.
+  const hasAutoSelectedRef = useRef(false)
+
+  // Helpful flag: when either token search dropdown is visible, we consider the
+  // user to be actively searching/typing and therefore suspend quote refreshes.
+  const isSearchActive = showInputResults || showOutputResults
+
   // Update URL when tokens change
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -101,64 +114,124 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
     }
   }, [initialInputMint, initialOutputMint])
 
-  // Load user tokens when wallet connects
-  useEffect(() => {
+  // Helper: fetch latest SOL balance
+  const fetchBalance = useCallback(async () => {
     if (!connected || !publicKey) {
-      setAvailableTokens([])
+      setWalletBalance(null)
       return
     }
+    try {
+      const lamports = await connection.getBalance(publicKey)
+      setWalletBalance(lamports / LAMPORTS_PER_SOL)
+    } catch {
+      // ignore errors, keep previous
+    }
+  }, [connected, publicKey, connection])
 
-    const loadTokens = async () => {
-      setIsLoadingTokens(true)
-      try {
-        const tokens = await fetchUserTokensEfficient(connection, publicKey, false, false)
-        
-        // Add SOL as first option
-        const solOption: TokenOption = {
-          mintAddress: NATIVE_MINT.toBase58(),
-          symbol: 'SOL',
-          name: 'Solana',
-          decimals: 9,
-          logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
-          uiAmount: tokens.find(t => t.mintAddress === NATIVE_MINT.toBase58())?.uiAmount || 0,
-          usdValue: tokens.find(t => t.mintAddress === NATIVE_MINT.toBase58())?.usdValue || 0
+  // Unified token loader so we can reuse after swaps
+  const loadTokens = useCallback(async () => {
+    if (!connected || !publicKey) return
+
+    setIsLoadingTokens(true)
+    try {
+      const tokens = await fetchUserTokensEfficient(connection, publicKey, false, false)
+
+      // Fetch native SOL balance for accurate display
+      const lamports = await connection.getBalance(publicKey)
+      const currentSolBalance = lamports / LAMPORTS_PER_SOL
+
+      setWalletBalance(currentSolBalance)
+
+      // Add SOL as first option
+      const solOption: TokenOption = {
+        mintAddress: NATIVE_MINT.toBase58(),
+        symbol: 'SOL',
+        name: 'Solana',
+        decimals: 9,
+        logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
+        uiAmount: currentSolBalance,
+        usdValue: 0 // will compute below
+      }
+
+      // Estimate SOL USD using any token price (optional)
+      const solPriceToken = tokens.find(t => t.mintAddress === NATIVE_MINT.toBase58())
+      if (solPriceToken && solPriceToken.usdValue && solPriceToken.uiAmount) {
+        solOption.usdValue = (solPriceToken.usdValue / solPriceToken.uiAmount) * currentSolBalance
+      }
+
+      // Convert user tokens to options
+      let tokenOptions: TokenOption[] = [
+        solOption,
+        ...tokens
+          .filter(token => token.mintAddress !== NATIVE_MINT.toBase58() && token.uiAmount > 0)
+          .map(token => ({
+            mintAddress: token.mintAddress,
+            symbol: token.symbol || token.name?.substring(0, 4) || '???',
+            name: token.name || 'Unknown Token',
+            decimals: token.decimals,
+            logoURI: token.logoURI,
+            uiAmount: token.uiAmount,
+            usdValue: token.usdValue
+          }))
+          .sort((a, b) => (b.usdValue || 0) - (a.usdValue || 0)) // Sort by USD value desc
+      ]
+
+      // Ensure that the tokens specified via URL (input/output) are also present so
+      // that components such as the price chart can resolve their metadata even if
+      // the user does not hold them in the connected wallet.
+      const ensureTokenPresent = (mint: string | undefined) => {
+        if (mint && !tokenOptions.some(t => t.mintAddress === mint)) {
+          tokenOptions.push({
+            mintAddress: mint,
+            symbol: mint.slice(0, 4),
+            name: 'Unknown Token',
+            decimals: 9,
+            uiAmount: 0,
+            usdValue: 0,
+          })
         }
+      }
 
-        // Convert user tokens to options
-        const tokenOptions: TokenOption[] = [
-          solOption,
-          ...tokens
-            .filter(token => token.mintAddress !== NATIVE_MINT.toBase58() && token.uiAmount > 0)
-            .map(token => ({
-              mintAddress: token.mintAddress,
-              symbol: token.symbol || token.name?.substring(0, 4) || '???',
-              name: token.name || 'Unknown Token',
-              decimals: token.decimals,
-              logoURI: token.logoURI,
-              uiAmount: token.uiAmount,
-              usdValue: token.usdValue
-            }))
-            .sort((a, b) => (b.usdValue || 0) - (a.usdValue || 0)) // Sort by USD value desc
-        ]
+      ensureTokenPresent(inputMint)
+      ensureTokenPresent(outputMint)
 
-        setAvailableTokens(tokenOptions)
+      setAvailableTokens(tokenOptions)
 
-        // Auto-select largest bag as output if not selected
+      // Auto-select the largest bag only once (first wallet load) and only if the
+      // URL did not already specify an output token.
+      if (!hasAutoSelectedRef.current) {
         if (!outputMint && tokenOptions.length > 1) {
           const largestBag = tokenOptions.find(t => t.mintAddress !== NATIVE_MINT.toBase58())
           if (largestBag) {
             setOutputMint(largestBag.mintAddress)
           }
         }
-      } catch (err) {
-        console.error('Failed to load tokens:', err)
-      } finally {
-        setIsLoadingTokens(false)
+        // Mark that we have performed (or skipped) the initial auto-selection so
+        // subsequent effect executions don't override user interaction.
+        hasAutoSelectedRef.current = true
       }
+    } finally {
+      setIsLoadingTokens(false)
     }
-
-    loadTokens()
   }, [connected, publicKey, connection, outputMint])
+
+  // Load user tokens when wallet connects or after reload
+  useEffect(() => {
+    if (!connected || !publicKey) {
+      setAvailableTokens([])
+      setWalletBalance(null)
+      return
+    }
+    loadTokens()
+  }, [connected, publicKey, loadTokens])
+
+  // Fetch balance periodically (every 30s) to stay fresh
+  useEffect(() => {
+    if (!connected) return
+    fetchBalance()
+    const interval = setInterval(fetchBalance, 30000)
+    return () => clearInterval(interval)
+  }, [connected, fetchBalance])
 
   // Auto-resize chart to maintain aspect ratio
   useEffect(() => {
@@ -189,7 +262,15 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
         const res = await fetch(`/api/trending/search?query=${encodeURIComponent(inputSearchTerm)}`)
         if (res.ok) {
           const data = await res.json()
-          setInputSearchResults(Array.isArray(data) ? data.map(d => ({ ...d, id: d.mintAddress })) : [])
+          const mapped = (Array.isArray(data) ? data : [])
+            .map((d: any) => ({
+              ...d,
+              id: d.id || d.address || d.mintAddress || undefined
+            }))
+            .filter((t: any) => !!t.id)
+            // remove duplicates by id
+            .filter((item, idx, arr) => arr.findIndex(i => i.id === item.id) === idx)
+          setInputSearchResults(mapped)
           setShowInputResults(true)
         } else {
           setInputSearchResults([])
@@ -218,7 +299,15 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
         const res = await fetch(`/api/trending/search?query=${encodeURIComponent(outputSearchTerm)}`)
         if (res.ok) {
           const data = await res.json()
-          setOutputSearchResults(Array.isArray(data) ? data.map(d => ({ ...d, id: d.mintAddress })) : [])
+          const mapped = (Array.isArray(data) ? data : [])
+            .map((d: any) => ({
+              ...d,
+              id: d.id || d.address || d.mintAddress || undefined
+            }))
+            .filter((t: any) => !!t.id)
+            // remove duplicates by id
+            .filter((item, idx, arr) => arr.findIndex(i => i.id === item.id) === idx)
+          setOutputSearchResults(mapped)
           setShowOutputResults(true)
         } else {
           setOutputSearchResults([])
@@ -296,32 +385,40 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
       setLastQuote(null)
     } finally {
       setQuoteFetching(false)
-    }
-  }, [inputMint, outputMint, inputAmount, slippage, getTokenInfo])
 
-  // Debounce quote when user types
-  useEffect(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current)
-    debounceRef.current = setTimeout(() => {
-      fetchQuote()
-    }, 400)
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-  }, [fetchQuote])
-
-  // Refresh quote every 5 seconds while form is valid
-  useEffect(() => {
-    if (refreshRef.current) clearInterval(refreshRef.current)
-    if (outputMint && isValidMintAddress(outputMint) && inputAmount && isValidMintAddress(inputMint)) {
+      // Start / reset 5-second auto refresh after each fetch
+      if (refreshRef.current) clearInterval(refreshRef.current)
       refreshRef.current = setInterval(() => {
         fetchQuote()
       }, 5000)
     }
-    return () => {
-      if (refreshRef.current) clearInterval(refreshRef.current)
+  }, [inputMint, outputMint, inputAmount, slippage, getTokenInfo])
+
+  // Debounce quote when user types – wait 15 seconds of inactivity before fetching.
+  // While the user is typing we also pause the auto-refresh interval.
+  useEffect(() => {
+    // If the user is still interacting with a search dropdown, postpone quoting.
+    if (isSearchActive) {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      return
     }
-  }, [fetchQuote, outputMint, inputAmount, inputMint])
+
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+
+    // Pause ongoing auto refresh while user is typing
+    if (refreshRef.current) {
+      clearInterval(refreshRef.current)
+      refreshRef.current = null as unknown as NodeJS.Timeout
+    }
+
+    debounceRef.current = setTimeout(() => {
+      fetchQuote()
+    }, 3000) // 3-second debounce
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [fetchQuote, isSearchActive])
 
   // Swap handler
   const handleSwap = useCallback(async () => {
@@ -356,15 +453,31 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
       await connection.confirmTransaction(signature, 'confirmed')
 
       setTxSignature(signature)
-      // Clear form after success
-      // setInputAmount('')
+
+      // Track the swap as a buy operation for points / history
+      try {
+        await trackBuy(
+          publicKey.toString(),
+          1,
+          {
+            tokenMints: [outputMint],
+            signatures: [signature]
+          }
+        )
+      } catch (trackErr) {
+        console.warn('Failed to track swap operation:', trackErr)
+      }
+
+      // Refresh balance and tokens after successful swap
+      await fetchBalance()
+      await loadTokens()
     } catch (swapErr: any) {
       console.error('Swap error', swapErr)
       setError(swapErr instanceof Error ? swapErr.message : 'Swap failed')
     } finally {
       setIsSwapping(false)
     }
-  }, [connected, publicKey, signAllTransactions, connection, lastQuote])
+  }, [connected, publicKey, signAllTransactions, connection, lastQuote, fetchBalance, loadTokens, outputMint])
 
   // Helper to switch input/output mints
   const handleSwitchMints = () => {
@@ -390,11 +503,11 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
         symbol: token.symbol,
         name: token.name,
         logoURI: token.icon,
-        decimals: token.decimals,
-        uiAmount: 0, // Not in wallet
-        usdValue: 0  // Not in wallet
-      };
-      setAvailableTokens(prev => [...prev, newToken]);
+        decimals: token.decimals ?? 9,
+        uiAmount: 0,
+        usdValue: 0,
+      }
+      setAvailableTokens(prev => prev.some(t => t.mintAddress === token.id) ? prev : [...prev, newToken])
     }
   }
 
@@ -410,11 +523,11 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
         symbol: token.symbol,
         name: token.name,
         logoURI: token.icon,
-        decimals: token.decimals,
+        decimals: token.decimals ?? 9,
         uiAmount: 0,
-        usdValue: 0
-      };
-      setAvailableTokens(prev => [...prev, newToken]);
+        usdValue: 0,
+      }
+      setAvailableTokens(prev => prev.some(t => t.mintAddress === token.id) ? prev : [...prev, newToken])
     }
   }
 
@@ -570,9 +683,8 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
                           }
                         }}
                         onFocus={(e) => {
-                          if (availableTokens.length > 0) {
-                            setShowInputResults(true)
-                          }
+                          // Always open dropdown on focus for a smoother UX like BulkTokenBuyer
+                          setShowInputResults(true)
                           e.target.select()
                         }}
                         placeholder="Search..."
@@ -729,9 +841,8 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
                         }
                       }}
                       onFocus={(e) => {
-                        if (availableTokens.length > 0) {
-                          setShowOutputResults(true)
-                        }
+                        // Always open dropdown on focus to mimic BulkTokenBuyer behaviour
+                        setShowOutputResults(true)
                         e.target.select()
                       }}
                       placeholder="Search..."
