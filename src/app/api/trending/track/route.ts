@@ -339,8 +339,19 @@ class RealTradeExecutor implements TradeExecutor {
   private async executeSwap(params: TradeExecutionParams, direction: 'buy' | 'sell'): Promise<TradeExecutionResult> {
     const startTime = Date.now()
     
+    // Enhanced logging for real trades
+    logTradeOperation(`Real Trade ${direction.toUpperCase()} Started`, {
+      tokenAddress: params.tokenAddress,
+      tokenSymbol: params.tokenSymbol,
+      amount: params.amount,
+      slippageBps: params.slippageBps,
+      userPublicKey: params.userPublicKey,
+      direction
+    })
+    
     try {
-      // Get quote first
+      // Get quote first (always use Jupiter for real trades)
+      console.log(`🔄 Getting Jupiter quote for ${direction} ${params.tokenSymbol}...`)
       const quote = await getSwapQuote(
         params.inputMint,
         params.outputMint,
@@ -349,10 +360,13 @@ class RealTradeExecutor implements TradeExecutor {
       )
 
       if (!quote) {
-        throw new Error('No valid quote available')
+        throw new Error('No valid Jupiter quote available')
       }
 
+      console.log(`📊 Jupiter quote received: ${quote.inAmount} → ${quote.outAmount}`)
+
       // Create transaction
+      console.log(`🔧 Creating swap transaction...`)
       const swapTransaction = await getSwapTransaction(
         quote,
         params.userPublicKey,
@@ -361,10 +375,11 @@ class RealTradeExecutor implements TradeExecutor {
       )
 
       if (!swapTransaction) {
-        throw new Error('Failed to create swap transaction')
+        throw new Error('Failed to create Jupiter swap transaction')
       }
 
       // Deserialize and sign transaction
+      console.log(`✍️ Signing transaction...`)
       const tx = VersionedTransaction.deserialize(
         Buffer.from(swapTransaction.swapTransaction, 'base64')
       )
@@ -373,17 +388,19 @@ class RealTradeExecutor implements TradeExecutor {
       const signedTx = signedTxs[0]
 
       // Send transaction
+      console.log(`📡 Sending transaction to Shyft RPC...`)
       const signature = await this.connection.sendTransaction(signedTx, {
         skipPreflight: false,
         maxRetries: 3,
       })
 
+      console.log(`⏳ Confirming transaction ${signature}...`)
       // Confirm transaction
       await this.connection.confirmTransaction(signature, 'confirmed')
 
       const responseTime = Date.now() - startTime
 
-      return {
+      const result = {
         success: true,
         signature,
         inputAmount: quote.inAmount,
@@ -393,11 +410,33 @@ class RealTradeExecutor implements TradeExecutor {
           feePercentage: quote.platformFee ? quote.platformFee.feeBps / 100 : 0
         },
         provider: 'jupiter',
-        rpcUsed: 'primary',
+        rpcUsed: 'shyft',
         responseTime,
       }
+
+      // Log successful real trade
+      logTradeOperation(`Real Trade ${direction.toUpperCase()} SUCCESS`, {
+        tokenSymbol: params.tokenSymbol,
+        signature,
+        inputAmount: quote.inAmount,
+        outputAmount: quote.outAmount,
+        responseTime,
+        fees: result.fees.totalFees
+      })
+
+      return result
     } catch (error) {
       const responseTime = Date.now() - startTime
+      
+      // Enhanced error logging for real trades
+      logTradeOperation(`Real Trade ${direction.toUpperCase()} FAILED`, {
+        tokenSymbol: params.tokenSymbol,
+        direction,
+        amount: params.amount,
+        slippageBps: params.slippageBps,
+        responseTime,
+        userPublicKey: params.userPublicKey
+      }, error as Error)
       
       return {
         success: false,
@@ -405,7 +444,7 @@ class RealTradeExecutor implements TradeExecutor {
         outputAmount: '0',
         fees: { totalFees: 0, feePercentage: 0 },
         provider: 'jupiter',
-        rpcUsed: 'primary',
+        rpcUsed: 'shyft',
         responseTime,
         error: error instanceof Error ? error.message : 'Real trade failed'
       }
@@ -1466,7 +1505,24 @@ export async function POST(request: NextRequest) {
         // Perform buy operation for new tokens (simulation or real trading)
         let tradingSimulation: TradingSimulation | null = null
         try {
-          // Create initial simulation configuration (default to simulation mode)
+          // Check if real trading mode is activated by looking at existing tokens
+          let isRealTradingActive = false
+          let keypairPath: string | undefined = undefined
+          
+          // Check if any existing tracked token has real trading enabled
+          const existingRealTradeToken = trackedTokens?.find(t => 
+            t.trading_simulation && !t.trading_simulation.is_simulated
+          )
+          
+          if (existingRealTradeToken?.trading_simulation) {
+            isRealTradingActive = true
+            keypairPath = existingRealTradeToken.trading_simulation.keypair_path
+            console.log(`🔥 Real trading mode detected - new token ${token.token_symbol} will use REAL trading`)
+          } else {
+            console.log(`💻 Simulation mode - new token ${token.token_symbol} will use simulation`)
+          }
+          
+          // Create initial simulation configuration (use detected trading mode)
           const initialSimulation: TradingSimulation = {
             token_address: token.token_address,
             token_symbol: token.token_symbol,
@@ -1476,7 +1532,8 @@ export async function POST(request: NextRequest) {
             current_status: 'buying',
             remaining_token_amount: '0',
             initial_token_amount: '0',
-            is_simulated: true, // Default to simulation mode
+            is_simulated: !isRealTradingActive, // Use detected trading mode
+            keypair_path: keypairPath,
             take_profit_levels: {
               tp1_percentage: 80,
               tp1_sell_percentage: 80,
@@ -1945,8 +2002,10 @@ let tradingSigner: ((transactions: VersionedTransaction[]) => Promise<VersionedT
 
 function initializeTradingConnection(): Connection {
   if (!tradingConnection) {
-    const rpcUrl = process.env.RPC_URL || 'https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn'
-    tradingConnection = new Connection(rpcUrl, 'confirmed')
+    // Always use Shyft RPC for real trading as requested
+    const shyftRpcUrl = 'https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn'
+    tradingConnection = new Connection(shyftRpcUrl, 'confirmed')
+    console.log('🌐 Real trading connection initialized with Shyft RPC')
   }
   return tradingConnection
 }
