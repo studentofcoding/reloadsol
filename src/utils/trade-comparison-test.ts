@@ -43,7 +43,6 @@ interface TestResult {
   providerResults: {
     jupiter: { success: boolean; responseTime: number; error?: string }
     dflow: { success: boolean; responseTime: number; error?: string }
-    'dflow-intent': { success: boolean; responseTime: number; error?: string }
     'solana-tracker': { success: boolean; responseTime: number; error?: string }
     gmgn: { success: boolean; responseTime: number; error?: string }
   }
@@ -94,11 +93,6 @@ export async function runTradeComparisonTests(): Promise<{
           success: comparison.quotes.find(q => q.provider === 'dflow')?.success || false,
           responseTime: comparison.quotes.find(q => q.provider === 'dflow')?.responseTime || 0,
           error: comparison.quotes.find(q => q.provider === 'dflow')?.error
-        },
-        'dflow-intent': {
-          success: comparison.quotes.find(q => q.provider === 'dflow-intent')?.success || false,
-          responseTime: comparison.quotes.find(q => q.provider === 'dflow-intent')?.responseTime || 0,
-          error: comparison.quotes.find(q => q.provider === 'dflow-intent')?.error
         },
         'solana-tracker': {
           success: comparison.quotes.find(q => q.provider === 'solana-tracker')?.success || false,
@@ -156,7 +150,6 @@ export async function runTradeComparisonTests(): Promise<{
         providerResults: {
           jupiter: { success: false, responseTime: 0, error: 'Test failed' },
           dflow: { success: false, responseTime: 0, error: 'Test failed' },
-          'dflow-intent': { success: false, responseTime: 0, error: 'Test failed' },
           'solana-tracker': { success: false, responseTime: 0, error: 'Test failed' },
           gmgn: { success: false, responseTime: 0, error: 'Test failed' }
         }
@@ -229,11 +222,6 @@ export async function testSingleTrade(
         responseTime: comparison.quotes.find(q => q.provider === 'dflow')?.responseTime || 0,
         error: comparison.quotes.find(q => q.provider === 'dflow')?.error
       },
-      'dflow-intent': {
-        success: comparison.quotes.find(q => q.provider === 'dflow-intent')?.success || false,
-        responseTime: comparison.quotes.find(q => q.provider === 'dflow-intent')?.responseTime || 0,
-        error: comparison.quotes.find(q => q.provider === 'dflow-intent')?.error
-      },
       'solana-tracker': {
         success: comparison.quotes.find(q => q.provider === 'solana-tracker')?.success || false,
         responseTime: comparison.quotes.find(q => q.provider === 'solana-tracker')?.responseTime || 0,
@@ -264,7 +252,6 @@ export async function testSingleTrade(
       providerResults: {
         jupiter: { success: false, responseTime: 0, error: 'Test failed' },
         dflow: { success: false, responseTime: 0, error: 'Test failed' },
-        'dflow-intent': { success: false, responseTime: 0, error: 'Test failed' },
         'solana-tracker': { success: false, responseTime: 0, error: 'Test failed' },
         gmgn: { success: false, responseTime: 0, error: 'Test failed' }
       }
@@ -291,7 +278,6 @@ export async function benchmarkProviders(iterations: number = 5): Promise<{
   const providerStats: Record<string, { times: number[]; successes: number }> = {
     jupiter: { times: [], successes: 0 },
     dflow: { times: [], successes: 0 },
-    'dflow-intent': { times: [], successes: 0 },
     'solana-tracker': { times: [], successes: 0 },
     gmgn: { times: [], successes: 0 }
   }
