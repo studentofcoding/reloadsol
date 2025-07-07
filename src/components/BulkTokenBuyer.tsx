@@ -588,6 +588,32 @@ export default function BulkTokenBuyer() {
 
   const feeRates = getAllFeeRates()
 
+  // NEW: Keep URL in sync so it can be shared with pre-filled params
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    // Preserve any existing, unrelated query params
+    const params = new URLSearchParams(window.location.search)
+
+    // Update SOL amount param
+    if (solAmount && !Number.isNaN(+solAmount) && +solAmount > 0) {
+      params.set('sol', solAmount)
+    } else {
+      params.delete('sol')
+    }
+
+    // Update mints param (comma-separated list)
+    const mintsParam = validMints.join(',')
+    if (mintsParam) {
+      params.set('mints', mintsParam)
+    } else {
+      params.delete('mints')
+    }
+
+    const newUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`
+    window.history.replaceState({}, '', newUrl)
+  }, [solAmount, tokenMints, validMints])
+
   return (
     <div className={`grid grid-cols-1 ${connected ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-8`}>
       {/* Trending Tokens Column */}
