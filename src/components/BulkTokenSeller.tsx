@@ -566,6 +566,109 @@ export default function BulkTokenSeller() {
     }
   }, [connected, publicKey, signAllTransactions, connection, selectedTokens, selectedZeroBalanceTokens, slippage, priorityFee, fetchTokens])
 
+  // Handle close-only (burn) operation without selling any tokens
+  const handleCloseOnly = useCallback(async () => {
+    if (!connected || !publicKey || !signAllTransactions) {
+      setError('Please connect your wallet first')
+      return
+    }
+
+    if (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0) {
+      setError('Please select at least one token')
+      return
+    }
+
+    setIsLoading(true)
+    setError('')
+    setCloseResult(null)
+    setClosePointsEarned(null)
+
+    try {
+      const request: BulkSellRequest = {
+        tokens: [], // no swaps, only closes
+        unsellableTokens: [...selectedTokens, ...selectedZeroBalanceTokens],
+        slippage,
+        priorityFee
+      }
+
+      const closeOnlyResult = await executeBulkSell(
+        request,
+        publicKey.toString(),
+        connection,
+        signAllTransactions
+      )
+
+      const closeData = {
+        successful: closeOnlyResult.successfulCloses,
+        failed: closeOnlyResult.failedCloses,
+        signatures: closeOnlyResult.signatures
+      }
+
+      setCloseResult(closeData)
+
+      if (closeData.successful.length > 0 || closeData.failed.length > 0) {
+        setShowCloseResultModal(true)
+      }
+
+      // Points tracking
+      try {
+        const trackResult = await trackClose(publicKey.toString(), closeData.successful.length, {
+          failureCount: closeData.failed.length,
+          tokenMints: closeData.successful,
+          signatures: closeData.signatures
+        })
+        console.log(`🎉 Earned ${trackResult.pointsEarned} points from close operation!`)
+        setClosePointsEarned(trackResult.pointsEarned)
+      } catch (trackError) {
+        console.error('Failed to track close operation for points:', trackError)
+      }
+
+      // History / PnL tracking
+      try {
+        const currentSolPrice = await getSolPriceUSD()
+        const closeTokenData = [...selectedTokens, ...selectedZeroBalanceTokens].map(token => ({
+          mintAddress: token.mintAddress,
+          symbol: token.symbol,
+          name: token.name,
+          logoURI: token.logoURI
+        }))
+
+        const closeErrors = closeData.failed.length > 0 ? closeData.failed.map(f => f.error) : undefined
+
+        await trackOperation({
+          walletAddress: publicKey.toString(),
+          operationType: 'close',
+          tokens: closeTokenData.map(t => ({ ...t, solPrice: currentSolPrice })),
+          successCount: closeData.successful.length,
+          failureCount: closeData.failed.length,
+          totalTokens: closeData.successful.length + closeData.failed.length,
+          feesPaid: 0,
+          solPriceUsd: currentSolPrice,
+          signatures: closeData.signatures,
+          errors: closeErrors
+        })
+      } catch (trackError) {
+        console.error('Failed to track close operation for history/PnL:', trackError)
+      }
+
+      // Refresh token list and clear selection
+      if (closeData.successful.length > 0) {
+        await fetchTokens()
+        setSelectedTokens([])
+        setSelectedZeroBalanceTokens([])
+      }
+    } catch (err) {
+      console.error('Close-only operation error:', err)
+      if (err instanceof Error) {
+        setError(err.message)
+      } else {
+        setError('An unknown error occurred. Please try again.')
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }, [connected, publicKey, signAllTransactions, connection, selectedTokens, selectedZeroBalanceTokens, slippage, priorityFee, fetchTokens, trackOperation])
+
   // Fetch user tokens on wallet connection
   useEffect(() => {
     if (connected && publicKey) {
@@ -926,37 +1029,67 @@ export default function BulkTokenSeller() {
               </div>
             </div>
 
-            {/* Sell Button */}
-            <button
-              onClick={handleBulkSell}
-              disabled={isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)}
-              className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
-                isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)
-                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                  : 'bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl'
-              }`}
-            >
-              {isLoading ? (
-                <div className="flex items-center justify-center space-x-3">
-                  <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
-                  <span>Processing...</span>
-                </div>
-              ) : (
-                <div className="flex items-center justify-center space-x-2">
-                  <span>
-                    {selectedTokens.length > 0 && selectedZeroBalanceTokens.length > 0
-                      ? `Sell ${selectedTokens.length} & Close ${tokensToClose} Accounts`
-                      : selectedTokens.length > 0
-                      ? `Sell ${selectedTokens.length} Token${selectedTokens.length !== 1 ? 's' : ''} ${tokensToClose > 0 ? `& Close ${tokensToClose}` : ''}`
-                      : `Close ${selectedZeroBalanceTokens.length} Account${selectedZeroBalanceTokens.length !== 1 ? 's' : ''}`
-                    }
-                  </span>
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
-                  </svg>
-                </div>
-              )}
-            </button>
+            {/* Action Buttons */}
+            <div className="flex flex-col md:flex-row gap-4">
+              {/* Sell (with optional close) */}
+              <button
+                onClick={handleBulkSell}
+                disabled={isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)}
+                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
+                  isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)
+                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                    : 'bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl'
+                }`}
+              >
+                {isLoading ? (
+                  <div className="flex items-center justify-center space-x-3">
+                    <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
+                    <span>Processing...</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center space-x-2">
+                    <span>
+                      {selectedTokens.length > 0 && selectedZeroBalanceTokens.length > 0
+                        ? `Sell ${selectedTokens.length} & Close ${tokensToClose} Accounts`
+                        : selectedTokens.length > 0
+                        ? `Sell ${selectedTokens.length} Token${selectedTokens.length !== 1 ? 's' : ''} ${tokensToClose > 0 ? `& Close ${tokensToClose}` : ''}`
+                        : `Close ${selectedZeroBalanceTokens.length} Account${selectedZeroBalanceTokens.length !== 1 ? 's' : ''}`
+                      }
+                    </span>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                )}
+              </button>
+
+              {/* Close Only */}
+              <button
+                onClick={handleCloseOnly}
+                disabled={isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)}
+                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
+                  isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)
+                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                    : 'bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg hover:shadow-xl'
+                }`}
+              >
+                {isLoading ? (
+                  <div className="flex items-center justify-center space-x-3">
+                    <div className="w-5 h-5 border-2 border-yellow-300 border-t-white rounded-full animate-spin"></div>
+                    <span>Processing...</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center space-x-2">
+                    <span>
+                      Close {selectedTokens.length + selectedZeroBalanceTokens.length} Account{(selectedTokens.length + selectedZeroBalanceTokens.length) !== 1 ? 's' : ''}
+                    </span>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </div>
+                )}
+              </button>
+            </div>
           </>
         )}
 
