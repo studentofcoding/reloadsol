@@ -84,21 +84,23 @@ export default function TradeLayout({
                   </div>
                 </Link>
 
-                <Link
-                  href="/swap"
-                  className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
-                    isActive('/swap')
-                      ? 'bg-white text-black'
-                      : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                    </svg>
-                    <span className="hidden md:block">Swap</span>
-                  </div>
-                </Link>
+                {isDevWallet(publicKey) && (
+                  <Link
+                    href="/swap"
+                    className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
+                      isActive('/swap')
+                        ? 'bg-white text-black'
+                        : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                      </svg>
+                      <span className="hidden md:block">Swap</span>
+                    </div>
+                  </Link>
+                )}
 
                 {/* Info Tabs */}
                 <div className="border-l border-gray-600 pl-2 ml-2">

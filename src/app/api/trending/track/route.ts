@@ -2322,7 +2322,7 @@ async function checkTradingBalance(): Promise<{ balance: number, canTrade: boole
 }
 
 async function getTotalSOLAtRisk(): Promise<number> {
-  // Calculate total SOL currently at risk across all active real trades
+  // Fetch only required fields to keep payload light
   const { data: activeRealTrades } = await supabase
     .from(TRACKER_TABLE)
     .select('trading_simulation')
@@ -2330,12 +2330,27 @@ async function getTotalSOLAtRisk(): Promise<number> {
     .not('trading_simulation', 'is', null)
 
   let totalAtRisk = 0
-  
+
   for (const trade of activeRealTrades || []) {
     const simulation = trade.trading_simulation as TradingSimulation
-    if (!simulation.is_simulated && simulation.buy_operation) {
-      totalAtRisk += simulation.buy_operation.buy_amount_sol
-    }
+
+    // Skip simulated positions entirely
+    if (simulation.is_simulated) continue
+
+    // We only count positions that are still holding tokens
+    if (simulation.current_status !== 'holding') continue
+
+    const remaining = parseFloat(simulation.remaining_token_amount || '0')
+    const initial = parseFloat(simulation.initial_token_amount || '0')
+
+    // Ignore if effectively closed (dust remaining)
+    if (!initial || remaining < 1e-6) continue
+
+    // Pro-rate original SOL spent by the fraction of tokens still held
+    const proportionRemaining = Math.min(1, remaining / initial)
+    const spentSOL = simulation.buy_operation?.buy_amount_sol || 0
+
+    totalAtRisk += spentSOL * proportionRemaining
   }
 
   return totalAtRisk

@@ -9,6 +9,8 @@ import { SLIPPAGE_OPTIONS } from '@/utils/solana'
 import { getSwapQuote, getSwapTransaction, isValidMintAddress, fetchUserTokensEfficient, UserToken } from '@/utils/jupiter'
 import TokenSkeleton from '@/components/TokenSkeleton'
 import { trackBuy } from '@/utils/operations-api'
+import { useTradingData } from '@/components/TradingDataProvider'
+import { getSolPriceUSD } from '@/utils/solana'
 
 interface TokenOption {
   mintAddress: string
@@ -37,6 +39,7 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
   // Wallet & connection
   const { publicKey, connected, signAllTransactions } = useWallet()
   const { connection } = useConnection()
+  const { trackOperation } = useTradingData()
 
   // Token options state
   const [availableTokens, setAvailableTokens] = useState<TokenOption[]>([])
@@ -468,6 +471,37 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
         console.warn('Failed to track swap operation:', trackErr)
       }
 
+      // Track operation via React Query system for PnL & history
+      const solPriceUsd = await getSolPriceUSD()
+
+      const tokenInfoNow = getTokenInfo(outputMint) || { }
+
+      await trackOperation({
+        walletAddress: publicKey.toString(),
+        operationType: 'buy',
+        tokens: [{
+          mintAddress: outputMint,
+          symbol: (tokenInfoNow as any).symbol,
+          name: (tokenInfoNow as any).name,
+          logoURI: (tokenInfoNow as any).logoURI,
+          priceUsd: undefined,
+          tokenAmount: undefined,
+          solPrice: solPriceUsd,
+          solAmount: parseFloat(inputAmount),
+        }],
+        successCount: 1,
+        failureCount: 0,
+        totalTokens: 1,
+        solAmount: parseFloat(inputAmount),
+        feesPaid: 0,
+        solPriceUsd,
+        totalUsdValue: solPriceUsd ? parseFloat(inputAmount) * solPriceUsd : undefined,
+        signatures: [signature],
+        slippage: slippage/100,
+        priorityFee: 0,
+        errors: undefined,
+      })
+
       // Refresh balance and tokens after successful swap
       await fetchBalance()
       await loadTokens()
@@ -477,7 +511,7 @@ export default function SwapPageClient({ initialInputMint, initialOutputMint }: 
     } finally {
       setIsSwapping(false)
     }
-  }, [connected, publicKey, signAllTransactions, connection, lastQuote, fetchBalance, loadTokens, outputMint])
+  }, [connected, publicKey, signAllTransactions, connection, lastQuote, fetchBalance, loadTokens, outputMint, inputAmount, slippage, trackOperation])
 
   // Helper to switch input/output mints
   const handleSwitchMints = () => {
