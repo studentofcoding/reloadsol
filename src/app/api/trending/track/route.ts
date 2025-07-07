@@ -123,7 +123,7 @@ interface BuyOperation {
   configurations: {
     slippage_1: BuyConfigResult
     slippage_2: BuyConfigResult
-    slippage_5: BuyConfigResult
+    slippage_3: BuyConfigResult
   }
   best_buy_config: {
     slippage: number
@@ -144,7 +144,7 @@ interface SellOperation {
   configurations: {
     slippage_1: SellConfigResult
     slippage_2: SellConfigResult
-    slippage_5: SellConfigResult
+    slippage_3: SellConfigResult
   }
   best_sell_config: {
     slippage: number
@@ -387,16 +387,43 @@ class RealTradeExecutor implements TradeExecutor {
       const signedTxs = await this.signer([tx])
       const signedTx = signedTxs[0]
 
-      // Send transaction
+      // Send transaction with retries
       console.log(`📡 Sending transaction to Shyft RPC...`)
-      const signature = await this.connection.sendTransaction(signedTx, {
-        skipPreflight: false,
-        maxRetries: 3,
-      })
+      let signature: string | undefined
+      let sendAttempts = 0
+      const maxSendAttempts = 3
+      
+      while (sendAttempts < maxSendAttempts) {
+        try {
+          signature = await this.connection.sendTransaction(signedTx, {
+            skipPreflight: false,
+            maxRetries: 1,
+          })
+          break
+        } catch (error) {
+          sendAttempts++
+          console.warn(`📡 Send attempt ${sendAttempts} failed:`, error)
+          if (sendAttempts >= maxSendAttempts) {
+            throw new Error(`Failed to send transaction after ${maxSendAttempts} attempts: ${error}`)
+          }
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 1000 * sendAttempts))
+        }
+      }
+
+      if (!signature) {
+        throw new Error('Failed to get transaction signature')
+      }
 
       console.log(`⏳ Confirming transaction ${signature}...`)
-      // Confirm transaction
-      await this.connection.confirmTransaction(signature, 'confirmed')
+      
+      // Enhanced transaction confirmation with timeout
+      const confirmationPromise = this.connection.confirmTransaction(signature, 'confirmed')
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Transaction confirmation timeout')), 30000)
+      )
+      
+      await Promise.race([confirmationPromise, timeoutPromise])
 
       const responseTime = Date.now() - startTime
 
@@ -550,6 +577,106 @@ function shouldEnableNotifications(): boolean {
 
 // Update the Discord notification parameter types
 type TradeAlertStatus = 'buy' | 'partial-sell' | 'completed'
+
+// Discord notification for new token detection
+async function sendNewTokenDetectionDiscord(params: {
+  tokenAddress: string
+  tokenSymbol: string | null
+  tokenName: string | null
+  currentPrice: number
+  marketCap: number | null
+  organicScore: number | null
+  volume1h: number | null
+  isRealTrading: boolean
+}) {
+  try {
+    // Check if Discord notifications are enabled
+    if (!shouldEnableNotifications()) {
+      logTradeOperation('Discord New Token Notification Skipped', {
+        reason: 'Notifications disabled',
+        webhookStatus: 'not configured'
+      })
+      return
+    }
+
+    const {
+      tokenAddress,
+      tokenSymbol,
+      tokenName,
+      currentPrice,
+      marketCap,
+      organicScore,
+      volume1h,
+      isRealTrading
+    } = params
+
+    // Log notification attempt
+    logTradeOperation('Discord New Token Notification Attempt', {
+      tokenSymbol,
+      tokenAddress,
+      isRealTrading,
+      currentPrice,
+      marketCap
+    })
+
+    const emoji = isRealTrading ? '🔥' : '💻'
+    const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
+    
+    // Create reloadSOL swap link as requested
+    const reloadSolLink = `https://v2.reloadsol.xyz/swap?input=So11111111111111111111111111111111111111112&output=${tokenAddress}`
+
+    const lines = [
+      `${emoji} New Token Detected (${mode})`,
+      ``,
+      `📊 **${tokenSymbol || 'UNKNOWN'}** (${tokenName || 'Unknown Name'})`,
+      `💰 Price: $${currentPrice.toFixed(8)}`,
+      `🏦 Market Cap: ${marketCap ? `$${(marketCap / 1000000).toFixed(2)}M` : 'N/A'}`,
+      `🎯 Organic Score: ${organicScore ? `${organicScore.toFixed(1)}` : 'N/A'}`,
+      `📈 Volume 1h: ${volume1h ? `$${(volume1h / 1000).toFixed(1)}K` : 'N/A'}`,
+      ``,
+      `🔗 **Trade on reloadSOL:**`,
+      reloadSolLink,
+      ``,
+      `⏰ ${new Date().toLocaleString()}`
+    ]
+
+    const content = lines.join('\n')
+
+    // Add request timing
+    const fetchStartTime = Date.now()
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    })
+
+    const webhookResponseTime = Date.now() - fetchStartTime
+
+    if (!response.ok) {
+      const responseText = await response.text()
+      throw new Error(`Discord webhook failed: ${response.status} ${response.statusText}\nResponse: ${responseText}`)
+    }
+
+    // Log successful notification
+    logTradeOperation('Discord New Token Notification Success', {
+      tokenSymbol,
+      tokenAddress,
+      isRealTrading,
+      responseTime: webhookResponseTime,
+      httpStatus: response.status
+    })
+  } catch (err) {
+    // Enhanced error logging
+    logTradeOperation('Discord New Token Notification Error', {
+      tokenSymbol: params.tokenSymbol,
+      tokenAddress: params.tokenAddress,
+      isRealTrading: params.isRealTrading
+    }, err as Error)
+    
+    // Re-throw for upstream handling if needed
+    throw err
+  }
+}
 
 // Updated Discord alert function with enhanced error handling
 async function sendTradeAlertDiscord(params: {
@@ -723,7 +850,7 @@ async function performTradeComparison(token: any): Promise<TradeComparisonResult
     const enhancedResult = await performEnhancedTradeComparison(
       token.token_address,
       token.token_symbol,
-      0.1 // 0.1 SOL
+      0.03 // 0.03 SOL as specified
     )
     
     // Convert enhanced result to the expected TradeComparisonResult format for backward compatibility
@@ -888,10 +1015,12 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     const operationType = isSimulated ? 'simulation' : 'real trade'
     console.log(`💰 Performing buy ${operationType} for ${token.token_symbol} (${token.token_address})`)
     
-    // SOL mint address
+    // SOL mint address and trading parameters
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
-    const BUY_AMOUNT_SOL = 0.1 // 0.1 SOL
+    const BUY_AMOUNT_SOL = 0.03 // 0.03 SOL per token as specified
     const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9)
+    const PRIORITY_FEE_SOL = 0.001 // 0.001 SOL priority fee as specified
+    const PRIORITY_FEE_LAMPORTS = Math.floor(PRIORITY_FEE_SOL * 1e9)
     
     // Safety checks for real trading
     if (!isSimulated) {
@@ -899,15 +1028,26 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
         throw new Error('Keypair path required for real trading')
       }
       
+      // Check RPC health before trading
+      const rpcHealth = await checkRpcHealth()
+      if (!rpcHealth.healthy) {
+        throw new Error(`Shyft RPC unhealthy: ${rpcHealth.error}`)
+      }
+      
       // Initialize trading infrastructure
       const connection = initializeTradingConnection()
       await initializeTradingKeypair(simulation.keypair_path)
       
       // Check if we can execute the trade
-      const { canTrade, reason } = await canExecuteRealTrade(BUY_AMOUNT_SOL)
+      const { canTrade, reason } = await canExecuteRealTrade(BUY_AMOUNT_SOL, token.token_address)
       if (!canTrade) {
         throw new Error(`Cannot execute real trade: ${reason}`)
       }
+      
+      // Mark token as having active trade
+      activeTrades.add(token.token_address)
+      
+      console.log(`🔥 Real trading safety checks passed - RPC healthy (${rpcHealth.latency}ms), sufficient balance`)
     }
     
     // Create appropriate executor
@@ -919,21 +1059,25 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     
     // Test different slippage configurations
     const slippageConfigs = [
-      { key: 'slippage_1', bps: 100 },
-      { key: 'slippage_2', bps: 200 },
-      { key: 'slippage_5', bps: 500 }
+      { key: 'slippage_1', bps: 100 },   // 1% for simulation comparison
+      { key: 'slippage_2', bps: 200 },   // 2% for simulation comparison  
+      { key: 'slippage_3', bps: 300 }    // 3% - required for real trades
     ]
     
     const configurations: any = {}
     const allResults: TradeExecutionResult[] = []
     
-    // For real trading, we only test once with the best slippage
-    // For simulation, we test all configurations
-    const configsToTest = isSimulated ? slippageConfigs : [slippageConfigs[0]]
+    // For real trading, use 3% slippage for execution but test all for comparison
+    // For simulation, test all configurations
+    const configsToTest = slippageConfigs
+    const realTradeSlippage = 300 // 3% slippage for real trades
     
     for (const config of configsToTest) {
       try {
         console.log(`  📊 Testing ${config.key} (${config.bps} bps slippage)...`)
+        
+        // For real trades, only execute with 3% slippage but record all tests
+        const shouldActuallyExecute = isSimulated || config.bps === realTradeSlippage
         
         const result = await executor.executeBuy({
           tokenAddress: token.token_address,
@@ -941,9 +1085,9 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
           inputMint: SOL_MINT,
           outputMint: token.token_address,
           amount: BUY_AMOUNT_LAMPORTS,
-          slippageBps: config.bps,
+          slippageBps: shouldActuallyExecute ? config.bps : realTradeSlippage,
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
-          priorityFee: 0
+          priorityFee: isSimulated ? 0 : PRIORITY_FEE_LAMPORTS
         })
         
         configurations[config.key] = {
@@ -965,8 +1109,8 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
           console.log(`    ❌ ${config.key}: ${result.error}`)
         }
         
-        // For real trading, break after first successful execution
-        if (!isSimulated && result.success) {
+        // For real trading, break after successful execution at 3% slippage
+        if (!isSimulated && result.success && shouldActuallyExecute) {
           break
         }
         
@@ -989,16 +1133,39 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       }
     }
     
-    // Find best result
+    // Find best result (considering both amount and fees for real trades)
     const bestResult = allResults.reduce((best, current) => {
+      if (!best) return current
+      
       const bestAmount = parseFloat(best.outputAmount)
       const currentAmount = parseFloat(current.outputAmount)
+      
+      // For real trades, also consider fees and slippage
+      if (!isSimulated) {
+        const bestValue = bestAmount - best.fees.totalFees
+        const currentValue = currentAmount - current.fees.totalFees
+        return currentValue > bestValue ? current : best
+      }
+      
+      // For simulation, just compare token amounts
       return currentAmount > bestAmount ? current : best
     }, allResults[0])
     
     if (!bestResult) {
       console.log(`❌ No successful buy ${operationType} for ${token.token_symbol}`)
       return null
+    }
+    
+    // Position validation for real trades
+    if (!isSimulated && bestResult.success) {
+      const tokenAmount = parseFloat(bestResult.outputAmount)
+      const expectedMinTokens = BUY_AMOUNT_SOL * 0.8 / token.current_price // At least 80% of expected
+      
+      if (tokenAmount < expectedMinTokens) {
+        console.warn(`⚠️ Real trade token amount lower than expected: ${tokenAmount} < ${expectedMinTokens}`)
+      } else {
+        console.log(`✅ Real trade position validated: ${tokenAmount} tokens received`)
+      }
     }
     
     const buyOperation: BuyOperation = {
@@ -1024,10 +1191,22 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     }
     
     console.log(`✅ Buy ${operationType} completed for ${token.token_symbol}: ${bestResult.outputAmount} tokens via ${bestResult.provider}${bestResult.signature ? ` (${bestResult.signature})` : ''}`)
+    
+    // Remove from active trades on completion (real trades only)
+    if (!isSimulated) {
+      activeTrades.delete(token.token_address)
+    }
+    
     return buyOperation
     
   } catch (error) {
     console.error(`❌ Error performing buy ${simulation.is_simulated ? 'simulation' : 'real trade'} for ${token.token_symbol}:`, error)
+    
+    // Remove from active trades on error (real trades only)
+    if (!simulation.is_simulated) {
+      activeTrades.delete(token.token_address)
+    }
+    
     return null
   }
 }
@@ -1099,23 +1278,28 @@ async function performSellOperation(
       isSimulated ? undefined : tradingSigner!
     )
     
-    // Test different slippage configurations
+    // Test different slippage configurations  
     const slippageConfigs = [
-      { key: 'slippage_1', bps: 100 },
-      { key: 'slippage_2', bps: 200 },
-      { key: 'slippage_5', bps: 500 }
+      { key: 'slippage_1', bps: 100 },   // 1% for simulation comparison
+      { key: 'slippage_2', bps: 200 },   // 2% for simulation comparison  
+      { key: 'slippage_3', bps: 300 }    // 3% - required for real trades
     ]
     
     const configurations: any = {}
     const allResults: TradeExecutionResult[] = []
     
-    // For real trading, we only test once with the best slippage
-    // For simulation, we test all configurations
-    const configsToTest = isSimulated ? slippageConfigs : [slippageConfigs[0]]
+    // For real trading, use 3% slippage for execution but test all for comparison
+    // For simulation, test all configurations
+    const configsToTest = slippageConfigs
+    const realTradeSlippage = 300 // 3% slippage for real trades
+    const PRIORITY_FEE_LAMPORTS = Math.floor(0.001 * 1e9) // 0.001 SOL priority fee
     
     for (const config of configsToTest) {
       try {
         console.log(`  📊 Testing sell ${config.key} (${config.bps} bps slippage)...`)
+        
+        // For real trades, only execute with 3% slippage but record all tests
+        const shouldActuallyExecute = isSimulated || config.bps === realTradeSlippage
         
         const result = await executor.executeSell({
           tokenAddress: token.token_address,
@@ -1123,9 +1307,9 @@ async function performSellOperation(
           inputMint: token.token_address,
           outputMint: SOL_MINT,
           amount: Math.floor(tokenAmountToSell), // Convert to integer token amount
-          slippageBps: config.bps,
+          slippageBps: shouldActuallyExecute ? config.bps : realTradeSlippage,
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
-          priorityFee: 0
+          priorityFee: isSimulated ? 0 : PRIORITY_FEE_LAMPORTS
         })
         
         configurations[config.key] = {
@@ -1147,8 +1331,8 @@ async function performSellOperation(
           console.log(`    ❌ ${config.key}: ${result.error}`)
         }
         
-        // For real trading, break after first successful execution
-        if (!isSimulated && result.success) {
+        // For real trading, break after successful execution at 3% slippage
+        if (!isSimulated && result.success && shouldActuallyExecute) {
           break
         }
         
@@ -1171,16 +1355,40 @@ async function performSellOperation(
       }
     }
     
-    // Find best result
+    // Find best result (considering both SOL amount and fees for real trades)
     const bestResult = allResults.reduce((best, current) => {
+      if (!best) return current
+      
       const bestAmount = parseFloat(best.outputAmount)
       const currentAmount = parseFloat(current.outputAmount)
+      
+      // For real trades, also consider fees
+      if (!isSimulated) {
+        const bestValue = bestAmount - best.fees.totalFees
+        const currentValue = currentAmount - current.fees.totalFees
+        return currentValue > bestValue ? current : best
+      }
+      
+      // For simulation, just compare SOL amounts
       return currentAmount > bestAmount ? current : best
     }, allResults[0])
     
     if (!bestResult) {
       console.log(`❌ No successful sell ${operationType} for ${token.token_symbol}`)
       return null
+    }
+    
+    // Position validation for real trades
+    if (!isSimulated && bestResult.success) {
+      const solReceived = parseFloat(bestResult.outputAmount) / 1e9 // Convert to SOL
+      const buyAmountSOL = 0.03 // Same as used in buy operation
+      const expectedMinSOL = (tokenAmountToSell * token.last_price_usd * 0.8) / buyAmountSOL // At least 80% of expected
+      
+      if (solReceived < expectedMinSOL) {
+        console.warn(`⚠️ Real sell trade SOL amount lower than expected: ${solReceived} < ${expectedMinSOL}`)
+      } else {
+        console.log(`✅ Real sell trade validated: ${solReceived} SOL received`)
+      }
     }
     
     // Calculate remaining token amount after this sell
@@ -1622,6 +1830,25 @@ export async function POST(request: NextRequest) {
                 price_history: [initialPriceRecord]
               })
             if (error) throw error
+            
+            // Send Discord notification for new token detection
+            if (shouldEnableNotifications()) {
+              try {
+                await sendNewTokenDetectionDiscord({
+                  tokenAddress: token.token_address,
+                  tokenSymbol: token.token_symbol,
+                  tokenName: token.token_name,
+                  currentPrice: token.current_price,
+                  marketCap: token.market_cap,
+                  organicScore: token.organic_score,
+                  volume1h: token.volume_1h,
+                  isRealTrading: tradingSimulation ? !tradingSimulation.is_simulated : false
+                })
+              } catch (discordError) {
+                console.error('❌ Failed to send new token Discord notification:', discordError)
+                // Don't fail the operation if Discord fails
+              }
+            }
           })()
         )
         
@@ -2021,6 +2248,9 @@ function getNotificationStatus(simulationStatus: TradingSimulationStatus): Trade
 const MAX_SOL_AT_RISK = parseFloat(process.env.MAX_SOL_AT_RISK || '1.0') // Maximum SOL that can be at risk
 const MIN_SOL_BALANCE = parseFloat(process.env.MIN_SOL_BALANCE || '0.1') // Minimum SOL balance to maintain
 
+// Track active trades to prevent duplicates
+const activeTrades = new Set<string>()
+
 // Connection management for real trading
 let tradingConnection: Connection | null = null
 let tradingKeypair: Keypair | null = null
@@ -2034,6 +2264,27 @@ function initializeTradingConnection(): Connection {
     console.log('🌐 Real trading connection initialized with Shyft RPC')
   }
   return tradingConnection
+}
+
+// Add RPC health check for real trading
+async function checkRpcHealth(): Promise<{ healthy: boolean, latency?: number, error?: string }> {
+  try {
+    const connection = initializeTradingConnection()
+    const startTime = Date.now()
+    
+    // Test RPC by getting latest blockhash
+    await connection.getLatestBlockhash('confirmed')
+    const latency = Date.now() - startTime
+    
+    console.log(`🏥 Shyft RPC health check passed (${latency}ms)`)
+    return { healthy: true, latency }
+  } catch (error) {
+    console.error('❌ Shyft RPC health check failed:', error)
+    return { 
+      healthy: false, 
+      error: error instanceof Error ? error.message : 'Unknown RPC error' 
+    }
+  }
 }
 
 async function initializeTradingKeypair(keypairPath: string): Promise<void> {
@@ -2076,12 +2327,17 @@ async function getTotalSOLAtRisk(): Promise<number> {
   return totalAtRisk
 }
 
-async function canExecuteRealTrade(buyAmountSOL: number): Promise<{ canTrade: boolean, reason?: string }> {
+async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string): Promise<{ canTrade: boolean, reason?: string }> {
   // Check if we can execute a real trade
   const { balance, canTrade: hasBalance } = await checkTradingBalance()
   
   if (!hasBalance) {
     return { canTrade: false, reason: `Insufficient balance: ${balance.toFixed(4)} SOL < ${MIN_SOL_BALANCE} SOL minimum` }
+  }
+
+  // Check for duplicate trade attempts
+  if (tokenAddress && activeTrades.has(tokenAddress)) {
+    return { canTrade: false, reason: `Trade already in progress for token ${tokenAddress}` }
   }
 
   const totalAtRisk = await getTotalSOLAtRisk()
