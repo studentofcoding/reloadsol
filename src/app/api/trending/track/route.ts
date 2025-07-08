@@ -5,6 +5,8 @@ import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trad
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 
+export const runtime = 'edge'
+
 // ====================================================================================================
 // REAL TRADING SETUP INSTRUCTIONS:
 // ====================================================================================================
@@ -1010,7 +1012,7 @@ async function performTradeComparison(token: any): Promise<TradeComparisonResult
     const enhancedResult = await performEnhancedTradeComparison(
       token.token_address,
       token.token_symbol,
-      0.03 // 0.03 SOL as specified
+      0.015 // 0.015 SOL as specified
     )
     
     // Convert enhanced result to the expected TradeComparisonResult format for backward compatibility
@@ -1201,7 +1203,7 @@ async function trackBotOperation(
 
     // Calculate SOL amount based on operation type
     const solAmount = operationType === 'buy' 
-      ? 0.03 // Fixed buy amount
+      ? 0.015 // Fixed buy amount
       : parseFloat(bestResult.outputAmount) / 1e9 // Convert lamports to SOL for sells
 
     await tradingTracker.trackOperation({
@@ -1329,7 +1331,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     
     // SOL mint address and trading parameters
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
-    const BUY_AMOUNT_SOL = 0.03 // 0.03 SOL per token as specified
+    const BUY_AMOUNT_SOL = 0.015 // 0.015 SOL per token as specified
     const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9)
     const PRIORITY_FEE_SOL = 0.001 // 0.001 SOL priority fee as specified
     const PRIORITY_FEE_LAMPORTS = Math.floor(PRIORITY_FEE_SOL * 1e9)
@@ -1964,7 +1966,7 @@ export async function PUT(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+export async function internalTrackPost(request: NextRequest) {
   const requestStartTime = Date.now()
   const requestId = Math.random().toString(36).substring(7)
 
@@ -2592,7 +2594,10 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// GET method to retrieve trade comparison data for a specific token
+export async function POST(request: NextRequest) {
+  return internalTrackPost(request)
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
