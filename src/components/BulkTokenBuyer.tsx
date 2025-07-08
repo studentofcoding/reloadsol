@@ -50,6 +50,8 @@ export default function BulkTokenBuyer() {
   const [selectedTokenInfo, setSelectedTokenInfo] = useState<TokenInfo | null>(null)
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
   
+  // Duplicate auto-select effect removed (see later effect after validMints declaration)
+
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0)
   const [balanceAfter, setBalanceAfter] = useState<number>(0)
@@ -70,7 +72,15 @@ export default function BulkTokenBuyer() {
   // Parse and validate mint addresses
   const parsedMints = parseMintAddresses(tokenMints)
   const validMints = parsedMints.filter(isValidMintAddress)
-  
+
+  // Auto-select first mint from URL params (display chart automatically)
+  useEffect(() => {
+    if (initialized && validMints.length > 0 && !selectedToken) {
+      handleSelectToken(validMints[0])
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialized, validMints])
+
   // Initialize from URL parameters (run once)
   useEffect(() => {
     if (initialized) return
