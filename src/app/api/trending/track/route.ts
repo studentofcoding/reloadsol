@@ -5,6 +5,29 @@ import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trad
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 
+// ====================================================================================================
+// REAL TRADING SETUP INSTRUCTIONS:
+// ====================================================================================================
+// To enable REAL trading (not simulation), you need to set up the following environment variables:
+//
+// 1. TRADING_KEYPAIR_JSON: Your wallet's private key as a JSON array
+//    Example: [123,45,67,89...] (the secret key from your Solana wallet)
+//    You can get this from your wallet export or Phantom wallet's "Export Private Key"
+//
+// 2. DISCORD_WEBHOOK_AUTO_TRADE: Discord webhook URL for trade notifications
+//    Example: https://discord.com/api/webhooks/YOUR_WEBHOOK_URL
+//
+// 3. Optional safety limits:
+//    - MAX_SOL_AT_RISK=1.0 (maximum SOL that can be at risk across all trades)
+//    - MIN_SOL_BALANCE=0.1 (minimum SOL balance to maintain)
+//
+// To activate real trading for new tokens, use the PUT endpoint:
+// PUT /api/trending/track?key=YOUR_SECRET_KEY
+// Body: { "isSimulated": false }
+//
+// The system will then show "🔥 LIVE TRADING" in Discord notifications instead of "💻 SIMULATION"
+// ====================================================================================================
+
 // Lightweight toggle for verbose logging
 const DEBUG_LOG = process.env.DEBUG === '1' || process.env.DEBUG === 'true'
 // Optional debug logger – only prints when DEBUG env is truthy
@@ -694,6 +717,119 @@ async function sendNewTokenDetectionDiscord(params: {
   }
 }
 
+// Discord notification for successful buy operations
+async function sendBuyNotificationDiscord(params: {
+  tokenSymbol: string | null
+  tokenAddress: string
+  isSimulated: boolean
+  amountSOL: number
+  tokensReceived: string
+  priceUSD: number
+  provider: string
+  rpcUsed: string
+  responseTime: number
+  signature?: string
+  totalFees: number
+}) {
+  try {
+    // Check if Discord notifications are enabled
+    if (!shouldEnableNotifications()) {
+      logTradeOperation('Discord Buy Notification Skipped', {
+        reason: 'Notifications disabled',
+        webhookStatus: 'not configured'
+      })
+      return
+    }
+
+    const {
+      tokenSymbol,
+      tokenAddress,
+      isSimulated,
+      amountSOL,
+      tokensReceived,
+      priceUSD,
+      provider,
+      rpcUsed,
+      responseTime,
+      signature,
+      totalFees
+    } = params
+
+    // Log notification attempt
+    logTradeOperation('Discord Buy Notification Attempt', {
+      tokenSymbol,
+      tokenAddress,
+      isSimulated,
+      amountSOL,
+      provider,
+      signature: signature ? `${signature.slice(0, 8)}...` : 'none'
+    })
+
+    const emoji = isSimulated ? '💻' : '🔥'
+    const mode = isSimulated ? 'SIMULATION' : 'LIVE'
+    const title = `${emoji} BUY Executed (${mode})`
+
+    const lines = [
+      title,
+      ``,
+      `🪙 **${tokenSymbol || 'UNKNOWN'}**`,
+      `💰 Spent: ${amountSOL} SOL`,
+      `🎯 Received: ${parseFloat(tokensReceived).toLocaleString()} tokens`,
+      `📊 Price: $${priceUSD.toFixed(8)}`,
+      `⚡ Provider: ${provider}`,
+      `🌐 RPC: ${rpcUsed}`,
+      `⏱️ Response: ${responseTime}ms`,
+      `💸 Fees: ${totalFees.toFixed(6)} SOL`
+    ]
+
+    // Add signature for real trades
+    if (signature && !isSimulated) {
+      lines.push(`🔗 Signature: \`${signature}\``)
+      lines.push(`📍 [View on Solscan](https://solscan.io/tx/${signature})`)
+    }
+
+    lines.push(``)
+    lines.push(`⏰ ${new Date().toLocaleString()}`)
+
+    const content = lines.join('\n')
+
+    // Add request timing
+    const fetchStartTime = Date.now()
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    })
+
+    const webhookResponseTime = Date.now() - fetchStartTime
+
+    if (!response.ok) {
+      const responseText = await response.text()
+      throw new Error(`Discord webhook failed: ${response.status} ${response.statusText}\nResponse: ${responseText}`)
+    }
+
+    // Log successful notification
+    logTradeOperation('Discord Buy Notification Success', {
+      tokenSymbol,
+      isSimulated,
+      signature: signature ? `${signature.slice(0, 8)}...` : 'none',
+      responseTime: webhookResponseTime,
+      httpStatus: response.status
+    })
+  } catch (err) {
+    // Enhanced error logging
+    logTradeOperation('Discord Buy Notification Error', {
+      tokenSymbol: params.tokenSymbol,
+      isSimulated: params.isSimulated,
+      amountSOL: params.amountSOL,
+      signature: params.signature ? `${params.signature.slice(0, 8)}...` : 'none'
+    }, err as Error)
+    
+    // Re-throw for upstream handling if needed
+    throw err
+  }
+}
+
 // Updated Discord alert function with enhanced error handling
 async function sendTradeAlertDiscord(params: {
   tokenSymbol: string | null
@@ -1212,6 +1348,28 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     }
     
     console.log(`✅ Buy ${operationType} completed for ${token.token_symbol}: ${bestResult.outputAmount} tokens via ${bestResult.provider}${bestResult.signature ? ` (${bestResult.signature})` : ''}`)
+    
+    // Send Discord notification for successful buy operations
+    if (shouldEnableNotifications() && bestResult.success) {
+      try {
+        await sendBuyNotificationDiscord({
+          tokenSymbol: token.token_symbol,
+          tokenAddress: token.token_address,
+          isSimulated: isSimulated,
+          amountSOL: BUY_AMOUNT_SOL,
+          tokensReceived: bestResult.outputAmount,
+          priceUSD: token.current_price,
+          provider: bestResult.provider,
+          rpcUsed: bestResult.rpcUsed,
+          responseTime: bestResult.responseTime,
+          signature: bestResult.signature,
+          totalFees: bestResult.fees.totalFees
+        })
+      } catch (discordError) {
+        console.error('❌ Failed to send buy Discord notification:', discordError)
+        // Don't fail the operation if Discord fails
+      }
+    }
     
     // Remove from active trades on completion (real trades only)
     if (!isSimulated) {
@@ -1763,6 +1921,28 @@ export async function POST(request: NextRequest) {
       const existingToken = trackedTokensMap.get(token.token_address)
       
       if (!existingToken) {
+        // Check if token exists in database with ANY status (not just tracking)
+        const { data: existingAnyStatus } = await supabase
+          .from(TRACKER_TABLE)
+          .select('id, token_address, status, updated_at')
+          .eq('token_address', token.token_address)
+          .single()
+        
+        if (existingAnyStatus) {
+          console.log(`🔄 Token ${token.token_symbol} already exists in database with status: ${existingAnyStatus.status}`)
+          
+          // If token exists but isn't tracking, we can restart it if it's been more than 1 hour
+          const lastUpdate = new Date(existingAnyStatus.updated_at)
+          const hoursSinceUpdate = (Date.now() - lastUpdate.getTime()) / (1000 * 60 * 60)
+          
+          if (hoursSinceUpdate < 1) {
+            console.log(`⏭️ Skipping ${token.token_symbol} - too recent (${hoursSinceUpdate.toFixed(1)}h ago)`)
+            continue
+          } else {
+            console.log(`🔄 Restarting tracking for ${token.token_symbol} (${hoursSinceUpdate.toFixed(1)}h since last update)`)
+          }
+        }
+        
         // Enhanced duplicate check before starting new token tracking
         const duplicateCheck = await performEnhancedDuplicateCheck(token.token_address, token.token_symbol)
         if (!duplicateCheck.canPurchase) {
@@ -1771,7 +1951,8 @@ export async function POST(request: NextRequest) {
         }
 
         // New token - start tracking it and perform trading simulation
-        const tokenId = `track_${token.token_address}_${Date.now()}`
+        // Use existing ID if restarting, otherwise create new one
+        const tokenId = existingAnyStatus?.id || `track_${token.token_address}_${Date.now()}`
         
         // Perform trade comparison for new tokens
         let tradeComparisonData = null
@@ -1856,29 +2037,50 @@ export async function POST(request: NextRequest) {
 
         updatesPromises.push(
           (async () => {
-            const { error } = await supabase
-              .from(TRACKER_TABLE)
-              .insert({
-                id: tokenId,
-                token_address: token.token_address,
-                token_symbol: token.token_symbol,
-                token_name: token.token_name,
-                logo_url: token.logo_url,
-                initial_price_usd: token.current_price,
-                last_price_usd: token.current_price,
-                peak_price_usd: 0,
-                current_gain_percentage: 0,
-                peak_gain_percentage: 0,
-                status: 'tracking',
-                organic_score: token.organic_score,
-                market_cap: token.market_cap,
-                volume_1h: token.volume_1h,
-                tracking_started_at: new Date().toISOString(),
-                trade_comparison_data: tradeComparisonData,
-                trading_simulation: tradingSimulation,
-                price_history: [initialPriceRecord]
-              })
-            if (error) throw error
+            try {
+              // Use UPSERT to handle race conditions and duplicate token addresses
+              const { error } = await supabase
+                .from(TRACKER_TABLE)
+                .upsert({
+                  id: tokenId,
+                  token_address: token.token_address,
+                  token_symbol: token.token_symbol,
+                  token_name: token.token_name,
+                  logo_url: token.logo_url,
+                  initial_price_usd: token.current_price,
+                  last_price_usd: token.current_price,
+                  peak_price_usd: 0,
+                  current_gain_percentage: 0,
+                  peak_gain_percentage: 0,
+                  status: 'tracking',
+                  organic_score: token.organic_score,
+                  market_cap: token.market_cap,
+                  volume_1h: token.volume_1h,
+                  tracking_started_at: new Date().toISOString(),
+                  trade_comparison_data: tradeComparisonData,
+                  trading_simulation: tradingSimulation,
+                  price_history: [initialPriceRecord]
+                }, {
+                  onConflict: 'token_address',
+                  ignoreDuplicates: false
+                })
+              
+              if (error) {
+                // Enhanced error logging for upsert failures
+                logTradeOperation('Database Upsert Error', {
+                  tokenSymbol: token.token_symbol,
+                  tokenAddress: token.token_address,
+                  errorCode: error.code,
+                  errorMessage: error.message,
+                  isRestart: !!existingAnyStatus
+                }, new Error(error.message))
+                throw error
+              }
+            } catch (err) {
+              // Log but don't completely fail if one token update fails
+              console.error(`❌ Failed to upsert token ${token.token_symbol}:`, err)
+              throw err
+            }
             
             // Send Discord notification for new token detection
             if (shouldEnableNotifications()) {
