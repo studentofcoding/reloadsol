@@ -248,3 +248,45 @@ MIT License - see LICENSE file for details
 ## Disclaimer
 
 This software is provided as-is. Always verify transactions and use at your own risk. The developers are not responsible for any financial losses.
+
+## Duplicate Prevention Configuration
+
+The system now includes comprehensive duplicate prevention to avoid repeatedly buying the same tokens. This prevents issues like "BONKGUY" being purchased multiple times, which could lead to insufficient balance errors.
+
+### Environment Variables
+
+Add these to your `.env.local` file to configure duplicate prevention:
+
+```bash
+# Duplicate Prevention Settings
+TOKEN_PURCHASE_COOLDOWN_HOURS=24    # Hours to wait before re-purchasing same token (default: 24)
+MAX_PURCHASES_PER_TOKEN=2           # Maximum times to purchase same token (default: 2)
+
+# Trading Safety Limits  
+MAX_SOL_AT_RISK=1.0                 # Maximum SOL that can be at risk across all positions (default: 1.0)
+MIN_SOL_BALANCE=0.1                 # Minimum SOL balance to maintain (default: 0.1)
+```
+
+### How Duplicate Prevention Works
+
+1. **Active Trade Detection**: Prevents concurrent purchases of the same token
+2. **Wallet Holdings Check**: Skips tokens where wallet already holds significant amounts (≥1000 tokens)
+3. **Purchase History Tracking**: Prevents re-purchasing tokens within cooldown period
+4. **Maximum Purchase Limits**: Enforces maximum number of purchases per token
+5. **Minimum Gap Between Attempts**: Requires at least 2 hours between purchase attempts
+
+### Example Scenarios
+
+- **BONKGUY purchased 3 times**: System will now prevent 4th purchase due to `MAX_PURCHASES_PER_TOKEN=2` limit
+- **Insufficient balance errors**: Better error messages and prevention of repeated failed attempts
+- **Wallet already holding tokens**: System checks wallet balance before attempting new purchases
+- **Recent purchase cooldown**: Prevents immediate re-purchases of tokens that just completed trading cycles
+
+### Logging
+
+The system provides detailed logging for duplicate prevention:
+- `🔍 Performing enhanced duplicate check for TOKEN`
+- `🚫 Skipping TOKEN due to duplicate prevention: REASON`
+- `✅ Enhanced duplicate check passed for TOKEN`
+
+This ensures transparency in trading decisions and helps debug any issues with the duplicate prevention system.

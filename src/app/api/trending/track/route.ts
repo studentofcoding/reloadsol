@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
-import { Connection, VersionedTransaction, Keypair } from '@solana/web3.js'
+import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 
 // Lightweight toggle for verbose logging
@@ -1055,7 +1055,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       await initializeTradingKeypair(simulation.keypair_path)
       
       // Check if we can execute the trade
-      const { canTrade, reason } = await canExecuteRealTrade(BUY_AMOUNT_SOL, token.token_address)
+      const { canTrade, reason } = await canExecuteRealTrade(BUY_AMOUNT_SOL, token.token_address, token.token_symbol)
       if (!canTrade) {
         throw new Error(`Cannot execute real trade: ${reason}`)
       }
@@ -1763,6 +1763,13 @@ export async function POST(request: NextRequest) {
       const existingToken = trackedTokensMap.get(token.token_address)
       
       if (!existingToken) {
+        // Enhanced duplicate check before starting new token tracking
+        const duplicateCheck = await performEnhancedDuplicateCheck(token.token_address, token.token_symbol)
+        if (!duplicateCheck.canPurchase) {
+          console.log(`🚫 Skipping ${token.token_symbol} due to duplicate prevention: ${duplicateCheck.reason}`)
+          continue
+        }
+
         // New token - start tracking it and perform trading simulation
         const tokenId = `track_${token.token_address}_${Date.now()}`
         
@@ -2294,8 +2301,16 @@ function getNotificationStatus(simulationStatus: TradingSimulationStatus): Trade
 const MAX_SOL_AT_RISK = parseFloat(process.env.MAX_SOL_AT_RISK || '1.0') // Maximum SOL that can be at risk
 const MIN_SOL_BALANCE = parseFloat(process.env.MIN_SOL_BALANCE || '0.1') // Minimum SOL balance to maintain
 
+// Configure duplicate prevention
+const TOKEN_PURCHASE_COOLDOWN_HOURS = parseInt(process.env.TOKEN_PURCHASE_COOLDOWN_HOURS || '24') // Hours to wait before re-purchasing same token
+const MAX_PURCHASES_PER_TOKEN = parseInt(process.env.MAX_PURCHASES_PER_TOKEN || '2') // Maximum times to purchase same token
+const MIN_WALLET_BALANCE_FOR_DUPLICATE_CHECK = 1000 // Minimum token balance to consider "already holding"
+
 // Track active trades to prevent duplicates
 const activeTrades = new Set<string>()
+
+// Enhanced duplicate prevention: track recent purchases
+const recentPurchases = new Map<string, { count: number, lastPurchase: Date, purchaseDates: Date[] }>()
 
 // Connection management for real trading
 let tradingConnection: Connection | null = null
@@ -2392,7 +2407,131 @@ async function getTotalSOLAtRisk(): Promise<number> {
   return totalAtRisk
 }
 
-async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string): Promise<{ canTrade: boolean, reason?: string }> {
+// Enhanced duplicate prevention functions
+async function checkWalletHoldings(tokenAddress: string): Promise<{ hasSignificantHolding: boolean, balance: number }> {
+  if (!tradingConnection || !tradingKeypair) {
+    return { hasSignificantHolding: false, balance: 0 }
+  }
+
+  try {
+    // Get token account for this mint
+    const { value: tokenAccounts } = await tradingConnection.getParsedTokenAccountsByOwner(
+      tradingKeypair.publicKey,
+      { mint: new PublicKey(tokenAddress) }
+    )
+
+    if (tokenAccounts.length === 0) {
+      return { hasSignificantHolding: false, balance: 0 }
+    }
+
+    // Sum up all token account balances for this mint
+    const totalBalance = tokenAccounts.reduce((sum, account) => {
+      const amount = account.account.data.parsed.info.tokenAmount.uiAmount
+      return sum + (amount || 0)
+    }, 0)
+
+    const hasSignificantHolding = totalBalance >= MIN_WALLET_BALANCE_FOR_DUPLICATE_CHECK
+
+    console.log(`🔍 Wallet holdings check for ${tokenAddress}: ${totalBalance} tokens (significant: ${hasSignificantHolding})`)
+    
+    return { hasSignificantHolding, balance: totalBalance }
+  } catch (error) {
+    console.error(`❌ Error checking wallet holdings for ${tokenAddress}:`, error)
+    return { hasSignificantHolding: false, balance: 0 }
+  }
+}
+
+async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: string | null): Promise<{ shouldPrevent: boolean, reason?: string }> {
+  try {
+    // Check database for recent purchases of this token
+    const cutoffTime = new Date(Date.now() - TOKEN_PURCHASE_COOLDOWN_HOURS * 60 * 60 * 1000)
+    
+    const { data: recentTokens, error } = await supabase
+      .from(TRACKER_TABLE)
+      .select('id, token_address, token_symbol, tracking_started_at, trading_simulation, status')
+      .eq('token_address', tokenAddress)
+      .gte('tracking_started_at', cutoffTime.toISOString())
+      .order('tracking_started_at', { ascending: false })
+
+    if (error) {
+      console.error(`❌ Error checking purchase history for ${tokenSymbol}:`, error)
+      return { shouldPrevent: false }
+    }
+
+    if (!recentTokens || recentTokens.length === 0) {
+      console.log(`✅ No recent purchases found for ${tokenSymbol}`)
+      return { shouldPrevent: false }
+    }
+
+    // Count only real trading attempts (not pure simulations)
+    const realTradeAttempts = recentTokens.filter(token => {
+      const simulation = token.trading_simulation as TradingSimulation | null
+      return simulation && !simulation.is_simulated && simulation.buy_operation
+    })
+
+    // Count all purchase attempts (including simulations that might become real trades)
+    const allAttempts = recentTokens.length
+
+    console.log(`📊 Purchase history for ${tokenSymbol}: ${realTradeAttempts.length} real trades, ${allAttempts} total attempts in last ${TOKEN_PURCHASE_COOLDOWN_HOURS}h`)
+
+    // Prevent if we've hit the maximum purchases limit
+    if (realTradeAttempts.length >= MAX_PURCHASES_PER_TOKEN) {
+      const lastPurchase = recentTokens[0].tracking_started_at
+      const hoursAgo = Math.round((Date.now() - new Date(lastPurchase).getTime()) / (1000 * 60 * 60))
+      return { 
+        shouldPrevent: true, 
+        reason: `Maximum purchases reached: ${realTradeAttempts.length}/${MAX_PURCHASES_PER_TOKEN} for ${tokenSymbol}. Last purchase ${hoursAgo}h ago. Cooldown: ${TOKEN_PURCHASE_COOLDOWN_HOURS}h` 
+      }
+    }
+
+    // Prevent if we have recent attempts (even if under the max)
+    if (allAttempts > 0) {
+      const lastAttempt = recentTokens[0].tracking_started_at
+      const hoursAgo = Math.round((Date.now() - new Date(lastAttempt).getTime()) / (1000 * 60 * 60))
+      
+      if (hoursAgo < 2) { // Minimum 2 hour gap between attempts
+        return { 
+          shouldPrevent: true, 
+          reason: `Recent purchase attempt for ${tokenSymbol} only ${hoursAgo}h ago. Minimum 2h gap required.` 
+        }
+      }
+    }
+
+    return { shouldPrevent: false }
+  } catch (error) {
+    console.error(`❌ Error checking recent purchase history for ${tokenSymbol}:`, error)
+    return { shouldPrevent: false }
+  }
+}
+
+async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: string | null): Promise<{ canPurchase: boolean, reason?: string }> {
+  console.log(`🔍 Performing enhanced duplicate check for ${tokenSymbol} (${tokenAddress})`)
+
+  // Check 1: Active trades (immediate duplicates)
+  if (activeTrades.has(tokenAddress)) {
+    return { canPurchase: false, reason: `Trade already in progress for ${tokenSymbol}` }
+  }
+
+  // Check 2: Wallet holdings
+  const { hasSignificantHolding, balance } = await checkWalletHoldings(tokenAddress)
+  if (hasSignificantHolding) {
+    return { 
+      canPurchase: false, 
+      reason: `Wallet already holds significant amount of ${tokenSymbol}: ${balance.toLocaleString()} tokens` 
+    }
+  }
+
+  // Check 3: Recent purchase history
+  const { shouldPrevent, reason } = await checkRecentPurchaseHistory(tokenAddress, tokenSymbol)
+  if (shouldPrevent) {
+    return { canPurchase: false, reason }
+  }
+
+  console.log(`✅ Enhanced duplicate check passed for ${tokenSymbol}`)
+  return { canPurchase: true }
+}
+
+async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, tokenSymbol?: string): Promise<{ canTrade: boolean, reason?: string }> {
   // Check if we can execute a real trade
   const { balance, canTrade: hasBalance } = await checkTradingBalance()
   
@@ -2400,9 +2539,12 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string):
     return { canTrade: false, reason: `Insufficient balance: ${balance.toFixed(4)} SOL < ${MIN_SOL_BALANCE} SOL minimum` }
   }
 
-  // Check for duplicate trade attempts
-  if (tokenAddress && activeTrades.has(tokenAddress)) {
-    return { canTrade: false, reason: `Trade already in progress for token ${tokenAddress}` }
+  // Enhanced duplicate prevention check
+  if (tokenAddress) {
+    const duplicateCheck = await performEnhancedDuplicateCheck(tokenAddress, tokenSymbol || null)
+    if (!duplicateCheck.canPurchase) {
+      return { canTrade: false, reason: duplicateCheck.reason }
+    }
   }
 
   const totalAtRisk = await getTotalSOLAtRisk()
@@ -2417,4 +2559,4 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string):
   }
 
   return { canTrade: true }
-} 
+}
