@@ -2,6 +2,7 @@
 
 
 import React, { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Line, Bar } from 'react-chartjs-2'
 import {
   Chart as ChartJS,
@@ -133,75 +134,68 @@ export default function TradingSimulationModal({
 }: TradingSimulationModalProps) {
   const [simulationData, setSimulationData] = useState<TradingSimulationData | null>(null)
   const [priceHistory, setPriceHistory] = useState<PriceRecord[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string>('')
   const lastNotifiedStatusRef = React.useRef<string | null>(null)
+  const [refreshId, setRefreshId] = useState(0)
 
+  const {
+    data: apiData,
+    isFetching: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: ['tradingSimulation', tokenAddress, refreshId],
+    queryFn: async () => {
+      const url = `/api/trending/track?token=${tokenAddress}&isSimulated=${isSimulated}&keypairPath=${encodeURIComponent(keypairPath)}&t=${Date.now()}`
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.json()
+    },
+    enabled: isOpen && !!tokenAddress,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+  })
+
+  const error = queryError ? (queryError as Error).message : ''
+
+  // Update local state when fresh data arrives
   useEffect(() => {
-    if (isOpen && tokenAddress) {
-      fetchSimulationData()
-    }
-  }, [isOpen, tokenAddress])
+    if (!apiData || !apiData.success) return
 
-  const fetchSimulationData = async () => {
-    try {
-      setLoading(true)
-      setError('')
-      
-      const response = await fetch(`/api/trending/track?token=${tokenAddress}&isSimulated=${isSimulated}&keypairPath=${encodeURIComponent(keypairPath)}`)
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch simulation data: ${response.status}`)
+    if (apiData.token) {
+      if (apiData.token.price_history) {
+        setPriceHistory(apiData.token.price_history)
       }
-      
-      const data = await response.json()
-      
-      if (data.success && data.token) {
-        const priceHistoryData = data.token.price_history || []
-        console.log(`📊 Price history for ${tokenAddress}:`, priceHistoryData.length, 'records')
-        setPriceHistory(priceHistoryData)
-      }
-      
-      if (data.success && data.token.trading_simulation) {
-        setSimulationData(data.token.trading_simulation)
-        
-        // Notify on trade triggers if callback provided and status has changed
-        const newStatus = data.token.trading_simulation.current_status
-        if (onTradeTriggered && 
-            newStatus !== lastNotifiedStatusRef.current && 
-            newStatus !== simulationData?.current_status) {
-          
-          // Get the most recent operation details
-          const latestOperation = data.token.trading_simulation.sell_operations?.length > 0 
-            ? data.token.trading_simulation.sell_operations[data.token.trading_simulation.sell_operations.length - 1]
-            : data.token.trading_simulation.buy_operation
+      if (apiData.token.trading_simulation) {
+        setSimulationData(apiData.token.trading_simulation)
 
-          // Get the best configuration from the operation
-          const bestConfig = latestOperation?.best_config || {}
-          
+        const newStatus = apiData.token.trading_simulation.current_status
+        if (
+          onTradeTriggered &&
+          newStatus !== lastNotifiedStatusRef.current &&
+          newStatus !== simulationData?.current_status
+        ) {
+          const latestOperation = apiData.token.trading_simulation.sell_operations?.length > 0
+            ? apiData.token.trading_simulation.sell_operations[apiData.token.trading_simulation.sell_operations.length - 1]
+            : apiData.token.trading_simulation.buy_operation
+
+          const bestConfig: any = latestOperation?.best_config || {}
+
           const details = {
-            currentGain: data.token.current_gain_percentage,
-            peakGain: data.token.peak_gain_percentage,
-            price: data.token.last_price_usd,
+            currentGain: apiData.token.current_gain_percentage,
+            peakGain: apiData.token.peak_gain_percentage,
+            price: apiData.token.last_price_usd,
             status: newStatus,
-            // Add provider, RPC, and timing information
-            provider: bestConfig.provider || latestOperation?.configurations?.best?.provider,
-            rpc: bestConfig.rpc_used || latestOperation?.configurations?.best?.rpc_used,
-            responseTime: bestConfig.response_time || latestOperation?.configurations?.best?.response_time,
+            provider: bestConfig.provider || (latestOperation as any)?.configurations?.best?.provider,
+            rpc: bestConfig.rpc_used || (latestOperation as any)?.configurations?.best?.rpc_used,
+            responseTime: bestConfig.response_time || (latestOperation as any)?.configurations?.best?.response_time,
           }
-          await onTradeTriggered(newStatus, details)
+          onTradeTriggered(newStatus, details)
           lastNotifiedStatusRef.current = newStatus
         }
-      } else {
-        setError('No trading simulation data available for this token')
       }
-    } catch (error) {
-      console.error('Error fetching simulation data:', error)
-      setError(error instanceof Error ? error.message : 'Failed to fetch simulation data')
-    } finally {
-      setLoading(false)
     }
-  }
+  }, [apiData])
+
+  const triggerRefresh = () => setRefreshId(id => id + 1)
 
   // Reset last notified status when modal closes
   useEffect(() => {
@@ -376,12 +370,13 @@ export default function TradingSimulationModal({
 
   const chartConfig = React.useMemo(
     () => getPriceHistoryChartConfig(priceHistory),
-    [priceHistory]
+    // Recompute only when the latest datapoint changes
+    [priceHistory.length ? priceHistory[priceHistory.length - 1] : null]
   )
 
   const configPerformanceChart = React.useMemo(
     () => simulationData ? getConfigurationPerformanceChartConfig(simulationData) : null,
-    [simulationData]
+    [simulationData?.buy_operation?.timestamp, simulationData?.sell_operation?.timestamp]
   )
 
   if (!isOpen) return null

@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 
 interface TradeComparisonData {
   token_address: string
@@ -78,75 +79,36 @@ export default function TradeComparisonModal({
   tokenName,
   logoUrl
 }: TradeComparisonModalProps) {
-  const [tradeData, setTradeData] = useState<TradeComparisonData | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string>('')
-  const [isRetesting, setIsRetesting] = useState(false)
+  const [refreshId, setRefreshId] = useState(0)
 
-  useEffect(() => {
-    if (isOpen && tokenAddress) {
-      fetchTradeComparisonData(true)
-    }
-  }, [isOpen, tokenAddress])
-
-  const fetchTradeComparisonData = async (forceRefresh: boolean = false) => {
-    try {
-      setLoading(true)
-      setError('')
-      setIsRetesting(forceRefresh)
-      
-      if (forceRefresh) {
-        setTradeData(null)
-      }
-      
-      const url = forceRefresh 
+  const {
+    data: apiData,
+    isFetching: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: ['tradeComparison', tokenAddress, refreshId],
+    queryFn: async () => {
+      const url = refreshId
         ? `/api/trending/track?token=${tokenAddress}&refresh=true&t=${Date.now()}`
         : `/api/trending/track?token=${tokenAddress}`
-      
-      console.log(`🔄 Fetching trade comparison data: ${forceRefresh ? 'force refresh' : 'cached'}`)
-      const response = await fetch(url)
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch trade comparison data: ${response.status}`)
-      }
-      
-      const data = await response.json()
-      
-      if (data.success) {
-        if (data.token.trade_comparison_data) {
-          console.log('✅ Trade comparison data received:', {
-            provider: data.token.trade_comparison_data.best_config.provider,
-            tokenAmount: data.token.trade_comparison_data.best_config.token_amount,
-            timestamp: data.token.trade_comparison_data.timestamp
-          })
-          setTradeData(data.token.trade_comparison_data)
-        } else {
-          console.log('⚠️ No trade comparison data available')
-          setError('No trade comparison data available for this token')
-        }
-      } else {
-        console.error('❌ Failed to fetch token data:', data.error)
-        setError('Failed to fetch token data')
-      }
-    } catch (error) {
-      console.error('❌ Error fetching trade comparison data:', error)
-      setError(error instanceof Error ? error.message : 'Failed to fetch trade comparison data')
-    } finally {
-      setLoading(false)
-      setIsRetesting(false)
-    }
-  }
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.json()
+    },
+    enabled: isOpen && !!tokenAddress,
+    staleTime: 60_000,
+    gcTime: 5 * 60_000,
+  })
+
+  const tradeData: TradeComparisonData | null = (apiData as any)?.token?.trade_comparison_data ?? null
+  const error = queryError ? (queryError as Error).message : ''
 
   const handleReset = () => {
-    setTradeData(null)
-    setError('')
-    fetchTradeComparisonData(true)
+    setRefreshId(id => id + 1)
   }
 
   const handleTest = () => {
-    if (!loading && !isRetesting) {
-      fetchTradeComparisonData(true)
-    }
+    if (!loading) setRefreshId(id => id + 1)
   }
 
   const formatNumber = (num: number, decimals: number = 6) => {
@@ -157,7 +119,7 @@ export default function TradeComparisonModal({
   }
 
   const formatTokenAmount = (amount: string) => {
-    const num = parseFloat(amount)
+    const num = parseFloat(amount) / 1_000_000_000 // Convert from lamports to SOL
     if (num === 0) return '0'
     if (num < 0.000001) return '< 0.000001'
     return formatNumber(num, 6)
@@ -202,14 +164,14 @@ export default function TradeComparisonModal({
             <div className="flex items-center space-x-3">
               <button
                 onClick={handleTest}
-                disabled={loading || isRetesting}
+                disabled={loading}
                 className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                  loading || isRetesting
+                  loading
                     ? 'bg-blue-600/50 cursor-not-allowed'
                     : 'bg-blue-600 hover:bg-blue-700'
                 }`}
               >
-                {isRetesting ? (
+                {loading ? (
                   <span className="flex items-center">
                     <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
@@ -229,9 +191,9 @@ export default function TradeComparisonModal({
               </button>
               <button
                 onClick={handleReset}
-                disabled={loading || isRetesting}
+                disabled={loading}
                 className={`px-4 py-2 rounded-lg font-medium transition-all ${
-                  loading || isRetesting
+                  loading
                     ? 'bg-gray-600/50 cursor-not-allowed'
                     : 'bg-gray-600 hover:bg-gray-700'
                 }`}
@@ -251,7 +213,7 @@ export default function TradeComparisonModal({
               </button>
             </div>
           </div>
-          {(loading || isRetesting) && (
+          {loading && (
             <div className="absolute bottom-0 left-0 right-0 h-0.5">
               <div className="absolute h-full bg-blue-500 animate-[progress_2s_ease-in-out_infinite]" style={{width: '25%'}}></div>
             </div>
@@ -266,7 +228,7 @@ export default function TradeComparisonModal({
             </div>
           )}
 
-          {loading && !isRetesting && (
+          {loading && (
             <div className="flex items-center justify-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
               <span className="ml-2 text-gray-400">Loading trade comparison data...</span>

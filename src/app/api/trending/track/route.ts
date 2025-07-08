@@ -7,6 +7,12 @@ import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 
 // Lightweight toggle for verbose logging
 const DEBUG_LOG = process.env.DEBUG === '1' || process.env.DEBUG === 'true'
+// Optional debug logger – only prints when DEBUG env is truthy
+const dbg = (...args: any[]): void => {
+  if (DEBUG_LOG) {
+    console.log(...args)
+  }
+}
 
 // === Table selection (use alternate tables in local development to avoid prod collisions) ===
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
@@ -1060,12 +1066,15 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       console.log(`🔥 Real trading safety checks passed - RPC healthy (${rpcHealth.latency}ms), sufficient balance`)
     }
     
-    // Create appropriate executor
+    // Choose executors
     const executor = createTradeExecutor(
       isSimulated,
       isSimulated ? undefined : tradingConnection!,
       isSimulated ? undefined : tradingSigner!
     )
+
+    // When doing a real trade we still want paper comparisons for other slippages
+    const simExecutor = isSimulated ? executor : new SimulationExecutor()
     
     // Test different slippage configurations
     const slippageConfigs = [
@@ -1086,18 +1095,19 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       try {
         console.log(`  📊 Testing ${config.key} (${config.bps} bps slippage)...`)
         
-        // For real trades, only execute with 3% slippage but record all tests
+        // For real trades, only the 3 % config hits chain – others use SimulationExecutor
         const shouldActuallyExecute = isSimulated || config.bps === realTradeSlippage
+        const exec = shouldActuallyExecute ? executor : simExecutor
         
-        const result = await executor.executeBuy({
+        const result = await exec.executeBuy({
           tokenAddress: token.token_address,
           tokenSymbol: token.token_symbol,
           inputMint: SOL_MINT,
           outputMint: token.token_address,
           amount: BUY_AMOUNT_LAMPORTS,
-          slippageBps: shouldActuallyExecute ? config.bps : realTradeSlippage,
+          slippageBps: config.bps,
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
-          priorityFee: isSimulated ? 0 : PRIORITY_FEE_LAMPORTS
+          priorityFee: shouldActuallyExecute ? PRIORITY_FEE_LAMPORTS : 0
         })
         
         configurations[config.key] = {
@@ -1119,7 +1129,8 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
           console.log(`    ❌ ${config.key}: ${result.error}`)
         }
         
-        // For real trading, break after successful execution at 3% slippage
+        // For real trading, break loop once the live 3 % trade succeeded –
+        // we already gathered simulation results for other configs.
         if (!isSimulated && result.success && shouldActuallyExecute) {
           break
         }
@@ -1288,6 +1299,8 @@ async function performSellOperation(
       isSimulated ? undefined : tradingSigner!
     )
     
+    const simExecutor = isSimulated ? executor : new SimulationExecutor()
+    
     // Test different slippage configurations  
     const slippageConfigs = [
       { key: 'slippage_1', bps: 100 },   // 1% for simulation comparison
@@ -1311,15 +1324,17 @@ async function performSellOperation(
         // For real trades, only execute with 3% slippage but record all tests
         const shouldActuallyExecute = isSimulated || config.bps === realTradeSlippage
         
-        const result = await executor.executeSell({
+        const exec = shouldActuallyExecute ? executor : simExecutor
+        
+        const result = await exec.executeSell({
           tokenAddress: token.token_address,
           tokenSymbol: token.token_symbol,
           inputMint: token.token_address,
           outputMint: SOL_MINT,
           amount: Math.floor(tokenAmountToSell), // Convert to integer token amount
-          slippageBps: shouldActuallyExecute ? config.bps : realTradeSlippage,
+          slippageBps: config.bps,
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
-          priorityFee: isSimulated ? 0 : PRIORITY_FEE_LAMPORTS
+          priorityFee: shouldActuallyExecute ? PRIORITY_FEE_LAMPORTS : 0
         })
         
         configurations[config.key] = {
@@ -2336,6 +2351,10 @@ async function getTotalSOLAtRisk(): Promise<number> {
 
     // Skip simulated positions entirely
     if (simulation.is_simulated) continue
+
+    // Only consider simulations whose buy actually reached the chain (has signature)
+    const buySig = (simulation.buy_operation as any)?.signature
+    if (!buySig) continue
 
     // We only count positions that are still holding tokens
     if (simulation.current_status !== 'holding') continue
