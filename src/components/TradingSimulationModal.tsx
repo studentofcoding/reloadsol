@@ -544,6 +544,14 @@ export default function TradingSimulationModal({
             </div>
           )}
 
+          {/* Show warning if trade/simulation absent */}
+          {!simulationData && priceHistory.length > 0 && !loading && (
+            <div className="bg-red-900/20 border border-red-600/30 rounded-lg p-4">
+              <h3 className="text-lg font-semibold text-red-400 mb-2">⚠️ Trade Execution Failed</h3>
+              <p className="text-red-300 text-sm">No trading simulation or live trade data was recorded for this token. The buy transaction likely failed or was never submitted.</p>
+            </div>
+          )}
+
           {/* Simulation sections rendered below if data available */}
           {simulationData && (
             <div className="space-y-6">

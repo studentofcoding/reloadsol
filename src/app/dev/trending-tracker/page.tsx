@@ -42,6 +42,7 @@ interface TrackedToken {
   updated_at: string
   trade_comparison_data?: any | null
   trading_simulation?: any | null
+  price_history?: any[] | null
 }
 
 interface Summary {
@@ -467,16 +468,12 @@ export default function TrendingTrackerPage() {
 
   // Handler to open appropriate modal based on available data
   const handleTokenClick = (token: TrackedToken) => {
-    setSelectedToken(token)
-    
-    // Prioritize trading simulation data over trade comparison data
-    if (token.trading_simulation) {
+    if (token.trading_simulation || token.price_history?.length) {
+      setSelectedToken(token)
       setSimulationModalOpen(true)
     } else if (token.trade_comparison_data) {
+      setSelectedToken(token)
       setTradeComparisonModalOpen(true)
-    } else {
-      // No data available - still open simulation modal to show "no data" message
-      setSimulationModalOpen(true)
     }
   }
 
