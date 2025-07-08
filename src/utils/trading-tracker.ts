@@ -346,35 +346,16 @@ class TradingTracker {
 
   // Subscribe to real-time updates for a wallet (using polling)
   subscribeToWallet(walletAddress: string, callback: (records: TrackingRecord[]) => void): () => void {
+    // Add subscriber and immediately emit current cache (if any)
     this.subscribers.add(callback)
+    callback(this.cache.get(walletAddress) || [])
 
-    // Setup polling if not already done
-    if (!this.pollingInterval) {
-      this.pollingInterval = setInterval(async () => {
-        // Poll for updates every 5 seconds
-        try {
-          // Simple polling - in a real app you might want to track last update time
-          this.notifySubscribers(walletAddress)
-        } catch (error) {
-          console.error('Polling error:', error)
-        }
-      }, 5000)
-    }
-
-    // Return unsubscribe function
+    // Return unsubscribe function (no polling to clean up)
     return () => {
       this.subscribers.delete(callback)
-      
-      // If no more subscribers, clean up polling
-      if (this.subscribers.size === 0) {
-        if (this.pollingInterval) {
-          clearInterval(this.pollingInterval)
-          this.pollingInterval = null
-        }
-      }
     }
   }
-
+  
   // Notify subscribers of changes
   private notifySubscribers(walletAddress: string): void {
     this.subscribers.forEach(callback => {
