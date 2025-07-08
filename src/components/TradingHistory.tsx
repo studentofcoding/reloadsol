@@ -146,16 +146,17 @@ export default function TradingHistory() {
 
   // No need for event listeners since React Query handles real-time updates
 
-  const getOperationIcon = (type: string) => {
+  const getOperationIcon = (type: string, isBot?: boolean) => {
+    const botPrefix = isBot ? '🤖' : ''
     switch (type) {
       case 'buy':
-        return '🟢'
+        return botPrefix + '🟢'
       case 'sell':
-        return '🔴'
+        return botPrefix + '🔴'
       case 'close':
-        return '🟡'
+        return botPrefix + '🟡'
       default:
-        return '⚪'
+        return botPrefix + '⚪'
     }
   }
 
@@ -226,6 +227,7 @@ export default function TradingHistory() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   <span className="text-sm text-gray-400 capitalize font-medium flex items-center space-x-2">
+                    <span>{getOperationIcon(record.operationType, (record as any).is_bot_operation)}</span>
                     {record.operationType === 'sell' && record.totalTokens > record.tokens.length 
                       ? 'sell & close' 
                       : record.operationType

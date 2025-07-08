@@ -166,6 +166,10 @@ interface BuyOperation {
     rpc_used: string
   }
   rpc_used: string
+  // Enhanced bot tracking
+  is_bot_operation?: boolean
+  bot_strategy?: string
+  signature?: string
 }
 
 interface SellOperation {
@@ -189,6 +193,10 @@ interface SellOperation {
   rpc_used: string
   final_gain_percentage: number
   hold_duration_hours: number
+  // Enhanced bot tracking
+  is_bot_operation?: boolean
+  bot_strategy?: string
+  signature?: string
 }
 
 interface BuyConfigResult {
@@ -1160,6 +1168,158 @@ async function runDailySummary(currentTime: Date): Promise<void> {
   }
 }
 
+// Enhanced bot operation tracking helper
+async function trackBotOperation(
+  operationType: 'buy' | 'sell',
+  token: any,
+  bestResult: TradeExecutionResult,
+  isSimulated: boolean,
+  strategy: string = 'auto-trending'
+): Promise<void> {
+  try {
+    // Only track if we have a keypair (real bot operations)
+    if (!tradingKeypair && !isSimulated) return
+    
+    const { getSolPriceUSD } = await import('@/utils/solana')
+    const { tradingTracker } = await import('@/utils/trading-tracker')
+    
+    const currentSolPrice = await getSolPriceUSD()
+    const walletAddress = tradingKeypair?.publicKey.toString() || 'simulation'
+    
+    const tokenData = {
+      mintAddress: token.token_address,
+      symbol: token.token_symbol,
+      name: token.token_name,
+      logoURI: token.logo_url,
+      priceUsd: token.current_price || token.last_price_usd,
+      tokenAmount: parseFloat(bestResult.outputAmount) || 0,
+      solPrice: currentSolPrice,
+      // Mark as bot operation
+      isBot: true,
+      botStrategy: strategy
+    }
+
+    // Calculate SOL amount based on operation type
+    const solAmount = operationType === 'buy' 
+      ? 0.03 // Fixed buy amount
+      : parseFloat(bestResult.outputAmount) / 1e9 // Convert lamports to SOL for sells
+
+    await tradingTracker.trackOperation({
+      walletAddress,
+      operationType,
+      tokens: [tokenData],
+      successCount: 1,
+      failureCount: 0,
+      totalTokens: 1,
+      solAmount,
+      feesPaid: bestResult.fees?.totalFees || 0,
+      solPriceUsd: currentSolPrice,
+      totalUsdValue: currentSolPrice ? solAmount * currentSolPrice : undefined,
+      signatures: bestResult.signature ? [bestResult.signature] : [],
+      slippage: 3, // 3% slippage for bot operations
+      priorityFee: 100000, // 0.0001 SOL priority fee
+      errors: undefined
+    })
+
+    console.log(`🤖 Bot operation tracked: ${operationType} ${token.token_symbol} (${strategy})`)
+  } catch (error) {
+    console.error(`❌ Failed to track bot operation:`, error)
+    // Don't throw - continue with the operation even if tracking fails
+  }
+}
+
+// Wallet balance monitoring for manual sell detection
+const monitoredTokens = new Map<string, {
+  lastBalance: number
+  lastCheck: number
+  tokenData: any
+}>()
+
+// Enhanced manual sell detection
+async function checkForManualSells(tokens: TrackedToken[]): Promise<void> {
+  if (!tradingKeypair || !tradingConnection) return
+
+  try {
+    const { value: tokenAccounts } = await tradingConnection.getParsedTokenAccountsByOwner(
+      tradingKeypair.publicKey,
+      { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+    )
+
+    // Process each tracked token
+    for (const token of tokens) {
+      if (token.status !== 'tracking' || !token.trading_simulation) continue
+      
+      const tokenAccount = tokenAccounts.find(account => 
+        account.account.data.parsed.info.mint === token.token_address
+      )
+      
+      const currentBalance = tokenAccount 
+        ? tokenAccount.account.data.parsed.info.tokenAmount.uiAmount || 0
+        : 0
+      
+      const monitoredToken = monitoredTokens.get(token.token_address)
+      
+      if (monitoredToken) {
+        const balanceDecrease = monitoredToken.lastBalance - currentBalance
+        
+        // Detect significant balance decrease (manual sell)
+        if (balanceDecrease > 0.001 && balanceDecrease > monitoredToken.lastBalance * 0.1) {
+          console.log(`🚨 Manual sell detected for ${token.token_symbol}: ${balanceDecrease.toFixed(6)} tokens sold`)
+          
+          // Mark trading simulation as manually closed
+          if (token.trading_simulation) {
+            token.trading_simulation.current_status = 'completed'
+            token.trading_simulation.final_result = {
+              ...token.trading_simulation.final_result,
+              success: true,
+              manual_intervention: true,
+              manual_sell_detected: true
+            } as any
+            
+            // Update token status to won (manual intervention)
+            await supabase
+              .from(TRACKER_TABLE)
+              .update({
+                status: 'won',
+                status_changed_at: new Date().toISOString(),
+                trading_simulation: token.trading_simulation
+              })
+              .eq('id', token.id)
+            
+            // Send Discord notification about manual sell
+            if (shouldEnableNotifications()) {
+              try {
+                await sendTradeAlertDiscord({
+                  tokenSymbol: token.token_symbol,
+                  status: 'completed',
+                  isSimulated: false,
+                  currentGain: token.current_gain_percentage,
+                  peakGain: token.peak_gain_percentage,
+                  priceUsd: token.last_price_usd,
+                  provider: 'manual',
+                  rpcUsed: 'manual',
+                  responseTime: 0
+                })
+              } catch (error) {
+                console.error('❌ Failed to send manual sell Discord notification:', error)
+              }
+            }
+          }
+        }
+      }
+      
+      // Update monitoring data
+      monitoredTokens.set(token.token_address, {
+        lastBalance: currentBalance,
+        lastCheck: Date.now(),
+        tokenData: token
+      })
+    }
+  } catch (error) {
+    console.error('❌ Error checking for manual sells:', error)
+  }
+}
+
 // Unified buy operation (supports both simulation and real trading)
 async function performBuyOperation(token: any, simulation: TradingSimulation): Promise<BuyOperation | null> {
   try {
@@ -1339,15 +1499,24 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
         total_fees: bestResult.fees.totalFees,
         rpc_used: bestResult.rpcUsed
       },
-      rpc_used: bestResult.rpcUsed
-    }
-    
-    // Add signature for real trades
-    if (bestResult.signature) {
-      (buyOperation as any).signature = bestResult.signature
+      rpc_used: bestResult.rpcUsed,
+      // Enhanced bot tracking
+      is_bot_operation: true,
+      bot_strategy: 'auto-trending-tracker',
+      signature: bestResult.signature
     }
     
     console.log(`✅ Buy ${operationType} completed for ${token.token_symbol}: ${bestResult.outputAmount} tokens via ${bestResult.provider}${bestResult.signature ? ` (${bestResult.signature})` : ''}`)
+    
+    // Track bot operation in the trading tracker system
+    if (bestResult.success) {
+      try {
+        await trackBotOperation('buy', token, bestResult, isSimulated, 'auto-trending-tracker')
+      } catch (trackError) {
+        console.error('❌ Failed to track bot buy operation:', trackError)
+        // Don't fail the operation if tracking fails
+      }
+    }
     
     // Send Discord notification for successful buy operations
     if (shouldEnableNotifications() && bestResult.success) {
@@ -1602,16 +1771,25 @@ async function performSellOperation(
       },
       rpc_used: bestResult.rpcUsed,
       final_gain_percentage: finalGainPercentage,
-      hold_duration_hours: holdDurationHours
-    }
-    
-    // Add signature for real trades
-    if (bestResult.signature) {
-      (sellOperation as any).signature = bestResult.signature
+      hold_duration_hours: holdDurationHours,
+      // Enhanced bot tracking
+      is_bot_operation: true,
+      bot_strategy: 'auto-trending-tracker',
+      signature: bestResult.signature
     }
     
     // Update simulation's remaining token amount
     simulation.remaining_token_amount = remainingTokens
+    
+    // Track bot sell operation in the trading tracker system
+    if (bestResult.success) {
+      try {
+        await trackBotOperation('sell', token, bestResult, isSimulated, 'auto-trending-tracker')
+      } catch (trackError) {
+        console.error('❌ Failed to track bot sell operation:', trackError)
+        // Don't fail the operation if tracking fails
+      }
+    }
     
     console.log(`✅ ${sellPercentage}% sell ${operationType} completed for ${token.token_symbol}: ${bestResult.outputAmount} SOL received, ${remainingTokens} tokens remaining${bestResult.signature ? ` (${bestResult.signature})` : ''}`)
     return sellOperation
@@ -1891,6 +2069,16 @@ export async function POST(request: NextRequest) {
          trading_simulation, price_history`
       )
       .eq('status', 'tracking')
+
+    // Check for manual sells before processing new tokens
+    if (trackedTokens && trackedTokens.length > 0) {
+      try {
+        await checkForManualSells(trackedTokens as TrackedToken[])
+      } catch (error) {
+        console.error('❌ Error checking for manual sells:', error)
+        // Continue processing even if manual sell detection fails
+      }
+    }
 
     if (fetchError) {
       throw new Error(`Failed to fetch tracked tokens: ${fetchError.message}`)

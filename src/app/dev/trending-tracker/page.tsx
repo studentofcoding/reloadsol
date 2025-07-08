@@ -17,7 +17,7 @@ interface TopWinner {
   peak_gain_percentage: number
   tracking_duration_hours: number
   status_changed_at: string
-  status?: 'tracking' | 'won' | 'lost'
+  status?: 'tracking' | 'won' | 'lost' | 'manual_sell'
   current_gain_percentage?: number
 }
 
@@ -32,7 +32,7 @@ interface TrackedToken {
   peak_price_usd: number
   current_gain_percentage: number
   peak_gain_percentage: number
-  status: 'tracking' | 'won' | 'lost'
+  status: 'tracking' | 'won' | 'lost' | 'manual_sell'
   organic_score: number | null
   market_cap: number | null
   volume_1h: number | null
@@ -1092,6 +1092,7 @@ export default function TrendingTrackerPage() {
                         const isWinner = token.peak_gain_percentage > 0
                         const currentGain = token.current_gain_percentage ?? token.peak_gain_percentage
                         const isLoser = currentGain < -50 || (token.status && token.status === 'lost')
+                        const isManualSell = token.status === 'manual_sell'
                         const displayGain = isLoser ? currentGain : token.peak_gain_percentage
                         
                         return (
@@ -1100,6 +1101,7 @@ export default function TrendingTrackerPage() {
                             className={`flex items-center justify-between p-3 rounded-lg hover:bg-gray-600 transition-all duration-200 cursor-pointer ${
                               isWinner ? 'bg-gray-700 border border-green-600/20' : 
                               isLoser ? 'bg-gray-700 border border-red-600/20' : 
+                              isManualSell ? 'bg-gray-700 border border-orange-600/20' :
                               'bg-gray-700'
                             }`}
                             onClick={() => handleSummaryTokenClick(token)}
@@ -1120,6 +1122,11 @@ export default function TrendingTrackerPage() {
                                     <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
                                       <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
                                     </svg>
+                                  </div>
+                                )}
+                                {isManualSell && (
+                                  <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-600 rounded-full flex items-center justify-center" title="Manual sell detected - bot stopped">
+                                    <span className="text-white text-xs">👤</span>
                                   </div>
                                 )}
                               </div>

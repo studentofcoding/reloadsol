@@ -9,6 +9,7 @@ import { getSolPriceUSD, SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/
 import { fetchUserTokens, executeBulkSell, BulkSellRequest, UserToken, TokenToSell } from '@/utils/jupiter'
 import { trackSell } from '@/utils/operations-api'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
+// Using emojis for bot operations to avoid dependencies
 
 interface PnLRecord {
   id: string
