@@ -1966,7 +1966,7 @@ export async function PUT(request: NextRequest) {
   }
 }
 
-export async function internalTrackPost(request: NextRequest) {
+async function internalTrackPost(request: NextRequest) {
   const requestStartTime = Date.now()
   const requestId = Math.random().toString(36).substring(7)
 
