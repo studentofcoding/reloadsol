@@ -173,9 +173,9 @@ export default function TradingSimulationModal({
           newStatus !== lastNotifiedStatusRef.current &&
           newStatus !== simulationData?.current_status
         ) {
-          const latestOperation = apiData.token.trading_simulation.sell_operations?.length > 0
-            ? apiData.token.trading_simulation.sell_operations[apiData.token.trading_simulation.sell_operations.length - 1]
-            : apiData.token.trading_simulation.buy_operation
+          const latestOperation =
+            apiData.token.trading_simulation.sell_operation ??
+            apiData.token.trading_simulation.buy_operation
 
           const bestConfig: any = latestOperation?.best_config || {}
 

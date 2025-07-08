@@ -1724,7 +1724,14 @@ export async function POST(request: NextRequest) {
     // Get currently tracked tokens
     const { data: trackedTokens, error: fetchError } = await supabase
       .from(TRACKER_TABLE)
-      .select(`id, token_address, token_symbol, token_name, logo_url, initial_price_usd, last_price_usd, peak_price_usd, current_gain_percentage, peak_gain_percentage, status, organic_score, market_cap, volume_1h, tracking_started_at, trading_simulation, price_history`)
+      .select(
+        `id, token_address, token_symbol, token_name, logo_url,
+         initial_price_usd, last_price_usd, peak_price_usd,
+         current_gain_percentage, peak_gain_percentage, status,
+         organic_score, market_cap, volume_1h,
+         tracking_started_at, updated_at,
+         trading_simulation, price_history`
+      )
       .eq('status', 'tracking')
 
     if (fetchError) {
@@ -1740,6 +1747,16 @@ export async function POST(request: NextRequest) {
     let tokensUpdated = 0
     let tokensLost = 0
     let updatesPromises: Promise<any>[] = []
+
+    // at the top of POST handler, just after you fetch `trackedTokens`
+    const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    const purgeIds = trackedTokens
+      ?.filter(t => t.status !== 'tracking' && new Date(t.updated_at) < cutoff24h)
+      .map(t => t.id)
+
+    if (purgeIds?.length) {
+      await supabase.from(TRACKER_TABLE).delete().in('id', purgeIds)
+    }
 
     // Process each trending token
     for (const token of filteredTokens) {
