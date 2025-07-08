@@ -1315,7 +1315,7 @@ async function performSellOperation(
     // For simulation, test all configurations
     const configsToTest = slippageConfigs
     const realTradeSlippage = 300 // 3% slippage for real trades
-    const PRIORITY_FEE_LAMPORTS = Math.floor(0.001 * 1e9) // 0.001 SOL priority fee
+    const PRIORITY_FEE_LAMPORTS = Math.floor(0.0005 * 1e9) // 0.0005 SOL priority fee
     
     for (const config of configsToTest) {
       try {
@@ -1406,7 +1406,7 @@ async function performSellOperation(
     // Position validation for real trades
     if (!isSimulated && bestResult.success) {
       const solReceived = parseFloat(bestResult.outputAmount) / 1e9 // Convert to SOL
-      const buyAmountSOL = 0.03 // Same as used in buy operation
+      const buyAmountSOL = 0.02 // Same as used in buy operation
       const expectedMinSOL = (tokenAmountToSell * token.last_price_usd * 0.8) / buyAmountSOL // At least 80% of expected
       
       if (solReceived < expectedMinSOL) {
