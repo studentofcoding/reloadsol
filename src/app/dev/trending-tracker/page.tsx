@@ -124,6 +124,9 @@ export default function TrendingTrackerPage() {
   const [currentPage, setCurrentPage] = useState<number>(1)
   const [itemsPerPage, setItemsPerPage] = useState<number>(12)
   
+  // New: tracking mode filter ('all' | 'real' | 'sim')
+  const [trackingModeFilter, setTrackingModeFilter] = useState<'all' | 'real' | 'sim'>('all')
+  
   // Advanced filter state
   const [sinceFilter, setSinceFilter] = useState<string>('all') // 'all', '1', '4', '12', '24', '48' (hours)
   const [priceMin, setPriceMin] = useState<string>('')
@@ -749,6 +752,11 @@ export default function TrendingTrackerPage() {
     </div>
   )
 
+  const getTokenMode = (token: TrackedToken): 'real' | 'sim' => {
+    if (token.trading_simulation && !token.trading_simulation.is_simulated) return 'real'
+    return 'sim'
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-6">
@@ -1296,8 +1304,20 @@ export default function TrendingTrackerPage() {
 
             {(() => {
               const filteredTokens = applyFilters(stats.current_tracking.tokens)
+
+              // Apply tracking mode filter (real vs simulation)
+              const modeFilteredTokens = filteredTokens.filter(token => {
+                if (trackingModeFilter === 'all') return true
+                const mode = getTokenMode(token)
+                return trackingModeFilter === mode
+              })
+
+              // Counts for tab labels
+              const realCount = stats.current_tracking.tokens.filter(t => getTokenMode(t) === 'real').length
+              const simCount = stats.current_tracking.tokens.filter(t => getTokenMode(t) === 'sim').length
+
               const totalPages = getTotalPages(filteredTokens.length, itemsPerPage)
-              const paginatedTokens = paginateTokens(filteredTokens, currentPage, itemsPerPage)
+              const paginatedTokens = paginateTokens(modeFilteredTokens, currentPage, itemsPerPage)
               
               if (stats.current_tracking.tokens.length === 0) {
                 return (
@@ -1305,7 +1325,7 @@ export default function TrendingTrackerPage() {
                 )
               }
               
-              if (filteredTokens.length === 0) {
+              if (modeFilteredTokens.length === 0) {
                 return (
                   <div className="text-center py-8">
                     <p className="text-gray-400 mb-2">No tokens found matching "{searchQuery}"</p>
@@ -1321,10 +1341,30 @@ export default function TrendingTrackerPage() {
               
               return (
                 <>
+                  {/* Mode Filter Tabs */}
+                  <div className="flex space-x-1 mb-4">
+                    {[
+                      { key: 'all', label: `All (${stats.current_tracking.statistics.total_tracking})` },
+                      { key: 'real', label: `Real (${realCount})` },
+                      { key: 'sim', label: `Simulation (${simCount})` }
+                    ].map(tab => (
+                      <button
+                        key={tab.key}
+                        onClick={() => { setTrackingModeFilter(tab.key as any); setCurrentPage(1) }}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all min-w-max ${
+                          trackingModeFilter === tab.key
+                            ? 'bg-blue-600 text-white'
+                            : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
                   {/* Results summary */}
                   <div className="flex justify-between items-center mb-4 text-sm text-gray-400">
                     <span>
-                      Showing {paginatedTokens.length} of {filteredTokens.length} tokens
+                      Showing {paginatedTokens.length} of {modeFilteredTokens.length} tokens
                       {searchQuery && ` matching "${searchQuery}"`}
                     </span>
                     {totalPages > 1 && (
