@@ -39,8 +39,15 @@ export async function POST(request: NextRequest) {
 
     for (const token of toProcess) {
       try {
-        // Fetch current price via internal price API to minimise heavy calls
-        const priceResp = await fetch(`${process.env.VERCEL_URL || 'https://v2.reloadsol.xyz'}/api/tokens/prices?token=${token.token_address}`)
+        // Build absolute URL for price API
+        const vercelUrl = process.env.VERCEL_URL ?? ''
+        const baseUrl = vercelUrl.startsWith('http') && vercelUrl !== ''
+          ? vercelUrl
+          : vercelUrl !== ''
+            ? `https://${vercelUrl}`
+            : 'https://v2.reloadsol.xyz'
+
+        const priceResp = await fetch(`${baseUrl}/api/tokens/prices?token=${token.token_address}`)
         if (!priceResp.ok) continue
         const { priceUsd } = await priceResp.json()
         if (!priceUsd || priceUsd <= 0) continue
