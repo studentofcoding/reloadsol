@@ -93,7 +93,7 @@ interface TrackedToken {
   peak_price_usd: number
   current_gain_percentage: number
   peak_gain_percentage: number
-  status: 'tracking' | 'won' | 'lost'
+  status: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped'
   organic_score: number | null
   market_cap: number | null
   volume_1h: number | null
@@ -105,6 +105,9 @@ interface TrackedToken {
   trade_comparison_data?: TradeComparisonResult | null
   trading_simulation?: TradingSimulation | null
   price_history?: PriceRecord[] | null
+  // New fields for waiting system
+  waiting_started_at?: string | null
+  waiting_initial_price?: number | null
 }
 
 // Add TopWinner interface for summary functionality
@@ -2036,16 +2039,12 @@ async function internalTrackPost(request: NextRequest) {
 
     const data = await response.json() as JupiterResponse
     
-    // Filter tokens using stricter pump-&-retrace criteria
+    // Filter tokens using quality criteria
     const filteredTokens = data.pools
-      .filter(pool =>
-        // 1. Must have dipped ≥ 12 % in last 5 min
-        pool.baseAsset.stats5m?.priceChange <= -0.12 &&
-        // …but not a total crash (> 40 % is ignored)
-        pool.baseAsset.stats5m?.priceChange > -40 &&
-        // 2. Must NOT have pumped > 150 % in the last hour
-        (pool.baseAsset.stats1h?.priceChange ?? 0) <= 1.5 &&
-        // 3. Existing quality filters
+      .filter(pool => 
+        // 1. Avoid total crashes (> 40% drops are ignored)
+        (pool.baseAsset.stats5m?.priceChange ?? 0) > -0.40 &&
+        // 2. Quality filters
         pool.baseAsset.organicScore >= 65 &&
         pool.baseAsset.mcap > 300_000 &&
         pool.baseAsset.mcap < 2_000_000
@@ -2065,7 +2064,7 @@ async function internalTrackPost(request: NextRequest) {
 
     console.log(`📊 Found ${filteredTokens.length} trending tokens to process`)
 
-    // Get currently tracked tokens
+    // Get currently tracked and waiting tokens
     const { data: trackedTokens, error: fetchError } = await supabase
       .from(TRACKER_TABLE)
       .select(
@@ -2074,9 +2073,10 @@ async function internalTrackPost(request: NextRequest) {
          current_gain_percentage, peak_gain_percentage, status,
          organic_score, market_cap, volume_1h,
          tracking_started_at, updated_at,
-         trading_simulation, price_history`
+         trading_simulation, price_history,
+         waiting_started_at, waiting_initial_price`
       )
-      .eq('status', 'tracking')
+      .in('status', ['tracking', 'waiting'])
 
     // Check for manual sells before processing new tokens
     if (trackedTokens && trackedTokens.length > 0) {
@@ -2127,7 +2127,7 @@ async function internalTrackPost(request: NextRequest) {
         
         if (existingAnyStatus) {
           console.warn(`⏭️ Token ${token.token_symbol} already exists in database. Skipping duplicate.`)
-          continue
+            continue
         }
         
         // Enhanced duplicate check before starting new token tracking
@@ -2137,161 +2137,247 @@ async function internalTrackPost(request: NextRequest) {
           continue
         }
 
-        // New token - start tracking it and perform trading simulation
-        // Use existing ID if restarting, otherwise create new one
-        const tokenId = (existingAnyStatus as any)?.id || `track_${token.token_address}_${Date.now()}`
+        // Check if token has pumped more than 120% in the last hour
+        const hourlyPumpPercentage = (token.change_1h || 0) * 100
+        const shouldWaitForDip = hourlyPumpPercentage > 120
         
-        // Perform trade comparison for new tokens
-        let tradeComparisonData = null
-        try {
-          tradeComparisonData = await performTradeComparison(token)
-          console.log(`📊 Trade comparison for new token ${token.token_symbol}:`, {
-            best_config: tradeComparisonData?.best_config,
-            successful_comparisons: Object.values(tradeComparisonData?.comparisons || {}).filter((c: any) => c.success).length
-          })
-        } catch (error) {
-          console.error(`❌ Trade comparison failed for ${token.token_symbol}:`, error)
-        }
-        
-        // Perform buy operation for new tokens (simulation or real trading)
-        let tradingSimulation: TradingSimulation | null = null
-        try {
-          // Check if real trading mode is activated by looking at existing tokens
-          let isRealTradingActive = false
-          let keypairPath: string | undefined = undefined
-          
-          // Check if any existing tracked token has real trading enabled
-          const existingRealTradeToken = trackedTokens?.find(t => 
-            t.trading_simulation && !t.trading_simulation.is_simulated
-          )
-          
-          if (existingRealTradeToken?.trading_simulation) {
-            isRealTradingActive = true
-            keypairPath = existingRealTradeToken.trading_simulation.keypair_path
-            console.log(`🔥 Real trading mode detected - new token ${token.token_symbol} will use REAL trading`)
-          } else {
-            console.log(`💻 Simulation mode - new token ${token.token_symbol} will use simulation`)
-          }
-          
-          // Create initial simulation configuration (use detected trading mode)
-          const initialSimulation: TradingSimulation = {
-            token_address: token.token_address,
-            token_symbol: token.token_symbol,
-            simulation_started_at: new Date().toISOString(),
-            buy_operation: null,
-            sell_operations: [],
-            current_status: 'buying',
-            remaining_token_amount: '0',
-            initial_token_amount: '0',
-            is_simulated: !isRealTradingActive, // Use detected trading mode
-            keypair_path: keypairPath,
-            take_profit_levels: {
-              tp1_percentage: 60,
-              tp1_sell_percentage: 80,
-              tp2_percentage: 100,
-              tp3_percentage: 30,
-              tp3_enabled: false
-            },
-            stop_loss_percentage: -50,
-            max_hold_hours: 24,
-            final_result: null
-          }
-          
-          // Perform buy operation using the unified system
-          const buyOperation = await performBuyOperation(token, initialSimulation)
-          
-          if (buyOperation) {
-            initialSimulation.buy_operation = buyOperation
-            initialSimulation.current_status = 'holding'
-            initialSimulation.remaining_token_amount = buyOperation.token_amount_received
-            initialSimulation.initial_token_amount = buyOperation.token_amount_received
-            tradingSimulation = initialSimulation
-            
-            console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'})`)
-          } else {
-            console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
-          }
-        } catch (error) {
-          console.error(`❌ Buy operation error for ${token.token_symbol}:`, error)
-        }
-        
-        // Create initial price history record for new token
-        const initialPriceRecord: PriceRecord = {
-          timestamp: new Date().toISOString(),
-          price_usd: token.current_price,
-          volume: token.volume_1h
+        if (shouldWaitForDip) {
+          console.log(`🚀 Token ${token.token_symbol} pumped ${hourlyPumpPercentage.toFixed(1)}% - adding to waiting queue`)
+        } else {
+          console.log(`📈 Token ${token.token_symbol} change ${hourlyPumpPercentage.toFixed(1)}% - proceeding with immediate tracking`)
         }
 
-        updatesPromises.push(
-          (async () => {
-            try {
-              // Use UPSERT to handle race conditions and duplicate token addresses
-              const { error } = await supabase
-                .from(TRACKER_TABLE)
-                .upsert({
-                  id: tokenId,
-                  token_address: token.token_address,
-                  token_symbol: token.token_symbol,
-                  token_name: token.token_name,
-                  logo_url: token.logo_url,
-                  initial_price_usd: token.current_price,
-                  last_price_usd: token.current_price,
-                  peak_price_usd: 0,
-                  current_gain_percentage: 0,
-                  peak_gain_percentage: 0,
-                  status: 'tracking',
-                  organic_score: token.organic_score,
-                  market_cap: token.market_cap,
-                  volume_1h: token.volume_1h,
-                  tracking_started_at: new Date().toISOString(),
-                  trade_comparison_data: tradeComparisonData,
-                  trading_simulation: tradingSimulation,
-                  price_history: [initialPriceRecord]
-                }, {
-                  onConflict: 'token_address',
-                  ignoreDuplicates: false
-                })
-              
-              if (error) {
-                // Enhanced error logging for upsert failures
-                logTradeOperation('Database Upsert Error', {
-                  tokenSymbol: token.token_symbol,
-                  tokenAddress: token.token_address,
-                  errorCode: error.code,
-                  errorMessage: error.message,
-                  isRestart: !!existingAnyStatus
-                }, new Error(error.message))
-                throw error
+        if (shouldWaitForDip) {
+          // Route highly pumped tokens to waiting system
+          const tokenId = (existingAnyStatus as any)?.id || `wait_${token.token_address}_${Date.now()}`
+          
+          // Perform trade comparison for future use when buying
+          let tradeComparisonData = null
+          try {
+            tradeComparisonData = await performTradeComparison(token)
+            console.log(`📊 Trade comparison for new waiting token ${token.token_symbol}:`, {
+              best_config: tradeComparisonData?.best_config,
+              successful_comparisons: Object.values(tradeComparisonData?.comparisons || {}).filter((c: any) => c.success).length
+            })
+          } catch (error) {
+            console.error(`❌ Trade comparison failed for ${token.token_symbol}:`, error)
+          }
+          
+          // Create initial price history record
+          const initialPriceRecord: PriceRecord = {
+            timestamp: new Date().toISOString(),
+            price_usd: token.current_price,
+            volume: token.volume_1h
+          }
+
+          const currentTime = new Date().toISOString()
+
+          updatesPromises.push(
+            (async () => {
+              try {
+                const { error } = await supabase
+                  .from(TRACKER_TABLE)
+                  .upsert({
+                    id: tokenId,
+                    token_address: token.token_address,
+                    token_symbol: token.token_symbol,
+                    token_name: token.token_name,
+                    logo_url: token.logo_url,
+                    initial_price_usd: token.current_price,
+                    last_price_usd: token.current_price,
+                    peak_price_usd: 0,
+                    current_gain_percentage: 0,
+                    peak_gain_percentage: 0,
+                    status: 'waiting',
+                    organic_score: token.organic_score,
+                    market_cap: token.market_cap,
+                    volume_1h: token.volume_1h,
+                    tracking_started_at: currentTime,
+                    trade_comparison_data: tradeComparisonData,
+                    trading_simulation: null, // No simulation until we buy
+                    price_history: [initialPriceRecord],
+                    // New waiting system fields
+                    waiting_started_at: currentTime,
+                    waiting_initial_price: token.current_price
+                  }, {
+                    onConflict: 'token_address',
+                    ignoreDuplicates: false
+                  })
+                
+                if (error) {
+                  logTradeOperation('Database Upsert Error', {
+                    tokenSymbol: token.token_symbol,
+                    tokenAddress: token.token_address,
+                    errorCode: error.code,
+                    errorMessage: error.message,
+                    isRestart: !!existingAnyStatus
+                  }, new Error(error.message))
+                  throw error
+                }
+              } catch (err) {
+                console.error(`❌ Failed to upsert waiting token ${token.token_symbol}:`, err)
+                throw err
               }
-            } catch (err) {
-              // Log but don't completely fail if one token update fails
-              console.error(`❌ Failed to upsert token ${token.token_symbol}:`, err)
-              throw err
+            })()
+          )
+          
+          newTokensAdded++
+          console.log(`⏳ Adding pumped token to waiting queue: ${token.token_symbol} (${token.token_address}) - waiting for 15% dip`)
+          
+        } else {
+          // Proceed with immediate buy and tracking for tokens that haven't pumped excessively
+          const tokenId = (existingAnyStatus as any)?.id || `track_${token.token_address}_${Date.now()}`
+          
+          // Perform trade comparison for new tokens
+          let tradeComparisonData = null
+          try {
+            tradeComparisonData = await performTradeComparison(token)
+            console.log(`📊 Trade comparison for new immediate token ${token.token_symbol}:`, {
+              best_config: tradeComparisonData?.best_config,
+              successful_comparisons: Object.values(tradeComparisonData?.comparisons || {}).filter((c: any) => c.success).length
+            })
+          } catch (error) {
+            console.error(`❌ Trade comparison failed for ${token.token_symbol}:`, error)
+          }
+          
+          // Perform buy operation for new tokens (simulation or real trading)
+          let tradingSimulation: TradingSimulation | null = null
+          try {
+            // Check if real trading mode is activated by looking at existing tokens
+            let isRealTradingActive = false
+            let keypairPath: string | undefined = undefined
+            
+            // Check if any existing tracked token has real trading enabled
+            const existingRealTradeToken = trackedTokens?.find(t => 
+              t.trading_simulation && !t.trading_simulation.is_simulated
+            )
+            
+            if (existingRealTradeToken?.trading_simulation) {
+              isRealTradingActive = true
+              keypairPath = existingRealTradeToken.trading_simulation.keypair_path
+              console.log(`🔥 Real trading mode detected - new token ${token.token_symbol} will use REAL trading`)
+            } else {
+              console.log(`💻 Simulation mode - new token ${token.token_symbol} will use simulation`)
             }
             
-            // Send Discord notification for new token detection
-            if (shouldEnableNotifications()) {
-              try {
-                await sendNewTokenDetectionDiscord({
-                  tokenAddress: token.token_address,
-                  tokenSymbol: token.token_symbol,
-                  tokenName: token.token_name,
-                  currentPrice: token.current_price,
-                  marketCap: token.market_cap,
-                  organicScore: token.organic_score,
-                  volume1h: token.volume_1h,
-                  isRealTrading: tradingSimulation ? !tradingSimulation.is_simulated : false
-                })
-              } catch (discordError) {
-                console.error('❌ Failed to send new token Discord notification:', discordError)
-                // Don't fail the operation if Discord fails
-              }
+            // Create initial simulation configuration (use detected trading mode)
+            const initialSimulation: TradingSimulation = {
+              token_address: token.token_address,
+              token_symbol: token.token_symbol,
+              simulation_started_at: new Date().toISOString(),
+              buy_operation: null,
+              sell_operations: [],
+              current_status: 'buying',
+              remaining_token_amount: '0',
+              initial_token_amount: '0',
+              is_simulated: !isRealTradingActive, // Use detected trading mode
+              keypair_path: keypairPath,
+              take_profit_levels: {
+                tp1_percentage: 60,
+                tp1_sell_percentage: 80,
+                tp2_percentage: 100,
+                tp3_percentage: 30,
+                tp3_enabled: false
+              },
+              stop_loss_percentage: -50,
+              max_hold_hours: 24,
+              final_result: null
             }
-          })()
-        )
-        
-        newTokensAdded++
-        console.log(`✅ Adding new token to track: ${token.token_symbol} (${token.token_address})`)
+            
+            // Perform buy operation using the unified system
+            const buyOperation = await performBuyOperation(token, initialSimulation)
+            
+            if (buyOperation) {
+              initialSimulation.buy_operation = buyOperation
+              initialSimulation.current_status = 'holding'
+              initialSimulation.remaining_token_amount = buyOperation.token_amount_received
+              initialSimulation.initial_token_amount = buyOperation.token_amount_received
+              tradingSimulation = initialSimulation
+              
+              console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'})`)
+            } else {
+              console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
+            }
+          } catch (error) {
+            console.error(`❌ Buy operation error for ${token.token_symbol}:`, error)
+          }
+          
+          // Create initial price history record for new token
+          const initialPriceRecord: PriceRecord = {
+            timestamp: new Date().toISOString(),
+            price_usd: token.current_price,
+            volume: token.volume_1h
+          }
+
+          updatesPromises.push(
+            (async () => {
+              try {
+                // Use UPSERT to handle race conditions and duplicate token addresses
+                const { error } = await supabase
+                  .from(TRACKER_TABLE)
+                  .upsert({
+                    id: tokenId,
+                    token_address: token.token_address,
+                    token_symbol: token.token_symbol,
+                    token_name: token.token_name,
+                    logo_url: token.logo_url,
+                    initial_price_usd: token.current_price,
+                    last_price_usd: token.current_price,
+                    peak_price_usd: 0,
+                    current_gain_percentage: 0,
+                    peak_gain_percentage: 0,
+                    status: 'tracking',
+                    organic_score: token.organic_score,
+                    market_cap: token.market_cap,
+                    volume_1h: token.volume_1h,
+                    tracking_started_at: new Date().toISOString(),
+                    trade_comparison_data: tradeComparisonData,
+                    trading_simulation: tradingSimulation,
+                    price_history: [initialPriceRecord]
+                  }, {
+                    onConflict: 'token_address',
+                    ignoreDuplicates: false
+                  })
+                
+                if (error) {
+                  logTradeOperation('Database Upsert Error', {
+                    tokenSymbol: token.token_symbol,
+                    tokenAddress: token.token_address,
+                    errorCode: error.code,
+                    errorMessage: error.message,
+                    isRestart: !!existingAnyStatus
+                  }, new Error(error.message))
+                  throw error
+                }
+              } catch (err) {
+                console.error(`❌ Failed to upsert token ${token.token_symbol}:`, err)
+                throw err
+              }
+              
+              // Send Discord notification for new token detection
+              if (shouldEnableNotifications()) {
+                try {
+                  await sendNewTokenDetectionDiscord({
+                    tokenAddress: token.token_address,
+                    tokenSymbol: token.token_symbol,
+                    tokenName: token.token_name,
+                    currentPrice: token.current_price,
+                    marketCap: token.market_cap,
+                    organicScore: token.organic_score,
+                    volume1h: token.volume_1h,
+                    isRealTrading: tradingSimulation ? !tradingSimulation.is_simulated : false
+                  })
+                } catch (discordError) {
+                  console.error('❌ Failed to send new token Discord notification:', discordError)
+                  // Don't fail the operation if Discord fails
+                }
+              }
+            })()
+          )
+          
+          newTokensAdded++
+          console.log(`✅ Adding new token to immediate tracking: ${token.token_symbol} (${token.token_address})`)
+        }
       } else {
         // Validate prices
         if (token.current_price <= 0) {
@@ -2299,7 +2385,189 @@ async function internalTrackPost(request: NextRequest) {
           continue
         }
 
-        // Calculate current gain
+        // Handle waiting tokens (check for 15% dip trigger or 1-hour timeout)
+        if (existingToken.status === 'waiting') {
+          const waitingStartTime = new Date(existingToken.waiting_started_at!)
+          const currentTime = new Date()
+          const waitingDurationHours = (currentTime.getTime() - waitingStartTime.getTime()) / (1000 * 60 * 60)
+          
+          // Check for 1-hour timeout
+          if (waitingDurationHours >= 1.0) {
+            console.log(`⏰ Waiting timeout for ${token.token_symbol} after ${waitingDurationHours.toFixed(1)}h - removing from queue`)
+            
+            // Remove from waiting queue (mark as skipped due to timeout)
+            updatesPromises.push(
+              (async () => {
+                const { error } = await supabase
+                  .from(TRACKER_TABLE)
+                  .update({
+                    status: 'skipped',
+                    status_changed_at: currentTime.toISOString(),
+                    last_price_usd: token.current_price,
+                    current_gain_percentage: calculateGainPercentage(token.current_price, existingToken.waiting_initial_price!)
+                  })
+                  .eq('id', existingToken.id)
+                if (error) throw error
+              })()
+            )
+            continue
+          }
+          
+          // Calculate dip percentage from waiting initial price
+          const dipFromWaitingStart = calculateGainPercentage(token.current_price, existingToken.waiting_initial_price!)
+          
+          console.log(`📊 Waiting token ${token.token_symbol}: ${dipFromWaitingStart.toFixed(2)}% change (waiting ${waitingDurationHours.toFixed(1)}h)`)
+          
+          // Check for 15% dip trigger
+          if (dipFromWaitingStart <= -15.0) {
+            console.log(`🎯 15% dip detected for ${token.token_symbol}! Converting from waiting to tracking status`)
+            
+            // Execute buy operation and convert to tracking
+            try {
+              // Check if real trading mode is activated by looking at existing tokens
+              let isRealTradingActive = false
+              let keypairPath: string | undefined = undefined
+              
+              // Check if any existing tracked token has real trading enabled
+              const existingRealTradeToken = trackedTokens?.find(t => 
+                t.trading_simulation && !t.trading_simulation.is_simulated
+              )
+              
+              if (existingRealTradeToken?.trading_simulation) {
+                isRealTradingActive = true
+                keypairPath = existingRealTradeToken.trading_simulation.keypair_path
+                console.log(`🔥 Real trading mode detected - ${token.token_symbol} will use REAL trading`)
+              } else {
+                console.log(`💻 Simulation mode - ${token.token_symbol} will use simulation`)
+              }
+              
+              // Create initial simulation configuration (use detected trading mode)
+              const initialSimulation: TradingSimulation = {
+                token_address: token.token_address,
+                token_symbol: token.token_symbol,
+                simulation_started_at: currentTime.toISOString(),
+                buy_operation: null,
+                sell_operations: [],
+                current_status: 'buying',
+                remaining_token_amount: '0',
+                initial_token_amount: '0',
+                is_simulated: !isRealTradingActive, // Use detected trading mode
+                keypair_path: keypairPath,
+                take_profit_levels: {
+                  tp1_percentage: 60,
+                  tp1_sell_percentage: 80,
+                  tp2_percentage: 100,
+                  tp3_percentage: 30,
+                  tp3_enabled: false
+                },
+                stop_loss_percentage: -50,
+                max_hold_hours: 24,
+                final_result: null
+              }
+              
+              // Perform buy operation using the unified system
+              const buyOperation = await performBuyOperation(token, initialSimulation)
+              
+              if (buyOperation) {
+                initialSimulation.buy_operation = buyOperation
+                initialSimulation.current_status = 'holding'
+                initialSimulation.remaining_token_amount = buyOperation.token_amount_received
+                initialSimulation.initial_token_amount = buyOperation.token_amount_received
+                
+                console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'})`)
+                
+                // Update token status to tracking with buy simulation
+                updatesPromises.push(
+                  (async () => {
+                    const { error } = await supabase
+                      .from(TRACKER_TABLE)
+                      .update({
+                        status: 'tracking',
+                        status_changed_at: currentTime.toISOString(),
+                        initial_price_usd: token.current_price, // Update initial price to dip price
+                        last_price_usd: token.current_price,
+                        peak_price_usd: token.current_price,
+                        current_gain_percentage: 0, // Reset gain calculation from new buy price
+                        peak_gain_percentage: 0,
+                        trading_simulation: initialSimulation
+                      })
+                      .eq('id', existingToken.id)
+                    if (error) throw error
+                  })()
+                )
+                
+                // Send Discord notification for successful dip buy
+                if (shouldEnableNotifications()) {
+                  try {
+                    await sendNewTokenDetectionDiscord({
+                      tokenAddress: token.token_address,
+                      tokenSymbol: token.token_symbol,
+                      tokenName: token.token_name,
+                      currentPrice: token.current_price,
+                      marketCap: token.market_cap,
+                      organicScore: token.organic_score,
+                      volume1h: token.volume_1h,
+                      isRealTrading: !initialSimulation.is_simulated
+                    })
+                  } catch (discordError) {
+                    console.error('❌ Failed to send dip buy Discord notification:', discordError)
+                  }
+                }
+                
+                tokensUpdated++
+                console.log(`✅ ${token.token_symbol} converted from waiting to tracking after 15% dip`)
+              } else {
+                console.warn(`❌ Buy operation failed for waiting token ${token.token_symbol}`)
+                // Keep in waiting status for next attempt
+                updatesPromises.push(
+                  (async () => {
+                    const { error } = await supabase
+                      .from(TRACKER_TABLE)
+                      .update({
+                        last_price_usd: token.current_price
+                      })
+                      .eq('id', existingToken.id)
+                    if (error) throw error
+                  })()
+                )
+              }
+            } catch (error) {
+              console.error(`❌ Error converting waiting token ${token.token_symbol} to tracking:`, error)
+              // Keep in waiting status for next attempt
+              updatesPromises.push(
+                (async () => {
+                  const { error } = await supabase
+                    .from(TRACKER_TABLE)
+                    .update({
+                      last_price_usd: token.current_price
+                    })
+                    .eq('id', existingToken.id)
+                  if (error) throw error
+                })()
+              )
+            }
+            continue
+          } else {
+            // Still waiting - just update price
+            updatesPromises.push(
+              (async () => {
+                const { error } = await supabase
+                  .from(TRACKER_TABLE)
+                  .update({
+                    last_price_usd: token.current_price,
+                    organic_score: token.organic_score,
+                    market_cap: token.market_cap,
+                    volume_1h: token.volume_1h
+                  })
+                  .eq('id', existingToken.id)
+                if (error) throw error
+              })()
+            )
+            continue
+          }
+        }
+
+        // Calculate current gain for tracking tokens
         const currentGain = calculateGainPercentage(token.current_price, existingToken.initial_price_usd)
         
         // Only update peak price and gain if current price is higher than existing peak
@@ -2540,9 +2808,11 @@ async function internalTrackPost(request: NextRequest) {
     }
 
     const stats = {
+      waiting: currentStats?.filter(t => t.status === 'waiting').length || 0,
       tracking: currentStats?.filter(t => t.status === 'tracking').length || 0,
       won: currentStats?.filter(t => t.status === 'won').length || 0,
-      lost: currentStats?.filter(t => t.status === 'lost').length || 0
+      lost: currentStats?.filter(t => t.status === 'lost').length || 0,
+      skipped: currentStats?.filter(t => t.status === 'skipped').length || 0
     }
 
     const summary = {
