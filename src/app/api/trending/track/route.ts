@@ -2186,7 +2186,7 @@ async function internalTrackPost(request: NextRequest) {
             is_simulated: !isRealTradingActive, // Use detected trading mode
             keypair_path: keypairPath,
             take_profit_levels: {
-              tp1_percentage: 80,
+              tp1_percentage: 60,
               tp1_sell_percentage: 80,
               tp2_percentage: 100,
               tp3_percentage: 30,
