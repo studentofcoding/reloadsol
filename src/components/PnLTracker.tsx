@@ -152,6 +152,182 @@ export default function PnLTracker() {
         }
       })
 
+      // NEW CYCLE-AWARE PnL CALCULATION ----------------------------------------------------
+      // The legacy aggregation logic below mixes multiple buy/sell cycles of the same token
+      // into a single position.  That causes a reopened position (buying again after a full
+      // close) to inherit the previous PnL.  We now compute PnL on a per-cycle basis: once the
+      // remaining token amount for a cycle reaches ~0 the cycle is considered closed and we
+      // start a fresh one for any subsequent buys.
+      {
+        // Helper type for an open trade cycle
+        type Cycle = {
+          mintAddress: string
+          symbol?: string
+          name?: string
+          logoURI?: string
+          totalSolBought: number
+          totalSolSold: number
+          totalTokenBought: number
+          remainingTokenAmount: number
+          weightedBuyPriceUsd: number // simple average for now
+          weightedSellPriceUsd: number
+          buyCount: number
+          sellCount: number
+          buySignatures: string[]
+          sellSignatures: string[]
+          firstBuyTimestamp: number
+        }
+
+        const allOpsUnsorted = [...buyRecords, ...processedSellRecords]
+        allOpsUnsorted.sort((a, b) => a.timestamp - b.timestamp)
+
+        const openCycles = new Map<string, Cycle>()
+        const closedCycles: PnLRecord[] = []
+
+        const solPriceCache = solPriceUsd // capture once
+
+        // Iterate chronologically through all operations and build cycles
+        for (const op of allOpsUnsorted) {
+          const isBuy = op.operationType === 'buy'
+          const tokensInOp = op.tokens || []
+
+          // Guard – skip malformed records
+          if (!op.solAmount || op.successCount === 0) continue
+
+          // Evenly distribute SOL across tokens in the operation (we usually have 1 token)
+          const solPerToken = op.solAmount / op.successCount
+
+          for (const tkn of tokensInOp) {
+            const mint = tkn.mintAddress
+            if (!mint) continue
+
+            if (isBuy) {
+              let cycle = openCycles.get(mint)
+              if (!cycle) {
+                cycle = {
+                  mintAddress: mint,
+                  symbol: tkn.symbol,
+                  name: tkn.name,
+                  logoURI: tkn.logoURI,
+                  totalSolBought: 0,
+                  totalSolSold: 0,
+                  totalTokenBought: 0,
+                  remainingTokenAmount: 0,
+                  weightedBuyPriceUsd: 0,
+                  weightedSellPriceUsd: 0,
+                  buyCount: 0,
+                  sellCount: 0,
+                  buySignatures: [],
+                  sellSignatures: [],
+                  firstBuyTimestamp: op.timestamp,
+                }
+                openCycles.set(mint, cycle)
+              }
+
+              const tokenAmt = tkn.tokenAmount || 0
+              cycle.totalSolBought += solPerToken
+              cycle.totalTokenBought += tokenAmt
+              cycle.remainingTokenAmount += tokenAmt
+              if (tkn.priceUsd) {
+                // simple running average
+                cycle.weightedBuyPriceUsd =
+                  (cycle.weightedBuyPriceUsd * cycle.buyCount + tkn.priceUsd) / (cycle.buyCount + 1)
+              }
+              cycle.buyCount += 1
+              cycle.buySignatures.push(...op.signatures)
+            } else {
+              // SELL branch
+              const cycle = openCycles.get(mint)
+              if (!cycle) {
+                // sell without open cycle (shouldn't happen) – skip
+                continue
+              }
+
+              const tokenAmt = tkn.tokenAmount || 0
+              cycle.totalSolSold += solPerToken
+              cycle.remainingTokenAmount = Math.max(0, cycle.remainingTokenAmount - tokenAmt)
+              if (tkn.priceUsd) {
+                cycle.weightedSellPriceUsd =
+                  (cycle.weightedSellPriceUsd * cycle.sellCount + tkn.priceUsd) / (cycle.sellCount + 1)
+              }
+              cycle.sellCount += 1
+              cycle.sellSignatures.push(...op.signatures)
+
+              // If the cycle is fully closed, compute PnL record and remove from open map
+              if (cycle.remainingTokenAmount <= 1e-6) {
+                const pnlSOL = cycle.totalSolSold - cycle.totalSolBought
+                const pnlUSD = pnlSOL * solPriceCache
+                const pnlPerc = cycle.totalSolBought > 0 ? (pnlSOL / cycle.totalSolBought) * 100 : 0
+
+                closedCycles.push({
+                  id: `${mint}-${cycle.firstBuyTimestamp}-${op.timestamp}`,
+                  mintAddress: mint,
+                  symbol: cycle.symbol,
+                  name: cycle.name,
+                  logoURI: cycle.logoURI,
+                  buyTimestamp: cycle.firstBuyTimestamp,
+                  sellTimestamp: op.timestamp,
+                  buyPrice: cycle.weightedBuyPriceUsd,
+                  sellPrice: cycle.weightedSellPriceUsd,
+                  solAmountBought: cycle.totalSolBought,
+                  solAmountSold: cycle.totalSolSold,
+                  pnlSOL,
+                  pnlUSD,
+                  pnlPercentage: pnlPerc,
+                  buySignatures: cycle.buySignatures,
+                  sellSignatures: cycle.sellSignatures,
+                  isPartialSell: false,
+                  sellTransactionId: `${mint}-${op.timestamp}`,
+                })
+
+                openCycles.delete(mint)
+              }
+            }
+          }
+        }
+
+        // Build open positions array by checking wallet holdings
+        let openPositionsResult: OpenPosition[] = []
+        if (openCycles.size > 0) {
+          try {
+            const walletTokens = await fetchUserTokens(connection, publicKey!, false, false)
+            openCycles.forEach((cycle) => {
+              const walletTok = walletTokens.find((wt) => wt.mintAddress === cycle.mintAddress)
+              if (walletTok && walletTok.uiAmount > 0.001) {
+                openPositionsResult.push({
+                  id: `open-${cycle.mintAddress}`,
+                  mintAddress: cycle.mintAddress,
+                  symbol: cycle.symbol || walletTok.symbol,
+                  name: cycle.name || walletTok.name,
+                  logoURI: cycle.logoURI || walletTok.logoURI,
+                  buyTimestamp: cycle.firstBuyTimestamp,
+                  solAmountBought: cycle.totalSolBought,
+                  buySignatures: cycle.buySignatures,
+                  isOpen: true,
+                  buyPriceUsd: cycle.weightedBuyPriceUsd,
+                  buyTokenAmount: cycle.totalTokenBought,
+                  actualWalletBalance: walletTok.uiAmount,
+                  walletTokenData: walletTok,
+                })
+              }
+            })
+          } catch (walletErr) {
+            console.error('Failed fetching wallet tokens for open cycle verification', walletErr)
+          }
+        }
+
+        // Sort results (newest first)
+        closedCycles.sort((a, b) => b.sellTimestamp - a.sellTimestamp)
+        openPositionsResult.sort((a, b) => b.buyTimestamp - a.buyTimestamp)
+
+        // Update state and exit this calculation early – legacy logic below is skipped
+        setPnlRecords(closedCycles)
+        setOpenPositions(openPositionsResult)
+        setIsLoading(false)
+        return // <––    EARLY EXIT  (legacy aggregation will be skipped)
+      }
+      // -------------------------------------------------------------------------------
+      // Legacy aggregation logic (kept for reference, now bypassed)
       // Create position tracking maps to combine multiple buys/sells
       const tokenPositions = new Map<string, {
         mintAddress: string
@@ -303,7 +479,7 @@ export default function PnLTracker() {
       // Fetch current wallet tokens to verify open positions
       let currentWalletTokens: UserToken[] = []
       try {
-        currentWalletTokens = await fetchUserTokens(connection, publicKey, false, false)
+        currentWalletTokens = await fetchUserTokens(connection, publicKey!, false, false)
         console.log('🔍 Fetched current wallet tokens:', currentWalletTokens.length, 'tokens found')
       } catch (error) {
         console.error('⚠️ Failed to fetch wallet tokens for position verification:', error)
