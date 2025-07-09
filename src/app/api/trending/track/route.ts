@@ -2036,13 +2036,19 @@ async function internalTrackPost(request: NextRequest) {
 
     const data = await response.json() as JupiterResponse
     
-    // Filter tokens using the same criteria as the main trending API
+    // Filter tokens using stricter pump-&-retrace criteria
     const filteredTokens = data.pools
-      .filter(pool => 
-        pool.baseAsset.stats5m?.priceChange > -40 && // Not dropping more than 40% in 5m
-        pool.baseAsset.organicScore >= 70.0 &&
-        pool.baseAsset.mcap > 300000 &&
-        pool.baseAsset.mcap < 2000000
+      .filter(pool =>
+        // 1. Must have dipped ≥ 12 % in last 5 min
+        pool.baseAsset.stats5m?.priceChange <= -0.12 &&
+        // …but not a total crash (> 40 % is ignored)
+        pool.baseAsset.stats5m?.priceChange > -40 &&
+        // 2. Must NOT have pumped > 150 % in the last hour
+        (pool.baseAsset.stats1h?.priceChange ?? 0) <= 1.5 &&
+        // 3. Existing quality filters
+        pool.baseAsset.organicScore >= 65 &&
+        pool.baseAsset.mcap > 300_000 &&
+        pool.baseAsset.mcap < 2_000_000
       )
       .map(pool => ({
         token_address: pool.baseAsset.id,
