@@ -2120,14 +2120,14 @@ async function internalTrackPost(request: NextRequest) {
           .single()
         
         if (existingAnyStatus) {
-          console.log(`⏭️ Token ${token.token_symbol} already exists in database. Skipping duplicate.`)
+          console.warn(`⏭️ Token ${token.token_symbol} already exists in database. Skipping duplicate.`)
           continue
         }
         
         // Enhanced duplicate check before starting new token tracking
         const duplicateCheck = await performEnhancedDuplicateCheck(token.token_address, token.token_symbol)
         if (!duplicateCheck.canPurchase) {
-          console.log(`🚫 Skipping ${token.token_symbol} due to duplicate prevention: ${duplicateCheck.reason}`)
+          console.warn(`🚫 Skipping ${token.token_symbol} due to duplicate prevention: ${duplicateCheck.reason}`)
           continue
         }
 
@@ -2203,7 +2203,7 @@ async function internalTrackPost(request: NextRequest) {
             
             console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'})`)
           } else {
-            console.log(`❌ Buy operation failed for ${token.token_symbol}`)
+            console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
           }
         } catch (error) {
           console.error(`❌ Buy operation error for ${token.token_symbol}:`, error)
