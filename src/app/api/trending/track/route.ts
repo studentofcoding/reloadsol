@@ -4,6 +4,9 @@ import { supabase } from '@/utils/supabase'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
+import { selectStrategyWithLoadBalancing, strategyToTradingSimulation, getEnabledStrategies } from '@/utils/strategy-selector'
+import { TradingStrategy } from '@/types/trading-strategies'
+import { createFallbackStrategy } from '@/utils/strategy-fallback'
 
 export const runtime = 'edge'
 
@@ -108,6 +111,8 @@ interface TrackedToken {
   // New fields for waiting system
   waiting_started_at?: string | null
   waiting_initial_price?: number | null
+  // Strategy management fields
+  strategy_id?: string | null
 }
 
 // Add TopWinner interface for summary functionality
@@ -247,6 +252,11 @@ interface TradingSimulation {
   }
   stop_loss_percentage: number
   max_hold_hours: number
+  // Strategy management fields
+  strategy_id?: string
+  strategy_name?: string
+  strategy_type?: string
+  position_size_sol?: number
   final_result: {
     success: boolean
     total_gain_percentage: number
@@ -625,6 +635,38 @@ function shouldEnableNotifications(): boolean {
     webhookConfigured: !!DISCORD_WEBHOOK_URL
   })
   return enabled
+}
+
+// Helper function to create TradingSimulation from strategy
+function createTradingSimulationFromStrategy(
+  token: any, 
+  strategy: TradingStrategy, 
+  isRealTrading: boolean,
+  keypairPath?: string
+): TradingSimulation {
+  const strategyConfig = strategyToTradingSimulation(strategy)
+  
+  return {
+    token_address: token.token_address,
+    token_symbol: token.token_symbol,
+    simulation_started_at: new Date().toISOString(),
+    buy_operation: null,
+    sell_operations: [],
+    current_status: 'buying',
+    remaining_token_amount: '0',
+    initial_token_amount: '0',
+    is_simulated: !isRealTrading,
+    keypair_path: keypairPath,
+    take_profit_levels: strategyConfig.take_profit_levels,
+    stop_loss_percentage: strategyConfig.stop_loss_percentage,
+    max_hold_hours: strategyConfig.max_hold_hours,
+    // Strategy management fields
+    strategy_id: strategy.id,
+    strategy_name: strategy.name,
+    strategy_type: strategyConfig.strategy_type,
+    position_size_sol: strategyConfig.position_size_sol,
+    final_result: null
+  }
 }
 
 // Update the Discord notification parameter types
@@ -2242,6 +2284,7 @@ async function internalTrackPost(request: NextRequest) {
           
           // Perform buy operation for new tokens (simulation or real trading)
           let tradingSimulation: TradingSimulation | null = null
+          let selectedStrategy: TradingStrategy | null = null
           try {
             // Check if real trading mode is activated by looking at existing tokens
             let isRealTradingActive = false
@@ -2260,29 +2303,35 @@ async function internalTrackPost(request: NextRequest) {
               console.log(`💻 Simulation mode - new token ${token.token_symbol} will use simulation`)
             }
             
-            // Create initial simulation configuration (use detected trading mode)
-            const initialSimulation: TradingSimulation = {
-              token_address: token.token_address,
-              token_symbol: token.token_symbol,
-              simulation_started_at: new Date().toISOString(),
-              buy_operation: null,
-              sell_operations: [],
-              current_status: 'buying',
-              remaining_token_amount: '0',
-              initial_token_amount: '0',
-              is_simulated: !isRealTradingActive, // Use detected trading mode
-              keypair_path: keypairPath,
-              take_profit_levels: {
-                tp1_percentage: 60,
-                tp1_sell_percentage: 80,
-                tp2_percentage: 100,
-                tp3_percentage: 30,
-                tp3_enabled: false
-              },
-              stop_loss_percentage: -50,
-              max_hold_hours: 24,
-              final_result: null
+            // Select strategy for this token
+            const strategySelection = await selectStrategyWithLoadBalancing({
+              address: token.token_address,
+              symbol: token.token_symbol,
+              name: token.token_name,
+              price: token.current_price,
+              market_cap: token.market_cap,
+              volume_1h: token.volume_1h,
+              price_change_5m: (token.change_5m || 0) * 100,
+              price_change_1h: (token.change_1h || 0) * 100,
+              organic_score: token.organic_score,
+              net_buyers_1h: 0 // Not available in current data
+            })
+            
+            if (!strategySelection) {
+              console.warn(`⚠️ No suitable strategy found for ${token.token_symbol} - using fallback strategy`)
+              selectedStrategy = createFallbackStrategy()
+            } else {
+              selectedStrategy = strategySelection.strategy
+              console.log(`✅ Selected strategy "${selectedStrategy.name}" for ${token.token_symbol} (confidence: ${strategySelection.confidence}%) - ${strategySelection.reason}`)
             }
+            
+            // Create initial simulation configuration using selected strategy
+            const initialSimulation = createTradingSimulationFromStrategy(
+              token,
+              selectedStrategy,
+              isRealTradingActive,
+              keypairPath
+            )
             
             // Perform buy operation using the unified system
             const buyOperation = await performBuyOperation(token, initialSimulation)
@@ -2333,6 +2382,7 @@ async function internalTrackPost(request: NextRequest) {
                     tracking_started_at: new Date().toISOString(),
                     trade_comparison_data: tradeComparisonData,
                     trading_simulation: tradingSimulation,
+                    strategy_id: selectedStrategy?.id || 'fallback',
                     price_history: [initialPriceRecord]
                   }, {
                     onConflict: 'token_address',
@@ -2441,29 +2491,37 @@ async function internalTrackPost(request: NextRequest) {
                 console.log(`💻 Simulation mode - ${token.token_symbol} will use simulation`)
               }
               
-              // Create initial simulation configuration (use detected trading mode)
-              const initialSimulation: TradingSimulation = {
-                token_address: token.token_address,
-                token_symbol: token.token_symbol,
-                simulation_started_at: currentTime.toISOString(),
-                buy_operation: null,
-                sell_operations: [],
-                current_status: 'buying',
-                remaining_token_amount: '0',
-                initial_token_amount: '0',
-                is_simulated: !isRealTradingActive, // Use detected trading mode
-                keypair_path: keypairPath,
-                take_profit_levels: {
-                  tp1_percentage: 60,
-                  tp1_sell_percentage: 80,
-                  tp2_percentage: 100,
-                  tp3_percentage: 30,
-                  tp3_enabled: false
-                },
-                stop_loss_percentage: -50,
-                max_hold_hours: 24,
-                final_result: null
+              // Select strategy for this waiting token
+              const strategySelection = await selectStrategyWithLoadBalancing({
+                address: token.token_address,
+                symbol: token.token_symbol,
+                name: token.token_name,
+                price: token.current_price,
+                market_cap: token.market_cap,
+                volume_1h: token.volume_1h,
+                price_change_5m: (token.change_5m || 0) * 100,
+                price_change_1h: (token.change_1h || 0) * 100,
+                organic_score: token.organic_score,
+                net_buyers_1h: 0 // Not available in current data
+              })
+              
+              let waitingSelectedStrategy: TradingStrategy
+              if (!strategySelection) {
+                console.warn(`⚠️ No suitable strategy found for waiting token ${token.token_symbol} - using fallback strategy`)
+                waitingSelectedStrategy = createFallbackStrategy()
+              } else {
+                waitingSelectedStrategy = strategySelection.strategy
+                console.log(`✅ Selected strategy "${waitingSelectedStrategy.name}" for waiting token ${token.token_symbol} (confidence: ${strategySelection.confidence}%) - ${strategySelection.reason}`)
               }
+              
+              // Create initial simulation configuration using selected strategy
+              const initialSimulation = createTradingSimulationFromStrategy(
+                token,
+                waitingSelectedStrategy,
+                isRealTradingActive,
+                keypairPath
+              )
+              initialSimulation.simulation_started_at = currentTime.toISOString()
               
               // Perform buy operation using the unified system
               const buyOperation = await performBuyOperation(token, initialSimulation)
@@ -2489,7 +2547,8 @@ async function internalTrackPost(request: NextRequest) {
                         peak_price_usd: token.current_price,
                         current_gain_percentage: 0, // Reset gain calculation from new buy price
                         peak_gain_percentage: 0,
-                        trading_simulation: initialSimulation
+                        trading_simulation: initialSimulation,
+                        strategy_id: waitingSelectedStrategy.id
                       })
                       .eq('id', existingToken.id)
                     if (error) throw error
