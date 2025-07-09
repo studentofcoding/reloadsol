@@ -46,7 +46,7 @@ export async function GET() {
     const tokenPrices = data.pools.map((pool): TokenPrice => ({
       token_address: pool.baseAsset.id,
       price: pool.baseAsset.usdPrice,
-      change_5m: pool.baseAsset.stats5m.priceChange / 100, // Convert percentage to decimal
+      change_5m: pool.baseAsset.stats5m?.priceChange ? pool.baseAsset.stats5m.priceChange / 100 : 0, // Convert percentage to decimal if exists
     }))
     
     // Filter out tokens with extreme negative price movement (less than -40%)
