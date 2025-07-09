@@ -23,8 +23,6 @@ interface TokenPrice {
   change_5m: number
 }
 
-export const runtime = 'edge'
-
 export async function GET() {
   try {
     const response = await fetch('https://datapi.jup.ag/v1/pools/toptrending/1h', {
