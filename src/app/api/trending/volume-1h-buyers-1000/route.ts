@@ -25,7 +25,7 @@ interface TokenPrice {
 
 export async function GET() {
   try {
-    const response = await fetch('https://datapi.jup.ag/v1/pools/toptrending/1h', {
+    const response = await fetch('https://datapi.jup.ag/v1/pools/toptrending/1h?minNumNetBuyers1h=1000', {
       headers: {
         'accept': 'application/json',
         'cache-control': 'no-cache',
