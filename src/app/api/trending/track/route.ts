@@ -2114,23 +2114,14 @@ async function internalTrackPost(request: NextRequest) {
         // Check if token exists in database with ANY status (not just tracking)
         const { data: existingAnyStatus } = await supabase
           .from(TRACKER_TABLE)
-          .select('id, token_address, status, updated_at')
+          .select('id')
           .eq('token_address', token.token_address)
+          .eq('token_symbol', token.token_symbol)
           .single()
         
         if (existingAnyStatus) {
-          console.log(`🔄 Token ${token.token_symbol} already exists in database with status: ${existingAnyStatus.status}`)
-          
-          // If token exists but isn't tracking, we can restart it if it's been more than 1 hour
-          const lastUpdate = new Date(existingAnyStatus.updated_at)
-          const hoursSinceUpdate = (Date.now() - lastUpdate.getTime()) / (1000 * 60 * 60)
-          
-          if (hoursSinceUpdate < 1) {
-            console.log(`⏭️ Skipping ${token.token_symbol} - too recent (${hoursSinceUpdate.toFixed(1)}h ago)`)
-            continue
-          } else {
-            console.log(`🔄 Restarting tracking for ${token.token_symbol} (${hoursSinceUpdate.toFixed(1)}h since last update)`)
-          }
+          console.log(`⏭️ Token ${token.token_symbol} already exists in database. Skipping duplicate.`)
+          continue
         }
         
         // Enhanced duplicate check before starting new token tracking
@@ -2142,7 +2133,7 @@ async function internalTrackPost(request: NextRequest) {
 
         // New token - start tracking it and perform trading simulation
         // Use existing ID if restarting, otherwise create new one
-        const tokenId = existingAnyStatus?.id || `track_${token.token_address}_${Date.now()}`
+        const tokenId = (existingAnyStatus as any)?.id || `track_${token.token_address}_${Date.now()}`
         
         // Perform trade comparison for new tokens
         let tradeComparisonData = null
