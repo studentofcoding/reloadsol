@@ -4,8 +4,8 @@ import { NextRequest } from 'next/server'
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
   process.env.NODE_ENV === 'development'
-    ? process.env.NEXT_PUBLIC_DISCORD_WEBHOOK_URL_DEV || process.env.NEXT_PUBLIC_DISCORD_WEBHOOK_URL
-    : process.env.NEXT_PUBLIC_DISCORD_WEBHOOK_URL;
+    ? process.env.DISCORD_WEBHOOK_URL_DEV || process.env.DISCORD_WEBHOOK_URL
+    : process.env.DISCORD_WEBHOOK_URL;
 const ENABLE_DISCORD_NOTIFICATIONS = process.env.ENABLE_DISCORD_NOTIFICATIONS === 'true';
 
 // Add auto-notification interval (default 10 minute = 600000ms)
@@ -14,16 +14,35 @@ const AUTO_NOTIFICATION_INTERVAL_MS = parseInt(process.env.AUTO_NOTIFICATION_INT
 // Track last auto notification time
 let lastAutoNotificationTime = 0;
 
+// Global cleanup tracking
+let globalTimers: {
+  notificationTimer?: NodeJS.Timeout;
+  initialDelayTimer?: NodeJS.Timeout;
+} = {};
+
+// Cleanup function for graceful shutdown
+function cleanupGlobalTimers() {
+  if (globalTimers.notificationTimer) {
+    clearInterval(globalTimers.notificationTimer);
+    globalTimers.notificationTimer = undefined;
+  }
+  if (globalTimers.initialDelayTimer) {
+    clearTimeout(globalTimers.initialDelayTimer);
+    globalTimers.initialDelayTimer = undefined;
+  }
+}
+
 // Set up a timer to send notifications on schedule if enabled
-if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS) {
+// Only initialize once and with proper cleanup
+if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !globalTimers.notificationTimer) {
   console.log(`Setting up automatic notification timer (${AUTO_NOTIFICATION_INTERVAL_MS}ms interval)`);
   
   // Initial delay of 30 seconds after server start before first check
-  setTimeout(() => {
+  globalTimers.initialDelayTimer = setTimeout(() => {
     console.log('Starting automatic notification timer');
     
     // Set interval for periodic notifications
-    setInterval(() => {
+    globalTimers.notificationTimer = setInterval(() => {
       const currentTime = Date.now();
       
       // Check if it's time for a notification
@@ -33,17 +52,30 @@ if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS) {
         // Determine if we need a full refresh
         const needsFullRefresh = currentTime - tokenCache.lastFullRefresh >= FULL_REFRESH_INTERVAL_MS;
         
-        // Trigger notification
+        // Trigger notification with proper error handling
         fetchAndUpdateCache(needsFullRefresh, currentTime, true)
           .then(tokenArray => {
             console.log(`Scheduled notification completed with ${tokenArray.length} tokens`);
           })
           .catch(error => {
             console.error('Error in scheduled notification:', error);
+            // Reset refresh state on error to prevent permanent blocking
+            refreshState.promise = null;
+            refreshState.timeout = null;
           });
       }
     }, Math.min(60000, AUTO_NOTIFICATION_INTERVAL_MS / 2)); // Check at least every minute or half the notification interval
+    
+    // Clear the initial delay timer reference
+    globalTimers.initialDelayTimer = undefined;
   }, 30000);
+}
+
+// Handle process termination gracefully
+if (typeof process !== 'undefined') {
+  process.on('SIGTERM', cleanupGlobalTimers);
+  process.on('SIGINT', cleanupGlobalTimers);
+  process.on('exit', cleanupGlobalTimers);
 }
 
 interface JupiterBaseAsset {
@@ -110,10 +142,34 @@ let tokenCache: TokenCache = {
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes in milliseconds
 const FULL_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes in milliseconds
 
-// Track ongoing refresh operations to prevent concurrent fetches
-let refreshPromise: Promise<TransformedToken[]> | null = null;
-let refreshTimeout: NodeJS.Timeout | null = null;
-let currentRefreshOperation: Promise<TransformedToken[]> | null = null;
+// Improved concurrency control with proper state management
+interface RefreshState {
+  promise: Promise<TransformedToken[]> | null;
+  timeout: NodeJS.Timeout | null;
+  startTime: number;
+  requestCount: number;
+}
+
+let refreshState: RefreshState = {
+  promise: null,
+  timeout: null,
+  startTime: 0,
+  requestCount: 0
+};
+
+// Maximum time to wait for a refresh operation (30 seconds)
+const MAX_REFRESH_WAIT_MS = 30000;
+
+// Function to safely clear refresh state
+function clearRefreshState() {
+  if (refreshState.timeout) {
+    clearTimeout(refreshState.timeout);
+  }
+  refreshState.promise = null;
+  refreshState.timeout = null;
+  refreshState.startTime = 0;
+  refreshState.requestCount = 0;
+}
 
 // Function to send updates to Discord
 async function sendDiscordNotification(
@@ -176,20 +232,31 @@ async function sendDiscordNotification(
       ]
     };
 
-    // Send the message to Discord
-    const response = await fetch(DISCORD_WEBHOOK_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(message),
-    });
+    // Send the message to Discord with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+    
+    try {
+      const response = await fetch(DISCORD_WEBHOOK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(message),
+        signal: controller.signal
+      });
 
-    if (!response.ok) {
-      throw new Error(`Discord API responded with status: ${response.status}`);
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`Discord API responded with status: ${response.status}`);
+      }
+
+      console.log('Discord notification sent successfully');
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
     }
-
-    console.log('Discord notification sent successfully');
   } catch (error) {
     console.error('Error sending Discord notification:', error);
     // Don't throw the error to avoid disrupting the main flow
@@ -261,43 +328,59 @@ export async function GET(request: NextRequest) {
       )
     }
     
-    // Check if there's an ongoing refresh operation
-    if (refreshPromise) {
-      console.log('Using existing refresh operation in progress');
-      try {
-        // Wait for the existing refresh operation to complete
-        const tokens = await refreshPromise;
-        return NextResponse.json(
-          { 
-            tokens,
-            cached: false,
-            cache_age: 0,
-            refresh_type: 'concurrent',
-            expires_in: Math.round((tokenCache.expiresAt - Date.now()) / 1000),
-            stats: { concurrent_request: true }
-          },
-          {
-            status: 200,
-            headers: {
-              'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60'
+    // Improved concurrency control
+    if (refreshState.promise) {
+      const elapsedTime = currentTime - refreshState.startTime;
+      
+      // If refresh has been running too long, abandon it and start fresh
+      if (elapsedTime > MAX_REFRESH_WAIT_MS) {
+        console.log('Refresh operation timed out, starting fresh');
+        clearRefreshState();
+      } else {
+        console.log(`Using existing refresh operation in progress (${refreshState.requestCount + 1} concurrent requests)`);
+        refreshState.requestCount++;
+        
+        try {
+          // Wait for the existing refresh operation to complete
+          const tokens = await refreshState.promise;
+          refreshState.requestCount = Math.max(0, refreshState.requestCount - 1);
+          
+          return NextResponse.json(
+            { 
+              tokens,
+              cached: false,
+              cache_age: 0,
+              refresh_type: 'concurrent',
+              expires_in: Math.round((tokenCache.expiresAt - Date.now()) / 1000),
+              stats: { 
+                concurrent_request: true,
+                concurrent_count: refreshState.requestCount + 1
+              }
+            },
+            {
+              status: 200,
+              headers: {
+                'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60'
+              }
             }
-          }
-        )
-      } catch (error) {
-        // If the existing refresh operation failed, reset and continue with a new one
-        refreshPromise = null;
-        console.error('Existing refresh operation failed:', error);
-        // Continue to fetch fresh data
+          )
+        } catch (error) {
+          // If the existing refresh operation failed, reset and continue with a new one
+          console.error('Existing refresh operation failed:', error);
+          clearRefreshState();
+          // Continue to fetch fresh data
+        }
       }
     }
     
     // Create a new refresh operation - never force notifications from frontend requests
-    refreshPromise = fetchAndUpdateCache(needsFullRefresh, currentTime, false);
-    currentRefreshOperation = refreshPromise;
+    refreshState.promise = fetchAndUpdateCache(needsFullRefresh, currentTime, false);
+    refreshState.startTime = currentTime;
+    refreshState.requestCount = 1;
     
     try {
       // Wait for the refresh operation to complete
-      const tokens = await refreshPromise;
+      const tokens = await refreshState.promise;
       
       return NextResponse.json(
         { 
@@ -318,22 +401,19 @@ export async function GET(request: NextRequest) {
         }
       )
     } finally {
-      // Set a timeout to clear the refreshPromise after a grace period
+      // Set a timeout to clear the refreshState after a grace period
       // This prevents a failed request from blocking all future requests permanently
-      if (refreshTimeout) {
-        clearTimeout(refreshTimeout);
+      if (refreshState.timeout) {
+        clearTimeout(refreshState.timeout);
       }
       
-      refreshTimeout = setTimeout(() => {
-        refreshPromise = null;
-        refreshTimeout = null;
-        currentRefreshOperation = null;
+      refreshState.timeout = setTimeout(() => {
+        clearRefreshState();
       }, 10000); // 10 second grace period
     }
   } catch (error) {
-    // Make sure to clear the refreshPromise if an error occurs
-    refreshPromise = null;
-    currentRefreshOperation = null;
+    // Make sure to clear the refreshState if an error occurs
+    clearRefreshState();
     console.error('Error fetching trending tokens:', error)
     return NextResponse.json(
       { error: 'Failed to fetch trending tokens', message: error instanceof Error ? error.message : 'Unknown error' },
@@ -568,9 +648,7 @@ async function fetchAndUpdateCache(
     console.error('Error in fetchAndUpdateCache:', error);
     throw error; // Re-throw to be handled by the calling function
   } finally {
-    // Clean up the promise reference if this operation is complete
-    if (refreshPromise === currentRefreshOperation) {
-      refreshPromise = null;
-    }
+    // The refresh state cleanup is handled by the calling function
+    // No need to clean up here as it could interfere with concurrent requests
   }
-} 
+}
