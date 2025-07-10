@@ -430,20 +430,62 @@ async function fetchAndUpdateCache(
 ): Promise<TransformedToken[]> {
   try {
     console.log(needsFullRefresh ? 'Performing full refresh' : 'Updating token cache');
-    const response = await fetch('https://datapi.jup.ag/v1/pools/toptrending/1h', {
-      headers: {
-        'accept': 'application/json',
-        'cache-control': 'no-cache',
-      },
-      // Ensure we're not using a stale response from the browser cache
-      next: { revalidate: 0 } // Force fresh data from API
-    });
+    // Jupiter may occasionally rate-limit or block datacenter IPs which results in 403/429.
+    // We add a small retry/fallback mechanism that: 
+    // 1. Tries the main `datapi` endpoint first
+    // 2. Falls back to the general `api` endpoint
+    // 3. Gracefully returns cached data if all attempts fail
 
-    if (!response.ok) {
-      throw new Error(`API responded with status: ${response.status}`);
+    const TRENDING_URLS = [
+      'https://datapi.jup.ag/v1/pools/toptrending/1h',
+      // Fallback – same path served from a different Cloudflare worker
+      'https://api.jup.ag/v1/pools/toptrending/1h'
+    ];
+
+    let response: Response | null = null;
+    for (const url of TRENDING_URLS) {
+      try {
+        response = await fetch(url, {
+          headers: {
+            accept: 'application/json',
+            'cache-control': 'no-cache',
+            // Setting a UA helps avoid Cloudflare bot challenges on some servers
+            'user-agent': 'reloadsol-bot/1.0 (+https://reloadsol.xyz)'
+          },
+          // Disable revalidation cache for freshest data
+          next: { revalidate: 0 }
+        });
+
+        if (response.ok) {
+          break; // Success – stop retrying
+        }
+
+        // For 403/429 we silently try the next URL after short delay
+        if (response.status === 403 || response.status === 429) {
+          console.warn(`Trending API responded with ${response.status} for ${url}. Trying fallback...`);
+          await new Promise(res => setTimeout(res, 500));
+          continue;
+        }
+
+        // Other HTTP errors are considered fatal – no point retrying
+        throw new Error(`API responded with status: ${response.status}`);
+      } catch (err) {
+        console.error(`Error fetching trending data from ${url}:`, err);
+        // On network error we just continue to next URL
+      }
     }
 
-    const data = await response.json() as JupiterResponse;
+    if (!response || !response.ok) {
+      // All attempts failed – if we still have cached tokens, return them so the
+      // frontend doesn’t break. Otherwise bubble up the error.
+      if (tokenCache.tokens.size > 0) {
+        console.warn('All trending API endpoints failed – serving cached data');
+        return Array.from(tokenCache.tokens.values());
+      }
+      throw new Error('All Jupiter trending API endpoints failed');
+    }
+
+    const data = (await response.json()) as JupiterResponse;
     
     // Transform the data to match our component's expected format
     const transformedTokens = data.pools.map((pool): TransformedToken => {
