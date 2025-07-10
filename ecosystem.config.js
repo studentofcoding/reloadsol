@@ -2,8 +2,8 @@ module.exports = {
   apps: [
     {
       name: 'reloadsol',
-      script: 'node_modules/.bin/next',
-      args: 'start',
+      script: 'node',
+      args: '.next/standalone/server.js',
       cwd: './',
       instances: 1, // Use only 1 CPU core (changed from 'max')
       exec_mode: 'cluster',
