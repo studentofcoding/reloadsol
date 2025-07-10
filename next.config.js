@@ -27,7 +27,8 @@ const nextConfig = {
       's3.coinmarketcap.com',
       'pbs.twimg.com',
       'ipfs.io',
-      'arweave.net'
+      'arweave.net',
+      'cdn.jsdelivr.net'
     ],
   },
   
@@ -60,7 +61,7 @@ const nextConfig = {
               script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com;
               style-src 'self' 'unsafe-inline' fonts.googleapis.com;
               font-src 'self' fonts.gstatic.com;
-              img-src 'self' data: blob: *.githubusercontent.com *.coingecko.com *.1inch.io *.vercel.app;
+              img-src 'self' data: blob: *.githubusercontent.com *.coingecko.com *.1inch.io *.vercel.app s3.coinmarketcap.com pbs.twimg.com ipfs.io arweave.net cdn.jsdelivr.net cryptologos.cc;
               connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com wss: https:;
               frame-src 'none';
               object-src 'none';
