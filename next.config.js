@@ -20,10 +20,14 @@ const nextConfig = {
       'raw.githubusercontent.com',
       'github.com',
       'assets.coingecko.com',
-      'coin-images.coingecko.com',
+      'coin-images.coingecko.com', 
       'cryptologos.cc',
       'tokens.1inch.io',
-      'jupiter-aggregator.vercel.app'
+      'jupiter-aggregator.vercel.app',
+      's3.coinmarketcap.com',
+      'pbs.twimg.com',
+      'ipfs.io',
+      'arweave.net'
     ],
   },
   
