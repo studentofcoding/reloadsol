@@ -200,9 +200,41 @@ The Trending Token Tracker is an automated system that monitors trending tokens 
 3. **Access Dashboard**: Navigate to `/dev/trending-tracker`
 
 ### API Endpoints
-- `/api/trending/track` - 5-minute price updates (automated)
-- `/api/trending/summary` - 24-hour summaries (automated)
-- `/api/trending/stats` - Frontend data source (public)
+- `/api/trending/track` – 5-minute price updates (automated cron, POST)
+- `/api/trending/summary` – 24-hour summaries (automated cron, POST)
+- `/api/trending/stats` – Front-end stats feed (public GET)
+- `/api/trending/mode` – **Switch between simulation ↔ live trading** (PUT)
+- `/api/trending/token` – On-demand trade-comparison for a token (GET)
+- `/api/trending/price-monitor` – 1-minute price monitor invoked by Go cron (POST)
+
+### Switching Between Simulation and Real Trading
+Use the **PUT** `/api/trending/mode` endpoint with your secret key.
+
+```bash
+curl -X PUT \
+  'https://<your-domain>/api/trending/mode?key=$TRENDING_TRACKER_SECRET' \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "isSimulated": false,
+        "keypairPath": "/home/ubuntu/trading-keypair.json"  # optional if TRADING_KEYPAIR_JSON env var is set
+      }'
+```
+Fields
+| Name           | Type      | Description                                              |
+|----------------|-----------|----------------------------------------------------------|
+| `isSimulated`  | boolean   | `true` = paper-trading only, `false` = live trading      |
+| `keypairPath`  | string?   | Server-side path to keypair file (omit if using env var) |
+
+The system will broadcast `🔥 LIVE TRADING` or `💻 SIMULATION` messages in Discord after each toggle.
+
+### Real-Time Price Monitor (1-Minute)
+A lightweight Go cron service calls `/api/trending/price-monitor` every minute to refresh prices for active live trades and issue Discord alerts when the change exceeds a threshold.
+
+Environment variables:
+```bash
+PRICE_MONITOR_INTERVAL=60   # seconds between checks (default 60)
+PRICE_ALERT_THRESHOLD=0.5   # % change (absolute) required to trigger alert (default 0.5)
+```
 
 ### Manual Testing
 ```bash

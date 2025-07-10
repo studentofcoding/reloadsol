@@ -5,13 +5,19 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:analyze": "ANALYZE=true next build",
     "start": "next start",
+    "start:prod": "NODE_ENV=production next start",
     "lint": "next lint",
+    "lint:fix": "next lint --fix",
+    "type-check": "tsc --noEmit",
     "logs": "node scripts/tail-logs.js",
     "logs:follow": "node scripts/tail-logs.js -f",
     "logs:errors": "node scripts/tail-logs.js -l error",
     "logs:trending": "node scripts/tail-logs.js -e /api/trending",
-    "logs:stats": "node scripts/tail-logs.js -s"
+    "logs:stats": "node scripts/tail-logs.js -s",
+    "clean": "rm -rf .next out",
+    "clean:all": "rm -rf .next out node_modules && npm install"
   },
   "dependencies": {
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",
@@ -46,6 +52,7 @@
     "url": "^0.11.0"
   },
   "devDependencies": {
+    "@next/bundle-analyzer": "^14.2.30",
     "@types/node": "^20.0.0",
     "@types/react": "^18.0.0",
     "@types/react-dom": "^18.0.0",
@@ -55,5 +62,9 @@
     "postcss": "^8.0.0",
     "tailwindcss": "^3.3.0",
     "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
   }
 }
