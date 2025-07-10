@@ -116,9 +116,6 @@ const nextConfig = {
     }
   }),
   
-  // ===== OUTPUT CONFIGURATION =====
-  output: 'standalone', // Optimal for Docker/self-hosting
-  
   // ===== WEBPACK OPTIMIZATIONS =====
   webpack: (config, { dev, isServer, webpack }) => {
     // Polyfills for Solana and crypto libraries
