@@ -43,6 +43,26 @@ if [ ! -f "package.json" ]; then
   exit 1
 fi
 
+# Detect package manager and fix lockfile issues
+echo -e "${BLUE}📦 Detecting package manager...${NC}"
+if [ -f "pnpm-lock.yaml" ] && command -v pnpm &> /dev/null; then
+  PACKAGE_MANAGER="pnpm"
+  echo "  Using: pnpm"
+  
+  # Check if lockfile is out of sync and fix it
+  echo -e "${BLUE}🔧 Checking lockfile sync...${NC}"
+  if ! pnpm install --frozen-lockfile 2>/dev/null | grep -q "Already up to date"; then
+    echo -e "${YELLOW}⚠️  pnpm-lock.yaml out of sync, updating...${NC}"
+    pnpm install
+  fi
+elif [ -f "package-lock.json" ]; then
+  PACKAGE_MANAGER="npm"
+  echo "  Using: npm"
+else
+  PACKAGE_MANAGER="npm"
+  echo "  Using: npm (default)"
+fi
+
 # Check system resources
 echo -e "${BLUE}📊 Checking system resources...${NC}"
 TOTAL_MEM=$(free -g | awk 'NR==2{print $2}')
@@ -68,9 +88,15 @@ fi
 echo -e "${BLUE}📁 Creating logs directory...${NC}"
 mkdir -p logs
 
-# Install dependencies with limited concurrency
+# Install dependencies with package manager detection
 echo -e "${BLUE}📦 Installing dependencies (single-threaded)...${NC}"
-npm ci --only=production --maxsockets 1
+if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
+  # For pnpm: use frozen lockfile for production
+  pnpm install --frozen-lockfile --production
+else
+  # For npm: use ci for clean install
+  npm ci --only=production --maxsockets 1
+fi
 
 # Build the application with limited resources (unless skipped)
 if [ "$SKIP_BUILD" = false ]; then
@@ -79,8 +105,12 @@ if [ "$SKIP_BUILD" = false ]; then
   # Set Node.js memory limit for build process
   export NODE_OPTIONS="--max-old-space-size=1024"
   
-  # Build with limited concurrency
-  npm run build
+  # Build with appropriate package manager
+  if [ "$PACKAGE_MANAGER" = "pnpm" ]; then
+    pnpm run build
+  else
+    npm run build
+  fi
   
   echo -e "${GREEN}✅ Build completed successfully${NC}"
 fi
@@ -239,6 +269,7 @@ echo "  - App uses 1 CPU core, ~400-800MB RAM"
 echo "  - CPU cores 1 & 2 available for other programs"  
 echo "  - Monitor with: watch 'pm2 monit --no-interaction'"
 echo "  - If memory issues: pm2 restart reloadsol"
+echo "  - Package manager used: ${PACKAGE_MANAGER}"
 echo ""
 echo -e "${GREEN}🎉 reloadSOL is running efficiently in single-core mode!${NC}"
 
