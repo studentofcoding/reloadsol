@@ -80,7 +80,7 @@ export default function BulkTokenSeller() {
   const [solPriceUsd, setSolPriceUsd] = useState<number>(145) // Default fallback
 
   // Provider and Quote state
-  const [swapProvider, setSwapProvider] = useState<'jupiter' | 'solanatracker' | 'gmgn'>('jupiter')
+  const [swapProvider, setSwapProvider] = useState<'jupiter' | 'gmgn'>('gmgn')
   // Auto-quote enabled by default (every 10s)
   const [autoQuote, setAutoQuote] = useState<boolean>(true)
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({})
@@ -91,9 +91,8 @@ export default function BulkTokenSeller() {
 
   // Provider options
   const PROVIDER_OPTIONS = [
-    { value: 'jupiter', label: 'Jupiter', icon: '🪐' },
-    { value: 'solanatracker', label: 'SolanaTracker', icon: '📊' },
-    { value: 'gmgn', label: 'GMGN', icon: '🔥' }
+    { value: 'jupiter', label: 'alternative', icon: '🚀' },
+    { value: 'gmgn', label: 'default', icon: '🔥' }
   ] as const
 
   // Quote utilities
@@ -135,49 +134,6 @@ export default function BulkTokenSeller() {
       return null
     }
   }, [slippage])
-
-  const fetchSolanaTrackerQuote = useCallback(async (inputMint: string, amount: string): Promise<QuoteData | null> => {
-    try {
-      // SolanaTracker Swap API - correct parameters from documentation
-      const query = new URLSearchParams({
-        from: inputMint,
-        to: 'So11111111111111111111111111111111111111112',
-        fromAmount: amount,
-        slippage: slippage.toString(), // SolanaTracker expects percent integer
-        payer: publicKey?.toString() || ''
-      })
-
-      const response = await fetch(`/api/providers/solanatracker/quote?${query.toString()}`)
-      if (!response.ok) throw new Error('SolanaTracker quote failed')
-      
-      const data = await response.json()
-      
-      // Validate response structure
-      if (!data.txn || (!data.outAmount && !data.rate?.amountOut)) {
-        throw new Error('Invalid SolanaTracker response format')
-      }
-      
-      // Handle known error structure { error: 'Failed to swap', details: 'Market not supported' }
-      if (data?.error) {
-        console.warn(`SolanaTracker returned error for ${inputMint}:`, data)
-        return null
-      }
-      
-      return {
-        provider: 'solanatracker',
-        inputMint,
-        outputMint: 'So11111111111111111111111111111111111111112',
-        amount,
-        outAmount: data.outAmount ?? data.rate?.amountOut?.toString() ?? '0',
-        priceImpact: parseFloat(data.priceImpact || data.impact || '0'),
-        timestamp: Date.now(),
-        route: data
-      }
-    } catch (error) {
-      console.error('SolanaTracker quote error:', error)
-      return null
-    }
-  }, [slippage, publicKey])
 
   const fetchGMGNQuote = useCallback(async (inputMint: string, amount: string): Promise<QuoteData | null> => {
     try {
@@ -231,12 +187,6 @@ export default function BulkTokenSeller() {
       switch (swapProvider) {
         case 'jupiter':
           return fetchJupiterQuote(token.mintAddress, amount)
-        case 'solanatracker': {
-          const stQuote = await fetchSolanaTrackerQuote(token.mintAddress, amount)
-          if (stQuote) return stQuote
-          // Fallback to Jupiter when ST fails (e.g., market not supported)
-          return fetchJupiterQuote(token.mintAddress, amount)
-        }
         case 'gmgn':
           return fetchGMGNQuote(token.mintAddress, amount)
         default:
@@ -245,7 +195,7 @@ export default function BulkTokenSeller() {
     }
 
     return tryProvider()
-  }, [swapProvider, fetchJupiterQuote, fetchSolanaTrackerQuote, fetchGMGNQuote])
+  }, [swapProvider, fetchJupiterQuote, fetchGMGNQuote])
 
   // Batch quote fetching for all selected tokens
   const fetchAllQuotes = useCallback(async () => {
@@ -595,6 +545,13 @@ export default function BulkTokenSeller() {
     connection: any,
     signAllTransactions: any
   ): Promise<BulkSellResult> => {
+    // Collect GMGN transactions for batch processing
+    const gmgnTransactions: Array<{
+      token: TokenToSell
+      quote: QuoteData
+      transaction: VersionedTransaction
+    }> = []
+
     const results: BulkSellResult = {
       success: false,
       successfulSwaps: [],
@@ -655,68 +612,19 @@ export default function BulkTokenSeller() {
             }
             break
             
-          case 'solanatracker':
-            // Use SolanaTracker swap API with transaction from quote
-            if (quote.route?.txn) {
-              try {
-                // The transaction is already prepared by SolanaTracker
-                const serializedTransactionBuffer = Buffer.from(quote.route.txn, "base64")
-                let transaction
-                
-                if (quote.route.type === 'v0') {
-                  transaction = VersionedTransaction.deserialize(serializedTransactionBuffer)
-                } else {
-                  transaction = Transaction.from(serializedTransactionBuffer)
-                }
-                
-                // Sign and send the transaction
-                if (quote.route.type === 'v0' && transaction) {
-                  await signAllTransactions([transaction])
-                }
-                
-                const signature = await connection.sendTransaction(transaction, {
-                  skipPreflight: true,
-                  maxRetries: 4,
-                })
-                
-                swapResult = { signature, outAmount: quote.outAmount }
-              } catch (txError) {
-                console.error('SolanaTracker transaction error:', txError)
-                throw new Error(`Transaction failed: ${txError instanceof Error ? txError.message : 'Unknown error'}`)
-              }
-            } else {
-              throw new Error('No transaction data from SolanaTracker')
-            }
-            break
-            
           case 'gmgn':
-            // Use GMGN swap API with the quote route data
-            if (quote.route?.data?.raw_tx?.swapTransaction) {
-              // Sign the transaction from GMGN
-              const swapTransactionBuf = Buffer.from(quote.route.data.raw_tx.swapTransaction, 'base64')
-              const transaction = VersionedTransaction.deserialize(swapTransactionBuf)
-              
-              // Sign the transaction with the connected wallet
-              const [signedTx] = await signAllTransactions([transaction])
-              const signedBase64 = Buffer.from(signedTx.serialize()).toString('base64')
-
-              // Submit the signed transaction to GMGN via server proxy (avoids CORS)
-              const submitResponse = await fetch('/api/providers/gmgn/submit', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  signed_tx: signedBase64
-                })
-              })
-              
-              if (submitResponse.ok) {
-                const submitData = await submitResponse.json()
-                swapResult = { 
-                  signature: submitData.data?.hash || 'gmgn-tx', 
-                  outAmount: quote.outAmount 
-                }
-              }
+            // GMGN transactions will be batched below
+            if (!quote.route?.data?.raw_tx?.swapTransaction) {
+              throw new Error('No transaction data from GMGN')
             }
+            // Collect for batch processing
+            gmgnTransactions.push({
+              token,
+              quote,
+              transaction: VersionedTransaction.deserialize(
+                Buffer.from(quote.route.data.raw_tx.swapTransaction, 'base64')
+              )
+            })
             break
         }
 
@@ -727,7 +635,7 @@ export default function BulkTokenSeller() {
           })
           results.signatures.push(swapResult.signature)
           results.totalReceived += parseFloat(swapResult.outAmount) / 1e9
-        } else {
+        } else if (swapProvider !== 'gmgn') {
           results.failedSwaps.push({
             mintAddress: token.mintAddress,
             error: `${swapProvider} swap failed`
@@ -741,9 +649,70 @@ export default function BulkTokenSeller() {
       }
     }
 
+    // Batch process GMGN transactions
+    if (swapProvider === 'gmgn' && gmgnTransactions.length > 0) {
+      try {
+        // Sign all GMGN transactions at once
+        const transactions = gmgnTransactions.map(t => t.transaction)
+        const signedTransactions = await signAllTransactions(transactions)
+        
+        // Submit all signed transactions to GMGN
+        const submitPromises = signedTransactions.map(async (signedTx: VersionedTransaction, index: number) => {
+          const signedBase64 = Buffer.from(signedTx.serialize()).toString('base64')
+          const submitResponse = await fetch('/api/providers/gmgn/submit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ signed_tx: signedBase64 })
+          })
+          
+          if (submitResponse.ok) {
+            const submitData = await submitResponse.json()
+            return {
+              success: true,
+              signature: submitData.data?.hash || `gmgn-tx-${index}`,
+              outAmount: gmgnTransactions[index].quote.outAmount
+            }
+          } else {
+            return {
+              success: false,
+              error: `GMGN submit failed for ${gmgnTransactions[index].token.mintAddress}`
+            }
+          }
+        })
+        
+        const submitResults = await Promise.all(submitPromises)
+        
+        // Process results
+        submitResults.forEach((result: any, index: number) => {
+          const token = gmgnTransactions[index].token
+          if (result.success) {
+            results.successfulSwaps.push({
+              mintAddress: token.mintAddress,
+              solReceived: parseFloat(result.outAmount) / 1e9
+            })
+            results.signatures.push(result.signature)
+            results.totalReceived += parseFloat(result.outAmount) / 1e9
+          } else {
+            results.failedSwaps.push({
+              mintAddress: token.mintAddress,
+              error: result.error
+            })
+          }
+        })
+      } catch (error) {
+        console.error('GMGN batch processing error:', error)
+        gmgnTransactions.forEach((t: any) => {
+          results.failedSwaps.push({
+            mintAddress: t.token.mintAddress,
+            error: 'GMGN batch processing failed'
+          })
+        })
+      }
+    }
+
     results.success = results.successfulSwaps.length > 0
     return results
-  }, [swapProvider, getQuoteForToken, isQuoteValid, priorityFee, signAllTransactions, connection])
+  }, [swapProvider, getQuoteForToken, isQuoteValid, priorityFee, signAllTransactions, connection, publicKey])
 
   // Handle bulk sell with better error handling
   const handleBulkSell = useCallback(async () => {
@@ -1450,7 +1419,7 @@ export default function BulkTokenSeller() {
                 <select
                   id="swapProvider"
                   value={swapProvider}
-                  onChange={(e) => setSwapProvider(e.target.value as 'jupiter' | 'solanatracker' | 'gmgn')}
+                  onChange={(e) => setSwapProvider(e.target.value as 'jupiter' | 'gmgn')}
                   className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
                   disabled={isLoading}
                 >
