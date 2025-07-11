@@ -56,7 +56,10 @@ export async function POST(request: NextRequest) {
         if (Math.abs(diffPercent) < threshold) continue
 
         const peakGain = token.peak_gain_percentage
-        const currentGain = calculateGainPercentage(priceUsd, token.initial_price_usd)
+        let currentGain = 0
+        if (token.initial_price_usd && token.initial_price_usd > 0) {
+          currentGain = calculateGainPercentage(priceUsd, token.initial_price_usd)
+        }
 
         // Update Supabase
         const { error: upErr } = await supabase
