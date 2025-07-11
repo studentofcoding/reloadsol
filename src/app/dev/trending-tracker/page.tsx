@@ -739,8 +739,9 @@ export default function TrendingTrackerPage() {
           onError={(e) => {
             e.currentTarget.onerror = null
             e.currentTarget.src = ''
-            if (e.currentTarget.parentElement) {
-              e.currentTarget.parentElement.textContent = (token.token_symbol || '?').charAt(0).toUpperCase()
+            const parent = e.currentTarget.parentElement as HTMLElement | null
+            if (parent) {
+              parent.textContent = (token.token_symbol || '?').charAt(0).toUpperCase()
             }
           }} 
         />

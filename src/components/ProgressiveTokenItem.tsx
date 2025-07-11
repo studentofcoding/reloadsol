@@ -68,8 +68,12 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
                 onError={(e) => {
                   // Fallback to letter if image fails to load
                   const target = e.target as HTMLImageElement
+                  target.onerror = null
                   target.style.display = 'none'
-                  target.parentElement!.textContent = (token.symbol || 'T').charAt(0)
+                  const parent = target.parentElement as HTMLElement | null
+                  if (parent) {
+                    parent.textContent = (token.symbol || 'T').charAt(0)
+                  }
                 }}
               />
             ) : (

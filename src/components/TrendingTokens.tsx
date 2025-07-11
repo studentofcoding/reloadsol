@@ -373,7 +373,10 @@ export default function TrendingTokens({
                             onError={(e) => {
                               e.currentTarget.onerror = null
                               e.currentTarget.src = ''
-                              e.currentTarget.parentElement!.textContent = token.token_symbol.charAt(0)
+                              const parent = e.currentTarget.parentElement as HTMLElement | null
+                              if (parent) {
+                                parent.textContent = token.token_symbol.charAt(0)
+                              }
                             }}
                           />
                         ) : (

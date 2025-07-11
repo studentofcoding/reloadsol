@@ -241,7 +241,19 @@ export default function TradingHistory() {
                             style={{ marginLeft: idx > 0 ? '-0.5rem' : '0' }}
                           >
                             {token.logoURI ? (
-                              <img src={token.logoURI} alt={token.symbol || token.name || 'Token'} className="w-full h-full object-cover" onError={(e) => {e.currentTarget.onerror = null; e.currentTarget.src = ''; e.currentTarget.parentElement!.textContent = (token.symbol || token.name || '?').charAt(0).toUpperCase()}} />
+                              <img
+                                src={token.logoURI}
+                                alt={token.symbol || token.name || 'Token'}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null
+                                  e.currentTarget.src = ''
+                                  const parent = e.currentTarget.parentElement as HTMLElement | null
+                                  if (parent) {
+                                    parent.textContent = (token.symbol || token.name || '?').charAt(0).toUpperCase()
+                                  }
+                                }}
+                              />
                             ) : ((token.symbol || token.name || '?').charAt(0).toUpperCase())}
                           </div>
                         ))}

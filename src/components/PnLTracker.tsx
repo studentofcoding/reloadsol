@@ -1138,8 +1138,9 @@ export default function PnLTracker() {
                                 onError={(e) => {
                                   e.currentTarget.onerror = null
                                   e.currentTarget.src = ''
-                                  if (e.currentTarget.parentElement) {
-                                    e.currentTarget.parentElement.textContent = (record.symbol || record.name || '?').charAt(0).toUpperCase()
+                                  const parent = e.currentTarget.parentElement as HTMLElement | null
+                                  if (parent) {
+                                    parent.textContent = (record.symbol || record.name || '?').charAt(0).toUpperCase()
                                   }
                                 }} 
                               />
@@ -1266,8 +1267,9 @@ export default function PnLTracker() {
                               onError={(e) => {
                                 e.currentTarget.onerror = null
                                 e.currentTarget.src = ''
-                                if (e.currentTarget.parentElement) {
-                                  e.currentTarget.parentElement.textContent = (position.symbol || position.name || '?').charAt(0).toUpperCase()
+                                const parent = e.currentTarget.parentElement as HTMLElement | null
+                                if (parent) {
+                                  parent.textContent = (position.symbol || position.name || '?').charAt(0).toUpperCase()
                                 }
                               }} 
                             />
