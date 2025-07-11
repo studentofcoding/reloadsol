@@ -288,7 +288,8 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
-  const tokens = searchParams.get('tokens')?.split(',').filter(Boolean) || []
+  const tokensParam = searchParams.get('tokens') || searchParams.get('token')
+  const tokens = tokensParam ? tokensParam.split(',').filter(Boolean) : []
   
   if (tokens.length === 0) {
     return NextResponse.json({ error: 'No tokens specified' }, { status: 400 })

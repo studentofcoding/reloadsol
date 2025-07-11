@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
             ? `https://${vercelUrl}`
             : 'https://v2.reloadsol.xyz'
 
-        const priceResp = await fetch(`${baseUrl}/api/tokens/prices?token=${token.token_address}`)
+        const priceResp = await fetch(`${baseUrl}/api/tokens/prices?tokens=${token.token_address}`)
         if (!priceResp.ok) continue
         const { priceUsd } = await priceResp.json()
         if (!priceUsd || priceUsd <= 0) continue
