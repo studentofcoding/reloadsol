@@ -25,17 +25,42 @@ interface TokenPrice {
 
 export async function GET() {
   try {
-    const response = await fetch('https://datapi.jup.ag/v1/pools/toptrending/1h?minNumNetBuyers1h=1000', {
-      headers: {
-        'accept': 'application/json',
-        'cache-control': 'no-cache',
-      },
-      // Short revalidation time for price updates
-      next: { revalidate: 10 } // 10 seconds
-    })
+    const TRENDING_URLS = [
+      'https://datapi.jup.ag/v1/pools/toptrending/1h?minNumNetBuyers1h=1000',
+      'https://api.jup.ag/v1/pools/toptrending/1h?minNumNetBuyers1h=1000'
+    ]
 
-    if (!response.ok) {
-      throw new Error(`API responded with status: ${response.status}`)
+    let response: Response | null = null
+
+    for (const url of TRENDING_URLS) {
+      try {
+        response = await fetch(url, {
+          headers: {
+            accept: 'application/json',
+            'cache-control': 'no-cache',
+            'user-agent': 'reloadsol-bot/1.0 (+https://reloadsol.xyz)'
+          },
+          next: { revalidate: 10 }
+        })
+
+        if (response.ok) break
+
+        if (response.status === 403 || response.status === 429) {
+          await new Promise(res => setTimeout(res, 300))
+          continue
+        }
+
+        throw new Error(`API responded with status: ${response.status}`)
+      } catch (err) {
+        console.error(`Trending buyers 1h fetch error from ${url}:`, err)
+      }
+    }
+
+    if (!response || !response.ok) {
+      return NextResponse.json(
+        { error: 'All Jupiter trending API endpoints failed' },
+        { status: 503 }
+      )
     }
 
     const data = await response.json() as JupiterResponse
