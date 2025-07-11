@@ -2790,9 +2790,9 @@ export async function executeBulkSellAlt(
                   throw new Error('Transaction failed on-chain');
                 }
 
-                const accountIndex = txInfo.transaction.message.staticAccountKeys.findIndex(key => key.toBase58() === userPublicKey);
-                const preBalance = txInfo.meta?.preBalances[accountIndex] || 0;
-                const postBalance = txInfo.meta?.postBalances[accountIndex] || 0;
+                const accountIndex = txInfo?.transaction.message.staticAccountKeys.findIndex(key => key.toBase58() === userPublicKey);
+                const preBalance = txInfo?.meta?.preBalances?.[accountIndex ?? 0] ?? 0;
+                const postBalance = txInfo?.meta?.postBalances?.[accountIndex ?? 0] ?? 0;
                 const solReceived = (postBalance - preBalance) / LAMPORTS_PER_SOL;
 
                 swapSignatures.push(sendResult.signature!);
