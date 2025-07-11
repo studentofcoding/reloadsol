@@ -9,12 +9,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'signed_tx missing' }, { status: 400 })
     }
 
-    // GMGN accepts signed swap transaction at this endpoint
-    const gmgnUrl = 'https://gmgn.ai/defi/router/v1/sol/tx/submit_signed_transaction'
+    // GMGN expects { chain: 'sol', signedTx: <base64> }
+    const gmgnUrl = 'https://gmgn.ai/txproxy/v1/send_transaction'
+    const gmgnPayload = {
+      chain: 'sol',
+      signedTx: body.signed_tx
+    }
     const gmgnResp = await fetch(gmgnUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify(gmgnPayload),
       cache: 'no-store'
     })
 
@@ -27,7 +31,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (!gmgnResp.ok) {
-      return NextResponse.json({ error: 'GMGN submit failed', details: payload }, { status: gmgnResp.status })
+      // Log full error details for debugging
+      console.error('[GMGN SUBMIT ERROR]', {
+        status: gmgnResp.status,
+        statusText: gmgnResp.statusText,
+        headers: Object.fromEntries(gmgnResp.headers.entries()),
+        body: rawBody,
+        request: body
+      })
+      return NextResponse.json({ error: 'GMGN submit failed', details: payload, status: gmgnResp.status, statusText: gmgnResp.statusText, headers: Object.fromEntries(gmgnResp.headers.entries()), body: rawBody }, { status: gmgnResp.status })
     }
 
     return NextResponse.json(payload, { status: gmgnResp.status })

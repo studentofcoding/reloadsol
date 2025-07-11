@@ -199,36 +199,40 @@ export default function BulkTokenSeller() {
 
   // Batch quote fetching for all selected tokens
   const fetchAllQuotes = useCallback(async () => {
-    if (selectedTokens.length === 0 || isGettingQuotes) return
-    
+    // Only fetch for tokens that are not unsellable
+    const tokensToQuote = selectedTokens.filter(
+      t => !selectedZeroBalanceTokens.some(z => z.mintAddress === t.mintAddress)
+    )
+    if (tokensToQuote.length === 0 || isGettingQuotes) return
+
     setIsGettingQuotes(true)
     setError('')
-    
+
     try {
-      console.log(`Fetching ${swapProvider} quotes for ${selectedTokens.length} tokens`)
-      
+      console.log(`Fetching ${swapProvider} quotes for ${tokensToQuote.length} tokens`)
+
       // Fetch quotes for all selected tokens in parallel
-      const quotePromises = selectedTokens.map(async (token) => {
+      const quotePromises = tokensToQuote.map(async (token) => {
         const quote = await fetchQuoteForToken(token)
         return { mintAddress: token.mintAddress, quote }
       })
-      
+
       const results = await Promise.allSettled(quotePromises)
       const newQuotes: Record<string, QuoteData> = {}
       let successCount = 0
-      
+
       results.forEach((result, index) => {
         if (result.status === 'fulfilled' && result.value.quote) {
           newQuotes[result.value.mintAddress] = result.value.quote
           successCount++
         }
       })
-      
+
       setQuotes(prevQuotes => ({ ...prevQuotes, ...newQuotes }))
       setLastQuoteTime(Date.now())
-      
-      console.log(`✅ Got ${successCount}/${selectedTokens.length} quotes from ${swapProvider}`)
-      
+
+      console.log(`✅ Got ${successCount}/${tokensToQuote.length} quotes from ${swapProvider}`)
+
       if (successCount === 0) {
         setError(`Failed to get quotes from ${swapProvider}. Try a different provider.`)
       }
@@ -238,7 +242,7 @@ export default function BulkTokenSeller() {
     } finally {
       setIsGettingQuotes(false)
     }
-  }, [selectedTokens, swapProvider, fetchQuoteForToken, isGettingQuotes])
+  }, [selectedTokens, selectedZeroBalanceTokens, swapProvider, fetchQuoteForToken, isGettingQuotes])
 
   // ===== Auto-quote effect =====
   // 1. Runs immediately whenever token selection changes (or autoQuote toggles on)
@@ -649,13 +653,12 @@ export default function BulkTokenSeller() {
       }
     }
 
-    // Batch process GMGN transactions
     if (swapProvider === 'gmgn' && gmgnTransactions.length > 0) {
       try {
         // Sign all GMGN transactions at once
         const transactions = gmgnTransactions.map(t => t.transaction)
         const signedTransactions = await signAllTransactions(transactions)
-        
+
         // Submit all signed transactions to GMGN
         const submitPromises = signedTransactions.map(async (signedTx: VersionedTransaction, index: number) => {
           const signedBase64 = Buffer.from(signedTx.serialize()).toString('base64')
@@ -664,7 +667,7 @@ export default function BulkTokenSeller() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ signed_tx: signedBase64 })
           })
-          
+
           if (submitResponse.ok) {
             const submitData = await submitResponse.json()
             return {
@@ -679,9 +682,9 @@ export default function BulkTokenSeller() {
             }
           }
         })
-        
+
         const submitResults = await Promise.all(submitPromises)
-        
+
         // Process results
         submitResults.forEach((result: any, index: number) => {
           const token = gmgnTransactions[index].token
@@ -699,6 +702,33 @@ export default function BulkTokenSeller() {
             })
           }
         })
+
+        // === Auto-close tokens after GMGN swap (like Jupiter) ===
+        // Find tokens with 100% sell
+        const tokensToClose = gmgnTransactions
+          .map(t => t.token)
+          .filter(t => t.sellPercentage >= 100)
+
+        if (tokensToClose.length > 0) {
+          try {
+            const closeResult = await executeBulkSellAlt(
+              {
+                tokens: [],
+                unsellableTokens: tokensToClose,
+                slippage: 0,
+                priorityFee: 0
+              },
+              walletAddress,
+              connection,
+              signAllTransactions
+            )
+            results.successfulCloses = closeResult.successfulCloses
+            results.failedCloses = closeResult.failedCloses
+            results.signatures.push(...closeResult.signatures)
+          } catch (closeError) {
+            console.error('Failed to auto-close after GMGN swap:', closeError)
+          }
+        }
       } catch (error) {
         console.error('GMGN batch processing error:', error)
         gmgnTransactions.forEach((t: any) => {
