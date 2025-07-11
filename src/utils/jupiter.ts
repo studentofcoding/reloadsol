@@ -2626,3 +2626,246 @@ export async function refreshTokenPricesBatch(
   }
 }
 
+export async function executeBulkSellAlt(
+  request: BulkSellRequest,
+  userPublicKey: string,
+  connection: Connection,
+  signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
+): Promise<BulkSellResult> {
+  const result: BulkSellResult = {
+    success: false,
+    successfulSwaps: [],
+    failedSwaps: [],
+    successfulCloses: [],
+    failedCloses: [],
+    totalReceived: 0,
+    signatures: [],
+    feeInfo: {
+      totalFees: 0,
+      devFee: 0,
+      referralFee: 0,
+      feePerOperation: 0,
+      totalOperations: 0,
+      operationType: 'SELL' as FeeOperationType,
+      sellFeeRate: 0,
+      closeFeeRate: getFeeForOperation('CLOSE')
+    }
+  };
+
+  try {
+    const start = Date.now();
+    const successfulSwaps: TokenToSell[] = [];
+
+    if (request.tokens && request.tokens.length > 0) {
+      const nonFrozenTokens = request.tokens.filter(token => !token.frozen);
+      const frozenTokens = request.tokens.filter(token => token.frozen);
+      
+      console.log(`Executing bulk sell (ALT): ${nonFrozenTokens.length} sellable tokens, ${frozenTokens.length} frozen tokens`);
+
+      frozenTokens.forEach(token => {
+        result.failedSwaps.push({
+          mintAddress: token.mintAddress,
+          error: 'Token account is frozen and cannot be traded'
+        });
+      });
+
+      if (nonFrozenTokens.length > 0) {
+        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+        const transactions: VersionedTransaction[] = [];
+        const transactionTokens: TokenToSell[] = [];
+        
+        const BATCH_SIZE = 10;
+        const batches: TokenToSell[][] = [];
+        for (let i = 0; i < nonFrozenTokens.length; i += BATCH_SIZE) {
+          batches.push(nonFrozenTokens.slice(i, i + BATCH_SIZE));
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+        try {
+          await Promise.all(batches.map(async (batch) => {
+            const batchPromises = batch.map(async (token) => {
+              try {
+                if (!token.decimals) {
+                  throw new Error(`Decimals missing for token ${token.mintAddress}`);
+                }
+                const sellAmountInBase = token.sellAmount / Math.pow(10, token.decimals);
+
+                const swapApiBody = {
+                  from: token.mintAddress,
+                  to: NATIVE_MINT.toBase58(),
+                  amount: sellAmountInBase,
+                  slippage: request.slippage / 100,
+                  payer: userPublicKey,
+                  priorityFee: request.priorityFee / 1000000000,
+                  // Assuming the same fee structure as buy
+                  fee: `${FEE_CONFIG.DEV_WALLET}:0.5`
+                };
+
+                const response = await fetch("https://swap-v2.solanatracker.io/swap", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json", "Connection": "keep-alive" },
+                  body: JSON.stringify(swapApiBody),
+                  signal: controller.signal,
+                  keepalive: true
+                });
+
+                if (!response.ok) {
+                  throw new Error(`Swap API failed: ${response.status} ${response.statusText}`);
+                }
+
+                const swapResult = await response.json();
+                if (!swapResult.txn) {
+                  throw new Error('No transaction returned from swap API');
+                }
+
+                const tx = VersionedTransaction.deserialize(Buffer.from(swapResult.txn, 'base64'));
+                tx.message.recentBlockhash = blockhash;
+                
+                return { success: true, token, tx };
+              } catch (error) {
+                console.error(`Failed to prepare sell for ${token.mintAddress}:`, error);
+                return { success: false, token, error };
+              }
+            });
+
+            const results = await Promise.all(batchPromises);
+            results.forEach(batchResult => {
+              if (batchResult.success && batchResult.tx) {
+                transactions.push(batchResult.tx);
+                transactionTokens.push(batchResult.token);
+              } else {
+                result.failedSwaps.push({
+                  mintAddress: batchResult.token.mintAddress,
+                  error: batchResult.error instanceof Error ? batchResult.error.message : 'Unknown error'
+                });
+              }
+            });
+          }));
+        } finally {
+          clearTimeout(timeoutId);
+        }
+
+        if (transactions.length > 0) {
+          console.log(`Signing ${transactions.length} sell transactions...`);
+          const signedTransactions = await signAllTransactions(transactions);
+          const swapSignatures: string[] = [];
+          
+          const SEND_BATCH_SIZE = 6;
+          for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
+            const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE);
+            const batchTokens = transactionTokens.slice(i, i + SEND_BATCH_SIZE);
+
+            const sendPromises = batch.map(async (tx, idx) => {
+              try {
+                const signature = await connection.sendTransaction(tx, { skipPreflight: true, maxRetries: 2 });
+                return { success: true, signature, tokenIdx: i + idx };
+              } catch (error) {
+                return { success: false, tokenIdx: i + idx, error };
+              }
+            });
+
+            const sendResults = await Promise.all(sendPromises);
+
+            const confirmPromises = sendResults.map(async (sendResult) => {
+              if (!sendResult.success) {
+                result.failedSwaps.push({ mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress, error: 'Failed to send' });
+                return;
+              }
+
+              try {
+                const confirmation = await connection.confirmTransaction({
+                  signature: sendResult.signature!,
+                  lastValidBlockHeight,
+                  blockhash
+                }, 'confirmed');
+
+                if (confirmation.value.err) {
+                  throw new Error(`Transaction failed confirmation: ${confirmation.value.err}`);
+                }
+                
+                const txInfo = await connection.getTransaction(sendResult.signature!, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
+                if (txInfo?.meta?.err) {
+                  throw new Error('Transaction failed on-chain');
+                }
+
+                const accountIndex = txInfo.transaction.message.staticAccountKeys.findIndex(key => key.toBase58() === userPublicKey);
+                const preBalance = txInfo.meta?.preBalances[accountIndex] || 0;
+                const postBalance = txInfo.meta?.postBalances[accountIndex] || 0;
+                const solReceived = (postBalance - preBalance) / LAMPORTS_PER_SOL;
+
+                swapSignatures.push(sendResult.signature!);
+                successfulSwaps.push(transactionTokens[sendResult.tokenIdx]);
+                result.successfulSwaps.push({
+                  mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
+                  solReceived: solReceived > 0 ? solReceived : 0
+                });
+                result.totalReceived += solReceived > 0 ? solReceived : 0;
+                console.log(`✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress}`);
+              } catch (error: any) {
+                result.failedSwaps.push({
+                  mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
+                  error: error.message || 'Confirmation failed'
+                });
+              }
+            });
+            await Promise.all(confirmPromises);
+          }
+          result.signatures.push(...swapSignatures);
+        }
+      }
+    }
+
+    const tokensToCloseFromSwaps = successfulSwaps.filter(token => token.sellPercentage >= 100);
+    const tokensToClose: UserToken[] = [...tokensToCloseFromSwaps];
+
+    if (request.unsellableTokens && request.unsellableTokens.length > 0) {
+      tokensToClose.push(...request.unsellableTokens.filter(token => !token.frozen));
+    }
+
+    if (tokensToClose.length > 0) {
+      const closeResults = await closeTokenAccounts(
+        tokensToClose,
+        userPublicKey,
+        connection,
+        signAllTransactions,
+        { successfulSwapsCount: result.successfulSwaps.length, totalSolReceived: result.totalReceived }
+      );
+      result.successfulCloses = closeResults.successful;
+      result.failedCloses.push(...closeResults.failed);
+      result.signatures.push(...closeResults.signatures);
+    }
+
+    if (result.successfulSwaps.length > 0 || result.successfulCloses.length > 0) {
+        const sellFeeDistribution = calculateFeeDistribution('SELL', result.successfulSwaps.length, result.totalReceived);
+        const closeFeeDistribution = calculateFeeDistribution('CLOSE', result.successfulCloses.length);
+        const totalFees = sellFeeDistribution.totalFee + closeFeeDistribution.totalFee;
+        result.feeInfo = {
+            ...result.feeInfo,
+            totalFees: totalFees,
+            devFee: sellFeeDistribution.devFee + closeFeeDistribution.devFee,
+            referralFee: sellFeeDistribution.referralFee + closeFeeDistribution.referralFee,
+            totalOperations: result.successfulSwaps.length + result.successfulCloses.length,
+            sellFeeRate: getFeeForOperation('SELL', result.totalReceived),
+        };
+        console.log(`🎉 Bulk sell (ALT) completed: ${result.successfulSwaps.length} swaps, ${result.successfulCloses.length} closes`);
+        console.log(`⚡ Total processing time: ${Date.now() - start}ms`);
+        console.log(`💰 Total fees: ${totalFees} SOL`);
+    }
+
+    result.success = result.successfulSwaps.length > 0 || result.successfulCloses.length > 0;
+    return result;
+
+  } catch (error) {
+    console.error('Bulk sell execution error (ALT):', error);
+    if (request.tokens && request.tokens.length > 0) {
+      result.failedSwaps = request.tokens.map(token => ({
+        mintAddress: token.mintAddress,
+        error: error instanceof Error ? error.message : 'Unknown error during alt sell'
+      }));
+    }
+    return result;
+  }
+}
+
