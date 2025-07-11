@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useWallet, useConnection } from '../components/WalletProvider'
 import PhantomWalletButton from './PhantomWalletButton'
 import TransactionResultModal from './TransactionResultModal'
@@ -81,7 +81,8 @@ export default function BulkTokenSeller() {
 
   // Provider and Quote state
   const [swapProvider, setSwapProvider] = useState<'jupiter' | 'solanatracker' | 'gmgn'>('jupiter')
-  const [autoQuote, setAutoQuote] = useState<boolean>(false)
+  // Auto-quote enabled by default (every 10s)
+  const [autoQuote, setAutoQuote] = useState<boolean>(true)
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({})
   const [isGettingQuotes, setIsGettingQuotes] = useState<boolean>(false)
   const [lastQuoteTime, setLastQuoteTime] = useState<number>(0)
@@ -109,7 +110,13 @@ export default function BulkTokenSeller() {
   // Quote fetching functions for different providers
   const fetchJupiterQuote = useCallback(async (inputMint: string, amount: string): Promise<QuoteData | null> => {
     try {
-      const response = await fetch(`https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=So11111111111111111111111111111111111111112&amount=${amount}&slippageBps=${slippage}`)
+      const query = new URLSearchParams({
+        inputMint,
+        outputMint: 'So11111111111111111111111111111111111111112',
+        amount,
+        slippageBps: slippage.toString()
+      })
+      const response = await fetch(`/api/providers/jupiter/quote?${query.toString()}`)
       if (!response.ok) throw new Error('Jupiter quote failed')
       
       const data = await response.json()
@@ -132,15 +139,28 @@ export default function BulkTokenSeller() {
   const fetchSolanaTrackerQuote = useCallback(async (inputMint: string, amount: string): Promise<QuoteData | null> => {
     try {
       // SolanaTracker Swap API - correct parameters from documentation
-      const slippagePercent = slippage / 100
-      const response = await fetch(`https://swap-v2.solanatracker.io/swap?from=${inputMint}&to=So11111111111111111111111111111111111111112&fromAmount=${amount}&slippage=${slippagePercent}&payer=${publicKey?.toString()}`)
+      const query = new URLSearchParams({
+        from: inputMint,
+        to: 'So11111111111111111111111111111111111111112',
+        fromAmount: amount,
+        slippage: slippage.toString(), // SolanaTracker expects percent integer
+        payer: publicKey?.toString() || ''
+      })
+
+      const response = await fetch(`/api/providers/solanatracker/quote?${query.toString()}`)
       if (!response.ok) throw new Error('SolanaTracker quote failed')
       
       const data = await response.json()
       
       // Validate response structure
-      if (!data.txn || !data.outAmount) {
+      if (!data.txn || (!data.outAmount && !data.rate?.amountOut)) {
         throw new Error('Invalid SolanaTracker response format')
+      }
+      
+      // Handle known error structure { error: 'Failed to swap', details: 'Market not supported' }
+      if (data?.error) {
+        console.warn(`SolanaTracker returned error for ${inputMint}:`, data)
+        return null
       }
       
       return {
@@ -148,7 +168,7 @@ export default function BulkTokenSeller() {
         inputMint,
         outputMint: 'So11111111111111111111111111111111111111112',
         amount,
-        outAmount: data.outAmount,
+        outAmount: data.outAmount ?? data.rate?.amountOut?.toString() ?? '0',
         priceImpact: parseFloat(data.priceImpact || data.impact || '0'),
         timestamp: Date.now(),
         route: data
@@ -161,14 +181,28 @@ export default function BulkTokenSeller() {
 
   const fetchGMGNQuote = useCallback(async (inputMint: string, amount: string): Promise<QuoteData | null> => {
     try {
-      // GMGN API endpoint for swap routes - correct API from documentation
-      const response = await fetch(`https://gmgn.ai/defi/router/v1/sol/tx/get_swap_route?token_in_address=${inputMint}&token_out_address=So11111111111111111111111111111111111111112&in_amount=${amount}&from_address=${publicKey?.toString()}&slippage=${slippage / 100}`)
+      // Call backend proxy to avoid CORS and include required fee parameter (handled server-side)
+      const query = new URLSearchParams({
+        token_in_address: inputMint,
+        token_out_address: 'So11111111111111111111111111111111111111112',
+        in_amount: amount,
+        from_address: publicKey?.toString() || '',
+        slippage: (slippage / 100).toString()
+      })
+      const response = await fetch(`/api/providers/gmgn/quote?${query.toString()}`)
       if (!response.ok) throw new Error('GMGN quote failed')
       
       const data = await response.json()
       
-      // Extract quote data from GMGN response structure
-      if (!data.data || !data.data.outputAmount) {
+      // Extract quote data from GMGN response structure (supports both legacy and new formats)
+      if (!data.data) {
+        throw new Error('Invalid GMGN response format')
+      }
+
+      const quoteInfo = data.data.quote || data.data // some responses nest under data.quote
+
+      const gmgnOut = quoteInfo.outputAmount ?? quoteInfo.output_amount ?? quoteInfo.outAmount ?? quoteInfo.out_amount
+      if (!gmgnOut) {
         throw new Error('Invalid GMGN response format')
       }
       
@@ -177,8 +211,8 @@ export default function BulkTokenSeller() {
         inputMint,
         outputMint: 'So11111111111111111111111111111111111111112',
         amount,
-        outAmount: data.data.outputAmount,
-        priceImpact: parseFloat(data.data.priceImpact || '0'),
+        outAmount: gmgnOut,
+        priceImpact: parseFloat(quoteInfo.priceImpactPct || quoteInfo.priceImpact || quoteInfo.price_impact || '0'),
         timestamp: Date.now(),
         route: data
       }
@@ -191,17 +225,26 @@ export default function BulkTokenSeller() {
   // Main quote fetching function
   const fetchQuoteForToken = useCallback(async (token: TokenToSell): Promise<QuoteData | null> => {
     const amount = token.sellAmount.toString()
-    
-    switch (swapProvider) {
-      case 'jupiter':
-        return fetchJupiterQuote(token.mintAddress, amount)
-      case 'solanatracker':
-        return fetchSolanaTrackerQuote(token.mintAddress, amount)
-      case 'gmgn':
-        return fetchGMGNQuote(token.mintAddress, amount)
-      default:
-        return null
+
+    // Helper to attempt provider then fallback to Jupiter
+    const tryProvider = async () => {
+      switch (swapProvider) {
+        case 'jupiter':
+          return fetchJupiterQuote(token.mintAddress, amount)
+        case 'solanatracker': {
+          const stQuote = await fetchSolanaTrackerQuote(token.mintAddress, amount)
+          if (stQuote) return stQuote
+          // Fallback to Jupiter when ST fails (e.g., market not supported)
+          return fetchJupiterQuote(token.mintAddress, amount)
+        }
+        case 'gmgn':
+          return fetchGMGNQuote(token.mintAddress, amount)
+        default:
+          return fetchJupiterQuote(token.mintAddress, amount)
+      }
     }
+
+    return tryProvider()
   }, [swapProvider, fetchJupiterQuote, fetchSolanaTrackerQuote, fetchGMGNQuote])
 
   // Batch quote fetching for all selected tokens
@@ -247,22 +290,35 @@ export default function BulkTokenSeller() {
     }
   }, [selectedTokens, swapProvider, fetchQuoteForToken, isGettingQuotes])
 
-  // Auto-quote effect (every 10 seconds when enabled)
+  // ===== Auto-quote effect =====
+  // 1. Runs immediately whenever token selection changes (or autoQuote toggles on)
+  // 2. Refreshes every 5 s as long as the selection stays the same
+  const tokensHash = useMemo(
+    () => selectedTokens.map(t => t.mintAddress).sort().join(','),
+    [selectedTokens]
+  )
+
+  // Keep a ref to the latest fetchAllQuotes so interval always has fresh logic but effect doesn't depend on its identity
+  const fetchAllQuotesRef = useRef(fetchAllQuotes)
+  useEffect(() => {
+    fetchAllQuotesRef.current = fetchAllQuotes
+  }, [fetchAllQuotes])
+
   useEffect(() => {
     if (!autoQuote || selectedTokens.length === 0) return
-    
-    // Fetch quotes immediately when auto-quote is enabled
-    fetchAllQuotes()
-    
-    // Set up interval for auto-refresh
+
+    // Fetch immediately on mount / token change
+    fetchAllQuotesRef.current()
+
+    // Poll every 5 seconds while the token list is unchanged
     const interval = setInterval(() => {
       if (autoQuote && selectedTokens.length > 0) {
-        fetchAllQuotes()
+        fetchAllQuotesRef.current()
       }
-    }, 10000) // 10 seconds
-    
+    }, 5000)
+
     return () => clearInterval(interval)
-  }, [autoQuote, selectedTokens.length, fetchAllQuotes])
+  }, [autoQuote, tokensHash, selectedTokens.length])
 
   // Clear quotes when provider changes
   useEffect(() => {
@@ -640,13 +696,16 @@ export default function BulkTokenSeller() {
               const swapTransactionBuf = Buffer.from(quote.route.data.raw_tx.swapTransaction, 'base64')
               const transaction = VersionedTransaction.deserialize(swapTransactionBuf)
               
-              // Sign transaction (this would need proper implementation with wallet)
-              // For now, submit the signed transaction to GMGN
-              const submitResponse = await fetch('https://gmgn.ai/defi/router/v1/sol/tx/submit_signed_transaction', {
+              // Sign the transaction with the connected wallet
+              const [signedTx] = await signAllTransactions([transaction])
+              const signedBase64 = Buffer.from(signedTx.serialize()).toString('base64')
+
+              // Submit the signed transaction to GMGN via server proxy (avoids CORS)
+              const submitResponse = await fetch('/api/providers/gmgn/submit', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                  signed_tx: 'base64-signed-transaction' // Would need actual signing
+                  signed_tx: signedBase64
                 })
               })
               
