@@ -121,7 +121,7 @@ export default function TradeComparison({ userPublicKey }: TradeComparisonProps)
       case 'dflow': return '🌊'
       case 'solana-tracker': return '📊'
       case 'gmgn': return '🔥'
-      case 'pump-fun': return '🚀'
+      // case 'pump-fun': return '🚀'  
       default: return '❓'
     }
   }

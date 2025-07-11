@@ -107,7 +107,7 @@ export const validateRpcUrl = (url: string): boolean => {
 /**
  * Get configuration recommendations based on use case
  */
-export const getConfigRecommendations = (useCase: 'development' | 'production' | 'high-throughput' | 'pump-fun'): {
+export const getConfigRecommendations = (useCase: 'development' | 'production' | 'high-throughput' ): {
   description: string
   example: string
   endpoints: string[]
@@ -120,12 +120,12 @@ export const getConfigRecommendations = (useCase: 'development' | 'production' |
         endpoints: RPC_EXAMPLES.public
       }
       
-    case 'pump-fun':
-      return {
-        description: 'Optimized for Pump.fun trading with Helius RPC',
-        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
-        endpoints: RPC_EXAMPLES.pumpFun
-      }
+    // case 'pump-fun':
+    //   return {
+    //     description: 'Optimized for Pump.fun trading with Helius RPC',
+    //     example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
+    //     endpoints: RPC_EXAMPLES.pumpFun
+    //   }
       
     case 'production':
       return {

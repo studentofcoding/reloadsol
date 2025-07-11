@@ -75,7 +75,7 @@ export interface WalletContextState {
 } 
 
 // New types for trade comparison API
-export type TradeProvider = 'jupiter' | 'dflow' | 'solana-tracker' | 'gmgn' | 'pump-fun'
+export type TradeProvider = 'jupiter' | 'dflow' | 'solana-tracker' | 'gmgn' // | 'pump-fun'
 
 export interface TradeQuoteRequest {
   inputMint: string
@@ -130,13 +130,13 @@ export interface ProviderQuote {
       poolInfo?: any
       timeTaken?: number
     }
-    'pump-fun'?: {
-      routePlan?: any[]
-      marketPrice?: number
-      liquidityUsd?: number
-      timeTaken?: number
-      rpcEndpoint?: string
-    }
+    // 'pump-fun'?: {
+    //   routePlan?: any[]
+    //   marketPrice?: number
+    //   liquidityUsd?: number
+    //   timeTaken?: number
+    //   rpcEndpoint?: string
+    // }
   }
 }
 
@@ -195,12 +195,12 @@ export interface ProviderConfig {
     maxRetries: number
     timeout: number
   }
-  'pump-fun': {
-    apiUrl: string
-    rpcUrl: string
-    maxRetries: number
-    timeout: number
-  }
+  // 'pump-fun': {
+  //   apiUrl: string
+  //   rpcUrl: string
+  //   maxRetries: number
+  //   timeout: number
+  // }
 }
 
 export interface TradeExecutionRequest {

@@ -29,12 +29,12 @@ const PROVIDER_CONFIG: ProviderConfig = {
     maxRetries: 3,
     timeout: 12000
   },
-  'pump-fun': {
-    apiUrl: 'https://pumpportal.fun/api',
-    rpcUrl: 'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
-    maxRetries: 3,
-    timeout: 15000
-  }
+  // 'pump-fun': {
+  //   apiUrl: 'https://pumpportal.fun/api',
+  //   rpcUrl: 'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
+  //   maxRetries: 3,
+  //   timeout: 15000
+  // }
 }
 
 // Utility function for measuring execution time
@@ -378,105 +378,105 @@ async function getGmgnQuote(request: TradeQuoteRequest): Promise<ProviderQuote> 
 }
 
 // Pump.fun quote fetcher (using PumpPortal API)
-async function getPumpFunQuote(request: TradeQuoteRequest): Promise<ProviderQuote> {
-  try {
-    const { result: quote, time } = await measureTime(async () => {
-      // Convert amount to SOL for pump.fun calculation
-      const amountInSol = parseFloat(request.amount) / 1e9
+// async function getPumpFunQuote(request: TradeQuoteRequest): Promise<ProviderQuote> {
+//   try {
+//     const { result: quote, time } = await measureTime(async () => {
+//       // Convert amount to SOL for pump.fun calculation
+//       const amountInSol = parseFloat(request.amount) / 1e9
       
-      // Get quote using PumpPortal local trade API
-      const response = await fetch(`${PROVIDER_CONFIG['pump-fun'].apiUrl}/trade-local`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          publicKey: request.userPublicKey || '11111111111111111111111111111111',
-          action: 'buy',
-          mint: request.outputMint,
-          denominatedInSol: 'true',
-          amount: amountInSol,
-          slippage: request.slippageBps / 100, // Convert bps to percentage
-          priorityFee: 0.00001,
-          pool: 'pump'
-        }),
-        signal: AbortSignal.timeout(PROVIDER_CONFIG['pump-fun'].timeout)
-      })
+//       // Get quote using PumpPortal local trade API
+//       const response = await fetch(`${PROVIDER_CONFIG['pump-fun'].apiUrl}/trade-local`, {
+//         method: 'POST',
+//         headers: {
+//           'Content-Type': 'application/json',
+//           'Accept': 'application/json'
+//         },
+//         body: JSON.stringify({
+//           publicKey: request.userPublicKey || '11111111111111111111111111111111',
+//           action: 'buy',
+//           mint: request.outputMint,
+//           denominatedInSol: 'true',
+//           amount: amountInSol,
+//           slippage: request.slippageBps / 100, // Convert bps to percentage
+//           priorityFee: 0.00001,
+//           pool: 'pump'
+//         }),
+//         signal: AbortSignal.timeout(PROVIDER_CONFIG['pump-fun'].timeout)
+//       })
 
-      if (!response.ok) {
-        throw new Error(`PumpPortal API error: ${response.status} ${response.statusText}`)
-      }
+//       if (!response.ok) {
+//         throw new Error(`PumpPortal API error: ${response.status} ${response.statusText}`)
+//       }
 
-      // For quotes, we'll simulate the transaction data
-      // In a real implementation, you'd parse the transaction to get expected output
-      // For now, we'll use market data estimation
+//       // For quotes, we'll simulate the transaction data
+//       // In a real implementation, you'd parse the transaction to get expected output
+//       // For now, we'll use market data estimation
       
-      // Fallback to market estimation since PumpPortal returns transaction data
-      // This is a simplified calculation - in production you'd parse the transaction
-      const estimatedPrice = 0.00001 // Placeholder price for pump.fun tokens
-      const estimatedOutput = Math.floor(amountInSol / estimatedPrice)
-      const priceImpact = Math.min((amountInSol / 1000) * 100, 15) // Estimate based on trade size
+//       // Fallback to market estimation since PumpPortal returns transaction data
+//       // This is a simplified calculation - in production you'd parse the transaction
+//       const estimatedPrice = 0.00001 // Placeholder price for pump.fun tokens
+//       const estimatedOutput = Math.floor(amountInSol / estimatedPrice)
+//       const priceImpact = Math.min((amountInSol / 1000) * 100, 15) // Estimate based on trade size
       
-      return {
-        success: true,
-        estimatedOutput: estimatedOutput.toString(),
-        estimatedPrice,
-        priceImpact,
-        transactionReady: true
-      }
-    })
+//       return {
+//         success: true,
+//         estimatedOutput: estimatedOutput.toString(),
+//         estimatedPrice,
+//         priceImpact,
+//         transactionReady: true
+//       }
+//     })
 
-    return {
-      provider: 'pump-fun',
-      inputMint: request.inputMint,
-      outputMint: request.outputMint,
-      inAmount: request.amount,
-      outAmount: quote.estimatedOutput,
-      otherAmountThreshold: Math.floor(parseFloat(quote.estimatedOutput) * (1 - request.slippageBps / 10000)).toString(),
-      slippageBps: request.slippageBps,
-      priceImpactPct: quote.priceImpact.toFixed(4),
-      responseTime: time,
-      success: true,
-      route: [{
-        type: 'pump-fun-bonding-curve',
-        tokenAddress: request.outputMint,
-        price: quote.estimatedPrice
-      }],
-      fees: {
-        totalFeeLamports: Math.floor(parseFloat(request.amount) * 0.005), // 0.5% PumpPortal fee
-        feePercentage: 0.5
-      },
-      providerData: {
-        'pump-fun': {
-          routePlan: [{
-            type: 'pump-fun-bonding-curve',
-            tokenAddress: request.outputMint,
-            price: quote.estimatedPrice
-          }],
-          marketPrice: quote.estimatedPrice,
-          liquidityUsd: 0, // Not available in this API
-          timeTaken: time,
-          rpcEndpoint: PROVIDER_CONFIG['pump-fun'].rpcUrl
-        }
-      }
-    }
-  } catch (error) {
-    return {
-      provider: 'pump-fun',
-      inputMint: request.inputMint,
-      outputMint: request.outputMint,
-      inAmount: request.amount,
-      outAmount: '0',
-      otherAmountThreshold: '0',
-      slippageBps: request.slippageBps,
-      priceImpactPct: '0',
-      responseTime: 0,
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown Pump.fun error'
-    }
-  }
-}
+//     return {
+//       provider: 'pump-fun',
+//       inputMint: request.inputMint,
+//       outputMint: request.outputMint,
+//       inAmount: request.amount,
+//       outAmount: quote.estimatedOutput,
+//       otherAmountThreshold: Math.floor(parseFloat(quote.estimatedOutput) * (1 - request.slippageBps / 10000)).toString(),
+//       slippageBps: request.slippageBps,
+//       priceImpactPct: quote.priceImpact.toFixed(4),
+//       responseTime: time,
+//       success: true,
+//       route: [{
+//         type: 'pump-fun-bonding-curve',
+//         tokenAddress: request.outputMint,
+//         price: quote.estimatedPrice
+//       }],
+//       fees: {
+//         totalFeeLamports: Math.floor(parseFloat(request.amount) * 0.005), // 0.5% PumpPortal fee
+//         feePercentage: 0.5
+//       },
+//       providerData: {
+//         'pump-fun': {
+//           routePlan: [{
+//             type: 'pump-fun-bonding-curve',
+//             tokenAddress: request.outputMint,
+//             price: quote.estimatedPrice
+//           }],
+//           marketPrice: quote.estimatedPrice,
+//           liquidityUsd: 0, // Not available in this API
+//           timeTaken: time,
+//           rpcEndpoint: PROVIDER_CONFIG['pump-fun'].rpcUrl
+//         }
+//       }
+//     }
+//   } catch (error) {
+//     return {
+//       provider: 'pump-fun',
+//       inputMint: request.inputMint,
+//       outputMint: request.outputMint,
+//       inAmount: request.amount,
+//       outAmount: '0',
+//       otherAmountThreshold: '0',
+//       slippageBps: request.slippageBps,
+//       priceImpactPct: '0',
+//       responseTime: 0,
+//       success: false,
+//       error: error instanceof Error ? error.message : 'Unknown Pump.fun error'
+//     }
+//   }
+// }
 
 // Main comparison function
 export async function compareTradeQuotes(request: TradeQuoteRequest): Promise<TradeComparison> {
@@ -488,15 +488,15 @@ export async function compareTradeQuotes(request: TradeQuoteRequest): Promise<Tr
   })
 
   // Fetch quotes from all providers in parallel
-  const [jupiterQuote, dflowQuote, solanaTrackerQuote, gmgnQuote, pumpFunQuote] = await Promise.all([
+  const [jupiterQuote, dflowQuote, solanaTrackerQuote, gmgnQuote ] = await Promise.all([
     getJupiterQuote(request),
     getDflowQuote(request),
     getSolanaTrackerQuote(request),
     getGmgnQuote(request),
-    getPumpFunQuote(request)
+    // getPumpFunQuote(request)
   ])
 
-  const quotes = [jupiterQuote, dflowQuote, solanaTrackerQuote, gmgnQuote, pumpFunQuote]
+  const quotes = [jupiterQuote, dflowQuote, solanaTrackerQuote, gmgnQuote ]
   const successfulQuotes = quotes.filter(q => q.success)
 
   // Find best quote by output amount
@@ -666,7 +666,7 @@ export async function checkProviderHealth(): Promise<Record<TradeProvider, boole
     checkDflowHealth(),
     checkSolanaTrackerHealth(),
     checkGmgnHealth(),
-    checkPumpFunHealth()
+    // checkPumpFunHealth()
   ])
 
   return {
@@ -674,7 +674,7 @@ export async function checkProviderHealth(): Promise<Record<TradeProvider, boole
     dflow: healthChecks[1],
     'solana-tracker': healthChecks[2],
     gmgn: healthChecks[3],
-    'pump-fun': healthChecks[4]
+    // 'pump-fun': healthChecks[4]
   }
 }
 
@@ -723,33 +723,33 @@ async function checkGmgnHealth(): Promise<boolean> {
   }
 }
 
-async function checkPumpFunHealth(): Promise<boolean> {
-  try {
-    // Check if PumpPortal API is accessible with a simple test request
-    const response = await fetch(`${PROVIDER_CONFIG['pump-fun'].apiUrl}/trade-local`, {
-      method: 'POST',
-      headers: {
-        'Accept': 'application/json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        publicKey: '11111111111111111111111111111111',
-        action: 'buy',
-        mint: 'So11111111111111111111111111111111111111112',
-        denominatedInSol: 'true',
-        amount: 0.01,
-        slippage: 1,
-        priorityFee: 0.00001,
-        pool: 'pump'
-      }),
-      signal: AbortSignal.timeout(5000)
-    })
-    // PumpPortal returns 400 for invalid tokens, which means API is working
-    return response.status === 400 || response.ok
-  } catch {
-    return false
-  }
-}
+// async function checkPumpFunHealth(): Promise<boolean> {
+//   try {
+//     // Check if PumpPortal API is accessible with a simple test request
+//     const response = await fetch(`${PROVIDER_CONFIG['pump-fun'].apiUrl}/trade-local`, {
+//       method: 'POST',
+//       headers: {
+//         'Accept': 'application/json',
+//         'Content-Type': 'application/json'
+//       },
+//       body: JSON.stringify({
+//         publicKey: '11111111111111111111111111111111',
+//         action: 'buy',
+//         mint: 'So11111111111111111111111111111111111111112',
+//         denominatedInSol: 'true',
+//         amount: 0.01,
+//         slippage: 1,
+//         priorityFee: 0.00001,
+//         pool: 'pump'
+//       }),
+//       signal: AbortSignal.timeout(5000)
+//     })
+//     // PumpPortal returns 400 for invalid tokens, which means API is working
+//     return response.status === 400 || response.ok
+//   } catch {
+//     return false
+//   }
+// }
 
 // Enhanced Trade Comparison with parallel processing and multiple configurations
 interface EnhancedTradeConfig {
@@ -888,9 +888,9 @@ async function getEnhancedQuote(
         case 'gmgn':
           quote = await getGmgnQuote(request)
           break
-        case 'pump-fun':
-          quote = await getPumpFunQuote(request)
-          break
+        // case 'pump-fun':
+        //   quote = await getPumpFunQuote(request)
+        //   break
         default:
           throw new Error(`Unknown provider: ${provider}`)
       }
@@ -943,7 +943,7 @@ export async function performEnhancedTradeComparison(
   
   // Test configurations
   const slippageConfigs = [1, 2, 5] // 1%, 2%, 5%
-  const providers: TradeProvider[] = ['jupiter', 'dflow', 'solana-tracker', 'gmgn', 'pump-fun']
+  const providers: TradeProvider[] = ['jupiter', 'dflow', 'solana-tracker', 'gmgn']
   const rpcs = RPC_ENDPOINTS
   
   // Build all test combinations
