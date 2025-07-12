@@ -64,25 +64,28 @@ export default function WalletPoints({ className = '' }: WalletPointsProps) {
   }
 
   return (
-    <div>
-
+    <div className={`min-h-[20px] ${className}`}>
       {error && (
-        <div className="bg-red-900/20 border border-red-700 rounded-lg p-3 mb-4">
+        <div className="bg-red-900/20 border border-red-700 rounded px-2 py-1 flex items-center space-x-1 min-h-[20px]">
           <p className="text-red-400 text-xs">{error}</p>
         </div>
       )}
 
-      {loading ? (
-        <div className="flex items-center justify-center py-4">
-          <div className="w-5 h-5 border-2 border-gray-400 border-t-white rounded-full animate-spin mr-3"></div>
-          <span className="text-gray-400 text-xs">Loading points...</span>
-        </div>
-      ) : (
-        <div className="flex items-center space-x-1">
-          <span className="text-white font-bold text-xs">{points.toLocaleString()}</span>
-          <span className="text-gray-400 text-xs">points</span>
+      {!error && (
+        <div className="flex items-center space-x-1 min-h-[20px]">
+          {loading ? (
+            <>
+              <div className="w-3 h-3 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+              <span className="text-gray-400 text-xs">Loading points...</span>
+            </>
+          ) : (
+            <>
+              <span className="text-white font-bold text-xs">{points.toLocaleString()}</span>
+              <span className="text-gray-400 text-xs">points</span>
+            </>
+          )}
         </div>
       )}
     </div>
   )
-} 
+}

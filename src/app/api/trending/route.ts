@@ -498,7 +498,7 @@ async function fetchAndUpdateCache(
       // Find the first successful response
       for (const result of results) {
         if (result.status === 'fulfilled' && result.value.success) {
-          response = result.value.response;
+          response = result.value.response || null;
           successfulUrl = result.value.url;
           console.log(`Successfully fetched trending data from ${successfulUrl}`);
           break;
