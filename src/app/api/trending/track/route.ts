@@ -2393,7 +2393,7 @@ async function internalTrackPost(request: NextRequest) {
                     marketCap: token.market_cap,
                     organicScore: token.organic_score,
                     volume1h: token.volume_1h,
-                    isRealTrading: tradingSimulation !== null ? !tradingSimulation.is_simulated : false
+                    isRealTrading: tradingSimulation?.is_simulated === false
                   })
                 } catch (discordError) {
                   console.error('❌ Failed to send new token Discord notification:', discordError)
