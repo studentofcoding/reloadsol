@@ -383,7 +383,7 @@ class RealTradeExecutor implements TradeExecutor {
 
   private async executeSwap(params: TradeExecutionParams, direction: 'buy' | 'sell'): Promise<TradeExecutionResult> {
     const startTime = Date.now()
-    
+
     // Enhanced logging for real trades
     logTradeOperation(`Real Trade ${direction.toUpperCase()} Started`, {
       tokenAddress: params.tokenAddress,
@@ -393,7 +393,7 @@ class RealTradeExecutor implements TradeExecutor {
       userPublicKey: params.userPublicKey,
       direction
     })
-    
+
     try {
       // Get quote first (always use Jupiter for real trades)
       console.log(`🔄 Getting Jupiter quote for ${direction} ${params.tokenSymbol}...`)
@@ -437,7 +437,7 @@ class RealTradeExecutor implements TradeExecutor {
       let signature: string | undefined
       let sendAttempts = 0
       const maxSendAttempts = 3
-      
+
       while (sendAttempts < maxSendAttempts) {
         try {
           signature = await this.connection.sendTransaction(signedTx, {
@@ -461,13 +461,13 @@ class RealTradeExecutor implements TradeExecutor {
       }
 
       console.log(`⏳ Confirming transaction ${signature}...`)
-      
+
       // Enhanced transaction confirmation with timeout
       const confirmationPromise = this.connection.confirmTransaction(signature, 'confirmed')
-      const timeoutPromise = new Promise((_, reject) => 
+      const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Transaction confirmation timeout')), 30000)
       )
-      
+
       await Promise.race([confirmationPromise, timeoutPromise])
 
       const responseTime = Date.now() - startTime
@@ -499,7 +499,7 @@ class RealTradeExecutor implements TradeExecutor {
       return result
     } catch (error) {
       const responseTime = Date.now() - startTime
-      
+
       // Enhanced error logging for real trades
       logTradeOperation(`Real Trade ${direction.toUpperCase()} FAILED`, {
         tokenSymbol: params.tokenSymbol,
@@ -509,7 +509,7 @@ class RealTradeExecutor implements TradeExecutor {
         responseTime,
         userPublicKey: params.userPublicKey
       }, error as Error)
-      
+
       return {
         success: false,
         inputAmount: params.amount.toString(),
@@ -526,8 +526,8 @@ class RealTradeExecutor implements TradeExecutor {
 
 // Factory function to create appropriate executor
 function createTradeExecutor(
-  isSimulated: boolean, 
-  connection?: Connection, 
+  isSimulated: boolean,
+  connection?: Connection,
   signer?: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
 ): TradeExecutor {
   if (isSimulated) {
@@ -573,7 +573,7 @@ function calculateGainPercentage(currentPrice: number, initialPrice: number): nu
     console.warn('Invalid initial price for gain calculation:', initialPrice)
     return 0
   }
-  
+
   // Round to 4 decimal places to avoid floating point precision issues
   return Math.round(((currentPrice - initialPrice) / initialPrice) * 10000) / 100
 }
@@ -581,10 +581,10 @@ function calculateGainPercentage(currentPrice: number, initialPrice: number): nu
 function calculatePeakPrice(currentPrice: number, existingPeakPrice: number): number {
   // Ensure we don't store invalid peak prices
   if (currentPrice <= 0) return existingPeakPrice
-  
+
   // If no existing peak price (0), set current as peak
   if (!existingPeakPrice) return currentPrice
-  
+
   // Only update peak if current is higher
   return currentPrice > existingPeakPrice ? currentPrice : existingPeakPrice
 }
@@ -673,7 +673,7 @@ async function sendNewTokenDetectionDiscord(params: {
 
     const emoji = isRealTrading ? '🔥' : '💻'
     const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
-    
+
     // Create reloadSOL swap link as requested
     const reloadSolLink = `https://v2.reloadsol.xyz/buy?sol=0.1&mints=${tokenAddress}`
 
@@ -724,7 +724,7 @@ async function sendNewTokenDetectionDiscord(params: {
       tokenAddress: params.tokenAddress,
       isRealTrading: params.isRealTrading
     }, err as Error)
-    
+
     // Re-throw for upstream handling if needed
     throw err
   }
@@ -837,7 +837,7 @@ async function sendBuyNotificationDiscord(params: {
       amountSOL: params.amountSOL,
       signature: params.signature ? `${params.signature.slice(0, 8)}...` : 'none'
     }, err as Error)
-    
+
     // Re-throw for upstream handling if needed
     throw err
   }
@@ -932,7 +932,7 @@ async function sendTradeAlertDiscord(params: {
       status: params.status,
       currentGain: params.currentGain
     }, err as Error)
-    
+
     // Re-throw for upstream handling if needed
     throw err
   }
@@ -966,7 +966,7 @@ function shouldRunDailySummary(currentTime: Date, lastSummaryTime: Date | null):
 
   // Check if it's been more than 23 hours since last summary
   const hoursSinceLastSummary = (currentTime.getTime() - lastSummaryTime.getTime()) / (1000 * 60 * 60)
-  
+
   // Run daily summary once per day (allow 23+ hours gap to avoid missing due to slight timing differences)
   return hoursSinceLastSummary >= 23
 }
@@ -975,7 +975,7 @@ function shouldRunDailySummary(currentTime: Date, lastSummaryTime: Date | null):
 function shouldRunPnLUpdate(currentTime: Date): boolean {
   const hour = currentTime.getUTCHours()
   const minute = currentTime.getUTCMinutes()
-  
+
   // Run PnL update at 2 AM UTC (allow 5-minute window: 2:00-2:05)
   return hour === 2 && minute < 5
 }
@@ -984,7 +984,7 @@ function shouldRunPnLUpdate(currentTime: Date): boolean {
 async function runPnLUpdate(): Promise<void> {
   try {
     console.log('🔄 Running PnL update...')
-    
+
     // Call the PnL update API internally
     const pnlResponse = await fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/pnl/update`, {
       method: 'POST',
@@ -993,7 +993,7 @@ async function runPnLUpdate(): Promise<void> {
         'User-Agent': 'vercel-cron-internal'
       }
     })
-    
+
     if (pnlResponse.ok) {
       const pnlResult = await pnlResponse.json()
       console.log('✅ PnL update completed:', pnlResult)
@@ -1010,14 +1010,14 @@ async function runPnLUpdate(): Promise<void> {
 async function performTradeComparison(token: any): Promise<TradeComparisonResult | null> {
   try {
     console.log(`🚀 Performing enhanced trade comparison for ${token.token_symbol} (${token.token_address})`)
-    
+
     // Use the new enhanced trade comparison function
     const enhancedResult = await performEnhancedTradeComparison(
       token.token_address,
       token.token_symbol,
       0.015 // 0.015 SOL as specified
     )
-    
+
     // Convert enhanced result to the expected TradeComparisonResult format for backward compatibility
     const tradeResult: TradeComparisonResult = {
       token_address: enhancedResult.token_address,
@@ -1033,7 +1033,7 @@ async function performTradeComparison(token: any): Promise<TradeComparisonResult
         total_fees: 0
       }
     }
-    
+
     console.log(`✅ Enhanced trade comparison completed for ${token.token_symbol}:`, {
       successful_configs: Object.values(enhancedResult.configurations).filter(c => c.success).length,
       best_provider: enhancedResult.best_config?.provider,
@@ -1042,9 +1042,9 @@ async function performTradeComparison(token: any): Promise<TradeComparisonResult
         .map(([p, perf]) => `${p}: ${perf.success_rate.toFixed(1)}%`)
         .join(', ')
     })
-    
+
     return tradeResult
-    
+
   } catch (error) {
     console.error(`❌ Error performing enhanced trade comparison for ${token.token_symbol}:`, error)
     return null
@@ -1055,7 +1055,7 @@ async function performTradeComparison(token: any): Promise<TradeComparisonResult
 async function runDailySummary(currentTime: Date): Promise<void> {
   try {
     const periodStart = new Date(currentTime.getTime() - 24 * 60 * 60 * 1000) // 24 hours ago
-    
+
     // Get all tokens that were tracked in the last 24 hours
     const { data: allTokens, error: fetchError } = await supabase
       .from(TRACKER_TABLE)
@@ -1107,7 +1107,7 @@ async function runDailySummary(currentTime: Date): Promise<void> {
     // Execute all updates
     const results = await Promise.allSettled(updatePromises)
     const failedUpdates = results.filter(result => result.status === 'rejected')
-    
+
     if (failedUpdates.length > 0) {
       console.error(`⚠️ ${failedUpdates.length} winner updates failed:`, failedUpdates)
     }
@@ -1120,7 +1120,7 @@ async function runDailySummary(currentTime: Date): Promise<void> {
     // Calculate summary statistics
     const allGains = [...topPerformers, ...wonTokens].map(t => t.peak_gain_percentage)
     const allLosses = lostTokens.map(t => Math.abs(t.current_gain_percentage))
-    
+
     const avgPeakGain = allGains.length > 0 ? allGains.reduce((a, b) => a + b, 0) / allGains.length : 0
     const maxPeakGain = allGains.length > 0 ? Math.max(...allGains) : 0
     const avgLoss = allLosses.length > 0 ? allLosses.reduce((a, b) => a + b, 0) / allLosses.length : 0
@@ -1129,7 +1129,7 @@ async function runDailySummary(currentTime: Date): Promise<void> {
     const topWinnersData: TopWinner[] = topPerformers.map(token => {
       const trackingStart = new Date(token.tracking_started_at)
       const trackingDuration = (currentTime.getTime() - trackingStart.getTime()) / (1000 * 60 * 60)
-      
+
       return {
         token_address: token.token_address,
         token_symbol: token.token_symbol,
@@ -1184,13 +1184,13 @@ async function trackBotOperation(
   try {
     // Only track if we have a keypair (real bot operations)
     if (!tradingKeypair && !isSimulated) return
-    
+
     const { getSolPriceUSD } = await import('@/utils/solana')
     const { tradingTracker } = await import('@/utils/trading-tracker')
-    
+
     const currentSolPrice = await getSolPriceUSD()
     const walletAddress = tradingKeypair?.publicKey.toString() || 'simulation'
-    
+
     const tokenData = {
       mintAddress: token.token_address,
       symbol: token.token_symbol,
@@ -1205,7 +1205,7 @@ async function trackBotOperation(
     }
 
     // Calculate SOL amount based on operation type
-    const solAmount = operationType === 'buy' 
+    const solAmount = operationType === 'buy'
       ? 0.015 // Fixed buy amount
       : parseFloat(bestResult.outputAmount) / 1e9 // Convert lamports to SOL for sells
 
@@ -1253,24 +1253,24 @@ async function checkForManualSells(tokens: TrackedToken[]): Promise<void> {
     // Process each tracked token
     for (const token of tokens) {
       if (token.status !== 'tracking' || !token.trading_simulation) continue
-      
-      const tokenAccount = tokenAccounts.find(account => 
+
+      const tokenAccount = tokenAccounts.find(account =>
         account.account.data.parsed.info.mint === token.token_address
       )
-      
-      const currentBalance = tokenAccount 
+
+      const currentBalance = tokenAccount
         ? tokenAccount.account.data.parsed.info.tokenAmount.uiAmount || 0
         : 0
-      
+
       const monitoredToken = monitoredTokens.get(token.token_address)
-      
+
       if (monitoredToken) {
         const balanceDecrease = monitoredToken.lastBalance - currentBalance
-        
+
         // Detect significant balance decrease (manual sell)
         if (balanceDecrease > 0.001 && balanceDecrease > monitoredToken.lastBalance * 0.1) {
           console.log(`🚨 Manual sell detected for ${token.token_symbol}: ${balanceDecrease.toFixed(6)} tokens sold`)
-          
+
           // Mark trading simulation as manually closed
           if (token.trading_simulation) {
             token.trading_simulation.current_status = 'completed'
@@ -1280,7 +1280,7 @@ async function checkForManualSells(tokens: TrackedToken[]): Promise<void> {
               manual_intervention: true,
               manual_sell_detected: true
             } as any
-            
+
             // Update token status to won (manual intervention)
             await supabase
               .from(TRACKER_TABLE)
@@ -1290,7 +1290,7 @@ async function checkForManualSells(tokens: TrackedToken[]): Promise<void> {
                 trading_simulation: token.trading_simulation
               })
               .eq('id', token.id)
-            
+
             // Send Discord notification about manual sell
             if (shouldEnableNotifications()) {
               try {
@@ -1312,7 +1312,7 @@ async function checkForManualSells(tokens: TrackedToken[]): Promise<void> {
           }
         }
       }
-      
+
       // Update monitoring data
       monitoredTokens.set(token.token_address, {
         lastBalance: currentBalance,
@@ -1331,42 +1331,42 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     const isSimulated = simulation.is_simulated
     const operationType = isSimulated ? 'simulation' : 'real trade'
     console.log(`💰 Performing buy ${operationType} for ${token.token_symbol} (${token.token_address})`)
-    
+
     // SOL mint address and trading parameters
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
     const BUY_AMOUNT_SOL = 0.015 // 0.015 SOL per token as specified
     const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9)
     const PRIORITY_FEE_SOL = 0.001 // 0.001 SOL priority fee as specified
     const PRIORITY_FEE_LAMPORTS = Math.floor(PRIORITY_FEE_SOL * 1e9)
-    
+
     // Safety checks for real trading
     if (!isSimulated) {
       if (!simulation.keypair_path) {
         throw new Error('Trading keypair not configured (set TRADING_KEYPAIR_JSON or provide keypair_path)')
       }
-      
+
       // Check RPC health before trading
       const rpcHealth = await checkRpcHealth()
       if (!rpcHealth.healthy) {
         throw new Error(`Shyft RPC unhealthy: ${rpcHealth.error}`)
       }
-      
+
       // Initialize trading infrastructure
       const connection = initializeTradingConnection()
       await initializeTradingKeypair(simulation.keypair_path)
-      
+
       // Check if we can execute the trade
       const { canTrade, reason } = await canExecuteRealTrade(BUY_AMOUNT_SOL, token.token_address, token.token_symbol)
       if (!canTrade) {
         throw new Error(`Cannot execute real trade: ${reason}`)
       }
-      
+
       // Mark token as having active trade
       activeTrades.add(token.token_address)
-      
+
       console.log(`🔥 Real trading safety checks passed - RPC healthy (${rpcHealth.latency}ms), sufficient balance`)
     }
-    
+
     // Choose executors
     const executor = createTradeExecutor(
       isSimulated,
@@ -1376,30 +1376,30 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
 
     // When doing a real trade we still want paper comparisons for other slippages
     const simExecutor = isSimulated ? executor : new SimulationExecutor()
-    
+
     // Test different slippage configurations
     const slippageConfigs = [
       { key: 'slippage_1', bps: 100 },   // 1% for simulation comparison
       { key: 'slippage_2', bps: 200 },   // 2% for simulation comparison  
       { key: 'slippage_3', bps: 300 }    // 3% - required for real trades
     ]
-    
+
     const configurations: any = {}
     const allResults: TradeExecutionResult[] = []
-    
+
     // For real trading, use 3% slippage for execution but test all for comparison
     // For simulation, test all configurations
     const configsToTest = slippageConfigs
     const realTradeSlippage = 300 // 3% slippage for real trades
-    
+
     for (const config of configsToTest) {
       try {
         console.log(`  📊 Testing ${config.key} (${config.bps} bps slippage)...`)
-        
+
         // For real trades, only the 3 % config hits chain – others use SimulationExecutor
         const shouldActuallyExecute = isSimulated || config.bps === realTradeSlippage
         const exec = shouldActuallyExecute ? executor : simExecutor
-        
+
         const result = await exec.executeBuy({
           tokenAddress: token.token_address,
           tokenSymbol: token.token_symbol,
@@ -1410,7 +1410,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
           priorityFee: shouldActuallyExecute ? PRIORITY_FEE_LAMPORTS : 0
         })
-        
+
         configurations[config.key] = {
           success: result.success,
           response_time: result.responseTime,
@@ -1422,20 +1422,20 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
           signature: result.signature,
           error: result.error
         }
-        
+
         if (result.success) {
           allResults.push(result)
           console.log(`    ✅ ${config.key}: ${result.provider} - ${result.outputAmount} tokens, ${result.responseTime}ms${result.signature ? ` (${result.signature.slice(0, 8)}...)` : ''}`)
         } else {
           console.log(`    ❌ ${config.key}: ${result.error}`)
         }
-        
+
         // For real trading, break loop once the live 3 % trade succeeded –
         // we already gathered simulation results for other configs.
         if (!isSimulated && result.success && shouldActuallyExecute) {
           break
         }
-        
+
       } catch (error) {
         console.error(`    ❌ ${config.key} error:`, error)
         configurations[config.key] = {
@@ -1448,48 +1448,48 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
           error: error instanceof Error ? error.message : 'Unknown error'
         }
       }
-      
+
       // Small delay between configurations (simulation only)
       if (isSimulated) {
         await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
-    
+
     // Find best result (considering both amount and fees for real trades)
     const bestResult = allResults.reduce((best, current) => {
       if (!best) return current
-      
+
       const bestAmount = parseFloat(best.outputAmount)
       const currentAmount = parseFloat(current.outputAmount)
-      
+
       // For real trades, also consider fees and slippage
       if (!isSimulated) {
         const bestValue = bestAmount - best.fees.totalFees
         const currentValue = currentAmount - current.fees.totalFees
         return currentValue > bestValue ? current : best
       }
-      
+
       // For simulation, just compare token amounts
       return currentAmount > bestAmount ? current : best
     }, allResults[0])
-    
+
     if (!bestResult) {
       console.log(`❌ No successful buy ${operationType} for ${token.token_symbol}`)
       return null
     }
-    
+
     // Position validation for real trades
     if (!isSimulated && bestResult.success) {
       const tokenAmount = parseFloat(bestResult.outputAmount)
       const expectedMinTokens = BUY_AMOUNT_SOL * 0.8 / token.current_price // At least 80% of expected
-      
+
       if (tokenAmount < expectedMinTokens) {
         console.warn(`⚠️ Real trade token amount lower than expected: ${tokenAmount} < ${expectedMinTokens}`)
       } else {
         console.log(`✅ Real trade position validated: ${tokenAmount} tokens received`)
       }
     }
-    
+
     const buyOperation: BuyOperation = {
       timestamp: new Date().toISOString(),
       buy_amount_sol: BUY_AMOUNT_SOL,
@@ -1510,9 +1510,9 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       bot_strategy: 'auto-trending-tracker',
       signature: bestResult.signature
     }
-    
+
     console.log(`✅ Buy ${operationType} completed for ${token.token_symbol}: ${bestResult.outputAmount} tokens via ${bestResult.provider}${bestResult.signature ? ` (${bestResult.signature})` : ''}`)
-    
+
     // Track bot operation in the trading tracker system
     if (bestResult.success) {
       try {
@@ -1522,7 +1522,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
         // Don't fail the operation if tracking fails
       }
     }
-    
+
     // Send Discord notification for successful buy operations
     if (shouldEnableNotifications() && bestResult.success) {
       try {
@@ -1544,22 +1544,22 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
         // Don't fail the operation if Discord fails
       }
     }
-    
+
     // Remove from active trades on completion (real trades only)
     if (!isSimulated) {
       activeTrades.delete(token.token_address)
     }
-    
+
     return buyOperation
-    
+
   } catch (error) {
     console.error(`❌ Error performing buy ${simulation.is_simulated ? 'simulation' : 'real trade'} for ${token.token_symbol}:`, error)
-    
+
     // Remove from active trades on error (real trades only)
     if (!simulation.is_simulated) {
       activeTrades.delete(token.token_address)
     }
-    
+
     return null
   }
 }
@@ -1587,13 +1587,13 @@ async function performBuySimulation(token: any): Promise<BuyOperation | null> {
     max_hold_hours: 24,
     final_result: null
   }
-  
+
   return performBuyOperation(token, mockSimulation)
 }
 
 // Unified sell operation (supports both simulation and real trading)
 async function performSellOperation(
-  token: any, 
+  token: any,
   simulation: TradingSimulation,
   sellPercentage: number
 ): Promise<SellOperation | null> {
@@ -1601,63 +1601,63 @@ async function performSellOperation(
     const isSimulated = simulation.is_simulated
     const operationType = isSimulated ? 'simulation' : 'real trade'
     console.log(`💸 Performing ${sellPercentage}% sell ${operationType} for ${token.token_symbol} (${token.token_address})`)
-    
+
     // SOL mint address
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
-    
+
     // Calculate token amount to sell based on percentage
     const totalTokenAmount = simulation.remaining_token_amount || simulation.buy_operation?.token_amount_received || '0'
     const tokenAmountToSell = parseFloat(totalTokenAmount) * (sellPercentage / 100)
-    
+
     if (tokenAmountToSell <= 0) {
       throw new Error('No tokens available to sell')
     }
-    
+
     // Safety checks for real trading
     if (!isSimulated) {
       if (!simulation.keypair_path) {
         throw new Error('Trading keypair not configured (set TRADING_KEYPAIR_JSON or provide keypair_path)')
       }
-      
+
       // Initialize trading infrastructure
       const connection = initializeTradingConnection()
       await initializeTradingKeypair(simulation.keypair_path)
     }
-    
+
     // Create appropriate executor
     const executor = createTradeExecutor(
       isSimulated,
       isSimulated ? undefined : tradingConnection!,
       isSimulated ? undefined : tradingSigner!
     )
-    
+
     const simExecutor = isSimulated ? executor : new SimulationExecutor()
-    
+
     // Test different slippage configurations  
     const slippageConfigs = [
       { key: 'slippage_1', bps: 100 },   // 1% for simulation comparison
       { key: 'slippage_2', bps: 200 },   // 2% for simulation comparison  
       { key: 'slippage_3', bps: 300 }    // 3% - required for real trades
     ]
-    
+
     const configurations: any = {}
     const allResults: TradeExecutionResult[] = []
-    
+
     // For real trading, use 3% slippage for execution but test all for comparison
     // For simulation, test all configurations
     const configsToTest = slippageConfigs
     const realTradeSlippage = 300 // 3% slippage for real trades
     const PRIORITY_FEE_LAMPORTS = Math.floor(0.0005 * 1e9) // 0.0005 SOL priority fee
-    
+
     for (const config of configsToTest) {
       try {
         console.log(`  📊 Testing sell ${config.key} (${config.bps} bps slippage)...`)
-        
+
         // For real trades, only execute with 3% slippage but record all tests
         const shouldActuallyExecute = isSimulated || config.bps === realTradeSlippage
-        
+
         const exec = shouldActuallyExecute ? executor : simExecutor
-        
+
         const result = await exec.executeSell({
           tokenAddress: token.token_address,
           tokenSymbol: token.token_symbol,
@@ -1668,7 +1668,7 @@ async function performSellOperation(
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
           priorityFee: shouldActuallyExecute ? PRIORITY_FEE_LAMPORTS : 0
         })
-        
+
         configurations[config.key] = {
           success: result.success,
           response_time: result.responseTime,
@@ -1680,19 +1680,19 @@ async function performSellOperation(
           signature: result.signature,
           error: result.error
         }
-        
+
         if (result.success) {
           allResults.push(result)
           console.log(`    ✅ ${config.key}: ${result.provider} - ${result.outputAmount} SOL, ${result.responseTime}ms${result.signature ? ` (${result.signature.slice(0, 8)}...)` : ''}`)
         } else {
           console.log(`    ❌ ${config.key}: ${result.error}`)
         }
-        
+
         // For real trading, break after successful execution at 3% slippage
         if (!isSimulated && result.success && shouldActuallyExecute) {
           break
         }
-        
+
       } catch (error) {
         console.error(`    ❌ ${config.key} error:`, error)
         configurations[config.key] = {
@@ -1705,61 +1705,61 @@ async function performSellOperation(
           error: error instanceof Error ? error.message : 'Unknown error'
         }
       }
-      
+
       // Small delay between configurations (simulation only)
       if (isSimulated) {
         await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
-    
+
     // Find best result (considering both SOL amount and fees for real trades)
     const bestResult = allResults.reduce((best, current) => {
       if (!best) return current
-      
+
       const bestAmount = parseFloat(best.outputAmount)
       const currentAmount = parseFloat(current.outputAmount)
-      
+
       // For real trades, also consider fees
       if (!isSimulated) {
         const bestValue = bestAmount - best.fees.totalFees
         const currentValue = currentAmount - current.fees.totalFees
         return currentValue > bestValue ? current : best
       }
-      
+
       // For simulation, just compare SOL amounts
       return currentAmount > bestAmount ? current : best
     }, allResults[0])
-    
+
     if (!bestResult) {
       console.log(`❌ No successful sell ${operationType} for ${token.token_symbol}`)
       return null
     }
-    
+
     // Position validation for real trades
     if (!isSimulated && bestResult.success) {
       const solReceived = parseFloat(bestResult.outputAmount) / 1e9 // Convert to SOL
       const buyAmountSOL = 0.02 // Same as used in buy operation
       const expectedMinSOL = (tokenAmountToSell * token.last_price_usd * 0.8) / buyAmountSOL // At least 80% of expected
-      
+
       if (solReceived < expectedMinSOL) {
         console.warn(`⚠️ Real sell trade SOL amount lower than expected: ${solReceived} < ${expectedMinSOL}`)
       } else {
         console.log(`✅ Real sell trade validated: ${solReceived} SOL received`)
       }
     }
-    
+
     // Calculate remaining token amount after this sell
     const remainingTokens = (parseFloat(totalTokenAmount) * (1 - sellPercentage / 100)).toString()
-    
+
     // Calculate hold duration
     const simulationStart = new Date(simulation.simulation_started_at)
     const now = new Date()
     const holdDurationHours = (now.getTime() - simulationStart.getTime()) / (1000 * 60 * 60)
-    
+
     // Calculate gain percentage
     const buyPrice = simulation.buy_operation?.buy_price_usd || token.initial_price_usd
     const finalGainPercentage = calculateGainPercentage(token.last_price_usd, buyPrice)
-    
+
     const sellOperation: SellOperation = {
       timestamp: new Date().toISOString(),
       sell_amount_tokens: tokenAmountToSell.toString(),
@@ -1782,10 +1782,10 @@ async function performSellOperation(
       bot_strategy: 'auto-trending-tracker',
       signature: bestResult.signature
     }
-    
+
     // Update simulation's remaining token amount
     simulation.remaining_token_amount = remainingTokens
-    
+
     // Track bot sell operation in the trading tracker system
     if (bestResult.success) {
       try {
@@ -1795,10 +1795,10 @@ async function performSellOperation(
         // Don't fail the operation if tracking fails
       }
     }
-    
+
     console.log(`✅ ${sellPercentage}% sell ${operationType} completed for ${token.token_symbol}: ${bestResult.outputAmount} SOL received, ${remainingTokens} tokens remaining${bestResult.signature ? ` (${bestResult.signature})` : ''}`)
     return sellOperation
-    
+
   } catch (error) {
     console.error(`❌ Error performing sell ${simulation.is_simulated ? 'simulation' : 'real trade'} for ${token.token_symbol}:`, error)
     return null
@@ -1809,7 +1809,7 @@ async function performSellOperation(
 function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { shouldSell: boolean, sellPercentage: number, reason: string } {
   const currentGain = calculateGainPercentage(token.last_price_usd, token.initial_price_usd)
   const hasTP1 = simulation.sell_operations.some(op => op.final_gain_percentage >= simulation.take_profit_levels.tp1_percentage)
-  
+
   // Check stop loss (-50%)
   if (currentGain <= simulation.stop_loss_percentage) {
     return {
@@ -1818,7 +1818,7 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
       reason: `🛑 Stop loss triggered: ${currentGain.toFixed(2)}% <= ${simulation.stop_loss_percentage}%`
     }
   }
-  
+
   // Check TP1 (80%) - Sell 80% of position
   if (!hasTP1 && currentGain >= simulation.take_profit_levels.tp1_percentage) {
     return {
@@ -1827,7 +1827,7 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
       reason: `🎯 TP1 reached: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp1_percentage}%`
     }
   }
-  
+
   // Check TP2 (100%) - Sell remaining position
   if (hasTP1 && currentGain >= simulation.take_profit_levels.tp2_percentage) {
     return {
@@ -1836,7 +1836,7 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
       reason: `🎯 TP2 reached: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp2_percentage}%`
     }
   }
-  
+
   // Check TP3 (30% after TP1) - Sell remaining position
   if (hasTP1 && simulation.take_profit_levels.tp3_enabled && currentGain <= simulation.take_profit_levels.tp3_percentage) {
     return {
@@ -1845,12 +1845,12 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
       reason: `📉 TP3 triggered: ${currentGain.toFixed(2)}% <= ${simulation.take_profit_levels.tp3_percentage}% after TP1`
     }
   }
-  
+
   // Check max hold time
   const simulationStart = new Date(simulation.simulation_started_at)
   const now = new Date()
   const holdDurationHours = (now.getTime() - simulationStart.getTime()) / (1000 * 60 * 60)
-  
+
   if (holdDurationHours >= simulation.max_hold_hours) {
     return {
       shouldSell: true,
@@ -1858,7 +1858,7 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
       reason: `⏰ Max hold time reached: ${holdDurationHours.toFixed(1)}h >= ${simulation.max_hold_hours}h`
     }
   }
-  
+
   return {
     shouldSell: false,
     sellPercentage: 0,
@@ -1912,8 +1912,8 @@ export async function PUT(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
-    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'trending-track-secret'
-    
+    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+
     if (secretKey !== expectedSecretKey) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -1984,20 +1984,20 @@ async function internalTrackPost(request: NextRequest) {
     // Validate authentication (server-side only)
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
-    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'trending-track-secret'
-    
+    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+
     // Check if this is a Vercel cron job (has special headers)
-    const isVercelCron = request.headers.get('vercel-cron') === '1' || 
-                        request.headers.get('user-agent')?.includes('vercel-cron') ||
-                        process.env.VERCEL === '1' && !secretKey && !request.headers.get('referer')
-    
+    const isVercelCron = request.headers.get('vercel-cron') === '1' ||
+      request.headers.get('user-agent')?.includes('vercel-cron') ||
+      process.env.VERCEL === '1' && !secretKey && !request.headers.get('referer')
+
     // Allow calls from:
     // 1. Vercel cron jobs (internal calls)
     // 2. Localhost in development (no secret needed)
     // 3. Valid secret key (manual/external calls)
     const isDevelopment = process.env.NODE_ENV === 'development'
     const isLocalhost = request.headers.get('host')?.includes('localhost') || request.headers.get('host')?.includes('127.0.0.1')
-    
+
     if (isVercelCron) {
       console.log('🤖 Vercel cron job detected: allowing combined tracking+summary API call')
     } else if (isDevelopment && isLocalhost && !secretKey) {
@@ -2024,7 +2024,7 @@ async function internalTrackPost(request: NextRequest) {
     }
 
     console.log('🔍 Starting 5-minute trending token tracking...')
-    
+
     // Fetch current trending tokens from Jupiter API with fallback & retry
     const TRENDING_URLS = [
       'https://datapi.jup.ag/v1/pools/toptrending/1h',
@@ -2062,10 +2062,10 @@ async function internalTrackPost(request: NextRequest) {
     }
 
     const data = await response.json() as JupiterResponse
-    
+
     // Filter tokens using quality criteria
     const filteredTokens = data.pools
-      .filter(pool => 
+      .filter(pool =>
         // 1. Avoid total crashes (> 40% drops are ignored)
         (pool.baseAsset.stats5m?.priceChange ?? 0) > -0.40 &&
         // 2. Quality filters
@@ -2139,7 +2139,7 @@ async function internalTrackPost(request: NextRequest) {
     // Process each trending token
     for (const token of filteredTokens) {
       const existingToken = trackedTokensMap.get(token.token_address)
-      
+
       if (!existingToken) {
         // Check if token exists in database with ANY status (not just tracking)
         const { data: existingAnyStatus } = await supabase
@@ -2148,12 +2148,12 @@ async function internalTrackPost(request: NextRequest) {
           .eq('token_address', token.token_address)
           .eq('token_symbol', token.token_symbol)
           .single()
-        
+
         if (existingAnyStatus) {
           console.warn(`⏭️ Token ${token.token_symbol} already exists in database. Skipping duplicate.`)
-            continue
+          continue
         }
-        
+
         // Enhanced duplicate check before starting new token tracking
         const duplicateCheck = await performEnhancedDuplicateCheck(token.token_address, token.token_symbol)
         if (!duplicateCheck.canPurchase) {
@@ -2164,7 +2164,7 @@ async function internalTrackPost(request: NextRequest) {
         // Check if token has pumped more than 120% in the last hour
         const hourlyPumpPercentage = (token.change_1h || 0) * 100
         const shouldWaitForDip = hourlyPumpPercentage > 120
-        
+
         if (shouldWaitForDip) {
           console.log(`🚀 Token ${token.token_symbol} pumped ${hourlyPumpPercentage.toFixed(1)}% - adding to waiting queue`)
         } else {
@@ -2174,7 +2174,7 @@ async function internalTrackPost(request: NextRequest) {
         if (shouldWaitForDip) {
           // Route highly pumped tokens to waiting system
           const tokenId = (existingAnyStatus as any)?.id || `wait_${token.token_address}_${Date.now()}`
-          
+
           // Perform trade comparison for future use when buying
           let tradeComparisonData = null
           try {
@@ -2186,7 +2186,7 @@ async function internalTrackPost(request: NextRequest) {
           } catch (error) {
             console.error(`❌ Trade comparison failed for ${token.token_symbol}:`, error)
           }
-          
+
           // Create initial price history record
           const initialPriceRecord: PriceRecord = {
             timestamp: new Date().toISOString(),
@@ -2227,7 +2227,7 @@ async function internalTrackPost(request: NextRequest) {
                     onConflict: 'token_address',
                     ignoreDuplicates: false
                   })
-                
+
                 if (error) {
                   logTradeOperation('Database Upsert Error', {
                     tokenSymbol: token.token_symbol,
@@ -2246,14 +2246,14 @@ async function internalTrackPost(request: NextRequest) {
               return { success: true, tokenSymbol: token.token_symbol }
             })()
           )
-          
+
           newTokensAdded++
           console.log(`⏳ Adding pumped token to waiting queue: ${token.token_symbol} (${token.token_address}) - waiting for 15% dip`)
-          
+
         } else {
           // Proceed with immediate buy and tracking for tokens that haven't pumped excessively
           const tokenId = (existingAnyStatus as any)?.id || `track_${token.token_address}_${Date.now()}`
-          
+
           // Perform trade comparison for new tokens
           let tradeComparisonData = null
           try {
@@ -2265,19 +2265,19 @@ async function internalTrackPost(request: NextRequest) {
           } catch (error) {
             console.error(`❌ Trade comparison failed for ${token.token_symbol}:`, error)
           }
-          
+
           // Perform buy operation for new tokens (simulation or real trading)
           let tradingSimulation: TradingSimulation | null = null
           try {
             // Check if real trading mode is activated by looking at existing tokens
             let isRealTradingActive = false
             let keypairPath: string | undefined = undefined
-            
+
             // Check if any existing tracked token has real trading enabled
-            const existingRealTradeToken = trackedTokens?.find(t => 
+            const existingRealTradeToken = trackedTokens?.find(t =>
               t.trading_simulation && !t.trading_simulation.is_simulated
             )
-            
+
             if (existingRealTradeToken?.trading_simulation) {
               isRealTradingActive = true
               keypairPath = existingRealTradeToken.trading_simulation.keypair_path
@@ -2285,7 +2285,7 @@ async function internalTrackPost(request: NextRequest) {
             } else {
               console.log(`💻 Simulation mode - new token ${token.token_symbol} will use simulation`)
             }
-            
+
             // Create initial simulation configuration (use detected trading mode)
             const initialSimulation: TradingSimulation = {
               token_address: token.token_address,
@@ -2309,17 +2309,17 @@ async function internalTrackPost(request: NextRequest) {
               max_hold_hours: 24,
               final_result: null
             }
-            
+
             // Perform buy operation using the unified system
             const buyOperation = await performBuyOperation(token, initialSimulation)
-            
+
             if (buyOperation) {
               initialSimulation.buy_operation = buyOperation
               initialSimulation.current_status = 'holding'
               initialSimulation.remaining_token_amount = buyOperation.token_amount_received
               initialSimulation.initial_token_amount = buyOperation.token_amount_received
               tradingSimulation = initialSimulation
-              
+
               console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'})`)
             } else {
               console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
@@ -2327,7 +2327,7 @@ async function internalTrackPost(request: NextRequest) {
           } catch (error) {
             console.error(`❌ Buy operation error for ${token.token_symbol}:`, error)
           }
-          
+
           // Create initial price history record for new token
           const initialPriceRecord: PriceRecord = {
             timestamp: new Date().toISOString(),
@@ -2364,7 +2364,7 @@ async function internalTrackPost(request: NextRequest) {
                     onConflict: 'token_address',
                     ignoreDuplicates: false
                   })
-                
+
                 if (error) {
                   logTradeOperation('Database Upsert Error', {
                     tokenSymbol: token.token_symbol,
@@ -2381,7 +2381,7 @@ async function internalTrackPost(request: NextRequest) {
                 return { success: false, error: err, tokenSymbol: token.token_symbol }
               }
               return { success: true, tokenSymbol: token.token_symbol }
-              
+
               // Send Discord notification for new token detection
               if (shouldEnableNotifications()) {
                 try {
@@ -2393,7 +2393,7 @@ async function internalTrackPost(request: NextRequest) {
                     marketCap: token.market_cap,
                     organicScore: token.organic_score,
                     volume1h: token.volume_1h,
-                    isRealTrading: tradingSimulation !== null ? !tradingSimulation.is_simulated : false
+                    isRealTrading: tradingSimulation?.is_simulated === false
                   })
                 } catch (discordError) {
                   console.error('❌ Failed to send new token Discord notification:', discordError)
@@ -2402,7 +2402,7 @@ async function internalTrackPost(request: NextRequest) {
               }
             })()
           )
-          
+
           newTokensAdded++
           console.log(`✅ Adding new token to immediate tracking: ${token.token_symbol} (${token.token_address})`)
         }
@@ -2418,11 +2418,11 @@ async function internalTrackPost(request: NextRequest) {
           const waitingStartTime = new Date(existingToken.waiting_started_at!)
           const currentTime = new Date()
           const waitingDurationHours = (currentTime.getTime() - waitingStartTime.getTime()) / (1000 * 60 * 60)
-          
+
           // Check for 1-hour timeout
           if (waitingDurationHours >= 1.0) {
             console.log(`⏰ Waiting timeout for ${token.token_symbol} after ${waitingDurationHours.toFixed(1)}h - removing from queue`)
-            
+
             // Remove from waiting queue (mark as skipped due to timeout)
             updatesPromises.push(
               (async () => {
@@ -2440,27 +2440,27 @@ async function internalTrackPost(request: NextRequest) {
             )
             continue
           }
-          
+
           // Calculate dip percentage from waiting initial price
           const dipFromWaitingStart = calculateGainPercentage(token.current_price, existingToken.waiting_initial_price!)
-          
+
           console.log(`📊 Waiting token ${token.token_symbol}: ${dipFromWaitingStart.toFixed(2)}% change (waiting ${waitingDurationHours.toFixed(1)}h)`)
-          
+
           // Check for 15% dip trigger
           if (dipFromWaitingStart <= -15.0) {
             console.log(`🎯 15% dip detected for ${token.token_symbol}! Converting from waiting to tracking status`)
-            
+
             // Execute buy operation and convert to tracking
             try {
               // Check if real trading mode is activated by looking at existing tokens
               let isRealTradingActive = false
               let keypairPath: string | undefined = undefined
-              
+
               // Check if any existing tracked token has real trading enabled
-              const existingRealTradeToken = trackedTokens?.find(t => 
+              const existingRealTradeToken = trackedTokens?.find(t =>
                 t.trading_simulation && !t.trading_simulation.is_simulated
               )
-              
+
               if (existingRealTradeToken?.trading_simulation) {
                 isRealTradingActive = true
                 keypairPath = existingRealTradeToken.trading_simulation.keypair_path
@@ -2468,7 +2468,7 @@ async function internalTrackPost(request: NextRequest) {
               } else {
                 console.log(`💻 Simulation mode - ${token.token_symbol} will use simulation`)
               }
-              
+
               // Create initial simulation configuration (use detected trading mode)
               const initialSimulation: TradingSimulation = {
                 token_address: token.token_address,
@@ -2492,18 +2492,18 @@ async function internalTrackPost(request: NextRequest) {
                 max_hold_hours: 24,
                 final_result: null
               }
-              
+
               // Perform buy operation using the unified system
               const buyOperation = await performBuyOperation(token, initialSimulation)
-              
+
               if (buyOperation) {
                 initialSimulation.buy_operation = buyOperation
                 initialSimulation.current_status = 'holding'
                 initialSimulation.remaining_token_amount = buyOperation.token_amount_received
                 initialSimulation.initial_token_amount = buyOperation.token_amount_received
-                
+
                 console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'})`)
-                
+
                 // Update token status to tracking with buy simulation
                 updatesPromises.push(
                   (async () => {
@@ -2523,7 +2523,7 @@ async function internalTrackPost(request: NextRequest) {
                     if (error) throw error
                   })()
                 )
-                
+
                 // Send Discord notification for successful dip buy
                 if (shouldEnableNotifications()) {
                   try {
@@ -2541,7 +2541,7 @@ async function internalTrackPost(request: NextRequest) {
                     console.error('❌ Failed to send dip buy Discord notification:', discordError)
                   }
                 }
-                
+
                 tokensUpdated++
                 console.log(`✅ ${token.token_symbol} converted from waiting to tracking after 15% dip`)
               } else {
@@ -2597,10 +2597,10 @@ async function internalTrackPost(request: NextRequest) {
 
         // Calculate current gain for tracking tokens
         const currentGain = calculateGainPercentage(token.current_price, existingToken.initial_price_usd)
-        
+
         // Only update peak price and gain if current price is higher than existing peak
         const newPeakPrice = calculatePeakPrice(token.current_price, existingToken.peak_price_usd)
-        const peakGain = newPeakPrice > existingToken.peak_price_usd ? 
+        const peakGain = newPeakPrice > existingToken.peak_price_usd ?
           calculateGainPercentage(newPeakPrice, existingToken.initial_price_usd) :
           existingToken.peak_gain_percentage
 
@@ -2616,53 +2616,53 @@ async function internalTrackPost(request: NextRequest) {
 
         // Check if token has dropped more than 50% from initial price (original loss condition)
         const isLost = currentGain <= -50
-        
+
         // Check if trading simulation should sell
         let shouldSell = false
         let sellOperation = null
-        
+
         if (existingToken.trading_simulation && existingToken.trading_simulation.current_status === 'holding') {
           const sellDecision = shouldSellToken(existingToken, existingToken.trading_simulation)
-          
+
           if (sellDecision.shouldSell) {
             console.log(sellDecision.reason)
-            
+
             // Perform sell simulation with the specified percentage
-                          const sellOperation = await performSellOperation(
+            const sellOperation = await performSellOperation(
               {
                 ...token,
                 current_price: token.current_price
-              }, 
+              },
               existingToken.trading_simulation,
               sellDecision.sellPercentage
             )
-            
+
             if (sellOperation) {
               try {
                 // Calculate gains using our helper function
                 const finalGain = calculateGainPercentage(token.current_price, existingToken.initial_price_usd)
-                
+
                 // Calculate hold duration
                 const simulationStart = new Date(existingToken.trading_simulation.simulation_started_at)
                 const now = new Date()
                 const holdDurationHours = (now.getTime() - simulationStart.getTime()) / (1000 * 60 * 60)
-                
+
                 // Set final gain and hold duration on sell operation
                 sellOperation.final_gain_percentage = finalGain
                 sellOperation.hold_duration_hours = holdDurationHours
-                
+
                 // Add sell operation to the simulation
                 existingToken.trading_simulation.sell_operations.push(sellOperation)
-                
+
                 // Check if position is fully closed (100% sell or remaining tokens ~ 0)
                 const remainingTokens = parseFloat(existingToken.trading_simulation.remaining_token_amount || '0')
                 const isPositionClosed = sellDecision.sellPercentage === 100 || remainingTokens < 1000 // Less than 0.001 tokens remaining
-                
+
                 if (isPositionClosed) {
                   // Update simulation status to completed
                   existingToken.trading_simulation.current_status = 'completed'
                   existingToken.trading_simulation.remaining_token_amount = '0'
-                  
+
                   // Calculate final result
                   const buyOperation = existingToken.trading_simulation.buy_operation
                   if (buyOperation) {
@@ -2670,7 +2670,7 @@ async function internalTrackPost(request: NextRequest) {
                       (total, op) => total + (parseFloat(op.sol_received) / 1e9), 0
                     )
                     const totalSolGain = totalSolReceived - buyOperation.buy_amount_sol
-                    
+
                     existingToken.trading_simulation.final_result = {
                       success: finalGain > 0,
                       total_gain_percentage: finalGain,
@@ -2683,7 +2683,7 @@ async function internalTrackPost(request: NextRequest) {
                     }
                   }
                 }
-                
+
                 // Log sell operation details
                 logTradeOperation('Sell Operation', {
                   requestId,
@@ -2698,7 +2698,7 @@ async function internalTrackPost(request: NextRequest) {
                 if (shouldEnableNotifications()) {
                   const bestCfg = sellOperation.best_sell_config
                   const notificationStatus = getNotificationStatus(existingToken.trading_simulation.current_status)
-                  
+
                   await sendTradeAlertDiscord({
                     tokenSymbol: token.token_symbol,
                     status: notificationStatus,
@@ -2733,25 +2733,25 @@ async function internalTrackPost(request: NextRequest) {
                   tokenSymbol: token.token_symbol,
                   operationType: existingToken.trading_simulation.current_status
                 }, error as Error)
-                
+
                 // Continue processing other tokens
                 console.error('Error in sell operation:', error)
               }
             }
           }
         }
-        
+
         // Create new price record for history
         const newPriceRecord: PriceRecord = {
           timestamp: new Date().toISOString(),
           price_usd: token.current_price,
           volume: token.volume_1h
         }
-        
+
         // Update price history (keep last 24 hours, max 288 records for 5-minute intervals)
         const existingPriceHistory = existingToken.price_history || []
         const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000) // 24 hours ago
-        
+
         // Filter old records and add new one
         const updatedPriceHistory = [
           ...existingPriceHistory.filter(record => new Date(record.timestamp) > cutoffTime),
@@ -2781,7 +2781,7 @@ async function internalTrackPost(request: NextRequest) {
               if (error) throw error
             })()
           )
-          
+
           tokensLost++
           console.log(`❌ Token lost (${currentGain.toFixed(2)}%): ${token.token_symbol} (${token.token_address})`)
         } else if (existingToken.status === 'tracking') {
@@ -2805,12 +2805,12 @@ async function internalTrackPost(request: NextRequest) {
               if (error) throw error
             })()
           )
-          
+
           tokensUpdated++
           if (currentGain > 10) {
             console.log(`📈 Token performing well (${currentGain.toFixed(2)}%): ${token.token_symbol}`)
           }
-          
+
           if (shouldSell && sellOperation) {
             console.log(`🎯 Token sold via simulation (${currentGain.toFixed(2)}%): ${token.token_symbol}`)
           }
@@ -2823,9 +2823,9 @@ async function internalTrackPost(request: NextRequest) {
     const rejectedPromises = results.filter(result => result.status === 'rejected')
     const fulfilledResults = results.filter(result => result.status === 'fulfilled').map(result => result.value)
     const failedOperations = fulfilledResults.filter(result => result && typeof result === 'object' && !result.success)
-    
+
     const totalFailures = rejectedPromises.length + failedOperations.length
-    
+
     if (totalFailures > 0) {
       console.error(`⚠️ ${totalFailures} updates failed:`, {
         rejectedPromises: rejectedPromises.length,
@@ -2839,7 +2839,7 @@ async function internalTrackPost(request: NextRequest) {
     const { data: currentStats, error: statsError } = await supabase
       .from(TRACKER_TABLE)
       .select('status')
-    
+
     if (statsError) {
       console.error('Failed to fetch current stats:', statsError)
     }
@@ -2869,18 +2869,18 @@ async function internalTrackPost(request: NextRequest) {
     } else {
       console.log(`✅ 5-minute tracking completed: processed ${summary.processed} tokens; new ${summary.new_tokens_added}, updated ${summary.tokens_updated}`)
     }
-    
+
     // Set a timestamp for cache invalidation (could be used by other APIs)
     const headers: Record<string, string> = {
       'X-Data-Updated': new Date().toISOString(),
       'Cache-Control': 'no-cache' // Track route should never be cached
     }
-    
-    return NextResponse.json(summary, { 
-      status: 200, 
-      headers 
+
+    return NextResponse.json(summary, {
+      status: 200,
+      headers
     })
-    
+
   } catch (error) {
     // Log complete request failure
     logTradeOperation('Tracking Request Failed', {
@@ -2906,38 +2906,38 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const tokenAddress = searchParams.get('token')
-    
+
     if (!tokenAddress) {
       return NextResponse.json({
         error: 'Token address is required',
         example: '/api/trending/track?token=TOKEN_ADDRESS'
       }, { status: 400 })
     }
-    
+
     // Get token data with trade comparison
     const { data: token, error } = await supabase
       .from(TRACKER_TABLE)
       .select('*')
       .eq('token_address', tokenAddress)
       .single()
-    
+
     if (error || !token) {
       return NextResponse.json({
         error: 'Token not found',
         token_address: tokenAddress
       }, { status: 404 })
     }
-    
+
     // If no trade comparison data exists, perform it now
     if (!token.trade_comparison_data) {
       console.log(`🔄 No trade comparison data found for ${token.token_symbol}, performing now...`)
-      
+
       const tradeComparisonData = await performTradeComparison({
         token_address: token.token_address,
         token_symbol: token.token_symbol,
         token_name: token.token_name
       })
-      
+
       if (tradeComparisonData) {
         // Update the token with trade comparison data
         const { error: updateError } = await supabase
@@ -2946,7 +2946,7 @@ export async function GET(request: NextRequest) {
             trade_comparison_data: tradeComparisonData
           })
           .eq('id', token.id)
-        
+
         if (updateError) {
           console.error('❌ Failed to update token with trade comparison data:', updateError)
         } else {
@@ -2954,7 +2954,7 @@ export async function GET(request: NextRequest) {
         }
       }
     }
-    
+
     return NextResponse.json({
       success: true,
       token: {
@@ -2980,7 +2980,7 @@ export async function GET(request: NextRequest) {
       },
       timestamp: new Date().toISOString()
     })
-    
+
   } catch (error) {
     console.error('❌ Error retrieving token trade comparison:', error)
     return NextResponse.json({
@@ -3031,18 +3031,18 @@ async function checkRpcHealth(): Promise<{ healthy: boolean, latency?: number, e
   try {
     const connection = initializeTradingConnection()
     const startTime = Date.now()
-    
+
     // Test RPC by getting latest blockhash
     await connection.getLatestBlockhash('confirmed')
     const latency = Date.now() - startTime
-    
+
     console.log(`🏥 Shyft RPC health check passed (${latency}ms)`)
     return { healthy: true, latency }
   } catch (error) {
     console.error('❌ Shyft RPC health check failed:', error)
-    return { 
-      healthy: false, 
-      error: error instanceof Error ? error.message : 'Unknown RPC error' 
+    return {
+      healthy: false,
+      error: error instanceof Error ? error.message : 'Unknown RPC error'
     }
   }
 }
@@ -3132,7 +3132,7 @@ async function checkWalletHoldings(tokenAddress: string): Promise<{ hasSignifica
     const hasSignificantHolding = totalBalance >= MIN_WALLET_BALANCE_FOR_DUPLICATE_CHECK
 
     console.log(`🔍 Wallet holdings check for ${tokenAddress}: ${totalBalance} tokens (significant: ${hasSignificantHolding})`)
-    
+
     return { hasSignificantHolding, balance: totalBalance }
   } catch (error) {
     console.error(`❌ Error checking wallet holdings for ${tokenAddress}:`, error)
@@ -3144,7 +3144,7 @@ async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: str
   try {
     // Check database for recent purchases of this token
     const cutoffTime = new Date(Date.now() - TOKEN_PURCHASE_COOLDOWN_HOURS * 60 * 60 * 1000)
-    
+
     const { data: recentTokens, error } = await supabase
       .from(TRACKER_TABLE)
       .select('id, token_address, token_symbol, tracking_started_at, trading_simulation, status')
@@ -3177,9 +3177,9 @@ async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: str
     if (realTradeAttempts.length >= MAX_PURCHASES_PER_TOKEN) {
       const lastPurchase = recentTokens[0].tracking_started_at
       const hoursAgo = Math.round((Date.now() - new Date(lastPurchase).getTime()) / (1000 * 60 * 60))
-      return { 
-        shouldPrevent: true, 
-        reason: `Maximum purchases reached: ${realTradeAttempts.length}/${MAX_PURCHASES_PER_TOKEN} for ${tokenSymbol}. Last purchase ${hoursAgo}h ago. Cooldown: ${TOKEN_PURCHASE_COOLDOWN_HOURS}h` 
+      return {
+        shouldPrevent: true,
+        reason: `Maximum purchases reached: ${realTradeAttempts.length}/${MAX_PURCHASES_PER_TOKEN} for ${tokenSymbol}. Last purchase ${hoursAgo}h ago. Cooldown: ${TOKEN_PURCHASE_COOLDOWN_HOURS}h`
       }
     }
 
@@ -3187,11 +3187,11 @@ async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: str
     if (allAttempts > 0) {
       const lastAttempt = recentTokens[0].tracking_started_at
       const hoursAgo = Math.round((Date.now() - new Date(lastAttempt).getTime()) / (1000 * 60 * 60))
-      
+
       if (hoursAgo < 2) { // Minimum 2 hour gap between attempts
-        return { 
-          shouldPrevent: true, 
-          reason: `Recent purchase attempt for ${tokenSymbol} only ${hoursAgo}h ago. Minimum 2h gap required.` 
+        return {
+          shouldPrevent: true,
+          reason: `Recent purchase attempt for ${tokenSymbol} only ${hoursAgo}h ago. Minimum 2h gap required.`
         }
       }
     }
@@ -3214,9 +3214,9 @@ async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: 
   // Check 2: Wallet holdings
   const { hasSignificantHolding, balance } = await checkWalletHoldings(tokenAddress)
   if (hasSignificantHolding) {
-    return { 
-      canPurchase: false, 
-      reason: `Wallet already holds significant amount of ${tokenSymbol}: ${balance.toLocaleString()} tokens` 
+    return {
+      canPurchase: false,
+      reason: `Wallet already holds significant amount of ${tokenSymbol}: ${balance.toLocaleString()} tokens`
     }
   }
 
@@ -3233,7 +3233,7 @@ async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: 
 async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, tokenSymbol?: string): Promise<{ canTrade: boolean, reason?: string }> {
   // Check if we can execute a real trade
   const { balance, canTrade: hasBalance } = await checkTradingBalance()
-  
+
   if (!hasBalance) {
     return { canTrade: false, reason: `Insufficient balance: ${balance.toFixed(4)} SOL < ${MIN_SOL_BALANCE} SOL minimum` }
   }
