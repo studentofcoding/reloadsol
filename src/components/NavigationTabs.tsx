@@ -129,8 +129,8 @@ export default function NavigationTabs({ activeInfoTab, setActiveInfoTab }: Navi
       </div>
 
       {/* Mobile Top Bar - SOL Balance & Info Tabs */}
-      <div className="md:hidden max-w-4xl mx-auto mb-2">
-        <div className="flex items-center justify-between px-4 py-3">
+      <div className="md:hidden max-w-4xl mx-auto mb-2 sticky top-0 z-40 pt-2">
+        <div className="flex items-center justify-between px-4 py-3 rounded-lg mb-4">
           {/* SOL Balance on Left */}
           <div className="flex-1">
             <WalletBalance />
@@ -171,7 +171,7 @@ export default function NavigationTabs({ activeInfoTab, setActiveInfoTab }: Navi
       </div>
 
       {/* Mobile Navigation - Bottom Fixed */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-black border-t border-gray-800 z-50">
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-black border-t border-gray-800 z-9999">
         <div className="flex items-center justify-around px-2 py-3">
           {/* Main Trading Tabs Only */}
           <Link
