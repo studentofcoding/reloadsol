@@ -41,6 +41,16 @@ export interface TrackingRecord {
 
   // Optional error information
   errors?: string[]
+
+  // New fields from API improvements
+  status?: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped'
+  is_bot_operation?: boolean // Whether this was a bot operation
+  bot_strategy?: string // Bot strategy used
+  trade_comparison_data?: any // Trade comparison result
+  trading_simulation?: any // Trading simulation data
+  price_history?: Array<{ timestamp: string; price_usd: number; volume?: number }>
+  waiting_started_at?: string | null
+  waiting_initial_price?: number | null
 }
 
 export interface TrackingStats {

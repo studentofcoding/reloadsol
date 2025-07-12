@@ -146,18 +146,28 @@ export default function TradingHistory() {
 
   // No need for event listeners since React Query handles real-time updates
 
-  const getOperationIcon = (type: string, isBot?: boolean) => {
+  const getOperationIcon = (type: string, isBot?: boolean, status?: string) => {
     const botPrefix = isBot ? '🤖' : ''
-    switch (type) {
-      case 'buy':
-        return botPrefix + '🟢'
-      case 'sell':
-        return botPrefix + '🔴'
-      case 'close':
-        return botPrefix + '🟡'
-      default:
-        return botPrefix + '⚪'
-    }
+    // switch (type) {
+    //   case 'buy':
+    //     return botPrefix + '🟢'
+    //   case 'sell':
+    //     return botPrefix + '🔴'
+    //   case 'close':
+    //     return botPrefix + '🟡'
+    //   case 'waiting':
+    //     return botPrefix + '⏳'
+    //   case 'tracking':
+    //     return botPrefix + '👁️'
+    //   case 'won':
+    //     return botPrefix + '🎉'
+    //   case 'lost':
+    //     return botPrefix + '💔'
+    //   case 'skipped':
+    //     return botPrefix + '⏭️'
+    //   default:
+    //     return botPrefix + '⚪'
+    // }
   }
 
   const formatRelativeTime = (timestamp: number) => {
@@ -227,11 +237,21 @@ export default function TradingHistory() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                   <span className="text-sm text-gray-400 capitalize font-medium flex items-center space-x-2">
-                    <span>{getOperationIcon(record.operationType, (record as any).is_bot_operation)}</span>
+                    {/* <span>{getOperationIcon(record.operationType, (record as any).is_bot_operation, (record as any).status)}</span> */}
                     {record.operationType === 'sell' && record.totalTokens > record.tokens.length 
                       ? 'sell & close' 
                       : record.operationType
                     }
+                    {(record as any).is_bot_operation && (
+                      <span className="text-xs bg-blue-600/20 text-blue-400 px-1 rounded" title={`Bot Strategy: ${(record as any).bot_strategy || 'auto'}`}>
+                        BOT
+                      </span>
+                    )}
+                    {(record as any).status && (record as any).status !== 'tracking' && (
+                      <span className="text-xs bg-gray-600/20 text-gray-300 px-1 rounded" title={`Status: ${(record as any).status}`}>
+                        {(record as any).status.toUpperCase()}
+                      </span>
+                    )}
                     <div className="flex items-center ml-2 space-x-2">
                       <div className="relative flex items-center">
                         {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token: any, idx: number) => (
@@ -337,4 +357,4 @@ export default function TradingHistory() {
       )}
     </div>
   )
-} 
+}

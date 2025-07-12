@@ -30,6 +30,13 @@ interface PnLRecord {
   sellSignatures: string[]
   isPartialSell: boolean // New field to indicate if this was a partial sell
   sellTransactionId: string // Unique ID for the sell transaction
+  // New fields from API improvements
+  status?: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped'
+  tradeComparisonData?: any // Trade comparison result
+  tradingSimulation?: any // Trading simulation data
+  priceHistory?: Array<{ timestamp: string; price_usd: number; volume?: number }>
+  isBotOperation?: boolean // Whether this was a bot operation
+  botStrategy?: string // Bot strategy used
 }
 
 interface OpenPosition {
@@ -50,6 +57,13 @@ interface OpenPosition {
   currentTokenPriceUsd?: number // Current token price in USD
   actualWalletBalance?: number // Actual balance in wallet
   walletTokenData?: UserToken // Full wallet token data for selling
+  // New fields from API improvements
+  status?: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped'
+  waitingStartedAt?: string | null
+  waitingInitialPrice?: number | null
+  tradeComparisonData?: any // Trade comparison result
+  tradingSimulation?: any // Trading simulation data
+  priceHistory?: Array<{ timestamp: string; price_usd: number; volume?: number }>
 }
 
 export default function PnLTracker() {
@@ -1121,12 +1135,25 @@ export default function PnLTracker() {
                         </button>
                       </div>
 
-                      {/* Line 1: Timestamp */}
+                      {/* Line 1: Timestamp and Status */}
                       <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
                         <span>{formatRelativeTime(record.sellTimestamp)}</span>
+                        <div className="flex items-center space-x-1">
+                          {record.status && record.status !== 'tracking' && (
+                            <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                              record.status === 'waiting' ? 'bg-yellow-900/50 text-yellow-300' :
+                              record.status === 'won' ? 'bg-green-900/50 text-green-300' :
+                              record.status === 'lost' ? 'bg-red-900/50 text-red-300' :
+                              record.status === 'skipped' ? 'bg-gray-900/50 text-gray-300' :
+                              'bg-blue-900/50 text-blue-300'
+                            }`}>
+                              {record.status.toUpperCase()}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       
-                      {/* Line 2: Token and PnL */}
+                      {/* Line 2: Token and Bot/Simulation Indicators */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-2">
                           <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center overflow-hidden">
@@ -1154,6 +1181,18 @@ export default function PnLTracker() {
                             {record.symbol || record.name || 'Token'}
                           </span>
                         </div>
+                        <div className="flex items-center space-x-1">
+                          {record.isBotOperation && (
+                            <span className="text-xs px-1.5 py-0.5 bg-blue-900/50 text-blue-300 rounded" title={`Bot Strategy: ${record.botStrategy || 'Unknown'}`}>
+                              BOT
+                            </span>
+                          )}
+                          {record.tradingSimulation && (
+                            <span className="text-xs px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded" title="Trading Simulation">
+                              SIM
+                            </span>
+                          )}
+                        </div>
                       </div>
                       
                       {/* Line 3: PnL Amount and Percentage */}
@@ -1166,7 +1205,7 @@ export default function PnLTracker() {
                         </div>
                       </div>
                       
-                      {/* Line 4: USD Value and Indicators */}
+                      {/* Line 4: USD Value and Enhanced Indicators */}
                       <div className="text-xs text-gray-400 mt-0.5 flex justify-between items-center">
                         <span>{record.pnlUSD > 0 ? '+' : ''}${Math.abs(record.pnlUSD).toFixed(2)}</span>
                         <div className="flex items-center space-x-1">
@@ -1178,6 +1217,12 @@ export default function PnLTracker() {
                           )}
                           {record.buyPrice && record.sellPrice && record.buyPrice > 0 && record.sellPrice > 0 && (
                             <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
+                          )}
+                          {record.tradeComparisonData && (
+                            <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${record.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
+                          )}
+                          {record.priceHistory && record.priceHistory.length > 0 && (
+                            <span className="text-purple-400 text-xs" title={`Price History: ${record.priceHistory.length} records`}>📈</span>
                           )}
                         </div>
                       </div>
@@ -1247,15 +1292,26 @@ export default function PnLTracker() {
                       </div>
                     )}
 
-                    {/* Line 1: Timestamp */}
+                    {/* Line 1: Timestamp and Status */}
                     <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
                       <span>{formatRelativeTime(position.buyTimestamp)}</span>
                       <div className="flex items-center space-x-1">
+                        {position.status && position.status !== 'tracking' && (
+                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
+                            position.status === 'waiting' ? 'bg-yellow-900/50 text-yellow-300' :
+                            position.status === 'won' ? 'bg-green-900/50 text-green-300' :
+                            position.status === 'lost' ? 'bg-red-900/50 text-red-300' :
+                            position.status === 'skipped' ? 'bg-gray-900/50 text-gray-300' :
+                            'bg-blue-900/50 text-blue-300'
+                          }`}>
+                            {position.status.toUpperCase()}
+                          </span>
+                        )}
                         <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
                       </div>
                     </div>
                     
-                    {/* Line 2: Token */}
+                    {/* Line 2: Token and Bot Indicator */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2">
                         <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center overflow-hidden">
@@ -1282,6 +1338,13 @@ export default function PnLTracker() {
                         <span className="text-sm text-white font-medium">
                           {position.symbol || position.name || 'Token'}
                         </span>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        {position.tradingSimulation && (
+                          <span className="text-xs px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded" title="Trading Simulation Active">
+                            SIM
+                          </span>
+                        )}
                       </div>
                     </div>
                     
@@ -1312,7 +1375,7 @@ export default function PnLTracker() {
                       </div>
                     </div>
                     
-                    {/* Line 4: USD Value and Wallet Balance */}
+                    {/* Line 4: USD Value and Additional Info */}
                     <div className="text-xs text-gray-400 mt-0.5">
                       {position.currentUsdValue !== undefined ? (
                         <div className="flex justify-between items-center">
@@ -1332,11 +1395,25 @@ export default function PnLTracker() {
                             {position.id.startsWith('open-') && (
                               <span className="text-blue-400 text-xs" title="Combined position from multiple buys">🔗</span>
                             )}
+                            {position.tradeComparisonData && (
+                              <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${position.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
+                            )}
+                            {position.waitingStartedAt && (
+                              <span className="text-yellow-400 text-xs" title={`Waiting since: ${new Date(position.waitingStartedAt).toLocaleString()}`}>⏳</span>
+                            )}
                           </div>
                         </div>
                       ) : (
                         <div className="flex justify-between items-center">
                           <span>~${(position.solAmountBought * solPriceUsd).toFixed(2)}</span>
+                          <div className="flex items-center space-x-1 ml-1">
+                            {position.tradeComparisonData && (
+                              <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${position.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
+                            )}
+                            {position.waitingStartedAt && (
+                              <span className="text-yellow-400 text-xs" title={`Waiting since: ${new Date(position.waitingStartedAt).toLocaleString()}`}>⏳</span>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
