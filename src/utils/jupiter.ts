@@ -65,9 +65,9 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 // Efficient batch price fetching using Jupiter API v2 - Returns prices in USD
 async function batchFetchPrices(mints: string[]): Promise<Record<string, number>> {
   if (mints.length === 0) return {}
-  
+
   startTimer('jupiter-batch')
-  
+
   const chunks = []
   for (let i = 0; i < mints.length; i += BATCH_SIZE) {
     chunks.push(mints.slice(i, i + BATCH_SIZE))
@@ -80,14 +80,14 @@ async function batchFetchPrices(mints: string[]): Promise<Record<string, number>
   await Promise.all(chunks.map(async (chunk, index) => {
     const chunkLabel = `Price Chunk ${index + 1}/${chunks.length}`
     startTimer(chunkLabel)
-    
+
     for (let retry = 0; retry < MAX_RETRIES; retry++) {
       try {
         const mintIds = chunk.join(',')
-        const response = await fetch(`https://lite-api.jup.ag/price/v2?ids=${mintIds}`)
+        const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mintIds}`)
         const priceData = await response.json()
         console.log(`Price data for chunk ${index + 1}:`, priceData)
-        
+
         if (priceData?.data) {
           Object.entries(priceData.data).forEach(([mint, data]: [string, any]) => {
             // Only set price if data exists and is not null
@@ -105,7 +105,7 @@ async function batchFetchPrices(mints: string[]): Promise<Record<string, number>
           })
           break // Success, exit retry loop
         }
-        
+
         await sleep(RETRY_DELAY)
       } catch (error) {
         console.warn(`Price fetch attempt ${retry + 1} failed:`, error)
@@ -120,10 +120,10 @@ async function batchFetchPrices(mints: string[]): Promise<Record<string, number>
         }
       }
     }
-    
+
     stopTimer(chunkLabel)
   }))
-  
+
   stopTimer('jupiter-batch')
   console.log(`Fetched USD prices for ${Object.keys(prices).length}/${mints.length} tokens`)
   return prices
@@ -135,7 +135,7 @@ async function getCachedPrice(mint: string): Promise<number> {
   if (cached && (Date.now() - cached.timestamp) < PRICE_CACHE_DURATION) {
     return cached.price
   }
-  
+
   // Use new price client for better rate limiting
   try {
     const { getTokenPrice } = await import('./price-client')
@@ -180,7 +180,7 @@ export async function preWarmTokenCache(mints: string[]): Promise<void> {
     const cached = priceCache.get(mint)
     return !cached || (Date.now() - cached.timestamp) > PRICE_CACHE_DURATION
   })
-  
+
   if (uncachedMints.length > 0) {
     console.log(`Pre-warming cache for ${uncachedMints.length} tokens`)
     try {
@@ -221,8 +221,8 @@ export function getFeeForOperation(operationType: FeeOperationType, solAmount?: 
 
 // Calculate fee distribution for specific operation type, count, and SOL amount
 export function calculateFeeDistribution(
-  operationType: FeeOperationType, 
-  operationCount: number, 
+  operationType: FeeOperationType,
+  operationCount: number,
   solAmount?: number
 ): {
   totalFee: number
@@ -237,7 +237,7 @@ export function calculateFeeDistribution(
   baseSolAmount?: number
 } {
   let totalFee = 0
-  
+
   if (operationType === 'BUY' || operationType === 'SELL') {
     // Percentage-based fees
     totalFee = solAmount ? getFeeForOperation(operationType, solAmount) : 0
@@ -245,11 +245,11 @@ export function calculateFeeDistribution(
     // Fixed fees for CLOSE operations
     totalFee = getFeeForOperation(operationType) * operationCount
   }
-  
+
   // All fees go to dev wallet (no referral split)
   const devFee = totalFee
   const referralFee = 0
-  
+
   return {
     totalFee,
     devFee,
@@ -259,19 +259,19 @@ export function calculateFeeDistribution(
     referralFeeInLamports: Math.floor(referralFee * LAMPORTS_PER_SOL),
     operationType,
     operationCount,
-    feePercentage: operationType === 'BUY' ? FEE_CONFIG.FEES.BUY_PERCENTAGE : 
-                   operationType === 'SELL' ? FEE_CONFIG.FEES.SELL_PERCENTAGE : undefined,
+    feePercentage: operationType === 'BUY' ? FEE_CONFIG.FEES.BUY_PERCENTAGE :
+      operationType === 'SELL' ? FEE_CONFIG.FEES.SELL_PERCENTAGE : undefined,
     baseSolAmount: solAmount
   }
 }
 
 export function getReferralFromUrl(): string | null {
   if (typeof window === 'undefined') return null
-  
+
   try {
     const url = new URL(window.location.href)
     const referral = url.searchParams.get('ref')
-    
+
     // Validate referral address
     if (referral && isValidMintAddress(referral)) {
       return referral
@@ -279,7 +279,7 @@ export function getReferralFromUrl(): string | null {
   } catch (error) {
     console.warn('Error parsing referral from URL:', error)
   }
-  
+
   return null
 }
 
@@ -322,7 +322,7 @@ export function createJupiterFeeInstructions(
   solAmount?: number
 ): any[] {
   const feeInstructions = createFeeTransferInstructions(fromPubkey, operationType, operationCount, solAmount)
-  
+
   // Convert to Jupiter format
   return feeInstructions.map(instruction => ({
     programId: instruction.programId.toBase58(),
@@ -475,7 +475,7 @@ export async function getSwapQuote(
     })
 
     const response = await fetch(`${JUPITER_API.quote}?${params}`)
-    
+
     if (!response.ok) {
       throw new Error(`Quote API error: ${response.status}`)
     }
@@ -542,12 +542,12 @@ async function retryWithBackoff<T>(
       return await fn()
     } catch (error) {
       const isLastAttempt = attempt === maxRetries
-      const isRetryableError = 
-        error instanceof Error && 
-        (error.message.includes('ChunkLoadError') || 
-         error.message.includes('Loading chunk') ||
-         error.message.includes('Network') ||
-         error.message.includes('fetch'))
+      const isRetryableError =
+        error instanceof Error &&
+        (error.message.includes('ChunkLoadError') ||
+          error.message.includes('Loading chunk') ||
+          error.message.includes('Network') ||
+          error.message.includes('fetch'))
 
       if (isLastAttempt || !isRetryableError) {
         throw error
@@ -571,18 +571,18 @@ export async function getTokenUsdValue(
   try {
     // Skip if balance is too small to avoid API calls for dust
     if (balance === 0) return 0
-    
+
     // First try to get price from cache or batch fetch (price is in USD)
     const price = await getCachedPrice(mintAddress)
-    
+
     if (price > 0) {
       // Calculate token value using USD price
       const tokenAmount = balance / Math.pow(10, decimals)
       return tokenAmount * price
     }
-    
+
     // Fallback to quote-based calculation for tokens without price data
-    const quote = await retryWithBackoff(() => 
+    const quote = await retryWithBackoff(() =>
       getSwapQuote(
         mintAddress,
         TOKENS.SOL,
@@ -592,9 +592,9 @@ export async function getTokenUsdValue(
       2, // Reduced retries since we have price fallback
       1000
     )
-    
+
     if (!quote || !quote.outAmount) return 0
-    
+
     // Convert outAmount (in lamports) to SOL
     const solAmount = parseInt(quote.outAmount) / LAMPORTS_PER_SOL
     return solAmount
@@ -640,8 +640,8 @@ export function clearMetadataUpdateCallback(): void {
 // Asynchronously enrich token metadata (name, symbol, logoURI) without blocking the main flow
 async function enrichTokenMetadataAsync(tokens: UserToken[]): Promise<void> {
   // Filter tokens that need metadata enrichment and aren't already being processed
-  const tokensNeedingMetadata = tokens.filter(token => 
-    !token.isNFT && 
+  const tokensNeedingMetadata = tokens.filter(token =>
+    !token.isNFT &&
     (token.symbol === 'Unknown' || token.name === 'Unknown Token') &&
     !metadataEnrichmentInProgress.has(token.mintAddress)
   )
@@ -657,9 +657,9 @@ async function enrichTokenMetadataAsync(tokens: UserToken[]): Promise<void> {
   try {
     const mints = tokensNeedingMetadata.map(token => token.mintAddress)
     const batchMetadata = await jupiterAPI.fetchTokenInfoBatch(mints)
-    
+
     const enrichedTokens: UserToken[] = []
-    
+
     tokensNeedingMetadata.forEach(token => {
       try {
         const metadata = batchMetadata[token.mintAddress]
@@ -686,20 +686,20 @@ async function enrichTokenMetadataAsync(tokens: UserToken[]): Promise<void> {
         metadataEnrichmentInProgress.delete(token.mintAddress)
       }
     })
-    
+
     // Trigger UI update callback if any tokens were enriched
     if (enrichedTokens.length > 0 && metadataUpdateCallback) {
       metadataUpdateCallback(enrichedTokens)
     }
   } catch (error) {
     console.error('Batch metadata enrichment failed:', error)
-    
+
     // Fallback to individual requests if batch fails
     const METADATA_BATCH_SIZE = 10 // Process 10 tokens at a time to avoid overwhelming the API
-    
+
     for (let i = 0; i < tokensNeedingMetadata.length; i += METADATA_BATCH_SIZE) {
       const batch = tokensNeedingMetadata.slice(i, i + METADATA_BATCH_SIZE)
-      
+
       // Process batch in parallel
       const metadataPromises = batch.map(async (token) => {
         try {
@@ -731,12 +731,12 @@ async function enrichTokenMetadataAsync(tokens: UserToken[]): Promise<void> {
 
       // Wait for current batch to complete before processing next batch
       const enrichedTokens = (await Promise.all(metadataPromises)).filter(Boolean) as UserToken[]
-      
+
       // Trigger UI update callback if any tokens were enriched
       if (enrichedTokens.length > 0 && metadataUpdateCallback) {
         metadataUpdateCallback(enrichedTokens)
       }
-      
+
       // Small delay between batches to be respectful to the API
       if (i + METADATA_BATCH_SIZE < tokensNeedingMetadata.length) {
         await sleep(500) // 500ms delay between batches
@@ -754,33 +754,33 @@ async function batchFetchTokenData(connection: Connection, mints: PublicKey[]): 
   supply: number
 }>> {
   startTimer('rpc-batch')
-  
+
   let allResults: Array<{
     mint: string
     decimals: number
     supply: number
   }> = []
-  
+
   // Process in chunks of 100 (RPC limit)
   for (let i = 0; i < mints.length; i += 100) {
     const mintChunk = mints.slice(i, i + 100)
-    
+
     try {
       const accountInfos = await connection.getMultipleAccountsInfo(mintChunk)
-      
+
       const chunkResults = mintChunk.map((mint, j) => {
         const mintInfo = accountInfos[j]
-        
+
         if (!mintInfo?.data || mintInfo.data.length < 82) {
           return null
         }
-        
+
         try {
           // Parse mint data: decimals at byte 44, supply at bytes 36-44
           const decimals = mintInfo.data[44]
           const supplyBytes = mintInfo.data.slice(36, 44)
           const supply = Number(supplyBytes.readBigUInt64LE(0))
-          
+
           return {
             mint: mint.toBase58(),
             decimals,
@@ -802,7 +802,7 @@ async function batchFetchTokenData(connection: Connection, mints: PublicKey[]): 
       await sleep(RPC_DELAY)
     }
   }
-  
+
   stopTimer('rpc-batch')
   return allResults
 }
@@ -818,25 +818,25 @@ async function processBatch(
     const mint = acc.account.data.parsed.info.mint
     return !ALL_EXCLUDED_MINTS.includes(mint) && !dynamicProblematicMints.has(mint)
   })
-  
-  const mintPublicKeys = filteredAccounts.map(acc => 
+
+  const mintPublicKeys = filteredAccounts.map(acc =>
     new PublicKey(acc.account.data.parsed.info.mint)
   )
 
   const tokenData = await batchFetchTokenData(connection, mintPublicKeys)
-  
+
   const processedTokens = filteredAccounts.map((account): UserToken | null => {
     const mint = account.account.data.parsed.info.mint
     const tokenAmount = account.account.data.parsed.info.tokenAmount.uiAmount || 0
     const balance = Number(account.account.data.parsed.info.tokenAmount.amount)
-    
+
     // Check cache first
     const cached = tokenCache.get(mint)
     if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
       // Update with current balance and recalculate USD value
       const price = prices[mint] || 0
       const updatedUsdValue = price > 0 ? tokenAmount * price : 0
-      
+
       return {
         ...cached.data,
         balance: balance,
@@ -894,12 +894,12 @@ export async function fetchUserTokens(
     console.log('Token fetch already in progress, skipping...')
     return []
   }
-  
+
   isTokenLoading = true
-  
+
   try {
     startTimer('total-token-fetch')
-    
+
     // Single RPC call to get all token accounts
     const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
       userPublicKey,
@@ -907,11 +907,11 @@ export async function fetchUserTokens(
     )
 
     // Split accounts by balance if needed
-    const relevantAccounts = includeZeroBalance 
+    const relevantAccounts = includeZeroBalance
       ? tokenAccounts.value
-      : tokenAccounts.value.filter(acc => 
-          acc.account.data.parsed.info.tokenAmount.uiAmount > 0
-        )
+      : tokenAccounts.value.filter(acc =>
+        acc.account.data.parsed.info.tokenAmount.uiAmount > 0
+      )
 
     if (relevantAccounts.length === 0) {
       return []
@@ -929,8 +929,8 @@ export async function fetchUserTokens(
     const processedTokens = await processBatch(connection, relevantAccounts, prices)
 
     // Filter NFTs if not requested
-    const filteredTokens = includeNFTs 
-      ? processedTokens 
+    const filteredTokens = includeNFTs
+      ? processedTokens
       : processedTokens.filter(token => !token.isNFT)
 
     // Asynchronously enrich token metadata (non-blocking)
@@ -942,11 +942,11 @@ export async function fetchUserTokens(
     return filteredTokens.sort((a, b) => {
       const aIsSellable = (a.usdValue >= 0.001 || isPumpFunToken(a.mintAddress)) && !a.frozen
       const bIsSellable = (b.usdValue >= 0.001 || isPumpFunToken(b.mintAddress)) && !b.frozen
-      
+
       if (aIsSellable && !bIsSellable) return -1
       if (!aIsSellable && bIsSellable) return 1
       if (aIsSellable && bIsSellable) return b.usdValue - a.usdValue
-      
+
       return (a.symbol || '').localeCompare(b.symbol || '')
     })
 
@@ -962,7 +962,7 @@ export async function fetchUserTokens(
 export function clearNFTCache(): void {
   nftMintCache.clear();
   nftCacheInitialized = false;
-  
+
   // Keep only the original hardcoded tokens in KNOWN_NON_NFT_TOKENS
   // by recreating the set with only the initial values
   const initialNonNFTTokens = [
@@ -973,7 +973,7 @@ export function clearNFTCache(): void {
     'CHEg2pGFoJE3BQChUgYWXUCMQzQfNp6jBDYkdiW11dqN',
     'DwJeLBy5PVHKR9Ec8491mk7E1XV11oB6JyjXZ2GjuoZX',
   ];
-  
+
   // Clear and repopulate the set
   KNOWN_NON_NFT_TOKENS.clear();
   initialNonNFTTokens.forEach(token => KNOWN_NON_NFT_TOKENS.add(token));
@@ -990,25 +990,25 @@ export async function checkIfTokenIsNFT(
     if (isKnownNonNFT(mintAddress)) {
       return false;
     }
-    
+
     // Initialize cache if not done yet
     if (!nftCacheInitialized) {
       const userNFTs = await fetchUserNFTMints(connection, userPublicKey)
       userNFTs.forEach(mint => nftMintCache.add(mint))
       nftCacheInitialized = true
     }
-    
+
     // Check cache first
     if (nftMintCache.has(mintAddress)) {
       return true;
     }
-    
+
     // If not in cache, do a direct check
     try {
       const mintInfo = await connection.getTokenSupply(new PublicKey(mintAddress))
       const supply = Number(mintInfo.value.amount)
       const decimals = mintInfo.value.decimals
-      
+
       // NFTs typically have 0 decimals and supply of 1
       return decimals === 0 && supply <= 1;
     } catch (error) {
@@ -1049,13 +1049,13 @@ export async function fetchUserNFTsDetailed(
   try {
     // Create UMI instance
     const umi = createUmi(connection.rpcEndpoint)
-    
+
     // Convert PublicKey to UMI publicKey
     const ownerPublicKey = publicKey(userPublicKey.toBase58())
-    
+
     console.log("Fetching detailed NFT information...")
     const allNFTs = await fetchAllDigitalAssetWithTokenByOwner(umi, ownerPublicKey)
-    
+
     return allNFTs.map((nft) => ({
       mintAddress: nft.publicKey.toString(),
       name: nft.metadata.name,
@@ -1091,19 +1091,19 @@ export async function getNFTMetadata(
         isNFT: false
       };
     }
-    
+
     // Then check if it's an NFT
     const tokenIsNFT = await checkIfTokenIsNFT(connection, userPublicKey, mintAddress)
-    
+
     if (tokenIsNFT) {
       // Get detailed NFT metadata
       const umi = createUmi(connection.rpcEndpoint)
       const ownerPublicKey = publicKey(userPublicKey.toBase58())
-      
+
       try {
         const allNFTs = await fetchAllDigitalAssetWithTokenByOwner(umi, ownerPublicKey)
         const specificNFT = allNFTs.find(nft => nft.publicKey.toString() === mintAddress)
-        
+
         if (specificNFT) {
           return {
             decimals: 0,
@@ -1117,7 +1117,7 @@ export async function getNFTMetadata(
       } catch (error) {
         console.warn(`Failed to get specific NFT metadata for ${mintAddress}:`, error)
       }
-      
+
       // Fallback for NFTs
       return {
         decimals: 0,
@@ -1127,7 +1127,7 @@ export async function getNFTMetadata(
         isNFT: true
       }
     }
-    
+
     // Not an NFT, use regular token info
     const tokenInfo = await getTokenInfo(mintAddress)
     if (tokenInfo) {
@@ -1136,7 +1136,7 @@ export async function getNFTMetadata(
         isNFT: false
       }
     }
-    
+
     return null
   } catch (error) {
     console.error(`Error getting token/NFT metadata for ${mintAddress}:`, error)
@@ -1152,9 +1152,9 @@ export async function fetchZeroBalanceTokens(
   try {
     const allTokens = await fetchUserTokens(connection, userPublicKey, true)
     // Include tokens with zero balance OR tokens with USD value < 0.001 (unsellable), but exclude pump.fun tokens AND frozen tokens
-    return allTokens.filter(token => 
+    return allTokens.filter(token =>
       !token.frozen && (
-        token.uiAmount <= 0.000000000001 || 
+        token.uiAmount <= 0.000000000001 ||
         (token.usdValue < 0.001 && !isPumpFunToken(token.mintAddress))
       )
     )
@@ -1169,7 +1169,7 @@ async function getTokenInfo(mintAddress: string): Promise<{ decimals: number; sy
   try {
     // Try Jupiter's Token API first with rate limiting
     const jupiterResult = await jupiterAPI.fetchTokenInfo(mintAddress)
-    
+
     if (jupiterResult) {
       return jupiterResult
     }
@@ -1216,9 +1216,9 @@ const KNOWN_NON_NFT_TOKENS = new Set([
 
 // Check if token is a known non-NFT token
 export function isKnownNonNFT(mintAddress: string): boolean {
-  return KNOWN_NON_NFT_TOKENS.has(mintAddress) || 
-         isWellKnownToken(mintAddress) || 
-         isPumpFunToken(mintAddress)
+  return KNOWN_NON_NFT_TOKENS.has(mintAddress) ||
+    isWellKnownToken(mintAddress) ||
+    isPumpFunToken(mintAddress)
 }
 
 // Cache for NFT mint addresses to avoid repeated API calls
@@ -1231,7 +1231,7 @@ function isTokenInNFTCache(mintAddress: string): boolean {
   if (isKnownNonNFT(mintAddress)) {
     return false;
   }
-  
+
   return nftMintCache.has(mintAddress)
 }
 
@@ -1243,53 +1243,53 @@ async function fetchUserNFTMints(
   try {
     // Create UMI instance
     const umi = createUmi(connection.rpcEndpoint)
-    
+
     // Convert PublicKey to UMI publicKey
     const ownerPublicKey = publicKey(userPublicKey.toBase58())
-    
+
     console.log("Fetching NFTs using Metaplex...")
     const allDigitalAssets = await fetchAllDigitalAssetWithTokenByOwner(umi, ownerPublicKey)
-    
+
     // Extract mint addresses
     const nftMints = new Set<string>()
-    
+
     // Process each digital asset
     for (const asset of allDigitalAssets) {
       const mintAddress = asset.publicKey.toString()
-      
+
       // Skip known non-NFT tokens
       if (isKnownNonNFT(mintAddress)) {
         console.log(`Skipping known non-NFT token: ${mintAddress}`)
         continue
       }
-      
+
       try {
         // Check if Jupiter API recognizes this as a fungible token
         const isJupiterToken = await isFungibleTokenWithJupiter(mintAddress)
         if (isJupiterToken) {
           console.log(`Skipping Jupiter-recognized token: ${mintAddress}`)
-          
+
           // Add to known non-NFT tokens for future reference
           KNOWN_NON_NFT_TOKENS.add(mintAddress)
           continue
         }
-        
+
         // Get token supply and decimals to determine if it's an NFT
         const mintInfo = await connection.getTokenSupply(new PublicKey(mintAddress))
-        
+
         // Check if token has NFT characteristics:
         // 1. Supply of 1 (or 0 for burned NFTs)
         // 2. 0 decimals
         const supply = Number(mintInfo.value.amount)
         const decimals = mintInfo.value.decimals
-        
+
         if (decimals === 0 && supply <= 1) {
           // This is likely an NFT
           nftMints.add(mintAddress)
         } else {
           // This is likely a fungible token
           console.log(`Skipping fungible token: ${mintAddress} (supply: ${supply}, decimals: ${decimals})`)
-          
+
           // Add to known non-NFT tokens for future reference
           KNOWN_NON_NFT_TOKENS.add(mintAddress)
         }
@@ -1298,7 +1298,7 @@ async function fetchUserNFTMints(
         // Skip this token if we can't determine its characteristics
       }
     }
-    
+
     console.log(`Found ${nftMints.size} verified NFTs for user`)
     return nftMints
   } catch (error) {
@@ -1319,12 +1319,12 @@ function isTokenAccountFrozen(accountData: Buffer): boolean {
     // - is_native: 12 bytes (109-120) - includes option flag + amount
     // - delegated_amount: 8 bytes (121-128)
     // - close_authority: 36 bytes (129-164) - includes option flag + pubkey
-    
+
     if (accountData.length < 165) {
       console.warn('Token account data too short to parse state')
       return false
     }
-    
+
     const state = accountData.readUInt8(108)
     return state === 2 // 2 = Frozen
   } catch (error) {
@@ -1340,7 +1340,7 @@ async function checkTokenFrozenStatusWithJupiter(mintAddress: string): Promise<b
   } catch (error) {
     console.warn(`Failed to check frozen status with Jupiter for ${mintAddress}:`, error instanceof Error ? error.message : error)
   }
-  
+
   return false
 }
 
@@ -1351,7 +1351,7 @@ async function isFungibleTokenWithJupiter(mintAddress: string): Promise<boolean>
   } catch (error) {
     console.warn(`Failed to check fungible status with Jupiter for ${mintAddress}:`, error instanceof Error ? error.message : error)
   }
-  
+
   return false
 }
 
@@ -1386,15 +1386,15 @@ export async function executeBulkSell(
     // Track start time for performance measurement
     const start = Date.now()
     const successfulSwaps: TokenToSell[] = []
-    
+
     // Only process swaps if there are tokens to sell
     if (request.tokens && request.tokens.length > 0) {
       // Filter out frozen tokens first
       const nonFrozenTokens = request.tokens.filter(token => !token.frozen)
       const frozenTokens = request.tokens.filter(token => token.frozen)
-      
+
       console.log(`Executing bulk sell: ${nonFrozenTokens.length} sellable tokens, ${frozenTokens.length} frozen tokens`)
-      
+
       // Add frozen tokens to failed sales immediately
       frozenTokens.forEach(token => {
         result.failedSwaps.push({
@@ -1415,7 +1415,7 @@ export async function executeBulkSell(
         const transactionQuotes: SwapQuote[] = []
         const BATCH_SIZE = 10 // Process 10 tokens per batch for API calls
         const batches: TokenToSell[][] = []
-        
+
         // Create batches
         for (let i = 0; i < nonFrozenTokens.length; i += BATCH_SIZE) {
           batches.push(nonFrozenTokens.slice(i, i + BATCH_SIZE))
@@ -1429,7 +1429,7 @@ export async function executeBulkSell(
           await Promise.all(batches.map(async (batch, batchIndex) => {
             const batchStart = batchIndex * BATCH_SIZE
             console.log(`Processing sell batch ${batchStart}-${batchStart + batch.length} of ${nonFrozenTokens.length} tokens`)
-            
+
             // Process tokens in this batch in parallel
             const batchPromises = batch.map(async (token) => {
               try {
@@ -1463,7 +1463,7 @@ export async function executeBulkSell(
                   Buffer.from(swapTransaction.swapTransaction, 'base64')
                 )
                 tx.message.recentBlockhash = blockhash
-                
+
                 return { success: true, token, tx, quote }
               } catch (error) {
                 console.error(`Failed to prepare sell for ${token.mintAddress}:`, error)
@@ -1473,7 +1473,7 @@ export async function executeBulkSell(
 
             // Wait for all transactions in this batch
             const results = await Promise.all(batchPromises)
-            
+
             // Collect successful transactions and failed ones
             results.forEach(batchResult => {
               if (batchResult.success && batchResult.tx && batchResult.quote) {
@@ -1505,12 +1505,12 @@ export async function executeBulkSell(
           // Send and confirm transactions using batched approach (like executeBulkBuy)
           const SEND_BATCH_SIZE = 6 // Send 6 transactions at a time
           const swapSignatures: string[] = []
-          
+
           for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
             const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE)
             const batchTokens = transactionTokens.slice(i, i + SEND_BATCH_SIZE)
             const batchQuotes = transactionQuotes.slice(i, i + SEND_BATCH_SIZE)
-            
+
             // Send batch transactions in parallel
             const sendPromises = batch.map(async (tx, idx) => {
               try {
@@ -1565,11 +1565,11 @@ export async function executeBulkSell(
                   } else {
                     swapSignatures.push(sendResult.signature!)
                     successfulSwaps.push(transactionTokens[sendResult.tokenIdx])
-                    
+
                     // Calculate actual SOL received from the quote
                     const quote = batchQuotes[sendResult.tokenIdx - i]
                     const solReceived = parseInt(quote.outAmount) / LAMPORTS_PER_SOL
-                    
+
                     result.successfulSwaps.push({
                       mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
                       solReceived: solReceived
@@ -1582,8 +1582,8 @@ export async function executeBulkSell(
                 console.error(`Confirmation failed for ${sendResult.signature}:`, error)
                 result.failedSwaps.push({
                   mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                  error: error.message && error.message.includes('TransactionExpiredBlockheightExceededError') 
-                    ? 'Transaction expired' 
+                  error: error.message && error.message.includes('TransactionExpiredBlockheightExceededError')
+                    ? 'Transaction expired'
                     : `Confirmation failed: ${error.message || 'Unknown error'}`
                 })
               }
@@ -1592,25 +1592,25 @@ export async function executeBulkSell(
             await Promise.all(confirmPromises)
             console.log(`Processed sell batch ${i / SEND_BATCH_SIZE + 1}/${Math.ceil(signedTransactions.length / SEND_BATCH_SIZE)}`)
           }
-          
-                     result.signatures.push(...swapSignatures)
-         }
-       }
+
+          result.signatures.push(...swapSignatures)
+        }
+      }
     }
 
     // Step 4: Close token accounts for successful swaps ONLY if selling 100% AND selected unsellable tokens
     // Only close accounts when selling 100% of the token
     const tokensToCloseFromSwaps = successfulSwaps.filter(token => token.sellPercentage >= 100)
     const tokensToClose: UserToken[] = [...tokensToCloseFromSwaps]
-    
+
     // Add unsellable tokens to the close list if provided (excluding frozen tokens)
     if (request.unsellableTokens && request.unsellableTokens.length > 0) {
       const nonFrozenUnsellableTokens = request.unsellableTokens.filter(token => !token.frozen)
       const frozenUnsellableTokens = request.unsellableTokens.filter(token => token.frozen)
-      
+
       tokensToClose.push(...nonFrozenUnsellableTokens)
       console.log(`Adding ${nonFrozenUnsellableTokens.length} unsellable tokens to close list`)
-      
+
       // Add frozen unsellable tokens to failed closes
       frozenUnsellableTokens.forEach(token => {
         result.failedCloses.push({
@@ -1619,7 +1619,7 @@ export async function executeBulkSell(
         })
       })
     }
-    
+
     if (tokensToClose.length > 0) {
       try {
         const closeResults = await closeTokenAccounts(
@@ -1629,7 +1629,7 @@ export async function executeBulkSell(
           signAllTransactions,
           { successfulSwapsCount: result.successfulSwaps.length, totalSolReceived: result.totalReceived }
         )
-        
+
         result.successfulCloses = closeResults.successful
         result.failedCloses = closeResults.failed
         result.signatures.push(...closeResults.signatures)
@@ -1650,13 +1650,13 @@ export async function executeBulkSell(
       const sellFeeDistribution = calculateFeeDistribution('SELL', result.successfulSwaps.length, result.totalReceived)
       // For close: fixed fee per account closed
       const closeFeeDistribution = calculateFeeDistribution('CLOSE', result.successfulCloses.length)
-      
+
       // Combine fees
       const totalFees = sellFeeDistribution.totalFee + closeFeeDistribution.totalFee
       const totalDevFee = sellFeeDistribution.devFee + closeFeeDistribution.devFee
       const totalReferralFee = sellFeeDistribution.referralFee + closeFeeDistribution.referralFee
       const totalOperations = result.successfulSwaps.length + result.successfulCloses.length
-      
+
       result.feeInfo = {
         totalFees,
         devFee: totalDevFee,
@@ -1667,7 +1667,7 @@ export async function executeBulkSell(
         sellFeeRate: getFeeForOperation('SELL', result.totalReceived),
         closeFeeRate: getFeeForOperation('CLOSE')
       }
-      
+
       console.log(`🎉 Bulk sell completed: ${result.successfulSwaps.length} swaps, ${result.successfulCloses.length} closes`)
       console.log(`⚡ Total processing time: ${Date.now() - start}ms`)
       console.log(`💰 Total fees: ${totalFees} SOL (Sell: ${sellFeeDistribution.totalFee} from ${result.totalReceived} SOL received, Close: ${closeFeeDistribution.totalFee})`)
@@ -1678,7 +1678,7 @@ export async function executeBulkSell(
     return result
   } catch (error) {
     console.error('Bulk sell execution error:', error)
-    
+
     // Only mark tokens as failed to sell if we actually have tokens to sell
     if (request.tokens && request.tokens.length > 0) {
       result.failedSwaps = request.tokens.map(token => ({
@@ -1686,7 +1686,7 @@ export async function executeBulkSell(
         error: error instanceof Error ? error.message : 'Unknown error'
       }))
     }
-    
+
     return result
   }
 }
@@ -1722,11 +1722,11 @@ async function closeTokenAccounts(
           })
           continue
         }
-        
+
         // Check if the token might be problematic (like pump.fun tokens)
         if (isPumpFunToken(token.mintAddress)) {
           console.warn(`Detected pump.fun token: ${token.mintAddress}`)
-          
+
           // For pump.fun tokens, we might need special handling
           // Some pump.fun tokens may not allow standard account closing
           try {
@@ -1737,7 +1737,7 @@ async function closeTokenAccounts(
 
             // Check account balance first for pump.fun tokens
             const accountInfo = await connection.getTokenAccountBalance(tokenAccount)
-            
+
             if (accountInfo.value.uiAmount && accountInfo.value.uiAmount > 0) {
               result.failed.push({
                 mintAddress: token.mintAddress,
@@ -1798,14 +1798,14 @@ async function closeTokenAccounts(
         // If token has balance > 0, we need to burn it first
         if (parseInt(currentBalance) > 0) {
           console.log(`Creating burn instruction for ${token.mintAddress} (${currentBalance} tokens)`)
-          
+
           const burnInstruction = createBurnInstruction(
             tokenAccount,
             new PublicKey(token.mintAddress),
             new PublicKey(userPublicKey),
             BigInt(currentBalance) // Burn the entire balance
           )
-          
+
           burnInstructions.push(burnInstruction)
         }
 
@@ -1835,7 +1835,7 @@ async function closeTokenAccounts(
           'CLOSE',
           tokensToProcess.length
         )
-        
+
         // Add sell fee instructions if sell data is provided (0.5% of total SOL received)
         const sellFeeInstructions = sellData ? createFeeTransferInstructions(
           new PublicKey(userPublicKey),
@@ -1843,13 +1843,13 @@ async function closeTokenAccounts(
           sellData.successfulSwapsCount,
           sellData.totalSolReceived
         ) : []
-        
+
         // Combine burn, close, and fee instructions in the same transaction
         const allInstructions = [...burnInstructions, ...closeInstructions, ...closeFeeInstructions, ...sellFeeInstructions]
-        
+
         // Create transaction with burn + close + fee instructions
         const { blockhash } = await connection.getLatestBlockhash('confirmed')
-        
+
         const messageV0 = new TransactionMessage({
           payerKey: new PublicKey(userPublicKey),
           recentBlockhash: blockhash,
@@ -1869,7 +1869,7 @@ async function closeTokenAccounts(
         })
 
         const confirmation = await connection.confirmTransaction(signature, 'confirmed')
-        
+
         if (confirmation.value.err) {
           const errorMsg = `Burn/Close transaction failed: ${JSON.stringify(confirmation.value.err)}`
           console.error(errorMsg)
@@ -1883,7 +1883,7 @@ async function closeTokenAccounts(
           result.signatures.push(signature)
           result.successful = tokensToProcess.map(token => token.mintAddress)
           console.log(`Successfully burned and closed ${tokensToProcess.length} token accounts`)
-          
+
           // Log details
           if (burnInstructions.length > 0) {
             console.log(`- Burned tokens in ${burnInstructions.length} accounts`)
@@ -1942,10 +1942,10 @@ export async function executeBulkBuy(
   try {
     // Track start time for performance measurement
     const start = Date.now()
-    
+
     // Calculate amount per token in lamports
     const amountPerToken = Math.floor((request.solAmount * LAMPORTS_PER_SOL) / request.tokenMints.length)
-    
+
     console.log(`Executing bulk buy: ${request.tokenMints.length} tokens, ${amountPerToken} lamports per token`)
 
     // Get latest blockhash for all transactions
@@ -1956,7 +1956,7 @@ export async function executeBulkBuy(
     const transactionMints: string[] = []
     const BATCH_SIZE = 10 // Process 10 tokens per batch for API calls
     const batches: string[][] = []
-    
+
     // Create batches
     for (let i = 0; i < request.tokenMints.length; i += BATCH_SIZE) {
       batches.push(request.tokenMints.slice(i, i + BATCH_SIZE))
@@ -1970,7 +1970,7 @@ export async function executeBulkBuy(
       await Promise.all(batches.map(async (batch, batchIndex) => {
         const batchStart = batchIndex * BATCH_SIZE
         console.log(`Processing batch ${batchStart}-${batchStart + batch.length} of ${request.tokenMints.length} tokens`)
-        
+
         // Process tokens in this batch in parallel
         const batchPromises = batch.map(async (mint) => {
           try {
@@ -1978,17 +1978,17 @@ export async function executeBulkBuy(
             const swapApiBody = {
               from: NATIVE_MINT.toBase58(), // SOL (Native mint for buy operations)
               to: mint,                     // Target token
-              amount: amountPerToken/1000000000,       // Amount in SOL
-              slippage: request.slippage/100,   // Slippage tolerance
+              amount: amountPerToken / 1000000000,       // Amount in SOL
+              slippage: request.slippage / 100,   // Slippage tolerance
               payer: userPublicKey,         // User's wallet
-              priorityFee: request.priorityFee/1000000000, // Priority fee in SOL
+              priorityFee: request.priorityFee / 1000000000, // Priority fee in SOL
               fee: `${FEE_CONFIG.DEV_WALLET}:0.5` // Dev wallet with 0.5% fee
             }
 
             // Call Solana Tracker swap API with timeout
             const response = await fetch("https://swap-v2.solanatracker.io/swap", {
               method: "POST",
-              headers: { 
+              headers: {
                 "Content-Type": "application/json",
                 "Connection": "keep-alive"
               },
@@ -2002,7 +2002,7 @@ export async function executeBulkBuy(
             }
 
             const swapResult = await response.json()
-            
+
             if (!swapResult.txn) {
               throw new Error('No transaction returned from swap API')
             }
@@ -2012,7 +2012,7 @@ export async function executeBulkBuy(
               Buffer.from(swapResult.txn, 'base64')
             )
             tx.message.recentBlockhash = blockhash
-            
+
             return { success: true, mint, tx }
           } catch (error) {
             console.error(`Failed to prepare buy for ${mint}:`, error)
@@ -2022,19 +2022,19 @@ export async function executeBulkBuy(
 
         // Wait for all transactions in this batch
         const results = await Promise.all(batchPromises)
-        
-                 // Collect successful transactions and failed ones
-         results.forEach(batchResult => {
-           if (batchResult.success && batchResult.tx) {
-             transactions.push(batchResult.tx)
-             transactionMints.push(batchResult.mint)
-           } else {
-             result.failedPurchases.push({
-               mintAddress: batchResult.mint,
-               error: batchResult.error instanceof Error ? batchResult.error.message : 'Unknown error creating transaction'
-             })
-           }
-         })
+
+        // Collect successful transactions and failed ones
+        results.forEach(batchResult => {
+          if (batchResult.success && batchResult.tx) {
+            transactions.push(batchResult.tx)
+            transactionMints.push(batchResult.mint)
+          } else {
+            result.failedPurchases.push({
+              mintAddress: batchResult.mint,
+              error: batchResult.error instanceof Error ? batchResult.error.message : 'Unknown error creating transaction'
+            })
+          }
+        })
 
         console.log(`Batch ${batchStart}-${batchStart + batch.length} completed: ${results.filter(r => r.success).length} successful`)
       }))
@@ -2054,11 +2054,11 @@ export async function executeBulkBuy(
     // Send and confirm transactions using batched approach (like sendTransactions)
     const SEND_BATCH_SIZE = 6 // Send 6 transactions at a time
     const signatures: string[] = []
-    
+
     for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
       const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE)
       const batchMints = transactionMints.slice(i, i + SEND_BATCH_SIZE)
-      
+
       // Send batch transactions in parallel
       const sendPromises = batch.map(async (tx, idx) => {
         try {
@@ -2123,8 +2123,8 @@ export async function executeBulkBuy(
           console.error(`Confirmation failed for ${sendResult.signature}:`, error)
           result.failedPurchases.push({
             mintAddress: transactionMints[sendResult.mintIdx],
-            error: error.message && error.message.includes('TransactionExpiredBlockheightExceededError') 
-              ? 'Transaction expired' 
+            error: error.message && error.message.includes('TransactionExpiredBlockheightExceededError')
+              ? 'Transaction expired'
               : `Confirmation failed: ${error.message || 'Unknown error'}`
           })
         }
@@ -2142,7 +2142,7 @@ export async function executeBulkBuy(
     if (result.successfulPurchases.length > 0) {
       // For buy: 0.5% of total SOL budget (request.solAmount)
       const feeDistribution = calculateFeeDistribution('BUY', result.successfulPurchases.length, request.solAmount)
-      
+
       result.feeInfo = {
         totalFees: feeDistribution.totalFee,
         devFee: feeDistribution.devFee,
@@ -2151,7 +2151,7 @@ export async function executeBulkBuy(
         totalOperations: result.successfulPurchases.length,
         operationType: 'BUY' as FeeOperationType
       }
-      
+
       console.log(`🎉 Bulk buy completed: ${result.successfulPurchases.length} successful, ${result.failedPurchases.length} failed`)
       console.log(`⚡ Total processing time: ${Date.now() - start}ms`)
       console.log(`💰 Total fees: ${feeDistribution.totalFee} SOL (0.5% of ${request.solAmount} SOL budget)`)
@@ -2175,7 +2175,7 @@ export function isValidMintAddress(address: string): boolean {
     if (address.length < 32 || address.length > 44) {
       return false
     }
-    
+
     // Check if it contains only valid base58 characters
     const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/
     return base58Regex.test(address)
@@ -2214,11 +2214,11 @@ export function categorizeUserTokens(tokens: UserToken[]): {
       frozen.push(token)
     } else if (token.uiAmount <= 0.000000000001) {
       zeroBalance.push(token)
-            } else if (token.usdValue >= 0.001 || isPumpFunToken(token.mintAddress)) {
-          sellable.push(token)
-        } else {
-          unsellable.push(token)
-        }
+    } else if (token.usdValue >= 0.001 || isPumpFunToken(token.mintAddress)) {
+      sellable.push(token)
+    } else {
+      unsellable.push(token)
+    }
   })
 
   return { sellable, unsellable, frozen, zeroBalance, nfts }
@@ -2240,7 +2240,7 @@ export async function closeZeroBalanceTokens(
   try {
     // Fetch tokens that are either zero-balance or have no SOL value (unsellable)
     const unsellableTokens = await fetchZeroBalanceTokens(connection, new PublicKey(userPublicKey))
-    
+
     if (unsellableTokens.length === 0) {
       console.log('No unsellable tokens found to close')
       return result
@@ -2264,21 +2264,21 @@ export async function closeZeroBalanceTokens(
         const balanceInfo = await connection.getTokenAccountBalance(tokenAccount)
         const currentBalance = balanceInfo.value.amount
         const currentUiAmount = balanceInfo.value.uiAmount || 0
-        
+
         console.log(`Token ${token.mintAddress}: balance=${currentBalance}, uiAmount=${currentUiAmount}, usdValue=${token.usdValue}`)
-        
+
         // For tokens with balance but low SOL value, we need to burn first
         if (parseInt(currentBalance) > 0) {
           if (token.usdValue < 0.001) {
             console.log(`Creating burn instruction for unsellable token ${token.mintAddress} (${currentBalance} tokens, SOL value ${token.usdValue})`)
-            
+
             const burnInstruction = createBurnInstruction(
               tokenAccount,
               new PublicKey(token.mintAddress),
               new PublicKey(userPublicKey),
               BigInt(currentBalance) // Burn the entire balance
             )
-            
+
             burnInstructions.push(burnInstruction)
           } else {
             result.failed.push({
@@ -2288,7 +2288,7 @@ export async function closeZeroBalanceTokens(
             continue
           }
         }
-        
+
         // Create close instruction (will execute after burn if needed)
         const closeInstruction = createCloseAccountInstruction(
           tokenAccount,
@@ -2311,10 +2311,10 @@ export async function closeZeroBalanceTokens(
       try {
         // Combine burn and close instructions in the same transaction
         const allInstructions = [...burnInstructions, ...closeInstructions]
-        
+
         // Create transaction with burn + close instructions
         const { blockhash } = await connection.getLatestBlockhash('confirmed')
-        
+
         const messageV0 = new TransactionMessage({
           payerKey: new PublicKey(userPublicKey),
           recentBlockhash: blockhash,
@@ -2334,7 +2334,7 @@ export async function closeZeroBalanceTokens(
         })
 
         const confirmation = await connection.confirmTransaction(signature, 'confirmed')
-        
+
         if (confirmation.value.err) {
           const errorMsg = `Burn/Close transaction failed: ${JSON.stringify(confirmation.value.err)}`
           console.error(errorMsg)
@@ -2348,13 +2348,13 @@ export async function closeZeroBalanceTokens(
           result.signatures.push(signature)
           result.successful = tokensToProcess.map(token => token.mintAddress)
           console.log(`Successfully burned and closed ${tokensToProcess.length} unsellable token accounts`)
-          
+
           // Log details
           if (burnInstructions.length > 0) {
             console.log(`- Burned tokens in ${burnInstructions.length} accounts`)
           }
           console.log(`- Closed ${closeInstructions.length} accounts`)
-          
+
           // Log fee summary (fees are now included in the transaction)
           const feeDistribution = calculateFeeDistribution('CLOSE', tokensToProcess.length)
           console.log(`Fees processed inline: ${feeDistribution.totalFee} SOL total (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
@@ -2418,13 +2418,13 @@ class JupiterAPIManager {
   private async makeServerRequest(mintAddress: string, retryCount = 0): Promise<any> {
     try {
       const response = await fetch(`/api/jupiter/metadata?mint=${encodeURIComponent(mintAddress)}`)
-      
+
       if (!response.ok) {
         throw new Error(`Server API error: ${response.status} ${response.statusText}`)
       }
 
       const result = await response.json()
-      
+
       if (result.error) {
         console.warn(`Server returned error for ${mintAddress}:`, result.error)
         return result.data || null
@@ -2436,11 +2436,11 @@ class JupiterAPIManager {
         // Network error - retry with backoff
         const delay = this.RETRY_DELAYS[retryCount] || 1600
         console.warn(`Network error for ${mintAddress}, retrying in ${delay}ms`)
-        
+
         await new Promise(resolve => setTimeout(resolve, delay))
         return this.makeServerRequest(mintAddress, retryCount + 1)
       }
-      
+
       throw error
     }
   }
@@ -2465,10 +2465,10 @@ class JupiterAPIManager {
     // Fetch uncached mints from server in batches
     if (uncachedMints.length > 0) {
       const BATCH_SIZE = 50 // Server supports up to 50 per request
-      
+
       for (let i = 0; i < uncachedMints.length; i += BATCH_SIZE) {
         const batch = uncachedMints.slice(i, i + BATCH_SIZE)
-        
+
         try {
           const response = await fetch('/api/jupiter/metadata', {
             method: 'POST',
@@ -2483,7 +2483,7 @@ class JupiterAPIManager {
           }
 
           const batchResult = await response.json()
-          
+
           if (batchResult.results) {
             Object.entries(batchResult.results).forEach(([mint, result]: [string, any]) => {
               if (result.data) {
@@ -2547,13 +2547,13 @@ class JupiterAPIManager {
   cleanup() {
     const now = Date.now()
     const keysToDelete: string[] = []
-    
+
     this.cache.forEach((value, key) => {
       if (now - value.timestamp > this.CACHE_DURATION) {
         keysToDelete.push(key)
       }
     })
-    
+
     keysToDelete.forEach(key => this.cache.delete(key))
   }
 }
@@ -2585,17 +2585,17 @@ export async function refreshTokenPricesBatch(
     if (tokens.length === 0) return tokens
 
     // Extract tradeable token mints (non-NFT, non-frozen)
-    const tradeableTokens = tokens.filter(token => 
+    const tradeableTokens = tokens.filter(token =>
       !token.isNFT && !token.frozen && token.uiAmount > 0.000000000001
     )
-    
+
     if (tradeableTokens.length === 0) {
       return tokens // No tradeable tokens to update
     }
 
     const mints = tradeableTokens.map(token => token.mintAddress)
     console.log(`Batch refreshing prices for ${mints.length} tokens`)
-    
+
     // Batch fetch fresh prices
     const freshPrices = await batchFetchPrices(mints)
     progressCallback?.(50)
@@ -2605,7 +2605,7 @@ export async function refreshTokenPricesBatch(
       if (!token.isNFT && !token.frozen && token.uiAmount > 0.000000000001) {
         const freshPrice = freshPrices[token.mintAddress] || 0
         const newSolValue = freshPrice > 0 ? token.uiAmount * freshPrice : token.usdValue
-        
+
         return {
           ...token,
           usdValue: newSolValue,
@@ -2617,7 +2617,7 @@ export async function refreshTokenPricesBatch(
 
     progressCallback?.(100)
     console.log(`Batch price refresh completed for ${mints.length} tokens`)
-    
+
     return updatedTokens
   } catch (error) {
     console.error('Error in batch price refresh:', error)

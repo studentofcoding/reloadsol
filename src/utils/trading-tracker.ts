@@ -6,7 +6,7 @@ export interface TrackingRecord {
   walletAddress: string
   operationType: 'buy' | 'sell' | 'close'
   timestamp: number
-  
+
   // Token information with prices and individual SOL amounts
   tokens: Array<{
     mintAddress: string
@@ -18,27 +18,27 @@ export interface TrackingRecord {
     tokenAmount?: number // Amount of tokens involved
     solAmount?: number // Individual SOL amount for this specific token (NEW)
   }>
-  
+
   // Operation results
   successCount: number
   failureCount: number
   totalTokens: number
-  
+
   // Financial data
   solAmount?: number // For buys: total amount spent, For sells: total amount received (kept for backward compatibility)
   feesPaid: number
-  
+
   // Price tracking for accurate PnL
   solPriceUsd?: number // SOL price in USD at operation time
   totalUsdValue?: number // Total USD value of operation
-  
+
   // Transaction data
   signatures: string[]
-  
+
   // Additional metadata
   slippage?: number
   priorityFee?: number
-  
+
   // Optional error information
   errors?: string[]
 }
@@ -75,11 +75,11 @@ class TradingTracker {
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
       return
     }
-    
+
     try {
       // Clear old trading records
       localStorage.removeItem(this.OLD_STORAGE_KEY)
-      
+
       // Clear other old cache data that might conflict
       const oldKeys = [
         'token_operations_cache',
@@ -87,14 +87,14 @@ class TradingTracker {
         'trading_history_cache',
         'pnl_cache'
       ]
-      
+
       oldKeys.forEach(key => {
         if (localStorage.getItem(key)) {
           localStorage.removeItem(key)
           console.log(`🧹 Cleared old cache: ${key}`)
         }
       })
-      
+
       console.log('🧹 Cleared all old localStorage data - starting fresh with API!')
     } catch (error) {
       console.warn('Failed to clear old cache:', error)
@@ -105,13 +105,13 @@ class TradingTracker {
   private setupOnlineOfflineHandlers(): void {
     if (typeof window !== 'undefined') {
       this.isOnline = navigator.onLine
-      
+
       window.addEventListener('online', () => {
         this.isOnline = true
         console.log('📶 Back online - syncing cached data...')
         this.syncOfflineData()
       })
-      
+
       window.addEventListener('offline', () => {
         this.isOnline = false
         console.log('📵 Gone offline - caching locally...')
@@ -127,7 +127,7 @@ class TradingTracker {
         id: this.generateId(),
         timestamp: Date.now()
       }
-      
+
       if (this.isOnline) {
         // Try to save via API first
         await this.saveViaAPI(newRecord)
@@ -148,7 +148,7 @@ class TradingTracker {
           detail: { record: newRecord, operationType: record.operationType }
         }))
       }
-      
+
       console.log(`📊 Tracked ${record.operationType} operation:`, {
         wallet: record.walletAddress.slice(0, 8) + '...',
         tokens: record.totalTokens,
@@ -190,19 +190,19 @@ class TradingTracker {
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
       return
     }
-    
+
     try {
       const key = `offline_trading_${record.walletAddress}`
       const cached = localStorage.getItem(key)
       const records: TrackingRecord[] = cached ? JSON.parse(cached) : []
-      
+
       records.unshift(record)
-      
+
       // Limit offline cache to 100 records per wallet
       if (records.length > 100) {
         records.splice(100)
       }
-      
+
       localStorage.setItem(key, JSON.stringify(records))
       console.log('💾 Saved to offline cache:', record.id)
     } catch (error) {
@@ -216,15 +216,15 @@ class TradingTracker {
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
       return
     }
-    
+
     try {
-      const offlineKeys = Object.keys(localStorage).filter(key => 
+      const offlineKeys = Object.keys(localStorage).filter(key =>
         key.startsWith('offline_trading_')
       )
 
       for (const key of offlineKeys) {
         const records: TrackingRecord[] = JSON.parse(localStorage.getItem(key) || '[]')
-        
+
         for (const record of records) {
           try {
             await this.saveViaAPI(record)
@@ -233,11 +233,11 @@ class TradingTracker {
             console.error('Failed to sync record:', record.id, error)
           }
         }
-        
+
         // Clear offline cache after successful sync
         localStorage.removeItem(key)
       }
-      
+
       console.log('🔄 Offline sync completed')
     } catch (error) {
       console.error('Offline sync failed:', error)
@@ -248,12 +248,12 @@ class TradingTracker {
   private updateLocalCache(walletAddress: string, newRecord: TrackingRecord): void {
     const cached = this.cache.get(walletAddress) || []
     cached.unshift(newRecord)
-    
+
     // Limit cache to 500 records per wallet
     if (cached.length > 500) {
       cached.splice(500)
     }
-    
+
     this.cache.set(walletAddress, cached)
   }
 
@@ -269,8 +269,8 @@ class TradingTracker {
       let offlineRecords: TrackingRecord[] = []
       if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
         const offlineKey = `offline_trading_${walletAddress}`
-        offlineRecords = localStorage.getItem(offlineKey) 
-          ? JSON.parse(localStorage.getItem(offlineKey) || '[]') 
+        offlineRecords = localStorage.getItem(offlineKey)
+          ? JSON.parse(localStorage.getItem(offlineKey) || '[]')
           : []
       }
 
@@ -282,7 +282,7 @@ class TradingTracker {
 
       // Fetch from API
       const response = await fetch(`/api/trading/records?wallet=${encodeURIComponent(walletAddress)}&limit=500`)
-      
+
       if (!response.ok) {
         console.error('Failed to fetch wallet records:', response.statusText)
         return offlineRecords // Fallback to offline records
@@ -290,19 +290,19 @@ class TradingTracker {
 
       const data = await response.json()
       const records: TrackingRecord[] = data.success ? data.records : []
-      
+
       // Merge with offline records and dedupe by ID
       const merged = [...offlineRecords, ...records]
-      const deduped = merged.filter((record, index, self) => 
+      const deduped = merged.filter((record, index, self) =>
         self.findIndex(r => r.id === record.id) === index
       )
-      
+
       // Sort by timestamp (newest first)
       deduped.sort((a, b) => b.timestamp - a.timestamp)
-      
+
       // Update cache
       this.cache.set(walletAddress, deduped)
-      
+
       return deduped
     } catch (error) {
       console.error('Error fetching wallet records:', error)
@@ -317,21 +317,21 @@ class TradingTracker {
         // Combine all offline caches when offline (only in browser)
         let allOfflineRecords: TrackingRecord[] = []
         if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-          const offlineKeys = Object.keys(localStorage).filter(key => 
+          const offlineKeys = Object.keys(localStorage).filter(key =>
             key.startsWith('offline_trading_')
           )
-          
+
           offlineKeys.forEach(key => {
             const records: TrackingRecord[] = JSON.parse(localStorage.getItem(key) || '[]')
             allOfflineRecords.push(...records)
           })
         }
-    
+
         return allOfflineRecords.sort((a, b) => b.timestamp - a.timestamp)
       }
 
       const response = await fetch('/api/trading/records/all?limit=1000')
-      
+
       if (!response.ok) {
         throw new Error(`Failed to fetch records: ${response.statusText}`)
       }
@@ -355,7 +355,7 @@ class TradingTracker {
       this.subscribers.delete(callback)
     }
   }
-  
+
   // Notify subscribers of changes
   private notifySubscribers(walletAddress: string): void {
     this.subscribers.forEach(callback => {
@@ -414,15 +414,15 @@ class TradingTracker {
     try {
       // Clear local cache
       this.cache.clear()
-      
+
       // Clear offline storage
       if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-        const offlineKeys = Object.keys(localStorage).filter(key => 
+        const offlineKeys = Object.keys(localStorage).filter(key =>
           key.startsWith('offline_trading_')
         )
         offlineKeys.forEach(key => localStorage.removeItem(key))
       }
-      
+
       console.log('🧹 Cleared all trading tracker data')
     } catch (error) {
       console.error('Failed to clear data:', error)
@@ -441,10 +441,10 @@ export const tradingTracker = new TradingTracker()
 // Helper functions for backward compatibility
 export const trackBuyOperation = (
   walletAddress: string,
-  tokens: Array<{ 
-    mintAddress: string; 
-    symbol?: string; 
-    name?: string; 
+  tokens: Array<{
+    mintAddress: string;
+    symbol?: string;
+    name?: string;
     logoURI?: string;
     priceUsd?: number;
     tokenAmount?: number;
@@ -482,10 +482,10 @@ export const trackBuyOperation = (
 
 export const trackSellOperation = (
   walletAddress: string,
-  tokens: Array<{ 
-    mintAddress: string; 
-    symbol?: string; 
-    name?: string; 
+  tokens: Array<{
+    mintAddress: string;
+    symbol?: string;
+    name?: string;
     logoURI?: string;
     priceUsd?: number;
     tokenAmount?: number;
@@ -551,18 +551,18 @@ export const trackCloseOperation = (
 // Fetch token prices for tracking
 export const fetchTokenPricesForTracking = async (mintAddresses: string[]): Promise<Record<string, number>> => {
   try {
-  if (mintAddresses.length === 0) return {}
-  
-    const response = await fetch(`https://lite-api.jup.ag/price/v2?ids=${mintAddresses.join(',')}`)
+    if (mintAddresses.length === 0) return {}
+
+    const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mintAddresses.join(',')}`)
     const data = await response.json()
-    
+
     const prices: Record<string, number> = {}
     for (const [mintAddress, priceInfo] of Object.entries(data?.data || {})) {
       if (typeof priceInfo === 'object' && priceInfo !== null && 'price' in priceInfo) {
         prices[mintAddress] = parseFloat((priceInfo as any).price)
       }
     }
-    
+
     return prices
   } catch (error) {
     console.error('Error fetching token prices for tracking:', error)

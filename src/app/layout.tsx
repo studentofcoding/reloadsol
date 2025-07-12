@@ -63,6 +63,8 @@ export default function RootLayout({
         <Analytics />
       </body>
       <script async src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
+      {/* Jupiter Terminal script to prevent hydration mismatches */}
+      <script async src="https://terminal.jup.ag/main-v4.js" data-enable-lazy-load></script>
     </html>
   )
 } 
