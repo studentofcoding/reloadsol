@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useWallet } from './WalletProvider'
 
 interface JupiterTerminalProps {
@@ -8,15 +8,16 @@ interface JupiterTerminalProps {
   initialOutputMint?: string
 }
 
-// Jupiter Terminal integration component with wallet passthrough
-export function JupiterTerminal({ 
-  initialInputMint,
-  initialOutputMint 
+export default function JupiterTerminal({ 
+  initialInputMint = 'So11111111111111111111111111111111111111112', // SOL
+  initialOutputMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' // USDC
 }: JupiterTerminalProps) {
   const walletContextState = useWallet()
+  const terminalRef = useRef<HTMLDivElement>(null)
 
   // Initialize Jupiter Terminal
   useEffect(() => {
+
     if (typeof window !== "undefined" && window.Jupiter && window.Jupiter.init) {
       console.log('Initializing Jupiter Terminal with:', {
         initialInputMint,
@@ -61,9 +62,7 @@ export function JupiterTerminal({
 
   return (
     <div className="mx-auto border-none">
-      <div id="jupiter-terminal-swap" />
+      <div id="jupiter-terminal-swap" ref={terminalRef} />
     </div>
   )
 }
-
-export default JupiterTerminal
