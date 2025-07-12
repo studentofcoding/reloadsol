@@ -430,59 +430,102 @@ async function fetchAndUpdateCache(
 ): Promise<TransformedToken[]> {
   try {
     console.log(needsFullRefresh ? 'Performing full refresh' : 'Updating token cache');
-    // Jupiter may occasionally rate-limit or block datacenter IPs which results in 403/429.
-    // We add a small retry/fallback mechanism that: 
-    // 1. Tries the main `datapi` endpoint first
-    // 2. Falls back to the general `api` endpoint
-    // 3. Gracefully returns cached data if all attempts fail
-
+    
+    // Enhanced API fetching with parallel requests and better error handling
     const TRENDING_URLS = [
       'https://datapi.jup.ag/v1/pools/toptrending/1h',
-      // Fallback – same path served from a different Cloudflare worker
       'https://api.jup.ag/v1/pools/toptrending/1h'
     ];
 
-    let response: Response | null = null;
-    for (const url of TRENDING_URLS) {
+    const REQUEST_TIMEOUT = 8000; // 8 second timeout
+    const RETRY_DELAY = 300; // Reduced delay between retries
+
+    // Create fetch promises for all URLs with timeout
+    const fetchPromises = TRENDING_URLS.map(async (url, index) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+      
       try {
-        response = await fetch(url, {
+        // Add small delay for fallback URLs to prefer primary
+        if (index > 0) {
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * index));
+        }
+        
+        const response = await fetch(url, {
           headers: {
             accept: 'application/json',
             'cache-control': 'no-cache',
-            // Setting a UA helps avoid Cloudflare bot challenges on some servers
             'user-agent': 'reloadsol-bot/1.0 (+https://reloadsol.xyz)'
           },
-          // Disable revalidation cache for freshest data
+          signal: controller.signal,
           next: { revalidate: 0 }
         });
 
+        clearTimeout(timeoutId);
+
         if (response.ok) {
-          break; // Success – stop retrying
+          return { success: true, response, url, index };
         }
 
-        // For 403/429 we silently try the next URL after short delay
+        // Handle rate limiting and server errors
         if (response.status === 403 || response.status === 429) {
-          console.warn(`Trending API responded with ${response.status} for ${url}. Trying fallback...`);
-          await new Promise(res => setTimeout(res, 500));
-          continue;
+          console.warn(`Trending API rate limited (${response.status}) for ${url}`);
+          return { success: false, error: `Rate limited: ${response.status}`, url, index, retryable: true };
         }
 
-        // Other HTTP errors are considered fatal – no point retrying
-        throw new Error(`API responded with status: ${response.status}`);
-      } catch (err) {
-        console.error(`Error fetching trending data from ${url}:`, err);
-        // On network error we just continue to next URL
+        return { success: false, error: `HTTP ${response.status}`, url, index, retryable: false };
+      } catch (error) {
+        clearTimeout(timeoutId);
+        const isTimeout = error instanceof Error && error.name === 'AbortError';
+        console.error(`Error fetching from ${url}:`, isTimeout ? 'Timeout' : error);
+        return { 
+          success: false, 
+          error: isTimeout ? 'Timeout' : (error instanceof Error ? error.message : 'Network error'), 
+          url, 
+          index, 
+          retryable: !isTimeout 
+        };
       }
+    });
+
+    // Wait for the first successful response or all to fail
+    let response: Response | null = null;
+    let successfulUrl = '';
+    
+    try {
+      const results = await Promise.allSettled(fetchPromises);
+      
+      // Find the first successful response
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value.success) {
+          response = result.value.response;
+          successfulUrl = result.value.url;
+          console.log(`Successfully fetched trending data from ${successfulUrl}`);
+          break;
+        }
+      }
+      
+      // If no successful response, log all errors
+      if (!response) {
+        const errors = results
+          .filter(r => r.status === 'fulfilled' && !r.value.success)
+          .map(r => r.status === 'fulfilled' ? `${r.value.url}: ${r.value.error}` : 'Promise rejected')
+          .join(', ');
+        console.error('All trending API endpoints failed:', errors);
+      }
+    } catch (error) {
+      console.error('Error in parallel fetch operation:', error);
     }
 
     if (!response || !response.ok) {
-      // All attempts failed – if we still have cached tokens, return them so the
-      // frontend doesn’t break. Otherwise bubble up the error.
+      // All attempts failed – if we still have cached tokens, return them
       if (tokenCache.tokens.size > 0) {
-        console.warn('All trending API endpoints failed – serving cached data');
+        console.warn('All trending API endpoints failed – serving stale cached data');
+        // Update cache timestamp to prevent immediate re-fetch
+        tokenCache.expiresAt = currentTime + (CACHE_TTL_MS / 2); // Extend cache by half TTL
         return Array.from(tokenCache.tokens.values());
       }
-      throw new Error('All Jupiter trending API endpoints failed');
+      throw new Error('All Jupiter trending API endpoints failed and no cached data available');
     }
 
     const data = (await response.json()) as JupiterResponse;

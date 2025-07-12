@@ -129,7 +129,7 @@ export default function NavigationTabs({ activeInfoTab, setActiveInfoTab }: Navi
       </div>
 
       {/* Mobile Top Bar - SOL Balance & Info Tabs */}
-      <div className="md:hidden max-w-4xl mx-auto mb-2 sticky top-0 z-40 pt-2">
+      <div className="md:hidden max-w-4xl mx-auto mb-2 z-50 pt-2">
         <div className="flex items-center justify-between px-4 py-3 rounded-lg mb-4">
           {/* SOL Balance on Left */}
           <div className="flex-1">

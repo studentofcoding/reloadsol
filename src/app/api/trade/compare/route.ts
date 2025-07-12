@@ -2,32 +2,103 @@ import { NextRequest, NextResponse } from 'next/server'
 import { compareTradeQuotes, checkProviderHealth } from '@/utils/trade-comparison'
 import { TradeQuoteRequest } from '@/types'
 
-// Cache for provider health status
-let providerHealthCache: Record<string, { status: boolean; timestamp: number }> = {}
-const HEALTH_CACHE_DURATION = 1000 * 60 * 5 // 5 minutes
+// Enhanced caching for provider health and quote results
+interface HealthCache {
+  health: Record<string, boolean>
+  timestamp: number
+}
 
+interface QuoteCache {
+  key: string
+  result: any
+  timestamp: number
+  expiresAt: number
+}
+
+let providerHealthCache: HealthCache | null = null
+let quoteCacheMap = new Map<string, QuoteCache>()
+
+const HEALTH_CACHE_DURATION = 1000 * 60 * 5 // 5 minutes
+const QUOTE_CACHE_DURATION = 1000 * 30 // 30 seconds for quote caching
+const MAX_CACHE_SIZE = 100 // Limit cache size to prevent memory issues
+
+// Enhanced provider health status with better caching
 async function getProviderHealthStatus() {
   const now = Date.now()
-  const cached = providerHealthCache['health']
   
-  if (cached && (now - cached.timestamp) < HEALTH_CACHE_DURATION) {
-    return cached.status
+  if (providerHealthCache && (now - providerHealthCache.timestamp) < HEALTH_CACHE_DURATION) {
+    return providerHealthCache.health
   }
   
   try {
     const health = await checkProviderHealth()
-    const isHealthy = Object.values(health).some(status => status)
     
-    providerHealthCache['health'] = {
-      status: isHealthy,
+    providerHealthCache = {
+      health,
       timestamp: now
     }
     
     return health
   } catch (error) {
     console.warn('Health check failed:', error)
+    // Return cached health if available, otherwise default
+    if (providerHealthCache) {
+      console.log('Using stale health cache due to error')
+      return providerHealthCache.health
+    }
     return { jupiter: true, dflow: false, 'solana-tracker': false }
   }
+}
+
+// Generate cache key for quote requests
+function generateQuoteCacheKey(request: TradeQuoteRequest): string {
+  return `${request.inputMint}-${request.outputMint}-${request.amount}-${request.slippageBps}`
+}
+
+// Clean up expired cache entries
+function cleanupQuoteCache() {
+  const now = Date.now()
+  for (const [key, cache] of quoteCacheMap.entries()) {
+    if (now > cache.expiresAt) {
+      quoteCacheMap.delete(key)
+    }
+  }
+  
+  // Limit cache size
+  if (quoteCacheMap.size > MAX_CACHE_SIZE) {
+    const entries = Array.from(quoteCacheMap.entries())
+    entries.sort((a, b) => a[1].timestamp - b[1].timestamp)
+    const toDelete = entries.slice(0, quoteCacheMap.size - MAX_CACHE_SIZE)
+    toDelete.forEach(([key]) => quoteCacheMap.delete(key))
+  }
+}
+
+// Get cached quote result
+function getCachedQuote(cacheKey: string): any | null {
+  const cached = quoteCacheMap.get(cacheKey)
+  if (!cached) return null
+  
+  const now = Date.now()
+  if (now <= cached.expiresAt) {
+    return cached.result
+  }
+  
+  quoteCacheMap.delete(cacheKey)
+  return null
+}
+
+// Set cached quote result
+function setCachedQuote(cacheKey: string, result: any) {
+  const now = Date.now()
+  quoteCacheMap.set(cacheKey, {
+    key: cacheKey,
+    result,
+    timestamp: now,
+    expiresAt: now + QUOTE_CACHE_DURATION
+  })
+  
+  // Clean up old entries
+  cleanupQuoteCache()
 }
 
 export async function POST(request: NextRequest) {
@@ -81,14 +152,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log('🚀 Trade comparison request:', {
-      inputMint,
-      outputMint,
-      amount,
-      slippageBps,
-      userPublicKey: userPublicKey.substring(0, 8) + '...' // Log partial key for privacy
-    })
-
     const tradeRequest: TradeQuoteRequest = {
       inputMint,
       outputMint,
@@ -97,12 +160,43 @@ export async function POST(request: NextRequest) {
       userPublicKey
     }
 
-    // Get provider health status
-    const providerHealth = await getProviderHealthStatus()
+    // Generate cache key and check for cached result
+    const cacheKey = generateQuoteCacheKey(tradeRequest)
+    const cachedResult = getCachedQuote(cacheKey)
+    
+    if (cachedResult) {
+      console.log('🎯 Returning cached trade comparison result')
+      return NextResponse.json({
+        ...cachedResult,
+        metadata: {
+          ...cachedResult.metadata,
+          cached: true,
+          cacheKey: cacheKey.substring(0, 16) + '...'
+        }
+      }, {
+        headers: {
+          'Cache-Control': 'public, max-age=30',
+          'X-Cache-Status': 'HIT',
+          'X-Request-ID': cachedResult.metadata?.api?.requestId || generateRequestId()
+        }
+      })
+    }
 
-    // Execute trade comparison
+    console.log('🚀 Trade comparison request:', {
+      inputMint,
+      outputMint,
+      amount,
+      slippageBps,
+      userPublicKey: userPublicKey.substring(0, 8) + '...',
+      cacheKey: cacheKey.substring(0, 16) + '...'
+    })
+
+    // Get provider health status and execute trade comparison in parallel
     const startTime = Date.now()
-    const comparison = await compareTradeQuotes(tradeRequest)
+    const [providerHealth, comparison] = await Promise.all([
+      getProviderHealthStatus(),
+      compareTradeQuotes(tradeRequest)
+    ])
     const totalTime = Date.now() - startTime
 
     // Add metadata to response
@@ -111,6 +205,7 @@ export async function POST(request: NextRequest) {
       metadata: {
         executionTime: totalTime,
         providerHealth,
+        cached: false,
         api: {
           version: '1.0.0',
           timestamp: new Date().toISOString(),
@@ -119,17 +214,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Cache the result for future requests
+    setCachedQuote(cacheKey, response)
+
     console.log('✅ Trade comparison response:', {
       requestId: response.metadata.api.requestId,
       executionTime: totalTime,
       bestProvider: comparison.bestQuote?.provider,
       bestAmount: comparison.bestQuote?.outAmount,
-      successfulQuotes: comparison.summary.successfulQuotes
+      successfulQuotes: comparison.summary.successfulQuotes,
+      cached: false
     })
 
     return NextResponse.json(response, {
       headers: {
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Cache-Control': 'public, max-age=30',
+        'X-Cache-Status': 'MISS',
         'X-Request-ID': response.metadata.api.requestId,
         'X-Execution-Time': totalTime.toString()
       }
@@ -227,4 +327,4 @@ export async function HEAD(request: NextRequest) {
 
 function generateRequestId(): string {
   return `trade_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`
-} 
+}

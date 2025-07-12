@@ -28,6 +28,10 @@ export default function JupiterTerminal({
         displayMode: "integrated",
         integratedTargetId: "jupiter-terminal-swap",
         containerClassName: "rounded-2xl p-6 w-full max-w-2xl mx-auto",
+        containerStyles: {
+          height: "500px",
+          paddingTop: "50px"
+        },
         enableWalletPassthrough: true,
         initialInputMint,
         initialOutputMint,
