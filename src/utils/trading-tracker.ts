@@ -553,19 +553,13 @@ export const fetchTokenPricesForTracking = async (mintAddresses: string[]): Prom
   try {
     if (mintAddresses.length === 0) return {}
 
-    const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mintAddresses.join(',')}`)
-    const data = await response.json()
-
-    const prices: Record<string, number> = {}
-    for (const [mintAddress, priceInfo] of Object.entries(data?.data || {})) {
-      if (typeof priceInfo === 'object' && priceInfo !== null && 'price' in priceInfo) {
-        prices[mintAddress] = parseFloat((priceInfo as any).price)
-      }
-    }
+    // Use the new Jupiter API utility
+    const { getTokenPrices } = await import('./jupiter-api')
+    const prices = await getTokenPrices(mintAddresses)
 
     return prices
   } catch (error) {
     console.error('Error fetching token prices for tracking:', error)
     return {}
   }
-} 
+}

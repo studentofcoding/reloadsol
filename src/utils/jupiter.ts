@@ -83,28 +83,25 @@ async function batchFetchPrices(mints: string[]): Promise<Record<string, number>
 
     for (let retry = 0; retry < MAX_RETRIES; retry++) {
       try {
-        const mintIds = chunk.join(',')
-        const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mintIds}`)
-        const priceData = await response.json()
-        console.log(`Price data for chunk ${index + 1}:`, priceData)
+        // Use the new Jupiter API utility
+        const { fetchTokenPrices } = await import('./jupiter-api')
+        const priceData = await fetchTokenPrices(chunk, {
+          timeout: 10000,
+          retries: 0 // We handle retries at this level
+        })
 
-        if (priceData?.data) {
-          Object.entries(priceData.data).forEach(([mint, data]: [string, any]) => {
-            // Only set price if data exists and is not null
-            if (data && data.price) {
-              const usdPrice = parseFloat(data.price)
-              prices[mint] = usdPrice
-              // Cache the USD price
-              priceCache.set(mint, {
-                price: usdPrice,
-                timestamp: Date.now()
-              })
-            } else {
-              prices[mint] = 0 // Default price for null values
-            }
+        console.log(`Price data for chunk ${index + 1}:`, Object.keys(priceData).length, 'prices fetched')
+
+        Object.entries(priceData).forEach(([mint, data]) => {
+          prices[mint] = data.price
+          // Cache the USD price
+          priceCache.set(mint, {
+            price: data.price,
+            timestamp: Date.now()
           })
-          break // Success, exit retry loop
-        }
+        })
+
+        break // Success, exit retry loop
 
         await sleep(RETRY_DELAY)
       } catch (error) {

@@ -854,10 +854,17 @@ export const searchTokenStats = async (tokenAddress: string): Promise<{
     // Get price data from Jupiter price API
     let priceData = null
     try {
-      const priceResponse = await fetch(`https://lite-api.jup.ag/price/v3?ids=${tokenAddress}`)
-      if (priceResponse.ok) {
-        const priceJson = await priceResponse.json()
-        priceData = priceJson.data?.[tokenAddress]
+      // Use the new Jupiter API utility
+      const { getTokenPrice } = await import('./jupiter-api')
+      const currentPrice = await getTokenPrice(tokenAddress)
+
+      if (currentPrice > 0) {
+        priceData = {
+          price: currentPrice,
+          change24h: 0, // Not available in basic price API
+          volume24h: 0, // Not available in basic price API
+          marketCap: 0  // Not available in basic price API
+        }
       }
     } catch (error) {
       console.warn('Price data unavailable:', error)
@@ -911,4 +918,4 @@ export const searchTokenStats = async (tokenAddress: string): Promise<{
     console.error('Error searching token stats:', error)
     return null
   }
-} 
+}

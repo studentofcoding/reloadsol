@@ -118,7 +118,10 @@ function TokenDisplay({ tokens }: { tokens: string[] }) {
 ### **Step 1: Replace Direct Jupiter Calls**
 ```typescript
 // OLD: Direct Jupiter API calls
-const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${tokens.join(',')}`)
+// Now using centralized Jupiter API utility with v3 exclusively
+// const response = await fetch(`https://lite-api.jup.ag/price/v2?ids=${tokens.join(',')}`)
+// Migrated to v3: const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${tokens.join(',')}`)
+const prices = await fetchTokenPrices(tokens) // Now uses Jupiter API v3 exclusively
 
 // NEW: Use price client
 import { getTokenPrices } from '@/utils/price-client'
@@ -235,4 +238,4 @@ npx autocannon -c 500 -d 30 http://localhost:3000/api/tokens/prices \
   -b '{"tokens":["So11111111111111111111111111111111111111112"]}'
 ```
 
-This system should handle **500+ concurrent users** without hitting Jupiter's rate limits while maintaining fast response times through intelligent caching and batching. 
+This system should handle **500+ concurrent users** without hitting Jupiter's rate limits while maintaining fast response times through intelligent caching and batching.
