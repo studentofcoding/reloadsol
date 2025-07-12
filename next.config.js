@@ -65,12 +65,12 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: `
               default-src 'self';
-              script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com;
+              script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com *.jup.ag;
               style-src 'self' 'unsafe-inline' fonts.googleapis.com;
               font-src 'self' fonts.gstatic.com;
               img-src 'self' data: blob: *.githubusercontent.com *.coingecko.com *.1inch.io *.vercel.app s3.coinmarketcap.com pbs.twimg.com ipfs.io arweave.net cdn.jsdelivr.net cryptologos.cc *.degencdn.com static-create.jup.ag *.duckduckgo.com *.solana.fm *.cf-ipfs.com *.arweave.net;
               connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com wss: https:;
-              frame-src 'self' https://auth.privy.io https://www.gmgn.cc https://gmgn.cc;
+              frame-src 'self' https://auth.privy.io https://www.gmgn.cc https://gmgn.cc https://terminal.jup.ag/;
               object-src 'none';
               base-uri 'self';
               form-action 'self';
