@@ -31,8 +31,7 @@ export default function SwapPageClient() {
       
       return shadowRoots;
     };
-
-    // Wait for Jupiter Terminal to load and then clean up branding
+    
     const waitForJupiterAndCleanup = () => {
       const terminalDiv = document.getElementById('jupiter-terminal-swap');
       if (!terminalDiv) {
@@ -56,182 +55,250 @@ export default function SwapPageClient() {
       const shadowRoots = getAllShadowRoots(terminalDiv);
       console.log(`🔍 Found ${shadowRoots.length} shadow roots`);
       
-      if (!hasJupiterContent && shadowRoots.length > 0) {
-        shadowRoots.forEach(shadowRoot => {
-          if (shadowRoot.querySelector('button, input, [class*="jupiter"], [class*="swap"], #portal-container, #jupiter-terminal') ||
-              shadowRoot.children.length > 0 ||
-              shadowRoot.innerHTML?.trim().length > 50) {
-            hasJupiterContent = true;
-          }
-        });
-      }
+      shadowRoots.forEach((shadowRoot, index) => {
+        const shadowContent = shadowRoot.children.length > 0 || shadowRoot.innerHTML.trim().length > 50;
+        if (shadowContent) {
+          console.log(`✅ Shadow root ${index + 1} has content`);
+          hasJupiterContent = true;
+        }
+      });
       
-      // Also check for portal containers that might be created outside the terminal div
+      // Check portal container in document
       const portalContainer = document.querySelector('#portal-container');
-      if (portalContainer) {
+      if (portalContainer && portalContainer.children.length > 0) {
+        console.log('✅ Portal container has content');
         hasJupiterContent = true;
-        console.log('🎯 Found portal container outside terminal div');
       }
       
       if (!hasJupiterContent) {
-        console.log('⏳ Jupiter content not loaded yet, waiting...');
-        return false; // Content not ready
+        console.log('⏳ Jupiter content not loaded yet...');
+        return false;
       }
-
-      console.log('🔍 Jupiter Terminal cleanup started - content detected!');
       
-      // Enhanced cleanup function to remove Jupiter branding and fix bg-black issues
-       const cleanupElementsInRoot = (root: Document | ShadowRoot | Element, rootName: string) => {
-         let cleanupCount = 0;
-         const cleanupDetails: string[] = [];
-         
-         console.log(`🔍 Inspecting ${rootName} for Jupiter branding...`);
-         
-         // 1. Remove spans with Jupiter branding text entirely
-         const spans = root.querySelectorAll('span');
-         console.log(`📊 Found ${spans.length} span elements in ${rootName}`);
-         
-         spans.forEach((span, index) => {
-           const htmlSpan = span as HTMLElement;
-           const text = span.textContent?.trim() || '';
-           
-           // Only target very specific Jupiter branding text
-           const isJupiterBranding = (
-             text.toLowerCase().includes('powered by jupiter') ||
-             text.toLowerCase().includes('jupiter terminal') ||
-             (text.toLowerCase().includes('jupiter') && text.length < 50) // Short Jupiter mentions
-           );
-           
-           if (isJupiterBranding) {
-             console.log(`🗑️ Removing Jupiter branding span: "${text}"`);
-             cleanupDetails.push(`Removed Span: "${text}"`);
-             htmlSpan.remove();
-             cleanupCount++;
-           } else if (text.includes('Jupiter')) {
-             console.log(`⚠️ Found Jupiter text but not removing: "${text.substring(0, 50)}..."`);
-           }
-         });
-         
-         // 2. Remove Jupiter logo images entirely
-         const jupiterImages = root.querySelectorAll('img[alt*="Jupiter"], img[src*="jupiter"]');
-         console.log(`🖼️ Found ${jupiterImages.length} Jupiter images in ${rootName}`);
-         jupiterImages.forEach((img, index) => {
-           const htmlImg = img as HTMLElement;
-           console.log(`🗑️ Removing Jupiter image: ${htmlImg.getAttribute('alt') || htmlImg.getAttribute('src')}`);
-           cleanupDetails.push(`Removed Image: Jupiter logo`);
-           htmlImg.remove();
-           cleanupCount++;
-         });
-         
-         // 3. Remove Jupiter links entirely
-         const jupiterLinks = root.querySelectorAll('a[href*="jup.ag"]');
-         console.log(`🔗 Found ${jupiterLinks.length} Jupiter links in ${rootName}`);
-         jupiterLinks.forEach((link, index) => {
-           const htmlLink = link as HTMLElement;
-           console.log(`🗑️ Removing Jupiter link: ${htmlLink.getAttribute('href')}`);
-           cleanupDetails.push(`Removed Link: jup.ag`);
-           htmlLink.remove();
-           cleanupCount++;
-         });
-         
-         // 4. Fix bg-black and h-[550px] classes in portal-container children
-         if (rootName.includes('document') || rootName.includes('portal')) {
-           const portalContainer = root.querySelector ? root.querySelector('#portal-container') : 
-                                  (root as Document).querySelector('#portal-container');
-           
-           if (portalContainer) {
-             console.log(`🎯 Found portal-container, checking children for bg-black and h-[550px] classes...`);
-             const childrenWithClasses = portalContainer.querySelectorAll('*');
-             let bgBlackRemoved = 0;
-             let heightClassRemoved = 0;
-             
-             childrenWithClasses.forEach((child) => {
-               const htmlChild = child as HTMLElement;
-               
-               // Remove bg-black class
-               if (htmlChild.classList.contains('bg-black')) {
-                 console.log(`🎨 Removing bg-black class from:`, htmlChild.tagName, htmlChild.className);
-                 htmlChild.classList.remove('bg-black');
-                 bgBlackRemoved++;
-                 cleanupCount++;
-               }
-               
-               // Remove h-[550px] class
-               if (htmlChild.classList.contains('h-[550px]')) {
-                 console.log(`📏 Removing h-[550px] class from:`, htmlChild.tagName, htmlChild.className);
-                 htmlChild.classList.remove('h-[550px]');
-                 heightClassRemoved++;
-                 cleanupCount++;
-               }
-             });
-             
-             if (bgBlackRemoved > 0) {
-               cleanupDetails.push(`Removed bg-black from ${bgBlackRemoved} portal-container children`);
-               console.log(`✅ Removed bg-black class from ${bgBlackRemoved} elements in portal-container`);
-             }
-             
-             if (heightClassRemoved > 0) {
-               cleanupDetails.push(`Removed h-[550px] from ${heightClassRemoved} portal-container children`);
-               console.log(`✅ Removed h-[550px] class from ${heightClassRemoved} elements in portal-container`);
-             }
-             
-             if (bgBlackRemoved === 0 && heightClassRemoved === 0) {
-               console.log(`ℹ️ No bg-black or h-[550px] classes found in portal-container children`);
-             }
-           } else {
-             console.log(`⚠️ portal-container not found in ${rootName}`);
-           }
-         }
-         
-         // 5. Remove h-[550px] class from all shadow DOM elements
-         const elementsWithHeight = root.querySelectorAll('.h-\\[550px\\]');
-         console.log(`📏 Found ${elementsWithHeight.length} elements with h-[550px] class in ${rootName}`);
-         elementsWithHeight.forEach((element) => {
-           const htmlElement = element as HTMLElement;
-           console.log(`📏 Removing h-[550px] class from:`, htmlElement.tagName, htmlElement.className);
-           htmlElement.classList.remove('h-[550px]');
-           cleanupDetails.push(`Removed h-[550px] class from ${htmlElement.tagName}`);
-           cleanupCount++;
-         });
-         
-         // Log what we found and cleaned
-         console.log(`🧹 Cleanup summary for ${rootName}: ${cleanupCount} elements processed`);
-         if (cleanupDetails.length > 0) {
-           console.log(`📋 Details:`, cleanupDetails);
-         }
-         
-         return cleanupCount;
-       };
-       
-       // Clean up portal container first
-       let totalCleanup = cleanupElementsInRoot(document, 'document (portal container)');
-       
-       // Specifically target jupiter-terminal shadow DOM
-       const jupiterTerminalElement = terminalDiv.querySelector('#jupiter-terminal') || 
-                                    document.querySelector('#jupiter-terminal');
-       
-       if (jupiterTerminalElement && jupiterTerminalElement.shadowRoot) {
-         console.log('🎯 Found jupiter-terminal shadow root!');
-         totalCleanup += cleanupElementsInRoot(jupiterTerminalElement.shadowRoot, 'jupiter-terminal shadow DOM');
-       } else {
-         console.log('⚠️ jupiter-terminal shadow root not found, checking all shadow roots...');
-         // Fallback: Clean up all detected shadow DOMs
-         shadowRoots.forEach((shadowRoot, index) => {
-           const shadowName = `shadow DOM ${index + 1}`;
-           totalCleanup += cleanupElementsInRoot(shadowRoot, shadowName);
-         });
-       }
-       
-       // Also clean up regular DOM in terminal div
-       totalCleanup += cleanupElementsInRoot(terminalDiv, 'terminal div regular DOM');
-       
-       console.log(`🧹 Total elements cleaned: ${totalCleanup}`);
+      console.log('🎯 Jupiter content detected! Starting cleanup...');
       
-      console.log('✅ Jupiter Terminal cleanup completed');
-      return true; // Cleanup successful
+      // Debounced mutation observer to avoid cleanup during search interactions
+      let cleanupTimeout: NodeJS.Timeout;
+      const debouncedCleanup = () => {
+        clearTimeout(cleanupTimeout);
+        cleanupTimeout = setTimeout(() => {
+          performCleanup();
+        }, 500); // Wait 500ms after last mutation
+      };
+      
+      // Set up mutation observer to detect search-related changes
+      const observer = new MutationObserver((mutations) => {
+        const isSearchRelatedMutation = mutations.some(mutation => {
+          const target = mutation.target as Element;
+          return target.closest && (
+            target.closest('[class*="search"]') ||
+            target.closest('[class*="dropdown"]') ||
+            target.closest('[class*="list"]') ||
+            target.closest('[role="listbox"]') ||
+            target.closest('[role="menu"]') ||
+            target.closest('[class*="cursor-pointer"]') ||
+            target.closest('[class*="bg-interactive"]')
+          );
+        });
+        
+        if (!isSearchRelatedMutation) {
+          debouncedCleanup();
+        }
+      });
+      
+      // Start observing
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'style']
+      });
+      
+      const performCleanup = () => {
+        const cleanupElementsInRoot = (root: Document | ShadowRoot | Element, rootName: string) => {
+          let cleanupCount = 0;
+          const cleanupDetails: string[] = [];
+          
+          console.log(`🔍 Inspecting ${rootName} for Jupiter branding...`);
+          
+          // Helper function to check if element is search-related
+          const isSearchRelated = (element: Element): boolean => {
+            const classList = Array.from(element.classList);
+            const tagName = element.tagName.toLowerCase();
+            
+            // Check for search-related classes
+            const hasSearchClasses = classList.some(cls => 
+              cls.includes('search') || 
+              cls.includes('dropdown') || 
+              cls.includes('list') || 
+              cls.includes('option') || 
+              cls.includes('result') ||
+              cls.includes('menu') ||
+              cls.includes('popup') ||
+              cls.includes('overlay') ||
+              cls.includes('input') ||
+              cls.includes('button') ||
+              cls.includes('select') ||
+              cls.includes('token')
+            );
+            
+            // Check for Jupiter Terminal specific search result patterns
+            const hasJupiterSearchClasses = classList.some(cls => 
+              cls.includes('cursor-pointer') || 
+              cls.includes('bg-interactive') ||
+              cls.includes('hover:bg-interactive')
+            );
+            
+            // Check for Jupiter Terminal search result list item pattern
+            const isJupiterListItem = classList.includes('rounded') && 
+              classList.includes('cursor-pointer') && 
+              classList.includes('px-5') && 
+              classList.includes('my-1') && 
+              classList.includes('list-none') && 
+              classList.includes('flex') && 
+              classList.includes('w-full') && 
+              classList.includes('items-center') && 
+              classList.includes('bg-interactive');
+            
+            // Check for interactive elements that should be preserved
+            const isInteractiveElement = [
+              'input', 'button', 'select', 'textarea', 'a'
+            ].includes(tagName);
+            
+            // Check for search-related attributes
+            const hasSearchAttributes = element.hasAttribute('role') && 
+              ['listbox', 'option', 'menu', 'menuitem', 'combobox', 'textbox', 'button'].includes(element.getAttribute('role') || '');
+            
+            // Check for placeholder text that indicates search functionality
+            const hasSearchPlaceholder = element.hasAttribute('placeholder') && 
+              (element.getAttribute('placeholder') || '').toLowerCase().includes('search');
+            
+            // Check for search-related parent elements
+            const hasSearchParent = element.closest([
+              '[role="listbox"]',
+              '[role="menu"]', 
+              '[class*="search"]',
+              '[class*="dropdown"]',
+              '[class*="list"]',
+              '[class*="cursor-pointer"]',
+              '[class*="bg-interactive"]',
+              '[class*="input"]',
+              '[class*="button"]',
+              'input',
+              'button',
+              'select'
+            ].join(', '));
+            
+            return hasSearchClasses || hasJupiterSearchClasses || isJupiterListItem || 
+                   hasSearchAttributes || isInteractiveElement || hasSearchPlaceholder || !!hasSearchParent;
+          };
+          
+          // 1. Remove spans with Jupiter branding text entirely (but preserve search results)
+          const spans = root.querySelectorAll('span');
+          console.log(`📊 Found ${spans.length} span elements in ${rootName}`);
+          
+          spans.forEach((span, index) => {
+            const htmlSpan = span as HTMLElement;
+            const text = span.textContent?.trim() || '';
+            
+            // Skip if this is search-related
+            if (isSearchRelated(span)) {
+              console.log(`🔍 Preserving search-related span: "${text.substring(0, 30)}..."`); 
+              return;
+            }
+            
+            // Enhanced Jupiter branding detection - only remove clear branding
+            const isJupiterBranding = (
+              text.toLowerCase().includes('powered by jupiter') ||
+              text.toLowerCase().includes('jupiter terminal') ||
+              (text.toLowerCase() === 'jupiter' && text.length <= 10) || // More specific Jupiter match
+              text.toLowerCase().includes('jup.ag') ||
+              text.toLowerCase().includes('jupiter exchange') ||
+              text.toLowerCase().includes('jupiter aggregator') ||
+              // Only remove generic "powered by" if it's clearly branding context
+              (text.toLowerCase().includes('powered by') && 
+               (text.toLowerCase().includes('jupiter') || text.toLowerCase().includes('jup') || text.length < 20))
+            );
+            
+            if (isJupiterBranding) {
+              console.log(`🗑️ Removing Jupiter branding span: "${text}"`);
+              cleanupDetails.push(`Removed Span: "${text}"`);
+              htmlSpan.remove();
+              cleanupCount++;
+            } else if (text.includes('Jupiter')) {
+              console.log(`⚠️ Found Jupiter text but not removing: "${text.substring(0, 50)}..."`);
+            }
+          });
+          
+          // 2. Remove Jupiter logo images entirely
+          const jupiterImages = root.querySelectorAll('img[alt*="Jupiter"], img[src*="jupiter"]');
+          console.log(`🖼️ Found ${jupiterImages.length} Jupiter images in ${rootName}`);
+          jupiterImages.forEach((img, index) => {
+            const htmlImg = img as HTMLElement;
+            // Skip if this is search-related
+            if (isSearchRelated(img)) {
+              console.log(`🔍 Preserving search-related image`);
+              return;
+            }
+            console.log(`🗑️ Removing Jupiter image: ${htmlImg.getAttribute('alt') || htmlImg.getAttribute('src')}`);
+            cleanupDetails.push(`Removed Image: Jupiter logo`);
+            htmlImg.remove();
+            cleanupCount++;
+          });
+          
+          // 3. Remove Jupiter links entirely
+          const jupiterLinks = root.querySelectorAll('a[href*="jup.ag"]');
+          console.log(`🔗 Found ${jupiterLinks.length} Jupiter links in ${rootName}`);
+          jupiterLinks.forEach((link, index) => {
+            const htmlLink = link as HTMLElement;
+            // Skip if this is search-related
+            if (isSearchRelated(link)) {
+              console.log(`🔍 Preserving search-related link`);
+              return;
+            }
+            console.log(`🗑️ Removing Jupiter link: ${htmlLink.getAttribute('href')}`);
+            cleanupDetails.push(`Removed Link: jup.ag`);
+            htmlLink.remove();
+            cleanupCount++;
+          });
+          
+          // Log what we found and cleaned
+          console.log(`🧹 Cleanup summary for ${rootName}: ${cleanupCount} elements processed`);
+          if (cleanupDetails.length > 0) {
+            console.log(`📋 Details:`, cleanupDetails);
+          }
+          
+          return cleanupCount;
+        };
+        
+        // Clean up portal container first
+        let totalCleanup = cleanupElementsInRoot(document, 'document (portal container)');
+        
+        // Specifically target jupiter-terminal shadow DOM
+        const jupiterTerminalElement = terminalDiv.querySelector('#jupiter-terminal') || 
+                                     document.querySelector('#jupiter-terminal');
+        
+        if (jupiterTerminalElement && jupiterTerminalElement.shadowRoot) {
+          console.log('🎯 Found jupiter-terminal shadow root!');
+          totalCleanup += cleanupElementsInRoot(jupiterTerminalElement.shadowRoot, 'jupiter-terminal shadow DOM');
+        } else {
+          console.log('⚠️ jupiter-terminal shadow root not found, checking all shadow roots...');
+          // Fallback: Clean up all detected shadow DOMs
+          shadowRoots.forEach((shadowRoot, index) => {
+            const shadowName = `shadow DOM ${index + 1}`;
+            totalCleanup += cleanupElementsInRoot(shadowRoot, shadowName);
+          });
+        }
+        
+        console.log(`✅ Total cleanup completed: ${totalCleanup} elements processed`);
+      };
+      
+      // Initial cleanup
+      performCleanup();
+      
+      return true;
     };
-
-    // Polling function to repeatedly check for Jupiter content
+    
     const pollForJupiterContent = () => {
       let attempts = 0;
       const maxAttempts = 20; // Try for up to 20 seconds
@@ -240,56 +307,24 @@ export default function SwapPageClient() {
         attempts++;
         console.log(`🔄 Polling attempt ${attempts}/${maxAttempts} for Jupiter content...`);
         
-        const success = waitForJupiterAndCleanup();
-        
-        if (success) {
-          console.log('🎉 Jupiter cleanup successful!');
-          return; // Stop polling
+        if (waitForJupiterAndCleanup()) {
+          console.log('✅ Jupiter cleanup completed successfully!');
+          return;
         }
         
         if (attempts < maxAttempts) {
-          setTimeout(poll, 1000); // Try again in 1 second
+          setTimeout(poll, 1000); // Check every second
         } else {
-          console.log('⚠️ Max polling attempts reached, Jupiter content may not have loaded');
+          console.log('⏰ Max polling attempts reached. Jupiter content may not have loaded.');
         }
       };
       
-      poll();
+      // Start polling after a short delay to ensure DOM is ready
+      setTimeout(poll, 2000);
     };
     
-    // Wait a bit for Jupiter Terminal to initialize, then start cleanup
-    const initTimer = setTimeout(() => {
-      console.log('🚀 Starting Jupiter Terminal cleanup process...');
-      pollForJupiterContent();
-      
-      // Set up observer to catch dynamically added content
-      const terminalDiv = document.getElementById('jupiter-terminal-swap');
-      if (terminalDiv) {
-        const observer = new MutationObserver(() => {
-          console.log('🔄 DOM mutation detected, running cleanup...');
-          try {
-            waitForJupiterAndCleanup();
-          } catch (error) {
-            console.error('❌ Error during mutation cleanup:', error);
-          }
-        });
-        
-        observer.observe(terminalDiv, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeOldValue: true,
-          characterData: true,
-          characterDataOldValue: true
-        });
-        
-        // Cleanup observer on unmount
-        return () => observer.disconnect();
-      }
-    }, 2000); // Wait 2 seconds for Jupiter Terminal to initialize
-    
-    // Cleanup timer on unmount
-    return () => clearTimeout(initTimer);
+    // Start the polling process
+    pollForJupiterContent();
   }, []);
   
   return (
