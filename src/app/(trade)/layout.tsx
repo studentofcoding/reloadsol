@@ -1,14 +1,11 @@
 'use client'
 
 import React from 'react'
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import WalletBalance from '@/components/WalletBalance'
 import ConnectionStatus from '@/components/ConnectionStatus'
 import TradingHistory from '@/components/TradingHistory'
 import PnLTracker from '@/components/PnLTracker'
 import Footer from '@/components/Footer'
-import PhantomWalletButton from '@/components/PhantomWalletButton'
+import NavigationTabs from '@/components/NavigationTabs'
 import { useWallet } from '@/components/WalletProvider'
 import { isDevWallet } from '@/utils/dev-wallet'
 import { useState } from 'react'
@@ -18,14 +15,11 @@ export default function TradeLayout({
 }: {
   children: React.ReactNode
 }) {
-  const pathname = usePathname()
   const { connected, publicKey } = useWallet()
   const [activeInfoTab, setActiveInfoTab] = useState<'history' | 'pnl' | null>('history')
 
-  const isActive = (path: string) => pathname === path
-
   return (
-    <main className="min-h-screen bg-black py-8">
+    <main className="min-h-screen bg-black py-8 pb-24 md:pb-8">
       <div className="container mx-auto px-4">
         {/* Header */}
         <div className="text-center mb-8">
@@ -47,112 +41,10 @@ export default function TradeLayout({
         </div>
         
         {/* Navigation Tabs */}
-        {connected && (
-          <div className="max-w-4xl mx-auto mb-2">
-            <div className="flex items-center justify-between h-full mb-4">
-              <div className="flex items-center space-x-2">
-                {/* Main Trading Tabs */}
-                <Link
-                  href="/sell"
-                  className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
-                    isActive('/sell')
-                      ? 'bg-white text-black'
-                      : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    <span className="hidden md:block">Reload your SOL</span>
-                  </div>
-                </Link>
-                
-                <Link
-                  href="/buy"
-                  className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
-                    isActive('/buy')
-                      ? 'bg-white text-black'
-                      : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                    </svg>
-                    <span className="hidden md:block">Buy Tokens</span>
-                  </div>
-                </Link>
-
-                {isDevWallet(publicKey) && (
-                  <Link
-                    href="/swap"
-                    className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
-                      isActive('/swap')
-                        ? 'bg-white text-black'
-                        : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2">
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                      </svg>
-                      <span className="hidden md:block">Swap</span>
-                    </div>
-                  </Link>
-                )}
-
-                {/* Info Tabs */}
-                <div className="border-l border-gray-600 pl-2 ml-2">
-                  <button
-                    onClick={() => setActiveInfoTab(activeInfoTab === 'history' ? null : 'history')}
-                    className={`px-4 py-3 rounded-lg font-medium transition-all duration-200 ${
-                      activeInfoTab === 'history'
-                        ? 'bg-gray-700 text-white'
-                        : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                    }`}
-                    title="Trading History"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                  </button>
-                  {isDevWallet(publicKey) && (
-                    <button
-                      onClick={() => setActiveInfoTab(activeInfoTab === 'pnl' ? null : 'pnl')}
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                        activeInfoTab === 'pnl'
-                          ? 'bg-gray-700 text-white'
-                          : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                      }`}
-                      title="P&L Tracker"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                      </svg>
-                    </button>
-                  )}
-                  {isDevWallet(publicKey) && (
-                    <button
-                      onClick={() => window.open('/dev/trending-tracker', '_blank')}
-                      className="px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 text-gray-400 hover:text-white hover:bg-gray-800"
-                      title="Trending Tracker (Dev)"
-                    >
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* Wallet Balance Display */}
-              <div className="h-full">
-                <WalletBalance />
-              </div>
-            </div>
-          </div>
-        )}
+        <NavigationTabs 
+          activeInfoTab={activeInfoTab} 
+          setActiveInfoTab={setActiveInfoTab} 
+        />
 
         {/* Info Tabs Content */}
         {connected && activeInfoTab && (
@@ -187,4 +79,4 @@ export default function TradeLayout({
       <Footer />
     </main>
   )
-} 
+}

@@ -148,7 +148,7 @@ interface PoolTestResult {
 // Helper function to calculate detailed price comparison
 function calculatePriceComparison(quotes: ProviderQuote[], testType: 'buy' | 'sell') {
   const successfulQuotes = quotes.filter(q => q.success)
-  
+
   if (successfulQuotes.length === 0) {
     return undefined
   }
@@ -184,11 +184,11 @@ function calculatePriceComparison(quotes: ProviderQuote[], testType: 'buy' | 'se
 
   // For buy operations, higher output is better
   // For sell operations, higher output is also better (more SOL received)
-  const bestQuote = successfulQuotes.reduce((best, current) => 
+  const bestQuote = successfulQuotes.reduce((best, current) =>
     parseFloat(current.outAmount) > parseFloat(best.outAmount) ? current : best
   )
-  
-  const worstQuote = successfulQuotes.reduce((worst, current) => 
+
+  const worstQuote = successfulQuotes.reduce((worst, current) =>
     parseFloat(current.outAmount) < parseFloat(worst.outAmount) ? current : worst
   )
 
@@ -198,13 +198,13 @@ function calculatePriceComparison(quotes: ProviderQuote[], testType: 'buy' | 'se
   // Calculate advantages/disadvantages
   const bestAdvantage = avgAmount > 0 ? (((bestAmount - avgAmount) / avgAmount) * 100).toFixed(2) : '0'
   const worstDisadvantage = avgAmount > 0 ? (((avgAmount - worstAmount) / avgAmount) * 100).toFixed(2) : '0'
-  
+
   // Calculate price spread
   const priceSpread = worstAmount > 0 ? (((bestAmount - worstAmount) / worstAmount) * 100).toFixed(2) : '0'
 
   // Calculate average price impact
   const priceImpacts = successfulQuotes.map(q => parseFloat(q.priceImpactPct)).filter(p => !isNaN(p))
-  const avgPriceImpact = priceImpacts.length > 0 
+  const avgPriceImpact = priceImpacts.length > 0
     ? (priceImpacts.reduce((sum, impact) => sum + impact, 0) / priceImpacts.length).toFixed(4)
     : '0'
 
@@ -272,7 +272,7 @@ export async function testJupiterPoolsTrading(): Promise<{
   for (const pool of JUPITER_TEST_POOLS) {
     console.log(`\n💰 Testing Pool: ${pool.baseSymbol} (${pool.id})`)
     console.log(`   Liquidity: ${pool.liquidity || 'Unknown'}`)
-    
+
     const poolResult: PoolTestResult = {
       poolId: pool.id,
       symbol: pool.baseSymbol,
@@ -296,13 +296,13 @@ export async function testJupiterPoolsTrading(): Promise<{
       }
 
       const buyComparison = await compareTradeQuotes(buyRequest)
-      
+
       // Process buy test results
       poolResult.buyTest.success = buyComparison.summary.successfulQuotes > 0
       poolResult.buyTest.bestProvider = buyComparison.bestQuote?.provider
       poolResult.buyTest.outputAmount = buyComparison.bestQuote?.outAmount
       poolResult.buyTest.responseTime = buyComparison.summary.averageResponseTime
-      
+
       // Calculate detailed price comparison for buy
       poolResult.buyTest.priceComparison = calculatePriceComparison(buyComparison.quotes, 'buy')
 
@@ -311,7 +311,7 @@ export async function testJupiterPoolsTrading(): Promise<{
           success: quote.success,
           error: quote.error
         }
-        
+
         // Update provider stats
         if (quote.success) {
           providerStats[quote.provider].successes++
@@ -327,7 +327,7 @@ export async function testJupiterPoolsTrading(): Promise<{
         const impact = parseFloat(poolResult.buyTest.priceComparison.avgPriceImpact.replace('%', ''))
         if (!isNaN(spread)) priceAnalysisData.buyPriceSpreads.push(spread)
         if (!isNaN(impact)) priceAnalysisData.buyPriceImpacts.push(impact)
-        
+
         const winner = poolResult.buyTest.priceComparison.bestPrice.provider
         priceAnalysisData.buyProviderWins[winner] = (priceAnalysisData.buyProviderWins[winner] || 0) + 1
       }
@@ -352,13 +352,13 @@ export async function testJupiterPoolsTrading(): Promise<{
       }
 
       const sellComparison = await compareTradeQuotes(sellRequest)
-      
+
       // Process sell test results
       poolResult.sellTest.success = sellComparison.summary.successfulQuotes > 0
       poolResult.sellTest.bestProvider = sellComparison.bestQuote?.provider
       poolResult.sellTest.outputAmount = sellComparison.bestQuote?.outAmount
       poolResult.sellTest.responseTime = sellComparison.summary.averageResponseTime
-      
+
       // Calculate detailed price comparison for sell
       poolResult.sellTest.priceComparison = calculatePriceComparison(sellComparison.quotes, 'sell')
 
@@ -367,7 +367,7 @@ export async function testJupiterPoolsTrading(): Promise<{
           success: quote.success,
           error: quote.error
         }
-        
+
         // Update provider stats
         if (quote.success) {
           providerStats[quote.provider].successes++
@@ -383,7 +383,7 @@ export async function testJupiterPoolsTrading(): Promise<{
         const impact = parseFloat(poolResult.sellTest.priceComparison.avgPriceImpact.replace('%', ''))
         if (!isNaN(spread)) priceAnalysisData.sellPriceSpreads.push(spread)
         if (!isNaN(impact)) priceAnalysisData.sellPriceImpacts.push(impact)
-        
+
         const winner = poolResult.sellTest.priceComparison.bestPrice.provider
         priceAnalysisData.sellProviderWins[winner] = (priceAnalysisData.sellProviderWins[winner] || 0) + 1
       }
@@ -401,7 +401,7 @@ export async function testJupiterPoolsTrading(): Promise<{
     }
 
     results.push(poolResult)
-    
+
     // Wait between pools to avoid rate limiting
     await new Promise(resolve => setTimeout(resolve, 2000))
   }
@@ -409,51 +409,51 @@ export async function testJupiterPoolsTrading(): Promise<{
   // Calculate summary statistics
   const successfulBuyTests = results.filter(r => r.buyTest.success).length
   const successfulSellTests = results.filter(r => r.sellTest.success).length
-  
+
   const allResponseTimes = results.flatMap(r => [
     r.buyTest.responseTime || 0,
     r.sellTest.responseTime || 0
   ]).filter(t => t > 0)
-  
-  const averageResponseTime = allResponseTimes.length > 0 
-    ? allResponseTimes.reduce((sum, time) => sum + time, 0) / allResponseTimes.length 
+
+  const averageResponseTime = allResponseTimes.length > 0
+    ? allResponseTimes.reduce((sum, time) => sum + time, 0) / allResponseTimes.length
     : 0
 
   // Calculate provider performance
   const providerPerformance: Record<string, { successes: number; failures: number; avgResponseTime: number }> = {}
-  
+
   Object.entries(providerStats).forEach(([provider, stats]) => {
     providerPerformance[provider] = {
       successes: stats.successes,
       failures: stats.failures,
-      avgResponseTime: stats.responseTimes.length > 0 
-        ? stats.responseTimes.reduce((sum, time) => sum + time, 0) / stats.responseTimes.length 
+      avgResponseTime: stats.responseTimes.length > 0
+        ? stats.responseTimes.reduce((sum, time) => sum + time, 0) / stats.responseTimes.length
         : 0
     }
   })
 
   // Calculate price analysis summary
-  const avgBuyPriceSpread = priceAnalysisData.buyPriceSpreads.length > 0 
+  const avgBuyPriceSpread = priceAnalysisData.buyPriceSpreads.length > 0
     ? (priceAnalysisData.buyPriceSpreads.reduce((sum, spread) => sum + spread, 0) / priceAnalysisData.buyPriceSpreads.length).toFixed(2)
     : '0'
-  
-  const avgSellPriceSpread = priceAnalysisData.sellPriceSpreads.length > 0 
+
+  const avgSellPriceSpread = priceAnalysisData.sellPriceSpreads.length > 0
     ? (priceAnalysisData.sellPriceSpreads.reduce((sum, spread) => sum + spread, 0) / priceAnalysisData.sellPriceSpreads.length).toFixed(2)
     : '0'
-  
-  const avgBuyPriceImpact = priceAnalysisData.buyPriceImpacts.length > 0 
+
+  const avgBuyPriceImpact = priceAnalysisData.buyPriceImpacts.length > 0
     ? (priceAnalysisData.buyPriceImpacts.reduce((sum, impact) => sum + impact, 0) / priceAnalysisData.buyPriceImpacts.length).toFixed(4)
     : '0'
-  
-  const avgSellPriceImpact = priceAnalysisData.sellPriceImpacts.length > 0 
+
+  const avgSellPriceImpact = priceAnalysisData.sellPriceImpacts.length > 0
     ? (priceAnalysisData.sellPriceImpacts.reduce((sum, impact) => sum + impact, 0) / priceAnalysisData.sellPriceImpacts.length).toFixed(4)
     : '0'
 
   // Find best providers
-  const bestBuyProvider = Object.entries(priceAnalysisData.buyProviderWins).reduce((best, [provider, wins]) => 
+  const bestBuyProvider = Object.entries(priceAnalysisData.buyProviderWins).reduce((best, [provider, wins]) =>
     wins > (priceAnalysisData.buyProviderWins[best] || 0) ? provider : best, 'jupiter')
-  
-  const bestSellProvider = Object.entries(priceAnalysisData.sellProviderWins).reduce((best, [provider, wins]) => 
+
+  const bestSellProvider = Object.entries(priceAnalysisData.sellProviderWins).reduce((best, [provider, wins]) =>
     wins > (priceAnalysisData.sellProviderWins[best] || 0) ? provider : best, 'jupiter')
 
   const summary = {
@@ -517,7 +517,7 @@ export async function stressTestJupiterPools(concurrentRequests: number = 3): Pr
   }>
 }> {
   console.log(`\n🔥 STRESS TEST: Testing ${concurrentRequests} concurrent requests per pool`)
-  
+
   const stressResults: Array<{
     poolId: string
     symbol: string
@@ -527,10 +527,10 @@ export async function stressTestJupiterPools(concurrentRequests: number = 3): Pr
   }> = []
 
   const testPools = JUPITER_TEST_POOLS.slice(0, 2) // Test first 2 pools to avoid overwhelming APIs
-  
+
   for (const pool of testPools) {
     console.log(`\nStress testing ${pool.baseSymbol}...`)
-    
+
     const requests = Array(concurrentRequests).fill(null).map(async (_, index) => {
       const request: TradeQuoteRequest = {
         inputMint: pool.quoteAsset,
@@ -539,7 +539,7 @@ export async function stressTestJupiterPools(concurrentRequests: number = 3): Pr
         slippageBps: 100,
         userPublicKey: TEST_USER_KEY
       }
-      
+
       const startTime = Date.now()
       try {
         const result = await compareTradeQuotes(request)
@@ -553,14 +553,14 @@ export async function stressTestJupiterPools(concurrentRequests: number = 3): Pr
         return { success: false, responseTime, error: errorMsg }
       }
     })
-    
+
     const requestResults = await Promise.all(requests)
     const successCount = requestResults.filter(r => r.success).length
     const avgTime = requestResults.reduce((sum, r) => sum + r.responseTime, 0) / requestResults.length
     const successRate = (successCount / concurrentRequests) * 100
-    
+
     console.log(`  Results: ${successCount}/${concurrentRequests} successful (${Math.round(avgTime)}ms avg, ${successRate.toFixed(1)}% success rate)`)
-    
+
     stressResults.push({
       poolId: pool.id,
       symbol: pool.baseSymbol,
@@ -615,10 +615,10 @@ export async function quickPoolsBenchmark(): Promise<{
   }
 }> {
   console.log('\n⚡ QUICK BENCHMARK: Testing provider speeds with real pools')
-  
+
   const testPool = JUPITER_TEST_POOLS[2] // Use LASER token pool
   const iterations = 3
-  
+
   const benchmarkRequest: TradeQuoteRequest = {
     inputMint: testPool.quoteAsset,
     outputMint: testPool.baseAsset,
@@ -626,9 +626,9 @@ export async function quickPoolsBenchmark(): Promise<{
     slippageBps: 100,
     userPublicKey: TEST_USER_KEY
   }
-  
+
   console.log(`Benchmarking with ${testPool.baseSymbol} (${testPool.baseAsset}) - ${iterations} iterations`)
-  
+
   const iterationResults: Array<{
     iteration: number
     providers: Record<string, { success: boolean; responseTime: number; error?: string }>
@@ -641,22 +641,22 @@ export async function quickPoolsBenchmark(): Promise<{
   }
 
   const startTime = Date.now()
-  
+
   for (let i = 0; i < iterations; i++) {
     console.log(`\n  Iteration ${i + 1}/${iterations}`)
-    
+
     try {
       const result = await compareTradeQuotes(benchmarkRequest)
-      
+
       const iterationData: Record<string, { success: boolean; responseTime: number; error?: string }> = {}
-      
+
       result.quotes.forEach(quote => {
         iterationData[quote.provider] = {
           success: quote.success,
           responseTime: quote.responseTime,
           error: quote.error
         }
-        
+
         if (quote.success) {
           providerStats[quote.provider].successes++
           providerStats[quote.provider].responseTimes.push(quote.responseTime)
@@ -664,46 +664,46 @@ export async function quickPoolsBenchmark(): Promise<{
           providerStats[quote.provider].failures++
         }
       })
-      
+
       iterationResults.push({
         iteration: i + 1,
         providers: iterationData
       })
-      
+
       console.log(`    Results: ${result.summary.successfulQuotes} successful quotes, ${result.summary.averageResponseTime}ms avg`)
-      
+
     } catch (error) {
       console.log(`    Iteration ${i + 1} failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
-    
+
     // Wait between iterations
     if (i < iterations - 1) {
       await new Promise(resolve => setTimeout(resolve, 1000))
     }
   }
-  
+
   const totalTime = Date.now() - startTime
-  
+
   // Calculate provider performance
   const providerPerformance: Record<string, { averageResponseTime: number; successRate: number; iterations: number }> = {}
   let fastestProvider = ''
   let slowestProvider = ''
   let fastestTime = Infinity
   let slowestTime = 0
-  
+
   Object.entries(providerStats).forEach(([provider, stats]) => {
     const totalAttempts = stats.successes + stats.failures
-    const avgTime = stats.responseTimes.length > 0 
-      ? stats.responseTimes.reduce((sum, time) => sum + time, 0) / stats.responseTimes.length 
+    const avgTime = stats.responseTimes.length > 0
+      ? stats.responseTimes.reduce((sum, time) => sum + time, 0) / stats.responseTimes.length
       : 0
     const successRate = totalAttempts > 0 ? (stats.successes / totalAttempts) * 100 : 0
-    
+
     providerPerformance[provider] = {
       averageResponseTime: Math.round(avgTime),
       successRate: Math.round(successRate * 10) / 10,
       iterations: totalAttempts
     }
-    
+
     if (avgTime > 0 && avgTime < fastestTime) {
       fastestTime = avgTime
       fastestProvider = provider
@@ -713,18 +713,18 @@ export async function quickPoolsBenchmark(): Promise<{
       slowestProvider = provider
     }
   })
-  
+
   const allResponseTimes = Object.values(providerStats).flatMap(stats => stats.responseTimes)
-  const overallAvgTime = allResponseTimes.length > 0 
-    ? allResponseTimes.reduce((sum, time) => sum + time, 0) / allResponseTimes.length 
+  const overallAvgTime = allResponseTimes.length > 0
+    ? allResponseTimes.reduce((sum, time) => sum + time, 0) / allResponseTimes.length
     : 0
-  
+
   console.log(`\n📈 Benchmark completed in ${totalTime}ms`)
   console.log('Provider Performance:')
   Object.entries(providerPerformance).forEach(([provider, stats]) => {
     console.log(`  ${provider}: ${stats.averageResponseTime}ms avg, ${stats.successRate}% success rate`)
   })
-  
+
   return {
     testType: 'benchmark',
     summary: {
@@ -752,10 +752,10 @@ export const getTokenAge = (createdAt: string): {
   const now = new Date()
   const diffMs = now.getTime() - created.getTime()
   const ageInDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-  
+
   let ageCategory: 'NEW' | 'RECENT' | 'ESTABLISHED' | 'OLD'
   let ageDisplay: string
-  
+
   if (ageInDays <= 7) {
     ageCategory = 'NEW'
     ageDisplay = ageInDays === 0 ? 'Today' : `${ageInDays} day${ageInDays === 1 ? '' : 's'} old`
@@ -769,7 +769,7 @@ export const getTokenAge = (createdAt: string): {
     ageCategory = 'OLD'
     ageDisplay = `${Math.floor(ageInDays / 30)} months old`
   }
-  
+
   return { ageInDays, ageCategory, ageDisplay, createdAt }
 }
 
@@ -791,14 +791,14 @@ export const getRandomTokens = async (count: number = 10): Promise<Array<{
         'Accept': 'application/json',
       }
     })
-    
+
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`)
     }
-    
+
     const data = await response.json()
     const tokens = data || []
-    
+
     // Shuffle and get random tokens
     const shuffled = tokens.sort(() => 0.5 - Math.random())
     return shuffled.slice(0, count)
@@ -844,17 +844,17 @@ export const searchTokenStats = async (tokenAddress: string): Promise<{
   try {
     // Get basic token info from Jupiter
     const jupiterResponse = await fetch(`https://tokens.jup.ag/token/${tokenAddress}`)
-    
+
     if (!jupiterResponse.ok) {
       return null
     }
-    
+
     const basicData = await jupiterResponse.json()
-    
+
     // Get price data from Jupiter price API
     let priceData = null
     try {
-      const priceResponse = await fetch(`https://lite-api.jup.ag/price/v2?ids=${tokenAddress}`)
+      const priceResponse = await fetch(`https://lite-api.jup.ag/price/v3?ids=${tokenAddress}`)
       if (priceResponse.ok) {
         const priceJson = await priceResponse.json()
         priceData = priceJson.data?.[tokenAddress]
@@ -862,7 +862,7 @@ export const searchTokenStats = async (tokenAddress: string): Promise<{
     } catch (error) {
       console.warn('Price data unavailable:', error)
     }
-    
+
     // Try to get creation timestamp from blockchain (simplified)
     let ageData = undefined
     try {
@@ -871,7 +871,7 @@ export const searchTokenStats = async (tokenAddress: string): Promise<{
       const randomDaysAgo = Math.floor(Math.random() * 365)
       const createdAt = new Date()
       createdAt.setDate(createdAt.getDate() - randomDaysAgo)
-      
+
       ageData = {
         ...getTokenAge(createdAt.toISOString()),
         createdAt: createdAt.toISOString()
@@ -879,7 +879,7 @@ export const searchTokenStats = async (tokenAddress: string): Promise<{
     } catch (error) {
       console.warn('Age data unavailable:', error)
     }
-    
+
     return {
       basic: {
         address: tokenAddress,
