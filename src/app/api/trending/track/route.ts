@@ -5,7 +5,7 @@ import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trad
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 
-export const runtime = 'edge'
+export const runtime = 'nodejs'
 
 // ====================================================================================================
 // REAL TRADING SETUP INSTRUCTIONS:
