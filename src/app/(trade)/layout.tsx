@@ -22,7 +22,7 @@ export default function TradeLayout({
     <main className="min-h-screen bg-black py-8 pb-24 md:pb-8">
       <div className="container mx-auto px-4">
         {/* Header */}
-        <div className="text-center mb-8">
+        <div className="text-center mb-8 sm:mb-12">
           <h1 className="text-5xl font-bold text-white mb-4">
             reloadSOL
           </h1>
@@ -36,7 +36,7 @@ export default function TradeLayout({
           )}
           
           {connected && (
-            <div className="mt-6 flex items-center justify-center space-x-4">
+            <div className="mt-8 flex items-center justify-center space-x-4">
               <ConnectionStatus />
             </div>
           )}
