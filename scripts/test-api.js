@@ -5,7 +5,7 @@ const chalk = require('chalk');
 const ora = require('ora');
 
 // Configuration
-const BASE_URL = 'https://test.reloadsol.xyz';
+const BASE_URL = 'https://v2.reloadsol.xyz';
 const TEST_WALLET = 'DGJqRtDKdBiKfXGwgQbaC5YJW3PGd5TtE2tGmKSLtVwx'; // Example wallet for testing
 const TEST_TOKEN = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // USDC token for testing
 const SOL_TOKEN = 'So11111111111111111111111111111111111111112';
@@ -176,4 +176,4 @@ async function runTests() {
 runTests().catch(error => {
   log.error('Test execution failed:', error);
   process.exit(1);
-}); 
+});
