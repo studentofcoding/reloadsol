@@ -3,4 +3,4 @@ declare global {
     Jupiter: any; // Use 'any' for now, or import JupiterTerminal type if available
   }
 }
-export {}; 
+export { }; 
