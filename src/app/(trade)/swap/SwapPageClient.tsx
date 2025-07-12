@@ -134,22 +134,33 @@ export default function SwapPageClient() {
            cleanupCount++;
          });
          
-         // 4. Fix bg-black classes in portal-container children
+         // 4. Fix bg-black and h-[550px] classes in portal-container children
          if (rootName.includes('document') || rootName.includes('portal')) {
            const portalContainer = root.querySelector ? root.querySelector('#portal-container') : 
                                   (root as Document).querySelector('#portal-container');
            
            if (portalContainer) {
-             console.log(`🎯 Found portal-container, checking children for bg-black classes...`);
-             const childrenWithBgBlack = portalContainer.querySelectorAll('*');
+             console.log(`🎯 Found portal-container, checking children for bg-black and h-[550px] classes...`);
+             const childrenWithClasses = portalContainer.querySelectorAll('*');
              let bgBlackRemoved = 0;
+             let heightClassRemoved = 0;
              
-             childrenWithBgBlack.forEach((child) => {
+             childrenWithClasses.forEach((child) => {
                const htmlChild = child as HTMLElement;
+               
+               // Remove bg-black class
                if (htmlChild.classList.contains('bg-black')) {
                  console.log(`🎨 Removing bg-black class from:`, htmlChild.tagName, htmlChild.className);
                  htmlChild.classList.remove('bg-black');
                  bgBlackRemoved++;
+                 cleanupCount++;
+               }
+               
+               // Remove h-[550px] class
+               if (htmlChild.classList.contains('h-[550px]')) {
+                 console.log(`📏 Removing h-[550px] class from:`, htmlChild.tagName, htmlChild.className);
+                 htmlChild.classList.remove('h-[550px]');
+                 heightClassRemoved++;
                  cleanupCount++;
                }
              });
@@ -157,13 +168,31 @@ export default function SwapPageClient() {
              if (bgBlackRemoved > 0) {
                cleanupDetails.push(`Removed bg-black from ${bgBlackRemoved} portal-container children`);
                console.log(`✅ Removed bg-black class from ${bgBlackRemoved} elements in portal-container`);
-             } else {
-               console.log(`ℹ️ No bg-black classes found in portal-container children`);
+             }
+             
+             if (heightClassRemoved > 0) {
+               cleanupDetails.push(`Removed h-[550px] from ${heightClassRemoved} portal-container children`);
+               console.log(`✅ Removed h-[550px] class from ${heightClassRemoved} elements in portal-container`);
+             }
+             
+             if (bgBlackRemoved === 0 && heightClassRemoved === 0) {
+               console.log(`ℹ️ No bg-black or h-[550px] classes found in portal-container children`);
              }
            } else {
              console.log(`⚠️ portal-container not found in ${rootName}`);
            }
          }
+         
+         // 5. Remove h-[550px] class from all shadow DOM elements
+         const elementsWithHeight = root.querySelectorAll('.h-\\[550px\\]');
+         console.log(`📏 Found ${elementsWithHeight.length} elements with h-[550px] class in ${rootName}`);
+         elementsWithHeight.forEach((element) => {
+           const htmlElement = element as HTMLElement;
+           console.log(`📏 Removing h-[550px] class from:`, htmlElement.tagName, htmlElement.className);
+           htmlElement.classList.remove('h-[550px]');
+           cleanupDetails.push(`Removed h-[550px] class from ${htmlElement.tagName}`);
+           cleanupCount++;
+         });
          
          // Log what we found and cleaned
          console.log(`🧹 Cleanup summary for ${rootName}: ${cleanupCount} elements processed`);
