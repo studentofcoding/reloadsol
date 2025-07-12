@@ -854,7 +854,7 @@ export const searchTokenStats = async (tokenAddress: string): Promise<{
     // Get price data from Jupiter price API
     let priceData = null
     try {
-      const priceResponse = await fetch(`https://lite-api.jup.ag/price/v3?ids=${tokenAddress}`)
+      const priceResponse = await fetch(`https://lite-api.jup.ag/price/v2?ids=${tokenAddress}`)
       if (priceResponse.ok) {
         const priceJson = await priceResponse.json()
         priceData = priceJson.data?.[tokenAddress]

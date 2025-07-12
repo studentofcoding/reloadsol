@@ -88,7 +88,7 @@ async function fetchPricesFromJupiter(tokens: string[]): Promise<Record<string, 
     const mintIds = tokens.join(',')
     console.log(`Fetching prices for ${tokens.length} tokens from Jupiter`)
 
-    const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mintIds}`, {
+    const response = await fetch(`https://lite-api.jup.ag/price/v2?ids=${mintIds}`, {
       headers: {
         'accept': 'application/json',
         'cache-control': 'no-cache',

@@ -84,7 +84,7 @@ async function batchFetchPrices(mints: string[]): Promise<Record<string, number>
     for (let retry = 0; retry < MAX_RETRIES; retry++) {
       try {
         const mintIds = chunk.join(',')
-        const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mintIds}`)
+        const response = await fetch(`https://lite-api.jup.ag/price/v2?ids=${mintIds}`)
         const priceData = await response.json()
         console.log(`Price data for chunk ${index + 1}:`, priceData)
 
@@ -2659,7 +2659,7 @@ export async function executeBulkSellAlt(
     if (request.tokens && request.tokens.length > 0) {
       const nonFrozenTokens = request.tokens.filter(token => !token.frozen);
       const frozenTokens = request.tokens.filter(token => token.frozen);
-      
+
       console.log(`Executing bulk sell (ALT): ${nonFrozenTokens.length} sellable tokens, ${frozenTokens.length} frozen tokens`);
 
       frozenTokens.forEach(token => {
@@ -2673,7 +2673,7 @@ export async function executeBulkSellAlt(
         const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
         const transactions: VersionedTransaction[] = [];
         const transactionTokens: TokenToSell[] = [];
-        
+
         const BATCH_SIZE = 10;
         const batches: TokenToSell[][] = [];
         for (let i = 0; i < nonFrozenTokens.length; i += BATCH_SIZE) {
@@ -2722,7 +2722,7 @@ export async function executeBulkSellAlt(
 
                 const tx = VersionedTransaction.deserialize(Buffer.from(swapResult.txn, 'base64'));
                 tx.message.recentBlockhash = blockhash;
-                
+
                 return { success: true, token, tx };
               } catch (error) {
                 console.error(`Failed to prepare sell for ${token.mintAddress}:`, error);
@@ -2751,7 +2751,7 @@ export async function executeBulkSellAlt(
           console.log(`Signing ${transactions.length} sell transactions...`);
           const signedTransactions = await signAllTransactions(transactions);
           const swapSignatures: string[] = [];
-          
+
           const SEND_BATCH_SIZE = 6;
           for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
             const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE);
@@ -2784,7 +2784,7 @@ export async function executeBulkSellAlt(
                 if (confirmation.value.err) {
                   throw new Error(`Transaction failed confirmation: ${confirmation.value.err}`);
                 }
-                
+
                 const txInfo = await connection.getTransaction(sendResult.signature!, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
                 if (txInfo?.meta?.err) {
                   throw new Error('Transaction failed on-chain');
@@ -2838,20 +2838,20 @@ export async function executeBulkSellAlt(
     }
 
     if (result.successfulSwaps.length > 0 || result.successfulCloses.length > 0) {
-        const sellFeeDistribution = calculateFeeDistribution('SELL', result.successfulSwaps.length, result.totalReceived);
-        const closeFeeDistribution = calculateFeeDistribution('CLOSE', result.successfulCloses.length);
-        const totalFees = sellFeeDistribution.totalFee + closeFeeDistribution.totalFee;
-        result.feeInfo = {
-            ...result.feeInfo,
-            totalFees: totalFees,
-            devFee: sellFeeDistribution.devFee + closeFeeDistribution.devFee,
-            referralFee: sellFeeDistribution.referralFee + closeFeeDistribution.referralFee,
-            totalOperations: result.successfulSwaps.length + result.successfulCloses.length,
-            sellFeeRate: getFeeForOperation('SELL', result.totalReceived),
-        };
-        console.log(`🎉 Bulk sell (ALT) completed: ${result.successfulSwaps.length} swaps, ${result.successfulCloses.length} closes`);
-        console.log(`⚡ Total processing time: ${Date.now() - start}ms`);
-        console.log(`💰 Total fees: ${totalFees} SOL`);
+      const sellFeeDistribution = calculateFeeDistribution('SELL', result.successfulSwaps.length, result.totalReceived);
+      const closeFeeDistribution = calculateFeeDistribution('CLOSE', result.successfulCloses.length);
+      const totalFees = sellFeeDistribution.totalFee + closeFeeDistribution.totalFee;
+      result.feeInfo = {
+        ...result.feeInfo,
+        totalFees: totalFees,
+        devFee: sellFeeDistribution.devFee + closeFeeDistribution.devFee,
+        referralFee: sellFeeDistribution.referralFee + closeFeeDistribution.referralFee,
+        totalOperations: result.successfulSwaps.length + result.successfulCloses.length,
+        sellFeeRate: getFeeForOperation('SELL', result.totalReceived),
+      };
+      console.log(`🎉 Bulk sell (ALT) completed: ${result.successfulSwaps.length} swaps, ${result.successfulCloses.length} closes`);
+      console.log(`⚡ Total processing time: ${Date.now() - start}ms`);
+      console.log(`💰 Total fees: ${totalFees} SOL`);
     }
 
     result.success = result.successfulSwaps.length > 0 || result.successfulCloses.length > 0;

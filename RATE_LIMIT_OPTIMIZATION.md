@@ -118,7 +118,7 @@ function TokenDisplay({ tokens }: { tokens: string[] }) {
 ### **Step 1: Replace Direct Jupiter Calls**
 ```typescript
 // OLD: Direct Jupiter API calls
-const response = await fetch(`https://lite-api.jup.ag/price/v3?ids=${tokens.join(',')}`)
+const response = await fetch(`https://lite-api.jup.ag/price/v2?ids=${tokens.join(',')}`)
 
 // NEW: Use price client
 import { getTokenPrices } from '@/utils/price-client'
