@@ -26,12 +26,14 @@ export default function TradeLayout({
           <h1 className="text-5xl font-bold text-white mb-4">
             reloadSOL
           </h1>
+          {!connected && (
           <h2 className="text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
             Reload your Solana from all worthless memecoins, and trade smartly with us!
             <br />
             Powered by <img className="inline-block h-[1.25rem]" src="https://s3.coinmarketcap.com/static-gravity/image/4dc5810324c74688a5a1b805f7506ec5.jpg" alt="Jupiter Logo" /> Jupiter, <img className="inline-block h-[1.25rem]" src="https://pbs.twimg.com/profile_images/1902372646249234432/T4kNyTq0_400x400.jpg" alt="Superteam Logo" /> Superteam Indonesia and 
             a part of <img className="inline-block h-[1.25rem]" src="https://pbs.twimg.com/profile_images/1843973608378421248/CzmuKtDx_400x400.jpg" alt="Colosseum Breakout" />.
           </h2>
+          )}
           
           {connected && (
             <div className="mt-6 flex items-center justify-center space-x-4">

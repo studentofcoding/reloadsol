@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getTokenPrice } from '../../../utils/jupiter-api'
 
 // Cache structure for SOL price data
 interface PriceCache {
@@ -19,8 +20,9 @@ let priceCache: PriceCache = {
   source: 'default'
 };
 
-// Cache TTL in milliseconds (30 seconds)
+// Cache TTL in milliseconds (30 seconds for fresh, 5 minutes for stale)
 const CACHE_TTL_MS = 30 * 1000;
+const STALE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Rate limiting state for each API
 interface RateLimitState {
@@ -29,31 +31,35 @@ interface RateLimitState {
   backoffUntil: number;
 }
 
-const rateLimitStates = {
+const rateLimitStates: Record<keyof typeof API_CONFIG, RateLimitState> = {
   coingecko: { lastRequestTime: 0, consecutiveErrors: 0, backoffUntil: 0 },
-  birdeye: { lastRequestTime: 0, consecutiveErrors: 0, backoffUntil: 0 },
   jupiter: { lastRequestTime: 0, consecutiveErrors: 0, backoffUntil: 0 }
 };
 
 // Configuration for each API
-const API_CONFIG = {
+type ApiConfig = {
+  url?: string;
+  minInterval: number;
+  maxBackoff: number;
+  timeout: number;
+  requiresAuth: boolean;
+  headers?: Record<string, string>;
+};
+
+const API_CONFIG: Record<string, ApiConfig> = {
   coingecko: {
     url: 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd',
     minInterval: 1000, // 1 second between requests
     maxBackoff: 60000, // 1 minute max backoff
-    timeout: 5000
-  },
-  birdeye: {
-    url: 'https://public-api.birdeye.so/defi/price?address=So11111111111111111111111111111111111111112',
-    minInterval: 500, // 0.5 seconds between requests  
-    maxBackoff: 30000, // 30 seconds max backoff
-    timeout: 5000
+    timeout: 5000,
+    requiresAuth: false
   },
   jupiter: {
-    url: 'https://api.jup.ag/price/v1?ids=So11111111111111111111111111111111111111112',
+    // No URL needed - using Jupiter API utility
     minInterval: 2000, // 2 seconds between requests (most conservative)
     maxBackoff: 120000, // 2 minutes max backoff
-    timeout: 8000
+    timeout: 8000,
+    requiresAuth: false
   }
 };
 
@@ -90,38 +96,52 @@ async function fetchWithRateLimit(
 
   try {
     console.log(`Fetching SOL price from ${apiName}`);
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), config.timeout);
-    
     state.lastRequestTime = Date.now();
-    
-    const response = await fetch(config.url, {
-      headers: {
-        'accept': 'application/json',
-        'cache-control': 'no-cache',
-        'user-agent': 'BuyBulk/1.0'
-      },
-      signal: controller.signal,
-      next: { revalidate: 0 }
-    });
 
-    clearTimeout(timeoutId);
+    let price: number;
 
-    if (response.status === 429) {
-      console.warn(`Rate limited by ${apiName} API`);
-      state.consecutiveErrors++;
-      state.backoffUntil = Date.now() + calculateBackoff(state.consecutiveErrors, config.maxBackoff);
-      return null;
+    if (apiName === 'jupiter') {
+      // Use the Jupiter API utility for Jupiter requests
+      price = await getTokenPrice('So11111111111111111111111111111111111111112');
+      if (!price) {
+        throw new Error('Jupiter API returned null price');
+      }
+    } else {
+      // For other APIs, use the standard fetch approach
+      if (!config.url) {
+        throw new Error(`No URL configured for ${apiName}`);
+      }
+
+      // Use direct fetch for other APIs (CoinGecko)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), config.timeout);
+
+      const response = await fetch(config.url, {
+        headers: {
+          'accept': 'application/json',
+          'cache-control': 'no-cache',
+          'user-agent': 'BuyBulk/1.0'
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.status === 429) {
+        console.warn(`Rate limited by ${apiName} API`);
+        state.consecutiveErrors++;
+        state.backoffUntil = Date.now() + calculateBackoff(state.consecutiveErrors, config.maxBackoff);
+        return null;
+      }
+
+      if (!response.ok) {
+        throw new Error(`API responded with status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      price = parseResponse(data);
     }
 
-    if (!response.ok) {
-      throw new Error(`API responded with status: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const price = parseResponse(data);
-    
     if (!price || price <= 0) {
       throw new Error('Invalid price data received');
     }
@@ -129,37 +149,47 @@ async function fetchWithRateLimit(
     // Reset error count on success
     state.consecutiveErrors = 0;
     state.backoffUntil = 0;
-    
+
     console.log(`Successfully fetched SOL price from ${apiName}: $${price}`);
     return { price, source: apiName };
 
   } catch (error) {
     console.error(`Error fetching from ${apiName}:`, error);
-    
+
     // Increase error count and set backoff
     state.consecutiveErrors++;
     state.backoffUntil = Date.now() + calculateBackoff(state.consecutiveErrors, config.maxBackoff);
-    
+
     return null;
   }
 }
 
-// SOL price fetching with intelligent fallback
+// Enhanced SOL price fetching with parallel requests and intelligent fallback
 async function getSolPriceUSD(): Promise<{ price: number; source: string }> {
-  // Try CoinGecko first
-  const coingeckoResult = await fetchWithRateLimit('coingecko', (data) => data?.solana?.usd);
-  if (coingeckoResult) return coingeckoResult;
+  // Check if we can use stale cache to avoid API calls during high load
+  const now = Date.now();
+  if (priceCache.price && priceCache.price !== DEFAULT_SOL_PRICE_USD &&
+    now - priceCache.timestamp < STALE_CACHE_TTL_MS) {
+    console.log('Using stale cache to reduce API load');
+    return { price: priceCache.price, source: `stale_${priceCache.source}` };
+  }
 
-  // Try Birdeye second
-  const birdeyeResult = await fetchWithRateLimit('birdeye', (data) => data?.data?.value);
-  if (birdeyeResult) return birdeyeResult;
+  // Try all APIs in parallel for faster response
+  const apiPromises = [
+    fetchWithRateLimit('coingecko', (data) => data?.solana?.usd),
+    fetchWithRateLimit('jupiter', () => 0) // Price will be fetched using Jupiter API utility
+  ];
 
-  // Try Jupiter last
-  const jupiterResult = await fetchWithRateLimit('jupiter', (data) => {
-    const solData = data?.data?.So11111111111111111111111111111111111111112;
-    return solData?.price;
-  });
-  if (jupiterResult) return jupiterResult;
+  // Use Promise.allSettled to get results from all APIs
+  const results = await Promise.allSettled(apiPromises);
+
+  // Find the first successful result
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result.status === 'fulfilled' && result.value) {
+      return result.value;
+    }
+  }
 
   // All APIs failed, use cached or default price
   if (priceCache.price && priceCache.price !== DEFAULT_SOL_PRICE_USD) {
@@ -171,15 +201,18 @@ async function getSolPriceUSD(): Promise<{ price: number; source: string }> {
   return { price: DEFAULT_SOL_PRICE_USD, source: 'default' };
 }
 
+// Request deduplication for concurrent requests
+let ongoingRequest: Promise<{ price: number; source: string }> | null = null;
+
 export async function GET() {
   try {
     const currentTime = Date.now();
-    
+
     // Return cached data if it's still valid
     if (currentTime < priceCache.expiresAt) {
       console.log(`Using cached SOL price from ${priceCache.source}, expires in ${Math.round((priceCache.expiresAt - currentTime) / 1000)} seconds`);
       return NextResponse.json(
-        { 
+        {
           price: priceCache.price,
           source: priceCache.source,
           cached: true,
@@ -194,47 +227,73 @@ export async function GET() {
         }
       )
     }
-    
-    console.log('Cache expired, fetching fresh SOL price data');
-    const result = await getSolPriceUSD();
-    
-    // Update the cache
-    priceCache = {
-      price: result.price,
-      source: result.source,
-      timestamp: currentTime,
-      expiresAt: currentTime + CACHE_TTL_MS
-    };
-    
-    return NextResponse.json(
-      { 
+
+    // Deduplicate concurrent requests
+    if (ongoingRequest) {
+      console.log('Deduplicating concurrent SOL price request');
+      const result = await ongoingRequest;
+      return NextResponse.json({
         price: result.price,
         source: result.source,
         cached: false,
+        deduplicated: true
+      });
+    }
+
+    console.log('Cache expired, fetching fresh SOL price data');
+    ongoingRequest = getSolPriceUSD();
+
+    try {
+      const result = await ongoingRequest;
+
+      // Update the cache
+      priceCache = {
+        price: result.price,
+        source: result.source,
         timestamp: currentTime,
-        expires_in: CACHE_TTL_MS / 1000
-      },
-      {
-        status: 200,
-        headers: {
-          'Cache-Control': 'public, max-age=30, stale-while-revalidate=5'
+        expiresAt: currentTime + CACHE_TTL_MS
+      };
+
+      console.log(`Updated SOL price cache: $${result.price} from ${result.source}`);
+
+      return NextResponse.json(
+        {
+          price: result.price,
+          source: result.source,
+          cached: false,
+          cache_age: 0,
+          expires_in: Math.round(CACHE_TTL_MS / 1000),
+          rate_limit_status: Object.entries(rateLimitStates).map(([api, state]) => ({
+            api,
+            backoff_until: state.backoffUntil > Date.now() ? new Date(state.backoffUntil).toISOString() : null,
+            consecutive_errors: state.consecutiveErrors
+          }))
+        },
+        {
+          status: 200,
+          headers: {
+            'Cache-Control': 'public, max-age=30, stale-while-revalidate=5',
+            'X-Price-Source': result.source
+          }
         }
-      }
-    )
+      );
+    } finally {
+      ongoingRequest = null;
+    }
   } catch (error) {
     console.error('Error in SOL price endpoint:', error);
-    
+
     // If cache exists but is expired, use it anyway during error
     if (priceCache.price) {
       return NextResponse.json(
-        { 
+        {
           price: priceCache.price,
           source: priceCache.source + '_emergency',
           cached: true,
           error: 'Failed to fetch fresh price data, using emergency cache',
           cache_age: Math.round((Date.now() - priceCache.timestamp) / 1000)
         },
-        { 
+        {
           status: 200,
           headers: {
             'Cache-Control': 'public, max-age=5'
@@ -242,16 +301,16 @@ export async function GET() {
         }
       )
     }
-    
+
     // Fallback to default price if no cache is available
     return NextResponse.json(
-      { 
+      {
         price: DEFAULT_SOL_PRICE_USD,
-        source: 'emergency_default', 
-        error: 'Failed to fetch SOL price', 
-        message: error instanceof Error ? error.message : 'Unknown error' 
+        source: 'emergency_default',
+        error: 'Failed to fetch SOL price',
+        message: error instanceof Error ? error.message : 'Unknown error'
       },
-      { 
+      {
         status: 200,
         headers: {
           'Cache-Control': 'public, max-age=5'
@@ -259,4 +318,4 @@ export async function GET() {
       }
     )
   }
-} 
+}
