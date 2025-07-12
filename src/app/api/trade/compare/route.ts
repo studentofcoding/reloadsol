@@ -58,11 +58,11 @@ function generateQuoteCacheKey(request: TradeQuoteRequest): string {
 // Clean up expired cache entries
 function cleanupQuoteCache() {
   const now = Date.now()
-  for (const [key, cache] of quoteCacheMap.entries()) {
+  Array.from(quoteCacheMap.entries()).forEach(([key, cache]) => {
     if (now > cache.expiresAt) {
       quoteCacheMap.delete(key)
     }
-  }
+  })
   
   // Limit cache size
   if (quoteCacheMap.size > MAX_CACHE_SIZE) {

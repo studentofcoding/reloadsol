@@ -27,18 +27,18 @@ function cleanupRandomCache() {
   const now = Date.now()
   
   // Clean expired cache entries
-  for (const [count, cache] of randomTokensCache.entries()) {
+  Array.from(randomTokensCache.entries()).forEach(([count, cache]) => {
     if (now > cache.expiresAt) {
       randomTokensCache.delete(count)
     }
-  }
+  })
   
   // Clean expired ongoing requests
-  for (const [count, request] of ongoingRandomRequests.entries()) {
+  Array.from(ongoingRandomRequests.entries()).forEach(([count, request]) => {
     if (now - request.timestamp > REQUEST_TIMEOUT) {
       ongoingRandomRequests.delete(count)
     }
-  }
+  })
   
   // Limit cache size
   if (randomTokensCache.size > MAX_CACHE_ENTRIES) {

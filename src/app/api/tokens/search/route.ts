@@ -25,18 +25,18 @@ function cleanupCache() {
   const now = Date.now()
   
   // Clean expired cache entries
-  for (const [key, cache] of tokenSearchCache.entries()) {
+  Array.from(tokenSearchCache.entries()).forEach(([key, cache]) => {
     if (now > cache.expiresAt) {
       tokenSearchCache.delete(key)
     }
-  }
+  })
   
   // Clean expired ongoing requests
-  for (const [key, request] of ongoingRequests.entries()) {
+  Array.from(ongoingRequests.entries()).forEach(([key, request]) => {
     if (now - request.timestamp > REQUEST_TIMEOUT) {
       ongoingRequests.delete(key)
     }
-  }
+  })
   
   // Limit cache size by removing oldest entries
   if (tokenSearchCache.size > MAX_CACHE_SIZE) {
