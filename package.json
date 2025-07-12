@@ -18,7 +18,13 @@
     "logs:stats": "node scripts/tail-logs.js -s",
     "clean": "rm -rf .next out",
     "clean:all": "rm -rf .next out node_modules && npm install",
-    "test:api": "node scripts/test-api.js"
+    "test:api": "node scripts/test-api.js",
+    "migrate:test": "node scripts/migrate-jupiter-api.js test",
+    "migrate:v3": "node scripts/migrate-jupiter-api.js migrate",
+    "migrate:rollback": "node scripts/migrate-jupiter-api.js rollback",
+    "migrate:status": "node scripts/migrate-jupiter-api.js status",
+    "migrate:validate": "node scripts/migrate-jupiter-api.js validate",
+    "test:fallback": "node scripts/test-fallback.js"
   },
   "dependencies": {
     "@metaplex-foundation/mpl-token-metadata": "^3.4.0",

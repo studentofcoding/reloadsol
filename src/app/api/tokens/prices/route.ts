@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { fetchTokenPricesBatch, getJupiterApiVersion, JupiterAPIError } from '@/utils/jupiter-api'
 
 // Enhanced cache with longer TTL for high-volume usage
 interface PriceCache {
@@ -85,43 +86,28 @@ async function fetchPricesFromJupiter(tokens: string[]): Promise<Record<string, 
 
   try {
     requestCount++
-    const mintIds = tokens.join(',')
-    console.log(`Fetching prices for ${tokens.length} tokens from Jupiter`)
+    console.log(`Fetching prices for ${tokens.length} tokens from Jupiter ${getJupiterApiVersion()}`)
 
-    const response = await fetch(`https://lite-api.jup.ag/price/v2?ids=${mintIds}`, {
-      headers: {
-        'accept': 'application/json',
-        'cache-control': 'no-cache',
-        'user-agent': 'BuyBulk/1.0'
-      }
+    const priceData = await fetchTokenPricesBatch(tokens, {
+      batchSize: 100,
+      timeout: 10000,
+      retries: 2
     })
 
-    if (response.status === 429) {
-      throw new Error('Rate limited by Jupiter API')
-    }
-
-    if (!response.ok) {
-      throw new Error(`Jupiter API error: ${response.status}`)
-    }
-
-    const data = await response.json()
     const prices: Record<string, number> = {}
 
-    if (data?.data) {
-      Object.entries(data.data).forEach(([mint, priceData]: [string, any]) => {
-        if (priceData && priceData.price) {
-          const price = parseFloat(priceData.price)
-          prices[mint] = price
-          setCachedPrice(mint, price, 'jupiter')
-        } else {
-          prices[mint] = 0
-        }
-      })
-    }
+    Object.entries(priceData).forEach(([mint, data]) => {
+      prices[mint] = data.price
+      setCachedPrice(mint, data.price, `jupiter-${data.source}`)
+    })
 
     return prices
   } catch (error) {
-    console.error('Jupiter price fetch error:', error)
+    if (error instanceof JupiterAPIError) {
+      console.error('Jupiter API error:', error.message, { statusCode: error.statusCode, isRateLimit: error.isRateLimit })
+    } else {
+      console.error('Jupiter price fetch error:', error)
+    }
     throw error
   }
 }
@@ -304,4 +290,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

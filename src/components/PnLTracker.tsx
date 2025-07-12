@@ -664,15 +664,15 @@ export default function PnLTracker() {
       const mintAddresses = openPositions.map(pos => pos.mintAddress)
       
       // Fetch current prices from Jupiter API
-      const priceResponse = await fetch(`https://lite-api.jup.ag/price/v2?ids=${mintAddresses.join(',')}`)
-      const priceData = await priceResponse.json()
+      // Use the new Jupiter API utility
+      const { getTokenPrices } = await import('@/utils/jupiter-api')
+      const prices = await getTokenPrices(mintAddresses)
 
       // Update positions with current prices and calculate P&L
       setOpenPositions(prev => prev.map(position => {
-        const currentPriceData = priceData?.data?.[position.mintAddress]
+        const currentTokenPriceUsd = prices[position.mintAddress]
         
-        if (currentPriceData && currentPriceData.price) {
-          const currentTokenPriceUsd = parseFloat(currentPriceData.price)
+        if (currentTokenPriceUsd && currentTokenPriceUsd > 0) {
           
           // Use actual buy price if available for accurate P&L calculation
           if (position.buyPriceUsd && position.buyPriceUsd > 0) {
@@ -1356,4 +1356,4 @@ export default function PnLTracker() {
       )}
     </div>
   )
-} 
+}
