@@ -2240,8 +2240,10 @@ async function internalTrackPost(request: NextRequest) {
                 }
               } catch (err) {
                 console.error(`❌ Failed to upsert waiting token ${token.token_symbol}:`, err)
-                throw err
+                // Don't re-throw to prevent unhandled rejection - let Promise.allSettled handle it
+                return { success: false, error: err, tokenSymbol: token.token_symbol }
               }
+              return { success: true, tokenSymbol: token.token_symbol }
             })()
           )
           
@@ -2375,8 +2377,10 @@ async function internalTrackPost(request: NextRequest) {
                 }
               } catch (err) {
                 console.error(`❌ Failed to upsert token ${token.token_symbol}:`, err)
-                throw err
+                // Don't re-throw to prevent unhandled rejection - let Promise.allSettled handle it
+                return { success: false, error: err, tokenSymbol: token.token_symbol }
               }
+              return { success: true, tokenSymbol: token.token_symbol }
               
               // Send Discord notification for new token detection
               if (shouldEnableNotifications()) {
@@ -2389,7 +2393,7 @@ async function internalTrackPost(request: NextRequest) {
                     marketCap: token.market_cap,
                     organicScore: token.organic_score,
                     volume1h: token.volume_1h,
-                    isRealTrading: tradingSimulation ? !tradingSimulation.is_simulated : false
+                    isRealTrading: tradingSimulation !== null ? !tradingSimulation.is_simulated : false
                   })
                 } catch (discordError) {
                   console.error('❌ Failed to send new token Discord notification:', discordError)
@@ -2816,10 +2820,19 @@ async function internalTrackPost(request: NextRequest) {
 
     // Execute all updates in parallel
     const results = await Promise.allSettled(updatesPromises)
-    const failedUpdates = results.filter(result => result.status === 'rejected')
+    const rejectedPromises = results.filter(result => result.status === 'rejected')
+    const fulfilledResults = results.filter(result => result.status === 'fulfilled').map(result => result.value)
+    const failedOperations = fulfilledResults.filter(result => result && typeof result === 'object' && !result.success)
     
-    if (failedUpdates.length > 0) {
-      console.error(`⚠️ ${failedUpdates.length} updates failed:`, failedUpdates)
+    const totalFailures = rejectedPromises.length + failedOperations.length
+    
+    if (totalFailures > 0) {
+      console.error(`⚠️ ${totalFailures} updates failed:`, {
+        rejectedPromises: rejectedPromises.length,
+        failedOperations: failedOperations.length,
+        rejectedReasons: rejectedPromises.map(r => r.reason),
+        failedTokens: failedOperations.map(op => op.tokenSymbol)
+      })
     }
 
     // Get updated statistics
@@ -2846,7 +2859,7 @@ async function internalTrackPost(request: NextRequest) {
       new_tokens_added: newTokensAdded,
       tokens_updated: tokensUpdated,
       tokens_lost: tokensLost,
-      failed_updates: failedUpdates.length,
+      failed_updates: totalFailures,
       current_stats: stats,
       message: `Tracked ${filteredTokens.length} tokens: ${newTokensAdded} new, ${tokensUpdated} updated, ${tokensLost} lost`
     }
