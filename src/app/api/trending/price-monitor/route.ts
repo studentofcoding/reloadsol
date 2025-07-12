@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
-    const expected = process.env.TRENDING_TRACKER_SECRET || 'trending-track-secret'
+    const expected = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
     if (secretKey !== expected) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

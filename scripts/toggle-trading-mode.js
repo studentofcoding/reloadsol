@@ -8,14 +8,14 @@
  *   node scripts/toggle-trading-mode.js disable
  */
 
-const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET || 'trending-track-secret'
-const API_BASE = process.env.API_BASE || 'http://localhost:3000'
+const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+const API_HOST = process.env.API_HOST || 'https://v2.reloadsol.xyz'
 
 async function checkTradingMode() {
   try {
     console.log('🔍 Checking current trading mode...')
     
-    const response = await fetch(`${API_BASE}/api/trending/track?token=check`, {
+    const response = await fetch(`${API_HOST}/api/trending/track?token=check`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json'
@@ -42,7 +42,7 @@ async function setTradingMode(isSimulated) {
     const mode = isSimulated ? 'simulation' : 'real trading'
     console.log(`🔄 Setting trading mode to: ${mode}`)
     
-    const response = await fetch(`${API_BASE}/api/trending/track?key=${SECRET_KEY}`, {
+    const response = await fetch(`${API_HOST}/api/trending/track?key=${SECRET_KEY}`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json'
@@ -119,6 +119,6 @@ switch (command) {
     console.log('  TRENDING_TRACKER_SECRET     # API secret key')
     console.log('  TRADING_KEYPAIR_JSON        # Wallet private key (for real trading)')
     console.log('  DISCORD_WEBHOOK_AUTO_TRADE  # Discord webhook URL')
-    console.log('  API_BASE                    # API base URL (default: http://localhost:3000)')
+    console.log('  API_HOST                    # API base URL (default: http://localhost:3000)')
     process.exit(1)
 } 
