@@ -4,7 +4,6 @@ import { supabase } from '@/utils/supabase'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
-import { fetchTrendingPools } from '@/utils/jupiter-api'
 
 export const runtime = 'nodejs'
 
@@ -2026,8 +2025,43 @@ async function internalTrackPost(request: NextRequest) {
 
     console.log('🔍 Starting 5-minute trending token tracking...')
 
-    // Fetch current trending tokens from Jupiter API using centralized function
-    const data = await fetchTrendingPools()
+    // Fetch current trending tokens from Jupiter API with fallback & retry
+    const TRENDING_URLS = [
+      'https://datapi.jup.ag/v1/pools/toptrending/1h',
+      'https://api.jup.ag/v1/pools/toptrending/1h'
+    ]
+
+    let response: Response | null = null
+
+    for (const url of TRENDING_URLS) {
+      try {
+        response = await fetch(url, {
+          headers: {
+            accept: 'application/json',
+            'cache-control': 'no-cache',
+            'user-agent': 'reloadsol-bot/1.0 (+https://reloadsol.xyz)'
+          }
+        })
+
+        if (response.ok) break
+
+        if (response.status === 403 || response.status === 429) {
+          console.warn(`Trending track API ${url} responded with ${response.status}. Retrying next mirror...`)
+          await new Promise(res => setTimeout(res, 500))
+          continue
+        }
+
+        throw new Error(`Jupiter API responded with status: ${response.status}`)
+      } catch (err) {
+        console.error(`Error fetching trending tokens from ${url}:`, err)
+      }
+    }
+
+    if (!response || !response.ok) {
+      throw new Error('All Jupiter trending API endpoints failed')
+    }
+
+    const data = await response.json() as JupiterResponse
 
     // Filter tokens using quality criteria
     const filteredTokens = data.pools

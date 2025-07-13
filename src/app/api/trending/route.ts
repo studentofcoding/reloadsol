@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
-import { fetchFilteredTrendingPools } from '@/utils/jupiter-api'
 
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
@@ -37,22 +36,22 @@ function cleanupGlobalTimers() {
 // Only initialize once and with proper cleanup
 if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !globalTimers.notificationTimer) {
   console.log(`Setting up automatic notification timer (${AUTO_NOTIFICATION_INTERVAL_MS}ms interval)`);
-
+  
   // Initial delay of 30 seconds after server start before first check
   globalTimers.initialDelayTimer = setTimeout(() => {
     console.log('Starting automatic notification timer');
-
+    
     // Set interval for periodic notifications
     globalTimers.notificationTimer = setInterval(() => {
       const currentTime = Date.now();
-
+      
       // Check if it's time for a notification
       if (currentTime - lastAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) {
         console.log('Auto-notification interval triggered');
-
+        
         // Determine if we need a full refresh
         const needsFullRefresh = currentTime - tokenCache.lastFullRefresh >= FULL_REFRESH_INTERVAL_MS;
-
+        
         // Trigger notification with proper error handling
         fetchAndUpdateCache(needsFullRefresh, currentTime, true)
           .then(tokenArray => {
@@ -66,7 +65,7 @@ if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !globalTim
           });
       }
     }, Math.min(60000, AUTO_NOTIFICATION_INTERVAL_MS / 2)); // Check at least every minute or half the notification interval
-
+    
     // Clear the initial delay timer reference
     globalTimers.initialDelayTimer = undefined;
   }, 30000);
@@ -120,7 +119,7 @@ interface TransformedToken {
   logo_url?: string
   organic_score: number
   last_updated?: number
-  price_change?: number
+  price_change?: number 
   created_at?: number
 }
 
@@ -174,11 +173,11 @@ function clearRefreshState() {
 
 // Function to send updates to Discord
 async function sendDiscordNotification(
-  tokenArray: TransformedToken[],
-  stats: {
-    added: number,
-    updated: number,
-    removed: number,
+  tokenArray: TransformedToken[], 
+  stats: { 
+    added: number, 
+    updated: number, 
+    removed: number, 
     unchanged: number,
     price_increased: number,
     price_decreased: number
@@ -200,7 +199,7 @@ async function sendDiscordNotification(
   try {
     // Get top 5 tokens by organic score
     const topTokens = tokenArray.slice(0, 5);
-
+    
     // Format the message
     const message = {
       embeds: [
@@ -213,13 +212,13 @@ async function sendDiscordNotification(
             {
               name: 'Top Tokens',
               value: topTokens.map(token => {
-                const priceChangeEmoji = token.price_change
-                  ? (token.price_change > 0 ? '📈' : '📉')
+                const priceChangeEmoji = token.price_change 
+                  ? (token.price_change > 0 ? '📈' : '📉') 
                   : '';
-                const hourChangeEmoji = token.change_1h
-                  ? (token.change_1h > 0 ? '🟢' : '🔴')
+                const hourChangeEmoji = token.change_1h 
+                  ? (token.change_1h > 0 ? '🟢' : '🔴') 
                   : '';
-
+                
                 return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
                   `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
                   `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
@@ -236,7 +235,7 @@ async function sendDiscordNotification(
     // Send the message to Discord with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-
+    
     try {
       const response = await fetch(DISCORD_WEBHOOK_URL, {
         method: 'POST',
@@ -270,25 +269,25 @@ export async function POST(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const secretKey = searchParams.get('key');
     const expectedSecretKey = process.env.NOTIFICATION_SECRET_KEY;
-
+    
     // Validate secret key if configured
     if (expectedSecretKey && secretKey !== expectedSecretKey) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-
+    
     // Force a full refresh and force notifications
     const tokenArray = await fetchAndUpdateCache(true, Date.now(), true);
-
-    return NextResponse.json({
-      success: true,
+    
+    return NextResponse.json({ 
+      success: true, 
       message: 'Notifications sent',
       token_count: tokenArray.length
     });
   } catch (error) {
     console.error('Error in scheduled notification:', error);
-    return NextResponse.json({
-      error: 'Failed to send scheduled notification',
-      message: error instanceof Error ? error.message : 'Unknown error'
+    return NextResponse.json({ 
+      error: 'Failed to send scheduled notification', 
+      message: error instanceof Error ? error.message : 'Unknown error' 
     }, { status: 500 });
   }
 }
@@ -296,19 +295,19 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     const currentTime = Date.now();
-
+    
     // Parse query parameters
     const { searchParams } = new URL(request.url);
     const forceRefresh = searchParams.get('refresh') === 'true';
     const skipCache = searchParams.get('nocache') === 'true';
-
+    
     const needsFullRefresh = currentTime - tokenCache.lastFullRefresh >= FULL_REFRESH_INTERVAL_MS || forceRefresh;
-
+    
     // Return cached data if it's still valid and doesn't need a full refresh
     if (tokenCache.tokens.size > 0 && currentTime < tokenCache.expiresAt && !needsFullRefresh && !skipCache) {
       console.log('Using cached token data, expires in', Math.round((tokenCache.expiresAt - currentTime) / 1000), 'seconds');
       return NextResponse.json(
-        {
+        { 
           // Re-use the same ordering criteria used for fresh responses
           tokens: Array.from(tokenCache.tokens.values()).sort((a, b) => {
             if (b.organic_score !== a.organic_score) {
@@ -328,11 +327,11 @@ export async function GET(request: NextRequest) {
         }
       )
     }
-
+    
     // Improved concurrency control
     if (refreshState.promise) {
       const elapsedTime = currentTime - refreshState.startTime;
-
+      
       // If refresh has been running too long, abandon it and start fresh
       if (elapsedTime > MAX_REFRESH_WAIT_MS) {
         console.log('Refresh operation timed out, starting fresh');
@@ -340,20 +339,20 @@ export async function GET(request: NextRequest) {
       } else {
         console.log(`Using existing refresh operation in progress (${refreshState.requestCount + 1} concurrent requests)`);
         refreshState.requestCount++;
-
+        
         try {
           // Wait for the existing refresh operation to complete
           const tokens = await refreshState.promise;
           refreshState.requestCount = Math.max(0, refreshState.requestCount - 1);
-
+          
           return NextResponse.json(
-            {
+            { 
               tokens,
               cached: false,
               cache_age: 0,
               refresh_type: 'concurrent',
               expires_in: Math.round((tokenCache.expiresAt - Date.now()) / 1000),
-              stats: {
+              stats: { 
                 concurrent_request: true,
                 concurrent_count: refreshState.requestCount + 1
               }
@@ -373,18 +372,18 @@ export async function GET(request: NextRequest) {
         }
       }
     }
-
+    
     // Create a new refresh operation - never force notifications from frontend requests
     refreshState.promise = fetchAndUpdateCache(needsFullRefresh, currentTime, false);
     refreshState.startTime = currentTime;
     refreshState.requestCount = 1;
-
+    
     try {
       // Wait for the refresh operation to complete
       const tokens = await refreshState.promise;
-
+      
       return NextResponse.json(
-        {
+        { 
           tokens,
           cached: false,
           cache_age: 0,
@@ -407,7 +406,7 @@ export async function GET(request: NextRequest) {
       if (refreshState.timeout) {
         clearTimeout(refreshState.timeout);
       }
-
+      
       refreshState.timeout = setTimeout(() => {
         clearRefreshState();
       }, 10000); // 10 second grace period
@@ -425,23 +424,114 @@ export async function GET(request: NextRequest) {
 
 // Separate async function to fetch and update the cache
 async function fetchAndUpdateCache(
-  needsFullRefresh: boolean,
+  needsFullRefresh: boolean, 
   currentTime: number,
   forceSendNotification: boolean = false
 ): Promise<TransformedToken[]> {
   try {
     console.log(needsFullRefresh ? 'Performing full refresh' : 'Updating token cache');
+    
+    // Enhanced API fetching with parallel requests and better error handling
+    const TRENDING_URLS = [
+      'https://datapi.jup.ag/v1/pools/toptrending/1h',
+      'https://api.jup.ag/v1/pools/toptrending/1h'
+    ];
 
-    // Use centralized trending API function
-    const pools = await fetchFilteredTrendingPools({
-      minMcap: 300000,
-      maxMcap: 2000000,
-      minOrganicScore: 70.0,
-      maxPriceChange5m: -0.4
-    })
+    const REQUEST_TIMEOUT = 8000; // 8 second timeout
+    const RETRY_DELAY = 300; // Reduced delay between retries
 
+    // Create fetch promises for all URLs with timeout
+    const fetchPromises = TRENDING_URLS.map(async (url, index) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+      
+      try {
+        // Add small delay for fallback URLs to prefer primary
+        if (index > 0) {
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * index));
+        }
+        
+        const response = await fetch(url, {
+          headers: {
+            accept: 'application/json',
+            'cache-control': 'no-cache',
+            'user-agent': 'reloadsol-bot/1.0 (+https://reloadsol.xyz)'
+          },
+          signal: controller.signal,
+          next: { revalidate: 0 }
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          return { success: true, response, url, index };
+        }
+
+        // Handle rate limiting and server errors
+        if (response.status === 403 || response.status === 429) {
+          console.warn(`Trending API rate limited (${response.status}) for ${url}`);
+          return { success: false, error: `Rate limited: ${response.status}`, url, index, retryable: true };
+        }
+
+        return { success: false, error: `HTTP ${response.status}`, url, index, retryable: false };
+      } catch (error) {
+        clearTimeout(timeoutId);
+        const isTimeout = error instanceof Error && error.name === 'AbortError';
+        console.error(`Error fetching from ${url}:`, isTimeout ? 'Timeout' : error);
+        return { 
+          success: false, 
+          error: isTimeout ? 'Timeout' : (error instanceof Error ? error.message : 'Network error'), 
+          url, 
+          index, 
+          retryable: !isTimeout 
+        };
+      }
+    });
+
+    // Wait for the first successful response or all to fail
+    let response: Response | null = null;
+    let successfulUrl = '';
+    
+    try {
+      const results = await Promise.allSettled(fetchPromises);
+      
+      // Find the first successful response
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value.success) {
+          response = result.value.response || null;
+          successfulUrl = result.value.url;
+          console.log(`Successfully fetched trending data from ${successfulUrl}`);
+          break;
+        }
+      }
+      
+      // If no successful response, log all errors
+      if (!response) {
+        const errors = results
+          .filter(r => r.status === 'fulfilled' && !r.value.success)
+          .map(r => r.status === 'fulfilled' ? `${r.value.url}: ${r.value.error}` : 'Promise rejected')
+          .join(', ');
+        console.error('All trending API endpoints failed:', errors);
+      }
+    } catch (error) {
+      console.error('Error in parallel fetch operation:', error);
+    }
+
+    if (!response || !response.ok) {
+      // All attempts failed – if we still have cached tokens, return them
+      if (tokenCache.tokens.size > 0) {
+        console.warn('All trending API endpoints failed – serving stale cached data');
+        // Update cache timestamp to prevent immediate re-fetch
+        tokenCache.expiresAt = currentTime + (CACHE_TTL_MS / 2); // Extend cache by half TTL
+        return Array.from(tokenCache.tokens.values());
+      }
+      throw new Error('All Jupiter trending API endpoints failed and no cached data available');
+    }
+
+    const data = (await response.json()) as JupiterResponse;
+    
     // Transform the data to match our component's expected format
-    const transformedTokens = pools.map((pool): TransformedToken => {
+    const transformedTokens = data.pools.map((pool): TransformedToken => {
       // Debug logging for created_at timestamp
       console.log(`Pool ${pool.baseAsset.symbol} createdAt:`, {
         rawCreatedAt: pool.createdAt,
@@ -449,10 +539,10 @@ async function fetchAndUpdateCache(
         cachedCreatedAt: tokenCache.tokens.get(pool.baseAsset.id)?.created_at,
         parsedDate: pool.createdAt ? new Date(pool.createdAt).toString() : 'N/A'
       });
-
+      
       // Parse and normalize the createdAt timestamp
       let normalizedCreatedAt: number | undefined = undefined;
-
+      
       if (pool.createdAt) {
         // Handle string timestamps (ISO format)
         if (typeof pool.createdAt === 'string') {
@@ -469,7 +559,7 @@ async function fetchAndUpdateCache(
           } catch (e) {
             console.error(`Failed to parse createdAt for ${pool.baseAsset.symbol}:`, pool.createdAt);
           }
-        }
+        } 
         // Handle numeric timestamps
         else if (typeof pool.createdAt === 'number') {
           normalizedCreatedAt = pool.createdAt;
@@ -479,53 +569,53 @@ async function fetchAndUpdateCache(
           }
         }
       }
-
+      
       // Fallback to cached value if available, or just leave as undefined
       if (!normalizedCreatedAt && tokenCache.tokens.has(pool.baseAsset.id)) {
         normalizedCreatedAt = tokenCache.tokens.get(pool.baseAsset.id)?.created_at;
       }
-
+      
       return {
-        token_symbol: pool.baseAsset.symbol,
-        token_address: pool.baseAsset.id,
-        price: pool.baseAsset.usdPrice,
+      token_symbol: pool.baseAsset.symbol,
+      token_address: pool.baseAsset.id,
+      price: pool.baseAsset.usdPrice,
         change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
         change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100,
         volume_1h: pool.baseAsset.stats1h.buyVolume,
-        mcap: pool.baseAsset.mcap,
-        logo_url: pool.baseAsset.icon,
-        organic_score: pool.baseAsset.organicScore,
-        last_updated: currentTime,
+      mcap: pool.baseAsset.mcap,
+      logo_url: pool.baseAsset.icon,
+      organic_score: pool.baseAsset.organicScore,
+      last_updated: currentTime,
         created_at: normalizedCreatedAt
       }
     });
-
+    
     // Filter out tokens with extreme negative price movement (less than -40%) and low organic score
-    const filteredTokens = transformedTokens.filter(token =>
-      token.change_5m > -0.4 &&
+    const filteredTokens = transformedTokens.filter(token => 
+      token.change_5m > -0.4 && 
       token.organic_score >= 70.0 &&
       token.mcap > 300000 &&
       token.mcap < 2000000
     );
-
+    
     // Log timestamps for all tokens in the final set
     filteredTokens.forEach(token => {
       console.log(`Final token ${token.token_symbol} (${token.token_address}) created_at:`, {
         value: token.created_at,
         type: typeof token.created_at,
-        parsedDate: token.created_at ? new Date(typeof token.created_at === 'number' ?
-          (token.created_at > 1000000000000 ? token.created_at : token.created_at * 1000) :
+        parsedDate: token.created_at ? new Date(typeof token.created_at === 'number' ? 
+          (token.created_at > 1000000000000 ? token.created_at : token.created_at * 1000) : 
           parseInt(token.created_at as any)).toString() : 'N/A'
       });
     });
-
+    
     // If doing a full refresh, reset the cache
     if (needsFullRefresh) {
       tokenCache.tokens = new Map<string, TransformedToken>();
       tokenCache.lastFullRefresh = currentTime;
       console.log('Cache fully refreshed');
     }
-
+    
     // Track changes for reporting
     const stats = {
       added: 0,
@@ -535,12 +625,12 @@ async function fetchAndUpdateCache(
       price_increased: 0,
       price_decreased: 0
     };
-
+    
     // Create a set of current token addresses for comparison
     const currentTokenAddresses = new Set<string>();
     filteredTokens.forEach(token => {
       currentTokenAddresses.add(token.token_address);
-
+      
       const existingToken = tokenCache.tokens.get(token.token_address);
       if (!existingToken) {
         // New token, add to cache
@@ -557,17 +647,17 @@ async function fetchAndUpdateCache(
           token.organic_score !== existingToken.organic_score
         ) {
           // Calculate price change percentage for tracking
-          const priceChange = existingToken.price > 0
-            ? (token.price - existingToken.price) / existingToken.price
+          const priceChange = existingToken.price > 0 
+            ? (token.price - existingToken.price) / existingToken.price 
             : 0;
-
+          
           // Track price movement direction
           if (token.price > existingToken.price) {
             stats.price_increased++;
           } else if (token.price < existingToken.price) {
             stats.price_decreased++;
           }
-
+          
           // Update only the changed token
           tokenCache.tokens.set(token.token_address, {
             ...existingToken,
@@ -587,7 +677,7 @@ async function fetchAndUpdateCache(
         }
       }
     });
-
+    
     // Remove tokens that are no longer in the results
     if (!needsFullRefresh) {
       // Only perform removals during incremental updates
@@ -599,16 +689,16 @@ async function fetchAndUpdateCache(
         }
       }
     }
-
+    
     // Update the cache timestamp and expiry
     tokenCache.timestamp = currentTime;
     tokenCache.expiresAt = currentTime + CACHE_TTL_MS;
-
+    
     console.log(`Token cache updated: ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed, ${stats.unchanged} unchanged`);
     console.log(`Price movements: ${stats.price_increased} increased, ${stats.price_decreased} decreased`);
-
+    
     const tokenArray = Array.from(tokenCache.tokens.values());
-
+    
     // Sort tokens by criteria - prioritize tokens with highest organic score and recent price change
     tokenArray.sort((a, b) => {
       // First by organic score (descending)
@@ -618,26 +708,26 @@ async function fetchAndUpdateCache(
       // Then by absolute price change in the last hour (descending)
       return Math.abs(b.change_1h || 0) - Math.abs(a.change_1h || 0);
     });
-
+    
     // Only send notification if this is a scheduled run or forced notification
     // Regular frontend API calls will no longer trigger notifications
-    const shouldSendNotification =
-      (currentTime - lastAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) ||
+    const shouldSendNotification = 
+      (currentTime - lastAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) || 
       forceSendNotification;
-
+    
     if (shouldSendNotification) {
       console.log('Sending scheduled Discord notification');
       lastAutoNotificationTime = currentTime;
       await sendDiscordNotification(
-        tokenArray,
-        stats,
+        tokenArray, 
+        stats, 
         needsFullRefresh ? 'full' : 'incremental',
         forceSendNotification
       );
     } else {
       console.log('Skipping Discord notification - not on schedule');
     }
-
+    
     return tokenArray;
   } catch (error) {
     console.error('Error in fetchAndUpdateCache:', error);
