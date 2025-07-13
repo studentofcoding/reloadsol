@@ -2028,7 +2028,7 @@ async function internalTrackPost(request: NextRequest) {
     // Fetch current trending tokens from Jupiter API with fallback & retry
     const TRENDING_URLS = [
       'https://datapi.jup.ag/v1/pools/toptrending/1h',
-      'https://api.jup.ag/v1/pools/toptrending/1h'
+      // 'https://api.jup.ag/v1/pools/toptrending/1h'
     ]
 
     let response: Response | null = null
