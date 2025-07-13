@@ -45,8 +45,8 @@ export default function TrendingTokens({
       setError(null)
       
       try {
-        // Use our local API endpoint instead of calling Jupiter API directly
-        const response = await fetch('/api/trending')
+        // Use the new filtered API endpoint specifically for TrendingTokens
+        const response = await fetch('/api/trending/filtered')
         
         if (!response.ok) {
           throw new Error(`Failed to fetch trending tokens: ${response.status}`)
@@ -434,4 +434,4 @@ export default function TrendingTokens({
       )}
     </div>
   )
-} 
+}

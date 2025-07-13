@@ -108,7 +108,7 @@ interface JupiterResponse {
   pools: JupiterPool[]
 }
 
-interface TransformedToken {
+export interface TransformedToken {
   token_symbol: string
   token_address: string
   price: number
@@ -590,16 +590,19 @@ async function fetchAndUpdateCache(
       }
     });
 
-    // Filter out tokens with extreme negative price movement (less than -40%) and low organic score
-    const filteredTokens = transformedTokens.filter(token =>
-      token.change_5m > -0.4 &&
-      token.organic_score >= 70.0 &&
-      token.mcap > 300000 &&
-      token.mcap < 2000000
-    );
+    // REMOVED: Filter logic - now returning all tokens unfiltered
+    // const filteredTokens = transformedTokens.filter(token =>
+    //   token.change_5m > -0.4 &&
+    //   token.organic_score >= 70.0 &&
+    //   token.mcap > 300000 &&
+    //   token.mcap < 2000000
+    // );
+
+    // Use all transformed tokens instead of filtered ones
+    const allTokens = transformedTokens;
 
     // Log timestamps for all tokens in the final set
-    filteredTokens.forEach(token => {
+    allTokens.forEach(token => {
       console.log(`Final token ${token.token_symbol} (${token.token_address}) created_at:`, {
         value: token.created_at,
         type: typeof token.created_at,
@@ -628,7 +631,7 @@ async function fetchAndUpdateCache(
 
     // Create a set of current token addresses for comparison
     const currentTokenAddresses = new Set<string>();
-    filteredTokens.forEach(token => {
+    allTokens.forEach(token => {
       currentTokenAddresses.add(token.token_address);
 
       const existingToken = tokenCache.tokens.get(token.token_address);
@@ -728,6 +731,7 @@ async function fetchAndUpdateCache(
       console.log('Skipping Discord notification - not on schedule');
     }
 
+    // Return all tokens (unfiltered) for API consumers
     return tokenArray;
   } catch (error) {
     console.error('Error in fetchAndUpdateCache:', error);
@@ -737,3 +741,6 @@ async function fetchAndUpdateCache(
     // No need to clean up here as it could interfere with concurrent requests
   }
 }
+
+// Export for use by filtered route
+export { tokenCache, fetchAndUpdateCache }
