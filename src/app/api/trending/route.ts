@@ -89,9 +89,13 @@ interface JupiterBaseAsset {
     priceChange: number
     numNetBuyers: number
     buyVolume: number
+    sellVolume: number
   }
   stats5m: {
     priceChange: number
+    numNetBuyers: number
+    buyVolume: number
+    sellVolume: number
   }
   mcap: number
   organicScore: number
@@ -115,6 +119,11 @@ export interface TransformedToken {
   change_1h: number
   change_5m: number
   volume_1h: number
+  volume_5m: number
+  buy_volume_1h: number
+  buy_volume_5m: number
+  sell_volume_1h: number
+  sell_volume_5m: number
   mcap: number
   logo_url?: string
   organic_score: number
@@ -581,7 +590,12 @@ async function fetchAndUpdateCache(
         price: pool.baseAsset.usdPrice,
         change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
         change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100,
-        volume_1h: pool.baseAsset.stats1h.buyVolume,
+        buy_volume_1h: pool.baseAsset.stats1h?.buyVolume ?? 0,
+        sell_volume_1h: pool.baseAsset.stats1h?.sellVolume ?? 0,
+        buy_volume_5m: pool.baseAsset.stats5m?.buyVolume ?? 0,
+        sell_volume_5m: pool.baseAsset.stats5m?.sellVolume ?? 0,
+        volume_1h: pool.baseAsset.stats1h?.buyVolume ?? 0,
+        volume_5m: pool.baseAsset.stats5m?.buyVolume ?? 0,
         mcap: pool.baseAsset.mcap,
         logo_url: pool.baseAsset.icon,
         organic_score: pool.baseAsset.organicScore,

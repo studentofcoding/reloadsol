@@ -8,7 +8,12 @@ interface TrendingToken {
   price: number
   change_1h: number
   change_5m: number
+  buy_volume_1h: number
+  sell_volume_1h: number
+  buy_volume_5m: number
+  sell_volume_5m: number
   volume_1h: number
+  volume_5m: number
   mcap: number
   logo_url?: string
   organic_score: number
@@ -157,14 +162,16 @@ export default function TrendingPoolsPage() {
     return `${(value * 100).toFixed(2)}%`
   }
 
-  const getMarketCapCategory = (mcap: number): MarketCapCategory => {
-    return MARKET_CAP_CATEGORIES.find(cat => mcap >= cat.min && mcap <= cat.max) || MARKET_CAP_CATEGORIES[0]
+  const getMarketCapCategory = (mcap: number): MarketCapCategory | null => {
+    return MARKET_CAP_CATEGORIES.find(cat => mcap >= cat.min && mcap <= cat.max) || null
   }
 
   const calculateNetVolume = (token: TrendingToken): number => {
-    const buyVolume = token.volume_1h
-    const sellVolume = buyVolume * (1 - Math.max(0, token.change_1h))
-    return buyVolume - sellVolume
+    const buyVolume = token.buy_volume_1h ?? 0
+    const sellVolume = token.sell_volume_1h ?? 0
+    const buyVolume5m = token.buy_volume_5m ?? 0
+    const sellVolume5m = token.sell_volume_5m ?? 0
+    return (buyVolume - sellVolume) + (buyVolume5m - sellVolume5m)
   }
 
   // Filter and sort tokens
@@ -172,13 +179,20 @@ export default function TrendingPoolsPage() {
     if (!trendingData?.tokens) return []
 
     let filtered = trendingData.tokens.filter(token => {
+      // First, filter out tokens with market cap above 3M (billions like Bonk)
+      if (token.mcap > 3000000) {
+        console.log(`Filtering out ${token.token_symbol} with mcap: ${token.mcap}`)
+        return false
+      }
+      
       const netVolume = calculateNetVolume(token)
       const volumeMatch = netVolume >= volumeFilter
       
       if (selectedCategory === 'all') return volumeMatch
       
       const category = getMarketCapCategory(token.mcap)
-      return volumeMatch && category.name === selectedCategory
+      // Only include tokens that have a valid category AND match the selected category
+      return volumeMatch && category && category.name === selectedCategory
     })
 
     filtered.sort((a, b) => {
@@ -222,7 +236,10 @@ export default function TrendingPoolsPage() {
     
     filteredAndSortedTokens.forEach(token => {
       const category = getMarketCapCategory(token.mcap)
-      grouped[category.name].push(token)
+      // Only group tokens that have a valid category
+      if (category) {
+        grouped[category.name].push(token)
+      }
     })
     
     return grouped
