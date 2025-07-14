@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { TrackingRecord } from '@/utils/trading-tracker'
 import { useWallet, useConnection } from './WalletProvider'
 import { useTradingData } from './TradingDataProvider'
@@ -87,6 +87,16 @@ export default function PnLTracker() {
   // Token chart state
   const [selectedToken, setSelectedToken] = useState<string>('')
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
+
+  // Share functionality state
+  const [showShareModal, setShowShareModal] = useState<boolean>(false)
+  const [shareData, setShareData] = useState<{
+    coinName: string, 
+    profitPercentage: number, 
+    type: 'profit' | 'loss',
+    tokenAddress?: string
+  } | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
 
   // Clear old localStorage data on component mount
   useEffect(() => {
@@ -746,6 +756,110 @@ export default function PnLTracker() {
     setIsChartLoading(true)
   }, [])
 
+  // Enhanced function to generate share image with token address
+  const generateShareImage = async (coinName: string, profitPercentage: number, tokenAddress?: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const canvas = canvasRef.current
+      if (!canvas) return resolve('')
+      
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return resolve('')
+      
+      // Set canvas size
+      canvas.width = 800
+      canvas.height = 600
+      
+      const img = new Image()
+      img.onload = () => {
+        // Draw background image
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        
+        // Set text styles
+        ctx.textAlign = 'center'
+        ctx.fillStyle = '#ffffff'
+        ctx.strokeStyle = '#000000'
+        ctx.lineWidth = 2
+        
+        // Draw coin name (top)
+        ctx.font = 'bold 36px Arial'
+        const coinText = coinName.toUpperCase()
+        ctx.strokeText(coinText, canvas.width / 2, canvas.height / 2 - 80)
+        ctx.fillText(coinText, canvas.width / 2, canvas.height / 2 - 80)
+        
+        // Draw profit percentage (center)
+        ctx.font = 'bold 64px Arial'
+        const profitText = `${profitPercentage > 0 ? '+' : ''}${profitPercentage.toFixed(1)}%`
+        ctx.fillStyle = profitPercentage > 0 ? '#10B981' : '#EF4444'
+        ctx.strokeText(profitText, canvas.width / 2, canvas.height / 2)
+        ctx.fillText(profitText, canvas.width / 2, canvas.height / 2)
+        
+        // Draw token address (bottom) if provided
+        if (tokenAddress) {
+          ctx.font = 'bold 20px Arial'
+          ctx.fillStyle = '#ffffff'
+          const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-6)}`
+          ctx.strokeText(shortAddress, canvas.width / 2, canvas.height / 2 + 80)
+          ctx.fillText(shortAddress, canvas.width / 2, canvas.height / 2 + 80)
+        }
+        
+        // Convert to data URL
+        resolve(canvas.toDataURL('image/png'))
+      }
+      
+      img.src = '/profit_share.png'
+    })
+  }
+
+  // Function to handle share
+  const handleShare = async (coinName: string, profitPercentage: number, tokenAddress?: string) => {
+    setShareData({ 
+      coinName, 
+      profitPercentage, 
+      type: profitPercentage > 0 ? 'profit' : 'loss',
+      tokenAddress 
+    })
+    setShowShareModal(true)
+  }
+
+  // Function to share to Twitter
+  const shareToTwitter = async () => {
+    if (!shareData) return
+    
+    const imageDataUrl = await generateShareImage(
+      shareData.coinName, 
+      shareData.profitPercentage,
+      shareData.tokenAddress
+    )
+    
+    // Create tweet text with token address if available
+    const addressText = shareData.tokenAddress ? `\n\nToken: ${shareData.tokenAddress}` : ''
+    const tweetText = `Just ${shareData.type === 'profit' ? 'made' : 'took'} ${shareData.profitPercentage > 0 ? '+' : ''}${shareData.profitPercentage.toFixed(1)}% on $${shareData.coinName}! 🚀${addressText}\n\n#Solana #Trading #Crypto`
+    
+    // For now, we'll copy the text and open Twitter
+    navigator.clipboard.writeText(tweetText)
+    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`, '_blank')
+    
+    setShowShareModal(false)
+  }
+
+  // Function to download the image
+  const downloadImage = async () => {
+    if (!shareData) return
+    
+    const imageDataUrl = await generateShareImage(
+      shareData.coinName, 
+      shareData.profitPercentage,
+      shareData.tokenAddress
+    )
+    
+    const link = document.createElement('a')
+    link.download = `${shareData.coinName}_profit_share.png`
+    link.href = imageDataUrl
+    link.click()
+    
+    setShowShareModal(false)
+  }
+
   // Fast sell function for open positions
   const handleFastSell = React.useCallback(async (position: OpenPosition, event: React.MouseEvent) => {
     event.preventDefault()
@@ -1106,6 +1220,19 @@ export default function PnLTracker() {
                       {/* Action buttons overlay */}
                       <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-2 sm:space-x-3">
                         <button
+                          onClick={() => handleShare(
+                            record.symbol || record.name || 'Token', 
+                            record.pnlPercentage,
+                            record.mintAddress
+                          )}
+                          className="p-1.5 sm:p-1 bg-green-600 hover:bg-green-500 rounded text-white"
+                          title="Share on Twitter"
+                        >
+                          <svg className="w-8 h-8 sm:w-3 sm:h-3" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                          </svg>
+                        </button>
+                        <button
                           onClick={() => handleSelectToken(record.mintAddress)}
                           className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
                           title="View chart"
@@ -1255,6 +1382,22 @@ export default function PnLTracker() {
                   >
                     {/* Action buttons overlay */}
                     <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-1 z-20">
+                      {position.pnlPercentage !== undefined && (
+                        <button
+                          onClick={() => handleShare(
+                            position.symbol || position.name || 'Token', 
+                            position.pnlPercentage!,
+                            position.mintAddress
+                          )}
+                          className="p-1.5 sm:p-1 bg-green-600 hover:bg-green-500 rounded text-white"
+                          title="Share on Twitter"
+                          disabled={sellingTokenId === position.id}
+                        >
+                          <svg className="w-4 h-4 sm:w-3 sm:h-3" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                          </svg>
+                        </button>
+                      )}
                       <button
                         onClick={() => handleSelectToken(position.mintAddress)}
                         className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
@@ -1431,6 +1574,62 @@ export default function PnLTracker() {
           <p className="text-gray-400 text-sm">Connect your wallet to track trading performance</p>
         </div>
       )}
+
+      {/* Share Modal */}
+      {showShareModal && shareData && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-semibold text-white">Share Your Trade</h3>
+              <button
+                onClick={() => setShowShareModal(false)}
+                className="text-gray-400 hover:text-white"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="mb-6">
+              <div className="bg-gray-700 rounded-lg p-4 text-center">
+                <div className="text-2xl font-bold text-white mb-2">
+                  ${shareData.coinName.toUpperCase()}
+                </div>
+                <div className={`text-3xl font-bold ${
+                  shareData.profitPercentage > 0 ? 'text-green-400' : 'text-red-400'
+                }`}>
+                  {shareData.profitPercentage > 0 ? '+' : ''}{shareData.profitPercentage.toFixed(1)}%
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex space-x-3">
+              <button
+                onClick={shareToTwitter}
+                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2"
+              >
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                </svg>
+                <span>Tweet</span>
+              </button>
+              <button
+                onClick={downloadImage}
+                className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>Download</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden canvas for image generation */}
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
     </div>
   )
 }
