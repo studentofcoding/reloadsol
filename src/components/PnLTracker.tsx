@@ -774,32 +774,36 @@ export default function PnLTracker() {
         // Draw background image
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
         
-        // Set text styles
-        ctx.textAlign = 'center'
+        // Set text styles for left middle alignment
+        ctx.textAlign = 'left'
         ctx.fillStyle = '#ffffff'
         ctx.strokeStyle = '#000000'
         ctx.lineWidth = 2
         
-        // Draw coin name (top)
+        // Left margin for text positioning
+        const leftMargin = 50
+        const middleY = canvas.height / 2
+        
+        // Draw coin name (top of middle section)
         ctx.font = 'bold 36px Arial'
         const coinText = coinName.toUpperCase()
-        ctx.strokeText(coinText, canvas.width / 2, canvas.height / 2 - 80)
-        ctx.fillText(coinText, canvas.width / 2, canvas.height / 2 - 80)
+        ctx.strokeText(coinText, leftMargin, middleY - 80)
+        ctx.fillText(coinText, leftMargin, middleY - 80)
         
-        // Draw profit percentage (center)
+        // Draw profit percentage (center of middle section)
         ctx.font = 'bold 64px Arial'
         const profitText = `${profitPercentage > 0 ? '+' : ''}${profitPercentage.toFixed(1)}%`
         ctx.fillStyle = profitPercentage > 0 ? '#10B981' : '#EF4444'
-        ctx.strokeText(profitText, canvas.width / 2, canvas.height / 2)
-        ctx.fillText(profitText, canvas.width / 2, canvas.height / 2)
+        ctx.strokeText(profitText, leftMargin, middleY)
+        ctx.fillText(profitText, leftMargin, middleY)
         
-        // Draw token address (bottom) if provided
+        // Draw token address (bottom of middle section) if provided
         if (tokenAddress) {
           ctx.font = 'bold 20px Arial'
           ctx.fillStyle = '#ffffff'
           const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-6)}`
-          ctx.strokeText(shortAddress, canvas.width / 2, canvas.height / 2 + 80)
-          ctx.fillText(shortAddress, canvas.width / 2, canvas.height / 2 + 80)
+          ctx.strokeText(shortAddress, leftMargin, middleY + 80)
+          ctx.fillText(shortAddress, leftMargin, middleY + 80)
         }
         
         // Convert to data URL
