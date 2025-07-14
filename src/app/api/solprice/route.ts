@@ -7,6 +7,7 @@ interface PriceCache {
   timestamp: number;
   expiresAt: number;
   source: string;
+  originalSource: string; // Add this field
 }
 
 // Default SOL price in case all APIs fail
@@ -17,7 +18,8 @@ let priceCache: PriceCache = {
   price: DEFAULT_SOL_PRICE_USD,
   timestamp: 0,
   expiresAt: 0,
-  source: 'default'
+  source: 'default',
+  originalSource: 'default'
 };
 
 // Cache TTL in milliseconds (30 seconds for fresh, 5 minutes for stale)
@@ -171,7 +173,8 @@ async function getSolPriceUSD(): Promise<{ price: number; source: string }> {
   if (priceCache.price && priceCache.price !== DEFAULT_SOL_PRICE_USD &&
     now - priceCache.timestamp < STALE_CACHE_TTL_MS) {
     console.log('Using stale cache to reduce API load');
-    return { price: priceCache.price, source: `stale_${priceCache.source}` };
+    // FIX: Use originalSource to prevent accumulation
+    return { price: priceCache.price, source: `stale_${priceCache.originalSource}` };
   }
 
   // Try all APIs in parallel for faster response
@@ -194,7 +197,8 @@ async function getSolPriceUSD(): Promise<{ price: number; source: string }> {
   // All APIs failed, use cached or default price
   if (priceCache.price && priceCache.price !== DEFAULT_SOL_PRICE_USD) {
     console.warn('All APIs failed, using stale cached price');
-    return { price: priceCache.price, source: 'stale_cache' };
+    // FIX: Use originalSource consistently
+    return { price: priceCache.price, source: `stale_${priceCache.originalSource}` };
   }
 
   console.warn('All APIs failed, using default price');
@@ -251,7 +255,8 @@ export async function GET() {
         price: result.price,
         source: result.source,
         timestamp: currentTime,
-        expiresAt: currentTime + CACHE_TTL_MS
+        expiresAt: currentTime + CACHE_TTL_MS,
+        originalSource: result.source
       };
 
       console.log(`Updated SOL price cache: $${result.price} from ${result.source}`);
@@ -288,7 +293,8 @@ export async function GET() {
       return NextResponse.json(
         {
           price: priceCache.price,
-          source: priceCache.source + '_emergency',
+          // FIX: Use originalSource to prevent accumulation
+          source: `emergency_${priceCache.originalSource}`,
           cached: true,
           error: 'Failed to fetch fresh price data, using emergency cache',
           cache_age: Math.round((Date.now() - priceCache.timestamp) / 1000)
