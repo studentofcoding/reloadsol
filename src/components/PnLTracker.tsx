@@ -835,13 +835,122 @@ export default function PnLTracker() {
       shareData.tokenAddress
     )
     
-    // Create tweet text with token address if available
-    const addressText = shareData.tokenAddress ? `\n\nToken: ${shareData.tokenAddress}` : ''
-    const tweetText = `Just ${shareData.type === 'profit' ? 'made' : 'took'} ${shareData.profitPercentage > 0 ? '+' : ''}${shareData.profitPercentage.toFixed(1)}% on $${shareData.coinName}! 🚀${addressText}\n\n#Solana #Trading #Crypto`
+    // Create simplified tweet text
+    const tweetText = `Just ${shareData.type === 'profit' ? 'made' : 'took'} ${shareData.profitPercentage > 0 ? '+' : ''}${shareData.profitPercentage.toFixed(1)}% on $${shareData.coinName}! 🚀\n\n#Solana #Trading #Crypto`
     
-    // For now, we'll copy the text and open Twitter
-    navigator.clipboard.writeText(tweetText)
-    window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`, '_blank')
+    // Open image in new tab with download instructions
+    const newWindow = window.open('', '_blank')
+    if (newWindow) {
+      newWindow.document.write(`
+        <html>
+          <head>
+            <title>${shareData.coinName} Trading Result</title>
+            <style>
+              body { 
+                margin: 0; 
+                padding: 20px; 
+                background: #000; 
+                color: #fff; 
+                font-family: Arial, sans-serif;
+                text-align: center;
+              }
+              img { 
+                max-width: 100%; 
+                height: auto; 
+                border-radius: 8px;
+                box-shadow: 0 4px 20px rgba(255,255,255,0.1);
+                margin-bottom: 20px;
+              }
+              .instructions {
+                margin-top: 20px;
+                padding: 20px;
+                background: #1a1a1a;
+                border-radius: 8px;
+                border: 1px solid #333;
+                max-width: 600px;
+                margin: 20px auto;
+              }
+              .step {
+                margin: 15px 0;
+                padding: 10px;
+                background: #2a2a2a;
+                border-radius: 6px;
+                text-align: left;
+              }
+              .tweet-text {
+                background: #2a2a2a;
+                padding: 15px;
+                border-radius: 6px;
+                margin: 15px 0;
+                font-family: monospace;
+                word-break: break-word;
+                text-align: left;
+              }
+              button {
+                background: #1d9bf0;
+                color: white;
+                border: none;
+                padding: 12px 24px;
+                border-radius: 25px;
+                cursor: pointer;
+                margin: 10px;
+                font-size: 16px;
+                font-weight: bold;
+              }
+              button:hover { background: #1a8cd8; }
+              .download-btn {
+                background: #10B981;
+                font-size: 18px;
+                padding: 15px 30px;
+              }
+              .download-btn:hover { background: #059669; }
+            </style>
+          </head>
+          <body>
+            <h1>🚀 ${shareData.coinName} Trading Result</h1>
+            <img src="${imageDataUrl}" alt="Trading Result" id="shareImage" />
+            
+            <div class="instructions">
+              <h2>📱 Share to X (Twitter)</h2>
+              
+              <div class="step">
+                <strong>Step 1:</strong> Download the image above
+              </div>
+              <button class="download-btn" onclick="downloadImage()">📥 Download Image</button>
+              
+              <div class="step">
+                <strong>Step 2:</strong> Copy the tweet text below
+              </div>
+              <div class="tweet-text">${tweetText}</div>
+              <button onclick="copyText()">📋 Copy Tweet Text</button>
+              
+              <div class="step">
+                <strong>Step 3:</strong> Go to X (Twitter) and create a new post
+              </div>
+              <button onclick="window.open('https://twitter.com/intent/tweet', '_blank')">🐦 Open X (Twitter)</button>
+              
+              <div class="step">
+                <strong>Step 4:</strong> Paste the text and upload the downloaded image
+              </div>
+            </div>
+            
+            <script>
+              function downloadImage() {
+                const link = document.createElement('a')
+                link.download = '${shareData.coinName}_profit_share.png'
+                link.href = '${imageDataUrl}'
+                link.click()
+              }
+              
+              function copyText() {
+                navigator.clipboard.writeText('${tweetText.replace(/'/g, "\\''").replace(/\n/g, '\\n')}')
+                alert('Tweet text copied to clipboard!')
+              }
+            </script>
+          </body>
+        </html>
+      `)
+    }
     
     setShowShareModal(false)
   }
