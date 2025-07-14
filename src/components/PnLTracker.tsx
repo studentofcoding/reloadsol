@@ -765,14 +765,14 @@ export default function PnLTracker() {
       const ctx = canvas.getContext('2d')
       if (!ctx) return resolve('')
       
-      // Set canvas size
-      canvas.width = 800
-      canvas.height = 600
-      
       const img = new Image()
       img.onload = () => {
-        // Draw background image
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        // Use the original image dimensions instead of fixed size
+        canvas.width = img.naturalWidth
+        canvas.height = img.naturalHeight
+        
+        // Draw background image at original size
+        ctx.drawImage(img, 0, 0)
         
         // Set text styles for left middle alignment
         ctx.textAlign = 'left'
@@ -780,30 +780,51 @@ export default function PnLTracker() {
         ctx.strokeStyle = '#000000'
         ctx.lineWidth = 2
         
-        // Left margin for text positioning
-        const leftMargin = 50
+        // Left margin for text positioning (scale with image width)
+        const leftMargin = canvas.width * 0.0625 // 50px for 800px width, scales proportionally
         const middleY = canvas.height / 2
         
+        // Scale font sizes based on canvas width
+        const baseWidth = 800
+        const scaleFactor = canvas.width / baseWidth
+        
         // Draw coin name (top of middle section)
-        ctx.font = 'bold 36px Arial'
+        ctx.font = `bold ${Math.round(36 * scaleFactor)}px Arial`
         const coinText = coinName.toUpperCase()
-        ctx.strokeText(coinText, leftMargin, middleY - 80)
-        ctx.fillText(coinText, leftMargin, middleY - 80)
+        ctx.strokeText(coinText, leftMargin, middleY - (80 * scaleFactor))
+        ctx.fillText(coinText, leftMargin, middleY - (80 * scaleFactor))
+        
+        // Prepare profit percentage text
+        ctx.font = `bold ${Math.round(64 * scaleFactor)}px Arial`
+        const profitText = `${profitPercentage > 0 ? '+' : ''}${profitPercentage.toFixed(1)}%`
+        
+        // Measure text to create background rectangle
+        const textMetrics = ctx.measureText(profitText)
+        const textWidth = textMetrics.width
+        const textHeight = Math.round(64 * scaleFactor)
+        
+        // Draw semi-transparent black background for profit percentage
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)' // 80% transparent black
+        const padding = 10 * scaleFactor
+        ctx.fillRect(
+          leftMargin - padding, 
+          middleY - textHeight + padding, 
+          textWidth + (padding * 2), 
+          textHeight + padding
+        )
         
         // Draw profit percentage (center of middle section)
-        ctx.font = 'bold 64px Arial'
-        const profitText = `${profitPercentage > 0 ? '+' : ''}${profitPercentage.toFixed(1)}%`
         ctx.fillStyle = profitPercentage > 0 ? '#10B981' : '#EF4444'
         ctx.strokeText(profitText, leftMargin, middleY)
         ctx.fillText(profitText, leftMargin, middleY)
         
         // Draw token address (bottom of middle section) if provided
         if (tokenAddress) {
-          ctx.font = 'bold 20px Arial'
+          ctx.font = `bold ${Math.round(20 * scaleFactor)}px Arial`
           ctx.fillStyle = '#ffffff'
           const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-6)}`
-          ctx.strokeText(shortAddress, leftMargin, middleY + 80)
-          ctx.fillText(shortAddress, leftMargin, middleY + 80)
+          ctx.strokeText(shortAddress, leftMargin, middleY + (80 * scaleFactor))
+          ctx.fillText(shortAddress, leftMargin, middleY + (80 * scaleFactor))
         }
         
         // Convert to data URL
@@ -836,7 +857,7 @@ export default function PnLTracker() {
     )
     
     // Create simplified tweet text
-    const tweetText = `Just ${shareData.type === 'profit' ? 'made' : 'took'} ${shareData.profitPercentage > 0 ? '+' : ''}${shareData.profitPercentage.toFixed(1)}% on $${shareData.coinName}! 🚀\n\n#Solana #Trading #Crypto`
+    const tweetText = `Just ${shareData.type === 'profit' ? 'made' : 'took'} ${shareData.profitPercentage > 0 ? '+' : ''}${shareData.profitPercentage.toFixed(1)}% on $${shareData.coinName}! 🚀\n\n check other recommended coin only on https://v2.reloadsol.xyz/buy`
     
     // Open image in new tab with download instructions
     const newWindow = window.open('', '_blank')
