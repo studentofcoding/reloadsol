@@ -200,6 +200,13 @@ async function sendDiscordNotification(
     return;
   }
 
+  const SERVER_URL = process.env.PUBLIC_SERVER_URL || process.env.VERCEL_URL || '';
+
+  if (SERVER_URL !== 'v2.reloadsol.xyz') {
+    console.log(`Skipping Discord notification: server URL is ${SERVER_URL}, not v2.reloadsol.xyz`);
+    return;
+  }
+
   // Skip notification if not forced and no meaningful changes
   if (!forceSend && stats.added === 0 && stats.updated === 0 && stats.removed === 0) {
     console.log('No changes to report to Discord');
