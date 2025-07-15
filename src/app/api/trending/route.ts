@@ -207,8 +207,9 @@ async function sendDiscordNotification(
     return;
   }
 
-  // Skip notification if not forced and no meaningful changes
-  if (!forceSend && stats.added === 0 && stats.updated === 0 && stats.removed === 0) {
+  // Always send if there are new tokens, updates, removals, or price movements in filter categories
+  const hasPriceMovement = stats.price_increased > 0 || stats.price_decreased > 0;
+  if (!forceSend && stats.added === 0 && stats.updated === 0 && stats.removed === 0 && !hasPriceMovement) {
     console.log('No changes to report to Discord');
     return;
   }
@@ -221,12 +222,22 @@ async function sendDiscordNotification(
       { label: '$121k - $200k', min: 121_000, max: 200_000 },
       { label: '$201k - $500k', min: 201_000, max: 500_000 },
       { label: '$501k - $1M', min: 501_000, max: 1_000_000 },
-      { label: '$1M - $3M', min: 1_000_001, max: 3_000_000 },
+      { label: '$1M - $3M', min: 1_000_001, max: 3_000_000 }
     ];
+
+    // If no new tokens, but there are price movements, include those tokens in the message
+    let tokensToShare = newlyAddedTokens;
+    if (tokensToShare.length === 0 && hasPriceMovement) {
+      // Find tokens in the filter categories with price movement
+      tokensToShare = tokenArray.filter(token => {
+        return categories.some(cat => token.mcap >= cat.min && token.mcap <= cat.max) &&
+          (token.price_change && Math.abs(token.price_change) > 0);
+      });
+    }
 
     // For each category, filter and format up to 5 tokens
     const categoryFields = categories.map(cat => {
-      const tokens = newlyAddedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 5);
+      const tokens = tokensToShare.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 5);
       if (tokens.length === 0) return null;
       return {
         name: `${cat.label} MCap`,
