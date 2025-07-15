@@ -93,7 +93,7 @@ interface TrackedToken {
   peak_price_usd: number
   current_gain_percentage: number
   peak_gain_percentage: number
-  status: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped'
+  status: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped' | 'stopped'
   organic_score: number | null
   market_cap: number | null
   volume_1h: number | null
@@ -2731,6 +2731,36 @@ async function internalTrackPost(request: NextRequest) {
         // Check if token has dropped more than 50% from initial price (original loss condition)
         const isLost = currentGain <= -50
 
+        // Check for stale data (price history older than 2 weeks)
+        const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
+        const lastPriceUpdate = new Date(existingToken.updated_at)
+        const isStaleData = lastPriceUpdate < twoWeeksAgo
+
+        if (isStaleData && existingToken.status === 'tracking') {
+          // Mark as stopped due to stale data
+          updatesPromises.push(
+            (async () => {
+              const { error } = await supabase
+                .from(TRACKER_TABLE)
+                .update({
+                  status: 'stopped',
+                  status_changed_at: new Date().toISOString(),
+                  last_price_usd: token.current_price,
+                  current_gain_percentage: currentGain,
+                  peak_gain_percentage: peakGain,
+                  organic_score: token.organic_score,
+                  market_cap: token.market_cap,
+                  volume_1h: token.volume_1h
+                })
+                .eq('id', existingToken.id)
+              if (error) throw error
+            })()
+          )
+
+          console.log(`🛑 Token stopped due to stale data (${Math.round((Date.now() - lastPriceUpdate.getTime()) / (1000 * 60 * 60 * 24))} days old): ${token.token_symbol} (${token.token_address})`)
+          continue // Skip further processing for this token
+        }
+
         // Check if trading simulation should sell
         let shouldSell = false
         let sellOperation = null
@@ -2963,7 +2993,8 @@ async function internalTrackPost(request: NextRequest) {
       tracking: currentStats?.filter(t => t.status === 'tracking').length || 0,
       won: currentStats?.filter(t => t.status === 'won').length || 0,
       lost: currentStats?.filter(t => t.status === 'lost').length || 0,
-      skipped: currentStats?.filter(t => t.status === 'skipped').length || 0
+      skipped: currentStats?.filter(t => t.status === 'skipped').length || 0,
+      stopped: currentStats?.filter(t => t.status === 'stopped').length || 0
     }
 
     const summary = {
