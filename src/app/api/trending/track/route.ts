@@ -2488,30 +2488,31 @@ async function internalTrackPost(request: NextRequest) {
                   }, new Error(error.message))
                   throw error
                 }
+
+                // Send Discord notification for new token detection (MOVED BEFORE RETURN)
+                if (shouldEnableNotifications()) {
+                  try {
+                    await sendNewTokenDetectionDiscord({
+                      tokenAddress: token.token_address,
+                      tokenSymbol: token.token_symbol,
+                      tokenName: token.token_name,
+                      currentPrice: token.current_price,
+                      marketCap: token.market_cap,
+                      organicScore: token.organic_score,
+                      volume1h: token.volume_1h,
+                      isRealTrading: tradingSimulation?.is_simulated === false
+                    })
+                  } catch (discordError) {
+                    console.error('❌ Failed to send new token Discord notification:', discordError)
+                    // Don't fail the operation if Discord fails
+                  }
+                }
+
+                return { success: true, tokenSymbol: token.token_symbol }
               } catch (err) {
                 console.error(`❌ Failed to upsert token ${token.token_symbol}:`, err)
                 // Don't re-throw to prevent unhandled rejection - let Promise.allSettled handle it
                 return { success: false, error: err, tokenSymbol: token.token_symbol }
-              }
-              return { success: true, tokenSymbol: token.token_symbol }
-
-              // Send Discord notification for new token detection
-              if (shouldEnableNotifications()) {
-                try {
-                  await sendNewTokenDetectionDiscord({
-                    tokenAddress: token.token_address,
-                    tokenSymbol: token.token_symbol,
-                    tokenName: token.token_name,
-                    currentPrice: token.current_price,
-                    marketCap: token.market_cap,
-                    organicScore: token.organic_score,
-                    volume1h: token.volume_1h,
-                    isRealTrading: tradingSimulation?.is_simulated === false
-                  })
-                } catch (discordError) {
-                  console.error('❌ Failed to send new token Discord notification:', discordError)
-                  // Don't fail the operation if Discord fails
-                }
               }
             })()
           )
