@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
-import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
+import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 
 export const runtime = 'nodejs'
 
@@ -93,7 +93,7 @@ interface TrackedToken {
   peak_price_usd: number
   current_gain_percentage: number
   peak_gain_percentage: number
-  status: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped'
+  status: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped' | 'stopped'
   organic_score: number | null
   market_cap: number | null
   volume_1h: number | null
@@ -102,7 +102,6 @@ interface TrackedToken {
   status_changed_at: string | null
   created_at: string
   updated_at: string
-  trade_comparison_data?: TradeComparisonResult | null
   trading_simulation?: TradingSimulation | null
   price_history?: PriceRecord[] | null
   // New fields for waiting system
@@ -1070,51 +1069,6 @@ async function runPnLUpdate(): Promise<void> {
   } catch (error) {
     console.error('❌ Error running PnL update:', error)
     // Don't throw - let tracking continue even if PnL update fails
-  }
-}
-
-// Helper function to perform enhanced trade comparison for a token
-async function performTradeComparison(token: any): Promise<TradeComparisonResult | null> {
-  try {
-    console.log(`🚀 Performing enhanced trade comparison for ${token.token_symbol} (${token.token_address})`)
-
-    // Use the new enhanced trade comparison function
-    const enhancedResult = await performEnhancedTradeComparison(
-      token.token_address,
-      token.token_symbol,
-      0.015 // 0.015 SOL as specified
-    )
-
-    // Convert enhanced result to the expected TradeComparisonResult format for backward compatibility
-    const tradeResult: TradeComparisonResult = {
-      token_address: enhancedResult.token_address,
-      token_symbol: enhancedResult.token_symbol,
-      timestamp: enhancedResult.timestamp,
-      buy_amount_sol: enhancedResult.buy_amount_sol,
-      comparisons: enhancedResult.configurations,
-      best_config: enhancedResult.best_config || {
-        slippage: 0,
-        provider: 'none',
-        token_amount: '0',
-        response_time: 0,
-        total_fees: 0
-      }
-    }
-
-    console.log(`✅ Enhanced trade comparison completed for ${token.token_symbol}:`, {
-      successful_configs: Object.values(enhancedResult.configurations).filter(c => c.success).length,
-      best_provider: enhancedResult.best_config?.provider,
-      best_rpc: enhancedResult.best_config?.rpc_used,
-      provider_performance: Object.entries(enhancedResult.provider_performance)
-        .map(([p, perf]) => `${p}: ${perf.success_rate.toFixed(1)}%`)
-        .join(', ')
-    })
-
-    return tradeResult
-
-  } catch (error) {
-    console.error(`❌ Error performing enhanced trade comparison for ${token.token_symbol}:`, error)
-    return null
   }
 }
 
@@ -2288,18 +2242,6 @@ async function internalTrackPost(request: NextRequest) {
           // Route highly pumped tokens to waiting system
           const tokenId = (existingAnyStatus as any)?.id || `wait_${token.token_address}_${Date.now()}`
 
-          // Perform trade comparison for future use when buying
-          let tradeComparisonData = null
-          try {
-            tradeComparisonData = await performTradeComparison(token)
-            console.log(`📊 Trade comparison for new waiting token ${token.token_symbol}:`, {
-              best_config: tradeComparisonData?.best_config,
-              successful_comparisons: Object.values(tradeComparisonData?.comparisons || {}).filter((c: any) => c.success).length
-            })
-          } catch (error) {
-            console.error(`❌ Trade comparison failed for ${token.token_symbol}:`, error)
-          }
-
           // Create initial price history record
           const initialPriceRecord: PriceRecord = {
             timestamp: new Date().toISOString(),
@@ -2330,7 +2272,6 @@ async function internalTrackPost(request: NextRequest) {
                     market_cap: token.market_cap,
                     volume_1h: token.volume_1h,
                     tracking_started_at: currentTime,
-                    trade_comparison_data: tradeComparisonData,
                     trading_simulation: null, // No simulation until we buy
                     price_history: [initialPriceRecord],
                     // New waiting system fields
@@ -2366,18 +2307,6 @@ async function internalTrackPost(request: NextRequest) {
         } else {
           // Proceed with immediate buy and tracking for tokens that haven't pumped excessively
           const tokenId = (existingAnyStatus as any)?.id || `track_${token.token_address}_${Date.now()}`
-
-          // Perform trade comparison for new tokens
-          let tradeComparisonData = null
-          try {
-            tradeComparisonData = await performTradeComparison(token)
-            console.log(`📊 Trade comparison for new immediate token ${token.token_symbol}:`, {
-              best_config: tradeComparisonData?.best_config,
-              successful_comparisons: Object.values(tradeComparisonData?.comparisons || {}).filter((c: any) => c.success).length
-            })
-          } catch (error) {
-            console.error(`❌ Trade comparison failed for ${token.token_symbol}:`, error)
-          }
 
           // Perform buy operation for new tokens (simulation or real trading)
           let tradingSimulation: TradingSimulation | null = null
@@ -2470,7 +2399,6 @@ async function internalTrackPost(request: NextRequest) {
                     market_cap: token.market_cap,
                     volume_1h: token.volume_1h,
                     tracking_started_at: new Date().toISOString(),
-                    trade_comparison_data: tradeComparisonData,
                     trading_simulation: tradingSimulation,
                     price_history: [initialPriceRecord]
                   }, {
@@ -2488,30 +2416,31 @@ async function internalTrackPost(request: NextRequest) {
                   }, new Error(error.message))
                   throw error
                 }
+
+                // Send Discord notification for new token detection (MOVED BEFORE RETURN)
+                if (shouldEnableNotifications()) {
+                  try {
+                    await sendNewTokenDetectionDiscord({
+                      tokenAddress: token.token_address,
+                      tokenSymbol: token.token_symbol,
+                      tokenName: token.token_name,
+                      currentPrice: token.current_price,
+                      marketCap: token.market_cap,
+                      organicScore: token.organic_score,
+                      volume1h: token.volume_1h,
+                      isRealTrading: tradingSimulation?.is_simulated === false
+                    })
+                  } catch (discordError) {
+                    console.error('❌ Failed to send new token Discord notification:', discordError)
+                    // Don't fail the operation if Discord fails
+                  }
+                }
+
+                return { success: true, tokenSymbol: token.token_symbol }
               } catch (err) {
                 console.error(`❌ Failed to upsert token ${token.token_symbol}:`, err)
                 // Don't re-throw to prevent unhandled rejection - let Promise.allSettled handle it
                 return { success: false, error: err, tokenSymbol: token.token_symbol }
-              }
-              return { success: true, tokenSymbol: token.token_symbol }
-
-              // Send Discord notification for new token detection
-              if (shouldEnableNotifications()) {
-                try {
-                  await sendNewTokenDetectionDiscord({
-                    tokenAddress: token.token_address,
-                    tokenSymbol: token.token_symbol,
-                    tokenName: token.token_name,
-                    currentPrice: token.current_price,
-                    marketCap: token.market_cap,
-                    organicScore: token.organic_score,
-                    volume1h: token.volume_1h,
-                    isRealTrading: tradingSimulation?.is_simulated === false
-                  })
-                } catch (discordError) {
-                  console.error('❌ Failed to send new token Discord notification:', discordError)
-                  // Don't fail the operation if Discord fails
-                }
               }
             })()
           )
@@ -2729,6 +2658,36 @@ async function internalTrackPost(request: NextRequest) {
 
         // Check if token has dropped more than 50% from initial price (original loss condition)
         const isLost = currentGain <= -50
+
+        // Check for stale data (price history older than 2 weeks)
+        const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
+        const lastPriceUpdate = new Date(existingToken.updated_at)
+        const isStaleData = lastPriceUpdate < twoWeeksAgo
+
+        if (isStaleData && existingToken.status === 'tracking') {
+          // Mark as stopped due to stale data
+          updatesPromises.push(
+            (async () => {
+              const { error } = await supabase
+                .from(TRACKER_TABLE)
+                .update({
+                  status: 'stopped',
+                  status_changed_at: new Date().toISOString(),
+                  last_price_usd: token.current_price,
+                  current_gain_percentage: currentGain,
+                  peak_gain_percentage: peakGain,
+                  organic_score: token.organic_score,
+                  market_cap: token.market_cap,
+                  volume_1h: token.volume_1h
+                })
+                .eq('id', existingToken.id)
+              if (error) throw error
+            })()
+          )
+
+          console.log(`🛑 Token stopped due to stale data (${Math.round((Date.now() - lastPriceUpdate.getTime()) / (1000 * 60 * 60 * 24))} days old): ${token.token_symbol} (${token.token_address})`)
+          continue // Skip further processing for this token
+        }
 
         // Check if trading simulation should sell
         let shouldSell = false
@@ -2962,7 +2921,8 @@ async function internalTrackPost(request: NextRequest) {
       tracking: currentStats?.filter(t => t.status === 'tracking').length || 0,
       won: currentStats?.filter(t => t.status === 'won').length || 0,
       lost: currentStats?.filter(t => t.status === 'lost').length || 0,
-      skipped: currentStats?.filter(t => t.status === 'skipped').length || 0
+      skipped: currentStats?.filter(t => t.status === 'skipped').length || 0,
+      stopped: currentStats?.filter(t => t.status === 'stopped').length || 0
     }
 
     const summary = {
@@ -3039,33 +2999,6 @@ export async function GET(request: NextRequest) {
         error: 'Token not found',
         token_address: tokenAddress
       }, { status: 404 })
-    }
-
-    // If no trade comparison data exists, perform it now
-    if (!token.trade_comparison_data) {
-      console.log(`🔄 No trade comparison data found for ${token.token_symbol}, performing now...`)
-
-      const tradeComparisonData = await performTradeComparison({
-        token_address: token.token_address,
-        token_symbol: token.token_symbol,
-        token_name: token.token_name
-      })
-
-      if (tradeComparisonData) {
-        // Update the token with trade comparison data
-        const { error: updateError } = await supabase
-          .from(TRACKER_TABLE)
-          .update({
-            trade_comparison_data: tradeComparisonData
-          })
-          .eq('id', token.id)
-
-        if (updateError) {
-          console.error('❌ Failed to update token with trade comparison data:', updateError)
-        } else {
-          token.trade_comparison_data = tradeComparisonData
-        }
-      }
     }
 
     return NextResponse.json({

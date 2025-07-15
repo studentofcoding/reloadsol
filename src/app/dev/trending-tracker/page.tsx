@@ -1,8 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import TradingSimulationModal from '@/components/TradingSimulationModal'
-import TradeComparisonModal from '@/components/TradeComparisonModal'
+import UnifiedTokenModal from '@/components/UnifiedTokenModal'
 
 // Use alternate tables in local development to avoid prod collisions
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
@@ -135,13 +134,15 @@ export default function TrendingTrackerPage() {
   const [pctMax, setPctMax] = useState<string>('')
   
   // Modal state
-  const [simulationModalOpen, setSimulationModalOpen] = useState(false)
-  const [tradeComparisonModalOpen, setTradeComparisonModalOpen] = useState(false)
-  const [selectedToken, setSelectedToken] = useState<TrackedToken | null>(null)
+  const [unifiedModalState, setUnifiedModalState] = useState<{
+    isOpen: boolean
+    modalType: 'transaction' | 'trading'
+    tokenData?: any
+    transactionData?: any
+  }>({ isOpen: false, modalType: 'trading' })
 
   // Latest 24h Summary state
   const [showAllSummaryTokens, setShowAllSummaryTokens] = useState(false)
-  const [selectedSummaryToken, setSelectedSummaryToken] = useState<TopWinner | null>(null)
 
   // Trading config state
   const [tradingConfig, setTradingConfig] = useState<TradingConfig>({
@@ -469,34 +470,42 @@ export default function TrendingTrackerPage() {
     }
   }
 
-  // Handler to open appropriate modal based on available data
-  const handleTokenClick = (token: TrackedToken) => {
-    if (token.trading_simulation || token.price_history?.length) {
-      setSelectedToken(token)
-      setSimulationModalOpen(true)
-    } else if (token.trade_comparison_data) {
-      setSelectedToken(token)
-      setTradeComparisonModalOpen(true)
-    }
+  // Handler to open trading modal
+  const handleOpenTradingModal = (token: any) => {
+    setUnifiedModalState({
+      isOpen: true,
+      modalType: 'trading',
+      tokenData: {
+        mint: token.token_address,
+        symbol: token.token_symbol,
+        name: token.token_name,
+        logoUrl: token.logo_url
+      }
+    })
+  }
+
+  // Handler to open transaction modal
+  const handleOpenTransactionModal = (result: any, operation: string) => {
+    setUnifiedModalState({
+      isOpen: true,
+      modalType: 'transaction',
+      transactionData: { result, operation }
+    })
   }
 
   // Handler to close modals
   const handleCloseModal = () => {
-    setSimulationModalOpen(false)
-    setTradeComparisonModalOpen(false)
-    setSelectedToken(null)
+    setUnifiedModalState({ isOpen: false, modalType: 'trading' })
+  }
+
+  // Handler for token clicks
+  const handleTokenClick = (token: TrackedToken) => {
+    handleOpenTradingModal(token)
   }
 
   // Handler for summary token clicks
   const handleSummaryTokenClick = (summaryToken: TopWinner) => {
-    setSelectedSummaryToken(summaryToken)
-    setSimulationModalOpen(true)
-  }
-
-  // Handler to close summary token modal
-  const handleCloseSummaryModal = () => {
-    setSimulationModalOpen(false)
-    setSelectedSummaryToken(null)
+    handleOpenTradingModal(summaryToken)
   }
 
   // Auto-refresh every 30 seconds (without price updates to avoid rate limiting)
@@ -555,6 +564,23 @@ export default function TrendingTrackerPage() {
       })
     } catch (error) {
       console.error('Failed to send Discord notification:', error)
+    }
+  }
+
+  // Handler for trade triggers
+  const handleTradeTriggered = async (type: string, details: any) => {
+    if (tradingConfig.notifyOnTrigger && tradingConfig.discordWebhook) {
+      const tokenSymbol = unifiedModalState.tokenData?.symbol || 'Unknown'
+      const message = `🔔 Trade Alert (${tradingConfig.isSimulated ? 'Simulation' : 'LIVE'})\n` +
+        `${type} triggered for ${tokenSymbol}\n` +
+        `Current Gain: ${details.currentGain}%\n` +
+        `Peak Gain: ${details.peakGain}%\n` +
+        `Price: ${details.price}\n` +
+        `Provider: ${details.provider || 'Unknown'}\n` +
+        `RPC: ${details.rpc || 'Default'}\n` +
+        `Response Time: ${details.responseTime ? `${details.responseTime}ms` : 'N/A'}\n` +
+        `Time: ${new Date().toLocaleString()}`
+      await sendDiscordNotification(message)
     }
   }
 
@@ -1649,73 +1675,28 @@ export default function TrendingTrackerPage() {
       {/* Configuration Modal */}
       <ConfigModal />
 
-      {/* Trading Simulation Modal */}
-      {selectedToken && (
-        <TradingSimulationModal
-          isOpen={simulationModalOpen}
+      {/* Unified Token Modal */}
+      {unifiedModalState.isOpen && (
+        <UnifiedTokenModal
+          isOpen={unifiedModalState.isOpen}
           onClose={handleCloseModal}
-          tokenAddress={selectedToken.token_address}
-          tokenSymbol={selectedToken.token_symbol}
-          tokenName={selectedToken.token_name}
-          logoUrl={selectedToken.logo_url}
+          modalType={unifiedModalState.modalType}
+          
+          // Trading simulation props
+          tokenAddress={unifiedModalState.tokenData?.mint}
+          tokenSymbol={unifiedModalState.tokenData?.symbol}
+          tokenName={unifiedModalState.tokenData?.name}
+          logoUrl={unifiedModalState.tokenData?.logoUrl}
           isSimulated={tradingConfig.isSimulated}
           keypairPath={tradingConfig.keypairPath}
-          onTradeTriggered={async (type: string, details: any) => {
-            if (tradingConfig.notifyOnTrigger && tradingConfig.discordWebhook) {
-              const message = `🔔 Trade Alert (${tradingConfig.isSimulated ? 'Simulation' : 'LIVE'})\n` +
-                `${type} triggered for ${selectedToken.token_symbol}\n` +
-                `Current Gain: ${details.currentGain}%\n` +
-                `Peak Gain: ${details.peakGain}%\n` +
-                `Price: ${details.price}\n` +
-                `Provider: ${details.provider || 'Unknown'}\n` +
-                `RPC: ${details.rpc || 'Default'}\n` +
-                `Response Time: ${details.responseTime ? `${details.responseTime}ms` : 'N/A'}\n` +
-                `Time: ${new Date().toLocaleString()}`
-              await sendDiscordNotification(message)
-            }
-          }}
-        />
-      )}
-
-      {/* Trade Comparison Modal */}
-      {selectedToken && (
-        <TradeComparisonModal
-          isOpen={tradeComparisonModalOpen}
-          onClose={handleCloseModal}
-          tokenAddress={selectedToken.token_address}
-          tokenSymbol={selectedToken.token_symbol}
-          tokenName={selectedToken.token_name}
-          logoUrl={selectedToken.logo_url}
-        />
-      )}
-
-      {/* Summary Token Trading Simulation Modal */}
-      {selectedSummaryToken && (
-        <TradingSimulationModal
-          isOpen={simulationModalOpen && !!selectedSummaryToken}
-          onClose={handleCloseSummaryModal}
-          tokenAddress={selectedSummaryToken.token_address}
-          tokenSymbol={selectedSummaryToken.token_symbol}
-          tokenName={selectedSummaryToken.token_name}
-          logoUrl={selectedSummaryToken.logo_url}
-          isSimulated={tradingConfig.isSimulated}
-          keypairPath={tradingConfig.keypairPath}
-          onTradeTriggered={async (type: string, details: any) => {
-            if (tradingConfig.notifyOnTrigger && tradingConfig.discordWebhook) {
-              const message = `🔔 Trade Alert (${tradingConfig.isSimulated ? 'Simulation' : 'LIVE'})\n` +
-                `${type} triggered for ${selectedSummaryToken.token_symbol}\n` +
-                `Current Gain: ${details.currentGain}%\n` +
-                `Peak Gain: ${details.peakGain}%\n` +
-                `Price: ${details.price}\n` +
-                `Provider: ${details.provider || 'Unknown'}\n` +
-                `RPC: ${details.rpc || 'Default'}\n` +
-                `Response Time: ${details.responseTime ? `${details.responseTime}ms` : 'N/A'}\n` +
-                `Time: ${new Date().toLocaleString()}`
-              await sendDiscordNotification(message)
-            }
-          }}
+          onTradeTriggered={handleTradeTriggered}
+          
+          // Transaction result props
+          operation={unifiedModalState.transactionData?.operation}
+          result={unifiedModalState.transactionData?.result}
+          solToUsd={(sol) => sol * 145}
         />
       )}
     </div>
   )
-} 
+}

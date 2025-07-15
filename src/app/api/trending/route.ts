@@ -192,22 +192,74 @@ async function sendDiscordNotification(
     price_decreased: number
   },
   refreshType: 'full' | 'incremental',
-  forceSend: boolean = false
+  forceSend: boolean = false,
+  newlyAddedTokens: TransformedToken[] = []
 ) {
   if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
     console.log('Discord notifications disabled or webhook URL not configured');
     return;
   }
 
-  // Skip notification if not forced and no meaningful changes
-  if (!forceSend && stats.added === 0 && stats.updated === 0 && stats.removed === 0) {
+  const SERVER_URL = process.env.PUBLIC_SERVER_URL || process.env.VERCEL_URL || '';
+
+  if (SERVER_URL !== 'v2.reloadsol.xyz') {
+    console.log(`Skipping Discord notification: server URL is ${SERVER_URL}, not v2.reloadsol.xyz`);
+    return;
+  }
+
+  // Always send if there are new tokens, updates, removals, or price movements in filter categories
+  const hasPriceMovement = stats.price_increased > 0 || stats.price_decreased > 0;
+  if (!forceSend && stats.added === 0 && stats.updated === 0 && stats.removed === 0 && !hasPriceMovement) {
     console.log('No changes to report to Discord');
     return;
   }
 
   try {
-    // Get top 5 tokens by organic score
-    const topTokens = tokenArray.slice(0, 5);
+    // Group newly added tokens by market cap categories
+    const categories = [
+      { label: '$30k - $70k', min: 30_000, max: 70_000 },
+      { label: '$71k - $120k', min: 71_000, max: 120_000 },
+      { label: '$121k - $200k', min: 121_000, max: 200_000 },
+      { label: '$201k - $500k', min: 201_000, max: 500_000 },
+      { label: '$501k - $1M', min: 501_000, max: 1_000_000 },
+      { label: '$1M - $3M', min: 1_000_001, max: 3_000_000 }
+    ];
+
+    // If no new tokens, but there are price movements, include those tokens in the message
+    let tokensToShare = newlyAddedTokens;
+    if (tokensToShare.length === 0 && hasPriceMovement) {
+      // Find tokens in the filter categories with price movement
+      tokensToShare = tokenArray.filter(token => {
+        return categories.some(cat => token.mcap >= cat.min && token.mcap <= cat.max) &&
+          (token.price_change && Math.abs(token.price_change) > 0);
+      });
+    }
+
+    // For each category, filter and format up to 5 tokens
+    const categoryFields = categories.map(cat => {
+      const tokens = tokensToShare.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 5);
+      if (tokens.length === 0) return null;
+      return {
+        name: `${cat.label} MCap`,
+        value: tokens.map(token => {
+          const priceChangeEmoji = token.price_change
+            ? (token.price_change > 0 ? '📈' : '📉')
+            : '';
+          const hourChangeEmoji = token.change_1h
+            ? (token.change_1h > 0 ? '🟢' : '🔴')
+            : '';
+          return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
+            `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
+            `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
+        }).join('\n')
+      };
+    }).filter(Boolean);
+
+    // If no tokens in any category, show a fallback field
+    const fields = categoryFields.length > 0 ? categoryFields : [{
+      name: 'No New Tokens ≤ $3M MCap Added',
+      value: 'No new tokens ≤ $3M market cap were added in this update.'
+    }];
 
     // Format the message
     const message = {
@@ -217,23 +269,7 @@ async function sendDiscordNotification(
           description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased`,
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
-          fields: [
-            {
-              name: 'Top Tokens',
-              value: topTokens.map(token => {
-                const priceChangeEmoji = token.price_change
-                  ? (token.price_change > 0 ? '📈' : '📉')
-                  : '';
-                const hourChangeEmoji = token.change_1h
-                  ? (token.change_1h > 0 ? '🟢' : '🔴')
-                  : '';
-
-                return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
-                  `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
-                  `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
-              }).join('\n')
-            }
-          ],
+          fields,
           footer: {
             text: 'Buy Bulk Token Tracker'
           }
@@ -440,6 +476,9 @@ async function fetchAndUpdateCache(
   try {
     console.log(needsFullRefresh ? 'Performing full refresh' : 'Updating token cache');
 
+    // Declare newlyAddedTokens at the top
+    const newlyAddedTokens: TransformedToken[] = [];
+
     // Enhanced API fetching with parallel requests and better error handling
     const TRENDING_URLS = [
       'https://datapi.jup.ag/v1/pools/toptrending/1h',
@@ -626,12 +665,8 @@ async function fetchAndUpdateCache(
       });
     });
 
-    // If doing a full refresh, reset the cache
-    if (needsFullRefresh) {
-      tokenCache.tokens = new Map<string, TransformedToken>();
-      tokenCache.lastFullRefresh = currentTime;
-      console.log('Cache fully refreshed');
-    }
+    // Store the existing cache for comparison during full refresh
+    const existingCache = needsFullRefresh ? new Map(tokenCache.tokens) : tokenCache.tokens;
 
     // Track changes for reporting
     const stats = {
@@ -643,16 +678,20 @@ async function fetchAndUpdateCache(
       price_decreased: 0
     };
 
+    // Create a new cache map for full refresh, or use existing for incremental
+    const newTokenCache = needsFullRefresh ? new Map<string, TransformedToken>() : tokenCache.tokens;
+
     // Create a set of current token addresses for comparison
     const currentTokenAddresses = new Set<string>();
     allTokens.forEach(token => {
       currentTokenAddresses.add(token.token_address);
 
-      const existingToken = tokenCache.tokens.get(token.token_address);
+      const existingToken = existingCache.get(token.token_address);
       if (!existingToken) {
-        // New token, add to cache
-        tokenCache.tokens.set(token.token_address, token);
+        // New token, add to cache and to newlyAddedTokens
+        newTokenCache.set(token.token_address, token);
         stats.added++;
+        newlyAddedTokens.push(token);
       } else {
         // Compare relevant fields to see if an update is needed
         if (
@@ -676,7 +715,7 @@ async function fetchAndUpdateCache(
           }
 
           // Update only the changed token
-          tokenCache.tokens.set(token.token_address, {
+          newTokenCache.set(token.token_address, {
             ...existingToken,
             price: token.price,
             change_1h: token.change_1h,
@@ -690,10 +729,40 @@ async function fetchAndUpdateCache(
           });
           stats.updated++;
         } else {
+          // Token unchanged, but still add to new cache
+          newTokenCache.set(token.token_address, {
+            ...existingToken,
+            last_updated: currentTime,
+            created_at: token.created_at ?? existingToken.created_at
+          });
           stats.unchanged++;
         }
       }
     });
+
+    // Handle token removals
+    if (!needsFullRefresh) {
+      // Only perform removals during incremental updates
+      for (const address of Array.from(existingCache.keys())) {
+        if (!currentTokenAddresses.has(address)) {
+          stats.removed++;
+        }
+      }
+    } else {
+      // During full refresh, count tokens that are no longer in the API response
+      for (const address of Array.from(existingCache.keys())) {
+        if (!currentTokenAddresses.has(address)) {
+          stats.removed++;
+        }
+      }
+    }
+
+    // Update the cache with the new data
+    tokenCache.tokens = newTokenCache;
+    if (needsFullRefresh) {
+      tokenCache.lastFullRefresh = currentTime;
+      console.log('Cache fully refreshed');
+    }
 
     // Remove tokens that are no longer in the results
     if (!needsFullRefresh) {
@@ -713,6 +782,18 @@ async function fetchAndUpdateCache(
 
     console.log(`Token cache updated: ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed, ${stats.unchanged} unchanged`);
     console.log(`Price movements: ${stats.price_increased} increased, ${stats.price_decreased} decreased`);
+
+    // Soft cleanup: Mark stale tokens as 'stopped' instead of deleting
+    const STALE_DAYS = 14;
+    const now = Date.now();
+    const staleCutoff = now - STALE_DAYS * 24 * 60 * 60 * 1000;
+    Array.from(tokenCache.tokens.values())
+      .filter(token => token.last_updated && token.last_updated < staleCutoff && (token as any).status !== 'stopped')
+      .forEach(token => {
+        (token as any).status = 'stopped';
+        (token as any).status_changed_at = new Date(now).toISOString();
+      });
+    // When calculating stats or returning tokens, filter out those with status 'stopped' from 'tracking' counts
 
     const tokenArray = Array.from(tokenCache.tokens.values());
 
@@ -739,7 +820,8 @@ async function fetchAndUpdateCache(
         tokenArray,
         stats,
         needsFullRefresh ? 'full' : 'incremental',
-        forceSendNotification
+        forceSendNotification,
+        newlyAddedTokens
       );
     } else {
       console.log('Skipping Discord notification - not on schedule');
