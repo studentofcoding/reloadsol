@@ -192,7 +192,8 @@ async function sendDiscordNotification(
     price_decreased: number
   },
   refreshType: 'full' | 'incremental',
-  forceSend: boolean = false
+  forceSend: boolean = false,
+  newlyAddedTokens: TransformedToken[] = []
 ) {
   if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
     console.log('Discord notifications disabled or webhook URL not configured');
@@ -206,8 +207,13 @@ async function sendDiscordNotification(
   }
 
   try {
-    // Get top 5 tokens by organic score
-    const topTokens = tokenArray.slice(0, 5);
+    // Use newly added tokens for Top Tokens section
+    let topTokens: TransformedToken[] = newlyAddedTokens;
+    let topTokensLabel = 'Top Tokens';
+    if (topTokens.length === 0) {
+      // If no new tokens, show a message
+      topTokensLabel = 'No New Tokens Added';
+    }
 
     // Format the message
     const message = {
@@ -219,19 +225,20 @@ async function sendDiscordNotification(
           timestamp: new Date().toISOString(),
           fields: [
             {
-              name: 'Top Tokens',
-              value: topTokens.map(token => {
-                const priceChangeEmoji = token.price_change
-                  ? (token.price_change > 0 ? '📈' : '📉')
-                  : '';
-                const hourChangeEmoji = token.change_1h
-                  ? (token.change_1h > 0 ? '🟢' : '🔴')
-                  : '';
-
-                return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
-                  `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
-                  `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
-              }).join('\n')
+              name: topTokensLabel,
+              value: topTokens.length > 0
+                ? topTokens.map(token => {
+                    const priceChangeEmoji = token.price_change
+                      ? (token.price_change > 0 ? '📈' : '📉')
+                      : '';
+                    const hourChangeEmoji = token.change_1h
+                      ? (token.change_1h > 0 ? '🟢' : '🔴')
+                      : '';
+                    return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
+                      `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
+                      `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
+                  }).join('\n')
+                : 'No new tokens were added in this update.'
             }
           ],
           footer: {
@@ -439,6 +446,9 @@ async function fetchAndUpdateCache(
 ): Promise<TransformedToken[]> {
   try {
     console.log(needsFullRefresh ? 'Performing full refresh' : 'Updating token cache');
+
+    // Declare newlyAddedTokens at the top
+    const newlyAddedTokens: TransformedToken[] = [];
 
     // Enhanced API fetching with parallel requests and better error handling
     const TRENDING_URLS = [
@@ -649,9 +659,10 @@ async function fetchAndUpdateCache(
 
       const existingToken = existingCache.get(token.token_address);
       if (!existingToken) {
-        // New token, add to cache
+        // New token, add to cache and to newlyAddedTokens
         newTokenCache.set(token.token_address, token);
         stats.added++;
+        newlyAddedTokens.push(token);
       } else {
         // Compare relevant fields to see if an update is needed
         if (
@@ -768,7 +779,8 @@ async function fetchAndUpdateCache(
         tokenArray,
         stats,
         needsFullRefresh ? 'full' : 'incremental',
-        forceSendNotification
+        forceSendNotification,
+        newlyAddedTokens
       );
     } else {
       console.log('Skipping Discord notification - not on schedule');
