@@ -5,7 +5,7 @@ const chalk = require('chalk');
 const ora = require('ora');
 
 // Configuration
-const BASE_URL = 'https://v2.reloadsol.xyz';
+const API_HOST = 'https://v2.reloadsol.xyz';
 const TEST_WALLET = 'DGJqRtDKdBiKfXGwgQbaC5YJW3PGd5TtE2tGmKSLtVwx'; // Example wallet for testing
 const TEST_TOKEN = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // USDC token for testing
 const SOL_TOKEN = 'So11111111111111111111111111111111111111112';
@@ -26,13 +26,13 @@ const log = {
 async function testEndpoint(name, endpoint, options = {}) {
   const spinner = ora(`Testing ${name}...`).start();
   try {
-    const url = `${BASE_URL}${endpoint}`;
+    const url = `${API_HOST}${endpoint}`;
     const response = await axios({
       url,
       method: options.method || 'GET',
       data: options.data,
       params: options.params,
-      timeout: 10000 // 10 second timeout
+      timeout: options.timeout || 10000 // Default 10 second timeout
     });
 
     if (options.validator) {
@@ -61,7 +61,7 @@ async function testEndpoint(name, endpoint, options = {}) {
 // Main test function
 async function runTests() {
   log.info('Starting API Tests...\n');
-  
+
   // Test RPC Health
   await testEndpoint('RPC Health', '/api/rpc/health', {
     validator: (data) => data.status === 'success' && Array.isArray(data.healthyEndpoints)
@@ -155,12 +155,136 @@ async function runTests() {
     validator: (data) => data.testType === 'benchmark' && data.result
   });
 
+  // === NEW JUPITER METADATA API TESTS ===
+  log.info('\n🚀 Testing Jupiter Metadata API v2...');
+
+  // Test Jupiter Metadata - Single Token (GET)
+  await testEndpoint('Jupiter Metadata - Single Token', '/api/jupiter/metadata', {
+    params: { mint: SOL_TOKEN },
+    validator: (data) => {
+      return data.data && 
+             typeof data.data.decimals === 'number' &&
+             typeof data.data.symbol === 'string' &&
+             typeof data.data.name === 'string' &&
+             (data.source === 'common_tokens' || data.source === 'jupiter_api_v2' || data.cached === true)
+    }
+  });
+
+  // Test Jupiter Metadata - Cache Performance
+  await testEndpoint('Jupiter Metadata - Cache Test', '/api/jupiter/metadata', {
+    params: { mint: SOL_TOKEN },
+    validator: (data) => {
+      return data.data && data.cached === true // Should be cached from previous request
+    }
+  });
+
+  // Test Jupiter Metadata - Batch Processing (POST)
+  await testEndpoint('Jupiter Metadata - Batch Processing', '/api/jupiter/metadata', {
+    method: 'POST',
+    data: { 
+      mints: [
+        SOL_TOKEN,
+        TEST_TOKEN,
+        'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB' // USDT
+      ]
+    },
+    validator: (data) => {
+      return data.results &&
+             Object.keys(data.results).length === 3 &&
+             data.totalRequested === 3 &&
+             typeof data.fromCache === 'number' &&
+             typeof data.fromAPI === 'number' &&
+             typeof data.batchesUsed === 'number'
+    }
+  });
+
+  // Test Jupiter Metadata - Large Batch (50 tokens)
+  const largeBatchTokens = [
+    SOL_TOKEN,
+    TEST_TOKEN,
+    'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',
+    // Add some random/test mint addresses
+    '11111111111111111111111111111111',
+    '22222222222222222222222222222222',
+    '33333333333333333333333333333333',
+    '44444444444444444444444444444444',
+    '55555555555555555555555555555555',
+    '66666666666666666666666666666666',
+    '77777777777777777777777777777777',
+    '88888888888888888888888888888888',
+    '99999999999999999999999999999999',
+    'AAAAAAAAAAAAAAAAAAAAAAAAAAAAa',
+    'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBb',
+    'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCc',
+    'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDd',
+    'EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEe',
+    'FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFf',
+    'GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGg',
+    'HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHh'
+  ];
+
+  await testEndpoint('Jupiter Metadata - Large Batch', '/api/jupiter/metadata', {
+    method: 'POST',
+    data: { mints: largeBatchTokens },
+    timeout: 15000, // Longer timeout for large batch
+    validator: (data) => {
+      return data.results &&
+             Object.keys(data.results).length === largeBatchTokens.length &&
+             data.totalRequested === largeBatchTokens.length
+    }
+  });
+
+  // Test Jupiter Metadata - Invalid Token
+  await testEndpoint('Jupiter Metadata - Invalid Token', '/api/jupiter/metadata', {
+    params: { mint: 'invalid_token_address_123' },
+    validator: (data) => {
+      return data.data &&
+             data.source === 'default' &&
+             data.data.symbol === 'TOKEN' &&
+             data.data.name === 'Unknown Token'
+    }
+  });
+
+  // Test Jupiter Metadata - Missing Mint Parameter
+  await testEndpoint('Jupiter Metadata - Missing Mint', '/api/jupiter/metadata', {
+    validator: (data) => false, // Should fail
+    expectError: true
+  });
+
+  // Test Jupiter Metadata - Empty Batch
+  await testEndpoint('Jupiter Metadata - Empty Batch', '/api/jupiter/metadata', {
+    method: 'POST',
+    data: { mints: [] },
+    validator: (data) => false, // Should fail
+    expectError: true
+  });
+
+  // Test Jupiter Metadata - Oversized Batch (501 tokens)
+  const oversizedBatch = Array.from({ length: 501 }, (_, i) => `token${i}`);
+  await testEndpoint('Jupiter Metadata - Oversized Batch', '/api/jupiter/metadata', {
+    method: 'POST',
+    data: { mints: oversizedBatch },
+    validator: (data) => false, // Should fail
+    expectError: true
+  });
+
+  // Test Jupiter Metadata - Cache Cleanup (DELETE)
+  await testEndpoint('Jupiter Metadata - Cache Cleanup', '/api/jupiter/metadata', {
+    method: 'DELETE',
+    validator: (data) => {
+      return data.message === 'Cache cleaned up' &&
+             typeof data.sizeBefore === 'number' &&
+             typeof data.sizeAfter === 'number' &&
+             typeof data.deletedEntries === 'number'
+    }
+  });
+
   // Print summary
   console.log('\n' + '='.repeat(50));
   log.info(`Test Summary:`);
   log.success(`Passed: ${passedTests}`);
   log.error(`Failed: ${failedTests}`);
-  
+
   if (failedEndpoints.length > 0) {
     log.warning('\nFailed Endpoints:');
     failedEndpoints.forEach(({ name, endpoint, error }) => {
