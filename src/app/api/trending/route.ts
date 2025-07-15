@@ -626,12 +626,8 @@ async function fetchAndUpdateCache(
       });
     });
 
-    // If doing a full refresh, reset the cache
-    if (needsFullRefresh) {
-      tokenCache.tokens = new Map<string, TransformedToken>();
-      tokenCache.lastFullRefresh = currentTime;
-      console.log('Cache fully refreshed');
-    }
+    // Store the existing cache for comparison during full refresh
+    const existingCache = needsFullRefresh ? new Map(tokenCache.tokens) : tokenCache.tokens;
 
     // Track changes for reporting
     const stats = {
@@ -643,15 +639,18 @@ async function fetchAndUpdateCache(
       price_decreased: 0
     };
 
+    // Create a new cache map for full refresh, or use existing for incremental
+    const newTokenCache = needsFullRefresh ? new Map<string, TransformedToken>() : tokenCache.tokens;
+
     // Create a set of current token addresses for comparison
     const currentTokenAddresses = new Set<string>();
     allTokens.forEach(token => {
       currentTokenAddresses.add(token.token_address);
 
-      const existingToken = tokenCache.tokens.get(token.token_address);
+      const existingToken = existingCache.get(token.token_address);
       if (!existingToken) {
         // New token, add to cache
-        tokenCache.tokens.set(token.token_address, token);
+        newTokenCache.set(token.token_address, token);
         stats.added++;
       } else {
         // Compare relevant fields to see if an update is needed
@@ -676,7 +675,7 @@ async function fetchAndUpdateCache(
           }
 
           // Update only the changed token
-          tokenCache.tokens.set(token.token_address, {
+          newTokenCache.set(token.token_address, {
             ...existingToken,
             price: token.price,
             change_1h: token.change_1h,
@@ -690,10 +689,40 @@ async function fetchAndUpdateCache(
           });
           stats.updated++;
         } else {
+          // Token unchanged, but still add to new cache
+          newTokenCache.set(token.token_address, {
+            ...existingToken,
+            last_updated: currentTime,
+            created_at: token.created_at ?? existingToken.created_at
+          });
           stats.unchanged++;
         }
       }
     });
+
+    // Handle token removals
+    if (!needsFullRefresh) {
+      // Only perform removals during incremental updates
+      for (const address of Array.from(existingCache.keys())) {
+        if (!currentTokenAddresses.has(address)) {
+          stats.removed++;
+        }
+      }
+    } else {
+      // During full refresh, count tokens that are no longer in the API response
+      for (const address of Array.from(existingCache.keys())) {
+        if (!currentTokenAddresses.has(address)) {
+          stats.removed++;
+        }
+      }
+    }
+
+    // Update the cache with the new data
+    tokenCache.tokens = newTokenCache;
+    if (needsFullRefresh) {
+      tokenCache.lastFullRefresh = currentTime;
+      console.log('Cache fully refreshed');
+    }
 
     // Remove tokens that are no longer in the results
     if (!needsFullRefresh) {
