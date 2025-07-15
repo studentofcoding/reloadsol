@@ -5,11 +5,7 @@ const chalk = require('chalk');
 const ora = require('ora');
 
 // Configuration
-<<<<<<< HEAD
 const API_HOST = 'https://v2.reloadsol.xyz';
-=======
-const BASE_URL = 'https://v2.reloadsol.xyz';
->>>>>>> main
 const TEST_WALLET = 'DGJqRtDKdBiKfXGwgQbaC5YJW3PGd5TtE2tGmKSLtVwx'; // Example wallet for testing
 const TEST_TOKEN = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // USDC token for testing
 const SOL_TOKEN = 'So11111111111111111111111111111111111111112';
@@ -65,7 +61,7 @@ async function testEndpoint(name, endpoint, options = {}) {
 // Main test function
 async function runTests() {
   log.info('Starting API Tests...\n');
-  
+
   // Test RPC Health
   await testEndpoint('RPC Health', '/api/rpc/health', {
     validator: (data) => data.status === 'success' && Array.isArray(data.healthyEndpoints)
@@ -164,7 +160,7 @@ async function runTests() {
   log.info(`Test Summary:`);
   log.success(`Passed: ${passedTests}`);
   log.error(`Failed: ${failedTests}`);
-  
+
   if (failedEndpoints.length > 0) {
     log.warning('\nFailed Endpoints:');
     failedEndpoints.forEach(({ name, endpoint, error }) => {
