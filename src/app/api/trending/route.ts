@@ -783,6 +783,18 @@ async function fetchAndUpdateCache(
     console.log(`Token cache updated: ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed, ${stats.unchanged} unchanged`);
     console.log(`Price movements: ${stats.price_increased} increased, ${stats.price_decreased} decreased`);
 
+    // Soft cleanup: Mark stale tokens as 'stopped' instead of deleting
+    const STALE_DAYS = 14;
+    const now = Date.now();
+    const staleCutoff = now - STALE_DAYS * 24 * 60 * 60 * 1000;
+    Array.from(tokenCache.tokens.values())
+      .filter(token => token.last_updated && token.last_updated < staleCutoff && (token as any).status !== 'stopped')
+      .forEach(token => {
+        (token as any).status = 'stopped';
+        (token as any).status_changed_at = new Date(now).toISOString();
+      });
+    // When calculating stats or returning tokens, filter out those with status 'stopped' from 'tracking' counts
+
     const tokenArray = Array.from(tokenCache.tokens.values());
 
     // Sort tokens by criteria - prioritize tokens with highest organic score and recent price change
