@@ -5,7 +5,7 @@ import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trad
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 
-export const runtime = 'edge'
+export const runtime = 'nodejs'
 
 // ====================================================================================================
 // REAL TRADING SETUP INSTRUCTIONS:
@@ -935,6 +935,73 @@ async function sendTradeAlertDiscord(params: {
 
     // Re-throw for upstream handling if needed
     throw err
+  }
+}
+
+// Discord notification for skipped tokens (already exist in database)
+async function sendSkippedTokenDiscord(params: {
+  tokenSymbol: string | null
+  tokenAddress: string
+  currentPriceAPI: number
+  existingTokenData: {
+    status: string
+    initial_price_usd: number | null
+    last_price_usd: number | null
+    peak_price_usd: number | null
+    current_gain_percentage: number | null
+    peak_gain_percentage: number | null
+    tracking_started_at: string | null
+    status_changed_at: string | null
+    updated_at: string | null
+  }
+}) {
+  try {
+    const webhookUrl = 'https://discord.com/api/webhooks/1388575606098100256/c4e6BM2W-htcl2hUF9f_nZcchJZXCgoEe5mV95gDKODTfOto97w9BEjW8C2CgL0QwXrP'
+    
+    const timeSinceTracking = params.existingTokenData.tracking_started_at 
+      ? Math.round((Date.now() - new Date(params.existingTokenData.tracking_started_at).getTime()) / (1000 * 60 * 60 * 24) * 100) / 100
+      : 'Unknown'
+    
+    const timeSinceStatusChange = params.existingTokenData.status_changed_at
+      ? Math.round((Date.now() - new Date(params.existingTokenData.status_changed_at).getTime()) / (1000 * 60 * 60 * 24) * 100) / 100
+      : 'N/A'
+
+    const lastUpdateTime = params.existingTokenData.updated_at
+      ? Math.round((Date.now() - new Date(params.existingTokenData.updated_at).getTime()) / (1000 * 60)) / 100
+      : 'Unknown'
+
+    const priceChangeVsDB = params.existingTokenData.last_price_usd 
+      ? ((params.currentPriceAPI - params.existingTokenData.last_price_usd) / params.existingTokenData.last_price_usd * 100).toFixed(2)
+      : 'N/A'
+
+    const currentVsPeak = params.existingTokenData.peak_price_usd && params.existingTokenData.last_price_usd 
+      ? ((params.existingTokenData.last_price_usd / params.existingTokenData.peak_price_usd - 1) * 100).toFixed(2)
+      : 'N/A'
+
+    const message = `🚫 **Token Skipped - Already Exists**\n\n` +
+      `**Token:** ${params.tokenSymbol || 'Unknown'} (${params.tokenAddress.slice(0, 8)}...)\n` +
+      `**Status:** ${params.existingTokenData.status}\n` +
+      `**Initial Price:** $${params.existingTokenData.initial_price_usd?.toFixed(6) || 'N/A'}\n` +
+      `**Last Price (DB):** $${params.existingTokenData.last_price_usd?.toFixed(6) || 'N/A'}\n` +
+      `**Current Price (API):** $${params.currentPriceAPI?.toFixed(6)}\n` +
+      `**Price Change vs DB:** ${priceChangeVsDB}%\n` +
+      `**Peak Price:** $${params.existingTokenData.peak_price_usd?.toFixed(6) || 'N/A'}\n` +
+      `**Current PnL:** ${params.existingTokenData.current_gain_percentage?.toFixed(2) || '0.00'}%\n` +
+      `**Peak PnL:** ${params.existingTokenData.peak_gain_percentage?.toFixed(2) || '0.00'}%\n` +
+      `**Current vs Peak:** ${currentVsPeak}%\n` +
+      `**Tracking Started:** ${timeSinceTracking} days ago\n` +
+      `**Status Changed:** ${timeSinceStatusChange !== 'N/A' ? `${timeSinceStatusChange} days ago` : 'Never'}\n` +
+      `**Last Updated:** ${lastUpdateTime} minutes ago`
+
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: message })
+    })
+
+    console.log(`📤 Discord notification sent for skipped token: ${params.tokenSymbol}`)
+  } catch (error) {
+    console.error(`❌ Failed to send Discord notification for skipped token ${params.tokenSymbol}:`, error)
   }
 }
 
@@ -2028,7 +2095,7 @@ async function internalTrackPost(request: NextRequest) {
     // Fetch current trending tokens from Jupiter API with fallback & retry
     const TRENDING_URLS = [
       'https://datapi.jup.ag/v1/pools/toptrending/1h',
-      'https://api.jup.ag/v1/pools/toptrending/1h'
+      // 'https://api.jup.ag/v1/pools/toptrending/1h'
     ]
 
     let response: Response | null = null
@@ -2144,13 +2211,59 @@ async function internalTrackPost(request: NextRequest) {
         // Check if token exists in database with ANY status (not just tracking)
         const { data: existingAnyStatus } = await supabase
           .from(TRACKER_TABLE)
-          .select('id')
+          .select('*') // Select all fields instead of just 'id'
           .eq('token_address', token.token_address)
           .eq('token_symbol', token.token_symbol)
           .single()
 
         if (existingAnyStatus) {
+          // Enhanced logging with detailed token information
+          const timeSinceTracking = existingAnyStatus.tracking_started_at 
+            ? Math.round((Date.now() - new Date(existingAnyStatus.tracking_started_at).getTime()) / (1000 * 60 * 60 * 24) * 100) / 100
+            : 'Unknown'
+          
+          const timeSinceStatusChange = existingAnyStatus.status_changed_at
+            ? Math.round((Date.now() - new Date(existingAnyStatus.status_changed_at).getTime()) / (1000 * 60 * 60 * 24) * 100) / 100
+            : 'N/A'
+
+          const lastUpdateTime = existingAnyStatus.updated_at
+            ? Math.round((Date.now() - new Date(existingAnyStatus.updated_at).getTime()) / (1000 * 60)) / 100
+            : 'Unknown'
+
           console.warn(`⏭️ Token ${token.token_symbol} already exists in database. Skipping duplicate.`)
+          console.log(`📊 ${token.token_symbol} Details:`, {
+            status: existingAnyStatus.status,
+            initial_price: `$${existingAnyStatus.initial_price_usd?.toFixed(6) || 'N/A'}`,
+            last_price: `$${existingAnyStatus.last_price_usd?.toFixed(6) || 'N/A'}`,
+            peak_price: `$${existingAnyStatus.peak_price_usd?.toFixed(6) || 'N/A'}`,
+            current_pnl: `${existingAnyStatus.current_gain_percentage?.toFixed(2) || '0.00'}%`,
+            peak_pnl: `${existingAnyStatus.peak_gain_percentage?.toFixed(2) || '0.00'}%`,
+            tracking_started: `${timeSinceTracking} days ago`,
+            status_changed: existingAnyStatus.status_changed_at ? `${timeSinceStatusChange} days ago` : 'Never',
+            last_updated: `${lastUpdateTime} minutes ago`,
+            current_vs_peak: existingAnyStatus.peak_price_usd && existingAnyStatus.last_price_usd 
+              ? `${((existingAnyStatus.last_price_usd / existingAnyStatus.peak_price_usd - 1) * 100).toFixed(2)}%`
+              : 'N/A'
+          })
+
+          // Send Discord notification for skipped token
+          await sendSkippedTokenDiscord({
+            tokenSymbol: token.token_symbol,
+            tokenAddress: token.token_address,
+            currentPriceAPI: token.current_price,
+            existingTokenData: {
+              status: existingAnyStatus.status,
+              initial_price_usd: existingAnyStatus.initial_price_usd,
+              last_price_usd: existingAnyStatus.last_price_usd,
+              peak_price_usd: existingAnyStatus.peak_price_usd,
+              current_gain_percentage: existingAnyStatus.current_gain_percentage,
+              peak_gain_percentage: existingAnyStatus.peak_gain_percentage,
+              tracking_started_at: existingAnyStatus.tracking_started_at,
+              status_changed_at: existingAnyStatus.status_changed_at,
+              updated_at: existingAnyStatus.updated_at
+            }
+          })
+
           continue
         }
 
