@@ -408,9 +408,48 @@ export default function UnifiedTokenModal({
           <div className="bg-gray-800/30 border border-gray-700 rounded-lg p-4">
             <h3 className="text-lg font-semibold mb-4 text-white">📈 Price History (24h)</h3>
             <div className="h-64 flex items-center justify-center text-gray-400">
-              {/* Chart implementation would go here */}
-              <p>Price chart visualization</p>
+              <Line
+                data={{
+                  labels: priceHistory.map(p => new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+                  datasets: [
+                    {
+                      label: 'Price (USD)',
+                      data: priceHistory.map(p => p.price_usd),
+                      borderColor: '#60a5fa',
+                      backgroundColor: 'rgba(96,165,250,0.1)',
+                      pointRadius: 0,
+                      tension: 0.2,
+                      fill: true,
+                    }
+                  ]
+                }}
+                options={{
+                  responsive: true,
+                  plugins: {
+                    legend: { display: false },
+                    tooltip: { mode: 'index', intersect: false }
+                  },
+                  scales: {
+                    x: {
+                      title: { display: true, text: 'Time' },
+                      grid: { display: false },
+                      ticks: { color: '#a3a3a3', maxTicksLimit: 8 }
+                    },
+                    y: {
+                      title: { display: true, text: 'Price (USD)' },
+                      grid: { color: 'rgba(96,165,250,0.05)' },
+                      ticks: { color: '#a3a3a3' }
+                    }
+                  }
+                }}
+                height={220}
+              />
             </div>
+          </div>
+        )}
+        {priceHistory.length <= 1 && (
+          <div className="bg-gray-800/30 border border-gray-700 rounded-lg p-4">
+            <p className="text-gray-400">Not enough price history to display chart.</p>
           </div>
         )}
       </div>
