@@ -207,13 +207,41 @@ async function sendDiscordNotification(
   }
 
   try {
-    // Use newly added tokens for Top Tokens section
-    let topTokens: TransformedToken[] = newlyAddedTokens;
-    let topTokensLabel = 'Top Tokens';
-    if (topTokens.length === 0) {
-      // If no new tokens, show a message
-      topTokensLabel = 'No New Tokens Added';
-    }
+    // Group newly added tokens by market cap categories
+    const categories = [
+      { label: '$30k - $70k', min: 30_000, max: 70_000 },
+      { label: '$71k - $120k', min: 71_000, max: 120_000 },
+      { label: '$121k - $200k', min: 121_000, max: 200_000 },
+      { label: '$201k - $500k', min: 201_000, max: 500_000 },
+      { label: '$501k - $1M', min: 501_000, max: 1_000_000 },
+      { label: '$1M - $3M', min: 1_000_001, max: 3_000_000 },
+    ];
+
+    // For each category, filter and format up to 5 tokens
+    const categoryFields = categories.map(cat => {
+      const tokens = newlyAddedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 5);
+      if (tokens.length === 0) return null;
+      return {
+        name: `${cat.label} MCap`,
+        value: tokens.map(token => {
+          const priceChangeEmoji = token.price_change
+            ? (token.price_change > 0 ? '📈' : '📉')
+            : '';
+          const hourChangeEmoji = token.change_1h
+            ? (token.change_1h > 0 ? '🟢' : '🔴')
+            : '';
+          return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
+            `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
+            `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
+        }).join('\n')
+      };
+    }).filter(Boolean);
+
+    // If no tokens in any category, show a fallback field
+    const fields = categoryFields.length > 0 ? categoryFields : [{
+      name: 'No New Tokens ≤ $3M MCap Added',
+      value: 'No new tokens ≤ $3M market cap were added in this update.'
+    }];
 
     // Format the message
     const message = {
@@ -223,24 +251,7 @@ async function sendDiscordNotification(
           description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased`,
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
-          fields: [
-            {
-              name: topTokensLabel,
-              value: topTokens.length > 0
-                ? topTokens.map(token => {
-                    const priceChangeEmoji = token.price_change
-                      ? (token.price_change > 0 ? '📈' : '📉')
-                      : '';
-                    const hourChangeEmoji = token.change_1h
-                      ? (token.change_1h > 0 ? '🟢' : '🔴')
-                      : '';
-                    return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
-                      `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
-                      `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
-                  }).join('\n')
-                : 'No new tokens were added in this update.'
-            }
-          ],
+          fields,
           footer: {
             text: 'Buy Bulk Token Tracker'
           }
