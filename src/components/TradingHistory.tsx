@@ -110,10 +110,11 @@ export default function TradingHistory() {
 
       setProcessedRecords(combinedRecords)
       
-      // Calculate stats (simplified version without tradingTracker.getStats)
+      // Calculate stats including bot operations
       const buyCount = combinedRecords.filter(r => r.operationType === 'buy').length
       const sellCount = combinedRecords.filter(r => r.operationType === 'sell').length
       const closeCount = combinedRecords.filter(r => r.operationType === 'close').length
+      const botOperationsCount = combinedRecords.filter(r => r.is_bot_operation).length
       
       setStats({
         totalOperations: combinedRecords.length,
@@ -144,30 +145,78 @@ export default function TradingHistory() {
     processRecords()
   }, [processRecords])
 
-  // No need for event listeners since React Query handles real-time updates
-
+  // Enhanced operation icon with bot support
   const getOperationIcon = (type: string, isBot?: boolean, status?: string) => {
-    const botPrefix = isBot ? '🤖' : ''
-    // switch (type) {
-    //   case 'buy':
-    //     return botPrefix + '🟢'
-    //   case 'sell':
-    //     return botPrefix + '🔴'
-    //   case 'close':
-    //     return botPrefix + '🟡'
-    //   case 'waiting':
-    //     return botPrefix + '⏳'
-    //   case 'tracking':
-    //     return botPrefix + '👁️'
-    //   case 'won':
-    //     return botPrefix + '🎉'
-    //   case 'lost':
-    //     return botPrefix + '💔'
-    //   case 'skipped':
-    //     return botPrefix + '⏭️'
-    //   default:
-    //     return botPrefix + '⚪'
-    // }
+    const baseIcon = {
+      'buy': '🟢',
+      'sell': '🔴', 
+      'close': '🟡',
+      'waiting': '⏳',
+      'tracking': '👁️',
+      'won': '🎉',
+      'lost': '💔',
+      'skipped': '⏭️'
+    }[type] || '⚪'
+    
+    return isBot ? `🤖${baseIcon}` : baseIcon
+  }
+
+  // Enhanced operation type display
+  const getOperationTypeDisplay = (record: TrackingRecord) => {
+    const baseType = record.operationType === 'sell' && record.totalTokens > record.tokens.length 
+      ? 'sell & close' 
+      : record.operationType
+    
+    return (
+      <div className="flex items-center space-x-1">
+        <span className="text-xs">
+          {getOperationIcon(record.operationType, record.is_bot_operation, record.status)}
+        </span>
+        <span className="capitalize">{baseType}</span>
+      </div>
+    )
+  }
+
+  // Enhanced bot operation indicator
+  const BotOperationIndicator = ({ record }: { record: TrackingRecord }) => {
+    if (!record.is_bot_operation) return null
+    
+    return (
+      <div className="flex items-center space-x-1">
+        <span 
+          className="text-xs bg-purple-600/20 text-purple-400 px-1.5 py-0.5 rounded-full font-medium border border-purple-500/30" 
+          title={`Bot Strategy: ${record.bot_strategy || 'auto'}`}
+        >
+          BOT
+        </span>
+        {record.bot_strategy && (
+          <span className="text-xs text-gray-500" title={`Strategy: ${record.bot_strategy}`}>
+            {record.bot_strategy.split('-')[0]}
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  // Enhanced status indicator
+  const StatusIndicator = ({ record }: { record: TrackingRecord }) => {
+    if (!record.status || record.status === 'tracking') return null
+    
+    const statusColors = {
+      'waiting': 'bg-yellow-600/20 text-yellow-400 border-yellow-500/30',
+      'won': 'bg-green-600/20 text-green-400 border-green-500/30',
+      'lost': 'bg-red-600/20 text-red-400 border-red-500/30',
+      'skipped': 'bg-gray-600/20 text-gray-400 border-gray-500/30'
+    }
+    
+    return (
+      <span 
+        className={`text-xs px-1.5 py-0.5 rounded-full font-medium border ${statusColors[record.status as keyof typeof statusColors] || statusColors.skipped}`}
+        title={`Status: ${record.status}`}
+      >
+        {record.status.toUpperCase()}
+      </span>
+    )
   }
 
   const formatRelativeTime = (timestamp: number) => {
@@ -219,6 +268,32 @@ export default function TradingHistory() {
         </div>
       )}
 
+      {/* Stats Summary */}
+      {/* {stats && processedRecords.length > 0 && (
+        <div className="mb-3 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+            <div className="text-center">
+              <div className="text-gray-400">Total Ops</div>
+              <div className="font-medium">{stats.totalOperations}</div>
+            </div>
+            <div className="text-center">
+              <div className="text-gray-400">Bot Ops</div>
+              <div className="font-medium text-purple-400">
+                {processedRecords.filter(r => r.is_bot_operation).length}
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-gray-400">Success Rate</div>
+              <div className="font-medium text-green-400">{stats.successRate.toFixed(1)}%</div>
+            </div>
+            <div className="text-center">
+              <div className="text-gray-400">Total Fees</div>
+              <div className="font-medium text-orange-400">{stats.totalFeesPaid.toFixed(4)} SOL</div>
+            </div>
+          </div>
+        </div>
+      )} */}
+
       {/* Horizontal Records List */}
       {connected && processedRecords.length === 0 ? (
         <div className="text-center py-4">
@@ -229,128 +304,92 @@ export default function TradingHistory() {
           {processedRecords.slice(0, 10).map((record: TrackingRecord) => (
             <div
               key={record.id}
-              className="flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg cursor-pointer group py-2 px-3 mr-2"
+              className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[200px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
+                record.is_bot_operation 
+                  ? 'border-purple-500/30 bg-purple-900/10' 
+                  : 'border-gray-600/30'
+              }`}
               onClick={() => openTransactionOnSolscan(record.signatures)}
               title="Click to view transaction on Solscan"
             > 
-              {/* Line 2: Operation type and amount */}
-              <div className="flex items-center justify-between">
+              {/* Header: Operation type and indicators */}
+              <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center space-x-2">
-                  <span className="text-sm text-gray-400 capitalize font-medium flex items-center space-x-2">
-                    {/* <span>{getOperationIcon(record.operationType, (record as any).is_bot_operation, (record as any).status)}</span> */}
-                    {record.operationType === 'sell' && record.totalTokens > record.tokens.length 
-                      ? 'sell & close' 
-                      : record.operationType
-                    }
-                    {(record as any).is_bot_operation && (
-                      <span className="text-xs bg-blue-600/20 text-blue-400 px-1 rounded" title={`Bot Strategy: ${(record as any).bot_strategy || 'auto'}`}>
-                        BOT
-                      </span>
-                    )}
-                    {(record as any).status && (record as any).status !== 'tracking' && (
-                      <span className="text-xs bg-gray-600/20 text-gray-300 px-1 rounded" title={`Status: ${(record as any).status}`}>
-                        {(record as any).status.toUpperCase()}
-                      </span>
-                    )}
-                    <div className="flex items-center ml-2 space-x-2">
-                      <div className="relative flex items-center">
-                        {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token: any, idx: number) => (
-                          <div 
-                            key={idx} 
-                            className="w-3 h-3 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden"
-                            style={{ marginLeft: idx > 0 ? '-0.5rem' : '0' }}
-                          >
-                            {token.logoURI ? (
-                              <img
-                                src={token.logoURI}
-                                alt={token.symbol || token.name || 'Token'}
-                                className="w-full h-full object-cover"
-                                onError={(e) => {
-                                  e.currentTarget.onerror = null
-                                  e.currentTarget.src = ''
-                                  const parent = e.currentTarget.parentElement as HTMLElement | null
-                                  if (parent) {
-                                    parent.textContent = (token.symbol || token.name || '?').charAt(0).toUpperCase()
-                                  }
-                                }}
-                              />
-                            ) : ((token.symbol || token.name || '?').charAt(0).toUpperCase())}
-                          </div>
-                        ))}
-                      </div>
-                      <div className="flex items-center space-x-1">
-                        {record.tokens.slice(0, Math.min(record.successCount, 4)).map((token: any, idx: number) => (
-                          <span key={idx} className="text-xs text-gray-300 font-medium">
-                            {token.symbol || token.name || 'Unknown'}
-                            {idx < Math.min(record.successCount, 4) - 1 ? ',' : ''}
-                          </span>
-                        ))}
-                        {record.successCount > 4 && <span className="text-xs text-gray-400">+{record.successCount - 4} more</span>}
-                      </div>
-                    </div>
-
-                    {record.solAmount && record.solAmount > 0 && (
-                      <span className="text-xs font-mono">
-                        {record.solAmount.toFixed(4)} SOL
-                      </span>
-                    )}
-                  </span>
-                </div>
-              </div>
-
-              {/* Line 1: Timestamp */}
-              <div className="flex items-center justify-between text-xs text-gray-400 mt-1">
-                <span>{formatRelativeTime(record.timestamp)}</span>
-                <svg 
-                  className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity duration-200" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24"
-                >
-                  <path 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round" 
-                    strokeWidth={2} 
-                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
-                  />
-                </svg>
-              </div>
-              
-              {/* Line 3: Enhanced info with P&L tracking indicator */}
-              {/* <div className="flex items-center justify-between mt-2">
-                <div className="flex items-center space-x-2">
-                  {record.tokens.some(token => token.priceUsd && token.priceUsd > 0) && (
-                    <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
-                  )}
-                  
-                  {record.operationType === 'buy' && (
-                    <span className="text-blue-400 text-xs">
-                      {record.successCount} token{record.successCount !== 1 ? 's' : ''} bought
-                    </span>
-                  )}
-                  
-                  {record.operationType === 'sell' && (
-                    <span className="text-orange-400 text-xs">
-                      {record.totalTokens > record.tokens.length 
-                        ? `${record.tokens.length} sold, ${record.totalTokens - record.tokens.length} closed`
-                        : `${record.successCount} token${record.successCount !== 1 ? 's' : ''} sold`
-                      }
-                    </span>
-                  )}
-                  
-                  {record.operationType === 'close' && (
-                    <span className="text-yellow-400 text-xs">
-                      {record.successCount} account{record.successCount !== 1 ? 's' : ''} closed
-                    </span>
-                  )}
+                  {getOperationTypeDisplay(record)}
+                  <BotOperationIndicator record={record} />
+                  <StatusIndicator record={record} />
                 </div>
                 
-                {record.failureCount > 0 && (
-                  <span className="text-red-400 text-xs">
-                    {record.failureCount} failed
+                {record.solAmount && record.solAmount > 0 && (
+                  <span className="text-xs font-mono text-gray-300">
+                    {record.solAmount.toFixed(4)} SOL
                   </span>
                 )}
-              </div> */}
+              </div>
+
+              {/* Tokens display */}
+              <div className="flex items-center space-x-2 mb-2">
+                <div className="relative flex items-center">
+                  {record.tokens.slice(0, Math.min(record.successCount, 3)).map((token: any, idx: number) => (
+                    <div 
+                      key={idx} 
+                      className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600"
+                      style={{ marginLeft: idx > 0 ? '-0.5rem' : '0' }}
+                    >
+                      {token.logoURI ? (
+                        <img
+                          src={token.logoURI}
+                          alt={token.symbol || token.name || 'Token'}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.onerror = null
+                            e.currentTarget.src = ''
+                            const parent = e.currentTarget.parentElement as HTMLElement | null
+                            if (parent) {
+                              parent.textContent = (token.symbol || token.name || '?').charAt(0).toUpperCase()
+                            }
+                          }}
+                        />
+                      ) : ((token.symbol || token.name || '?').charAt(0).toUpperCase())}
+                    </div>
+                  ))}
+                </div>
+                
+                <div className="flex items-center space-x-1 flex-1 min-w-0">
+                  {record.tokens.slice(0, Math.min(record.successCount, 2)).map((token: any, idx: number) => (
+                    <span key={idx} className="text-xs text-gray-300 font-medium truncate">
+                      {token.symbol || token.name || 'Unknown'}
+                      {idx < Math.min(record.successCount, 2) - 1 ? ',' : ''}
+                    </span>
+                  ))}
+                  {record.successCount > 2 && (
+                    <span className="text-xs text-gray-400">+{record.successCount - 2}</span>
+                  )}
+                </div>
+              </div>
+
+              {/* Footer: Timestamp and external link */}
+              <div className="flex items-center justify-between text-xs text-gray-400">
+                <span>{formatRelativeTime(record.timestamp)}</span>
+                <div className="flex items-center space-x-1">
+                  {record.failureCount > 0 && (
+                    <span className="text-red-400">{record.failureCount} failed</span>
+                  )}
+                  <svg 
+                    className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity duration-200" 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth={2} 
+                      d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
+                    />
+                  </svg>
+                </div>
+              </div>
             </div>
           ))}
         </div>

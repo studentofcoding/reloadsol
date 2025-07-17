@@ -35,6 +35,7 @@ interface PnLRecord {
   tradeComparisonData?: any // Trade comparison result
   tradingSimulation?: any // Trading simulation data
   priceHistory?: Array<{ timestamp: string; price_usd: number; volume?: number }>
+  // ✅ NEW: Bot operation fields
   isBotOperation?: boolean // Whether this was a bot operation
   botStrategy?: string // Bot strategy used
 }
@@ -64,6 +65,9 @@ interface OpenPosition {
   tradeComparisonData?: any // Trade comparison result
   tradingSimulation?: any // Trading simulation data
   priceHistory?: Array<{ timestamp: string; price_usd: number; volume?: number }>
+  // ✅ NEW: Bot operation fields
+  isBotOperation?: boolean // Whether this was a bot operation
+  botStrategy?: string // Bot strategy used
 }
 
 export default function PnLTracker() {
@@ -98,10 +102,86 @@ export default function PnLTracker() {
   } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
+  // ✅ NEW: Bot operation sync state
+  const [lastBotSync, setLastBotSync] = useState<number>(0)
+  const [isBotSyncActive, setIsBotSyncActive] = useState<boolean>(false)
+
+  // ✅ NEW: Bot operation indicator component
+  const BotOperationIndicator = ({ isBotOperation, botStrategy }: { 
+    isBotOperation?: boolean, 
+    botStrategy?: string 
+  }) => {
+    if (!isBotOperation) return null
+    
+    return (
+      <div className="flex items-center gap-1 text-xs">
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+          🤖 Bot
+        </span>
+        {botStrategy && (
+          <span className="text-gray-500 dark:text-gray-400">
+            {botStrategy}
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  // ✅ NEW: Sync status indicator
+  const SyncStatusIndicator = () => {
+    if (!isBotSyncActive) return null
+    
+    return (
+      <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 mb-4">
+        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+        <span>Syncing bot operations...</span>
+      </div>
+    )
+  }
+
   // Clear old localStorage data on component mount
   useEffect(() => {
     console.log('🧹 PnLTracker: Cleared old localStorage data, now using Supabase!')
   }, [])
+
+  // ✅ NEW: Bot operation sync polling
+  useEffect(() => {
+    if (!connected || !publicKey) return
+
+    const walletAddress = publicKey.toString()
+    let syncInterval: NodeJS.Timeout
+
+    const checkForBotUpdates = async () => {
+      try {
+        const response = await fetch(`/api/trading/sync?wallet=${encodeURIComponent(walletAddress)}`)
+        if (response.ok) {
+          const { hasUpdate, lastUpdate, source } = await response.json()
+          
+          if (hasUpdate && lastUpdate > lastBotSync) {
+            console.log(`🤖 Bot operation detected from ${source}, refreshing PnL...`)
+            setLastBotSync(lastUpdate)
+            setIsBotSyncActive(true)
+            
+            // Force refresh the PnL calculation
+            await calculatePnL()
+            
+            // Reset sync indicator after a delay
+            setTimeout(() => setIsBotSyncActive(false), 2000)
+          }
+        }
+      } catch (error) {
+        // Silent fail - sync is best effort
+      }
+    }
+
+    // Check immediately and then every 10 seconds
+    checkForBotUpdates()
+    syncInterval = setInterval(checkForBotUpdates, 10000)
+
+    return () => {
+      if (syncInterval) clearInterval(syncInterval)
+    }
+  }, [connected, publicKey, lastBotSync])
 
   // Fetch SOL price
   const fetchSolPrice = React.useCallback(async () => {
@@ -164,6 +244,9 @@ export default function PnLTracker() {
             successCount: sellRecord.successCount + closeRecord.successCount,
             totalTokens: sellRecord.totalTokens + closeRecord.totalTokens,
             signatures: [...sellRecord.signatures, ...closeRecord.signatures],
+            // ✅ NEW: Preserve bot operation flags when combining records
+            is_bot_operation: sellRecord.is_bot_operation || closeRecord.is_bot_operation,
+            bot_strategy: sellRecord.bot_strategy || closeRecord.bot_strategy,
           }
           
           processedSellRecords.push(combinedRecord)
@@ -200,6 +283,9 @@ export default function PnLTracker() {
           buySignatures: string[]
           sellSignatures: string[]
           firstBuyTimestamp: number
+          // ✅ NEW: Track bot operation info
+          isBotOperation: boolean
+          botStrategy?: string
         }
 
         const allOpsUnsorted = [...buyRecords, ...processedSellRecords]
@@ -244,6 +330,9 @@ export default function PnLTracker() {
                   buySignatures: [],
                   sellSignatures: [],
                   firstBuyTimestamp: op.timestamp,
+                  // ✅ NEW: Initialize bot operation tracking
+                  isBotOperation: !!op.is_bot_operation,
+                  botStrategy: op.bot_strategy,
                 }
                 openCycles.set(mint, cycle)
               }
@@ -259,6 +348,12 @@ export default function PnLTracker() {
               }
               cycle.buyCount += 1
               cycle.buySignatures.push(...op.signatures)
+              
+              // ✅ NEW: Update bot operation info if this is a bot operation
+              if (op.is_bot_operation) {
+                cycle.isBotOperation = true
+                cycle.botStrategy = op.bot_strategy || cycle.botStrategy
+              }
             } else {
               // SELL branch
               const cycle = openCycles.get(mint)
@@ -276,6 +371,12 @@ export default function PnLTracker() {
               }
               cycle.sellCount += 1
               cycle.sellSignatures.push(...op.signatures)
+
+              // ✅ NEW: Update bot operation info if this is a bot operation
+              if (op.is_bot_operation) {
+                cycle.isBotOperation = true
+                cycle.botStrategy = op.bot_strategy || cycle.botStrategy
+              }
 
               // If the cycle is fully closed, compute PnL record and remove from open map
               if (cycle.remainingTokenAmount <= 1e-6) {
@@ -302,6 +403,9 @@ export default function PnLTracker() {
                   sellSignatures: cycle.sellSignatures,
                   isPartialSell: false,
                   sellTransactionId: `${mint}-${op.timestamp}`,
+                  // ✅ NEW: Include bot operation info in PnL records
+                  isBotOperation: cycle.isBotOperation,
+                  botStrategy: cycle.botStrategy,
                 })
 
                 openCycles.delete(mint)
@@ -332,6 +436,9 @@ export default function PnLTracker() {
                   buyTokenAmount: cycle.totalTokenBought,
                   actualWalletBalance: walletTok.uiAmount,
                   walletTokenData: walletTok,
+                  // ✅ NEW: Include bot operation info in open positions
+                  isBotOperation: cycle.isBotOperation,
+                  botStrategy: cycle.botStrategy,
                 })
               }
             })
@@ -1220,7 +1327,15 @@ export default function PnLTracker() {
   }
 
   return (
-    <div className="">
+    <div className="space-y-6">
+      {/* Header with sync status */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+          P&L Tracker
+        </h2>
+        <SyncStatusIndicator />
+      </div>
+
       {/* Error Display */}
       {error && (
         <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-3 mb-3 text-center">
@@ -1311,12 +1426,14 @@ export default function PnLTracker() {
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
                   isRefreshingPrices 
                     ? 'bg-gray-600 text-white opacity-50 cursor-not-allowed'
-                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : isBotSyncActive
+                      ? 'bg-green-600 text-white'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white'
                 } flex items-center space-x-1`}
-                title="Refresh wallet balances and current prices for open positions"
+                title={isBotSyncActive ? 'Bot operation detected - syncing...' : 'Refresh wallet balances and current prices for open positions'}
               >
                 <svg 
-                  className={`w-3 h-3 ${isRefreshingPrices ? 'animate-spin' : ''}`} 
+                  className={`w-3 h-3 ${isRefreshingPrices || isBotSyncActive ? 'animate-spin' : ''}`} 
                   fill="none" 
                   stroke="currentColor" 
                   viewBox="0 0 24 24"
@@ -1328,6 +1445,7 @@ export default function PnLTracker() {
                     d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
                   />
                 </svg>
+                {isBotSyncActive && <span className="text-xs">🤖</span>}
               </button>
             )}
           </div>
@@ -1438,16 +1556,20 @@ export default function PnLTracker() {
                               </span>
                             )}
                           </div>
-                          <span className="text-sm text-white font-medium">
-                            {record.symbol || record.name || 'Token'}
-                          </span>
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-white font-medium">
+                                {record.symbol || record.name || 'Token'}
+                              </span>
+                              {/* ✅ NEW: Bot operation indicator */}
+                              <BotOperationIndicator 
+                                isBotOperation={record.isBotOperation} 
+                                botStrategy={record.botStrategy} 
+                              />
+                            </div>
+                          </div>
                         </div>
                         <div className="flex items-center space-x-1">
-                          {record.isBotOperation && (
-                            <span className="text-xs px-1.5 py-0.5 bg-blue-900/50 text-blue-300 rounded" title={`Bot Strategy: ${record.botStrategy || 'Unknown'}`}>
-                              BOT
-                            </span>
-                          )}
                           {record.tradingSimulation && (
                             <span className="text-xs px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded" title="Trading Simulation">
                               SIM
@@ -1612,9 +1734,18 @@ export default function PnLTracker() {
                             </span>
                           )}
                         </div>
-                        <span className="text-sm text-white font-medium">
-                          {position.symbol || position.name || 'Token'}
-                        </span>
+                        <div className="flex flex-col">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-white font-medium">
+                              {position.symbol || position.name || 'Token'}
+                            </span>
+                            {/* ✅ NEW: Bot operation indicator */}
+                            <BotOperationIndicator 
+                              isBotOperation={position.isBotOperation} 
+                              botStrategy={position.botStrategy} 
+                            />
+                          </div>
+                        </div>
                       </div>
                       <div className="flex items-center space-x-1">
                         {position.tradingSimulation && (

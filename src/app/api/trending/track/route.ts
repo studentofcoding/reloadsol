@@ -1220,9 +1220,7 @@ async function trackBotOperation(
       priceUsd: token.current_price || token.last_price_usd,
       tokenAmount: parseFloat(bestResult.outputAmount) || 0,
       solPrice: currentSolPrice,
-      // Mark as bot operation
-      isBot: true,
-      botStrategy: strategy
+      // Remove bot fields from token data - they belong on the main record
     }
 
     // Calculate SOL amount based on operation type
@@ -1244,13 +1242,41 @@ async function trackBotOperation(
       signatures: bestResult.signature ? [bestResult.signature] : [],
       slippage: 3, // 3% slippage for bot operations
       priorityFee: 100000, // 0.0001 SOL priority fee
-      errors: undefined
+      errors: undefined,
+      // ✅ FIXED: Move bot operation fields to the main record level
+      is_bot_operation: true,
+      bot_strategy: strategy
     })
 
     console.log(`🤖 Bot operation tracked: ${operationType} ${token.token_symbol} (${strategy})`)
+    
+    // ✅ NEW: Trigger real-time sync for UI updates
+    await triggerPnLSync(walletAddress)
   } catch (error) {
     console.error(`❌ Failed to track bot operation:`, error)
     // Don't throw - continue with the operation even if tracking fails
+  }
+}
+
+// ✅ NEW: Function to trigger PnL synchronization
+async function triggerPnLSync(walletAddress: string): Promise<void> {
+  try {
+    // Trigger a webhook or event to notify the UI about new bot operations
+    // This could be a simple HTTP call to invalidate caches
+    await fetch('/api/trading/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        walletAddress, 
+        timestamp: Date.now(),
+        source: 'bot_operation' 
+      })
+    }).catch(() => {
+      // Ignore sync errors - this is best effort
+      console.log('📡 PnL sync notification sent (best effort)')
+    })
+  } catch (error) {
+    // Silent fail - sync is best effort
   }
 }
 
