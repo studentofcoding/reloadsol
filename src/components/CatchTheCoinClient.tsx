@@ -78,6 +78,9 @@ export default function CatchTheCoinClient() {
   const previousPricesRef = useRef<Map<string, number>>(new Map())
   const previousTokensRef = useRef<Set<string>>(new Set()) // Track previous token addresses
   const quoteTimestamps = useRef<Map<string, number>>(new Map()) // Track quote timestamps for expiration
+  // Add new state for tracking which token is being hovered
+  const [hoveredToken, setHoveredToken] = useState<string | null>(null)
+  const [quoteErrors, setQuoteErrors] = useState<Map<string, string>>(new Map())
 
   // Fetch user's wallet tokens
   const fetchWalletTokens = async () => {
@@ -166,21 +169,21 @@ export default function CatchTheCoinClient() {
         }
         
         // Safe iteration over the Set
-        for (const address of currentTokenAddresses) {
-          if (!previousTokensRef.current.has(address)) {
-            newTokenAddresses.add(address)
+        for (const address of Array.from(currentTokenAddresses) as string[]) {
+          if (!previousTokensRef.current.has(address as string)) {
+            newTokenAddresses.add(address as string)
           }
         }
 
         // Update previous tokens reference
-        previousTokensRef.current = new Set(currentTokenAddresses)
+        previousTokensRef.current = new Set<string>(Array.from(currentTokenAddresses) as string[])
 
         // Set new tokens for animation (clear after 3 seconds)
         if (newTokenAddresses.size > 0) {
           console.log(`New tokens detected: ${newTokenAddresses.size}`)
-          setNewTokens(newTokenAddresses)
+          setNewTokens(new Set<string>(Array.from(newTokenAddresses) as string[]))
           setTimeout(() => {
-            setNewTokens(new Set())
+            setNewTokens(new Set<string>())
           }, 3000)
         }
 
@@ -197,22 +200,14 @@ export default function CatchTheCoinClient() {
     }
   }
 
-  // Fetch single quote on hover with caching
+  // Fetch single quote on hover with caching and reset on mouse leave
   const fetchSingleBuyQuote = async (token: TrendingToken) => {
     if (buyAmount <= 0) return
-
     const tokenAddress = token.token_address
-    const now = Date.now()
-    const lastQuoteTime = quoteTimestamps.current.get(tokenAddress) || 0
-    
-    // Check if we have a recent quote (within 30 seconds)
-    if (now - lastQuoteTime < 30000 && quotes.has(tokenAddress)) {
-      return
-    }
-
-    // Set loading state
+    // Prevent duplicate fetches
+    if (loadingQuotes.has(tokenAddress)) return
     setLoadingQuotes(prev => new Set(prev).add(tokenAddress))
-
+    setQuoteErrors(prev => { const m = new Map(prev); m.delete(tokenAddress); return m })
     try {
       const inputAmount = Math.floor(buyAmount * 1e9) // Convert SOL to lamports
       const quote = await getSwapQuote(
@@ -221,15 +216,16 @@ export default function CatchTheCoinClient() {
         inputAmount,
         300 // 3% slippage
       )
-
       if (quote) {
         setQuotes(prev => new Map(prev).set(tokenAddress, quote))
-        quoteTimestamps.current.set(tokenAddress, now)
+        quoteTimestamps.current.set(tokenAddress, Date.now())
+      } else {
+        setQuoteErrors(prev => { const m = new Map(prev); m.set(tokenAddress, 'No quote available'); return m })
       }
     } catch (err) {
+      setQuoteErrors(prev => { const m = new Map(prev); m.set(tokenAddress, 'Failed to fetch quote'); return m })
       console.error(`Failed to get buy quote for ${token.token_symbol}:`, err)
     } finally {
-      // Remove loading state
       setLoadingQuotes(prev => {
         const newSet = new Set(prev)
         newSet.delete(tokenAddress)
@@ -242,11 +238,30 @@ export default function CatchTheCoinClient() {
   const handleTokenHover = (token: TrendingToken) => {
     const ownedInfo = ownedTokens.get(token.token_address)
     const isOwned = ownedInfo && ownedInfo.balance > 0.001
-    
-    // Only fetch quote for tokens we don't own
     if (!isOwned) {
+      setHoveredToken(token.token_address)
       fetchSingleBuyQuote(token)
     }
+  }
+
+  // Handle mouse leave to reset quote state
+  const handleTokenMouseLeave = (token: TrendingToken) => {
+    setHoveredToken(null)
+    setQuotes(prev => {
+      const m = new Map(prev)
+      m.delete(token.token_address)
+      return m
+    })
+    setLoadingQuotes(prev => {
+      const s = new Set(prev)
+      s.delete(token.token_address)
+      return s
+    })
+    setQuoteErrors(prev => {
+      const m = new Map(prev)
+      m.delete(token.token_address)
+      return m
+    })
   }
 
   // Fetch Jupiter quotes for buying
@@ -653,6 +668,7 @@ export default function CatchTheCoinClient() {
                   animationDelay: isNewToken ? `${Math.random() * 0.5}s` : '0s'
                 }}
                 onMouseEnter={() => handleTokenHover(token)}
+                onMouseLeave={() => handleTokenMouseLeave(token)}
               >
                 {/* New Token Indicator */}
                 {isNewToken && (
@@ -741,12 +757,14 @@ export default function CatchTheCoinClient() {
                   {!isOwned && (
                     <div className="flex justify-between">
                       <span className="text-gray-400">You'll get:</span>
-                      {isLoadingQuote ? (
+                      {loadingQuotes.has(token.token_address) && hoveredToken === token.token_address ? (
                         <div className="flex items-center space-x-1">
                           <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                          <span className="text-gray-400 text-xs">Loading...</span>
+                          <span className="text-gray-400 text-xs">Getting Quote...</span>
                         </div>
-                      ) : quote ? (
+                      ) : quoteErrors.get(token.token_address) ? (
+                        <span className="text-red-400 text-xs">{quoteErrors.get(token.token_address)}</span>
+                      ) : quotes.has(token.token_address) ? (
                         <span className="text-green-400">~{formatNumber(expectedTokens, 2, false)} {token.token_symbol}</span>
                       ) : (
                         <span className="text-gray-500 text-xs">Hover to quote</span>
@@ -767,15 +785,20 @@ export default function CatchTheCoinClient() {
                   {!isOwned && (
                     <button
                       onClick={() => handleBuyToken(token)}
-                      disabled={isBuying || (!quote && !isLoadingQuote)}
+                      disabled={
+                        isBuying ||
+                        !quotes.has(token.token_address) ||
+                        loadingQuotes.has(token.token_address) ||
+                        hoveredToken !== token.token_address
+                      }
                       className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
                         isBuying
                           ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                          : quote
+                          : quotes.has(token.token_address) && hoveredToken === token.token_address
                           ? isNewToken
-                            ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-700 hover:to-blue-700 hover:scale-105 animate-pulse'
+                            ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-700 hover:to-blue-700 hover:scale-105'
                             : 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 hover:scale-105'
-                          : isLoadingQuote
+                          : loadingQuotes.has(token.token_address) && hoveredToken === token.token_address
                           ? 'bg-gray-700 text-gray-300 cursor-wait'
                           : 'bg-gray-600 text-gray-400 cursor-not-allowed'
                       }`}
@@ -785,12 +808,12 @@ export default function CatchTheCoinClient() {
                           <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
                           <span>Buying...</span>
                         </div>
-                      ) : isLoadingQuote ? (
+                      ) : loadingQuotes.has(token.token_address) && hoveredToken === token.token_address ? (
                         <div className="flex items-center justify-center space-x-2">
                           <div className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin"></div>
                           <span>Getting Quote...</span>
                         </div>
-                      ) : quote ? (
+                      ) : quotes.has(token.token_address) && hoveredToken === token.token_address ? (
                         isNewToken ? (
                           `🚀 Catch NEW ${token.token_symbol} (${buyAmount} SOL)`
                         ) : (
