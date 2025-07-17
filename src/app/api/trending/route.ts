@@ -337,21 +337,25 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
     const currentTime = Date.now();
 
     // Parse query parameters
-    const { searchParams } = new URL(request.url);
+    const { searchParams } = new URL(req.url, 'http://localhost');
     const forceRefresh = searchParams.get('refresh') === 'true';
-    const skipCache = searchParams.get('nocache') === 'true';
+    const cacheParam = searchParams.get('cache');
+    const noCacheHeader = req.headers.get('x-no-cache');
+    const shouldDisableCache = cacheParam === 'off' || noCacheHeader === '1';
+    // If shouldDisableCache, force skipCache
+    const skipCache = shouldDisableCache || searchParams.get('nocache') === 'true';
 
     const needsFullRefresh = currentTime - tokenCache.lastFullRefresh >= FULL_REFRESH_INTERVAL_MS || forceRefresh;
 
     // Return cached data if it's still valid and doesn't need a full refresh
     if (tokenCache.tokens.size > 0 && currentTime < tokenCache.expiresAt && !needsFullRefresh && !skipCache) {
       console.log('Using cached token data, expires in', Math.round((tokenCache.expiresAt - currentTime) / 1000), 'seconds');
-      return NextResponse.json(
+      const response = NextResponse.json(
         {
           // Re-use the same ordering criteria used for fresh responses
           tokens: Array.from(tokenCache.tokens.values()).sort((a, b) => {
@@ -370,7 +374,13 @@ export async function GET(request: NextRequest) {
             'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60'
           }
         }
-      )
+      );
+      if (shouldDisableCache) {
+        response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        response.headers.set('Pragma', 'no-cache');
+        response.headers.set('Expires', '0');
+      }
+      return response;
     }
 
     // Improved concurrency control
@@ -390,12 +400,12 @@ export async function GET(request: NextRequest) {
           const tokens = await refreshState.promise;
           refreshState.requestCount = Math.max(0, refreshState.requestCount - 1);
 
-          return NextResponse.json(
+          const response = NextResponse.json(
             {
               tokens,
               cached: false,
               cache_age: 0,
-              refresh_type: 'concurrent',
+              refresh_type: needsFullRefresh ? 'full' : 'incremental',
               expires_in: Math.round((tokenCache.expiresAt - Date.now()) / 1000),
               stats: {
                 concurrent_request: true,
@@ -408,7 +418,13 @@ export async function GET(request: NextRequest) {
                 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60'
               }
             }
-          )
+          );
+          if (shouldDisableCache) {
+            response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            response.headers.set('Pragma', 'no-cache');
+            response.headers.set('Expires', '0');
+          }
+          return response;
         } catch (error) {
           // If the existing refresh operation failed, reset and continue with a new one
           console.error('Existing refresh operation failed:', error);
@@ -427,7 +443,7 @@ export async function GET(request: NextRequest) {
       // Wait for the refresh operation to complete
       const tokens = await refreshState.promise;
 
-      return NextResponse.json(
+      const response = NextResponse.json(
         {
           tokens,
           cached: false,
@@ -444,7 +460,13 @@ export async function GET(request: NextRequest) {
             'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60'
           }
         }
-      )
+      );
+      if (shouldDisableCache) {
+        response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        response.headers.set('Pragma', 'no-cache');
+        response.headers.set('Expires', '0');
+      }
+      return response;
     } finally {
       // Set a timeout to clear the refreshState after a grace period
       // This prevents a failed request from blocking all future requests permanently

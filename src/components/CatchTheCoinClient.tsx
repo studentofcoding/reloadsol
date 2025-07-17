@@ -58,6 +58,20 @@ interface OwnedTokenInfo {
   currentPrice?: number
 }
 
+// Helper to batch fetch prices for owned tokens
+async function fetchOwnedTokenPrices(tokenMints: string[]): Promise<Record<string, number>> {
+  if (!tokenMints.length) return {}
+  try {
+    const resp = await fetch(`/api/tokens/prices?tokens=${tokenMints.join(',')}`)
+    if (!resp.ok) throw new Error('Failed to fetch prices')
+    const data = await resp.json()
+    // Assume data.prices is { mint: price }
+    return data.prices || {}
+  } catch {
+    return {}
+  }
+}
+
 export default function CatchTheCoinClient() {
   const { connected, publicKey, signTransaction, signAllTransactions } = useWallet()
   const { connection } = useConnection()
@@ -81,6 +95,17 @@ export default function CatchTheCoinClient() {
   // Add new state for tracking which token is being hovered
   const [hoveredToken, setHoveredToken] = useState<string | null>(null)
   const [quoteErrors, setQuoteErrors] = useState<Map<string, string>>(new Map())
+  // Add state for auto-update indicator and hover tracking
+  const [autoUpdateProgress, setAutoUpdateProgress] = useState(0)
+  const [isAnyTokenHovered, setIsAnyTokenHovered] = useState(false)
+  const autoUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const autoUpdateProgressRef = useRef<NodeJS.Timeout | null>(null)
+
+  // Add sidebar state for owned token prices, sell quotes, and loading
+  const [ownedTokenPrices, setOwnedTokenPrices] = useState<Record<string, number>>({})
+  const [sidebarSellQuotes, setSidebarSellQuotes] = useState<Record<string, JupiterQuote | null>>({})
+  const [sidebarSelling, setSidebarSelling] = useState<Record<string, boolean>>({})
+  const [sidebarHovered, setSidebarHovered] = useState<string | null>(null)
 
   // Fetch user's wallet tokens
   const fetchWalletTokens = async () => {
@@ -136,7 +161,7 @@ export default function CatchTheCoinClient() {
   // Fetch trending tokens with filtering and sorting
   const fetchTrendingTokens = async () => {
     try {
-      const response = await fetch('/api/trending')
+      const response = await fetch('/api/trending?cache=off', { cache: 'no-store' })
       if (!response.ok) throw new Error('Failed to fetch trending tokens')
       
       const data = await response.json()
@@ -559,6 +584,123 @@ export default function CatchTheCoinClient() {
     return () => clearInterval(interval)
   }, [tokens])
 
+  // Auto-update logic with moving indicator and pause on hover
+  useEffect(() => {
+    // Clear any previous intervals
+    if (autoUpdateIntervalRef.current) clearInterval(autoUpdateIntervalRef.current)
+    if (autoUpdateProgressRef.current) clearInterval(autoUpdateProgressRef.current)
+    setAutoUpdateProgress(0)
+    if (isAnyTokenHovered) return // Pause auto-update when hovering
+
+    // Progress bar: update every 100ms
+    let progress = 0
+    autoUpdateProgressRef.current = setInterval(() => {
+      progress += 2 // 2% every 100ms = 5s for 100%
+      setAutoUpdateProgress(progress)
+      if (progress >= 100) progress = 0
+    }, 100)
+
+    // Auto-update every 5 seconds
+    autoUpdateIntervalRef.current = setInterval(() => {
+      fetchTrendingTokens()
+      setAutoUpdateProgress(0)
+    }, 5000)
+
+    return () => {
+      if (autoUpdateIntervalRef.current) clearInterval(autoUpdateIntervalRef.current)
+      if (autoUpdateProgressRef.current) clearInterval(autoUpdateProgressRef.current)
+    }
+  }, [isAnyTokenHovered])
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      if (autoUpdateIntervalRef.current) clearInterval(autoUpdateIntervalRef.current)
+      if (autoUpdateProgressRef.current) clearInterval(autoUpdateProgressRef.current)
+    }
+  }, [])
+
+  // Fetch prices for owned tokens (positions) whenever userTokens changes
+  useEffect(() => {
+    const mints = userTokens.filter(t => t.uiAmount > 0.001).map(t => t.mintAddress)
+    if (mints.length) {
+      fetchOwnedTokenPrices(mints).then(setOwnedTokenPrices)
+    } else {
+      setOwnedTokenPrices({})
+    }
+  }, [userTokens])
+
+  // Fetch sell quote for sidebar position on hover
+  const handleSidebarHover = async (token: UserToken) => {
+    setSidebarHovered(token.mintAddress)
+    setSidebarSellQuotes(prev => ({ ...prev, [token.mintAddress]: null }))
+    try {
+      const sellAmount = Math.floor(token.balance)
+      const quote = await getSwapQuote(
+        token.mintAddress,
+        TOKENS.SOL,
+        sellAmount,
+        300 // 3% slippage
+      )
+      setSidebarSellQuotes(prev => ({ ...prev, [token.mintAddress]: quote }))
+    } catch {
+      setSidebarSellQuotes(prev => ({ ...prev, [token.mintAddress]: null }))
+    }
+  }
+  const handleSidebarMouseLeave = (token: UserToken) => {
+    setSidebarHovered(null)
+    setSidebarSellQuotes(prev => ({ ...prev, [token.mintAddress]: null }))
+  }
+
+  // Sell handler for sidebar
+  const handleSidebarSell = async (token: UserToken) => {
+    const quote = sidebarSellQuotes[token.mintAddress]
+    if (!quote || !connected || !publicKey || !signAllTransactions) return
+    setSidebarSelling(prev => ({ ...prev, [token.mintAddress]: true }))
+    try {
+      const expectedSol = parseInt(quote.outAmount) / 1e9
+      const feeInstructions = createFeeTransferInstructions(
+        publicKey,
+        'SELL' as FeeOperationType,
+        1,
+        expectedSol
+      )
+      const swapTransaction = await getSwapTransaction(
+        quote,
+        publicKey.toString(),
+        30000,
+        feeInstructions
+      )
+      if (!swapTransaction) throw new Error('Failed to create swap transaction')
+      const transaction = VersionedTransaction.deserialize(
+        Buffer.from(swapTransaction.swapTransaction, 'base64')
+      )
+      const signedTransactions = await signAllTransactions([transaction])
+      const signature = await connection.sendRawTransaction(signedTransactions[0].serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed'
+      })
+      await connection.confirmTransaction(signature, 'confirmed')
+      alert(`Successfully sold ${token.symbol}! Transaction: ${signature}`)
+      await fetchWalletTokens()
+      await fetchSellQuotes()
+    } catch (err) {
+      alert(`Failed to sell ${token.symbol}`)
+    } finally {
+      setSidebarSelling(prev => ({ ...prev, [token.mintAddress]: false }))
+    }
+  }
+
+  // Helper to handle hover state for all token cards
+  const handleTokenCardMouseEnter = (token: TrendingToken) => {
+    setIsAnyTokenHovered(true)
+    handleTokenHover(token)
+  }
+  const handleTokenCardMouseLeave = (token: TrendingToken) => {
+    setIsAnyTokenHovered(false)
+    handleTokenMouseLeave(token)
+  }
+
   if (!connected) {
     return (
       <div className="max-w-6xl mx-auto px-4 py-8">
@@ -574,312 +716,415 @@ export default function CatchTheCoinClient() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8">
-      {/* Header */}
-      <div className="text-center mb-8">
-        <h1 className="text-3xl font-bold text-white mb-4">🎯 Catch the Coin</h1>
-        <p className="text-gray-400 mb-6">One-click buy trending tokens with real-time price alerts & PnL tracking</p>
-        
-        {/* Buy Amount Selector */}
-        <div className="flex items-center justify-center space-x-4 mb-6">
-          <label className="text-gray-300">Buy Amount (SOL):</label>
-          <select
-            value={buyAmount}
-            onChange={(e) => setBuyAmount(Number(e.target.value))}
-            className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none"
-          >
-            <option value={0.05}>0.05 SOL</option>
-            <option value={0.1}>0.1 SOL</option>
-            <option value={0.25}>0.25 SOL</option>
-            <option value={0.5}>0.5 SOL</option>
-            <option value={1}>1 SOL</option>
-            <option value={2}>2 SOL</option>
-            <option value={5}>5 SOL</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Loading State */}
-      {loading && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="bg-gray-800 rounded-xl p-6 animate-pulse">
-              <div className="flex items-center space-x-3 mb-4">
-                <div className="w-12 h-12 bg-gray-700 rounded-full"></div>
-                <div className="flex-1">
-                  <div className="h-4 bg-gray-700 rounded mb-2"></div>
-                  <div className="h-3 bg-gray-700 rounded w-2/3"></div>
-                </div>
-              </div>
-              <div className="space-y-2 mb-4">
-                <div className="h-3 bg-gray-700 rounded"></div>
-                <div className="h-3 bg-gray-700 rounded w-3/4"></div>
-              </div>
-              <div className="h-10 bg-gray-700 rounded"></div>
+    <div className="max-w-6xl mx-auto px-4 py-8 flex flex-col md:flex-row-reverse gap-6">
+      {/* Main content: Trending tokens grid */}
+      <div className="flex-1">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-white mb-4">🎯 Catch the Coin</h1>
+          <div className="bg-gray-900 rounded-xl p-4 shadow-lg sticky top-8">
+          {/* Header styled like TradingHistory */}
+          <div className="mb-4 p-3 bg-cyan-900/30 rounded-lg border border-cyan-500/30 flex items-center gap-3">
+            <span className="text-2xl">🎯</span>
+            <div className="flex-1">
+              <div className="text-cyan-300 font-bold text-base">Your Recent Positions</div>
+              {(() => {
+                // Get all mint addresses with a 'buy' record and tradeSource: 'catch-the-coin'
+                // Use (r as any).tradeSource for compatibility with older records
+                const boughtRecords = records.filter(r => r.operationType === 'buy' && (r as any).tradeSource === 'catch-the-coin')
+                const boughtMints = new Set(boughtRecords.flatMap(r => r.tokens.map(t => t.mintAddress)))
+                const filteredTokens = userTokens.filter(t => t.uiAmount > 0.001 && boughtMints.has(t.mintAddress))
+                const totalPnl = filteredTokens.reduce((sum, token) => {
+                  const price = ownedTokenPrices[token.mintAddress] || 0
+                  const avgBuyPrice = ownedTokens.get(token.mintAddress)?.buyPrice || 0
+                  const pnl = avgBuyPrice > 0 ? ((price - avgBuyPrice) / avgBuyPrice) * 100 : 0
+                  return sum + pnl
+                }, 0)
+                return (
+                  <div className="flex items-center gap-3 mt-1">
+                    <span className="text-xs text-cyan-200">{filteredTokens.length} coins</span>
+                    <span className={`text-xs font-semibold ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>Total PnL: {totalPnl >= 0 ? '+' : ''}{totalPnl.toFixed(2)}%</span>
+                  </div>
+                )
+              })()}
             </div>
-          ))}
+          </div>
+          {(() => {
+            // Get all mint addresses with a 'buy' record and tradeSource: 'catch-the-coin'
+            // Use (r as any).tradeSource for compatibility with older records
+            const boughtRecords = records.filter(r => r.operationType === 'buy' && (r as any).tradeSource === 'catch-the-coin')
+            const boughtMints = new Set(boughtRecords.flatMap(r => r.tokens.map(t => t.mintAddress)))
+            // Only show userTokens that are in boughtMints and have a balance
+            const filteredTokens = userTokens.filter(t => t.uiAmount > 0.001 && boughtMints.has(t.mintAddress))
+            if (filteredTokens.length === 0) {
+              return <div className="text-gray-400 text-sm">No positions</div>
+            }
+            return (
+              <ul className="space-y-3">
+                {filteredTokens.map(token => {
+                  const price = ownedTokenPrices[token.mintAddress] || 0
+                  const avgBuyPrice = ownedTokens.get(token.mintAddress)?.buyPrice || 0
+                  const pnl = avgBuyPrice > 0 ? ((price - avgBuyPrice) / avgBuyPrice) * 100 : 0
+                  const quote = sidebarSellQuotes[token.mintAddress]
+                  const isSelling = sidebarSelling[token.mintAddress]
+                  return (
+                    <li
+                      key={token.mintAddress}
+                      className="bg-gray-800 rounded-lg p-3 flex items-center gap-3 group hover:bg-gray-700 transition"
+                      onMouseEnter={() => handleSidebarHover(token)}
+                      onMouseLeave={() => handleSidebarMouseLeave(token)}
+                    >
+                      <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center overflow-hidden">
+                        {token.logoURI ? (
+                          <img src={token.logoURI} alt={token.symbol} className="object-cover w-10 h-10 rounded-full" />
+                        ) : (
+                          <span className="text-white font-bold text-lg">{token.symbol?.charAt(0) || '?'}</span>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-white font-semibold text-sm truncate">{token.symbol}</span>
+                          <span className="text-gray-400 text-xs">{formatNumber(token.uiAmount, 2)}</span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-xs font-medium text-gray-300">PnL:</span>
+                          <span className={`text-xs font-bold ${pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{pnl >= 0 ? '+' : ''}{pnl.toFixed(2)}%</span>
+                        </div>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        {sidebarHovered === token.mintAddress && (
+                          quote === undefined ? (
+                            <span className="text-xs text-gray-400">Loading...</span>
+                          ) : quote ? (
+                            <span className="text-xs text-blue-400">~{(parseInt(quote.outAmount) / 1e9).toFixed(4)} SOL</span>
+                          ) : (
+                            <span className="text-xs text-red-400">No quote</span>
+                          )
+                        )}
+                        <button
+                          className={`mt-1 px-3 py-1 rounded bg-gradient-to-r from-red-600 to-orange-600 text-white text-xs font-semibold shadow hover:from-red-700 hover:to-orange-700 transition disabled:opacity-60 disabled:cursor-not-allowed`}
+                          disabled={isSelling || !quote}
+                          onClick={() => handleSidebarSell(token)}
+                        >
+                          {isSelling ? 'Selling...' : 'Sell'}
+                        </button>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )
+          })()}
         </div>
-      )}
-
-      {/* Error State */}
-      {error && (
-        <div className="text-center py-8">
-          <div className="bg-red-900/20 border border-red-500 rounded-lg p-6">
-            <p className="text-red-400">{error}</p>
-            <button
-              onClick={fetchTrendingTokens}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-            >
-              Retry
-            </button>
+        {/* Auto-update moving indicator */}
+        <div className="w-full h-2 mb-4 bg-gray-700 rounded-full overflow-hidden relative">
+          <div
+            className="h-full bg-gradient-to-r from-cyan-400 to-blue-500 transition-all duration-100"
+            style={{ width: `${autoUpdateProgress}%` }}
+          />
+          <div className="absolute inset-0 flex items-center justify-center text-xs text-cyan-200 font-semibold pointer-events-none">
+            {isAnyTokenHovered ? '⏸ Paused (hovering)' : `Auto update in ${Math.ceil((100 - autoUpdateProgress) / 20) * 1}s`}
           </div>
         </div>
-      )}
+          
+          {/* Buy Amount Selector */}
+          <div className="flex items-center justify-center space-x-4 mb-6">
+            <label className="text-gray-300">Buy Amount (SOL):</label>
+            <select
+              value={buyAmount}
+              onChange={(e) => setBuyAmount(Number(e.target.value))}
+              className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none"
+            >
+              <option value={0.05}>0.05 SOL</option>
+              <option value={0.1}>0.1 SOL</option>
+              <option value={0.25}>0.25 SOL</option>
+              <option value={0.5}>0.5 SOL</option>
+              <option value={1}>1 SOL</option>
+              <option value={2}>2 SOL</option>
+              <option value={5}>5 SOL</option>
+            </select>
+          </div>
+        </div>
 
-      {/* Token Cards */}
-      {!loading && !error && tokens.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {tokens.slice(0, 12).map((token) => {
-            const isHighlighted = highlightedTokens.has(token.token_address)
-            const isBuying = buyingTokens.has(token.token_address)
-            const isSelling = sellingTokens.has(token.token_address)
-            const isNewToken = newTokens.has(token.token_address)
-            const isLoadingQuote = loadingQuotes.has(token.token_address)
-            const quote = quotes.get(token.token_address)
-            const sellQuote = sellQuotes.get(token.token_address)
-            const ownedInfo = ownedTokens.get(token.token_address)
-            const isOwned = ownedInfo && ownedInfo.balance > 0.001
-            const expectedTokens = quote ? Number(quote.outAmount) / Math.pow(10, 6) : 0 // Assuming 6 decimals
-            const expectedSol = sellQuote ? parseInt(sellQuote.outAmount) / 1e9 : 0
-
-            return (
-              <div
-                key={token.token_address}
-                className={`bg-gray-800 rounded-xl p-6 border transition-all duration-500 hover:scale-105 ${
-                  isNewToken
-                    ? 'border-cyan-400 shadow-lg shadow-cyan-400/30 animate-bounce-in bg-gradient-to-br from-gray-800 to-cyan-900/20'
-                    : isHighlighted
-                    ? 'border-yellow-400 shadow-lg shadow-yellow-400/20 animate-pulse'
-                    : isOwned
-                    ? 'border-green-500 shadow-lg shadow-green-500/20'
-                    : 'border-gray-700 hover:border-gray-600'
-                }`}
-                style={{
-                  animationDelay: isNewToken ? `${Math.random() * 0.5}s` : '0s'
-                }}
-                onMouseEnter={() => handleTokenHover(token)}
-                onMouseLeave={() => handleTokenMouseLeave(token)}
-              >
-                {/* New Token Indicator */}
-                {isNewToken && (
-                  <div className="flex items-center justify-center mb-3 p-2 bg-cyan-900/30 rounded-lg border border-cyan-400/50 animate-pulse">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-2 h-2 bg-cyan-400 rounded-full animate-ping"></div>
-                      <span className="text-cyan-400 text-sm font-bold">🚀 NEW POTENTIAL</span>
-                      <div className="w-2 h-2 bg-cyan-400 rounded-full animate-ping"></div>
-                    </div>
+        {/* Loading State */}
+        {loading && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[...Array(6)].map((_, i) => (
+              <div key={i} className="bg-gray-800 rounded-xl p-6 animate-pulse">
+                <div className="flex items-center space-x-3 mb-4">
+                  <div className="w-12 h-12 bg-gray-700 rounded-full"></div>
+                  <div className="flex-1">
+                    <div className="h-4 bg-gray-700 rounded mb-2"></div>
+                    <div className="h-3 bg-gray-700 rounded w-2/3"></div>
                   </div>
-                )}
+                </div>
+                <div className="space-y-2 mb-4">
+                  <div className="h-3 bg-gray-700 rounded"></div>
+                  <div className="h-3 bg-gray-700 rounded w-3/4"></div>
+                </div>
+                <div className="h-10 bg-gray-700 rounded"></div>
+              </div>
+            ))}
+          </div>
+        )}
 
-                {/* Owned Token Indicator */}
-                {isOwned && (
-                  <div className="flex items-center justify-between mb-3 p-2 bg-green-900/20 rounded-lg border border-green-500/30">
-                    <div className="flex items-center space-x-2">
-                      <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                      <span className="text-green-400 text-sm font-medium">OWNED</span>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-green-400 text-sm font-medium">
-                        {formatNumber(ownedInfo.balance, 2)} {token.token_symbol}
+        {/* Error State */}
+        {error && (
+          <div className="text-center py-8">
+            <div className="bg-red-900/20 border border-red-500 rounded-lg p-6">
+              <p className="text-red-400">{error}</p>
+              <button
+                onClick={fetchTrendingTokens}
+                className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Token Cards */}
+        {!loading && !error && tokens.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {tokens.slice(0, 12).map((token) => {
+              const isHighlighted = highlightedTokens.has(token.token_address)
+              const isBuying = buyingTokens.has(token.token_address)
+              const isSelling = sellingTokens.has(token.token_address)
+              const isNewToken = newTokens.has(token.token_address)
+              const isLoadingQuote = loadingQuotes.has(token.token_address)
+              const quote = quotes.get(token.token_address)
+              const sellQuote = sellQuotes.get(token.token_address)
+              const ownedInfo = ownedTokens.get(token.token_address)
+              const isOwned = ownedInfo && ownedInfo.balance > 0.001
+              const expectedTokens = quote ? Number(quote.outAmount) / Math.pow(10, 6) : 0 // Assuming 6 decimals
+              const expectedSol = sellQuote ? parseInt(sellQuote.outAmount) / 1e9 : 0
+
+              return (
+                <div
+                  key={token.token_address}
+                  className={`bg-gray-800 rounded-xl p-6 border transition-all duration-500 hover:scale-105 ${
+                    isNewToken
+                      ? 'border-cyan-400 shadow-lg shadow-cyan-400/30 animate-bounce-in bg-gradient-to-br from-gray-800 to-cyan-900/20'
+                      : isHighlighted
+                      ? 'border-yellow-400 shadow-lg shadow-yellow-400/20 animate-pulse'
+                      : isOwned
+                      ? 'border-green-500 shadow-lg shadow-green-500/20'
+                      : 'border-gray-700 hover:border-gray-600'
+                  }`}
+                  style={{
+                    animationDelay: isNewToken ? `${Math.random() * 0.5}s` : '0s'
+                  }}
+                  onMouseEnter={() => handleTokenCardMouseEnter(token)}
+                  onMouseLeave={() => handleTokenCardMouseLeave(token)}
+                >
+                  {/* New Token Indicator */}
+                  {isNewToken && (
+                    <div className="flex items-center justify-center mb-3 p-2 bg-cyan-900/30 rounded-lg border border-cyan-400/50 animate-pulse">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-2 h-2 bg-cyan-400 rounded-full animate-ping"></div>
+                        <span className="text-cyan-400 text-sm font-bold">🚀 NEW POTENTIAL</span>
+                        <div className="w-2 h-2 bg-cyan-400 rounded-full animate-ping"></div>
                       </div>
-                      {ownedInfo.pnlPercentage !== undefined && (
-                        <div className={`text-xs ${ownedInfo.pnlPercentage >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                          PnL: {ownedInfo.pnlPercentage >= 0 ? '+' : ''}{ownedInfo.pnlPercentage.toFixed(2)}%
+                    </div>
+                  )}
+
+                  {/* Owned Token Indicator */}
+                  {isOwned && (
+                    <div className="flex items-center justify-between mb-3 p-2 bg-green-900/20 rounded-lg border border-green-500/30">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                        <span className="text-green-400 text-sm font-medium">OWNED</span>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-green-400 text-sm font-medium">
+                          {formatNumber(ownedInfo.balance, 2)} {token.token_symbol}
                         </div>
+                        {ownedInfo.pnlPercentage !== undefined && (
+                          <div className={`text-xs ${ownedInfo.pnlPercentage >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            PnL: {ownedInfo.pnlPercentage >= 0 ? '+' : ''}{ownedInfo.pnlPercentage.toFixed(2)}%
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Token Header */}
+                  <div className="flex items-center space-x-3 mb-4">
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 ${
+                      isNewToken 
+                        ? 'bg-gradient-to-r from-cyan-500 to-blue-500 animate-pulse' 
+                        : 'bg-gradient-to-r from-purple-500 to-pink-500'
+                    }`}>
+                      {token.logo_url ? (
+                        <img
+                          src={token.logo_url}
+                          alt={token.token_symbol}
+                          className="rounded-full object-cover"
+                          style={{ width: '40px', height: '40px', objectFit: 'cover', borderRadius: '50%' }}
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none'
+                          }}
+                        />
+                      ) : (
+                        <span className="text-white font-bold text-lg">
+                          {token.token_symbol?.charAt(0) || '?'}
+                        </span>
                       )}
                     </div>
+                    <div className="flex-1">
+                      <h3 className="text-white font-semibold text-lg">{token.token_symbol}</h3>
+                      <div className="flex items-center space-x-2 mt-1">
+                        <span className="text-white text-sm font-medium">{formatCurrency(token.price, 6, false)}</span>
+                        <span className={`text-xs font-semibold ${token.change_1h >= 0 ? 'text-green-400' : 'text-red-400'}`}
+                          >{token.change_1h >= 0 ? '+' : ''}{Math.abs(token.change_1h) < 1 ? (token.change_1h * 100).toFixed(2) : token.change_1h.toFixed(2)}%</span>
+                      </div>
+                    </div>
                   </div>
-                )}
 
-                {/* Token Header */}
-                <div className="flex items-center space-x-3 mb-4">
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 ${
-                    isNewToken 
-                      ? 'bg-gradient-to-r from-cyan-500 to-blue-500 animate-pulse' 
-                      : 'bg-gradient-to-r from-purple-500 to-pink-500'
-                  }`}>
-                    {token.logo_url ? (
-                      <img
-                        src={token.logo_url}
-                        alt={token.token_symbol}
-                        className="w-10 h-10 rounded-full"
-                        onError={(e) => {
-                          e.currentTarget.style.display = 'none'
-                        }}
-                      />
-                    ) : (
-                      <span className="text-white font-bold text-lg">
-                        {token.token_symbol?.charAt(0) || '?'}
+                  {/* Token Stats */}
+                  <div className="space-y-2 mb-4 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Market Cap:</span>
+                      <span className={`font-medium ${isNewToken ? 'text-cyan-400' : 'text-white'}`}>
+                        {formatCurrency(token.mcap)}
                       </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Volume 1h:</span>
+                      <span className="text-white">{formatCurrency(token.volume_1h)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Volume 5m:</span>
+                      <span className="text-white">{formatCurrency(token.volume_5m)}</span>
+                    </div>
+                    {/* Quote info with loading state */}
+                    {!isOwned && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">You'll get:</span>
+                        {loadingQuotes.has(token.token_address) && hoveredToken === token.token_address ? (
+                          <div className="flex items-center space-x-1">
+                            <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span className="text-gray-400 text-xs">Getting Quote...</span>
+                          </div>
+                        ) : quoteErrors.get(token.token_address) ? (
+                          <span className="text-red-400 text-xs">{quoteErrors.get(token.token_address)}</span>
+                        ) : quotes.has(token.token_address) ? (
+                          <span className="text-green-400">~{formatNumber(expectedTokens, 2, false)} {token.token_symbol}</span>
+                        ) : (
+                          <span className="text-gray-500 text-xs">Hover to quote</span>
+                        )}
+                      </div>
+                    )}
+                    {sellQuote && isOwned && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Sell for:</span>
+                        <span className="text-blue-400">~{expectedSol.toFixed(4)} SOL</span>
+                      </div>
                     )}
                   </div>
-                  <div className="flex-1">
-                    <h3 className="text-white font-semibold text-lg">{token.token_symbol}</h3>
-                    <p className="text-gray-400 text-sm truncate">
-                      Small Cap • {formatCurrency(token.mcap, 0, true)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-white font-medium">{formatCurrency(token.price, 6, false)}</p>
-                    <p className={`text-sm ${token.change_1h >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {token.change_1h >= 0 ? '+' : ''}{Math.abs(token.change_1h) < 1 ? (token.change_1h * 100).toFixed(2) : token.change_1h.toFixed(2)}%
-                    </p>
-                  </div>
-                </div>
 
-                {/* Token Stats */}
-                <div className="space-y-2 mb-4 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Market Cap:</span>
-                    <span className={`font-medium ${isNewToken ? 'text-cyan-400' : 'text-white'}`}>
-                      {formatCurrency(token.mcap)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Volume 1h:</span>
-                    <span className="text-white">{formatCurrency(token.volume_1h)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Volume 5m:</span>
-                    <span className="text-white">{formatCurrency(token.volume_5m)}</span>
-                  </div>
-                  {/* Quote info with loading state */}
-                  {!isOwned && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">You'll get:</span>
-                      {loadingQuotes.has(token.token_address) && hoveredToken === token.token_address ? (
-                        <div className="flex items-center space-x-1">
-                          <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                          <span className="text-gray-400 text-xs">Getting Quote...</span>
-                        </div>
-                      ) : quoteErrors.get(token.token_address) ? (
-                        <span className="text-red-400 text-xs">{quoteErrors.get(token.token_address)}</span>
-                      ) : quotes.has(token.token_address) ? (
-                        <span className="text-green-400">~{formatNumber(expectedTokens, 2, false)} {token.token_symbol}</span>
-                      ) : (
-                        <span className="text-gray-500 text-xs">Hover to quote</span>
-                      )}
-                    </div>
-                  )}
-                  {sellQuote && isOwned && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Sell for:</span>
-                      <span className="text-blue-400">~{expectedSol.toFixed(4)} SOL</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Action Buttons */}
-                <div className="space-y-2">
-                  {/* Buy Button */}
-                  {!isOwned && (
-                    <button
-                      onClick={() => handleBuyToken(token)}
-                      disabled={
-                        isBuying ||
-                        !quotes.has(token.token_address) ||
-                        loadingQuotes.has(token.token_address) ||
-                        hoveredToken !== token.token_address
-                      }
-                      className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
-                        isBuying
-                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                          : quotes.has(token.token_address) && hoveredToken === token.token_address
-                          ? isNewToken
-                            ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-700 hover:to-blue-700 hover:scale-105'
-                            : 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 hover:scale-105'
-                          : loadingQuotes.has(token.token_address) && hoveredToken === token.token_address
-                          ? 'bg-gray-700 text-gray-300 cursor-wait'
-                          : 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                      }`}
-                    >
-                      {isBuying ? (
-                        <div className="flex items-center justify-center space-x-2">
-                          <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                          <span>Buying...</span>
-                        </div>
-                      ) : loadingQuotes.has(token.token_address) && hoveredToken === token.token_address ? (
-                        <div className="flex items-center justify-center space-x-2">
-                          <div className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin"></div>
-                          <span>Getting Quote...</span>
-                        </div>
-                      ) : quotes.has(token.token_address) && hoveredToken === token.token_address ? (
-                        isNewToken ? (
-                          `🚀 Catch NEW ${token.token_symbol} (${buyAmount} SOL)`
+                  {/* Action Buttons */}
+                  <div className="space-y-2">
+                    {/* Buy Button */}
+                    {!isOwned && (
+                      <button
+                        onClick={() => handleBuyToken(token)}
+                        disabled={
+                          isBuying ||
+                          !quotes.has(token.token_address) ||
+                          loadingQuotes.has(token.token_address) ||
+                          hoveredToken !== token.token_address
+                        }
+                        className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
+                          isBuying
+                            ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                            : quotes.has(token.token_address) && hoveredToken === token.token_address
+                            ? isNewToken
+                              ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-700 hover:to-blue-700 hover:scale-105'
+                              : 'bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 hover:scale-105'
+                            : loadingQuotes.has(token.token_address) && hoveredToken === token.token_address
+                            ? 'bg-gray-700 text-gray-300 cursor-wait'
+                            : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                        }`}
+                      >
+                        {isBuying ? (
+                          <div className="flex items-center justify-center space-x-2">
+                            <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span>Buying...</span>
+                          </div>
+                        ) : loadingQuotes.has(token.token_address) && hoveredToken === token.token_address ? (
+                          <div className="flex items-center justify-center space-x-2">
+                            <div className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin"></div>
+                            <span>Getting Quote...</span>
+                          </div>
+                        ) : quotes.has(token.token_address) && hoveredToken === token.token_address ? (
+                          isNewToken ? (
+                            `🚀 Catch NEW ${token.token_symbol} (${buyAmount} SOL)`
+                          ) : (
+                            `🎯 Catch ${token.token_symbol} (${buyAmount} SOL)`
+                          )
                         ) : (
-                          `🎯 Catch ${token.token_symbol} (${buyAmount} SOL)`
-                        )
-                      ) : (
-                        'Hover to Quote'
-                      )}
-                    </button>
-                  )}
+                          'Hover to Quote'
+                        )}
+                      </button>
+                    )}
 
-                  {/* Sell Button */}
-                  {isOwned && (
-                    <button
-                      onClick={() => handleSellToken(token)}
-                      disabled={isSelling || !sellQuote}
-                      className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
-                        isSelling
-                          ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                          : sellQuote
-                          ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white hover:from-red-700 hover:to-orange-700 hover:scale-105'
-                          : 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                      }`}
-                    >
-                      {isSelling ? (
-                        <div className="flex items-center justify-center space-x-2">
-                          <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                          <span>Selling...</span>
-                        </div>
-                      ) : sellQuote ? (
-                        `💰 Sell ${token.token_symbol} (${expectedSol.toFixed(4)} SOL)`
-                      ) : (
-                        'Getting Sell Quote...'
-                      )}
-                    </button>
+                    {/* Sell Button */}
+                    {isOwned && (
+                      <button
+                        onClick={() => handleSellToken(token)}
+                        disabled={isSelling || !sellQuote}
+                        className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
+                          isSelling
+                            ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                            : sellQuote
+                            ? 'bg-gradient-to-r from-red-600 to-orange-600 text-white hover:from-red-700 hover:to-orange-700 hover:scale-105'
+                            : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                        }`}
+                      >
+                        {isSelling ? (
+                          <div className="flex items-center justify-center space-x-2">
+                            <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span>Selling...</span>
+                          </div>
+                        ) : sellQuote ? (
+                          `💰 Sell ${token.token_symbol} (${expectedSol.toFixed(4)} SOL)`
+                        ) : (
+                          'Getting Sell Quote...'
+                        )}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Highlight Indicator */}
+                  {isHighlighted && (
+                    <div className="mt-2 text-center">
+                      <span className="text-yellow-400 text-xs font-medium animate-pulse">
+                        🔥 Price moved {`>`}5%!
+                      </span>
+                    </div>
                   )}
                 </div>
-
-                {/* Highlight Indicator */}
-                {isHighlighted && (
-                  <div className="mt-2 text-center">
-                    <span className="text-yellow-400 text-xs font-medium animate-pulse">
-                      🔥 Price moved {`>`}5%!
-                    </span>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Empty State */}
-      {!loading && !error && tokens.length === 0 && (
-        <div className="text-center py-8">
-          <div className="bg-gray-800 rounded-lg p-8">
-            <p className="text-gray-300 mb-4">No trending tokens found at the moment.</p>
-            <button
-              onClick={fetchTrendingTokens}
-              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-            >
-              Refresh
-            </button>
+              )
+            })}
           </div>
-        </div>
-      )}
+        )}
+
+        {/* Empty State */}
+        {!loading && !error && tokens.length === 0 && (
+          <div className="text-center py-8">
+            <div className="bg-gray-800 rounded-lg p-8">
+              <p className="text-gray-300 mb-4">No trending tokens found at the moment.</p>
+              <button
+                onClick={fetchTrendingTokens}
+                className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
