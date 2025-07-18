@@ -3,26 +3,54 @@ import { NextRequest, NextResponse } from 'next/server'
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const pairAddress = searchParams.get('pairAddress')
+    const mintAddress = searchParams.get('pairAddress') // Keep parameter name for backward compatibility
 
-    if (!pairAddress) {
+    if (!mintAddress) {
       return NextResponse.json({
-        error: 'Pair address is required',
-        example: '/api/axiom/token-info?pairAddress=TOKEN_PAIR_ADDRESS'
+        error: 'Mint address is required',
+        example: '/api/axiom/token-info?pairAddress=TOKEN_MINT_ADDRESS'
       }, { status: 400 })
     }
 
-    // Validate pair address format (basic Solana address validation)
-    if (pairAddress.length < 32 || pairAddress.length > 44) {
+    // Validate mint address format (basic Solana address validation)
+    if (mintAddress.length < 32 || mintAddress.length > 44) {
       return NextResponse.json({
-        error: 'Invalid pair address format'
+        error: 'Invalid mint address format'
       }, { status: 400 })
     }
 
-    console.log(`🔍 Fetching Axiom token info for: ${pairAddress}`)
+    console.log(`🔍 Fetching Axiom token info for mint: ${mintAddress}`)
 
-    // Fetch from Axiom API with authentication cookies
-    const response = await fetch(`https://api.axiom.trade/token-info?pairAddress=${pairAddress}`, {
+    // First, get the graduated pool from Jupiter metadata
+    console.log(`🔍 Getting graduated pool for mint: ${mintAddress}`)
+    const jupiterResponse = await fetch(`/api/jupiter/metadata?mint=${mintAddress}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      },
+      signal: AbortSignal.timeout(5000) // 5 second timeout
+    })
+
+    if (!jupiterResponse.ok) {
+      throw new Error(`Failed to fetch Jupiter metadata: ${jupiterResponse.status}`)
+    }
+
+    const jupiterData = await jupiterResponse.json()
+    const graduatedPool = jupiterData.data?.graduatedPool
+
+    if (!graduatedPool) {
+      console.warn(`No graduated pool found for mint: ${mintAddress}`)
+      return NextResponse.json({
+        error: 'No graduated pool available for this token',
+        details: 'This token does not have a graduated pool in Jupiter',
+        pairNotFound: true
+      }, { status: 404 })
+    }
+
+    console.log(`🎯 Using graduated pool: ${graduatedPool} for mint: ${mintAddress}`)
+
+    // Fetch from Axiom API with authentication cookies using the graduated pool
+    const response = await fetch(`https://api.axiom.trade/token-info?pairAddress=${graduatedPool}`, {
       method: 'GET',
       headers: {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -77,6 +105,15 @@ export async function GET(request: NextRequest) {
       }, { status: 401 })
     }
 
+    // Check for "Pair not found" error specifically
+    if (data.error && data.error.includes('Pair not found')) {
+      return NextResponse.json({
+        error: 'Token not found in Axiom database',
+        details: 'This token is not tracked by Axiom. Risk data unavailable.',
+        pairNotFound: true
+      }, { status: 404 })
+    }
+
     // Validate required fields
     if (typeof data.numHolders !== 'number' || typeof data.insidersHoldPercent !== 'number' || typeof data.bundlersHoldPercent !== 'number') {
       return NextResponse.json({
@@ -85,7 +122,7 @@ export async function GET(request: NextRequest) {
       }, { status: 500 })
     }
 
-    console.log(`✅ Successfully fetched Axiom token info for ${pairAddress}`)
+    console.log(`✅ Successfully fetched Axiom token info for ${mintAddress} using graduated pool ${graduatedPool}`)
 
     return NextResponse.json({
       success: true,
