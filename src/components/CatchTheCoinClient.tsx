@@ -1239,7 +1239,7 @@ export default function CatchTheCoinClient() {
                           </div>
                           <div className="flex justify-between">
                             <span>Holders: {data.numHolders.toLocaleString()}</span>
-                            <span className="text-gray-300">Fees: ${data.totalPairFeesPaid.toFixed(0)}</span>
+                            <span className="text-gray-300">Fees: {data.totalPairFeesPaid.toFixed(0)} SOL</span>
                           </div>
                         </div>
                       )
