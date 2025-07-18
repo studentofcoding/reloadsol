@@ -23,34 +23,35 @@ export async function GET(request: NextRequest) {
 
     // First, get the graduated pool from Jupiter metadata
     console.log(`🔍 Getting graduated pool for mint: ${mintAddress}`)
-    const jupiterResponse = await fetch(`/api/jupiter/metadata?mint=${mintAddress}`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json'
-      },
-      signal: AbortSignal.timeout(5000) // 5 second timeout
-    })
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `http://${request.headers.get('host')}`;
+    // const jupiterResponse = await fetch(`${baseUrl}/api/jupiter/metadata?mint=${mintAddress}`, {
+    //   method: 'GET',
+    //   headers: {
+    //     'Accept': 'application/json'
+    //   },
+    //   signal: AbortSignal.timeout(5000) // 5 second timeout
+    // })
 
-    if (!jupiterResponse.ok) {
-      throw new Error(`Failed to fetch Jupiter metadata: ${jupiterResponse.status}`)
-    }
+    // if (!jupiterResponse.ok) {
+    //   throw new Error(`Failed to fetch Jupiter metadata: ${jupiterResponse.status}`)
+    // }
 
-    const jupiterData = await jupiterResponse.json()
-    const graduatedPool = jupiterData.data?.graduatedPool
+    // const jupiterData = await jupiterResponse.json()
+    // const graduatedPool = jupiterData.data?.graduatedPool
 
-    if (!graduatedPool) {
-      console.warn(`No graduated pool found for mint: ${mintAddress}`)
-      return NextResponse.json({
-        error: 'No graduated pool available for this token',
-        details: 'This token does not have a graduated pool in Jupiter',
-        pairNotFound: true
-      }, { status: 404 })
-    }
+    // if (!graduatedPool) {
+    //   console.warn(`No graduated pool found for mint: ${mintAddress}`)
+    //   return NextResponse.json({
+    //     error: 'No graduated pool available for this token',
+    //     details: 'This token does not have a graduated pool in Jupiter',
+    //     pairNotFound: true
+    //   }, { status: 404 })
+    // }
 
-    console.log(`🎯 Using graduated pool: ${graduatedPool} for mint: ${mintAddress}`)
+    // console.log(`🎯 Using graduated pool: ${graduatedPool} for mint: ${mintAddress}`)
 
     // Fetch from Axiom API with authentication cookies using the graduated pool
-    const response = await fetch(`https://api.axiom.trade/token-info?pairAddress=${graduatedPool}`, {
+    const response = await fetch(`https://api.axiom.trade/token-info?pairAddress=${mintAddress}`, {
       method: 'GET',
       headers: {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -122,7 +123,7 @@ export async function GET(request: NextRequest) {
       }, { status: 500 })
     }
 
-    console.log(`✅ Successfully fetched Axiom token info for ${mintAddress} using graduated pool ${graduatedPool}`)
+    // console.log(`✅ Successfully fetched Axiom token info for ${mintAddress} using graduated pool ${graduatedPool}`)
 
     return NextResponse.json({
       success: true,
