@@ -7,6 +7,7 @@ const serverTokenCache = new Map<string, {
     symbol: string
     name: string
     logoURI?: string
+    graduatedPool?: string | null
   }
   timestamp: number
 }>()
@@ -92,7 +93,7 @@ async function fetchTokensFromJupiterV2(mintAddresses: string[], retryCount = 0)
 
     const tokensData = await response.json()
 
-    // Convert array response to object keyed by mint address - only essential fields
+    // Convert array response to object keyed by mint address - include graduated pool
     const results: Record<string, any> = {}
 
     if (Array.isArray(tokensData)) {
@@ -102,7 +103,8 @@ async function fetchTokensFromJupiterV2(mintAddresses: string[], retryCount = 0)
             decimals: token.decimals,
             symbol: token.symbol,
             name: token.name,
-            logoURI: token.icon
+            logoURI: token.icon,
+            graduatedPool: token.graduatedPool || null // Include graduated pool if available
           }
         }
       })
@@ -140,25 +142,28 @@ async function fetchTokenMetadataFromJupiter(mintAddress: string, retryCount = 0
   return tokenData
 }
 
-// Fallback token data for common tokens - only essential fields
+// Fallback token data for common tokens - include graduated pool
 const COMMON_TOKENS: Record<string, any> = {
   'So11111111111111111111111111111111111111112': {
     decimals: 9,
     symbol: 'SOL',
     name: 'Wrapped SOL',
-    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png'
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
+    graduatedPool: null // SOL doesn't have a graduated pool
   },
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': {
     decimals: 6,
     symbol: 'USDC',
     name: 'USD Coin',
-    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png'
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/logo.png',
+    graduatedPool: null // USDC doesn't have a graduated pool
   },
   'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': {
     decimals: 6,
     symbol: 'USDT',
     name: 'Tether USD',
-    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg'
+    logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB/logo.svg',
+    graduatedPool: null // USDT doesn't have a graduated pool
   },
 }
 
@@ -214,11 +219,12 @@ export async function GET(request: NextRequest) {
     } catch (error) {
       console.warn(`Failed to fetch token metadata for ${mintAddress}:`, error)
 
-      // Return default token data - only essential fields
+      // Return default token data - include graduated pool
       const defaultData = {
         decimals: 6,
         symbol: 'TOKEN',
-        name: 'Unknown Token'
+        name: 'Unknown Token',
+        graduatedPool: null
       }
 
       return NextResponse.json({
@@ -304,11 +310,12 @@ export async function POST(request: NextRequest) {
                 source: 'jupiter_api_v2'
               }
             } else {
-              // Token not found in batch results - only essential fields
+              // Token not found in batch results - include graduated pool
               const defaultData = {
                 decimals: 6,
                 symbol: 'TOKEN',
-                name: 'Unknown Token'
+                name: 'Unknown Token',
+                graduatedPool: null
               }
 
               results[mint] = {
@@ -327,7 +334,8 @@ export async function POST(request: NextRequest) {
             const defaultData = {
               decimals: 6,
               symbol: 'TOKEN',
-              name: 'Unknown Token'
+              name: 'Unknown Token',
+              graduatedPool: null
             }
 
             results[mint] = {

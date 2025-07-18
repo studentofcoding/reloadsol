@@ -15,22 +15,51 @@ interface AxiomResponse {
   data?: AxiomTokenInfo
   error?: string
   requiresAuth?: boolean
+  pairNotFound?: boolean
 }
 
 // Cache for Axiom API responses to avoid repeated calls
 const axiomCache = new Map<string, { data: AxiomTokenInfo; timestamp: number }>()
 const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes cache
 
-export async function fetchAxiomTokenInfo(pairAddress: string): Promise<AxiomResponse> {
+export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomResponse> {
   try {
     // Check cache first
-    const cached = axiomCache.get(pairAddress)
+    const cached = axiomCache.get(mintAddress)
     if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
       return { success: true, data: cached.data }
     }
 
-    // Fetch from our proxy API endpoint
-    const response = await fetch(`/api/axiom/token-info?pairAddress=${pairAddress}`, {
+    // First, get the graduated pool from Jupiter metadata
+    console.log(`🔍 Getting graduated pool for mint: ${mintAddress}`)
+    const jupiterResponse = await fetch(`/api/jupiter/metadata?mint=${mintAddress}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json'
+      },
+      signal: AbortSignal.timeout(5000) // 5 second timeout
+    })
+
+    if (!jupiterResponse.ok) {
+      throw new Error(`Failed to fetch Jupiter metadata: ${jupiterResponse.status}`)
+    }
+
+    const jupiterData = await jupiterResponse.json()
+    const graduatedPool = jupiterData.data?.graduatedPool
+
+    if (!graduatedPool) {
+      console.warn(`No graduated pool found for mint: ${mintAddress}`)
+      return { 
+        success: false, 
+        error: 'No graduated pool available for this token',
+        pairNotFound: true
+      }
+    }
+
+    console.log(`🎯 Using graduated pool: ${graduatedPool} for mint: ${mintAddress}`)
+
+    // Fetch from our proxy API endpoint using the graduated pool
+    const response = await fetch(`/api/axiom/token-info?pairAddress=${graduatedPool}`, {
       method: 'GET',
       headers: {
         'Accept': 'application/json'
@@ -50,6 +79,15 @@ export async function fetchAxiomTokenInfo(pairAddress: string): Promise<AxiomRes
       }
     }
 
+    // Handle pair not found error
+    if (result.pairNotFound) {
+      return { 
+        success: false, 
+        error: 'Token not found in Axiom database',
+        pairNotFound: true
+      }
+    }
+
     if (!response.ok) {
       throw new Error(`Axiom API error: ${response.status} ${response.statusText}`)
     }
@@ -66,11 +104,11 @@ export async function fetchAxiomTokenInfo(pairAddress: string): Promise<AxiomRes
     }
 
     // Cache the result
-    axiomCache.set(pairAddress, { data, timestamp: Date.now() })
+    axiomCache.set(mintAddress, { data, timestamp: Date.now() })
 
     return { success: true, data }
   } catch (error) {
-    console.error(`Failed to fetch Axiom token info for ${pairAddress}:`, error)
+    console.error(`Failed to fetch Axiom token info for ${mintAddress}:`, error)
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error' 
