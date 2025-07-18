@@ -127,7 +127,7 @@ export default function CatchTheCoinClient() {
   const [sidebarSellQuotes, setSidebarSellQuotes] = useState<Record<string, JupiterQuote | null>>({})
   const [sidebarSelling, setSidebarSelling] = useState<Record<string, boolean>>({})
   const [sidebarHovered, setSidebarHovered] = useState<string | null>(null)
-  const [axiomData, setAxiomData] = useState<Map<string, { data: AxiomTokenInfo; risk: RiskIndicators }>>(new Map())
+  const [axiomData, setAxiomData] = useState<Map<string, { data: AxiomTokenInfo | null; risk: RiskIndicators | null; pairNotFound?: boolean }>>(new Map())
   const [loadingAxiom, setLoadingAxiom] = useState<Set<string>>(new Set())
 
   // Fetch user's wallet tokens
@@ -690,6 +690,15 @@ export default function CatchTheCoinClient() {
         // Handle authentication error gracefully
         console.warn('Axiom API requires authentication - risk data unavailable')
         // You could show a tooltip or notification here
+      } else if (result.pairNotFound) {
+        // Handle pair not found error gracefully
+        console.warn(`Token ${tokenAddress} not found in Axiom database - no risk data available`)
+        // Store a special marker to indicate the token was checked but not found
+        setAxiomData(prev => new Map(prev).set(tokenAddress, { 
+          data: null as any, 
+          risk: null as any,
+          pairNotFound: true 
+        }))
       }
     } catch (error) {
       console.error(`Failed to fetch Axiom data for ${tokenAddress}:`, error)
@@ -1184,7 +1193,18 @@ export default function CatchTheCoinClient() {
                             )
                           }
                           
+                          // Handle pair not found case
+                          if (tokenAxiomData.pairNotFound) {
+                            return (
+                              <div className="px-2 py-1 rounded text-xs font-medium bg-gray-900/20 border border-gray-500/30 text-gray-400">
+                                No Data
+                              </div>
+                            )
+                          }
+                          
                           const { risk } = tokenAxiomData
+                          if (!risk) return null
+                          
                           const riskDisplay = formatRiskDisplay(risk.overallRisk)
                           
                           return (
@@ -1199,11 +1219,13 @@ export default function CatchTheCoinClient() {
                     {/* Detailed risk breakdown */}
                     {(() => {
                       const tokenAxiomData = axiomData.get(token.token_address)
-                      if (!tokenAxiomData) return null
+                      if (!tokenAxiomData || tokenAxiomData.pairNotFound || !tokenAxiomData.data || !tokenAxiomData.risk) return null
                       
                       const { data, risk } = tokenAxiomData
-                      const insiderDisplay = formatRiskDisplay(risk.insiderRisk)
-                      const bundlerDisplay = formatRiskDisplay(risk.bundlerRisk)
+                      if (!data || !risk) return null
+                      
+                      const insiderDisplay = formatRiskDisplay(risk!.insiderRisk)
+                      const bundlerDisplay = formatRiskDisplay(risk!.bundlerRisk)
                       
                       return (
                         <div className="mt-1 text-xs text-gray-400 space-y-1">
