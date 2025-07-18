@@ -311,6 +311,7 @@ export default function TrendingTokens({
 
   // Fetch Axiom data for a token
   const fetchAxiomData = async (tokenAddress: string) => {
+    console.log('Fetching Axiom data for:', tokenAddress)
     if (loadingAxiom.has(tokenAddress) || axiomData.has(tokenAddress)) return
     
     setLoadingAxiom(prev => new Set(prev).add(tokenAddress))
@@ -540,7 +541,7 @@ export default function TrendingTokens({
                         </div>
                         <div className="flex justify-between">
                           <span>Holders: {data.numHolders.toLocaleString()}</span>
-                          <span className="text-gray-300">Fees: ${data.totalPairFeesPaid.toFixed(0)}</span>
+                          <span className="text-gray-300">Fees: {data.totalPairFeesPaid.toFixed(0)} SOL</span>
                         </div>
                       </div>
                     )

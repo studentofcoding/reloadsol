@@ -31,7 +31,7 @@ async function testAxiomAPI() {
         console.log(`📈 Risk indicators:`)
         console.log(`   - Insiders: ${data.data.insidersHoldPercent.toFixed(1)}%`)
         console.log(`   - Bundlers: ${data.data.bundlersHoldPercent.toFixed(1)}%`)
-        console.log(`   - Total Fees: $${data.data.totalPairFeesPaid.toFixed(0)}`)
+        console.log(`   - Total Fees: ${data.data.totalPairFeesPaid.toFixed(0)} SOL`)
         console.log(`   - Holders: ${data.data.numHolders.toLocaleString()}`)
       } else {
         console.log('❌ Missing required fields:', missingFields)
