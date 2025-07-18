@@ -14,6 +14,7 @@ import {
   FeeOperationType 
 } from '@/utils/jupiter'
 import { TOKENS } from '@/utils/solana'
+import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay } from '@/utils/axiom'
 
 interface TrendingToken {
   token_address: string
@@ -48,6 +49,26 @@ interface JupiterQuote {
   }
   priceImpactPct: string
   routePlan: any[]
+}
+
+interface AxiomTokenInfo {
+  numHolders: number
+  numBotUsers: number
+  top10HoldersPercent: number
+  devHoldsPercent: number
+  insidersHoldPercent: number
+  bundlersHoldPercent: number
+  snipersHoldPercent: number
+  dexPaid: boolean
+  totalPairFeesPaid: number
+}
+
+interface RiskIndicators {
+  insiderRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  bundlerRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  sniperRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  concentrationRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
 }
 
 interface OwnedTokenInfo {
@@ -106,6 +127,8 @@ export default function CatchTheCoinClient() {
   const [sidebarSellQuotes, setSidebarSellQuotes] = useState<Record<string, JupiterQuote | null>>({})
   const [sidebarSelling, setSidebarSelling] = useState<Record<string, boolean>>({})
   const [sidebarHovered, setSidebarHovered] = useState<string | null>(null)
+  const [axiomData, setAxiomData] = useState<Map<string, { data: AxiomTokenInfo; risk: RiskIndicators }>>(new Map())
+  const [loadingAxiom, setLoadingAxiom] = useState<Set<string>>(new Set())
 
   // Fetch user's wallet tokens
   const fetchWalletTokens = async () => {
@@ -652,6 +675,33 @@ export default function CatchTheCoinClient() {
     setSidebarSellQuotes(prev => ({ ...prev, [token.mintAddress]: null }))
   }
 
+  // Fetch Axiom data for a token
+  const fetchAxiomData = async (tokenAddress: string) => {
+    if (loadingAxiom.has(tokenAddress) || axiomData.has(tokenAddress)) return
+    
+    setLoadingAxiom(prev => new Set(prev).add(tokenAddress))
+    
+    try {
+      const result = await fetchAxiomTokenInfo(tokenAddress)
+      if (result.success && result.data) {
+        const risk = getRiskIndicators(result.data)
+        setAxiomData(prev => new Map(prev).set(tokenAddress, { data: result.data!, risk }))
+      } else if (result.requiresAuth) {
+        // Handle authentication error gracefully
+        console.warn('Axiom API requires authentication - risk data unavailable')
+        // You could show a tooltip or notification here
+      }
+    } catch (error) {
+      console.error(`Failed to fetch Axiom data for ${tokenAddress}:`, error)
+    } finally {
+      setLoadingAxiom(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(tokenAddress)
+        return newSet
+      })
+    }
+  }
+
   // Sell handler for sidebar
   const handleSidebarSell = async (token: UserToken) => {
     const quote = sidebarSellQuotes[token.mintAddress]
@@ -1104,6 +1154,75 @@ export default function CatchTheCoinClient() {
                       </span>
                     </div>
                   )}
+
+                  {/* Axiom Risk Indicators */}
+                  <div className="mt-2 pt-2 border-t border-gray-700">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-gray-400">Risk:</span>
+                      <div className="flex items-center space-x-1">
+                        {(() => {
+                          const tokenAxiomData = axiomData.get(token.token_address)
+                          const isLoading = loadingAxiom.has(token.token_address)
+                          
+                          if (isLoading) {
+                            return (
+                              <div className="flex items-center space-x-1">
+                                <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                                <span className="text-gray-400">Loading...</span>
+                              </div>
+                            )
+                          }
+                          
+                          if (!tokenAxiomData) {
+                            return (
+                              <button
+                                onClick={() => fetchAxiomData(token.token_address)}
+                                className="text-blue-400 hover:text-blue-300 text-xs"
+                              >
+                                Check Risk
+                              </button>
+                            )
+                          }
+                          
+                          const { risk } = tokenAxiomData
+                          const riskDisplay = formatRiskDisplay(risk.overallRisk)
+                          
+                          return (
+                            <div className={`px-2 py-1 rounded text-xs font-medium ${riskDisplay.bg} ${riskDisplay.border} ${riskDisplay.color}`}>
+                              {riskDisplay.text}
+                            </div>
+                          )
+                        })()}
+                      </div>
+                    </div>
+                    
+                    {/* Detailed risk breakdown */}
+                    {(() => {
+                      const tokenAxiomData = axiomData.get(token.token_address)
+                      if (!tokenAxiomData) return null
+                      
+                      const { data, risk } = tokenAxiomData
+                      const insiderDisplay = formatRiskDisplay(risk.insiderRisk)
+                      const bundlerDisplay = formatRiskDisplay(risk.bundlerRisk)
+                      
+                      return (
+                        <div className="mt-1 text-xs text-gray-400 space-y-1">
+                          <div className="flex justify-between">
+                            <span>Insiders: {data.insidersHoldPercent.toFixed(1)}%</span>
+                            <span className={insiderDisplay.color}>{insiderDisplay.text}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Bundlers: {data.bundlersHoldPercent.toFixed(1)}%</span>
+                            <span className={bundlerDisplay.color}>{bundlerDisplay.text}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Holders: {data.numHolders.toLocaleString()}</span>
+                            <span className="text-gray-300">Fees: ${data.totalPairFeesPaid.toFixed(0)}</span>
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </div>
                 </div>
               )
             })}
