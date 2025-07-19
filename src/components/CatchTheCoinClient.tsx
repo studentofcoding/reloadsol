@@ -14,7 +14,7 @@ import {
   FeeOperationType 
 } from '@/utils/jupiter'
 import { TOKENS } from '@/utils/solana'
-import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay } from '@/utils/axiom'
+import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom'
 
 interface TrendingToken {
   token_address: string
@@ -68,6 +68,7 @@ interface RiskIndicators {
   bundlerRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   sniperRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   concentrationRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  feeRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
 }
 
@@ -684,7 +685,10 @@ export default function CatchTheCoinClient() {
     try {
       const result = await fetchAxiomTokenInfo(tokenAddress)
       if (result.success && result.data) {
-        const risk = getRiskIndicators(result.data)
+        // Find the token to get its market cap for fee analysis
+        const token = tokens.find(t => t.token_address === tokenAddress)
+        const marketCap = token?.mcap || 0
+        const risk = getRiskIndicators(result.data, marketCap)
         setAxiomData(prev => new Map(prev).set(tokenAddress, { data: result.data!, risk }))
       } else if (result.requiresAuth) {
         // Handle authentication error gracefully
@@ -1238,6 +1242,11 @@ export default function CatchTheCoinClient() {
                       const bundlerDisplay = formatRiskDisplay(risk!.bundlerRisk)
                       const sniperDisplay = formatRiskDisplay(risk!.sniperRisk)
                       const concentrationDisplay = formatRiskDisplay(risk!.concentrationRisk)
+                      const feeDisplay = formatRiskDisplay(risk!.feeRisk)
+                      
+                      // Calculate fee analysis
+                      const marketCap = token.mcap || 0
+                      const feeAnalysis = calculateFeeToMarketCapRatio(data.totalPairFeesPaid, marketCap)
                       
                       return (
                         <div className="mt-2 space-y-2">
@@ -1281,6 +1290,31 @@ export default function CatchTheCoinClient() {
                             </div>
                           </div>
                           
+                          {/* Fee Analysis */}
+                          <div className="border-t border-gray-700 pt-2 space-y-1">
+                            <div className="flex justify-between items-center text-xs">
+                              <span className="text-gray-400">Organic Trading:</span>
+                              <div className="flex items-center gap-1">
+                                <span className={`text-xs font-medium ${feeAnalysis.isOrganic ? 'text-green-400' : 'text-red-400'}`}>
+                                  {feeAnalysis.isOrganic ? '✅ Organic' : '⚠️ Bundled'}
+                                </span>
+                                <span className={`px-1 py-0.5 rounded text-xs ${feeDisplay.bg} ${feeDisplay.color}`}>
+                                  {feeDisplay.text}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-gray-400">Fees/MCap Ratio:</span>
+                              <span className="text-white font-medium">{feeAnalysis.ratio.toFixed(2)} SOL/5K MC</span>
+                            </div>
+                            <div className="flex justify-between text-xs">
+                              <span className="text-gray-400">Organic Score:</span>
+                              <span className={`font-medium ${feeAnalysis.organicScore >= 70 ? 'text-green-400' : feeAnalysis.organicScore >= 40 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                {feeAnalysis.organicScore}/100
+                              </span>
+                            </div>
+                          </div>
+                          
                           {/* Additional Info */}
                           <div className="flex justify-between text-xs border-t border-gray-700 pt-2">
                             <div className="flex items-center gap-2">
@@ -1289,7 +1323,7 @@ export default function CatchTheCoinClient() {
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="text-gray-400">Fees:</span>
-                              <span className="text-white font-medium">${data.totalPairFeesPaid.toFixed(0)}</span>
+                              <span className="text-white font-medium">{data.totalPairFeesPaid.toFixed(1)} SOL</span>
                             </div>
                           </div>
                         </div>

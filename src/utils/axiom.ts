@@ -116,12 +116,94 @@ export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomRes
   }
 }
 
+// Helper function to calculate fee-to-market-cap ratio and assess organic trading
+export function calculateFeeToMarketCapRatio(feesPaid: number, marketCap: number): {
+  ratio: number
+  organicScore: number
+  feeRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  isOrganic: boolean
+} {
+  if (marketCap <= 0) {
+    return { ratio: 0, organicScore: 0, feeRisk: 'HIGH', isOrganic: false }
+  }
+
+  // Convert market cap to thousands for easier calculation
+  const mcapInK = marketCap / 1000
+  const feesInSol = feesPaid
+
+  // Calculate ratio: fees per 5K market cap
+  const ratio = (feesInSol / mcapInK) * 5
+
+  // Organic trading assessment based on your criteria:
+  // - For every 5K MC, should have at least 0.5 SOL in fees
+  // - At 20K MC, should have 1.5-2 SOL in fees
+  // - Under 4 SOL for graduated tokens is suspicious
+  
+  let organicScore = 0
+  let feeRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW'
+  let isOrganic = false
+
+  if (mcapInK <= 20) {
+    // Small cap tokens (≤ 20K MC)
+    const expectedFees = mcapInK * 0.1 // 0.1 SOL per 1K MC
+    if (feesInSol >= expectedFees * 1.5) {
+      organicScore = 100
+      feeRisk = 'LOW'
+      isOrganic = true
+    } else if (feesInSol >= expectedFees) {
+      organicScore = 70
+      feeRisk = 'MEDIUM'
+      isOrganic = true
+    } else if (feesInSol >= expectedFees * 0.5) {
+      organicScore = 40
+      feeRisk = 'MEDIUM'
+      isOrganic = false
+    } else {
+      organicScore = 10
+      feeRisk = 'HIGH'
+      isOrganic = false
+    }
+  } else {
+    // Larger cap tokens (> 20K MC)
+    const expectedFees = mcapInK * 0.075 // 0.075 SOL per 1K MC for larger caps
+    if (feesInSol >= expectedFees * 1.2) {
+      organicScore = 100
+      feeRisk = 'LOW'
+      isOrganic = true
+    } else if (feesInSol >= expectedFees) {
+      organicScore = 80
+      feeRisk = 'MEDIUM'
+      isOrganic = true
+    } else if (feesInSol >= expectedFees * 0.6) {
+      organicScore = 50
+      feeRisk = 'MEDIUM'
+      isOrganic = false
+    } else {
+      organicScore = 20
+      feeRisk = 'HIGH'
+      isOrganic = false
+    }
+  }
+
+  // Special case for graduated tokens (high market cap)
+  if (marketCap > 1000000) { // > 1M MC
+    if (feesInSol < 4) {
+      organicScore = Math.min(organicScore, 30)
+      feeRisk = 'HIGH'
+      isOrganic = false
+    }
+  }
+
+  return { ratio, organicScore, feeRisk, isOrganic }
+}
+
 // Helper function to get risk indicators based on Axiom data
-export function getRiskIndicators(data: AxiomTokenInfo): {
+export function getRiskIndicators(data: AxiomTokenInfo, marketCap?: number): {
   insiderRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   bundlerRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   sniperRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   concentrationRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  feeRisk: 'LOW' | 'MEDIUM' | 'HIGH'
   overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
 } {
   const indicators = {
@@ -131,9 +213,16 @@ export function getRiskIndicators(data: AxiomTokenInfo): {
     concentrationRisk: (data.top10HoldersPercent > 50 ? 'HIGH' : data.top10HoldersPercent > 30 ? 'MEDIUM' : 'LOW') as 'LOW' | 'MEDIUM' | 'HIGH'
   }
 
-  // Overall risk assessment
-  const highRiskCount = Object.values(indicators).filter(risk => risk === 'HIGH').length
-  const mediumRiskCount = Object.values(indicators).filter(risk => risk === 'MEDIUM').length
+  // Calculate fee risk if market cap is provided
+  let feeRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW'
+  if (marketCap) {
+    const feeAnalysis = calculateFeeToMarketCapRatio(data.totalPairFeesPaid, marketCap)
+    feeRisk = feeAnalysis.feeRisk
+  }
+
+  // Overall risk assessment (now includes fee risk)
+  const highRiskCount = Object.values(indicators).filter(risk => risk === 'HIGH').length + (feeRisk === 'HIGH' ? 1 : 0)
+  const mediumRiskCount = Object.values(indicators).filter(risk => risk === 'MEDIUM').length + (feeRisk === 'MEDIUM' ? 1 : 0)
 
   let overallRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW'
   if (highRiskCount >= 2 || (highRiskCount >= 1 && mediumRiskCount >= 2)) {
@@ -144,6 +233,7 @@ export function getRiskIndicators(data: AxiomTokenInfo): {
 
   return {
     ...indicators,
+    feeRisk,
     overallRisk
   }
 }
