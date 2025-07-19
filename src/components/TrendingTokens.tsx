@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from 'react'
 import ChartOverview from './ChartOverview'
 import TokenSkeleton from './TokenSkeleton'
 import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom'
+import RiskAnalysis from './RiskAnalysis'
 
 interface TrendingToken {
   token_symbol: string
@@ -484,154 +485,12 @@ export default function TrendingTokens({
                 </div>
 
                 {/* Axiom Risk Indicators */}
+                // In the token render section, replace the risk display with:
                 <div className="mt-2 pt-2 border-t border-gray-700">
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-1">
-                      <span className="text-gray-400">Risk:</span>
-                      <span className="text-gray-500 cursor-help" title="Risk analysis based on insider holdings, bundler concentration, sniper activity, and holder distribution">
-                        ℹ️
-                      </span>
-                    </div>
-                    <div className="flex items-center space-x-1">
-                      {(() => {
-                        const tokenAxiomData = axiomData.get(token.token_address)
-                        const isLoading = loadingAxiom.has(token.token_address)
-                        
-                        if (isLoading) {
-                          return (
-                            <div className="flex items-center space-x-1">
-                              <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                              <span className="text-gray-400">Loading...</span>
-                            </div>
-                          )
-                        }
-                        
-                        if (!tokenAxiomData) {
-                          return (
-                            <button
-                              onClick={() => fetchAxiomData(token.token_address)}
-                              className="text-blue-400 hover:text-blue-300 text-xs"
-                              title="Check token risk analysis (requires Axiom API access)"
-                            >
-                              Check Risk
-                            </button>
-                          )
-                        }
-                        
-                        const { risk } = tokenAxiomData
-                        const riskDisplay = formatRiskDisplay(risk.overallRisk)
-                        
-                        return (
-                          <div className="flex items-center gap-2">
-                            <div className={`px-2 py-1 rounded text-xs font-medium ${riskDisplay.bg} ${riskDisplay.border} ${riskDisplay.color}`}>
-                              {riskDisplay.text}
-                            </div>
-                            <div className="text-xs text-gray-400">
-                              {risk.overallRisk === 'HIGH' ? '⚠️' : risk.overallRisk === 'MEDIUM' ? '⚡' : '✅'}
-                            </div>
-                          </div>
-                        )
-                      })()}
-                    </div>
-                  </div>
-                  
-                  {/* Detailed risk breakdown */}
-                  {(() => {
-                    const tokenAxiomData = axiomData.get(token.token_address)
-                    if (!tokenAxiomData) return null
-                    
-                    const { data, risk } = tokenAxiomData
-                    const insiderDisplay = formatRiskDisplay(risk.insiderRisk)
-                    const bundlerDisplay = formatRiskDisplay(risk.bundlerRisk)
-                    const sniperDisplay = formatRiskDisplay(risk.sniperRisk)
-                    const concentrationDisplay = formatRiskDisplay(risk.concentrationRisk)
-                    const feeDisplay = formatRiskDisplay(risk.feeRisk)
-                    
-                    // Calculate fee analysis
-                    const marketCap = token.mcap || 0
-                    const feeAnalysis = calculateFeeToMarketCapRatio(data.totalPairFeesPaid, marketCap)
-                    
-                    return (
-                      <div className="mt-2 space-y-2">
-                        {/* Risk Metrics Grid */}
-                        <div className="grid grid-cols-2 gap-2 text-xs">
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-400">Insiders:</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-white">{data.insidersHoldPercent.toFixed(1)}%</span>
-                              <span className={`px-1 py-0.5 rounded text-xs ${insiderDisplay.bg} ${insiderDisplay.color}`}>
-                                {insiderDisplay.text}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-400">Bundlers:</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-white">{data.bundlersHoldPercent.toFixed(1)}%</span>
-                              <span className={`px-1 py-0.5 rounded text-xs ${bundlerDisplay.bg} ${bundlerDisplay.color}`}>
-                                {bundlerDisplay.text}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-400">Snipers:</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-white">{data.snipersHoldPercent.toFixed(1)}%</span>
-                              <span className={`px-1 py-0.5 rounded text-xs ${sniperDisplay.bg} ${sniperDisplay.color}`}>
-                                {sniperDisplay.text}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex justify-between items-center">
-                            <span className="text-gray-400">Top 10:</span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-white">{data.top10HoldersPercent.toFixed(1)}%</span>
-                              <span className={`px-1 py-0.5 rounded text-xs ${concentrationDisplay.bg} ${concentrationDisplay.color}`}>
-                                {concentrationDisplay.text}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        {/* Fee Analysis */}
-                        <div className="border-t border-gray-700 pt-2 space-y-1">
-                          <div className="flex justify-between items-center text-xs">
-                            <span className="text-gray-400">Organic Trading:</span>
-                            <div className="flex items-center gap-1">
-                              <span className={`text-xs font-medium ${feeAnalysis.isOrganic ? 'text-green-400' : 'text-red-400'}`}>
-                                {feeAnalysis.isOrganic ? '✅ Organic' : '⚠️ Bundled'}
-                              </span>
-                              <span className={`px-1 py-0.5 rounded text-xs ${feeDisplay.bg} ${feeDisplay.color}`}>
-                                {feeDisplay.text}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex justify-between text-xs">
-                            <span className="text-gray-400">Fees/MCap Ratio:</span>
-                            <span className="text-white font-medium">{feeAnalysis.ratio.toFixed(2)} SOL/5K MC</span>
-                          </div>
-                          <div className="flex justify-between text-xs">
-                            <span className="text-gray-400">Organic Score:</span>
-                            <span className={`font-medium ${feeAnalysis.organicScore >= 70 ? 'text-green-400' : feeAnalysis.organicScore >= 40 ? 'text-yellow-400' : 'text-red-400'}`}>
-                              {feeAnalysis.organicScore}/100
-                            </span>
-                          </div>
-                        </div>
-                        
-                        {/* Additional Info */}
-                        <div className="flex justify-between text-xs border-t border-gray-700 pt-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-400">Holders:</span>
-                            <span className="text-white font-medium">{data.numHolders.toLocaleString()}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-400">Fees:</span>
-                            <span className="text-white font-medium">{data.totalPairFeesPaid.toFixed(1)} SOL</span>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })()}
+                  <RiskAnalysis 
+                    tokenAddress={token.token_address} 
+                    marketCap={token.mcap || 0} 
+                  />
                 </div>
               </div>
               )

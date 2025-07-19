@@ -14,8 +14,8 @@ const https = require('https');
 const http = require('http');
 
 // Configuration - All values now configurable via environment variables
-const BASE_URL = process.env.VERCEL_URL 
-  ? `https://${process.env.VERCEL_URL}` 
+const BASE_URL = process.env.VERCEL_URL
+  ? `https://${process.env.VERCEL_URL}`
   : process.env.TEST_BASE_URL || 'http://localhost:3000';
 
 const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET || 'trending-track-secret';
@@ -32,7 +32,7 @@ function makeRequest(url, method = 'GET', data = null) {
   return new Promise((resolve, reject) => {
     const isHttps = url.startsWith('https');
     const lib = isHttps ? https : http;
-    
+
     const options = {
       method,
       headers: {
@@ -43,11 +43,11 @@ function makeRequest(url, method = 'GET', data = null) {
 
     const req = lib.request(url, options, (res) => {
       let responseData = '';
-      
+
       res.on('data', (chunk) => {
         responseData += chunk;
       });
-      
+
       res.on('end', () => {
         try {
           const jsonData = JSON.parse(responseData);
@@ -73,7 +73,7 @@ function makeRequest(url, method = 'GET', data = null) {
     if (data) {
       req.write(JSON.stringify(data));
     }
-    
+
     req.end();
   });
 }
@@ -85,12 +85,12 @@ const VERBOSE_LOGGING = process.env.VERBOSE_LOGGING === 'true';
 async function testTracking() {
   console.log('🔍 Testing 5-minute tracking endpoint...');
   console.log(`URL: ${BASE_URL}/api/trending/track?key=${SECRET_KEY}`);
-  
+
   try {
     const result = await makeRequest(`${BASE_URL}/api/trending/track?key=${SECRET_KEY}`, 'POST');
-    
+
     console.log(`Status: ${result.status}`);
-    
+
     if (result.status === 200) {
       console.log('✅ Tracking endpoint successful!');
       console.log('📊 Results:');
@@ -98,7 +98,7 @@ async function testTracking() {
       console.log(`  • New tokens added: ${result.data.new_tokens_added || 0}`);
       console.log(`  • Tokens updated: ${result.data.tokens_updated || 0}`);
       console.log(`  • Tokens lost: ${result.data.tokens_lost || 0}`);
-      
+
       // Enhanced logging for token stopping
       if (VERBOSE_LOGGING && result.data.stopped_tokens) {
         console.log('🛑 Stopped Tokens Details:');
@@ -106,7 +106,7 @@ async function testTracking() {
           console.log(`  • ${token.symbol || token.address}: Stopped due to ${token.stop_reason || 'unknown'}`);
         });
       }
-      
+
       if (result.data.current_stats) {
         console.log(`  • Currently tracking: ${result.data.current_stats.tracking || 0}`);
         console.log(`  • Total won: ${result.data.current_stats.won || 0}`);
@@ -125,23 +125,23 @@ async function testTracking() {
       console.log('Error details:', error);
     }
   }
-  
+
   console.log('');
 }
 
 async function testSummary() {
   console.log('📊 Testing 24-hour summary endpoint...');
   console.log(`URL: ${BASE_URL}/api/trending/summary?key=${SECRET_KEY}`);
-  
+
   try {
     const result = await makeRequest(`${BASE_URL}/api/trending/summary?key=${SECRET_KEY}`, 'POST');
-    
+
     console.log(`Status: ${result.status}`);
-    
+
     if (result.status === 200) {
       console.log('✅ Summary endpoint successful!');
       console.log('📈 Summary:');
-      
+
       if (result.data.statistics) {
         const stats = result.data.statistics;
         console.log(`  • Total tracked: ${stats.total_tokens_tracked || 0}`);
@@ -152,14 +152,14 @@ async function testSummary() {
         console.log(`  • Avg peak gain: ${stats.avg_peak_gain || 0}%`);
         console.log(`  • Max peak gain: ${stats.max_peak_gain || 0}%`);
       }
-      
+
       if (result.data.top_winners && result.data.top_winners.length > 0) {
         console.log('🏆 Top winners:');
         result.data.top_winners.slice(0, TOP_WINNERS_DISPLAY_COUNT).forEach((winner, index) => {
           console.log(`  ${index + 1}. ${winner.token_symbol || 'Unknown'}: +${winner.peak_gain_percentage.toFixed(2)}%`);
         });
       }
-      
+
       console.log(`📝 ${result.data.message || 'Summary completed'}`);
     } else {
       console.log('❌ Summary endpoint failed!');
@@ -168,39 +168,39 @@ async function testSummary() {
   } catch (error) {
     console.log('❌ Request failed:', error.message);
   }
-  
+
   console.log('');
 }
 
 async function testStats() {
   console.log('📋 Testing stats endpoint...');
   console.log(`URL: ${BASE_URL}/api/trending/stats`);
-  
+
   try {
     const result = await makeRequest(`${BASE_URL}/api/trending/stats`);
-    
+
     console.log(`Status: ${result.status}`);
-    
+
     if (result.status === 200) {
       console.log('✅ Stats endpoint successful!');
       console.log('📊 Current status:');
-      
+
       if (result.data.current_tracking) {
         const current = result.data.current_tracking;
         console.log(`  • Currently tracking: ${current.statistics.total_tracking || 0} tokens`);
         console.log(`  • Positive performers: ${current.statistics.positive_performers || 0}`);
         console.log(`  • Negative performers: ${current.statistics.negative_performers || 0}`);
         console.log(`  • At risk (>-40%): ${current.statistics.at_risk || 0}`);
-        
+
         if (current.statistics.top_performer) {
           const top = current.statistics.top_performer;
           console.log(`  • Top performer: ${top.token_symbol} (${top.peak_gain_percentage.toFixed(2)}%)`);
         }
-        
+
         console.log(`  • Avg current gain: ${current.averages.current_gain}%`);
         console.log(`  • Avg peak gain: ${current.averages.peak_gain}%`);
       }
-      
+
       if (result.data.latest_summary) {
         const summary = result.data.latest_summary;
         console.log('🗓️  Latest 24h summary:');
@@ -208,7 +208,7 @@ async function testStats() {
         console.log(`  • Total tracked: ${summary.total_tokens_tracked}`);
         console.log(`  • Won: ${summary.won_tokens}, Lost: ${summary.lost_tokens}`);
       }
-      
+
       if (result.data.data_freshness) {
         const freshness = result.data.data_freshness;
         console.log('⏰ Data freshness:');
@@ -224,14 +224,14 @@ async function testStats() {
   } catch (error) {
     console.log('❌ Request failed:', error.message);
   }
-  
+
   console.log('');
 }
 
 // Add new test functions for specific features
 async function testGainCalculations() {
   console.log('📊 Testing gain calculations...');
-  
+
   const testCases = [
     {
       name: 'Basic gain calculation',
@@ -265,7 +265,7 @@ async function testGainCalculations() {
 
   for (const test of testCases) {
     console.log(`\n🧪 Testing: ${test.name}`);
-    
+
     try {
       const result = await makeRequest(`${BASE_URL}/api/trending/track/test-gains`, 'POST', {
         initial_price: test.initial,
@@ -345,10 +345,10 @@ async function testErrorHandling() {
 
   for (const test of testCases) {
     console.log(`\n🧪 Testing: ${test.name}`);
-    
+
     try {
       const result = await makeRequest(`${BASE_URL}${test.url}`, test.method);
-      
+
       if (result.status === test.expectedStatus) {
         console.log('✅ Test passed');
         console.log(`  Expected status: ${test.expectedStatus}`);
@@ -395,7 +395,7 @@ async function testLogging() {
 
   for (const test of testCases) {
     console.log(`\n🧪 Testing: ${test.name}`);
-    
+
     try {
       const result = await makeRequest(
         `${BASE_URL}/api/trending/${test.operation}?key=${SECRET_KEY}`,
@@ -427,38 +427,38 @@ async function testLogging() {
 // Main execution
 async function main() {
   const command = process.argv[2] || 'help';
-  
+
   console.log('🚀 Trending Token Tracker - Test Suite');
   console.log(`📡 Base URL: ${BASE_URL}`);
   console.log(`🔑 Using secret key: ${SECRET_KEY}`);
   console.log('');
-  
+
   switch (command.toLowerCase()) {
     case 'track':
     case 'tracking':
       await testTracking();
       break;
-      
+
     case 'summary':
       await testSummary();
       break;
-      
+
     case 'stats':
       await testStats();
       break;
-      
+
     case 'gains':
       await testGainCalculations();
       break;
-      
+
     case 'errors':
       await testErrorHandling();
       break;
-      
+
     case 'logs':
       await testLogging();
       break;
-      
+
     case 'full':
       console.log('🔬 Running full test suite...\n');
       await testGainCalculations();
@@ -468,13 +468,13 @@ async function main() {
       await testTracking();
       await testSummary();
       break;
-      
+
     case 'all':
       await testStats();
       await testTracking();
       await testSummary();
       break;
-      
+
     case 'help':
     default:
       console.log('📖 Usage:');
