@@ -440,7 +440,7 @@ class RealTradeExecutor implements TradeExecutor {
       while (sendAttempts < maxSendAttempts) {
         try {
           signature = await this.connection.sendTransaction(signedTx, {
-            skipPreflight: false,
+            skipPreflight: true,
             maxRetries: 1,
           })
           break
@@ -956,11 +956,11 @@ async function sendSkippedTokenDiscord(params: {
 }) {
   try {
     const webhookUrl = 'https://discord.com/api/webhooks/1388575606098100256/c4e6BM2W-htcl2hUF9f_nZcchJZXCgoEe5mV95gDKODTfOto97w9BEjW8C2CgL0QwXrP'
-    
-    const timeSinceTracking = params.existingTokenData.tracking_started_at 
+
+    const timeSinceTracking = params.existingTokenData.tracking_started_at
       ? Math.round((Date.now() - new Date(params.existingTokenData.tracking_started_at).getTime()) / (1000 * 60 * 60 * 24) * 100) / 100
       : 'Unknown'
-    
+
     const timeSinceStatusChange = params.existingTokenData.status_changed_at
       ? Math.round((Date.now() - new Date(params.existingTokenData.status_changed_at).getTime()) / (1000 * 60 * 60 * 24) * 100) / 100
       : 'N/A'
@@ -969,11 +969,11 @@ async function sendSkippedTokenDiscord(params: {
       ? Math.round((Date.now() - new Date(params.existingTokenData.updated_at).getTime()) / (1000 * 60)) / 100
       : 'Unknown'
 
-    const priceChangeVsDB = params.existingTokenData.last_price_usd 
+    const priceChangeVsDB = params.existingTokenData.last_price_usd
       ? ((params.currentPriceAPI - params.existingTokenData.last_price_usd) / params.existingTokenData.last_price_usd * 100).toFixed(2)
       : 'N/A'
 
-    const currentVsPeak = params.existingTokenData.peak_price_usd && params.existingTokenData.last_price_usd 
+    const currentVsPeak = params.existingTokenData.peak_price_usd && params.existingTokenData.last_price_usd
       ? ((params.existingTokenData.last_price_usd / params.existingTokenData.peak_price_usd - 1) * 100).toFixed(2)
       : 'N/A'
 
@@ -1249,7 +1249,7 @@ async function trackBotOperation(
     })
 
     console.log(`🤖 Bot operation tracked: ${operationType} ${token.token_symbol} (${strategy})`)
-    
+
     // ✅ NEW: Trigger real-time sync for UI updates
     await triggerPnLSync(walletAddress)
   } catch (error) {
@@ -1266,10 +1266,10 @@ async function triggerPnLSync(walletAddress: string): Promise<void> {
     await fetch('/api/trading/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        walletAddress, 
+      body: JSON.stringify({
+        walletAddress,
         timestamp: Date.now(),
-        source: 'bot_operation' 
+        source: 'bot_operation'
       })
     }).catch(() => {
       // Ignore sync errors - this is best effort
@@ -2198,10 +2198,10 @@ async function internalTrackPost(request: NextRequest) {
 
         if (existingAnyStatus) {
           // Enhanced logging with detailed token information
-          const timeSinceTracking = existingAnyStatus.tracking_started_at 
+          const timeSinceTracking = existingAnyStatus.tracking_started_at
             ? Math.round((Date.now() - new Date(existingAnyStatus.tracking_started_at).getTime()) / (1000 * 60 * 60 * 24) * 100) / 100
             : 'Unknown'
-          
+
           const timeSinceStatusChange = existingAnyStatus.status_changed_at
             ? Math.round((Date.now() - new Date(existingAnyStatus.status_changed_at).getTime()) / (1000 * 60 * 60 * 24) * 100) / 100
             : 'N/A'
@@ -2221,7 +2221,7 @@ async function internalTrackPost(request: NextRequest) {
             tracking_started: `${timeSinceTracking} days ago`,
             status_changed: existingAnyStatus.status_changed_at ? `${timeSinceStatusChange} days ago` : 'Never',
             last_updated: `${lastUpdateTime} minutes ago`,
-            current_vs_peak: existingAnyStatus.peak_price_usd && existingAnyStatus.last_price_usd 
+            current_vs_peak: existingAnyStatus.peak_price_usd && existingAnyStatus.last_price_usd
               ? `${((existingAnyStatus.last_price_usd / existingAnyStatus.peak_price_usd - 1) * 100).toFixed(2)}%`
               : 'N/A'
           })
