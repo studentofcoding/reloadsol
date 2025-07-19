@@ -60,8 +60,9 @@ export async function GET(request: NextRequest) {
                 filtered: true,
                 filter_criteria: {
                     min_change_5m: -0.4,
+                    max_change_1h: 0.5,
                     min_organic_score: 70.0,
-                    min_mcap: 300000,
+                    min_mcap: 350000,
                     max_mcap: 2000000
                 },
                 total_before_filter: rawTokens.length,
