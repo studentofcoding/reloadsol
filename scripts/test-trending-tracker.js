@@ -13,12 +13,19 @@
 const https = require('https');
 const http = require('http');
 
-// Configuration
+// Configuration - All values now configurable via environment variables
 const BASE_URL = process.env.VERCEL_URL 
   ? `https://${process.env.VERCEL_URL}` 
-  : 'http://localhost:3000';
+  : process.env.TEST_BASE_URL || 'http://localhost:3000';
 
 const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET || 'trending-track-secret';
+const CONTENT_TYPE = process.env.TEST_CONTENT_TYPE || 'application/json';
+const USER_AGENT = process.env.TEST_USER_AGENT || 'trending-tracker-test-script';
+const EXPECTED_UNAUTHORIZED_STATUS = parseInt(process.env.TEST_EXPECTED_UNAUTHORIZED_STATUS) || 401;
+const EXPECTED_NOT_FOUND_STATUS = parseInt(process.env.TEST_EXPECTED_NOT_FOUND_STATUS) || 404;
+const GAIN_TOLERANCE = parseFloat(process.env.TEST_GAIN_TOLERANCE) || 0.01;
+const SAMPLE_LOG_COUNT = parseInt(process.env.TEST_SAMPLE_LOG_COUNT) || 3;
+const TOP_WINNERS_DISPLAY_COUNT = parseInt(process.env.TEST_TOP_WINNERS_COUNT) || 3;
 
 // Helper function to make HTTP requests
 function makeRequest(url, method = 'GET', data = null) {
@@ -29,8 +36,8 @@ function makeRequest(url, method = 'GET', data = null) {
     const options = {
       method,
       headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'trending-tracker-test-script'
+        'Content-Type': CONTENT_TYPE,
+        'User-Agent': USER_AGENT
       }
     };
 
@@ -72,6 +79,9 @@ function makeRequest(url, method = 'GET', data = null) {
 }
 
 // Test functions
+// Add near the top with other configs
+const VERBOSE_LOGGING = process.env.VERBOSE_LOGGING === 'true';
+
 async function testTracking() {
   console.log('🔍 Testing 5-minute tracking endpoint...');
   console.log(`URL: ${BASE_URL}/api/trending/track?key=${SECRET_KEY}`);
@@ -89,6 +99,14 @@ async function testTracking() {
       console.log(`  • Tokens updated: ${result.data.tokens_updated || 0}`);
       console.log(`  • Tokens lost: ${result.data.tokens_lost || 0}`);
       
+      // Enhanced logging for token stopping
+      if (VERBOSE_LOGGING && result.data.stopped_tokens) {
+        console.log('🛑 Stopped Tokens Details:');
+        result.data.stopped_tokens.forEach(token => {
+          console.log(`  • ${token.symbol || token.address}: Stopped due to ${token.stop_reason || 'unknown'}`);
+        });
+      }
+      
       if (result.data.current_stats) {
         console.log(`  • Currently tracking: ${result.data.current_stats.tracking || 0}`);
         console.log(`  • Total won: ${result.data.current_stats.won || 0}`);
@@ -97,9 +115,15 @@ async function testTracking() {
     } else {
       console.log('❌ Tracking endpoint failed!');
       console.log('Error:', result.data);
+      if (VERBOSE_LOGGING) {
+        console.log('Full error response:', JSON.stringify(result, null, 2));
+      }
     }
   } catch (error) {
     console.log('❌ Request failed:', error.message);
+    if (VERBOSE_LOGGING) {
+      console.log('Error details:', error);
+    }
   }
   
   console.log('');
@@ -131,7 +155,7 @@ async function testSummary() {
       
       if (result.data.top_winners && result.data.top_winners.length > 0) {
         console.log('🏆 Top winners:');
-        result.data.top_winners.slice(0, 3).forEach((winner, index) => {
+        result.data.top_winners.slice(0, TOP_WINNERS_DISPLAY_COUNT).forEach((winner, index) => {
           console.log(`  ${index + 1}. ${winner.token_symbol || 'Unknown'}: +${winner.peak_gain_percentage.toFixed(2)}%`);
         });
       }
@@ -255,7 +279,7 @@ async function testGainCalculations() {
 
         if ('gain_percentage' in data) {
           const gainDiff = Math.abs(data.gain_percentage - test.expected);
-          if (gainDiff > 0.01) {
+          if (gainDiff > GAIN_TOLERANCE) {
             console.log('❌ Gain calculation failed');
             console.log(`  Expected: ${test.expected}%`);
             console.log(`  Got: ${data.gain_percentage}%`);
@@ -300,19 +324,19 @@ async function testErrorHandling() {
       name: 'Missing auth key',
       url: '/api/trending/track',
       method: 'POST',
-      expectedStatus: 401
+      expectedStatus: EXPECTED_UNAUTHORIZED_STATUS
     },
     {
       name: 'Invalid auth key',
       url: '/api/trending/track?key=invalid',
       method: 'POST',
-      expectedStatus: 401
+      expectedStatus: EXPECTED_UNAUTHORIZED_STATUS
     },
     {
       name: 'Invalid endpoint',
       url: '/api/trending/invalid',
       method: 'GET',
-      expectedStatus: 404
+      expectedStatus: EXPECTED_NOT_FOUND_STATUS
     }
   ];
 
@@ -383,7 +407,7 @@ async function testLogging() {
       if (result.data.logs) {
         console.log('✅ Logging test passed');
         console.log('📋 Sample logs:');
-        result.data.logs.slice(0, 3).forEach(log => {
+        result.data.logs.slice(0, SAMPLE_LOG_COUNT).forEach(log => {
           console.log(`  • ${log.operation}: ${log.message}`);
         });
         passed++;
@@ -464,8 +488,16 @@ async function main() {
       console.log('  node scripts/test-trending-tracker.js all       # Test basic endpoints');
       console.log('');
       console.log('💡 Environment variables:');
-      console.log('  VERCEL_URL                - Base URL (default: localhost:3000)');
-      console.log('  TRENDING_TRACKER_SECRET   - API secret key');
+      console.log('  VERCEL_URL                      - Base URL for production');
+      console.log('  TEST_BASE_URL                   - Base URL for testing (default: http://localhost:3000)');
+      console.log('  TRENDING_TRACKER_SECRET         - API secret key');
+      console.log('  TEST_CONTENT_TYPE               - HTTP Content-Type header (default: application/json)');
+      console.log('  TEST_USER_AGENT                 - HTTP User-Agent header (default: trending-tracker-test-script)');
+      console.log('  TEST_EXPECTED_UNAUTHORIZED_STATUS - Expected HTTP status for unauthorized requests (default: 401)');
+      console.log('  TEST_EXPECTED_NOT_FOUND_STATUS  - Expected HTTP status for not found requests (default: 404)');
+      console.log('  TEST_GAIN_TOLERANCE             - Tolerance for gain calculation tests (default: 0.01)');
+      console.log('  TEST_SAMPLE_LOG_COUNT           - Number of sample logs to display (default: 3)');
+      console.log('  TEST_TOP_WINNERS_COUNT          - Number of top winners to display (default: 3)');
       break;
   }
 }
@@ -480,4 +512,4 @@ process.on('unhandledRejection', (error) => {
 main().catch((error) => {
   console.error('❌ Script failed:', error.message);
   process.exit(1);
-}); 
+});

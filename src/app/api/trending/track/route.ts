@@ -2685,13 +2685,19 @@ async function internalTrackPost(request: NextRequest) {
         // Check if token has dropped more than 50% from initial price (original loss condition)
         const isLost = currentGain <= -50
 
-        // Check for stale data (price history older than 2 weeks)
+        // Existing staleness check
         const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
         const lastPriceUpdate = new Date(existingToken.updated_at)
         const isStaleData = lastPriceUpdate < twoWeeksAgo
 
-        if (isStaleData && existingToken.status === 'tracking') {
-          // Mark as stopped due to stale data
+        // New tracking age check
+        const maxTrackingDays = process.env.MAX_TRACKING_DAYS ? parseInt(process.env.MAX_TRACKING_DAYS) : 3;
+        const trackingStart = new Date(existingToken.tracking_started_at);
+        const trackingAgeDays = (Date.now() - trackingStart.getTime()) / (1000 * 60 * 60 * 24);
+        const isTooOld = trackingAgeDays > maxTrackingDays && existingToken.status === 'tracking';
+
+        if (isStaleData || isTooOld) {
+          // Mark as stopped due to staleness or age
           updatesPromises.push(
             (async () => {
               const { error } = await supabase
@@ -2711,7 +2717,8 @@ async function internalTrackPost(request: NextRequest) {
             })()
           )
 
-          console.log(`🛑 Token stopped due to stale data (${Math.round((Date.now() - lastPriceUpdate.getTime()) / (1000 * 60 * 60 * 24))} days old): ${token.token_symbol} (${token.token_address})`)
+          const reason = isStaleData ? 'stale data' : 'tracking age exceeded';
+          console.log(`🛑 Token stopped due to ${reason} (${Math.round(trackingAgeDays)} days): ${token.token_symbol} (${token.token_address})`)
           continue // Skip further processing for this token
         }
 
