@@ -180,17 +180,19 @@ class TradingTracker {
 
   // Save record via API
   private async saveViaAPI(record: TrackingRecord): Promise<void> {
-    const response = await fetch('/api/trading/records', {
+    // Use absolute URL for server-side compatibility
+    const baseUrl = process.env.API_HOST || 'http://localhost:3000';
+    const response = await fetch(`${baseUrl}/api/trading/records`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(record)
-    })
+    });
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }))
-      throw new Error(`API insert failed: ${error.error || 'Unknown error'}`)
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(`API insert failed: ${error.error || 'Unknown error'}`);
     }
   }
 

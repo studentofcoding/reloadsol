@@ -41,28 +41,30 @@ export const PRIORITY_FEE_OPTIONS = [
 // Utility function to get SOL price with caching and fallback
 export async function getSolPriceUSD(): Promise<number> {
   try {
-    const response = await fetch('/api/solprice', {
+    // Use absolute URL for server-side compatibility
+    const baseUrl = process.env.API_HOST || 'http://localhost:3000';
+    const response = await fetch(`${baseUrl}/api/solprice`, {
       headers: {
         'Cache-Control': 'max-age=30' // Use 30-second cache
       }
     });
-    
+
     if (!response.ok) {
       throw new Error(`SOL price API error: ${response.status}`);
     }
-    
+
     const data = await response.json();
     const price = data.price;
-    
+
     if (typeof price === 'number' && price > 0) {
       console.log(`SOL price fetched: $${price} (source: ${data.source})`);
       return price;
     }
-    
+
     throw new Error('Invalid SOL price data received');
   } catch (error) {
     console.error('Error fetching SOL price:', error);
     // Return a reasonable fallback price if the API fails
     return 145; // Default SOL price
   }
-} 
+}
