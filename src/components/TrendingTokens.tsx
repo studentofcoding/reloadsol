@@ -481,7 +481,12 @@ export default function TrendingTokens({
                 {/* Axiom Risk Indicators */}
                 <div className="mt-2 pt-2 border-t border-gray-700">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-gray-400">Risk:</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-gray-400">Risk:</span>
+                      <span className="text-gray-500 cursor-help" title="Risk analysis based on insider holdings, bundler concentration, sniper activity, and holder distribution">
+                        ℹ️
+                      </span>
+                    </div>
                     <div className="flex items-center space-x-1">
                       {(() => {
                         const tokenAxiomData = axiomData.get(token.token_address)
@@ -512,15 +517,20 @@ export default function TrendingTokens({
                         const riskDisplay = formatRiskDisplay(risk.overallRisk)
                         
                         return (
-                          <div className={`px-2 py-1 rounded text-xs font-medium ${riskDisplay.bg} ${riskDisplay.border} ${riskDisplay.color}`}>
-                            {riskDisplay.text}
+                          <div className="flex items-center gap-2">
+                            <div className={`px-2 py-1 rounded text-xs font-medium ${riskDisplay.bg} ${riskDisplay.border} ${riskDisplay.color}`}>
+                              {riskDisplay.text}
+                            </div>
+                            <div className="text-xs text-gray-400">
+                              {risk.overallRisk === 'HIGH' ? '⚠️' : risk.overallRisk === 'MEDIUM' ? '⚡' : '✅'}
+                            </div>
                           </div>
                         )
                       })()}
                     </div>
                   </div>
                   
-                  {/* Detailed risk breakdown (show on hover) */}
+                  {/* Detailed risk breakdown */}
                   {(() => {
                     const tokenAxiomData = axiomData.get(token.token_address)
                     if (!tokenAxiomData) return null
@@ -528,20 +538,61 @@ export default function TrendingTokens({
                     const { data, risk } = tokenAxiomData
                     const insiderDisplay = formatRiskDisplay(risk.insiderRisk)
                     const bundlerDisplay = formatRiskDisplay(risk.bundlerRisk)
+                    const sniperDisplay = formatRiskDisplay(risk.sniperRisk)
+                    const concentrationDisplay = formatRiskDisplay(risk.concentrationRisk)
                     
                     return (
-                      <div className="mt-1 text-xs text-gray-400 space-y-1">
-                        <div className="flex justify-between">
-                          <span>Insiders: {data.insidersHoldPercent.toFixed(1)}%</span>
-                          <span className={insiderDisplay.color}>{insiderDisplay.text}</span>
+                      <div className="mt-2 space-y-2">
+                        {/* Risk Metrics Grid */}
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400">Insiders:</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-white">{data.insidersHoldPercent.toFixed(1)}%</span>
+                              <span className={`px-1 py-0.5 rounded text-xs ${insiderDisplay.bg} ${insiderDisplay.color}`}>
+                                {insiderDisplay.text}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400">Bundlers:</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-white">{data.bundlersHoldPercent.toFixed(1)}%</span>
+                              <span className={`px-1 py-0.5 rounded text-xs ${bundlerDisplay.bg} ${bundlerDisplay.color}`}>
+                                {bundlerDisplay.text}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400">Snipers:</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-white">{data.snipersHoldPercent.toFixed(1)}%</span>
+                              <span className={`px-1 py-0.5 rounded text-xs ${sniperDisplay.bg} ${sniperDisplay.color}`}>
+                                {sniperDisplay.text}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400">Top 10:</span>
+                            <div className="flex items-center gap-1">
+                              <span className="text-white">{data.top10HoldersPercent.toFixed(1)}%</span>
+                              <span className={`px-1 py-0.5 rounded text-xs ${concentrationDisplay.bg} ${concentrationDisplay.color}`}>
+                                {concentrationDisplay.text}
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Bundlers: {data.bundlersHoldPercent.toFixed(1)}%</span>
-                          <span className={bundlerDisplay.color}>{bundlerDisplay.text}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Holders: {data.numHolders.toLocaleString()}</span>
-                          <span className="text-gray-300">Fees: {data.totalPairFeesPaid.toFixed(0)} SOL</span>
+                        
+                        {/* Additional Info */}
+                        <div className="flex justify-between text-xs border-t border-gray-700 pt-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-400">Holders:</span>
+                            <span className="text-white font-medium">{data.numHolders.toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-400">Fees:</span>
+                            <span className="text-white font-medium">${data.totalPairFeesPaid.toFixed(0)}</span>
+                          </div>
                         </div>
                       </div>
                     )
