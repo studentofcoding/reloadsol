@@ -7,6 +7,7 @@ import PhantomWalletButton from './PhantomWalletButton'
 import TrendingTokens from './TrendingTokens'
 import TransactionResultModal from './TransactionResultModal'
 import TokenSkeleton from './TokenSkeleton'
+import RiskAnalysis from './RiskAnalysis'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates, fetchUserTokensEfficient, setMetadataUpdateCallback, clearMetadataUpdateCallback, UserToken } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS, getSolPriceUSD } from '@/utils/solana'
@@ -1010,252 +1011,66 @@ export default function BulkTokenBuyer() {
                       <button
                         type="button"
                         onClick={fetchAllRiskData}
-                        disabled={loadingAxiom.size > 0}
-                        className="text-xs bg-blue-600 text-white py-1 px-3 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+                        disabled={validMints.every(mint => axiomData.has(mint) || loadingAxiom.has(mint))}
+                        className="text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white px-3 py-1 rounded-md transition-colors"
                       >
-                        {loadingAxiom.size > 0 ? (
-                          <div className="flex items-center space-x-1">
-                            <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
-                            <span>Analyzing...</span>
-                          </div>
-                        ) : (
-                          'Analyze Risk'
-                        )}
+                        {validMints.every(mint => axiomData.has(mint) || loadingAxiom.has(mint)) ? 'Analysis Complete' : 'Analyze All Tokens'}
                       </button>
                     </div>
                     
                     {showRiskAnalysis && (
-                      <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-sm font-semibold text-white">Token Risk Overview</h4>
-                          <div className="flex items-center space-x-2">
-                            <span className="text-xs text-gray-400">Overall Risk:</span>
-                            {(() => {
-                              const risks = Array.from(axiomData.values()).map(item => item.risk?.overallRisk).filter(Boolean)
-                              if (risks.length === 0) return <span className="text-xs text-gray-400">Not analyzed</span>
-                              
-                              const highRiskCount = risks.filter(r => r === 'HIGH').length
-                              const mediumRiskCount = risks.filter(r => r === 'MEDIUM').length
-                              const lowRiskCount = risks.filter(r => r === 'LOW').length
-                              
-                              if (highRiskCount > 0) {
-                                return <span className="text-xs bg-red-900/20 text-red-400 px-2 py-1 rounded border border-red-500/30">High Risk</span>
-                              } else if (mediumRiskCount > 0) {
-                                return <span className="text-xs bg-yellow-900/20 text-yellow-400 px-2 py-1 rounded border border-yellow-500/30">Medium Risk</span>
-                              } else {
-                                return <span className="text-xs bg-green-900/20 text-green-400 px-2 py-1 rounded border border-green-500/30">Low Risk</span>
-                              }
-                            })()}
-                          </div>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {validMints.map((mint, index) => {
-                            const tokenInfo = tokenList.find(t => t.address === mint)
-                            const axiomInfo = axiomData.get(mint)
-                            const isLoading = loadingAxiom.has(mint)
-                            
-                            return (
-                              <div key={mint} className="bg-gray-900 rounded-lg p-3 border border-gray-700">
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center space-x-2">
-                                    {tokenInfo?.icon && (
-                                      <img src={tokenInfo.icon} alt={tokenInfo.symbol} className="w-5 h-5 rounded-full" />
-                                    )}
-                                    <span className="text-sm font-medium text-white">
-                                      {tokenInfo?.symbol || mint.substring(0, 8) + '...'}
-                                    </span>
-                                  </div>
-                                  <span className="text-xs text-gray-400">#{index + 1}</span>
+                      <div className="space-y-2">
+                        {validMints.map(mint => {
+                          const tokenInfo = tokenList.find(t => t.address === mint)
+                          const axiomInfo = axiomData.get(mint)
+                          const isLoading = loadingAxiom.has(mint)
+                          
+                          return (
+                            <div key={mint} className="bg-gray-800 border border-gray-600 rounded-lg p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center space-x-2">
+                                  {tokenInfo?.icon && (
+                                    <img src={tokenInfo.icon} alt={tokenInfo.symbol} className="w-5 h-5 rounded-full" />
+                                  )}
+                                  <span className="text-sm font-medium text-white">
+                                    {tokenInfo?.symbol || 'Unknown'}
+                                  </span>
                                 </div>
-                                
-                                {isLoading ? (
-                                  <div className="flex items-center justify-center py-4">
-                                    <div className="w-4 h-4 border border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                                  </div>
-                                ) : axiomInfo?.pairNotFound ? (
-                                  <div className="text-xs text-gray-400 text-center py-2">
-                                    No risk data available
-                                  </div>
-                                ) : axiomInfo?.data ? (
-                                  <div className="space-y-2">
-                                    {/* Risk Metrics Grid */}
-                                    <div className="grid grid-cols-2 gap-2 text-xs">
-                                      {(() => {
-                                        const { data, risk } = axiomInfo
-                                        const insiderDisplay = formatRiskDisplay(risk.insiderRisk)
-                                        const bundlerDisplay = formatRiskDisplay(risk.bundlerRisk)
-                                        const sniperDisplay = formatRiskDisplay(risk.sniperRisk)
-                                        const concentrationDisplay = formatRiskDisplay(risk.concentrationRisk)
-                                        const feeDisplay = formatRiskDisplay(risk.feeRisk)
-                                        
-                                        // Calculate fee analysis
-                                        const marketCap = tokenInfo?.mcap || 0
-                                        const feeAnalysis = calculateFeeToMarketCapRatio(data.totalPairFeesPaid, marketCap)
-                                        
-                                        return (
-                                          <>
-                                            <div className="flex justify-between items-center">
-                                              <span className="text-gray-400">Insiders:</span>
-                                              <div className="flex items-center gap-1">
-                                                <span className="text-white">{data.insidersHoldPercent.toFixed(1)}%</span>
-                                                <span className={`px-1 py-0.5 rounded text-xs ${insiderDisplay.bg} ${insiderDisplay.color}`}>
-                                                  {insiderDisplay.text}
-                                                </span>
-                                              </div>
-                                            </div>
-                                            <div className="flex justify-between items-center">
-                                              <span className="text-gray-400">Bundlers:</span>
-                                              <div className="flex items-center gap-1">
-                                                <span className="text-white">{data.bundlersHoldPercent.toFixed(1)}%</span>
-                                                <span className={`px-1 py-0.5 rounded text-xs ${bundlerDisplay.bg} ${bundlerDisplay.color}`}>
-                                                  {bundlerDisplay.text}
-                                                </span>
-                                              </div>
-                                            </div>
-                                            <div className="flex justify-between items-center">
-                                              <span className="text-gray-400">Snipers:</span>
-                                              <div className="flex items-center gap-1">
-                                                <span className="text-white">{data.snipersHoldPercent.toFixed(1)}%</span>
-                                                <span className={`px-1 py-0.5 rounded text-xs ${sniperDisplay.bg} ${sniperDisplay.color}`}>
-                                                  {sniperDisplay.text}
-                                                </span>
-                                              </div>
-                                            </div>
-                                            <div className="flex justify-between items-center">
-                                              <span className="text-gray-400">Top 10:</span>
-                                              <div className="flex items-center gap-1">
-                                                <span className="text-white">{data.top10HoldersPercent.toFixed(1)}%</span>
-                                                <span className={`px-1 py-0.5 rounded text-xs ${concentrationDisplay.bg} ${concentrationDisplay.color}`}>
-                                                  {concentrationDisplay.text}
-                                                </span>
-                                              </div>
-                                            </div>
-                                            
-                                            {/* Fee Analysis */}
-                                            <div className="col-span-2 border-t border-gray-700 pt-2 space-y-1">
-                                              <div className="flex justify-between items-center">
-                                                <span className="text-gray-400">Organic:</span>
-                                                <div className="flex items-center gap-1">
-                                                  <span className={`text-xs font-medium ${feeAnalysis.isOrganic ? 'text-green-400' : 'text-red-400'}`}>
-                                                    {feeAnalysis.isOrganic ? '✅ Organic' : '⚠️ Bundled'}
-                                                  </span>
-                                                  <span className={`px-1 py-0.5 rounded text-xs ${feeDisplay.bg} ${feeDisplay.color}`}>
-                                                    {feeDisplay.text}
-                                                  </span>
-                                                </div>
-                                              </div>
-                                              <div className="flex justify-between text-xs">
-                                                <span className="text-gray-400">Fees/MCap:</span>
-                                                <span className="text-white font-medium">{feeAnalysis.ratio.toFixed(2)} SOL/5K MC</span>
-                                              </div>
-                                              <div className="flex justify-between text-xs">
-                                                <span className="text-gray-400">Score:</span>
-                                                <span className={`font-medium ${feeAnalysis.organicScore >= 70 ? 'text-green-400' : feeAnalysis.organicScore >= 40 ? 'text-yellow-400' : 'text-red-400'}`}>
-                                                  {feeAnalysis.organicScore}/100
-                                                </span>
-                                              </div>
-                                            </div>
-                                            
-                                            {/* Additional Info */}
-                                            <div className="col-span-2 flex justify-between text-xs border-t border-gray-700 pt-2">
-                                              <div className="flex items-center gap-2">
-                                                <span className="text-gray-400">Holders:</span>
-                                                <span className="text-white font-medium">{data.numHolders.toLocaleString()}</span>
-                                              </div>
-                                              <div className="flex items-center gap-2">
-                                                <span className="text-gray-400">Fees:</span>
-                                                <span className="text-white font-medium">{data.totalPairFeesPaid.toFixed(1)} SOL</span>
-                                              </div>
-                                            </div>
-                                          </>
-                                        )
-                                      })()}
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div className="text-xs text-gray-400 text-center py-2">
-                                    Click "Analyze Risk" to check
-                                  </div>
+                                {!axiomInfo && !isLoading && (
+                                  <button
+                                    type="button"
+                                    onClick={() => fetchAxiomData(mint)}
+                                    className="text-xs bg-gray-700 hover:bg-gray-600 text-white px-2 py-1 rounded"
+                                  >
+                                    Analyze
+                                  </button>
                                 )}
                               </div>
-                            )
-                          })}
-                        </div>
-                        
-                        {/* Risk Warnings */}
-                        {(() => {
-                          const risks = Array.from(axiomData.values()).map(item => item.risk).filter(Boolean)
-                          const highRiskCount = risks.filter(r => r.overallRisk === 'HIGH').length
-                          const bundledCount = Array.from(axiomData.values()).filter(item => {
-                            if (!item.data) return false
-                            const marketCap = tokenList.find(t => t.address === item.data.mintAddress)?.mcap || 0
-                            const feeAnalysis = calculateFeeToMarketCapRatio(item.data.totalPairFeesPaid, marketCap)
-                            return !feeAnalysis.isOrganic
-                          }).length
-                          
-                          if (highRiskCount > 0 || bundledCount > 0) {
-                            return (
-                              <div className="border-t border-gray-700 pt-4">
-                                <div className="bg-red-900/20 border border-red-500/30 rounded-lg p-3 space-y-2">
-                                  <div className="flex items-center space-x-2">
-                                    <span className="text-red-400">⚠️</span>
-                                    <span className="text-red-400 font-semibold text-sm">Risk Warnings</span>
-                                  </div>
-                                  {highRiskCount > 0 && (
-                                    <div className="text-xs text-red-300">
-                                      • {highRiskCount} token{highRiskCount > 1 ? 's' : ''} with high risk indicators detected
-                                    </div>
-                                  )}
-                                  {bundledCount > 0 && (
-                                    <div className="text-xs text-red-300">
-                                      • {bundledCount} token{bundledCount > 1 ? 's' : ''} show signs of bundled trading (low fees)
-                                    </div>
-                                  )}
-                                  <div className="text-xs text-gray-400">
-                                    Consider removing high-risk tokens before proceeding
-                                  </div>
+                              
+                              {isLoading ? (
+                                <div className="flex items-center space-x-2 text-gray-400">
+                                  <div className="w-4 h-4 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+                                  <span className="text-xs">Analyzing...</span>
                                 </div>
-                              </div>
-                            )
-                          }
-                          return null
-                        })()}
-                        
-                        {/* Risk Summary */}
-                        {axiomData.size > 0 && (
-                          <div className="border-t border-gray-700 pt-4">
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-                              {(() => {
-                                const risks = Array.from(axiomData.values()).map(item => item.risk).filter(Boolean)
-                                const highRiskCount = risks.filter(r => r.overallRisk === 'HIGH').length
-                                const mediumRiskCount = risks.filter(r => r.overallRisk === 'MEDIUM').length
-                                const lowRiskCount = risks.filter(r => r.overallRisk === 'LOW').length
-                                
-                                return (
-                                  <>
-                                    <div className="text-center">
-                                      <div className="text-green-400 font-semibold">{lowRiskCount}</div>
-                                      <div className="text-gray-400">Low Risk</div>
-                                    </div>
-                                    <div className="text-center">
-                                      <div className="text-yellow-400 font-semibold">{mediumRiskCount}</div>
-                                      <div className="text-gray-400">Medium Risk</div>
-                                    </div>
-                                    <div className="text-center">
-                                      <div className="text-red-400 font-semibold">{highRiskCount}</div>
-                                      <div className="text-gray-400">High Risk</div>
-                                    </div>
-                                    <div className="text-center">
-                                      <div className="text-blue-400 font-semibold">{validMints.length - axiomData.size}</div>
-                                      <div className="text-gray-400">Not Analyzed</div>
-                                    </div>
-                                  </>
-                                )
-                              })()}
+                              ) : axiomInfo?.pairNotFound ? (
+                                <div className="text-xs text-gray-400">
+                                  Token not found in risk database
+                                </div>
+                              ) : axiomInfo?.data ? (
+                                <RiskAnalysis 
+                                  tokenAddress={mint} 
+                                  marketCap={tokenInfo?.mcap || 0}
+                                  axiomData={axiomInfo.data}
+                                  riskData={axiomInfo.risk}
+                                />
+                              ) : (
+                                <div className="text-xs text-gray-400">
+                                  Click "Analyze" to check token risks
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        )}
+                          )
+                        })}
                       </div>
                     )}
                   </div>
