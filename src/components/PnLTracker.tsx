@@ -5,10 +5,10 @@ import { TrackingRecord } from '@/utils/trading-tracker'
 import { useWallet, useConnection } from './WalletProvider'
 import { useTradingData } from './TradingDataProvider'
 import TokenSkeleton from './TokenSkeleton'
-import { getSolPriceUSD, SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS } from '@/utils/solana'
+import { getSolPriceUSD } from '@/utils/solana'
 import { fetchUserTokens, executeBulkSell, BulkSellRequest, UserToken, TokenToSell } from '@/utils/jupiter'
+import { SwapQuote } from '@/types'
 import { trackSell } from '@/utils/operations-api'
-import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 // Using emojis for bot operations to avoid dependencies
 
 interface PnLRecord {
@@ -101,6 +101,11 @@ export default function PnLTracker() {
     tokenAddress?: string
   } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  // Sell quote state
+  const [sellQuotes, setSellQuotes] = useState<Map<string, SwapQuote>>(new Map())
+  const [quotingTokenId, setQuotingTokenId] = useState<string>('')
+  const [quoteTimeouts, setQuoteTimeouts] = useState<Map<string, NodeJS.Timeout>>(new Map())
 
   // ✅ NEW: Bot operation sync state
   const [lastBotSync, setLastBotSync] = useState<number>(0)
@@ -457,275 +462,6 @@ export default function PnLTracker() {
         setIsLoading(false)
         return // <––    EARLY EXIT  (legacy aggregation will be skipped)
       }
-      // -------------------------------------------------------------------------------
-      // Legacy aggregation logic (kept for reference, now bypassed)
-      // Create position tracking maps to combine multiple buys/sells
-      const tokenPositions = new Map<string, {
-        mintAddress: string
-        symbol?: string
-        name?: string
-        logoURI?: string
-        totalSolBought: number
-        totalSolSold: number
-        totalTokenAmount: number
-        remainingTokenAmount: number
-        weightedAvgBuyPrice: number
-        weightedAvgSellPrice: number
-        firstBuyTimestamp: number
-        lastSellTimestamp?: number
-        buySignatures: string[]
-        sellSignatures: string[]
-        transactions: Array<{
-          type: 'buy' | 'sell'
-          timestamp: number
-          solAmount: number
-          tokenAmount: number
-          priceUsd?: number
-          signatures: string[]
-        }>
-      }>()
-
-      // Process all buy records to build positions
-      buyRecords.forEach(buyRecord => {
-        buyRecord.tokens.forEach(buyToken => {
-          if (!buyRecord.solAmount) return
-          
-          const solPerToken = buyRecord.solAmount / buyRecord.successCount
-          const position = tokenPositions.get(buyToken.mintAddress)
-          
-          if (position) {
-            // Add to existing position
-            const newTotalSol = position.totalSolBought + solPerToken
-            const newTotalTokens = position.totalTokenAmount + (buyToken.tokenAmount || 0)
-            
-            // Update weighted average buy price
-            if (buyToken.priceUsd && buyToken.priceUsd > 0) {
-              const currentWeight = position.totalSolBought
-              const newWeight = solPerToken
-              const totalWeight = currentWeight + newWeight
-              
-              if (position.weightedAvgBuyPrice > 0) {
-                position.weightedAvgBuyPrice = 
-                  (position.weightedAvgBuyPrice * currentWeight + buyToken.priceUsd * newWeight) / totalWeight
-              } else {
-                position.weightedAvgBuyPrice = buyToken.priceUsd
-              }
-            }
-            
-            position.totalSolBought = newTotalSol
-            position.totalTokenAmount = newTotalTokens
-            position.remainingTokenAmount = newTotalTokens
-            position.buySignatures.push(...buyRecord.signatures)
-            position.transactions.push({
-              type: 'buy',
-              timestamp: buyRecord.timestamp,
-              solAmount: solPerToken,
-              tokenAmount: buyToken.tokenAmount || 0,
-              priceUsd: buyToken.priceUsd,
-              signatures: buyRecord.signatures
-            })
-          } else {
-            // Create new position
-            tokenPositions.set(buyToken.mintAddress, {
-              mintAddress: buyToken.mintAddress,
-              symbol: buyToken.symbol,
-              name: buyToken.name,
-              logoURI: buyToken.logoURI,
-              totalSolBought: solPerToken,
-              totalSolSold: 0,
-              totalTokenAmount: buyToken.tokenAmount || 0,
-              remainingTokenAmount: buyToken.tokenAmount || 0,
-              weightedAvgBuyPrice: buyToken.priceUsd || 0,
-              weightedAvgSellPrice: 0,
-              firstBuyTimestamp: buyRecord.timestamp,
-              buySignatures: [...buyRecord.signatures],
-              sellSignatures: [],
-              transactions: [{
-                type: 'buy',
-                timestamp: buyRecord.timestamp,
-                solAmount: solPerToken,
-                tokenAmount: buyToken.tokenAmount || 0,
-                priceUsd: buyToken.priceUsd,
-                signatures: buyRecord.signatures
-              }]
-            })
-          }
-        })
-      })
-
-      // Process sell records to update positions
-      processedSellRecords.forEach(sellRecord => {
-        sellRecord.tokens.forEach(soldToken => {
-          const position = tokenPositions.get(soldToken.mintAddress)
-          if (!position || !sellRecord.solAmount) return
-          
-          const solPerToken = sellRecord.solAmount / sellRecord.successCount
-          
-          // Update weighted average sell price
-          if (soldToken.priceUsd && soldToken.priceUsd > 0) {
-            const currentSolSold = position.totalSolSold
-            const newSolSold = solPerToken
-            const totalSolSold = currentSolSold + newSolSold
-            
-            if (position.weightedAvgSellPrice > 0 && currentSolSold > 0) {
-              position.weightedAvgSellPrice = 
-                (position.weightedAvgSellPrice * currentSolSold + soldToken.priceUsd * newSolSold) / totalSolSold
-            } else {
-              position.weightedAvgSellPrice = soldToken.priceUsd
-            }
-          }
-          
-          position.totalSolSold += solPerToken
-          position.lastSellTimestamp = sellRecord.timestamp
-          position.sellSignatures.push(...sellRecord.signatures)
-          position.transactions.push({
-            type: 'sell',
-            timestamp: sellRecord.timestamp,
-            solAmount: solPerToken,
-            tokenAmount: soldToken.tokenAmount || 0,
-            priceUsd: soldToken.priceUsd,
-            signatures: sellRecord.signatures
-          })
-          
-          // Reduce remaining token amount using actual token amounts sold
-          if (soldToken.tokenAmount && soldToken.tokenAmount > 0) {
-            // Use actual token amount sold for accurate remaining calculation
-            position.remainingTokenAmount = Math.max(0, 
-              position.remainingTokenAmount - soldToken.tokenAmount
-            )
-          } else if (position.totalSolBought > 0) {
-            // Fallback to SOL proportion only if token amount is not available
-            const sellProportion = Math.min(1, solPerToken / position.totalSolBought)
-            const estimatedTokensSold = position.totalTokenAmount * sellProportion
-            position.remainingTokenAmount = Math.max(0, 
-              position.remainingTokenAmount - estimatedTokensSold
-            )
-          }
-        })
-      })
-
-      const pnlData: PnLRecord[] = []
-      let openData: OpenPosition[] = []
-
-      // Fetch current wallet tokens to verify open positions
-      let currentWalletTokens: UserToken[] = []
-      try {
-        currentWalletTokens = await fetchUserTokens(connection, publicKey!, false, false)
-        console.log('🔍 Fetched current wallet tokens:', currentWalletTokens.length, 'tokens found')
-      } catch (error) {
-        console.error('⚠️ Failed to fetch wallet tokens for position verification:', error)
-        // Continue with empty array - will filter out all open positions
-      }
-
-            // Generate P&L records and open positions using DIRECT SOL amounts (like TradingHistory)
-      tokenPositions.forEach((position, mintAddress) => {
-        const totalSolBought = position.totalSolBought
-        const totalSolSold = position.totalSolSold
-        
-        console.log(`📊 Position ${position.symbol}: ${totalSolBought.toFixed(4)} SOL invested, ${totalSolSold.toFixed(4)} SOL received`)
-        
-        // Create P&L record using ACTUAL SOL amounts (no proportional calculations)
-        if (totalSolSold > 0) {
-          // Simple, accurate P&L calculation using actual transaction SOL amounts
-          const pnlSOL = totalSolSold - totalSolBought
-          const pnlPercentage = totalSolBought > 0 ? (pnlSOL / totalSolBought) * 100 : 0
-          const pnlUSD = pnlSOL * solPriceUsd
-          
-          // Determine if partial sell by checking wallet for remaining tokens
-          const walletToken = currentWalletTokens.find(token => token.mintAddress === position.mintAddress)
-          const hasRemainingTokens = !!(walletToken && walletToken.uiAmount > 0.001)
-          
-          // Use the most recent sell transaction for timestamps and signatures
-          const sellTransactions = position.transactions.filter(t => t.type === 'sell')
-          const mostRecentSell = sellTransactions[sellTransactions.length - 1]
-          
-          const pnlRecord: PnLRecord = {
-            id: `${mintAddress}-direct`,
-            mintAddress: position.mintAddress,
-            symbol: position.symbol,
-            name: position.name,
-            logoURI: position.logoURI,
-            buyTimestamp: position.firstBuyTimestamp,
-            sellTimestamp: mostRecentSell.timestamp,
-            buyPrice: position.weightedAvgBuyPrice || 0,
-            sellPrice: position.weightedAvgSellPrice || 0,
-            solAmountBought: totalSolBought,     // ACTUAL total SOL spent
-            solAmountSold: totalSolSold,         // ACTUAL total SOL received
-            pnlSOL,                              // Simple: received - spent
-            pnlUSD,
-            pnlPercentage,
-            buySignatures: position.buySignatures,
-            sellSignatures: position.sellSignatures,
-            isPartialSell: hasRemainingTokens,   // Based on actual wallet balance
-            sellTransactionId: `${mintAddress}-direct-${mostRecentSell.timestamp}`
-          }
-
-          pnlData.push(pnlRecord)
-          
-          console.log(`💰 Direct P&L for ${position.symbol}: ${totalSolSold.toFixed(4)} - ${totalSolBought.toFixed(4)} = ${pnlSOL.toFixed(4)} SOL (${pnlPercentage.toFixed(1)}%)`)
-        }
-        
-        // Show as open position ONLY if user has tokens in wallet AND no sells have occurred
-        // For partial sells, the P&L record shows the complete transaction history
-        const walletToken = currentWalletTokens.find(token => token.mintAddress === position.mintAddress)
-        if (walletToken && walletToken.uiAmount > 0.001 && totalSolSold === 0) {
-          // This is a pure open position (bought but never sold)
-          console.log(`✅ Open position for ${position.symbol}: ${totalSolBought.toFixed(4)} SOL invested, no sells yet`)
-          
-          const openPosition: OpenPosition = {
-            id: `open-${mintAddress}`,
-            mintAddress: position.mintAddress,
-            symbol: position.symbol || walletToken.symbol,
-            name: position.name || walletToken.name,
-            logoURI: position.logoURI || walletToken.logoURI,
-            buyTimestamp: position.firstBuyTimestamp,
-            solAmountBought: totalSolBought,  // Full original investment
-            buySignatures: position.buySignatures,
-            isOpen: true,
-            buyPriceUsd: position.weightedAvgBuyPrice,
-            buyTokenAmount: position.totalTokenAmount,
-            actualWalletBalance: walletToken.uiAmount,
-            walletTokenData: walletToken
-          }
-          openData.push(openPosition)
-          console.log(`✅ Pure open position: ${position.symbol || walletToken.symbol} - SOL Investment: ${totalSolBought.toFixed(4)}, Wallet: ${walletToken.uiAmount.toFixed(4)}`)
-        } else if (walletToken && walletToken.uiAmount > 0.001 && totalSolSold > 0) {
-          console.log(`ℹ️ ${position.symbol} has remaining tokens but is tracked in P&L (partial sell completed)`)
-        } else {
-          console.log(`❌ Skipping open position: ${position.symbol} - Token not found in wallet or zero balance`)
-        }
-      })
-
-      // Sort by timestamp (most recent first)
-      pnlData.sort((a, b) => b.sellTimestamp - a.sellTimestamp)
-      openData.sort((a, b) => b.buyTimestamp - a.buyTimestamp)
-      
-      // Summary and validation
-      const positionSummary = Array.from(tokenPositions.entries()).map(([mint, pos]) => {
-        const pnlRecord = pnlData.find(p => p.mintAddress === mint)
-        const openPosition = openData.find(o => o.mintAddress === mint)
-        
-        return {
-          token: pos.symbol || mint.slice(0, 8) + '...',
-          totalBought: pos.totalSolBought.toFixed(4),
-          totalSold: pos.totalSolSold.toFixed(4),
-          hasPnL: !!pnlRecord,
-          isOpen: !!openPosition,
-          status: pos.totalSolSold > 0 ? 'sold' : 'holding'
-        }
-      })
-      
-      console.log('📊 Direct P&L Calculation Summary:', {
-        totalPositions: tokenPositions.size,
-        completedTrades: pnlData.length,
-        openPositions: openData.length,
-        positionSummary
-      })
-      
-      console.log('✅ Using direct SOL amounts - no allocation math needed!')
-      
-      setPnlRecords(pnlData)
-      setOpenPositions(openData)
     } catch (err) {
       console.error('Error calculating PnL:', err)
       setError('Failed to calculate PnL data')
@@ -1101,6 +837,69 @@ export default function PnLTracker() {
     setShowShareModal(false)
   }
 
+  // Function to fetch sell quote for a position
+  const fetchSellQuote = useCallback(async (position: OpenPosition) => {
+    if (!connected || !publicKey || !position.walletTokenData) return
+
+    setQuotingTokenId(position.id)
+    
+    try {
+      const { getSwapQuote } = await import('@/utils/jupiter')
+      const quote = await getSwapQuote(
+        position.mintAddress,
+        'So11111111111111111111111111111111111111112', // SOL mint address
+        position.walletTokenData.balance, // Use full balance for quote
+        300 // 3% slippage
+      )
+
+      if (quote) {
+        setSellQuotes(prev => new Map(prev).set(position.id, quote))
+      }
+    } catch (error) {
+      console.error('Failed to fetch sell quote:', error)
+    } finally {
+      setQuotingTokenId('')
+    }
+  }, [connected, publicKey])
+
+  // Add these handlers after the fetchSellQuote function
+  const handlePositionHover = useCallback((position: OpenPosition) => {
+    // Clear any existing timeout for this position
+    const existingTimeout = quoteTimeouts.get(position.id)
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+    }
+
+    // Set a new timeout to fetch quote after 300ms hover
+    const timeout = setTimeout(() => {
+      fetchSellQuote(position)
+    }, 300)
+
+    setQuoteTimeouts(prev => new Map(prev).set(position.id, timeout))
+  }, [fetchSellQuote, quoteTimeouts])
+
+  const handlePositionHoverOut = useCallback((position: OpenPosition) => {
+    // Clear timeout if user stops hovering before quote is fetched
+    const existingTimeout = quoteTimeouts.get(position.id)
+    if (existingTimeout) {
+      clearTimeout(existingTimeout)
+      setQuoteTimeouts(prev => {
+        const newMap = new Map(prev)
+        newMap.delete(position.id)
+        return newMap
+      })
+    }
+
+    // Remove quote after 1 second delay to allow for quick re-hover
+    setTimeout(() => {
+      setSellQuotes(prev => {
+        const newMap = new Map(prev)
+        newMap.delete(position.id)
+        return newMap
+      })
+    }, 1000)
+  }, [quoteTimeouts])
+
   // Fast sell function for open positions
   const handleFastSell = React.useCallback(async (position: OpenPosition, event: React.MouseEvent) => {
     event.preventDefault()
@@ -1132,6 +931,13 @@ export default function PnLTracker() {
 
       console.log(`💰 Selling ${tokenToSell.symbol}: ${tokenToSell.uiAmount} tokens (balance verified: ${position.actualWalletBalance?.toFixed(4) || 'unknown'})`)
       
+      // Check if we have a cached quote for faster execution
+      const cachedQuote = sellQuotes.get(position.id)
+      if (cachedQuote) {
+        console.log('🚀 Using cached quote for faster execution')
+        // Use cached quote logic here - you can implement direct transaction execution
+        // For now, we'll continue with the existing bulk sell approach
+      }
 
       // Convert to TokenToSell format for bulk sell
       const tokenForSale: TokenToSell = {
@@ -1263,6 +1069,13 @@ export default function PnLTracker() {
       clearInterval(interval)
     }
   }, [openPositions.length, refreshOpenPositionPrices, isRefreshingPrices])
+
+  // Cleanup timeouts when component unmounts
+  useEffect(() => {
+    return () => {
+      quoteTimeouts.forEach(timeout => clearTimeout(timeout))
+    }
+  }, [quoteTimeouts])
 
   // Event-based updates are no longer needed - React Query handles all updates
   // The records dependency in the calculatePnL useEffect will trigger recalculation
@@ -1635,6 +1448,8 @@ export default function PnLTracker() {
                         ? 'bg-red-800/30 border border-red-600' 
                         : 'hover:bg-gray-700/40 border border-transparent'
                     }`}
+                    onMouseEnter={() => handlePositionHover(position)}
+                    onMouseLeave={() => handlePositionHoverOut(position)}
                   >
                     {/* Action buttons overlay */}
                     <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-1 z-20">
@@ -1669,12 +1484,26 @@ export default function PnLTracker() {
                         className={`p-1.5 sm:p-1 rounded text-white transition-colors ${
                           sellingTokenId === position.id 
                             ? 'bg-red-600 cursor-not-allowed' 
-                            : 'bg-red-500 hover:bg-red-600'
+                            : sellQuotes.has(position.id)
+                              ? 'bg-green-500 hover:bg-green-600'
+                              : quotingTokenId === position.id
+                                ? 'bg-yellow-500 hover:bg-yellow-600'
+                                : 'bg-red-500 hover:bg-red-600'
                         }`}
-                        title={sellingTokenId === position.id ? 'Selling...' : 'Sell position'}
+                        title={
+                          sellingTokenId === position.id 
+                            ? 'Selling...' 
+                            : sellQuotes.has(position.id)
+                              ? 'Sell position (Quote ready)'
+                              : quotingTokenId === position.id
+                                ? 'Fetching quote...'
+                                : 'Sell position'
+                        }
                         disabled={sellingTokenId === position.id}
                       >
                         {sellingTokenId === position.id ? (
+                          <div className="w-4 h-4 sm:w-3 sm:h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
+                        ) : quotingTokenId === position.id ? (
                           <div className="w-4 h-4 sm:w-3 sm:h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
                         ) : (
                           <svg className="w-4 h-4 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
