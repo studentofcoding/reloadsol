@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/utils/supabase'
 
+// Force dynamic rendering for this route
+export const dynamic = 'force-dynamic'
+
 // GET /api/trading/records/all?limit=<number>
 export async function GET(request: NextRequest) {
   try {
@@ -31,4 +34,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

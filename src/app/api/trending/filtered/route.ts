@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 
+// Force dynamic rendering for this route
+export const dynamic = 'force-dynamic'
+
 // Import the interfaces and cache from the main trending route
 import type { TransformedToken } from '../route'
 import { tokenCache, fetchAndUpdateCache } from '../route'
