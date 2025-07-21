@@ -5,20 +5,6 @@ const nextConfig = {
   swcMinify: true,
   poweredByHeader: false,
 
-  // ===== FIX: Add hostname configuration for Server Actions =====
-  experimental: {
-    serverActions: {
-      allowedOrigins: [
-        'localhost:3000',
-        '127.0.0.1:3000',
-        '161.97.82.10:3000', // Your production server IP
-        'v2.reloadsol.xyz',
-        'reloadsol.xyz', // Add your domain if you have one
-        'www.reloadsol.xyz'
-      ]
-    }
-  },
-
   // ===== COMPRESSION & PERFORMANCE =====
   compress: true,
 
@@ -138,13 +124,6 @@ const nextConfig = {
     reactRemoveProperties: process.env.NODE_ENV === 'production',
   },
 
-  // ===== BUNDLE ANALYSIS =====
-  ...(process.env.ANALYZE === 'true' && {
-    experimental: {
-      bundlePagesExternals: false
-    }
-  }),
-
   // ===== WEBPACK OPTIMIZATIONS =====
   webpack: (config, { dev, isServer, webpack }) => {
     // Polyfills for Solana and crypto libraries
@@ -246,6 +225,13 @@ const nextConfig = {
       }
     ]
   },
+
+  // ===== BUNDLE ANALYSIS (Only when needed) =====
+  ...(process.env.ANALYZE === 'true' && {
+    experimental: {
+      bundlePagesExternals: false
+    }
+  }),
 }
 
 // Bundle analyzer (run with ANALYZE=true npm run build)
