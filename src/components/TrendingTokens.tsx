@@ -485,7 +485,7 @@ export default function TrendingTokens({
                 </div>
 
                 {/* Axiom Risk Indicators */}
-                // In the token render section, replace the risk display with:
+                {/* // In the token render section, replace the risk display with: */}
                 <div className="mt-2 pt-2 border-t border-gray-700">
                   <RiskAnalysis 
                     tokenAddress={token.token_address} 

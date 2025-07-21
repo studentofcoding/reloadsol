@@ -1403,7 +1403,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       await initializeTradingKeypair(simulation.keypair_path)
 
       // Check if we can execute the trade
-      const { canTrade, reason } = await canExecuteRealTrade(BUY_AMOUNT_SOL, token.token_address, token.token_symbol)
+      const { canTrade, reason } = await canExecuteRealTrade(BUY_AMOUNT_SOL, token.token_address, token.token_symbol, token.current_price)
       if (!canTrade) {
         throw new Error(`Cannot execute real trade: ${reason}`)
       }
@@ -2248,7 +2248,7 @@ async function internalTrackPost(request: NextRequest) {
         }
 
         // Enhanced duplicate check before starting new token tracking
-        const duplicateCheck = await performEnhancedDuplicateCheck(token.token_address, token.token_symbol)
+        const duplicateCheck = await performEnhancedDuplicateCheck(token.token_address, token.token_symbol, token.current_price)
         if (!duplicateCheck.canPurchase) {
           console.warn(`🚫 Skipping ${token.token_symbol} due to duplicate prevention: ${duplicateCheck.reason}`)
           continue
@@ -3219,14 +3219,14 @@ async function checkWalletHoldings(tokenAddress: string): Promise<{ hasSignifica
   }
 }
 
-async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: string | null): Promise<{ shouldPrevent: boolean, reason?: string }> {
+async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: string | null, currentPrice?: number): Promise<{ shouldPrevent: boolean, reason?: string }> {
   try {
-    // Check database for recent purchases of this token
-    const cutoffTime = new Date(Date.now() - TOKEN_PURCHASE_COOLDOWN_HOURS * 60 * 60 * 1000)
+    // Check database for recent purchases of this token - changed to 5 minutes
+    const cutoffTime = new Date(Date.now() - 5 * 60 * 1000) // 5 minutes instead of hours
 
     const { data: recentTokens, error } = await supabase
       .from(TRACKER_TABLE)
-      .select('id, token_address, token_symbol, tracking_started_at, trading_simulation, status')
+      .select('id, token_address, token_symbol, tracking_started_at, trading_simulation, status, initial_price_usd')
       .eq('token_address', tokenAddress)
       .gte('tracking_started_at', cutoffTime.toISOString())
       .order('tracking_started_at', { ascending: false })
@@ -3250,27 +3250,46 @@ async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: str
     // Count all purchase attempts (including simulations that might become real trades)
     const allAttempts = recentTokens.length
 
-    console.log(`📊 Purchase history for ${tokenSymbol}: ${realTradeAttempts.length} real trades, ${allAttempts} total attempts in last ${TOKEN_PURCHASE_COOLDOWN_HOURS}h`)
+    console.log(`📊 Purchase history for ${tokenSymbol}: ${realTradeAttempts.length} real trades, ${allAttempts} total attempts in last 5 minutes`)
 
     // Prevent if we've hit the maximum purchases limit
     if (realTradeAttempts.length >= MAX_PURCHASES_PER_TOKEN) {
       const lastPurchase = recentTokens[0].tracking_started_at
-      const hoursAgo = Math.round((Date.now() - new Date(lastPurchase).getTime()) / (1000 * 60 * 60))
+      const minutesAgo = Math.round((Date.now() - new Date(lastPurchase).getTime()) / (1000 * 60))
       return {
         shouldPrevent: true,
-        reason: `Maximum purchases reached: ${realTradeAttempts.length}/${MAX_PURCHASES_PER_TOKEN} for ${tokenSymbol}. Last purchase ${hoursAgo}h ago. Cooldown: ${TOKEN_PURCHASE_COOLDOWN_HOURS}h`
+        reason: `Maximum purchases reached: ${realTradeAttempts.length}/${MAX_PURCHASES_PER_TOKEN} for ${tokenSymbol}. Last purchase ${minutesAgo}m ago. Cooldown: 5m`
       }
     }
 
     // Prevent if we have recent attempts (even if under the max)
     if (allAttempts > 0) {
       const lastAttempt = recentTokens[0].tracking_started_at
-      const hoursAgo = Math.round((Date.now() - new Date(lastAttempt).getTime()) / (1000 * 60 * 60))
+      const minutesAgo = Math.round((Date.now() - new Date(lastAttempt).getTime()) / (1000 * 60))
 
-      if (hoursAgo < 2) { // Minimum 2 hour gap between attempts
-        return {
-          shouldPrevent: true,
-          reason: `Recent purchase attempt for ${tokenSymbol} only ${hoursAgo}h ago. Minimum 2h gap required.`
+      if (minutesAgo < 5) { // Minimum 5 minute gap between attempts
+        // If current price is available, compare with the last attempt's price
+        if (currentPrice && recentTokens[0].initial_price_usd) {
+          const lastPrice = recentTokens[0].initial_price_usd
+          const priceChangePercentage = Math.abs(((currentPrice - lastPrice) / lastPrice) * 100)
+          
+          console.log(`📊 Price comparison for ${tokenSymbol}: Current $${currentPrice.toFixed(8)}, Last $${lastPrice.toFixed(8)}, Change: ${priceChangePercentage.toFixed(2)}%`)
+          
+          // Only proceed if price change is >= 20%
+          if (priceChangePercentage >= 20) {
+            console.log(`✅ Price change ${priceChangePercentage.toFixed(2)}% >= 20% - allowing purchase despite recent attempt`)
+            return { shouldPrevent: false }
+          } else {
+            return {
+              shouldPrevent: true,
+              reason: `Recent purchase attempt for ${tokenSymbol} only ${minutesAgo}m ago with price change ${priceChangePercentage.toFixed(2)}% < 20%. Minimum 5m gap or 20% price change required.`
+            }
+          }
+        } else {
+          return {
+            shouldPrevent: true,
+            reason: `Recent purchase attempt for ${tokenSymbol} only ${minutesAgo}m ago. Minimum 5m gap required.`
+          }
         }
       }
     }
@@ -3282,7 +3301,7 @@ async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: str
   }
 }
 
-async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: string | null): Promise<{ canPurchase: boolean, reason?: string }> {
+async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: string | null, currentPrice?: number): Promise<{ canPurchase: boolean, reason?: string }> {
   console.log(`🔍 Performing enhanced duplicate check for ${tokenSymbol} (${tokenAddress})`)
 
   // Check 1: Active trades (immediate duplicates)
@@ -3299,8 +3318,8 @@ async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: 
     }
   }
 
-  // Check 3: Recent purchase history
-  const { shouldPrevent, reason } = await checkRecentPurchaseHistory(tokenAddress, tokenSymbol)
+  // Check 3: Recent purchase history with price comparison
+  const { shouldPrevent, reason } = await checkRecentPurchaseHistory(tokenAddress, tokenSymbol, currentPrice)
   if (shouldPrevent) {
     return { canPurchase: false, reason }
   }
@@ -3309,7 +3328,7 @@ async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: 
   return { canPurchase: true }
 }
 
-async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, tokenSymbol?: string): Promise<{ canTrade: boolean, reason?: string }> {
+async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, tokenSymbol?: string, currentPrice?: number): Promise<{ canTrade: boolean, reason?: string }> {
   // Check if we can execute a real trade
   const { balance, canTrade: hasBalance } = await checkTradingBalance()
 
@@ -3319,7 +3338,7 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
 
   // Enhanced duplicate prevention check
   if (tokenAddress) {
-    const duplicateCheck = await performEnhancedDuplicateCheck(tokenAddress, tokenSymbol || null)
+    const duplicateCheck = await performEnhancedDuplicateCheck(tokenAddress, tokenSymbol || null, currentPrice)
     if (!duplicateCheck.canPurchase) {
       return { canTrade: false, reason: duplicateCheck.reason }
     }
