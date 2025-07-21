@@ -1381,7 +1381,27 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
 
     // SOL mint address and trading parameters
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
-    const BUY_AMOUNT_SOL = 0.015 // 0.015 SOL per token as specified
+    let BUY_AMOUNT_SOL = 0.015 // Default 0.015 SOL per token as specified
+
+    let isRebuy = false
+
+    // Check if this is a real trade and if we need to adjust the buy amount for re-buy
+    if (!isSimulated) {
+      const tradeCheck = await canExecuteRealTrade(BUY_AMOUNT_SOL, token.token_address, token.token_symbol, token.current_price)
+
+      if (!tradeCheck.canTrade) {
+        console.error(`❌ Cannot execute real trade for ${token.token_symbol}: ${tradeCheck.reason}`)
+        return null
+      }
+
+      // Use adjusted buy amount if this is a re-buy
+      if (tradeCheck.adjustedBuyAmount && tradeCheck.adjustedBuyAmount !== BUY_AMOUNT_SOL) {
+        BUY_AMOUNT_SOL = tradeCheck.adjustedBuyAmount
+        isRebuy = tradeCheck.isRebuy || false
+        console.log(`🔄 Using adjusted buy amount for ${token.token_symbol}: ${BUY_AMOUNT_SOL} SOL ${isRebuy ? '(re-buy)' : ''}`)
+      }
+    }
+
     const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9)
     const PRIORITY_FEE_SOL = 0.001 // 0.001 SOL priority fee as specified
     const PRIORITY_FEE_LAMPORTS = Math.floor(PRIORITY_FEE_SOL * 1e9)
@@ -1402,16 +1422,13 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       const connection = initializeTradingConnection()
       await initializeTradingKeypair(simulation.keypair_path)
 
-      // Check if we can execute the trade
-      const { canTrade, reason } = await canExecuteRealTrade(BUY_AMOUNT_SOL, token.token_address, token.token_symbol, token.current_price)
-      if (!canTrade) {
-        throw new Error(`Cannot execute real trade: ${reason}`)
-      }
+      // Safety checks already performed above, just mark as active trade
+      console.log(`🔥 Real trading safety checks passed - proceeding with ${BUY_AMOUNT_SOL} SOL buy`)
 
       // Mark token as having active trade
       activeTrades.add(token.token_address)
 
-      console.log(`🔥 Real trading safety checks passed - RPC healthy (${rpcHealth.latency}ms), sufficient balance`)
+      console.log(`🔥 Real trading safety checks passed - RPC healthy (${rpcHealth.latency}ms), sufficient balance${isRebuy ? ' (re-buy scenario)' : ''}`)
     }
 
     // Choose executors
@@ -2254,6 +2271,11 @@ async function internalTrackPost(request: NextRequest) {
           continue
         }
 
+        // Log if this is a re-buy scenario
+        if (duplicateCheck.isRebuy) {
+          console.log(`🔄 Re-buy scenario detected for ${token.token_symbol} - will use ${(duplicateCheck.rebuyMultiplier! * 100)}% of normal buy amount`)
+        }
+
         // Check if token has pumped more than 120% in the last hour
         const hourlyPumpPercentage = (token.change_1h || 0) * 100
         const shouldWaitForDip = hourlyPumpPercentage > 120
@@ -2551,7 +2573,7 @@ async function internalTrackPost(request: NextRequest) {
                 keypair_path: keypairPath,
                 take_profit_levels: {
                   tp1_percentage: 60,
-                  tp1_sell_percentage: 80,
+                  tp1_sell_percentage: 95,
                   tp2_percentage: 100,
                   tp3_percentage: 30,
                   tp3_enabled: false
@@ -3186,9 +3208,15 @@ async function getTotalSOLAtRisk(): Promise<number> {
 }
 
 // Enhanced duplicate prevention functions
-async function checkWalletHoldings(tokenAddress: string): Promise<{ hasSignificantHolding: boolean, balance: number }> {
+async function checkWalletHoldings(tokenAddress: string, currentPrice?: number): Promise<{
+  hasSignificantHolding: boolean,
+  balance: number,
+  shouldRebuyPreviouslySold: boolean,
+  rebuyReason?: string,
+  originalPurchasePrice?: number
+}> {
   if (!tradingConnection || !tradingKeypair) {
-    return { hasSignificantHolding: false, balance: 0 }
+    return { hasSignificantHolding: false, balance: 0, shouldRebuyPreviouslySold: false }
   }
 
   try {
@@ -3198,24 +3226,65 @@ async function checkWalletHoldings(tokenAddress: string): Promise<{ hasSignifica
       { mint: new PublicKey(tokenAddress) }
     )
 
-    if (tokenAccounts.length === 0) {
-      return { hasSignificantHolding: false, balance: 0 }
+    let totalBalance = 0
+    if (tokenAccounts.length > 0) {
+      // Sum up all token account balances for this mint
+      totalBalance = tokenAccounts.reduce((sum, account) => {
+        const amount = account.account.data.parsed.info.tokenAmount.uiAmount
+        return sum + (amount || 0)
+      }, 0)
     }
-
-    // Sum up all token account balances for this mint
-    const totalBalance = tokenAccounts.reduce((sum, account) => {
-      const amount = account.account.data.parsed.info.tokenAmount.uiAmount
-      return sum + (amount || 0)
-    }, 0)
 
     const hasSignificantHolding = totalBalance >= MIN_WALLET_BALANCE_FOR_DUPLICATE_CHECK
 
-    console.log(`🔍 Wallet holdings check for ${tokenAddress}: ${totalBalance} tokens (significant: ${hasSignificantHolding})`)
+    // Check for previously sold tokens that might qualify for re-buy
+    let shouldRebuyPreviouslySold = false
+    let rebuyReason: string | undefined
+    let originalPurchasePrice: number | undefined
 
-    return { hasSignificantHolding, balance: totalBalance }
+    if (!hasSignificantHolding && currentPrice) {
+      // Look for completed (sold) tokens with this address
+      const { data: completedTokens, error } = await supabase
+        .from(TRACKER_TABLE)
+        .select('id, token_address, token_symbol, initial_price_usd, trading_simulation, tracking_started_at')
+        .eq('token_address', tokenAddress)
+        .in('status', ['completed', 'won', 'lost'])
+        .not('trading_simulation', 'is', null)
+        .order('tracking_started_at', { ascending: false })
+        .limit(1) // Get the most recent completed trade
+
+      if (!error && completedTokens && completedTokens.length > 0) {
+        const lastCompletedToken = completedTokens[0]
+        const simulation = lastCompletedToken.trading_simulation as TradingSimulation
+
+        // Only consider real trades (not simulations)
+        if (simulation && !simulation.is_simulated && simulation.buy_operation) {
+          const originalPrice = simulation.buy_operation.buy_price_usd
+          const priceThreshold = originalPrice * 0.25 // 25% of original price
+
+          if (currentPrice < priceThreshold) {
+            shouldRebuyPreviouslySold = true
+            originalPurchasePrice = originalPrice
+            rebuyReason = `Current price $${currentPrice.toFixed(8)} < 25% of original purchase price $${originalPrice.toFixed(8)} (threshold: $${priceThreshold.toFixed(8)})`
+
+            console.log(`🔄 Re-buy opportunity detected for ${lastCompletedToken.token_symbol}: ${rebuyReason}`)
+          }
+        }
+      }
+    }
+
+    console.log(`🔍 Wallet holdings check for ${tokenAddress}: ${totalBalance} tokens (significant: ${hasSignificantHolding}), rebuy: ${shouldRebuyPreviouslySold}`)
+
+    return {
+      hasSignificantHolding,
+      balance: totalBalance,
+      shouldRebuyPreviouslySold,
+      rebuyReason,
+      originalPurchasePrice
+    }
   } catch (error) {
     console.error(`❌ Error checking wallet holdings for ${tokenAddress}:`, error)
-    return { hasSignificantHolding: false, balance: 0 }
+    return { hasSignificantHolding: false, balance: 0, shouldRebuyPreviouslySold: false }
   }
 }
 
@@ -3272,9 +3341,9 @@ async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: str
         if (currentPrice && recentTokens[0].initial_price_usd) {
           const lastPrice = recentTokens[0].initial_price_usd
           const priceChangePercentage = Math.abs(((currentPrice - lastPrice) / lastPrice) * 100)
-          
+
           console.log(`📊 Price comparison for ${tokenSymbol}: Current $${currentPrice.toFixed(8)}, Last $${lastPrice.toFixed(8)}, Change: ${priceChangePercentage.toFixed(2)}%`)
-          
+
           // Only proceed if price change is >= 20%
           if (priceChangePercentage >= 20) {
             console.log(`✅ Price change ${priceChangePercentage.toFixed(2)}% >= 20% - allowing purchase despite recent attempt`)
@@ -3301,7 +3370,12 @@ async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: str
   }
 }
 
-async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: string | null, currentPrice?: number): Promise<{ canPurchase: boolean, reason?: string }> {
+async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: string | null, currentPrice?: number): Promise<{
+  canPurchase: boolean,
+  reason?: string,
+  isRebuy?: boolean,
+  rebuyMultiplier?: number
+}> {
   console.log(`🔍 Performing enhanced duplicate check for ${tokenSymbol} (${tokenAddress})`)
 
   // Check 1: Active trades (immediate duplicates)
@@ -3309,12 +3383,23 @@ async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: 
     return { canPurchase: false, reason: `Trade already in progress for ${tokenSymbol}` }
   }
 
-  // Check 2: Wallet holdings
-  const { hasSignificantHolding, balance } = await checkWalletHoldings(tokenAddress)
+  // Check 2: Wallet holdings and re-buy opportunities
+  const { hasSignificantHolding, balance, shouldRebuyPreviouslySold, rebuyReason } = await checkWalletHoldings(tokenAddress, currentPrice)
+
   if (hasSignificantHolding) {
     return {
       canPurchase: false,
       reason: `Wallet already holds significant amount of ${tokenSymbol}: ${balance.toLocaleString()} tokens`
+    }
+  }
+
+  // Special case: Allow re-buy of previously sold tokens at reduced amount
+  if (shouldRebuyPreviouslySold) {
+    console.log(`🔄 Re-buy approved for ${tokenSymbol}: ${rebuyReason}`)
+    return {
+      canPurchase: true,
+      isRebuy: true,
+      rebuyMultiplier: 0.3 // Use 30% of normal buy amount
     }
   }
 
@@ -3328,7 +3413,12 @@ async function performEnhancedDuplicateCheck(tokenAddress: string, tokenSymbol: 
   return { canPurchase: true }
 }
 
-async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, tokenSymbol?: string, currentPrice?: number): Promise<{ canTrade: boolean, reason?: string }> {
+async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, tokenSymbol?: string, currentPrice?: number): Promise<{
+  canTrade: boolean,
+  reason?: string,
+  adjustedBuyAmount?: number,
+  isRebuy?: boolean
+}> {
   // Check if we can execute a real trade
   const { balance, canTrade: hasBalance } = await checkTradingBalance()
 
@@ -3336,24 +3426,34 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
     return { canTrade: false, reason: `Insufficient balance: ${balance.toFixed(4)} SOL < ${MIN_SOL_BALANCE} SOL minimum` }
   }
 
+  let adjustedBuyAmount = buyAmountSOL
+  let isRebuy = false
+
   // Enhanced duplicate prevention check
   if (tokenAddress) {
     const duplicateCheck = await performEnhancedDuplicateCheck(tokenAddress, tokenSymbol || null, currentPrice)
     if (!duplicateCheck.canPurchase) {
       return { canTrade: false, reason: duplicateCheck.reason }
     }
+
+    // Adjust buy amount for re-buy scenarios
+    if (duplicateCheck.isRebuy && duplicateCheck.rebuyMultiplier) {
+      adjustedBuyAmount = buyAmountSOL * duplicateCheck.rebuyMultiplier
+      isRebuy = true
+      console.log(`🔄 Adjusting buy amount for re-buy: ${buyAmountSOL} SOL → ${adjustedBuyAmount} SOL (${(duplicateCheck.rebuyMultiplier * 100)}%)`)
+    }
   }
 
   const totalAtRisk = await getTotalSOLAtRisk()
-  const newTotalAtRisk = totalAtRisk + buyAmountSOL
+  const newTotalAtRisk = totalAtRisk + adjustedBuyAmount
 
   if (newTotalAtRisk > MAX_SOL_AT_RISK) {
     return { canTrade: false, reason: `Risk limit exceeded: ${newTotalAtRisk.toFixed(4)} SOL > ${MAX_SOL_AT_RISK} SOL maximum` }
   }
 
-  if (balance < buyAmountSOL + MIN_SOL_BALANCE) {
-    return { canTrade: false, reason: `Insufficient balance for trade: need ${(buyAmountSOL + MIN_SOL_BALANCE).toFixed(4)} SOL, have ${balance.toFixed(4)} SOL` }
+  if (balance < adjustedBuyAmount + MIN_SOL_BALANCE) {
+    return { canTrade: false, reason: `Insufficient balance for trade: need ${(adjustedBuyAmount + MIN_SOL_BALANCE).toFixed(4)} SOL, have ${balance.toFixed(4)} SOL` }
   }
 
-  return { canTrade: true }
+  return { canTrade: true, adjustedBuyAmount, isRebuy }
 }

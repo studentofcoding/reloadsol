@@ -5,33 +5,35 @@ module.exports = {
       script: 'node_modules/.bin/next',
       args: 'start',
       cwd: './',
-      instances: 1, // Use only 1 CPU core (changed from 'max')
+      instances: 1,
       exec_mode: 'cluster',
 
       // Environment
       env: {
         NODE_ENV: 'development',
         PORT: 3000,
-        TZ: 'Asia/Jakarta', // GMT+7 timezone
+        TZ: 'Asia/Jakarta',
+        // FIX: Add hostname for Server Actions
+        HOSTNAME: 'localhost',
       },
       env_production: {
         NODE_ENV: 'production',
         PORT: 3000,
-        TZ: 'Asia/Jakarta', // GMT+7 timezone
-        // Add your production environment variables here
-        // SUPABASE_URL: 'your-production-supabase-url',
-        // SUPABASE_ANON_KEY: 'your-production-supabase-key',
+        TZ: 'Asia/Jakarta',
+        // FIX: Add production hostname
+        HOSTNAME: '161.97.82.10', // Your server IP
+        // Or use your domain: HOSTNAME: 'reloadsol.xyz',
       },
 
-      // Performance & Monitoring (adjusted for single core)
-      max_memory_restart: '800M', // Reduced from 1G for single core
+      // Performance & Monitoring
+      max_memory_restart: '800M',
       min_uptime: '10s',
       max_restarts: 10,
       autorestart: true,
-      watch: false, // Disable in production
+      watch: false,
 
-      // CPU throttling to ensure fair resource sharing
-      node_args: '--max-old-space-size=768', // Limit heap to 768MB
+      // CPU throttling
+      node_args: '--max-old-space-size=768',
 
       // Logging
       log_file: './logs/combined.log',

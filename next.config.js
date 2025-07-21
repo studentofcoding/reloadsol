@@ -2,12 +2,26 @@
 const nextConfig = {
   // ===== CORE CONFIGURATION =====
   reactStrictMode: true,
-  swcMinify: true, // Use SWC for faster builds
-  poweredByHeader: false, // Remove X-Powered-By header for security
-  
+  swcMinify: true,
+  poweredByHeader: false,
+
+  // ===== FIX: Add hostname configuration for Server Actions =====
+  experimental: {
+    serverActions: {
+      allowedOrigins: [
+        'localhost:3000',
+        '127.0.0.1:3000',
+        '161.97.82.10:3000', // Your production server IP
+        'v2.reloadsol.xyz',
+        'reloadsol.xyz', // Add your domain if you have one
+        'www.reloadsol.xyz'
+      ]
+    }
+  },
+
   // ===== COMPRESSION & PERFORMANCE =====
   compress: true,
-  
+
   // ===== IMAGES OPTIMIZATION =====
   images: {
     formats: ['image/webp', 'image/avif'],
@@ -19,7 +33,7 @@ const nextConfig = {
     domains: [
       'raw.githubusercontent.com',
       'github.com',
-      'assets.coingecko.com', 
+      'assets.coingecko.com',
       'coin-images.coingecko.com',
       'cryptologos.cc',
       'tokens.1inch.io',
@@ -38,8 +52,8 @@ const nextConfig = {
       'kuji44lsf4frvko7srm7jdj6nqy2jzvdl5hy5dsodi7nva75rbtq.arweave.net'
     ],
   },
-  
-  // ===== SECURITY HEADERS =====
+
+  // ===== SECURITY HEADERS (UPDATED) =====
   async headers() {
     return [
       {
@@ -60,6 +74,21 @@ const nextConfig = {
           {
             key: 'Permissions-Policy',
             value: 'geolocation=(), microphone=(), camera=()'
+          },
+          // FIX: Add proper origin handling
+          {
+            key: 'Access-Control-Allow-Origin',
+            value: process.env.NODE_ENV === 'production'
+              ? 'https://v2.reloadsol.xyz' // Replace with your actual domain
+              : '*'
+          },
+          {
+            key: 'Access-Control-Allow-Methods',
+            value: 'GET, POST, PUT, OPTIONS'
+          },
+          {
+            key: 'Access-Control-Allow-Headers',
+            value: 'Content-Type, Authorization, X-Requested-With, Origin'
           },
           {
             key: 'Content-Security-Policy',
@@ -99,7 +128,7 @@ const nextConfig = {
       }
     ]
   },
-  
+
   // ===== COMPILER OPTIMIZATIONS =====
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production' ? {
@@ -108,14 +137,14 @@ const nextConfig = {
     // Remove React dev tools in production
     reactRemoveProperties: process.env.NODE_ENV === 'production',
   },
-  
+
   // ===== BUNDLE ANALYSIS =====
   ...(process.env.ANALYZE === 'true' && {
     experimental: {
       bundlePagesExternals: false
     }
   }),
-  
+
   // ===== WEBPACK OPTIMIZATIONS =====
   webpack: (config, { dev, isServer, webpack }) => {
     // Polyfills for Solana and crypto libraries
@@ -135,7 +164,7 @@ const nextConfig = {
       path: require.resolve('path-browserify'),
       'pino-pretty': false,
     }
-    
+
     // Exclude development files from production builds
     if (!dev) {
       config.module.rules.push({
@@ -143,7 +172,7 @@ const nextConfig = {
         use: 'null-loader',
       })
     }
-    
+
     // Production optimizations
     if (!dev && !isServer) {
       // Bundle splitting for better caching
@@ -182,32 +211,32 @@ const nextConfig = {
           },
         },
       }
-      
+
       // Tree shaking optimization
       config.optimization.usedExports = true
       config.optimization.sideEffects = false
     }
-    
+
     // Ignore source maps in production for smaller builds
     if (!dev) {
       config.devtool = false
     }
-    
+
     return config
   },
-  
+
   // ===== ENVIRONMENT VARIABLES =====
   env: {
     NEXT_TELEMETRY_DISABLED: '1',
   },
-  
+
   // ===== REDIRECTS & REWRITES =====
   async redirects() {
     return [
       // Add any redirects here if needed
     ]
   },
-  
+
   async rewrites() {
     return [
       // Proxy RPC requests to avoid CORS issues
@@ -227,4 +256,4 @@ if (process.env.ANALYZE === 'true') {
   module.exports = withBundleAnalyzer(nextConfig)
 } else {
   module.exports = nextConfig
-} 
+}
