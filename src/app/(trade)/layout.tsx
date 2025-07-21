@@ -60,12 +60,12 @@ export default function TradeLayout({
             {activeInfoTab === 'pnl' && isDevWallet(publicKey) && (
               <div>
                 <div className="text-left mb-3">
-                  <h3 className="text-lg font-semibold text-white">
+                  <h2 className="text-lg font-semibold text-white">
                     Your PnL Performance 
                     {isDevWallet(publicKey) && (
                       <span className="ml-2 text-xs bg-yellow-600 text-yellow-100 px-2 py-1 rounded">DEV</span>
                     )}
-                  </h3>
+                  </h2>
                 </div>
                 <PnLTracker />
               </div>

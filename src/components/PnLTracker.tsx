@@ -102,6 +102,15 @@ export default function PnLTracker() {
   } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
+  // Hint message state
+  const [showClosedPositionsHint, setShowClosedPositionsHint] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const dismissed = localStorage.getItem('closedPositionsHintDismissed')
+      return dismissed !== 'true'
+    }
+    return true
+  })
+
   // Sell quote state
   const [sellQuotes, setSellQuotes] = useState<Map<string, SwapQuote>>(new Map())
   const [quotingTokenId, setQuotingTokenId] = useState<string>('')
@@ -110,6 +119,20 @@ export default function PnLTracker() {
   // ✅ NEW: Bot operation sync state
   const [lastBotSync, setLastBotSync] = useState<number>(0)
   const [isBotSyncActive, setIsBotSyncActive] = useState<boolean>(false)
+
+  // Handler to dismiss the hint message
+  const handleDismissHint = useCallback(() => {
+    setShowClosedPositionsHint(false)
+    localStorage.setItem('pnl-closed-positions-hint-dismissed', 'true')
+  }, [])
+
+  // Add this useEffect after other useEffect hooks to persist dismissal state
+  useEffect(() => {
+    const hintDismissed = localStorage.getItem('pnl-closed-positions-hint-dismissed')
+    if (hintDismissed === 'true') {
+      setShowClosedPositionsHint(false)
+    }
+  }, [])
 
   // ✅ NEW: Bot operation indicator component
   const BotOperationIndicator = ({ isBotOperation, botStrategy }: { 
@@ -1140,15 +1163,7 @@ export default function PnLTracker() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header with sync status */}
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-          P&L Tracker
-        </h2>
-        <SyncStatusIndicator />
-      </div>
-
+    <div className="space-y-6 mb-3">
       {/* Error Display */}
       {error && (
         <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-3 mb-3 text-center">
@@ -1206,7 +1221,7 @@ export default function PnLTracker() {
       {connected && (
         <>
           {/* Tab Navigation */}
-          <div className="flex space-x-1 mb-3 bg-gray-800 rounded-lg p-1">
+          <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
             <button
               onClick={() => setActiveTab('completed')}
               className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
@@ -1273,9 +1288,20 @@ export default function PnLTracker() {
               </div>
             ) : (
               <>
-                <div className="text-center py-2 mb-2">
-                  <p className="text-gray-400 text-xs">💡 Below is your Closed Positions for the past 7 days</p>
-                </div>
+                {showClosedPositionsHint && (
+                  <div className="text-center py-2 mb-2 relative">
+                    <p className="text-gray-400 text-xs">💡 Below is your Closed Positions for the past 7 days</p>
+                    <button
+                      onClick={handleDismissHint}
+                      className="absolute top-1 right-2 text-gray-500 hover:text-gray-300 transition-colors"
+                      title="Dismiss this hint"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
                 <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
                   {pnlRecords.slice(0, 10).map((record) => (
                     <div
@@ -1436,9 +1462,11 @@ export default function PnLTracker() {
               </div>
             ) : (
               <>
-                <div className="text-center py-2 mb-2">
-                  <p className="text-gray-400 text-xs">💡 Hover over positions to see chart and sell options</p>
-                </div>
+                {showClosedPositionsHint && (
+                  <div className="text-center py-2 mb-2">
+                    <p className="text-gray-400 text-xs">💡 Hover over positions to see chart and sell options</p>
+                  </div>
+                )}
                 <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
                 {openPositions.slice(0, 10).map((position) => (
                   <div
