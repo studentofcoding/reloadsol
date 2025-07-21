@@ -39,7 +39,7 @@ const nextConfig = {
     ],
   },
 
-  // ===== SECURITY HEADERS (UPDATED) =====
+  // ===== SECURITY HEADERS =====
   async headers() {
     return [
       {
@@ -61,11 +61,10 @@ const nextConfig = {
             key: 'Permissions-Policy',
             value: 'geolocation=(), microphone=(), camera=()'
           },
-          // FIX: Add proper origin handling
           {
             key: 'Access-Control-Allow-Origin',
             value: process.env.NODE_ENV === 'production'
-              ? 'https://v2.reloadsol.xyz' // Replace with your actual domain
+              ? 'https://v2.reloadsol.xyz'
               : '*'
           },
           {
@@ -93,7 +92,6 @@ const nextConfig = {
           }
         ]
       },
-      // Cache static assets aggressively
       {
         source: '/favicon.ico',
         headers: [
@@ -120,7 +118,6 @@ const nextConfig = {
     removeConsole: process.env.NODE_ENV === 'production' ? {
       exclude: ['error', 'warn']
     } : false,
-    // Remove React dev tools in production
     reactRemoveProperties: process.env.NODE_ENV === 'production',
   },
 
@@ -152,51 +149,109 @@ const nextConfig = {
       })
     }
 
-    // Production optimizations
+    // Production optimizations - FIXED: More conservative bundle splitting
     if (!dev && !isServer) {
-      // Bundle splitting for better caching
       config.optimization.splitChunks = {
         chunks: 'all',
+        minSize: 20000,
+        maxSize: 200000, // Reduced from 244000
+        maxInitialRequests: 6, // Limit initial chunks
+        maxAsyncRequests: 10,
         cacheGroups: {
           default: false,
           vendors: false,
-          // Solana libraries chunk
+          
+          // ESSENTIAL: Only framework in initial bundle
+          framework: {
+            name: 'framework',
+            chunks: 'all',
+            test: /[\\/]node_modules[\\/](react|react-dom|next)[\\/]/,
+            priority: 50,
+            enforce: true,
+          },
+
+          // ASYNC: Load Solana libraries on-demand only
           solana: {
             name: 'solana',
-            chunks: 'all',
+            chunks: 'async', // Changed from 'all' to 'async'
             test: /[\\/]node_modules[\\/](@solana|@metaplex)[\\/]/,
-            priority: 40,
+            priority: 45,
+            enforce: true,
           },
-          // React chunk
-          react: {
-            name: 'react',
-            chunks: 'all',
-            test: /[\\/]node_modules[\\/](react|react-dom)[\\/]/,
-            priority: 30,
-          },
-          // Chart.js chunk  
+
+          // ASYNC: Charts load when needed
           charts: {
             name: 'charts',
-            chunks: 'all',
+            chunks: 'async', // Changed from 'all' to 'async'
             test: /[\\/]node_modules[\\/](chart\.js|react-chartjs-2)[\\/]/,
-            priority: 25,
+            priority: 40,
+            enforce: true,
           },
-          // Common vendor libraries
+
+          // ESSENTIAL: Keep React Query in initial (used everywhere)
+          reactQuery: {
+            name: 'react-query',
+            chunks: 'all',
+            test: /[\\/]node_modules[\\/]@tanstack\/react-query/,
+            priority: 38,
+            enforce: true,
+          },
+
+          // ESSENTIAL: Keep Supabase in initial (used for auth/data)
+          supabase: {
+            name: 'supabase',
+            chunks: 'all',
+            test: /[\\/]node_modules[\\/]@supabase/,
+            priority: 37,
+            enforce: true,
+          },
+
+          // ASYNC: Crypto polyfills load when wallet connects
+          crypto: {
+            name: 'crypto',
+            chunks: 'async', // Changed from 'all' to 'async'
+            test: /[\\/]node_modules[\\/](crypto-browserify|stream-browserify|https-browserify|os-browserify|path-browserify|browserify-zlib|stream-http|assert)[\\/]/,
+            priority: 35,
+            enforce: true,
+          },
+
+          // SHARED: Common utilities in initial bundle
+          utils: {
+            name: 'utils',
+            chunks: 'all',
+            test: /[\\/]node_modules[\\/](axios|chalk|ora)[\\/]/,
+            priority: 30,
+            enforce: true,
+          },
+
+          // ASYNC: Other vendor libraries load on-demand
           vendor: {
             name: 'vendor',
-            chunks: 'all',
+            chunks: 'async', // Changed from 'all' to 'async'
             test: /[\\/]node_modules[\\/]/,
             priority: 20,
+            minChunks: 2,
+          },
+
+          // Common application code
+          common: {
+            name: 'common',
+            chunks: 'all',
+            minChunks: 2,
+            priority: 10,
+            reuseExistingChunk: true,
           },
         },
       }
 
-      // Tree shaking optimization
+      // Enhanced tree shaking
       config.optimization.usedExports = true
       config.optimization.sideEffects = false
+      config.optimization.concatenateModules = true
+      config.optimization.minimize = true
     }
 
-    // Ignore source maps in production for smaller builds
+    // Ignore source maps in production
     if (!dev) {
       config.devtool = false
     }
@@ -211,14 +266,11 @@ const nextConfig = {
 
   // ===== REDIRECTS & REWRITES =====
   async redirects() {
-    return [
-      // Add any redirects here if needed
-    ]
+    return []
   },
 
   async rewrites() {
     return [
-      // Proxy RPC requests to avoid CORS issues
       {
         source: '/rpc/:path*',
         destination: '/api/rpc/:path*'
@@ -226,7 +278,7 @@ const nextConfig = {
     ]
   },
 
-  // ===== BUNDLE ANALYSIS (Only when needed) =====
+  // ===== BUNDLE ANALYSIS =====
   ...(process.env.ANALYZE === 'true' && {
     experimental: {
       bundlePagesExternals: false
@@ -234,7 +286,7 @@ const nextConfig = {
   }),
 }
 
-// Bundle analyzer (run with ANALYZE=true npm run build)
+// Bundle analyzer
 if (process.env.ANALYZE === 'true') {
   const withBundleAnalyzer = require('@next/bundle-analyzer')({
     enabled: true,
