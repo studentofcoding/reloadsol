@@ -1,21 +1,5 @@
 import { NextResponse } from 'next/server'
-
-interface JupiterBaseAsset {
-  id: string
-  usdPrice: number
-  stats5m: {
-    priceChange: number
-  }
-}
-
-interface JupiterPool {
-  id: string
-  baseAsset: JupiterBaseAsset
-}
-
-interface JupiterResponse {
-  pools: JupiterPool[]
-}
+import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 
 interface TokenPrice {
   token_address: string
@@ -64,17 +48,17 @@ export async function GET() {
     }
 
     const data = await response.json() as JupiterResponse
-    
+
     // Only extract the price information to keep the payload small
     const tokenPrices = data.pools.map((pool): TokenPrice => ({
       token_address: pool.baseAsset.id,
       price: pool.baseAsset.usdPrice,
       change_5m: pool.baseAsset.stats5m.priceChange / 100, // Convert percentage to decimal
     }))
-    
+
     // Filter out tokens with extreme negative price movement (less than -40%)
     const filteredPrices = tokenPrices.filter(token => token.change_5m > -0.4)
-    
+
     // Deduplicate tokens by token_address
     const priceMap = new Map<string, TokenPrice>()
     filteredPrices.forEach(token => {
@@ -82,9 +66,9 @@ export async function GET() {
         priceMap.set(token.token_address, token)
       }
     })
-    
+
     const uniquePrices = Array.from(priceMap.values())
-    
+
     return NextResponse.json(
       { prices: uniquePrices },
       {

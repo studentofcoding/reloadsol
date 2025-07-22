@@ -49,8 +49,8 @@ export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomRes
 
     if (!graduatedPool) {
       console.warn(`No graduated pool found for mint: ${mintAddress}`)
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: 'No graduated pool available for this token',
         pairNotFound: true
       }
@@ -69,11 +69,11 @@ export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomRes
     })
 
     const result = await response.json()
-    
+
     // Handle authentication error
     if (result.requiresAuth) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: 'Axiom API requires authentication',
         requiresAuth: true
       }
@@ -81,8 +81,8 @@ export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomRes
 
     // Handle pair not found error
     if (result.pairNotFound) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: 'Token not found in Axiom database',
         pairNotFound: true
       }
@@ -109,9 +109,9 @@ export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomRes
     return { success: true, data }
   } catch (error) {
     console.error(`Failed to fetch Axiom token info for ${mintAddress}:`, error)
-    return { 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
     }
   }
 }
@@ -138,7 +138,7 @@ export function calculateFeeToMarketCapRatio(feesPaid: number, marketCap: number
   // - For every 5K MC, should have at least 0.5 SOL in fees
   // - At 20K MC, should have 1.5-2 SOL in fees
   // - Under 4 SOL for graduated tokens is suspicious
-  
+
   let organicScore = 0
   let feeRisk: 'LOW' | 'MEDIUM' | 'HIGH' = 'LOW'
   let isOrganic = false
@@ -248,4 +248,4 @@ export function formatRiskDisplay(risk: 'LOW' | 'MEDIUM' | 'HIGH') {
     case 'HIGH':
       return { text: 'High', color: 'text-red-400', bg: 'bg-red-900/20', border: 'border-red-500/30' }
   }
-} 
+}

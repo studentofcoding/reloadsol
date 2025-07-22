@@ -1,21 +1,5 @@
 import { NextResponse } from 'next/server'
-
-interface JupiterBaseAsset {
-  id: string
-  usdPrice: number
-  stats5m: {
-    priceChange: number
-  }
-}
-
-interface JupiterPool {
-  id: string
-  baseAsset: JupiterBaseAsset
-}
-
-interface JupiterResponse {
-  pools: JupiterPool[]
-}
+import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 
 interface TokenPrice {
   token_address: string

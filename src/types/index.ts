@@ -72,7 +72,7 @@ export interface WalletContextState {
   signTransaction?: (transaction: any) => Promise<any>
   signAllTransactions?: (transactions: any[]) => Promise<any[]>
   sendTransaction?: (transaction: any, connection: any, options?: any) => Promise<string>
-} 
+}
 
 // New types for trade comparison API
 export type TradeProvider = 'jupiter' | 'dflow' | 'solana-tracker' | 'gmgn' // | 'pump-fun'
@@ -223,4 +223,42 @@ export interface TradeExecutionResult {
     protocolFee: number
     totalFee: number
   }
-} 
+}
+
+// Jupiter API interfaces - consolidated from multiple API routes
+export interface JupiterBaseAsset {
+  id: string
+  name: string
+  symbol: string
+  icon: string
+  decimals: number
+  usdPrice: number
+  stats1h: {
+    priceChange: number
+    numNetBuyers: number
+    buyVolume: number
+    sellVolume?: number // Optional for backward compatibility
+  }
+  stats5m: {
+    priceChange: number
+    numNetBuyers: number | null
+    buyVolume: number | null
+    sellVolume?: number | null // Optional for backward compatibility
+  }
+  mcap: number
+  organicScore: number
+  audit: {
+    topHoldersPercentage: number
+  }
+}
+
+export interface JupiterPool {
+  id: string
+  baseAsset: JupiterBaseAsset
+  volume24h: number
+  createdAt: string | number
+}
+
+export interface JupiterResponse {
+  pools: JupiterPool[]
+}

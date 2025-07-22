@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
+import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
@@ -76,40 +77,6 @@ if (typeof process !== 'undefined') {
   process.on('SIGTERM', cleanupGlobalTimers);
   process.on('SIGINT', cleanupGlobalTimers);
   process.on('exit', cleanupGlobalTimers);
-}
-
-interface JupiterBaseAsset {
-  id: string
-  name: string
-  symbol: string
-  icon: string
-  decimals: number
-  usdPrice: number
-  stats1h: {
-    priceChange: number
-    numNetBuyers: number
-    buyVolume: number
-    sellVolume: number
-  }
-  stats5m: {
-    priceChange: number
-    numNetBuyers: number
-    buyVolume: number
-    sellVolume: number
-  }
-  mcap: number
-  organicScore: number
-}
-
-interface JupiterPool {
-  id: string
-  baseAsset: JupiterBaseAsset
-  volume24h: number
-  createdAt: string | number
-}
-
-interface JupiterResponse {
-  pools: JupiterPool[]
 }
 
 export interface TransformedToken {

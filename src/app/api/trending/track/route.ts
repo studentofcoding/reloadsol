@@ -4,6 +4,7 @@ import { supabase } from '@/utils/supabase'
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
+import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 
 export const runtime = 'nodejs'
 
@@ -42,38 +43,6 @@ const dbg = (...args: any[]): void => {
 // === Table selection (use alternate tables in local development to avoid prod collisions) ===
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
-
-interface JupiterBaseAsset {
-  id: string
-  name: string
-  symbol: string
-  icon: string
-  decimals: number
-  usdPrice: number
-  stats1h: {
-    priceChange: number
-    numNetBuyers: number
-    buyVolume: number
-  }
-  stats5m: {
-    priceChange: number
-    numNetBuyers: number | null
-    buyVolume: number | null
-  }
-  mcap: number
-  organicScore: number
-}
-
-interface JupiterPool {
-  id: string
-  baseAsset: JupiterBaseAsset
-  volume24h: number
-  createdAt: string | number
-}
-
-interface JupiterResponse {
-  pools: JupiterPool[]
-}
 
 // Add PriceRecord interface for price history
 interface PriceRecord {
@@ -2135,7 +2104,9 @@ async function internalTrackPost(request: NextRequest) {
         // 2. Quality filters
         pool.baseAsset.organicScore >= 65 &&
         pool.baseAsset.mcap > 300_000 &&
-        pool.baseAsset.mcap < 2_000_000
+        pool.baseAsset.mcap < 2_000_000 &&
+        // 3. Filter > 25% Holders 
+        pool.baseAsset.audit.topHoldersPercentage < 25
       )
       .map(pool => ({
         token_address: pool.baseAsset.id,
