@@ -1163,6 +1163,76 @@ async function runDailySummary(currentTime: Date): Promise<void> {
   }
 }
 
+// Add diagnostic function for wallet troubleshooting
+async function diagnoseTradingWallet(): Promise<void> {
+  console.log('🔧 === WALLET DIAGNOSTICS ===')
+  
+  try {
+    // Check environment variables
+    const hasEnvKeypair = !!process.env.TRADING_KEYPAIR_JSON
+    console.log(`📋 TRADING_KEYPAIR_JSON env var: ${hasEnvKeypair ? 'SET' : 'NOT SET'}`)
+    
+    if (hasEnvKeypair) {
+      try {
+        const envJson = JSON.parse(process.env.TRADING_KEYPAIR_JSON!)
+        console.log(`📋 Keypair JSON length: ${envJson.length} bytes`)
+      } catch (e) {
+        console.error('❌ Invalid TRADING_KEYPAIR_JSON format:', e)
+      }
+    }
+    
+    // Check MIN_SOL_BALANCE
+    console.log(`📋 MIN_SOL_BALANCE: ${MIN_SOL_BALANCE} SOL`)
+    
+    // Initialize and test connection
+    if (!tradingConnection) {
+      console.log('🌐 Initializing trading connection...')
+      initializeTradingConnection()
+    }
+    
+    if (tradingConnection) {
+      console.log('✅ Trading connection initialized')
+      
+      // Test RPC connection
+      try {
+        const slot = await tradingConnection.getSlot()
+        console.log(`✅ RPC connection healthy, current slot: ${slot}`)
+      } catch (rpcError) {
+        console.error('❌ RPC connection failed:', rpcError)
+      }
+    }
+    
+    // Initialize and test keypair
+    if (!tradingKeypair) {
+      console.log('🔑 Initializing trading keypair...')
+      await initializeTradingKeypair()
+    }
+    
+    if (tradingKeypair) {
+      console.log(`✅ Trading keypair loaded: ${tradingKeypair.publicKey.toBase58()}`)
+      
+      // Test balance fetch
+      if (tradingConnection) {
+        try {
+          const balance = await tradingConnection.getBalance(tradingKeypair.publicKey)
+          const balanceSOL = balance / 1e9
+          console.log(`✅ Wallet balance: ${balanceSOL.toFixed(4)} SOL`)
+          console.log(`✅ Can trade: ${balanceSOL >= MIN_SOL_BALANCE}`)
+        } catch (balanceError) {
+          console.error('❌ Balance fetch failed:', balanceError)
+        }
+      }
+    } else {
+      console.error('❌ Failed to load trading keypair')
+    }
+    
+  } catch (error) {
+    console.error('❌ Wallet diagnostics failed:', error)
+  }
+  
+  console.log('🔧 === END DIAGNOSTICS ===')
+}
+
 // Enhanced bot operation tracking helper
 async function trackBotOperation(
   operationType: 'buy' | 'sell',
@@ -2998,7 +3068,20 @@ async function internalTrackPost(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  return internalTrackPost(request)
+  try {
+    console.log('🚀 Starting trending token tracking...')
+    
+    // Run wallet diagnostics to help troubleshoot balance issues
+    await diagnoseTradingWallet()
+    
+    return await internalTrackPost(request)
+  } catch (error) {
+    console.error('❌ Error in POST handler:', error)
+    return NextResponse.json({
+      error: 'Failed to process tracking request',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 })
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -3128,15 +3211,36 @@ async function initializeTradingKeypair(keypairPath?: string): Promise<void> {
 }
 
 async function checkTradingBalance(): Promise<{ balance: number, canTrade: boolean }> {
-  if (!tradingConnection || !tradingKeypair) {
+  try {
+    // Ensure trading infrastructure is initialized before checking balance
+    if (!tradingConnection) {
+      console.log('🔧 Initializing trading connection for balance check...')
+      initializeTradingConnection()
+    }
+    
+    if (!tradingKeypair) {
+      console.log('🔑 Initializing trading keypair for balance check...')
+      await initializeTradingKeypair()
+    }
+
+    if (!tradingConnection || !tradingKeypair) {
+      console.error('❌ Failed to initialize trading infrastructure for balance check')
+      return { balance: 0, canTrade: false }
+    }
+
+    console.log(`🔍 Checking balance for wallet: ${tradingKeypair.publicKey.toBase58()}`)
+    
+    const balance = await tradingConnection.getBalance(tradingKeypair.publicKey)
+    const balanceSOL = balance / 1e9
+    const canTrade = balanceSOL >= MIN_SOL_BALANCE
+
+    console.log(`💰 Wallet balance: ${balanceSOL.toFixed(4)} SOL (minimum required: ${MIN_SOL_BALANCE} SOL, can trade: ${canTrade})`)
+
+    return { balance: balanceSOL, canTrade }
+  } catch (error) {
+    console.error('❌ Error checking trading balance:', error)
     return { balance: 0, canTrade: false }
   }
-
-  const balance = await tradingConnection.getBalance(tradingKeypair.publicKey)
-  const balanceSOL = balance / 1e9
-  const canTrade = balanceSOL >= MIN_SOL_BALANCE
-
-  return { balance: balanceSOL, canTrade }
 }
 
 async function getTotalSOLAtRisk(): Promise<number> {
@@ -3390,12 +3494,18 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
   adjustedBuyAmount?: number,
   isRebuy?: boolean
 }> {
+  console.log(`🔍 Checking if real trade can be executed for ${tokenSymbol || 'unknown'} (${buyAmountSOL} SOL)`)
+  
   // Check if we can execute a real trade
   const { balance, canTrade: hasBalance } = await checkTradingBalance()
 
   if (!hasBalance) {
-    return { canTrade: false, reason: `Insufficient balance: ${balance.toFixed(4)} SOL < ${MIN_SOL_BALANCE} SOL minimum` }
+    const errorMsg = `Insufficient balance: ${balance.toFixed(4)} SOL < ${MIN_SOL_BALANCE} SOL minimum`
+    console.error(`❌ ${errorMsg}`)
+    return { canTrade: false, reason: errorMsg }
   }
+
+  console.log(`✅ Balance check passed: ${balance.toFixed(4)} SOL >= ${MIN_SOL_BALANCE} SOL minimum`)
 
   let adjustedBuyAmount = buyAmountSOL
   let isRebuy = false
@@ -3404,6 +3514,7 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
   if (tokenAddress) {
     const duplicateCheck = await performEnhancedDuplicateCheck(tokenAddress, tokenSymbol || null, currentPrice)
     if (!duplicateCheck.canPurchase) {
+      console.log(`❌ Duplicate check failed: ${duplicateCheck.reason}`)
       return { canTrade: false, reason: duplicateCheck.reason }
     }
 
@@ -3418,13 +3529,20 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
   const totalAtRisk = await getTotalSOLAtRisk()
   const newTotalAtRisk = totalAtRisk + adjustedBuyAmount
 
+  console.log(`📊 Risk analysis: Current at risk: ${totalAtRisk.toFixed(4)} SOL, New total: ${newTotalAtRisk.toFixed(4)} SOL, Max allowed: ${MAX_SOL_AT_RISK} SOL`)
+
   if (newTotalAtRisk > MAX_SOL_AT_RISK) {
-    return { canTrade: false, reason: `Risk limit exceeded: ${newTotalAtRisk.toFixed(4)} SOL > ${MAX_SOL_AT_RISK} SOL maximum` }
+    const errorMsg = `Risk limit exceeded: ${newTotalAtRisk.toFixed(4)} SOL > ${MAX_SOL_AT_RISK} SOL maximum`
+    console.error(`❌ ${errorMsg}`)
+    return { canTrade: false, reason: errorMsg }
   }
 
   if (balance < adjustedBuyAmount + MIN_SOL_BALANCE) {
-    return { canTrade: false, reason: `Insufficient balance for trade: need ${(adjustedBuyAmount + MIN_SOL_BALANCE).toFixed(4)} SOL, have ${balance.toFixed(4)} SOL` }
+    const errorMsg = `Insufficient balance for trade: need ${(adjustedBuyAmount + MIN_SOL_BALANCE).toFixed(4)} SOL, have ${balance.toFixed(4)} SOL`
+    console.error(`❌ ${errorMsg}`)
+    return { canTrade: false, reason: errorMsg }
   }
 
+  console.log(`✅ Real trade check passed: ${adjustedBuyAmount} SOL trade approved`)
   return { canTrade: true, adjustedBuyAmount, isRebuy }
 }
