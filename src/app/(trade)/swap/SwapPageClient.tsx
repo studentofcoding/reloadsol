@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import JupiterTerminal from '@/components/JupiterTerminal'
 import { WalletProvider } from '@/components/WalletProvider'
 
@@ -8,6 +8,17 @@ export default function SwapPageClient() {
   // Fixed trading pair: SOL -> USDC
   const inputMint = 'So11111111111111111111111111111111111111112' // SOL
   const outputMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' // USDC
+  const [isPageReady, setIsPageReady] = useState(false)
+
+  // Ensure page is ready before rendering Jupiter Terminal
+  useEffect(() => {
+    // Small delay to ensure DOM is ready
+    const timer = setTimeout(() => {
+      setIsPageReady(true)
+    }, 100)
+
+    return () => clearTimeout(timer)
+  }, [])
   
   // Jupiter Terminal cleanup logic - runs after terminal initialization
   useEffect(() => {
@@ -193,48 +204,6 @@ export default function SwapPageClient() {
                    hasSearchAttributes || isInteractiveElement || hasSearchPlaceholder || !!hasSearchParent;
           };
           
-          // 1. Modify height classes on Jupiter Terminal elements
-          // const elementsWithHeight = root.querySelectorAll('*');
-          // elementsWithHeight.forEach((element) => {
-          //   const htmlElement = element as HTMLElement;
-          //   const classList = Array.from(element.classList);
-            
-          //   // Skip if this is search-related
-          //   if (isSearchRelated(element)) {
-          //     return;
-          //   }
-            
-          //   // Check if element contains jupiter-terminal or is a parent of it
-          //   // const isJupiterContainer = element.id === 'jupiter-terminal' || 
-          //   //                          element.querySelector('#jupiter-terminal') ||
-          //   //                          element.closest('#jupiter-terminal-swap');
-            
-          //   // Check if element is portal-container or its child
-          //   const isPortalContainer = element.id === 'portal-container' ||
-          //                           element.closest('#portal-container');
-            
-          //   // Special handling for portal-container elements
-          //   if (isPortalContainer) {
-          //     let heightModified = false;
-              
-          //     // Replace h-[550px] with h-[450px] for portal-container
-          //     classList.forEach((className) => {
-          //       if (className === 'h-[550px]') {
-          //         htmlElement.classList.remove('h-[550px]');
-          //         htmlElement.classList.add('h-[450px]');
-          //         console.log(`📏 Modified portal-container height class: h-[550px] → h-[450px]`);
-          //         cleanupDetails.push('Modified portal-container height: h-[550px] → h-[450px]');
-          //         heightModified = true;
-          //         cleanupCount++;
-          //       }
-          //     });
-              
-          //     if (heightModified) {
-          //       console.log(`🎯 Height classes modified on portal-container element`);
-          //     }
-          //   }
-          // });
-          
           // 2. Remove spans with Jupiter branding text entirely (but preserve search results)
           const spans = root.querySelectorAll('span');
           console.log(`📊 Found ${spans.length} span elements in ${rootName}`);
@@ -362,20 +331,22 @@ export default function SwapPageClient() {
       };
       
       // Start polling after a short delay to ensure DOM is ready
-      setTimeout(poll, 2000);
+      setTimeout(poll, 3000); // Increased delay to allow skeleton to show first
     };
     
     // Start the polling process
     pollForJupiterContent();
-  }, []);
+  }, [isPageReady]);
   
   return (
-    <div className="flex flex-col items-center justify-center max-h-[500px] sm:max-h-[550px]">
+    <div className="flex flex-col items-center justify-center" style={{ minHeight: '550px' }}>
       <WalletProvider>
-        <JupiterTerminal 
-          initialInputMint={inputMint}
-          initialOutputMint={outputMint}
-        />
+        {isPageReady && (
+          <JupiterTerminal 
+            initialInputMint={inputMint}
+            initialOutputMint={outputMint}
+          />
+        )}
       </WalletProvider>
     </div>
   )
