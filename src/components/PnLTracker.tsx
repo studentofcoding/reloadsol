@@ -627,242 +627,213 @@ export default function PnLTracker() {
     setIsChartLoading(true)
   }, [])
 
-  // Enhanced function to generate share image with token address
-  const generateShareImage = async (coinName: string, profitPercentage: number, tokenAddress?: string): Promise<string> => {
-    return new Promise((resolve) => {
+  // Function to generate shareable image using the profit_share.png template
+  const generateShareImage = (coinName: string, profitPercentage: number, tokenAddress?: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
       const canvas = canvasRef.current
-      if (!canvas) return resolve('')
-      
+      if (!canvas) {
+        reject(new Error('Canvas not available'))
+        return
+      }
+
       const ctx = canvas.getContext('2d')
-      if (!ctx) return resolve('')
+      if (!ctx) {
+        reject(new Error('Canvas context not available'))
+        return
+      }
+
+      // Set canvas dimensions to match the template
+      canvas.width = 1200
+      canvas.height = 675
+
+      // Load the base template image
+      const baseImage = new Image()
+      baseImage.crossOrigin = 'anonymous'
       
-      const img = new Image()
-      img.onload = () => {
-        // Use the original image dimensions instead of fixed size
-        canvas.width = img.naturalWidth
-        canvas.height = img.naturalHeight
-        
-        // Draw background image at original size
-        ctx.drawImage(img, 0, 0)
-        
-        // Set text styles for left middle alignment
-        ctx.textAlign = 'left'
-        ctx.fillStyle = '#ffffff'
-        ctx.strokeStyle = '#000000'
-        ctx.lineWidth = 2
-        
-        // Left margin for text positioning (scale with image width)
-        const leftMargin = canvas.width * 0.0625 // 50px for 800px width, scales proportionally
-        const middleY = canvas.height / 2
-        
-        // Scale font sizes based on canvas width
-        const baseWidth = 800
-        const scaleFactor = canvas.width / baseWidth
-        
-        // Draw coin name (top of middle section)
-        ctx.font = `bold ${Math.round(36 * scaleFactor)}px Arial`
-        const coinText = coinName.toUpperCase()
-        ctx.strokeText(coinText, leftMargin, middleY - (80 * scaleFactor))
-        ctx.fillText(coinText, leftMargin, middleY - (80 * scaleFactor))
-        
-        // Prepare profit percentage text
-        ctx.font = `bold ${Math.round(64 * scaleFactor)}px Arial`
-        const profitText = `${profitPercentage > 0 ? '+' : ''}${profitPercentage.toFixed(1)}%`
-        
-        // Measure text to create background rectangle
-        const textMetrics = ctx.measureText(profitText)
-        const textWidth = textMetrics.width
-        const textHeight = Math.round(64 * scaleFactor)
-        
-        // Draw semi-transparent black background for profit percentage
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)' // 80% transparent black
-        const padding = 10 * scaleFactor
-        ctx.fillRect(
-          leftMargin - padding, 
-          middleY - textHeight + padding, 
-          textWidth + (padding * 2), 
-          textHeight + padding
-        )
-        
-        // Draw profit percentage (center of middle section)
-        ctx.fillStyle = profitPercentage > 0 ? '#10B981' : '#EF4444'
-        ctx.strokeText(profitText, leftMargin, middleY)
-        ctx.fillText(profitText, leftMargin, middleY)
-        
-        // Draw token address (bottom of middle section) if provided
-        if (tokenAddress) {
-          ctx.font = `bold ${Math.round(20 * scaleFactor)}px Arial`
-          ctx.fillStyle = '#ffffff'
-          const shortAddress = `${tokenAddress.slice(0, 6)}...${tokenAddress.slice(-6)}`
-          ctx.strokeText(shortAddress, leftMargin, middleY + (80 * scaleFactor))
-          ctx.fillText(shortAddress, leftMargin, middleY + (80 * scaleFactor))
+      baseImage.onload = () => {
+        try {
+          // Clear canvas and draw the base template
+          ctx.clearRect(0, 0, canvas.width, canvas.height)
+          ctx.drawImage(baseImage, 0, 0, canvas.width, canvas.height)
+
+          // Set up text styling
+          ctx.textAlign = 'left'
+          ctx.textBaseline = 'middle'
+
+          // Draw PnL percentage on middle-left (as requested)
+          const isProfit = profitPercentage > 0
+          const pnlText = `${isProfit ? '+' : ''}${profitPercentage.toFixed(1)}%`
+          
+          // Position for middle-left area
+          const pnlX = 120 // Left side with some margin
+          const pnlY = canvas.height / 2 // Middle vertically
+
+          // Large, bold text for PnL percentage
+          ctx.font = 'bold 72px Arial, sans-serif'
+          ctx.fillStyle = isProfit ? '#10B981' : '#EF4444' // Green for profit, red for loss
+          ctx.strokeStyle = '#000000'
+          ctx.lineWidth = 3
+          
+          // Add stroke for better visibility
+          ctx.strokeText(pnlText, pnlX, pnlY)
+          ctx.fillText(pnlText, pnlX, pnlY)
+
+          // Draw coin name below the PnL percentage
+          const coinText = `$${coinName.toUpperCase()}`
+          ctx.font = 'bold 36px Arial, sans-serif'
+          ctx.fillStyle = '#FFFFFF'
+          ctx.strokeStyle = '#000000'
+          ctx.lineWidth = 2
+          
+          const coinY = pnlY + 60 // Below the PnL percentage
+          ctx.strokeText(coinText, pnlX, coinY)
+          ctx.fillText(coinText, pnlX, coinY)
+
+          // Add profit/loss indicator text
+          const statusText = isProfit ? 'PROFIT' : 'LOSS'
+          ctx.font = 'bold 28px Arial, sans-serif'
+          ctx.fillStyle = isProfit ? '#10B981' : '#EF4444'
+          ctx.strokeStyle = '#000000'
+          ctx.lineWidth = 2
+          
+          const statusY = pnlY - 60 // Above the PnL percentage
+          ctx.strokeText(statusText, pnlX, statusY)
+          ctx.fillText(statusText, pnlX, statusY)
+
+          resolve(canvas.toDataURL('image/png'))
+        } catch (error) {
+          console.error('Error generating share image:', error)
+          reject(error)
         }
+      }
+
+      baseImage.onerror = () => {
+        console.error('Failed to load profit_share.png template')
+        // Fallback: create a simple colored background if template fails
+        ctx.fillStyle = profitPercentage > 0 ? '#065F46' : '#7F1D1D'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
         
-        // Convert to data URL
+        // Add fallback text
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.font = 'bold 72px Arial, sans-serif'
+        ctx.fillStyle = '#FFFFFF'
+        ctx.fillText(`${profitPercentage > 0 ? '+' : ''}${profitPercentage.toFixed(1)}%`, canvas.width / 2, canvas.height / 2)
+        
         resolve(canvas.toDataURL('image/png'))
       }
-      
-      img.src = '/profit_share.png'
+
+      // Load the template image
+      baseImage.src = '/profit_share.png'
     })
   }
 
   // Function to handle share
   const handleShare = async (coinName: string, profitPercentage: number, tokenAddress?: string) => {
-    setShareData({ 
-      coinName, 
-      profitPercentage, 
-      type: profitPercentage > 0 ? 'profit' : 'loss',
-      tokenAddress 
-    })
-    setShowShareModal(true)
-  }
-
-  // Function to share to Twitter
-  const shareToTwitter = async () => {
-    if (!shareData) return
-    
-    const imageDataUrl = await generateShareImage(
-      shareData.coinName, 
-      shareData.profitPercentage,
-      shareData.tokenAddress
-    )
-    
-    // Create simplified tweet text
-    const tweetText = `Just ${shareData.type === 'profit' ? 'made' : 'took'} ${shareData.profitPercentage > 0 ? '+' : ''}${shareData.profitPercentage.toFixed(1)}% on $${shareData.coinName}! 🚀\n\n check other recommended coin only on https://v2.reloadsol.xyz/buy`
-    
-    // Open image in new tab with download instructions
-    const newWindow = window.open('', '_blank')
-    if (newWindow) {
-      newWindow.document.write(`
-        <html>
-          <head>
-            <title>${shareData.coinName} Trading Result</title>
-            <style>
-              body { 
-                margin: 0; 
-                padding: 20px; 
-                background: #000; 
-                color: #fff; 
-                font-family: Arial, sans-serif;
-                text-align: center;
-              }
-              img { 
-                max-width: 100%; 
-                height: auto; 
-                border-radius: 8px;
-                box-shadow: 0 4px 20px rgba(255,255,255,0.1);
-                margin-bottom: 20px;
-              }
-              .instructions {
-                margin-top: 20px;
-                padding: 20px;
-                background: #1a1a1a;
-                border-radius: 8px;
-                border: 1px solid #333;
-                max-width: 600px;
-                margin: 20px auto;
-              }
-              .step {
-                margin: 15px 0;
-                padding: 10px;
-                background: #2a2a2a;
-                border-radius: 6px;
-                text-align: left;
-              }
-              .tweet-text {
-                background: #2a2a2a;
-                padding: 15px;
-                border-radius: 6px;
-                margin: 15px 0;
-                font-family: monospace;
-                word-break: break-word;
-                text-align: left;
-              }
-              button {
-                background: #1d9bf0;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 25px;
-                cursor: pointer;
-                margin: 10px;
-                font-size: 16px;
-                font-weight: bold;
-              }
-              button:hover { background: #1a8cd8; }
-              .download-btn {
-                background: #10B981;
-                font-size: 18px;
-                padding: 15px 30px;
-              }
-              .download-btn:hover { background: #059669; }
-            </style>
-          </head>
-          <body>
-            <h1>🚀 ${shareData.coinName} Trading Result</h1>
-            <img src="${imageDataUrl}" alt="Trading Result" id="shareImage" />
-            
-            <div class="instructions">
-              <h2>📱 Share to X (Twitter)</h2>
-              
-              <div class="step">
-                <strong>Step 1:</strong> Download the image above
-              </div>
-              <button class="download-btn" onclick="downloadImage()">📥 Download Image</button>
-              
-              <div class="step">
-                <strong>Step 2:</strong> Copy the tweet text below
-              </div>
-              <div class="tweet-text">${tweetText}</div>
-              <button onclick="copyText()">📋 Copy Tweet Text</button>
-              
-              <div class="step">
-                <strong>Step 3:</strong> Go to X (Twitter) and create a new post
-              </div>
-              <button onclick="window.open('https://twitter.com/intent/tweet', '_blank')">🐦 Open X (Twitter)</button>
-              
-              <div class="step">
-                <strong>Step 4:</strong> Paste the text and upload the downloaded image
-              </div>
-            </div>
-            
-            <script>
-              function downloadImage() {
-                const link = document.createElement('a')
-                link.download = '${shareData.coinName}_profit_share.png'
-                link.href = '${imageDataUrl}'
-                link.click()
-              }
-              
-              function copyText() {
-                navigator.clipboard.writeText('${tweetText.replace(/'/g, "\\''").replace(/\n/g, '\\n')}')
-                alert('Tweet text copied to clipboard!')
-              }
-            </script>
-          </body>
-        </html>
-      `)
+    try {
+      // Generate the image first
+      const imageDataUrl = await generateShareImage(coinName, profitPercentage, tokenAddress)
+      
+      // Generate tweet text
+      const isProfit = profitPercentage > 0
+      const tweetText = `Just ${isProfit ? 'made' : 'took'} ${Math.abs(profitPercentage).toFixed(1)}% ${isProfit ? 'profit' : 'loss'} trading $${coinName}! 📈\n\n${isProfit ? '🚀 To the moon!' : '📉 Learning experience!'}\n\n#Solana #Trading #Crypto${tokenAddress ? `\n\nToken: ${tokenAddress}` : ''}`
+      
+      setShareData({ 
+        coinName, 
+        profitPercentage, 
+        type: profitPercentage > 0 ? 'profit' : 'loss',
+        imageDataUrl,
+        tweetText
+      })
+      setShowShareModal(true)
+    } catch (error) {
+      console.error('Error preparing share data:', error)
+      // Fallback: still show modal but without image
+      setShareData({ 
+        coinName, 
+        profitPercentage, 
+        type: profitPercentage > 0 ? 'profit' : 'loss',
+        tweetText: `Just ${profitPercentage > 0 ? 'made' : 'took'} ${Math.abs(profitPercentage).toFixed(1)}% ${profitPercentage > 0 ? 'profit' : 'loss'} trading $${coinName}! 📈`
+      })
+      setShowShareModal(true)
     }
+  }
+  
+  // Mobile-first sharing function
+  const shareToTwitter = async () => {
+    if (!shareData?.tweetText) return
     
-    setShowShareModal(false)
+    try {
+      // Try Web Share API first (mobile native sharing)
+      if (navigator.share && shareData.imageDataUrl) {
+        try {
+          // Convert data URL to blob for sharing
+          const response = await fetch(shareData.imageDataUrl)
+          const blob = await response.blob()
+          const file = new File([blob], `${shareData.coinName}_trade.png`, { type: 'image/png' })
+          
+          const shareData_native = {
+            title: `${shareData.coinName} Trade Result`,
+            text: shareData.tweetText,
+            files: [file]
+          }
+          
+          if (navigator.canShare(shareData_native)) {
+            await navigator.share(shareData_native)
+            setShowShareModal(false)
+            return
+          }
+        } catch (shareError) {
+          console.log('Web Share API failed, falling back to Twitter intent')
+        }
+      }
+      
+      // Fallback: Twitter intent URL (works on all platforms)
+      const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareData.tweetText)}`
+      window.open(twitterUrl, '_blank', 'width=550,height=420,noopener,noreferrer')
+      setShowShareModal(false)
+      
+    } catch (error) {
+      console.error('Error sharing:', error)
+      // Final fallback: just open Twitter
+      window.open('https://twitter.com/intent/tweet', '_blank', 'noopener,noreferrer')
+      setShowShareModal(false)
+    }
+  }
+  // Copy tweet text to clipboard
+  const copyTweetText = async () => {
+    if (!shareData?.tweetText) return
+    
+    try {
+      await navigator.clipboard.writeText(shareData.tweetText)
+      setShareData(prev => prev ? { ...prev, copied: true } : null)
+      setTimeout(() => {
+        setShareData(prev => prev ? { ...prev, copied: false } : null)
+      }, 2000)
+    } catch (error) {
+      console.error('Failed to copy text:', error)
+    }
   }
 
   // Function to download the image
   const downloadImage = async () => {
-    if (!shareData) return
+    if (!shareData?.imageDataUrl) {
+      console.error('No image data available for download')
+      return
+    }
     
-    const imageDataUrl = await generateShareImage(
-      shareData.coinName, 
-      shareData.profitPercentage,
-      shareData.tokenAddress
-    )
-    
-    const link = document.createElement('a')
-    link.download = `${shareData.coinName}_profit_share.png`
-    link.href = imageDataUrl
-    link.click()
-    
-    setShowShareModal(false)
+    try {
+      const link = document.createElement('a')
+      link.download = `${shareData.coinName}_profit_share.png`
+      link.href = shareData.imageDataUrl
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      setShowShareModal(false)
+    } catch (error) {
+      console.error('Error downloading image:', error)
+    }
   }
 
   // Function to fetch sell quote for a position
@@ -1702,54 +1673,91 @@ export default function PnLTracker() {
         </div>
       )}
 
-      {/* Share Modal */}
+      {/* Enhanced Share Modal */}
       {showShareModal && shareData && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold text-white">Share Your Trade</h3>
-              <button
-                onClick={() => setShowShareModal(false)}
-                className="text-gray-400 hover:text-white"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            
-            <div className="mb-6">
-              <div className="bg-gray-700 rounded-lg p-4 text-center">
-                <div className="text-2xl font-bold text-white mb-2">
-                  ${shareData.coinName.toUpperCase()}
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-800 rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-semibold text-white">Share Your Trade</h3>
+                <button
+                  onClick={() => setShowShareModal(false)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              
+              {/* Generated Image Preview */}
+              {shareData.imageDataUrl && (
+                <div className="mb-4">
+                  <img 
+                    src={shareData.imageDataUrl} 
+                    alt="Trade result" 
+                    className="w-full rounded-lg border border-gray-600"
+                  />
                 </div>
-                <div className={`text-3xl font-bold ${
-                  shareData.profitPercentage > 0 ? 'text-green-400' : 'text-red-400'
-                }`}>
-                  {shareData.profitPercentage > 0 ? '+' : ''}{shareData.profitPercentage.toFixed(1)}%
+              )}
+              
+              {/* Tweet Text Preview */}
+              {shareData.tweetText && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Tweet Text:</label>
+                  <div className="bg-gray-700 rounded-lg p-3 text-sm text-gray-200 font-mono">
+                    {shareData.tweetText}
+                  </div>
+                </div>
+              )}
+              
+              {/* Action Buttons */}
+              <div className="space-y-3">
+                <button
+                  onClick={shareToTwitter}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                  </svg>
+                  <span>Share on X (Twitter)</span>
+                </button>
+                
+                <div className="flex space-x-3">
+                  <button
+                    onClick={copyTweetText}
+                    className={`flex-1 py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors ${
+                      shareData.copied 
+                        ? 'bg-green-600 text-white' 
+                        : 'bg-gray-600 hover:bg-gray-700 text-white'
+                    }`}
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={
+                        shareData.copied 
+                          ? "M5 13l4 4L19 7" 
+                          : "M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      } />
+                    </svg>
+                    <span>{shareData.copied ? 'Copied!' : 'Copy Text'}</span>
+                  </button>
+                  
+                  <button
+                    onClick={downloadImage}
+                    className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <span>Download</span>
+                  </button>
+                </div>
+                
+                {/* Mobile Instructions */}
+                <div className="text-xs text-gray-400 text-center mt-4 md:hidden">
+                  💡 Tip: Use "Share on X" for best mobile experience
                 </div>
               </div>
-            </div>
-            
-            <div className="flex space-x-3">
-              <button
-                onClick={shareToTwitter}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2"
-              >
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-                </svg>
-                <span>Tweet</span>
-              </button>
-              <button
-                onClick={downloadImage}
-                className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <span>Download</span>
-              </button>
             </div>
           </div>
         </div>
