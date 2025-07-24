@@ -98,7 +98,10 @@ export default function PnLTracker() {
     coinName: string, 
     profitPercentage: number, 
     type: 'profit' | 'loss',
-    tokenAddress?: string
+    tokenAddress?: string,
+    imageDataUrl?: string,
+    tweetText?: string,
+    copied?: boolean
   } | null>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
@@ -156,60 +159,23 @@ export default function PnLTracker() {
   }
 
   // ✅ NEW: Sync status indicator
-  const SyncStatusIndicator = () => {
-    if (!isBotSyncActive) return null
+  // const SyncStatusIndicator = () => {
+  //   if (!isBotSyncActive) return null
     
-    return (
-      <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 mb-4">
-        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-        <span>Syncing bot operations...</span>
-      </div>
-    )
-  }
+  //   return (
+  //     <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 mb-4">
+  //       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+  //       <span>Syncing bot operations...</span>
+  //     </div>
+  //   )
+  // }
 
   // Clear old localStorage data on component mount
   useEffect(() => {
     console.log('🧹 PnLTracker: Cleared old localStorage data, now using Supabase!')
   }, [])
 
-  // ✅ NEW: Bot operation sync polling
-  useEffect(() => {
-    if (!connected || !publicKey) return
 
-    const walletAddress = publicKey.toString()
-    let syncInterval: NodeJS.Timeout
-
-    const checkForBotUpdates = async () => {
-      try {
-        const response = await fetch(`/api/trading/sync?wallet=${encodeURIComponent(walletAddress)}`)
-        if (response.ok) {
-          const { hasUpdate, lastUpdate, source } = await response.json()
-          
-          if (hasUpdate && lastUpdate > lastBotSync) {
-            console.log(`🤖 Bot operation detected from ${source}, refreshing PnL...`)
-            setLastBotSync(lastUpdate)
-            setIsBotSyncActive(true)
-            
-            // Force refresh the PnL calculation
-            await calculatePnL()
-            
-            // Reset sync indicator after a delay
-            setTimeout(() => setIsBotSyncActive(false), 2000)
-          }
-        }
-      } catch (error) {
-        // Silent fail - sync is best effort
-      }
-    }
-
-    // Check immediately and then every 10 seconds
-    checkForBotUpdates()
-    syncInterval = setInterval(checkForBotUpdates, 10000)
-
-    return () => {
-      if (syncInterval) clearInterval(syncInterval)
-    }
-  }, [connected, publicKey, lastBotSync])
 
   // Fetch SOL price
   const fetchSolPrice = React.useCallback(async () => {
@@ -493,7 +459,46 @@ export default function PnLTracker() {
     } finally {
       setIsLoading(false)
     }
-  }, [connected, publicKey, solPriceUsd])
+  }, [connected, publicKey, records, solPriceUsd])
+
+  // ✅ NEW: Bot operation sync polling
+  useEffect(() => {
+    if (!connected || !publicKey) return
+
+    const walletAddress = publicKey.toString()
+    let syncInterval: NodeJS.Timeout
+
+    const checkForBotUpdates = async () => {
+      try {
+        const response = await fetch(`/api/trading/sync?wallet=${encodeURIComponent(walletAddress)}`)
+        if (response.ok) {
+          const { hasUpdate, lastUpdate, source } = await response.json()
+          
+          if (hasUpdate && lastUpdate > lastBotSync) {
+            console.log(`🤖 Bot operation detected from ${source}, refreshing PnL...`)
+            setLastBotSync(lastUpdate)
+            setIsBotSyncActive(true)
+            
+            // Force refresh the PnL calculation
+            await calculatePnL()
+            
+            // Reset sync indicator after a delay
+            setTimeout(() => setIsBotSyncActive(false), 2000)
+          }
+        }
+      } catch (error) {
+        // Silent fail - sync is best effort
+      }
+    }
+
+    // Check immediately and then every 10 seconds
+    checkForBotUpdates()
+    syncInterval = setInterval(checkForBotUpdates, 10000)
+
+    return () => {
+      if (syncInterval) clearInterval(syncInterval)
+    }
+  }, [connected, publicKey, lastBotSync, calculatePnL])
 
   // Load PnL data when wallet connects or records change
   useEffect(() => {
@@ -1306,7 +1311,7 @@ export default function PnLTracker() {
                   {pnlRecords.slice(0, 10).map((record) => (
                     <div
                       key={record.id}
-                      className="flex-shrink-0 p-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg group p-4 relative"
+                      className="flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg group p-4 relative"
                     >
                       {/* Action buttons overlay */}
                       <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-2 sm:space-x-3">
