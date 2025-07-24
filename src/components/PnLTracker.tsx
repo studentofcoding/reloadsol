@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { TrackingRecord } from '@/utils/trading-tracker'
 import { useWallet, useConnection } from './WalletProvider'
 import { useTradingData } from './TradingDataProvider'
@@ -9,6 +9,9 @@ import { getSolPriceUSD } from '@/utils/solana'
 import { fetchUserTokens, executeBulkSell, BulkSellRequest, UserToken, TokenToSell } from '@/utils/jupiter'
 import { SwapQuote } from '@/types'
 import { trackSell } from '@/utils/operations-api'
+import { usePnLShare } from '@/hooks/usePnLShare'
+import PnLShareModal from './PnLShareModal'
+import { pnlShareService } from '@/utils/pnl-share-service'
 // Using emojis for bot operations to avoid dependencies
 
 interface PnLRecord {
@@ -92,18 +95,15 @@ export default function PnLTracker() {
   const [selectedToken, setSelectedToken] = useState<string>('')
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
 
-  // Share functionality state
-  const [showShareModal, setShowShareModal] = useState<boolean>(false)
-  const [shareData, setShareData] = useState<{
-    coinName: string, 
-    profitPercentage: number, 
-    type: 'profit' | 'loss',
-    tokenAddress?: string,
-    imageDataUrl?: string,
-    tweetText?: string,
-    copied?: boolean
-  } | null>(null)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  // ✅ NEW: Use the modular PnL sharing system
+  const { 
+    shareData, 
+    isShareModalOpen, 
+    isGeneratingShare, 
+    showShareModal, 
+    hideShareModal, 
+    autoTriggerShare 
+  } = usePnLShare()
 
   // Hint message state
   const [showClosedPositionsHint, setShowClosedPositionsHint] = useState<boolean>(() => {
@@ -158,24 +158,10 @@ export default function PnLTracker() {
     )
   }
 
-  // ✅ NEW: Sync status indicator
-  // const SyncStatusIndicator = () => {
-  //   if (!isBotSyncActive) return null
-    
-  //   return (
-  //     <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 mb-4">
-  //       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-  //       <span>Syncing bot operations...</span>
-  //     </div>
-  //   )
-  // }
-
   // Clear old localStorage data on component mount
   useEffect(() => {
     console.log('🧹 PnLTracker: Cleared old localStorage data, now using Supabase!')
   }, [])
-
-
 
   // Fetch SOL price
   const fetchSolPrice = React.useCallback(async () => {
@@ -378,7 +364,7 @@ export default function PnLTracker() {
                 const pnlUSD = pnlSOL * solPriceCache
                 const pnlPerc = cycle.totalSolBought > 0 ? (pnlSOL / cycle.totalSolBought) * 100 : 0
 
-                closedCycles.push({
+                const pnlRecord: PnLRecord = {
                   id: `${mint}-${cycle.firstBuyTimestamp}-${op.timestamp}`,
                   mintAddress: mint,
                   symbol: cycle.symbol,
@@ -400,7 +386,26 @@ export default function PnLTracker() {
                   // ✅ NEW: Include bot operation info in PnL records
                   isBotOperation: cycle.isBotOperation,
                   botStrategy: cycle.botStrategy,
-                })
+                }
+
+                closedCycles.push(pnlRecord)
+
+                // ✅ NEW: Auto-trigger share modal for completed trades
+                if (Math.abs(pnlPerc) >= 1) { // Only trigger for trades with >= 1% P&L
+                  setTimeout(async () => {
+                    try {
+                      await autoTriggerShare({
+                        coinName: cycle.symbol || cycle.name || 'Token',
+                        profitPercentage: pnlPerc,
+                        tokenAddress: mint,
+                        solAmountBought: cycle.totalSolBought,
+                        solAmountSold: cycle.totalSolSold
+                      })
+                    } catch (error) {
+                      console.error('Error auto-triggering share:', error)
+                    }
+                  }, 1000) // Small delay to ensure UI is ready
+                }
 
                 openCycles.delete(mint)
               }
@@ -459,7 +464,7 @@ export default function PnLTracker() {
     } finally {
       setIsLoading(false)
     }
-  }, [connected, publicKey, records, solPriceUsd])
+  }, [connected, publicKey, records, solPriceUsd, autoTriggerShare])
 
   // ✅ NEW: Bot operation sync polling
   useEffect(() => {
@@ -627,271 +632,14 @@ export default function PnLTracker() {
     setIsChartLoading(true)
   }, [])
 
-  // Function to generate shareable image using the profit_share.png template
-  const generateShareImage = (coinName: string, profitPercentage: number, tokenAddress?: string): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const canvas = canvasRef.current
-      if (!canvas) {
-        reject(new Error('Canvas not available'))
-        return
-      }
-
-      const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        reject(new Error('Canvas context not available'))
-        return
-      }
-
-      // Set canvas dimensions to match the template
-      canvas.width = 1200
-      canvas.height = 675
-
-      // Load the base template image
-      const baseImage = new Image()
-      baseImage.crossOrigin = 'anonymous'
-      
-      baseImage.onload = () => {
-        try {
-          // Clear canvas and draw the base template
-          ctx.clearRect(0, 0, canvas.width, canvas.height)
-          ctx.drawImage(baseImage, 0, 0, canvas.width, canvas.height)
-
-          const isProfit = profitPercentage > 0
-          const pnlText = `${isProfit ? '+' : ''}${profitPercentage.toFixed(1)}%`
-          const coinText = `$${coinName.toUpperCase()}`
-          const statusText = isProfit ? 'PROFIT' : 'LOSS'
-          
-          // Position for middle-left area
-          const baseX = 120
-          const baseY = canvas.height / 2
-
-          // Helper function to draw text with background
-          const drawTextWithBackground = (
-            text: string, 
-            x: number, 
-            y: number, 
-            fontSize: number, 
-            textColor: string, 
-            bgColor: string,
-            padding: number = 20
-          ) => {
-            // Set font for measurement
-            ctx.font = `bold ${fontSize}px Arial, sans-serif`
-            const metrics = ctx.measureText(text)
-            const textWidth = metrics.width
-            const textHeight = fontSize
-
-            // Calculate background rectangle dimensions
-            const bgWidth = textWidth + (padding * 2)
-            const bgHeight = textHeight + (padding * 1.5)
-            const bgX = x - padding
-            const bgY = y - (textHeight / 2) - (padding * 0.75)
-
-            // Draw shadow first (offset background)
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'
-            ctx.fillRect(bgX + 4, bgY + 4, bgWidth, bgHeight)
-
-            // Draw main background with gradient
-            const gradient = ctx.createLinearGradient(bgX, bgY, bgX, bgY + bgHeight)
-            gradient.addColorStop(0, bgColor)
-            gradient.addColorStop(1, bgColor.replace('0.9', '0.7')) // Slightly more transparent at bottom
-            
-            ctx.fillStyle = gradient
-            ctx.fillRect(bgX, bgY, bgWidth, bgHeight)
-
-            // Draw border
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'
-            ctx.lineWidth = 2
-            ctx.strokeRect(bgX, bgY, bgWidth, bgHeight)
-
-            // Draw the text
-            ctx.fillStyle = textColor
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)'
-            ctx.lineWidth = 3
-            ctx.textAlign = 'left'
-            ctx.textBaseline = 'middle'
-            
-            ctx.strokeText(text, x, y)
-            ctx.fillText(text, x, y)
-          }
-
-          // Draw STATUS text with background (top)
-          const statusY = baseY - 120
-          const statusBgColor = isProfit ? 'rgba(16, 185, 129, 0.9)' : 'rgba(239, 68, 68, 0.9)'
-          drawTextWithBackground(
-            statusText, 
-            baseX, 
-            statusY, 
-            28, 
-            '#FFFFFF', 
-            statusBgColor,
-            15
-          )
-
-          // Draw PnL percentage with background (main focus)
-          const pnlBgColor = isProfit ? 'rgba(16, 185, 129, 0.9)' : 'rgba(239, 68, 68, 0.9)'
-          drawTextWithBackground(
-            pnlText, 
-            baseX, 
-            baseY, 
-            72, 
-            '#FFFFFF', 
-            pnlBgColor,
-            25
-          )
-
-          // Draw coin name with background (below PnL)
-          const coinY = baseY + 80
-          drawTextWithBackground(
-            coinText, 
-            baseX, 
-            coinY, 
-            36, 
-            '#FFFFFF', 
-            'rgba(55, 65, 81, 0.9)', // Dark gray background
-            20
-          )
-
-          resolve(canvas.toDataURL('image/png'))
-        } catch (error) {
-          console.error('Error generating share image:', error)
-          reject(error)
-        }
-      }
-
-      baseImage.onerror = () => {
-        console.error('Failed to load profit_share.png template')
-        // Fallback: create a simple colored background if template fails
-        const isProfit = profitPercentage > 0
-        ctx.fillStyle = isProfit ? '#065F46' : '#7F1D1D'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        
-        // Add fallback text with background
-        const fallbackText = `${profitPercentage > 0 ? '+' : ''}${profitPercentage.toFixed(1)}%`
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
-        ctx.fillRect(canvas.width / 2 - 150, canvas.height / 2 - 50, 300, 100)
-        
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.font = 'bold 72px Arial, sans-serif'
-        ctx.fillStyle = '#FFFFFF'
-        ctx.fillText(fallbackText, canvas.width / 2, canvas.height / 2)
-        
-        resolve(canvas.toDataURL('image/png'))
-      }
-
-      // Load the template image
-      baseImage.src = '/profit_share.png'
+  // ✅ NEW: Manual share trigger function (for existing share buttons)
+  const handleShare = useCallback(async (coinName: string, profitPercentage: number, tokenAddress?: string) => {
+    await showShareModal({
+      coinName,
+      profitPercentage,
+      tokenAddress
     })
-  }
-
-  // Function to handle share
-  const handleShare = async (coinName: string, profitPercentage: number, tokenAddress?: string) => {
-    try {
-      // Generate the image first
-      const imageDataUrl = await generateShareImage(coinName, profitPercentage, tokenAddress)
-      
-      // Generate tweet text
-      const isProfit = profitPercentage > 0
-      const tweetText = `Just ${isProfit ? 'made' : 'took'} ${Math.abs(profitPercentage).toFixed(1)}% ${isProfit ? 'profit' : 'loss'} trading $${coinName}! 📈\n\n${isProfit ? '🚀 To the moon!' : '📉 Learning experience!'}\n\n#Solana #Trading #Crypto${tokenAddress ? `\n\nToken: ${tokenAddress}` : ''}`
-      
-      setShareData({ 
-        coinName, 
-        profitPercentage, 
-        type: profitPercentage > 0 ? 'profit' : 'loss',
-        imageDataUrl,
-        tweetText
-      })
-      setShowShareModal(true)
-    } catch (error) {
-      console.error('Error preparing share data:', error)
-      // Fallback: still show modal but without image
-      setShareData({ 
-        coinName, 
-        profitPercentage, 
-        type: profitPercentage > 0 ? 'profit' : 'loss',
-        tweetText: `Just ${profitPercentage > 0 ? 'made' : 'took'} ${Math.abs(profitPercentage).toFixed(1)}% ${profitPercentage > 0 ? 'profit' : 'loss'} trading $${coinName}! 📈`
-      })
-      setShowShareModal(true)
-    }
-  }
-  
-  // Mobile-first sharing function
-  const shareToTwitter = async () => {
-    if (!shareData?.tweetText) return
-    
-    try {
-      // Try Web Share API first (mobile native sharing)
-      if (navigator.share && shareData.imageDataUrl) {
-        try {
-          // Convert data URL to blob for sharing
-          const response = await fetch(shareData.imageDataUrl)
-          const blob = await response.blob()
-          const file = new File([blob], `${shareData.coinName}_trade.png`, { type: 'image/png' })
-          
-          const shareData_native = {
-            title: `${shareData.coinName} Trade Result`,
-            text: shareData.tweetText,
-            files: [file]
-          }
-          
-          if (navigator.canShare(shareData_native)) {
-            await navigator.share(shareData_native)
-            setShowShareModal(false)
-            return
-          }
-        } catch (shareError) {
-          console.log('Web Share API failed, falling back to Twitter intent')
-        }
-      }
-      
-      // Fallback: Twitter intent URL (works on all platforms)
-      const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareData.tweetText)}`
-      window.open(twitterUrl, '_blank', 'width=550,height=420,noopener,noreferrer')
-      setShowShareModal(false)
-      
-    } catch (error) {
-      console.error('Error sharing:', error)
-      // Final fallback: just open Twitter
-      window.open('https://twitter.com/intent/tweet', '_blank', 'noopener,noreferrer')
-      setShowShareModal(false)
-    }
-  }
-  // Copy tweet text to clipboard
-  const copyTweetText = async () => {
-    if (!shareData?.tweetText) return
-    
-    try {
-      await navigator.clipboard.writeText(shareData.tweetText)
-      setShareData(prev => prev ? { ...prev, copied: true } : null)
-      setTimeout(() => {
-        setShareData(prev => prev ? { ...prev, copied: false } : null)
-      }, 2000)
-    } catch (error) {
-      console.error('Failed to copy text:', error)
-    }
-  }
-
-  // Function to download the image
-  const downloadImage = async () => {
-    if (!shareData?.imageDataUrl) {
-      console.error('No image data available for download')
-      return
-    }
-    
-    try {
-      const link = document.createElement('a')
-      link.download = `${shareData.coinName}_profit_share.png`
-      link.href = shareData.imageDataUrl
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-      
-      setShowShareModal(false)
-    } catch (error) {
-      console.error('Error downloading image:', error)
-    }
-  }
+  }, [showShareModal])
 
   // Function to fetch sell quote for a position
   const fetchSellQuote = useCallback(async (position: OpenPosition) => {
@@ -1006,7 +754,7 @@ export default function PnLTracker() {
       const sellRequest: BulkSellRequest = {
         tokens: [tokenForSale],
         slippage: 300, // 3% slippage (default)
-        priorityFee: 30000, // 0.0003 SOL priority fee (default)
+        priorityFee: 30000, // 0.0003 SOL priority fee (default),
       }
 
       // Execute the sell
@@ -1033,6 +781,28 @@ export default function PnLTracker() {
           console.log(`🎉 Earned ${trackResult.pointsEarned} points from fast sell!`)
         } catch (trackError) {
           console.error('Failed to track sell operation for points:', trackError)
+        }
+
+        // ✅ NEW: Auto-trigger share modal for fast sells
+        const pnlPercentage = pnlShareService.calculatePnLPercentage(
+          position.solAmountBought, 
+          sellResult.totalReceived || 0
+        )
+        
+        if (Math.abs(pnlPercentage) >= 1) { // Only trigger for trades with >= 1% P&L
+          setTimeout(async () => {
+            try {
+              await autoTriggerShare({
+                coinName: position.symbol || position.name || 'Token',
+                profitPercentage: pnlPercentage,
+                tokenAddress: position.mintAddress,
+                solAmountBought: position.solAmountBought,
+                solAmountSold: sellResult.totalReceived || 0
+              })
+            } catch (error) {
+              console.error('Error auto-triggering share for fast sell:', error)
+            }
+          }, 1000)
         }
 
         // Track operation for PnL and history via React Query system
@@ -1094,8 +864,7 @@ export default function PnLTracker() {
       setIsSelling(false)
       setSellingTokenId('')
     }
-  }, [connected, publicKey, signAllTransactions, connection, calculatePnL])
-
+  }, [connected, publicKey, signAllTransactions, connection, calculatePnL, autoTriggerShare])
   // Initial price fetch and automatic refresh every 30 seconds
   useEffect(() => {
     if (openPositions.length > 0 && !hasInitialPricesFetched && !isRefreshingPrices) {
@@ -1196,435 +965,252 @@ export default function PnLTracker() {
   }
 
   return (
-    <div className="space-y-6 mb-3">
-      {/* Error Display */}
-      {error && (
-        <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-3 mb-3 text-center">
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <h2 className="text-2xl font-bold text-white">P&L Tracker</h2>
+          {isBotSyncActive && (
+            <div className="flex items-center space-x-2 text-purple-400">
+              <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse"></div>
+              <span className="text-sm">Bot sync active</span>
+            </div>
+          )}
+        </div>
+        
+        {connected && (
+          <div className="flex items-center space-x-2">
+            {activeTab === 'open' && (
+              <button
+                onClick={refreshOpenPositionPrices}
+                disabled={isRefreshingPrices}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-sm rounded-lg flex items-center space-x-1 transition-colors"
+              >
+                <svg className={`w-4 h-4 ${isRefreshingPrices ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>{isRefreshingPrices ? 'Refreshing...' : 'Refresh Prices'}</span>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Tab Navigation */}
+      <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
+        <button
+          onClick={() => setActiveTab('completed')}
+          className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+            activeTab === 'completed'
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-400 hover:text-white hover:bg-gray-700'
+          }`}
+        >
+          Completed Trades ({pnlRecords.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('open')}
+          className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
+            activeTab === 'open'
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-400 hover:text-white hover:bg-gray-700'
+          }`}
+        >
+          Open Positions ({openPositions.length})
+        </button>
+      </div>
+
+      {/* Content */}
+      {isLoading ? (
+        <div className="space-y-4">
+          {[...Array(3)].map((_, i) => (
+            <TokenSkeleton key={i} />
+          ))}
+        </div>
+      ) : error ? (
+        <div className="text-center py-8">
           <p className="text-red-400 text-sm">{error}</p>
         </div>
-      )}
-
-      {/* Sell Error Display */}
-      {sellError && (
-        <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-3 mb-3 text-center">
-          <p className="text-red-400 text-sm">Sell Error: {sellError}</p>
-        </div>
-      )}
-
-      {/* Token Chart Section */}
-      {selectedToken && (
-        <div className="space-y-3 mb-6">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center space-x-2">
-              <label className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                Token Chart
-              </label>
-              <button
-                onClick={() => setSelectedToken('')}
-                className="text-xs text-gray-400 hover:text-white flex items-center"
-              >
-                <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-                Close
-              </button>
-            </div>
-            <span className="text-xs font-mono text-gray-400">{selectedToken}</span>
-          </div>
-          <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
-            {isChartLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
-                <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
-              </div>
-            )}
-            <iframe 
-              src={`https://www.gmgn.cc/kline/sol/${selectedToken}?interval=1D`}
-              height="400"
-              className="w-full"
-              style={{ border: 'none' }}
-              title={`Birdeye Chart - ${selectedToken}`}
-              onLoad={() => setIsChartLoading(false)}
-              allowFullScreen
-              frameBorder="0"
-            />
-          </div>
-        </div>
-      )}
-
-      {connected && (
+      ) : (
         <>
-          {/* Tab Navigation */}
-          <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
-            <button
-              onClick={() => setActiveTab('completed')}
-              className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                activeTab === 'completed'
-                  ? 'bg-gray-700 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-              }`}
-            >
-              Closed P&L ({pnlRecords.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('open')}
-              className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                activeTab === 'open'
-                  ? 'bg-gray-700 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
-              }`}
-            >
-              Positions ({openPositions.length}) 
-              {openPositions.length > 0 && <span className="text-green-400 ml-1">⚡</span>}
-            </button>
-            {activeTab === 'open' && openPositions.length > 0 && (
-              <button
-                onClick={async () => {
-                  console.log('🔄 Manual refresh triggered by user')
-                  await refreshWalletBalances()
-                  refreshOpenPositionPrices()
-                }}
-                disabled={isRefreshingPrices}
-                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                  isRefreshingPrices 
-                    ? 'bg-gray-600 text-white opacity-50 cursor-not-allowed'
-                    : isBotSyncActive
-                      ? 'bg-green-600 text-white'
-                      : 'bg-blue-600 hover:bg-blue-700 text-white'
-                } flex items-center space-x-1`}
-                title={isBotSyncActive ? 'Bot operation detected - syncing...' : 'Refresh wallet balances and current prices for open positions'}
-              >
-                <svg 
-                  className={`w-3 h-3 ${isRefreshingPrices || isBotSyncActive ? 'animate-spin' : ''}`} 
-                  fill="none" 
-                  stroke="currentColor" 
-                  viewBox="0 0 24 24"
-                >
-                  <path 
-                    strokeLinecap="round" 
-                    strokeLinejoin="round" 
-                    strokeWidth={2} 
-                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
-                  />
-                </svg>
-                {isBotSyncActive && <span className="text-xs">🤖</span>}
-              </button>
-            )}
-          </div>
-
-          {/* Content based on active tab */}
-          {activeTab === 'completed' ? (
-            // Completed PnL Records
-            pnlRecords.length === 0 ? (
-              <div className="text-center py-4">
-                <p className="text-gray-400 text-sm">Buy and sell tokens to track your completed trades</p>
-                <p className="text-gray-500 text-xs mt-1">💡 Each sell creates a separate P&L record, including partial sells</p>
-              </div>
-            ) : (
-              <>
-                {showClosedPositionsHint && (
-                  <div className="text-center py-2 mb-2 relative">
-                    <p className="text-gray-400 text-xs">💡 Below is your Closed Positions for the past 7 days</p>
-                    <button
-                      onClick={handleDismissHint}
-                      className="absolute top-1 right-2 text-gray-500 hover:text-gray-300 transition-colors"
-                      title="Dismiss this hint"
-                    >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          {activeTab === 'completed' && (
+            <>
+              {showClosedPositionsHint && pnlRecords.length === 0 && (
+                <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-4 mb-4">
+                  <div className="flex items-start space-x-3">
+                    <div className="flex-shrink-0">
+                      <svg className="w-5 h-5 text-blue-400 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
                       </svg>
-                    </button>
+                    </div>
+                    <div className="flex-1">
+                      <h3 className="text-sm font-medium text-blue-400 mb-1">
+                        How P&L Tracking Works
+                      </h3>
+                      <p className="text-sm text-blue-300 mb-3">
+                        Your completed trades will appear here once you buy and sell tokens. The tracker automatically matches your buy and sell operations to calculate profit/loss.
+                      </p>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={handleDismissHint}
+                          className="text-xs text-blue-400 hover:text-blue-300 underline"
+                        >
+                          Got it, don't show again
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                )}
-                <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
-                  {pnlRecords.slice(0, 10).map((record) => (
+                </div>
+              )}
+
+              {pnlRecords.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-400 text-sm">No completed trades yet</p>
+                  <p className="text-gray-500 text-xs mt-1">Buy and sell tokens to see your P&L here</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pnlRecords.map((record) => (
                     <div
                       key={record.id}
-                      className="flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[180px] rounded-lg group p-4 relative"
+                      className="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 transition-colors"
                     >
-                      {/* Action buttons overlay */}
-                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-2 sm:space-x-3">
-                        <button
-                          onClick={() => handleShare(
-                            record.symbol || record.name || 'Token', 
-                            record.pnlPercentage,
-                            record.mintAddress
-                          )}
-                          className="p-1.5 sm:p-1 bg-green-600 hover:bg-green-500 rounded text-white"
-                          title="Share on Twitter"
-                        >
-                          <svg className="w-8 h-8 sm:w-3 sm:h-3" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => handleSelectToken(record.mintAddress)}
-                          className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
-                          title="View chart"
-                        >
-                          <svg className="w-8 h-8 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => openTransactionOnSolscan(record.sellSignatures)}
-                          className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
-                          title="View on Solscan"
-                        >
-                          <svg 
-                            className="w-8 h-8 sm:w-3 sm:h-3" 
-                            fill="none" 
-                            stroke="currentColor" 
-                            viewBox="0 0 24 24"
-                          >
-                            <path 
-                              strokeLinecap="round" 
-                              strokeLinejoin="round" 
-                              strokeWidth={2} 
-                              d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" 
+                      {/* Line 1: Token Info and Share Button */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center space-x-3">
+                          {record.logoURI && (
+                            <img 
+                              src={record.logoURI} 
+                              alt={record.symbol || record.name || 'Token'} 
+                              className="w-8 h-8 rounded-full"
+                              onError={(e) => {
+                                e.currentTarget.style.display = 'none'
+                              }}
                             />
-                          </svg>
-                        </button>
-                      </div>
-
-                      {/* Line 1: Timestamp and Status */}
-                      <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                        <span>{formatRelativeTime(record.sellTimestamp)}</span>
-                        <div className="flex items-center space-x-1">
-                          {record.status && record.status !== 'tracking' && (
-                            <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
-                              record.status === 'waiting' ? 'bg-yellow-900/50 text-yellow-300' :
-                              record.status === 'won' ? 'bg-green-900/50 text-green-300' :
-                              record.status === 'lost' ? 'bg-red-900/50 text-red-300' :
-                              record.status === 'skipped' ? 'bg-gray-900/50 text-gray-300' :
-                              'bg-blue-900/50 text-blue-300'
-                            }`}>
-                              {record.status.toUpperCase()}
-                            </span>
                           )}
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-white font-medium">
+                              {record.symbol || record.name || 'Unknown Token'}
+                            </span>
+                            {/* ✅ NEW: Bot operation indicator */}
+                            <BotOperationIndicator 
+                              isBotOperation={record.isBotOperation} 
+                              botStrategy={record.botStrategy} 
+                            />
+                          </div>
                         </div>
-                      </div>
-                      
-                      {/* Line 2: Token and Bot/Simulation Indicators */}
-                      <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-2">
-                          <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center overflow-hidden">
-                            {record.logoURI ? (
-                              <img 
-                                src={record.logoURI} 
-                                alt={record.symbol || record.name || 'Token'} 
-                                className="w-full h-full object-cover" 
-                                onError={(e) => {
-                                  e.currentTarget.onerror = null
-                                  e.currentTarget.src = ''
-                                  const parent = e.currentTarget.parentElement as HTMLElement | null
-                                  if (parent) {
-                                    parent.textContent = (record.symbol || record.name || '?').charAt(0).toUpperCase()
-                                  }
-                                }} 
-                              />
-                            ) : (
-                              <span className="text-white text-xs font-bold">
-                                {(record.symbol || record.name || '?').charAt(0).toUpperCase()}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex flex-col">
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm text-white font-medium">
-                                {record.symbol || record.name || 'Token'}
-                              </span>
-                              {/* ✅ NEW: Bot operation indicator */}
-                              <BotOperationIndicator 
-                                isBotOperation={record.isBotOperation} 
-                                botStrategy={record.botStrategy} 
-                              />
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-1">
                           {record.tradingSimulation && (
-                            <span className="text-xs px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded" title="Trading Simulation">
+                            <span className="text-xs px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded" title="Trading Simulation Active">
                               SIM
                             </span>
                           )}
+                          <button
+                            onClick={() => handleShare(
+                              record.symbol || record.name || 'Token',
+                              record.pnlPercentage,
+                              record.mintAddress
+                            )}
+                            className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded flex items-center space-x-1 transition-colors"
+                          >
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
+                            </svg>
+                            <span>Share</span>
+                          </button>
                         </div>
                       </div>
                       
-                      {/* Line 3: PnL Amount and Percentage */}
-                      <div className="flex items-center justify-between mt-1">
-                        <div className="text-xs">
-                          {formatPnL(record.pnlSOL)}
+                      {/* Line 2: P&L and Amounts */}
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-xs text-gray-300">
+                          {record.solAmountBought.toFixed(4)} SOL → {record.solAmountSold.toFixed(4)} SOL
                         </div>
-                        <div className="text-xs">
-                          {formatPnL(record.pnlPercentage, true)}
+                        <div className="text-sm">
+                          <span className={`font-medium ${
+                            record.pnlPercentage > 0 
+                              ? 'text-green-400' 
+                              : record.pnlPercentage < 0 
+                                ? 'text-red-400' 
+                                : 'text-gray-400'
+                          }`}>
+                            {record.pnlPercentage > 0 ? '+' : ''}{record.pnlPercentage.toFixed(1)}%
+                          </span>
                         </div>
                       </div>
                       
-                      {/* Line 4: USD Value and Enhanced Indicators */}
-                      <div className="text-xs text-gray-400 mt-0.5 flex justify-between items-center">
-                        <span>{record.pnlUSD > 0 ? '+' : ''}${Math.abs(record.pnlUSD).toFixed(2)}</span>
-                        <div className="flex items-center space-x-1">
-                          {record.isPartialSell && (
-                            <span className="text-orange-400 text-xs" title="Partial sell - some tokens remain">⚡</span>
-                          )}
-                          {!record.isPartialSell && (
-                            <span className="text-blue-400 text-xs" title="Complete position closed">🎯</span>
-                          )}
-                          {record.buyPrice && record.sellPrice && record.buyPrice > 0 && record.sellPrice > 0 && (
-                            <span className="text-green-400 text-xs" title="Accurate price data available">✓</span>
-                          )}
-                          {record.tradeComparisonData && (
-                            <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${record.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
-                          )}
-                          {record.priceHistory && record.priceHistory.length > 0 && (
-                            <span className="text-purple-400 text-xs" title={`Price History: ${record.priceHistory.length} records`}>📈</span>
-                          )}
+                      {/* Line 3: USD Values and Additional Info */}
+                      <div className="text-xs text-gray-400">
+                        <div className="flex justify-between items-center">
+                          <div className="flex justify-between flex-1">
+                            <span>${(record.solAmountBought * solPriceUsd).toFixed(2)}</span>
+                            <span className={`${
+                              record.pnlPercentage > 0 
+                                ? 'text-green-400' 
+                                : record.pnlPercentage < 0 
+                                  ? 'text-red-400' 
+                                  : 'text-gray-400'
+                            }`}>
+                              →${(record.solAmountSold * solPriceUsd).toFixed(2)}
+                            </span>
+                          </div>
+                          <div className="flex items-center space-x-1 ml-1">
+                            {record.tradeComparisonData && (
+                              <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${record.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
+                            )}
+                            {record.status && (
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                record.status === 'won' ? 'bg-green-900/50 text-green-300' :
+                                record.status === 'lost' ? 'bg-red-900/50 text-red-300' :
+                                record.status === 'tracking' ? 'bg-blue-900/50 text-blue-300' :
+                                record.status === 'waiting' ? 'bg-yellow-900/50 text-yellow-300' :
+                                'bg-gray-900/50 text-gray-300'
+                              }`}>
+                                {record.status.toUpperCase()}
+                              </span>
+                            )}
+                          </div>
                         </div>
+                      </div>
+                      
+                      {/* Line 4: Timestamps */}
+                      <div className="text-xs text-gray-500 mt-1">
+                        {new Date(record.buyTimestamp).toLocaleDateString()} → {new Date(record.sellTimestamp).toLocaleDateString()}
                       </div>
                     </div>
                   ))}
                 </div>
-              </>
-            )
-          ) : (
-            // Open Positions
-            openPositions.length === 0 ? (
-              <div className="text-center py-4">
-                <p className="text-gray-400 text-sm">No open positions. Buy tokens to start tracking.</p>
-                <p className="text-gray-500 text-xs mt-1">🔄 Positions are combined when you buy the same token multiple times</p>
-              </div>
-            ) : (
-              <>
-                {showClosedPositionsHint && (
-                  <div className="text-center py-2 mb-2">
-                    <p className="text-gray-400 text-xs">💡 Hover over positions to see chart and sell options</p>
-                  </div>
-                )}
-                <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
-                {openPositions.slice(0, 10).map((position) => (
-                  <div
-                    key={position.id}
-                    className={`flex-shrink-0 transition-all duration-200 min-w-[180px] rounded-lg group p-4 relative ${
-                      sellingTokenId === position.id 
-                        ? 'bg-red-800/30 border border-red-600' 
-                        : 'hover:bg-gray-700/40 border border-transparent'
-                    }`}
-                    onMouseEnter={() => handlePositionHover(position)}
-                    onMouseLeave={() => handlePositionHoverOut(position)}
-                  >
-                    {/* Action buttons overlay */}
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex space-x-1 z-20">
-                      {position.pnlPercentage !== undefined && (
-                        <button
-                          onClick={() => handleShare(
-                            position.symbol || position.name || 'Token', 
-                            position.pnlPercentage!,
-                            position.mintAddress
-                          )}
-                          className="p-1.5 sm:p-1 bg-green-600 hover:bg-green-500 rounded text-white"
-                          title="Share on Twitter"
-                          disabled={sellingTokenId === position.id}
-                        >
-                          <svg className="w-4 h-4 sm:w-3 sm:h-3" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-                          </svg>
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleSelectToken(position.mintAddress)}
-                        className="p-1.5 sm:p-1 bg-gray-600 hover:bg-gray-500 rounded text-white"
-                        title="View chart"
-                        disabled={sellingTokenId === position.id}
-                      >
-                        <svg className="w-4 h-4 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                        </svg>
-                      </button>
-                      <button
-                        onClick={(e) => handleFastSell(position, e)}
-                        className={`p-1.5 sm:p-1 rounded text-white transition-colors ${
-                          sellingTokenId === position.id 
-                            ? 'bg-red-600 cursor-not-allowed' 
-                            : sellQuotes.has(position.id)
-                              ? 'bg-green-500 hover:bg-green-600'
-                              : quotingTokenId === position.id
-                                ? 'bg-yellow-500 hover:bg-yellow-600'
-                                : 'bg-red-500 hover:bg-red-600'
-                        }`}
-                        title={
-                          sellingTokenId === position.id 
-                            ? 'Selling...' 
-                            : sellQuotes.has(position.id)
-                              ? 'Sell position (Quote ready)'
-                              : quotingTokenId === position.id
-                                ? 'Fetching quote...'
-                                : 'Sell position'
-                        }
-                        disabled={sellingTokenId === position.id}
-                      >
-                        {sellingTokenId === position.id ? (
-                          <div className="w-4 h-4 sm:w-3 sm:h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
-                        ) : quotingTokenId === position.id ? (
-                          <div className="w-4 h-4 sm:w-3 sm:h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
-                        ) : (
-                          <svg className="w-4 h-4 sm:w-3 sm:h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
-                          </svg>
-                        )}
-                      </button>
-                    </div>
+              )}
+            </>
+          )}
 
-                    {/* Loading spinner overlay for selling state */}
-                    {sellingTokenId === position.id && (
-                      <div className="absolute inset-0 bg-red-900/50 rounded-lg flex items-center justify-center z-10">
-                        <div className="w-6 h-6 border-2 border-red-400 border-t-red-200 rounded-full animate-spin"></div>
-                      </div>
-                    )}
-
-                    {/* Line 1: Timestamp and Status */}
-                    <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                      <span>{formatRelativeTime(position.buyTimestamp)}</span>
-                      <div className="flex items-center space-x-1">
-                        {position.status && position.status !== 'tracking' && (
-                          <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${
-                            position.status === 'waiting' ? 'bg-yellow-900/50 text-yellow-300' :
-                            position.status === 'won' ? 'bg-green-900/50 text-green-300' :
-                            position.status === 'lost' ? 'bg-red-900/50 text-red-300' :
-                            position.status === 'skipped' ? 'bg-gray-900/50 text-gray-300' :
-                            'bg-blue-900/50 text-blue-300'
-                          }`}>
-                            {position.status.toUpperCase()}
-                          </span>
-                        )}
-                        <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                      </div>
-                    </div>
-                    
-                    {/* Line 2: Token and Bot Indicator */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center overflow-hidden">
-                          {position.logoURI ? (
+          {activeTab === 'open' && (
+            <>
+              {openPositions.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-gray-400 text-sm">No open positions</p>
+                  <p className="text-gray-500 text-xs mt-1">Buy some tokens to see your positions here</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {openPositions.map((position) => (
+                    <div
+                      key={position.id}
+                      className="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 transition-colors group"
+                    >
+                      {/* Line 1: Token Info and Fast Sell Button */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center space-x-3">
+                          {position.logoURI && (
                             <img 
                               src={position.logoURI} 
                               alt={position.symbol || position.name || 'Token'} 
-                              className="w-full h-full object-cover" 
+                              className="w-8 h-8 rounded-full"
                               onError={(e) => {
-                                e.currentTarget.onerror = null
-                                e.currentTarget.src = ''
-                                const parent = e.currentTarget.parentElement as HTMLElement | null
-                                if (parent) {
-                                  parent.textContent = (position.symbol || position.name || '?').charAt(0).toUpperCase()
-                                }
-                              }} 
+                                e.currentTarget.style.display = 'none'
+                              }}
                             />
-                          ) : (
-                            <span className="text-white text-xs font-bold">
-                              {(position.symbol || position.name || '?').charAt(0).toUpperCase()}
-                            </span>
                           )}
-                        </div>
-                        <div className="flex flex-col">
                           <div className="flex items-center gap-2">
                             <span className="text-sm text-white font-medium">
                               {position.symbol || position.name || 'Token'}
@@ -1636,90 +1222,109 @@ export default function PnLTracker() {
                             />
                           </div>
                         </div>
+                        <div className="flex items-center space-x-1">
+                          {position.tradingSimulation && (
+                            <span className="text-xs px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded" title="Trading Simulation Active">
+                              SIM
+                            </span>
+                          )}
+                          {/* Fast Sell Button */}
+                          <button
+                            onClick={(e) => handleFastSell(position, e)}
+                            disabled={isSelling && sellingTokenId === position.id}
+                            className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded flex items-center space-x-1 transition-colors opacity-0 group-hover:opacity-100"
+                          >
+                            {isSelling && sellingTokenId === position.id ? (
+                              <>
+                                <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
+                                <span>Selling...</span>
+                              </>
+                            ) : (
+                              <>
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                </svg>
+                                <span>Sell</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center space-x-1">
-                        {position.tradingSimulation && (
-                          <span className="text-xs px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded" title="Trading Simulation Active">
-                            SIM
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {/* Line 3: Position Value and P&L */}
-                    <div className="flex items-center justify-between mt-1">
-                      <div className="text-xs text-gray-300">
-                        {position.solAmountBought.toFixed(4)} SOL
-                      </div>
-                      <div className="text-xs">
-                        {position.isLoadingPrice ? (
-                          <div className="flex items-center space-x-1">
-                            <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
-                            <span className="text-gray-400">...</span>
-                          </div>
-                        ) : position.pnlPercentage !== undefined ? (
-                          <span className={`font-medium ${
-                            position.pnlPercentage > 0 
-                              ? 'text-green-400' 
-                              : position.pnlPercentage < 0 
-                                ? 'text-red-400' 
-                                : 'text-gray-400'
-                          }`}>
-                            {position.pnlPercentage > 0 ? '+' : ''}{position.pnlPercentage.toFixed(1)}%
-                          </span>
-                        ) : (
-                          <span className="text-blue-400">OPEN</span>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {/* Line 4: USD Value and Additional Info */}
-                    <div className="text-xs text-gray-400 mt-0.5">
-                      {position.currentUsdValue !== undefined ? (
-                        <div className="flex justify-between items-center">
-                          <div className="flex justify-between flex-1">
-                            <span>~${(position.solAmountBought * solPriceUsd).toFixed(2)}</span>
-                            <span className={`${
-                              position.pnlPercentage && position.pnlPercentage > 0 
+                      
+                      {/* Line 2: Position Value and P&L */}
+                      <div className="flex items-center justify-between mt-1">
+                        <div className="text-xs text-gray-300">
+                          {position.solAmountBought.toFixed(4)} SOL
+                        </div>
+                        <div className="text-xs">
+                          {position.isLoadingPrice ? (
+                            <div className="flex items-center space-x-1">
+                              <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
+                              <span className="text-gray-400">...</span>
+                            </div>
+                          ) : position.pnlPercentage !== undefined ? (
+                            <span className={`font-medium ${
+                              position.pnlPercentage > 0 
                                 ? 'text-green-400' 
-                                : position.pnlPercentage && position.pnlPercentage < 0 
+                                : position.pnlPercentage < 0 
                                   ? 'text-red-400' 
                                   : 'text-gray-400'
                             }`}>
-                              →${position.currentUsdValue.toFixed(2)}
+                              {position.pnlPercentage > 0 ? '+' : ''}{position.pnlPercentage.toFixed(1)}%
                             </span>
-                          </div>
-                          <div className="flex items-center space-x-1 ml-1">
-                            {position.id.startsWith('open-') && (
-                              <span className="text-blue-400 text-xs" title="Combined position from multiple buys">🔗</span>
-                            )}
-                            {position.tradeComparisonData && (
-                              <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${position.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
-                            )}
-                            {position.waitingStartedAt && (
-                              <span className="text-yellow-400 text-xs" title={`Waiting since: ${new Date(position.waitingStartedAt).toLocaleString()}`}>⏳</span>
-                            )}
-                          </div>
+                          ) : (
+                            <span className="text-blue-400">OPEN</span>
+                          )}
                         </div>
-                      ) : (
-                        <div className="flex justify-between items-center">
-                          <span>~${(position.solAmountBought * solPriceUsd).toFixed(2)}</span>
-                          <div className="flex items-center space-x-1 ml-1">
-                            {position.tradeComparisonData && (
-                              <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${position.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
-                            )}
-                            {position.waitingStartedAt && (
-                              <span className="text-yellow-400 text-xs" title={`Waiting since: ${new Date(position.waitingStartedAt).toLocaleString()}`}>⏳</span>
-                            )}
+                      </div>
+                      
+                      {/* Line 3: USD Value and Additional Info */}
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        {position.currentUsdValue !== undefined ? (
+                          <div className="flex justify-between items-center">
+                            <div className="flex justify-between flex-1">
+                              <span>~${(position.solAmountBought * solPriceUsd).toFixed(2)}</span>
+                              <span className={`${
+                                position.pnlPercentage && position.pnlPercentage > 0 
+                                  ? 'text-green-400' 
+                                  : position.pnlPercentage && position.pnlPercentage < 0 
+                                    ? 'text-red-400' 
+                                    : 'text-gray-400'
+                              }`}>
+                                →${position.currentUsdValue.toFixed(2)}
+                              </span>
+                            </div>
+                            <div className="flex items-center space-x-1 ml-1">
+                              {position.id.startsWith('open-') && (
+                                <span className="text-blue-400 text-xs" title="Combined position from multiple buys">🔗</span>
+                              )}
+                              {position.tradeComparisonData && (
+                                <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${position.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
+                              )}
+                              {position.waitingStartedAt && (
+                                <span className="text-yellow-400 text-xs" title={`Waiting since: ${new Date(position.waitingStartedAt).toLocaleString()}`}>⏳</span>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      )}
+                        ) : (
+                          <div className="flex justify-between items-center">
+                            <span>~${(position.solAmountBought * solPriceUsd).toFixed(2)}</span>
+                            <div className="flex items-center space-x-1 ml-1">
+                              {position.tradeComparisonData && (
+                                <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${position.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
+                              )}
+                              {position.waitingStartedAt && (
+                                <span className="text-yellow-400 text-xs" title={`Waiting since: ${new Date(position.waitingStartedAt).toLocaleString()}`}>⏳</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
                 </div>
-              </>
-            )
+              )}
+            </>
           )}
         </>
       )}
@@ -1730,98 +1335,13 @@ export default function PnLTracker() {
         </div>
       )}
 
-      {/* Enhanced Share Modal */}
-      {showShareModal && shareData && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-800 rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold text-white">Share Your Trade</h3>
-                <button
-                  onClick={() => setShowShareModal(false)}
-                  className="text-gray-400 hover:text-white"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
-              
-              {/* Generated Image Preview */}
-              {shareData.imageDataUrl && (
-                <div className="mb-4">
-                  <img 
-                    src={shareData.imageDataUrl} 
-                    alt="Trade result" 
-                    className="w-full rounded-lg border border-gray-600"
-                  />
-                </div>
-              )}
-              
-              {/* Tweet Text Preview */}
-              {shareData.tweetText && (
-                <div className="mb-4">
-                  <label className="block text-sm font-medium text-gray-300 mb-2">Tweet Text:</label>
-                  <div className="bg-gray-700 rounded-lg p-3 text-sm text-gray-200 font-mono">
-                    {shareData.tweetText}
-                  </div>
-                </div>
-              )}
-              
-              {/* Action Buttons */}
-              <div className="space-y-3">
-                <button
-                  onClick={shareToTwitter}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
-                >
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-                  </svg>
-                  <span>Share on X (Twitter)</span>
-                </button>
-                
-                <div className="flex space-x-3">
-                  <button
-                    onClick={copyTweetText}
-                    className={`flex-1 py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors ${
-                      shareData.copied 
-                        ? 'bg-green-600 text-white' 
-                        : 'bg-gray-600 hover:bg-gray-700 text-white'
-                    }`}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={
-                        shareData.copied 
-                          ? "M5 13l4 4L19 7" 
-                          : "M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                      } />
-                    </svg>
-                    <span>{shareData.copied ? 'Copied!' : 'Copy Text'}</span>
-                  </button>
-                  
-                  <button
-                    onClick={downloadImage}
-                    className="flex-1 bg-gray-600 hover:bg-gray-700 text-white py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <span>Download</span>
-                  </button>
-                </div>
-                
-                {/* Mobile Instructions */}
-                <div className="text-xs text-gray-400 text-center mt-4 md:hidden">
-                  💡 Tip: Use "Share on X" for best mobile experience
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Hidden canvas for image generation */}
-      <canvas ref={canvasRef} style={{ display: 'none' }} />
+      {/* ✅ NEW: Replace the old share modal with the new modular one */}
+      <PnLShareModal
+        isOpen={isShareModalOpen}
+        onClose={hideShareModal}
+        shareData={shareData}
+        onCopySuccess={() => console.log('Tweet text copied!')}
+      />
     </div>
   )
 }

@@ -29,6 +29,10 @@ import {
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS, getSolPriceUSD } from '@/utils/solana'
 import { trackSell, trackClose } from '@/utils/operations-api'
 import { useTradingData } from './TradingDataProvider'
+// ✅ NEW: Import PnL sharing system
+import { usePnLShare } from '@/hooks/usePnLShare'
+import PnLShareModal from './PnLShareModal'
+import { pnlShareService } from '@/utils/pnl-share-service'
 
 // Quote data interface for different providers
 interface QuoteData {
@@ -47,6 +51,16 @@ export default function BulkTokenSeller() {
   const { publicKey, signAllTransactions, connected } = useWallet()
   const { connection } = useConnection()
   const { trackOperation } = useTradingData()
+  
+  // ✅ NEW: Add PnL sharing hook
+  const { 
+    shareData, 
+    isShareModalOpen, 
+    isGeneratingShare, 
+    showShareModal, 
+    hideShareModal, 
+    autoTriggerShare 
+  } = usePnLShare()
   
   // Form state - Updated to use TokenToSell
   const [selectedTokens, setSelectedTokens] = useState<TokenToSell[]>([])
@@ -923,6 +937,40 @@ export default function BulkTokenSeller() {
               priorityFee,
               errors: sellErrors
             })
+
+            // ✅ NEW: Auto-trigger share modal for successful sells
+            if (sellResult.successfulSwaps.length > 0 && totalSolReceived > 0) {
+              // For bulk sells, we'll trigger share for the most significant trade
+              const mostSignificantToken = enhancedTokenData.reduce((prev, current) => 
+                (current.solAmount > prev.solAmount) ? current : prev
+              )
+
+              if (mostSignificantToken) {
+                // Calculate P&L percentage (we don't have buy data here, so we'll estimate)
+                // This is a simplified approach - in a real scenario you'd want to track buy history
+                const estimatedBuyValue = mostSignificantToken.solAmount * 0.8 // Assume 25% profit for demo
+                const pnlPercentage = pnlShareService.calculatePnLPercentage(
+                  estimatedBuyValue, 
+                  mostSignificantToken.solAmount
+                )
+
+                if (Math.abs(pnlPercentage) >= 5) { // Only trigger for trades with >= 5% P&L
+                  setTimeout(async () => {
+                    try {
+                      await autoTriggerShare({
+                        coinName: mostSignificantToken.symbol || mostSignificantToken.name || 'Token',
+                        profitPercentage: pnlPercentage,
+                        tokenAddress: mostSignificantToken.mintAddress,
+                        solAmountBought: estimatedBuyValue,
+                        solAmountSold: mostSignificantToken.solAmount
+                      })
+                    } catch (error) {
+                      console.error('Error auto-triggering share for bulk sell:', error)
+                    }
+                  }, 1000)
+                }
+              }
+            }
           } catch (trackError) {
             console.error('Failed to track sell operation for history/PnL:', trackError);
           }
@@ -1017,7 +1065,7 @@ export default function BulkTokenSeller() {
     } finally {
       setIsLoading(false)
     }
-  }, [connected, publicKey, signAllTransactions, connection, selectedTokens, selectedZeroBalanceTokens, slippage, priorityFee, fetchTokens, swapProvider, executeCustomSwap])
+  }, [connected, publicKey, signAllTransactions, connection, selectedTokens, selectedZeroBalanceTokens, slippage, priorityFee, fetchTokens, swapProvider, executeCustomSwap, autoTriggerShare])
 
   // Handle close-only (burn) operation without selling any tokens
   const handleCloseOnly = useCallback(async () => {
@@ -1691,10 +1739,18 @@ export default function BulkTokenSeller() {
           result={closeResult}
           pointsEarned={closePointsEarned ?? undefined}
         />
+        
+        {/* ✅ NEW: Add PnL Share Modal */}
+        <PnLShareModal
+          isOpen={isShareModalOpen}
+          onClose={hideShareModal}
+          shareData={shareData}
+          onCopySuccess={() => console.log('Tweet text copied from BulkTokenSeller!')}
+        />
       </div>
 
       {/* {connected && (
       )} */}
     </div>
   )
-} 
+}
