@@ -656,49 +656,101 @@ export default function PnLTracker() {
           ctx.clearRect(0, 0, canvas.width, canvas.height)
           ctx.drawImage(baseImage, 0, 0, canvas.width, canvas.height)
 
-          // Set up text styling
-          ctx.textAlign = 'left'
-          ctx.textBaseline = 'middle'
-
-          // Draw PnL percentage on middle-left (as requested)
           const isProfit = profitPercentage > 0
           const pnlText = `${isProfit ? '+' : ''}${profitPercentage.toFixed(1)}%`
+          const coinText = `$${coinName.toUpperCase()}`
+          const statusText = isProfit ? 'PROFIT' : 'LOSS'
           
           // Position for middle-left area
-          const pnlX = 120 // Left side with some margin
-          const pnlY = canvas.height / 2 // Middle vertically
+          const baseX = 120
+          const baseY = canvas.height / 2
 
-          // Large, bold text for PnL percentage
-          ctx.font = 'bold 72px Arial, sans-serif'
-          ctx.fillStyle = isProfit ? '#10B981' : '#EF4444' // Green for profit, red for loss
-          ctx.strokeStyle = '#000000'
-          ctx.lineWidth = 3
-          
-          // Add stroke for better visibility
-          ctx.strokeText(pnlText, pnlX, pnlY)
-          ctx.fillText(pnlText, pnlX, pnlY)
+          // Helper function to draw text with background
+          const drawTextWithBackground = (
+            text: string, 
+            x: number, 
+            y: number, 
+            fontSize: number, 
+            textColor: string, 
+            bgColor: string,
+            padding: number = 20
+          ) => {
+            // Set font for measurement
+            ctx.font = `bold ${fontSize}px Arial, sans-serif`
+            const metrics = ctx.measureText(text)
+            const textWidth = metrics.width
+            const textHeight = fontSize
 
-          // Draw coin name below the PnL percentage
-          const coinText = `$${coinName.toUpperCase()}`
-          ctx.font = 'bold 36px Arial, sans-serif'
-          ctx.fillStyle = '#FFFFFF'
-          ctx.strokeStyle = '#000000'
-          ctx.lineWidth = 2
-          
-          const coinY = pnlY + 60 // Below the PnL percentage
-          ctx.strokeText(coinText, pnlX, coinY)
-          ctx.fillText(coinText, pnlX, coinY)
+            // Calculate background rectangle dimensions
+            const bgWidth = textWidth + (padding * 2)
+            const bgHeight = textHeight + (padding * 1.5)
+            const bgX = x - padding
+            const bgY = y - (textHeight / 2) - (padding * 0.75)
 
-          // Add profit/loss indicator text
-          const statusText = isProfit ? 'PROFIT' : 'LOSS'
-          ctx.font = 'bold 28px Arial, sans-serif'
-          ctx.fillStyle = isProfit ? '#10B981' : '#EF4444'
-          ctx.strokeStyle = '#000000'
-          ctx.lineWidth = 2
-          
-          const statusY = pnlY - 60 // Above the PnL percentage
-          ctx.strokeText(statusText, pnlX, statusY)
-          ctx.fillText(statusText, pnlX, statusY)
+            // Draw shadow first (offset background)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'
+            ctx.fillRect(bgX + 4, bgY + 4, bgWidth, bgHeight)
+
+            // Draw main background with gradient
+            const gradient = ctx.createLinearGradient(bgX, bgY, bgX, bgY + bgHeight)
+            gradient.addColorStop(0, bgColor)
+            gradient.addColorStop(1, bgColor.replace('0.9', '0.7')) // Slightly more transparent at bottom
+            
+            ctx.fillStyle = gradient
+            ctx.fillRect(bgX, bgY, bgWidth, bgHeight)
+
+            // Draw border
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'
+            ctx.lineWidth = 2
+            ctx.strokeRect(bgX, bgY, bgWidth, bgHeight)
+
+            // Draw the text
+            ctx.fillStyle = textColor
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.8)'
+            ctx.lineWidth = 3
+            ctx.textAlign = 'left'
+            ctx.textBaseline = 'middle'
+            
+            ctx.strokeText(text, x, y)
+            ctx.fillText(text, x, y)
+          }
+
+          // Draw STATUS text with background (top)
+          const statusY = baseY - 120
+          const statusBgColor = isProfit ? 'rgba(16, 185, 129, 0.9)' : 'rgba(239, 68, 68, 0.9)'
+          drawTextWithBackground(
+            statusText, 
+            baseX, 
+            statusY, 
+            28, 
+            '#FFFFFF', 
+            statusBgColor,
+            15
+          )
+
+          // Draw PnL percentage with background (main focus)
+          const pnlBgColor = isProfit ? 'rgba(16, 185, 129, 0.9)' : 'rgba(239, 68, 68, 0.9)'
+          drawTextWithBackground(
+            pnlText, 
+            baseX, 
+            baseY, 
+            72, 
+            '#FFFFFF', 
+            pnlBgColor,
+            25
+          )
+
+          // Draw coin name with background (below PnL)
+          const coinY = baseY + 80
+          drawTextWithBackground(
+            coinText, 
+            baseX, 
+            coinY, 
+            36, 
+            '#FFFFFF', 
+            'rgba(55, 65, 81, 0.9)', // Dark gray background
+            20
+          )
 
           resolve(canvas.toDataURL('image/png'))
         } catch (error) {
@@ -710,15 +762,20 @@ export default function PnLTracker() {
       baseImage.onerror = () => {
         console.error('Failed to load profit_share.png template')
         // Fallback: create a simple colored background if template fails
-        ctx.fillStyle = profitPercentage > 0 ? '#065F46' : '#7F1D1D'
+        const isProfit = profitPercentage > 0
+        ctx.fillStyle = isProfit ? '#065F46' : '#7F1D1D'
         ctx.fillRect(0, 0, canvas.width, canvas.height)
         
-        // Add fallback text
+        // Add fallback text with background
+        const fallbackText = `${profitPercentage > 0 ? '+' : ''}${profitPercentage.toFixed(1)}%`
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
+        ctx.fillRect(canvas.width / 2 - 150, canvas.height / 2 - 50, 300, 100)
+        
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.font = 'bold 72px Arial, sans-serif'
         ctx.fillStyle = '#FFFFFF'
-        ctx.fillText(`${profitPercentage > 0 ? '+' : ''}${profitPercentage.toFixed(1)}%`, canvas.width / 2, canvas.height / 2)
+        ctx.fillText(fallbackText, canvas.width / 2, canvas.height / 2)
         
         resolve(canvas.toDataURL('image/png'))
       }
