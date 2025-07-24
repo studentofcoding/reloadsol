@@ -1020,11 +1020,15 @@ async function runPnLUpdate(): Promise<void> {
   try {
     console.log('🔄 Running PnL update...')
 
+    // Get the PnL update token from environment variables
+    const pnlToken = process.env.PNL_UPDATE_TOKEN || 'r3l0ads0l-pnl'
+
     // Call the PnL update API internally
     const pnlResponse = await fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/pnl/update`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${pnlToken}`,
         'User-Agent': 'vercel-cron-internal'
       }
     })
@@ -1166,12 +1170,12 @@ async function runDailySummary(currentTime: Date): Promise<void> {
 // Add diagnostic function for wallet troubleshooting
 async function diagnoseTradingWallet(): Promise<void> {
   console.log('🔧 === WALLET DIAGNOSTICS ===')
-  
+
   try {
     // Check environment variables
     const hasEnvKeypair = !!process.env.TRADING_KEYPAIR_JSON
     console.log(`📋 TRADING_KEYPAIR_JSON env var: ${hasEnvKeypair ? 'SET' : 'NOT SET'}`)
-    
+
     if (hasEnvKeypair) {
       try {
         const envJson = JSON.parse(process.env.TRADING_KEYPAIR_JSON!)
@@ -1180,19 +1184,19 @@ async function diagnoseTradingWallet(): Promise<void> {
         console.error('❌ Invalid TRADING_KEYPAIR_JSON format:', e)
       }
     }
-    
+
     // Check MIN_SOL_BALANCE
     console.log(`📋 MIN_SOL_BALANCE: ${MIN_SOL_BALANCE} SOL`)
-    
+
     // Initialize and test connection
     if (!tradingConnection) {
       console.log('🌐 Initializing trading connection...')
       initializeTradingConnection()
     }
-    
+
     if (tradingConnection) {
       console.log('✅ Trading connection initialized')
-      
+
       // Test RPC connection
       try {
         const slot = await tradingConnection.getSlot()
@@ -1201,16 +1205,16 @@ async function diagnoseTradingWallet(): Promise<void> {
         console.error('❌ RPC connection failed:', rpcError)
       }
     }
-    
+
     // Initialize and test keypair
     if (!tradingKeypair) {
       console.log('🔑 Initializing trading keypair...')
       await initializeTradingKeypair()
     }
-    
+
     if (tradingKeypair) {
       console.log(`✅ Trading keypair loaded: ${tradingKeypair.publicKey.toBase58()}`)
-      
+
       // Test balance fetch
       if (tradingConnection) {
         try {
@@ -1225,11 +1229,11 @@ async function diagnoseTradingWallet(): Promise<void> {
     } else {
       console.error('❌ Failed to load trading keypair')
     }
-    
+
   } catch (error) {
     console.error('❌ Wallet diagnostics failed:', error)
   }
-  
+
   console.log('🔧 === END DIAGNOSTICS ===')
 }
 
@@ -3070,10 +3074,10 @@ async function internalTrackPost(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     console.log('🚀 Starting trending token tracking...')
-    
+
     // Run wallet diagnostics to help troubleshoot balance issues
     await diagnoseTradingWallet()
-    
+
     return await internalTrackPost(request)
   } catch (error) {
     console.error('❌ Error in POST handler:', error)
@@ -3217,7 +3221,7 @@ async function checkTradingBalance(): Promise<{ balance: number, canTrade: boole
       console.log('🔧 Initializing trading connection for balance check...')
       initializeTradingConnection()
     }
-    
+
     if (!tradingKeypair) {
       console.log('🔑 Initializing trading keypair for balance check...')
       await initializeTradingKeypair()
@@ -3229,7 +3233,7 @@ async function checkTradingBalance(): Promise<{ balance: number, canTrade: boole
     }
 
     console.log(`🔍 Checking balance for wallet: ${tradingKeypair.publicKey.toBase58()}`)
-    
+
     const balance = await tradingConnection.getBalance(tradingKeypair.publicKey)
     const balanceSOL = balance / 1e9
     const canTrade = balanceSOL >= MIN_SOL_BALANCE
@@ -3495,7 +3499,7 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
   isRebuy?: boolean
 }> {
   console.log(`🔍 Checking if real trade can be executed for ${tokenSymbol || 'unknown'} (${buyAmountSOL} SOL)`)
-  
+
   // Check if we can execute a real trade
   const { balance, canTrade: hasBalance } = await checkTradingBalance()
 
