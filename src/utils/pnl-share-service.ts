@@ -52,7 +52,7 @@ export class PnLShareService {
       // Load the base template image
       const baseImage = new Image()
       baseImage.crossOrigin = 'anonymous'
-      
+
       baseImage.onload = () => {
         try {
           // Clear canvas and draw the base template
@@ -63,18 +63,18 @@ export class PnLShareService {
           const pnlText = `${isProfit ? '+' : ''}${profitPercentage.toFixed(1)}%`
           const coinText = `$${coinName.toUpperCase()}`
           const statusText = isProfit ? 'PROFIT' : 'LOSS'
-          
+
           // Position for middle-left area
           const baseX = 120
           const baseY = this.canvas!.height / 2
 
           // Helper function to draw text with background
           const drawTextWithBackground = (
-            text: string, 
-            x: number, 
-            y: number, 
-            fontSize: number, 
-            textColor: string, 
+            text: string,
+            x: number,
+            y: number,
+            fontSize: number,
+            textColor: string,
             bgColor: string,
             padding: number = 20
           ) => {
@@ -98,7 +98,7 @@ export class PnLShareService {
             const gradient = ctx.createLinearGradient(bgX, bgY, bgX, bgY + bgHeight)
             gradient.addColorStop(0, bgColor)
             gradient.addColorStop(1, bgColor.replace('0.9', '0.7')) // Slightly more transparent at bottom
-            
+
             ctx.fillStyle = gradient
             ctx.fillRect(bgX, bgY, bgWidth, bgHeight)
 
@@ -113,7 +113,7 @@ export class PnLShareService {
             ctx.lineWidth = 3
             ctx.textAlign = 'left'
             ctx.textBaseline = 'middle'
-            
+
             ctx.strokeText(text, x, y)
             ctx.fillText(text, x, y)
           }
@@ -122,11 +122,11 @@ export class PnLShareService {
           const statusY = baseY - 120
           const statusBgColor = isProfit ? 'rgba(16, 185, 129, 0.9)' : 'rgba(239, 68, 68, 0.9)'
           drawTextWithBackground(
-            statusText, 
-            baseX, 
-            statusY, 
-            28, 
-            '#FFFFFF', 
+            statusText,
+            baseX,
+            statusY,
+            28,
+            '#FFFFFF',
             statusBgColor,
             15
           )
@@ -134,11 +134,11 @@ export class PnLShareService {
           // Draw PnL percentage with background (main focus)
           const pnlBgColor = isProfit ? 'rgba(16, 185, 129, 0.9)' : 'rgba(239, 68, 68, 0.9)'
           drawTextWithBackground(
-            pnlText, 
-            baseX, 
-            baseY, 
-            72, 
-            '#FFFFFF', 
+            pnlText,
+            baseX,
+            baseY,
+            72,
+            '#FFFFFF',
             pnlBgColor,
             25
           )
@@ -146,11 +146,11 @@ export class PnLShareService {
           // Draw coin name with background (below PnL)
           const coinY = baseY + 80
           drawTextWithBackground(
-            coinText, 
-            baseX, 
-            coinY, 
-            36, 
-            '#FFFFFF', 
+            coinText,
+            baseX,
+            coinY,
+            36,
+            '#FFFFFF',
             'rgba(55, 65, 81, 0.9)', // Dark gray background
             20
           )
@@ -168,18 +168,18 @@ export class PnLShareService {
         const isProfit = profitPercentage > 0
         ctx.fillStyle = isProfit ? '#065F46' : '#7F1D1D'
         ctx.fillRect(0, 0, this.canvas!.width, this.canvas!.height)
-        
+
         // Add fallback text with background
         const fallbackText = `${profitPercentage > 0 ? '+' : ''}${profitPercentage.toFixed(1)}%`
         ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'
         ctx.fillRect(this.canvas!.width / 2 - 150, this.canvas!.height / 2 - 50, 300, 100)
-        
+
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
         ctx.font = 'bold 72px Arial, sans-serif'
         ctx.fillStyle = '#FFFFFF'
         ctx.fillText(fallbackText, this.canvas!.width / 2, this.canvas!.height / 2)
-        
+
         resolve(this.canvas!.toDataURL('image/png'))
       }
 
@@ -192,11 +192,11 @@ export class PnLShareService {
   generateTweetText(options: PnLShareOptions): string {
     const { coinName, profitPercentage, tokenAddress, customMessage } = options
     const isProfit = profitPercentage > 0
-    
+
     if (customMessage) {
       return customMessage
     }
-    
+
     return `Just ${isProfit ? 'made' : 'took'} ${Math.abs(profitPercentage).toFixed(1)}% ${isProfit ? 'profit' : 'loss'} trading $${coinName}! 📈\n\n${isProfit ? '🚀 To the moon!' : '📉 Learning experience!'}\n\n#Solana #Trading #Crypto${tokenAddress ? `\n\nToken: ${tokenAddress}` : ''}`
   }
 
@@ -205,7 +205,7 @@ export class PnLShareService {
     try {
       const imageDataUrl = await this.generateShareImage(options.coinName, options.profitPercentage, options.tokenAddress)
       const tweetText = this.generateTweetText(options)
-      
+
       return {
         coinName: options.coinName,
         profitPercentage: options.profitPercentage,
@@ -230,7 +230,7 @@ export class PnLShareService {
   // Share to Twitter with mobile-first approach
   async shareToTwitter(shareData: ShareData): Promise<void> {
     if (!shareData.tweetText) return
-    
+
     try {
       // Try Web Share API first (mobile native sharing)
       if (navigator.share && shareData.imageDataUrl) {
@@ -239,13 +239,13 @@ export class PnLShareService {
           const response = await fetch(shareData.imageDataUrl)
           const blob = await response.blob()
           const file = new File([blob], `${shareData.coinName}_trade.png`, { type: 'image/png' })
-          
+
           const shareData_native = {
             title: `${shareData.coinName} Trade Result`,
             text: shareData.tweetText,
             files: [file]
           }
-          
+
           if (navigator.canShare(shareData_native)) {
             await navigator.share(shareData_native)
             return
@@ -254,11 +254,11 @@ export class PnLShareService {
           console.log('Web Share API failed, falling back to Twitter intent')
         }
       }
-      
+
       // Fallback: Twitter intent URL (works on all platforms)
       const twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareData.tweetText)}`
       window.open(twitterUrl, '_blank', 'width=550,height=420,noopener,noreferrer')
-      
+
     } catch (error) {
       console.error('Error sharing:', error)
       // Final fallback: just open Twitter
@@ -283,7 +283,7 @@ export class PnLShareService {
       console.error('No image data available for download')
       return
     }
-    
+
     try {
       const link = document.createElement('a')
       link.download = `${shareData.coinName}_profit_share.png`

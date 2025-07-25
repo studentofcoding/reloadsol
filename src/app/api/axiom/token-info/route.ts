@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
 
     if (!response.ok) {
       console.error(`Axiom API error: ${response.status} ${response.statusText}`)
-      
+
       // Handle authentication error specifically
       if (response.status === 500) {
         const errorText = await response.text()
@@ -91,7 +91,7 @@ export async function GET(request: NextRequest) {
           }, { status: 401 })
         }
       }
-      
+
       return NextResponse.json({
         error: `Axiom API error: ${response.status}`,
         details: response.statusText
@@ -140,7 +140,7 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
     console.error('❌ Axiom token info API error:', error)
-    
+
     return NextResponse.json({
       error: 'Failed to fetch token info from Axiom',
       message: error instanceof Error ? error.message : 'Unknown error',

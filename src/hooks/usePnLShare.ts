@@ -41,7 +41,7 @@ export function usePnLShare(): UsePnLShareReturn {
       const data = await pnlShareService.autoTriggerShare(options)
       setShareData(data)
       setIsShareModalOpen(true)
-      
+
       // Auto-close after 10 seconds if user doesn't interact
       setTimeout(() => {
         setIsShareModalOpen(false)

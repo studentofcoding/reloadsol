@@ -1069,65 +1069,22 @@ export default function PnLTracker() {
                   <p className="text-gray-500 text-xs mt-1">Buy and sell tokens to see your P&L here</p>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
                   {pnlRecords.map((record) => (
                     <div
                       key={record.id}
-                      className="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 transition-colors"
+                      className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[200px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
+                        record.isBotOperation 
+                          ? 'border-purple-500/30 bg-purple-900/10' 
+                          : 'border-gray-600/30'
+                      }`}
+                      onClick={() => openTransactionOnSolscan(record.sellSignatures)}
+                      title="Click to view transaction on Solscan"
                     >
-                      {/* Line 1: Token Info and Share Button */}
+                      {/* Header: P&L and Share Button */}
                       <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-3">
-                          {record.logoURI && (
-                            <img 
-                              src={record.logoURI} 
-                              alt={record.symbol || record.name || 'Token'} 
-                              className="w-8 h-8 rounded-full"
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none'
-                              }}
-                            />
-                          )}
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-white font-medium">
-                              {record.symbol || record.name || 'Unknown Token'}
-                            </span>
-                            {/* ✅ NEW: Bot operation indicator */}
-                            <BotOperationIndicator 
-                              isBotOperation={record.isBotOperation} 
-                              botStrategy={record.botStrategy} 
-                            />
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          {record.tradingSimulation && (
-                            <span className="text-xs px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded" title="Trading Simulation Active">
-                              SIM
-                            </span>
-                          )}
-                          <button
-                            onClick={() => handleShare(
-                              record.symbol || record.name || 'Token',
-                              record.pnlPercentage,
-                              record.mintAddress
-                            )}
-                            className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded flex items-center space-x-1 transition-colors"
-                          >
-                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                              <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
-                            </svg>
-                            <span>Share</span>
-                          </button>
-                        </div>
-                      </div>
-                      
-                      {/* Line 2: P&L and Amounts */}
-                      <div className="flex items-center justify-between mb-1">
-                        <div className="text-xs text-gray-300">
-                          {record.solAmountBought.toFixed(4)} SOL → {record.solAmountSold.toFixed(4)} SOL
-                        </div>
-                        <div className="text-sm">
-                          <span className={`font-medium ${
+                        <div className="flex items-center space-x-1">
+                          <span className={`text-sm font-medium ${
                             record.pnlPercentage > 0 
                               ? 'text-green-400' 
                               : record.pnlPercentage < 0 
@@ -1136,46 +1093,78 @@ export default function PnLTracker() {
                           }`}>
                             {record.pnlPercentage > 0 ? '+' : ''}{record.pnlPercentage.toFixed(1)}%
                           </span>
+                          <BotOperationIndicator 
+                            isBotOperation={record.isBotOperation} 
+                            botStrategy={record.botStrategy} 
+                          />
+                        </div>
+                        
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleShare(
+                              record.symbol || record.name || 'Token',
+                              record.pnlPercentage,
+                              record.mintAddress
+                            )
+                          }}
+                          className="px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          📤
+                        </button>
+                      </div>
+
+                      {/* Token display */}
+                      <div className="flex items-center space-x-2 mb-2">
+                        <div className="relative flex items-center">
+                          <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
+                            {record.logoURI ? (
+                              <img
+                                src={record.logoURI}
+                                alt={record.symbol || record.name || 'Token'}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null
+                                  e.currentTarget.src = ''
+                                  const parent = e.currentTarget.parentElement as HTMLElement | null
+                                  if (parent) {
+                                    parent.textContent = (record.symbol || record.name || '?').charAt(0).toUpperCase()
+                                  }
+                                }}
+                              />
+                            ) : ((record.symbol || record.name || '?').charAt(0).toUpperCase())}
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center space-x-1 flex-1 min-w-0">
+                          <span className="text-xs text-gray-300 font-medium truncate">
+                            {record.symbol || record.name || 'Unknown'}
+                          </span>
                         </div>
                       </div>
-                      
-                      {/* Line 3: USD Values and Additional Info */}
-                      <div className="text-xs text-gray-400">
-                        <div className="flex justify-between items-center">
-                          <div className="flex justify-between flex-1">
-                            <span>${(record.solAmountBought * solPriceUsd).toFixed(2)}</span>
-                            <span className={`${
-                              record.pnlPercentage > 0 
-                                ? 'text-green-400' 
-                                : record.pnlPercentage < 0 
-                                  ? 'text-red-400' 
-                                  : 'text-gray-400'
+
+                      {/* SOL amounts */}
+                      <div className="text-xs text-gray-300 mb-1">
+                        {record.solAmountBought.toFixed(3)} → {record.solAmountSold.toFixed(3)} SOL
+                      </div>
+
+                      {/* Footer: Status and timestamp */}
+                      <div className="flex items-center justify-between text-xs text-gray-400">
+                        <span>{formatRelativeTime(record.sellTimestamp)}</span>
+                        <div className="flex items-center space-x-1">
+                          {record.status && (
+                            <span className={`text-xs px-1 py-0.5 rounded ${
+                              record.status === 'won' ? 'bg-green-900/50 text-green-300' :
+                              record.status === 'lost' ? 'bg-red-900/50 text-red-300' :
+                              'bg-gray-900/50 text-gray-300'
                             }`}>
-                              →${(record.solAmountSold * solPriceUsd).toFixed(2)}
+                              {record.status.toUpperCase()}
                             </span>
-                          </div>
-                          <div className="flex items-center space-x-1 ml-1">
-                            {record.tradeComparisonData && (
-                              <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${record.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
-                            )}
-                            {record.status && (
-                              <span className={`text-xs px-1.5 py-0.5 rounded ${
-                                record.status === 'won' ? 'bg-green-900/50 text-green-300' :
-                                record.status === 'lost' ? 'bg-red-900/50 text-red-300' :
-                                record.status === 'tracking' ? 'bg-blue-900/50 text-blue-300' :
-                                record.status === 'waiting' ? 'bg-yellow-900/50 text-yellow-300' :
-                                'bg-gray-900/50 text-gray-300'
-                              }`}>
-                                {record.status.toUpperCase()}
-                              </span>
-                            )}
-                          </div>
+                          )}
+                          {record.tradeComparisonData && (
+                            <span className="text-cyan-400" title="Trade Comparison Available">📊</span>
+                          )}
                         </div>
-                      </div>
-                      
-                      {/* Line 4: Timestamps */}
-                      <div className="text-xs text-gray-500 mt-1">
-                        {new Date(record.buyTimestamp).toLocaleDateString()} → {new Date(record.sellTimestamp).toLocaleDateString()}
                       </div>
                     </div>
                   ))}
@@ -1192,78 +1181,27 @@ export default function PnLTracker() {
                   <p className="text-gray-500 text-xs mt-1">Buy some tokens to see your positions here</p>
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
                   {openPositions.map((position) => (
                     <div
                       key={position.id}
-                      className="bg-gray-800 rounded-lg p-4 border border-gray-700 hover:border-gray-600 transition-colors group"
+                      className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[200px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
+                        position.isBotOperation 
+                          ? 'border-purple-500/30 bg-purple-900/10' 
+                          : 'border-gray-600/30'
+                      }`}
+                      title="Open position"
                     >
-                      {/* Line 1: Token Info and Fast Sell Button */}
+                      {/* Header: P&L and Fast Sell Button */}
                       <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-3">
-                          {position.logoURI && (
-                            <img 
-                              src={position.logoURI} 
-                              alt={position.symbol || position.name || 'Token'} 
-                              className="w-8 h-8 rounded-full"
-                              onError={(e) => {
-                                e.currentTarget.style.display = 'none'
-                              }}
-                            />
-                          )}
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-white font-medium">
-                              {position.symbol || position.name || 'Token'}
-                            </span>
-                            {/* ✅ NEW: Bot operation indicator */}
-                            <BotOperationIndicator 
-                              isBotOperation={position.isBotOperation} 
-                              botStrategy={position.botStrategy} 
-                            />
-                          </div>
-                        </div>
                         <div className="flex items-center space-x-1">
-                          {position.tradingSimulation && (
-                            <span className="text-xs px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded" title="Trading Simulation Active">
-                              SIM
-                            </span>
-                          )}
-                          {/* Fast Sell Button */}
-                          <button
-                            onClick={(e) => handleFastSell(position, e)}
-                            disabled={isSelling && sellingTokenId === position.id}
-                            className="px-2 py-1 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded flex items-center space-x-1 transition-colors opacity-0 group-hover:opacity-100"
-                          >
-                            {isSelling && sellingTokenId === position.id ? (
-                              <>
-                                <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
-                                <span>Selling...</span>
-                              </>
-                            ) : (
-                              <>
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                                </svg>
-                                <span>Sell</span>
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                      
-                      {/* Line 2: Position Value and P&L */}
-                      <div className="flex items-center justify-between mt-1">
-                        <div className="text-xs text-gray-300">
-                          {position.solAmountBought.toFixed(4)} SOL
-                        </div>
-                        <div className="text-xs">
                           {position.isLoadingPrice ? (
                             <div className="flex items-center space-x-1">
                               <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
-                              <span className="text-gray-400">...</span>
+                              <span className="text-xs text-gray-400">...</span>
                             </div>
                           ) : position.pnlPercentage !== undefined ? (
-                            <span className={`font-medium ${
+                            <span className={`text-sm font-medium ${
                               position.pnlPercentage > 0 
                                 ? 'text-green-400' 
                                 : position.pnlPercentage < 0 
@@ -1273,52 +1211,78 @@ export default function PnLTracker() {
                               {position.pnlPercentage > 0 ? '+' : ''}{position.pnlPercentage.toFixed(1)}%
                             </span>
                           ) : (
-                            <span className="text-blue-400">OPEN</span>
+                            <span className="text-blue-400 text-xs">OPEN</span>
                           )}
+                          <BotOperationIndicator 
+                            isBotOperation={position.isBotOperation} 
+                            botStrategy={position.botStrategy} 
+                          />
+                        </div>
+                        
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleFastSell(position, e)
+                          }}
+                          disabled={isSelling && sellingTokenId === position.id}
+                          className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          {isSelling && sellingTokenId === position.id ? (
+                            <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
+                          ) : (
+                            '🔴'
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Token display */}
+                      <div className="flex items-center space-x-2 mb-2">
+                        <div className="relative flex items-center">
+                          <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
+                            {position.logoURI ? (
+                              <img
+                                src={position.logoURI}
+                                alt={position.symbol || position.name || 'Token'}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null
+                                  e.currentTarget.src = ''
+                                  const parent = e.currentTarget.parentElement as HTMLElement | null
+                                  if (parent) {
+                                    parent.textContent = (position.symbol || position.name || '?').charAt(0).toUpperCase()
+                                  }
+                                }}
+                              />
+                            ) : ((position.symbol || position.name || '?').charAt(0).toUpperCase())}
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center space-x-1 flex-1 min-w-0">
+                          <span className="text-xs text-gray-300 font-medium truncate">
+                            {position.symbol || position.name || 'Unknown'}
+                          </span>
                         </div>
                       </div>
-                      
-                      {/* Line 3: USD Value and Additional Info */}
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        {position.currentUsdValue !== undefined ? (
-                          <div className="flex justify-between items-center">
-                            <div className="flex justify-between flex-1">
-                              <span>~${(position.solAmountBought * solPriceUsd).toFixed(2)}</span>
-                              <span className={`${
-                                position.pnlPercentage && position.pnlPercentage > 0 
-                                  ? 'text-green-400' 
-                                  : position.pnlPercentage && position.pnlPercentage < 0 
-                                    ? 'text-red-400' 
-                                    : 'text-gray-400'
-                              }`}>
-                                →${position.currentUsdValue.toFixed(2)}
-                              </span>
-                            </div>
-                            <div className="flex items-center space-x-1 ml-1">
-                              {position.id.startsWith('open-') && (
-                                <span className="text-blue-400 text-xs" title="Combined position from multiple buys">🔗</span>
-                              )}
-                              {position.tradeComparisonData && (
-                                <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${position.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
-                              )}
-                              {position.waitingStartedAt && (
-                                <span className="text-yellow-400 text-xs" title={`Waiting since: ${new Date(position.waitingStartedAt).toLocaleString()}`}>⏳</span>
-                              )}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex justify-between items-center">
-                            <span>~${(position.solAmountBought * solPriceUsd).toFixed(2)}</span>
-                            <div className="flex items-center space-x-1 ml-1">
-                              {position.tradeComparisonData && (
-                                <span className="text-cyan-400 text-xs" title={`Trade Comparison: ${position.tradeComparisonData.comparison_result || 'Available'}`}>📊</span>
-                              )}
-                              {position.waitingStartedAt && (
-                                <span className="text-yellow-400 text-xs" title={`Waiting since: ${new Date(position.waitingStartedAt).toLocaleString()}`}>⏳</span>
-                              )}
-                            </div>
-                          </div>
-                        )}
+
+                      {/* SOL amount */}
+                      <div className="text-xs text-gray-300 mb-1">
+                        {position.solAmountBought.toFixed(3)} SOL
+                      </div>
+
+                      {/* Footer: USD value and indicators */}
+                      <div className="flex items-center justify-between text-xs text-gray-400">
+                        <span>~${(position.solAmountBought * solPriceUsd).toFixed(0)}</span>
+                        <div className="flex items-center space-x-1">
+                          {position.tradingSimulation && (
+                            <span className="text-purple-300" title="Trading Simulation">SIM</span>
+                          )}
+                          {position.tradeComparisonData && (
+                            <span className="text-cyan-400" title="Trade Comparison Available">📊</span>
+                          )}
+                          {position.waitingStartedAt && (
+                            <span className="text-yellow-400" title="Waiting">⏳</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}

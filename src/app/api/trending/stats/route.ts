@@ -14,9 +14,9 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const refresh = searchParams.get('refresh') === 'true'
     const nocache = searchParams.get('nocache') === 'true'
-    
+
     console.log(`📊 Fetching trending token statistics... ${refresh ? '(forced refresh)' : ''}${nocache ? '(no cache)' : ''}`)
-    
+
     // Get the most recent summary
     const { data: summaries, error: summaryError } = await supabase
       .from(SUMMARY_TABLE)
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     let allSummaryTokens = null
     if (summaries && summaries.length > 0) {
       const latestSummary = summaries[0]
-      
+
       // Fetch all tokens that were tracked during the summary period
       const { data: summaryPeriodTokens, error: summaryTokensError } = await supabase
         .from(TRACKER_TABLE)
@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
           const trackingStart = new Date(token.tracking_started_at)
           const periodEnd = new Date(latestSummary.period_end)
           const trackingDuration = (periodEnd.getTime() - trackingStart.getTime()) / (1000 * 60 * 60)
-          
+
           return {
             token_address: token.token_address,
             token_symbol: token.token_symbol,
@@ -62,7 +62,7 @@ export async function GET(request: NextRequest) {
             current_gain_percentage: token.current_gain_percentage
           }
         })
-        
+
         console.log(`📊 Fetched ${allSummaryTokens.length} tokens from summary period (${latestSummary.period_start} to ${latestSummary.period_end})`)
       }
     }
@@ -109,13 +109,13 @@ export async function GET(request: NextRequest) {
       positive_performers: trackingTokens?.filter(t => t.current_gain_percentage > 0).length || 0,
       negative_performers: trackingTokens?.filter(t => t.current_gain_percentage < 0).length || 0,
       at_risk: trackingTokens?.filter(t => t.current_gain_percentage <= -40).length || 0, // Close to -50% loss threshold
-      top_performer: trackingTokens && trackingTokens.length > 0 
+      top_performer: trackingTokens && trackingTokens.length > 0
         ? {
-            token_symbol: trackingTokens[0].token_symbol,
-            token_name: trackingTokens[0].token_name,
-            current_gain_percentage: trackingTokens[0].current_gain_percentage,
-            peak_gain_percentage: trackingTokens[0].peak_gain_percentage
-          }
+          token_symbol: trackingTokens[0].token_symbol,
+          token_name: trackingTokens[0].token_name,
+          current_gain_percentage: trackingTokens[0].current_gain_percentage,
+          peak_gain_percentage: trackingTokens[0].peak_gain_percentage
+        }
         : null
     }
 
@@ -153,10 +153,10 @@ export async function GET(request: NextRequest) {
     const response = {
       success: true,
       timestamp: new Date().toISOString(),
-      
+
       // Latest 24-hour summary (enhanced with all tokens)
       latest_summary: enhancedLatestSummary,
-      
+
       // Current tracking status
       current_tracking: {
         tokens: trackingTokens || [],
@@ -166,23 +166,23 @@ export async function GET(request: NextRequest) {
           peak_gain: Math.round(avgPeakGain * 100) / 100
         }
       },
-      
+
       // Recent performance
       recent_completed: {
         winners: recentWinners.slice(0, 10), // Top 10 recent winners
         losers: recentLosers.slice(0, 10)    // Top 10 recent losers
       },
-      
+
       // Historical trends
       trends: {
         win_rate_change: Math.round(winRateTrend * 100) / 100,
         historical_summaries: historicalSummaries || []
       },
-      
+
       // Metadata
       data_freshness: {
         tracking_tokens_count: trackingTokens?.length || 0,
-        latest_summary_age_hours: summaries && summaries.length > 0 
+        latest_summary_age_hours: summaries && summaries.length > 0
           ? Math.round((Date.now() - new Date(summaries[0].created_at).getTime()) / (1000 * 60 * 60) * 100) / 100
           : null,
         last_updated: new Date().toISOString()
@@ -190,7 +190,7 @@ export async function GET(request: NextRequest) {
     }
 
     console.log(`✅ Stats fetched: ${currentStats.total_tracking} tracking, ${recentWinners.length} recent winners, ${recentLosers.length} recent losers`)
-    
+
     // Add cache metadata to response
     const enhancedResponse = {
       ...response,
@@ -198,27 +198,27 @@ export async function GET(request: NextRequest) {
       cache_age: 0,  // Fresh data
       expires_in: nocache ? 0 : 300 // 5 minutes unless nocache is requested
     }
-    
+
     // Determine cache headers based on parameters
-    const cacheHeaders: Record<string, string> = nocache 
+    const cacheHeaders: Record<string, string> = nocache
       ? {
-          'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-          'Pragma': 'no-cache',
-          'Expires': '0'
-        }
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
       : refresh
-      ? {
+        ? {
           'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30' // Shorter cache for refresh
         }
-      : {
+        : {
           'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60' // 5-minute cache
         }
-    
+
     return NextResponse.json(enhancedResponse, {
       status: 200,
       headers: cacheHeaders
     })
-    
+
   } catch (error) {
     console.error('❌ Error fetching trending token stats:', error)
     return NextResponse.json({
