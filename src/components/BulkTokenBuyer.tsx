@@ -2,8 +2,8 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useWallet, useConnection } from '../components/WalletProvider'
-import PhantomWalletButton from './PhantomWalletButton'
+import { useWallet, useConnection } from '@/components/WalletProvider'
+import WalletSwitcher from '@/components/WalletSwitcher'
 import TrendingTokens from './TrendingTokens'
 import TransactionResultModal from './TransactionResultModal'
 import TokenSkeleton from './TokenSkeleton'
@@ -698,7 +698,7 @@ export default function BulkTokenBuyer() {
               <p className="text-gray-400">Split your SOL across multiple tokens instantly</p>
             </div>
             <div className="shrink-0">
-              <PhantomWalletButton />
+              <WalletSwitcher />
             </div>
           </div>
 
@@ -1232,7 +1232,8 @@ export default function BulkTokenBuyer() {
                   Buy any token in bulk, <br />
                   trade faster and smarter with us
                 </p>
-                <PhantomWalletButton />
+                <WalletSwitcher />
+                {/* <PhantomWalletButton /> */}
               </div>
             </div>
           )}
