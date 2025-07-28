@@ -390,23 +390,6 @@ export default function PnLTracker() {
 
                 closedCycles.push(pnlRecord)
 
-                // ✅ NEW: Auto-trigger share modal for completed trades
-                if (Math.abs(pnlPerc) >= 1) { // Only trigger for trades with >= 1% P&L
-                  setTimeout(async () => {
-                    try {
-                      await autoTriggerShare({
-                        coinName: cycle.symbol || cycle.name || 'Token',
-                        profitPercentage: pnlPerc,
-                        tokenAddress: mint,
-                        solAmountBought: cycle.totalSolBought,
-                        solAmountSold: cycle.totalSolSold
-                      })
-                    } catch (error) {
-                      console.error('Error auto-triggering share:', error)
-                    }
-                  }, 1000) // Small delay to ensure UI is ready
-                }
-
                 openCycles.delete(mint)
               }
             }
@@ -464,7 +447,7 @@ export default function PnLTracker() {
     } finally {
       setIsLoading(false)
     }
-  }, [connected, publicKey, records, solPriceUsd, autoTriggerShare])
+  }, [connected, publicKey, records, solPriceUsd])
 
   // ✅ NEW: Bot operation sync polling
   useEffect(() => {
@@ -864,7 +847,7 @@ export default function PnLTracker() {
       setIsSelling(false)
       setSellingTokenId('')
     }
-  }, [connected, publicKey, signAllTransactions, connection, calculatePnL, autoTriggerShare])
+  }, [connected, publicKey, signAllTransactions, connection, calculatePnL])
   // Initial price fetch and automatic refresh every 30 seconds
   useEffect(() => {
     if (openPositions.length > 0 && !hasInitialPricesFetched && !isRefreshingPrices) {
@@ -988,7 +971,7 @@ export default function PnLTracker() {
               : 'text-gray-400 hover:text-white hover:bg-gray-700'
           }`}
         >
-          Completed Trades ({pnlRecords.length})
+          Past ({pnlRecords.length})
         </button>
         <button
           onClick={() => setActiveTab('open')}
@@ -998,7 +981,7 @@ export default function PnLTracker() {
               : 'text-gray-400 hover:text-white hover:bg-gray-700'
           }`}
         >
-          Open Positions ({openPositions.length})
+          Open ({openPositions.length})
         </button>
         {connected && (
           <div className="flex items-center space-x-2">

@@ -112,7 +112,7 @@ const TokenSkeleton: React.FC<TokenSkeletonProps> = ({
   )
 
   const renderTradingHistorySkeleton = () => (
-    <div className={`flex space-x-0 overflow-x-auto mb-3 scrollbar-hide ${className}`}>
+    <div className={`flex space-x-2 overflow-x-auto mb-3 scrollbar-hide ${className}`}>
       {Array.from({ length: count }).map((_, index) => (
         <div
           key={index}

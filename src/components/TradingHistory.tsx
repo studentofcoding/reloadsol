@@ -300,7 +300,7 @@ export default function TradingHistory() {
           <p className="text-gray-400 text-sm">Trade on reloadsol to track your history</p>
         </div>
       ) : (
-        <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
+        <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
           {processedRecords.slice(0, 10).map((record: TrackingRecord) => (
             <div
               key={record.id}
