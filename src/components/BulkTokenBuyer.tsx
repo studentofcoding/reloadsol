@@ -77,9 +77,98 @@ export default function BulkTokenBuyer() {
   const [loadingAxiom, setLoadingAxiom] = useState<Set<string>>(new Set())
   const [showRiskAnalysis, setShowRiskAnalysis] = useState<boolean>(false)
 
+  // ✅ NEW: Auto-quoting state for buy operations
+  const [buyQuotes, setBuyQuotes] = useState<Map<string, any>>(new Map())
+  const [isQuotingBuy, setIsQuotingBuy] = useState<boolean>(false)
+  const [lastQuoteTime, setLastQuoteTime] = useState<number>(0)
+  const quoteIntervalRef = useRef<NodeJS.Timeout | null>(null)
+
   // Parse and validate mint addresses
   const parsedMints = parseMintAddresses(tokenMints)
   const validMints = parsedMints.filter(isValidMintAddress)
+
+ // ✅ FIXED: Auto-refresh quotes every 5 seconds with stable interval
+  useEffect(() => {
+    // Clear existing interval
+    if (quoteIntervalRef.current) {
+      clearInterval(quoteIntervalRef.current)
+      quoteIntervalRef.current = null
+    }
+
+    // Only start auto-quoting if we have valid tokens and SOL amount
+    if (validMints.length > 0 && solAmount && parseFloat(solAmount) > 0 && connected && publicKey) {
+      console.log(`🔄 Starting auto-quote for ${validMints.length} tokens every 5 seconds`)
+      
+      // Create a stable quote fetching function inside the effect
+      const fetchQuotes = async () => {
+        if (!connected || !publicKey || validMints.length === 0 || !solAmount || parseFloat(solAmount) <= 0) {
+          return
+        }
+
+        console.log(`📊 Fetching quotes for ${validMints.length} tokens...`)
+        setIsQuotingBuy(true)
+        const newQuotes = new Map()
+        
+        try {
+          const { getSwapQuote } = await import('@/utils/jupiter')
+          const solAmountPerToken = parseFloat(solAmount) / validMints.length
+          const solAmountLamports = Math.floor(solAmountPerToken * LAMPORTS_PER_SOL)
+          
+          // Fetch quotes for all tokens in parallel
+          const quotePromises = validMints.map(async (mintAddress) => {
+            try {
+              const quote = await getSwapQuote(
+                'So11111111111111111111111111111111111111112', // SOL mint address
+                mintAddress,
+                solAmountLamports,
+                slippage / 100 // Convert basis points to percentage
+              )
+              return { mintAddress, quote }
+            } catch (error) {
+              console.error(`Failed to fetch quote for ${mintAddress}:`, error)
+              return { mintAddress, quote: null }
+            }
+          })
+
+          const results = await Promise.all(quotePromises)
+          
+          results.forEach(({ mintAddress, quote }) => {
+            if (quote) {
+              newQuotes.set(mintAddress, quote)
+            }
+          })
+
+          setBuyQuotes(newQuotes)
+          setLastQuoteTime(Date.now())
+          console.log(`✅ Successfully fetched ${newQuotes.size}/${validMints.length} quotes`)
+        } catch (error) {
+          console.error('Failed to fetch buy quotes:', error)
+        } finally {
+          setIsQuotingBuy(false)
+        }
+      }
+      
+      // Fetch quotes immediately
+      fetchQuotes()
+      
+      // Set up 5-second interval
+      quoteIntervalRef.current = setInterval(() => {
+        fetchQuotes()
+      }, 5000)
+    } else {
+      console.log('🛑 Clearing quotes - no valid conditions for auto-quoting')
+      setBuyQuotes(new Map())
+    }
+
+    // Cleanup on unmount or dependency change
+    return () => {
+      if (quoteIntervalRef.current) {
+        console.log('🧹 Cleaning up quote interval')
+        clearInterval(quoteIntervalRef.current)
+        quoteIntervalRef.current = null
+      }
+    }
+  }, [validMints.length, solAmount, connected, publicKey, slippage])
 
   // Auto-select first mint from URL params (display chart automatically)
   useEffect(() => {
@@ -1168,6 +1257,77 @@ export default function BulkTokenBuyer() {
                 </div>
               </div> */}
 
+              {/* ✅ NEW: Quote Information Display */}
+              {validMints.length > 0 && solAmount && parseFloat(solAmount) > 0 && (
+                <div className="bg-gray-800 border border-gray-600 rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold text-gray-200">Buy Quotes</h3>
+                    <div className="flex items-center space-x-2">
+                      {isQuotingBuy && (
+                        <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                      )}
+                      <span className="text-xs text-gray-400">
+                        {lastQuoteTime > 0 ? `Updated ${Math.floor((Date.now() - lastQuoteTime) / 1000)}s ago` : 'Getting quotes...'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="grid gap-2 max-h-32 overflow-y-auto">
+                    {validMints.map((mintAddress) => {
+                      const tokenInfo = tokenList.find(t => t.address === mintAddress)
+                      const quote = buyQuotes.get(mintAddress)
+                      const solAmountPerToken = parseFloat(solAmount) / validMints.length
+                      
+                      return (
+                        <div key={mintAddress} className="flex items-center justify-between text-xs">
+                          <div className="flex items-center space-x-2">
+                            <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
+                              {tokenInfo?.icon ? (
+                                <img
+                                  src={tokenInfo.icon}
+                                  alt={tokenInfo.symbol}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    e.currentTarget.onerror = null
+                                    e.currentTarget.src = ''
+                                    const parent = e.currentTarget.parentElement as HTMLElement | null
+                                    if (parent) {
+                                      parent.textContent = (tokenInfo?.symbol || '?').charAt(0).toUpperCase()
+                                    }
+                                  }}
+                                />
+                              ) : ((tokenInfo?.symbol || '?').charAt(0).toUpperCase())}
+                            </div>
+                            <span className="text-gray-300 font-medium">
+                              {tokenInfo?.symbol || `${mintAddress.slice(0, 4)}...`}
+                            </span>
+                          </div>
+                          
+                          <div className="text-right">
+                            <div className="text-gray-400">
+                              {solAmountPerToken.toFixed(3)} SOL
+                            </div>
+                            {quote ? (
+                              <div className="text-green-400">
+                                → {quote.outAmount ? (Number(quote.outAmount) / Math.pow(10, quote.outputMint?.decimals || 6)).toLocaleString() : '0'} tokens
+                              </div>
+                            ) : isQuotingBuy ? (
+                              <div className="text-blue-400 animate-pulse">
+                                Getting quote...
+                              </div>
+                            ) : (
+                              <div className="text-red-400">
+                                Quote failed
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Buy Button */}
               <button
                 onClick={handleBulkBuy}
@@ -1175,13 +1335,22 @@ export default function BulkTokenBuyer() {
                 className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
                   isLoading || !solAmount || validMints.length === 0
                     ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                    : 'bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl'
+                    : buyQuotes.size === validMints.length && buyQuotes.size > 0
+                      ? 'bg-green-600 hover:bg-green-700 text-white shadow-lg hover:shadow-xl'
+                      : 'bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl'
                 }`}
               >
                 {isLoading ? (
                   <div className="flex items-center justify-center space-x-3">
                     <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
                     <span>Processing Transactions...</span>
+                  </div>
+                ) : buyQuotes.size === validMints.length && buyQuotes.size > 0 ? (
+                  <div className="flex items-center justify-center space-x-2">
+                    <span>💰 Buy {validMints.length} Token{validMints.length !== 1 ? 's' : ''} (Quoted)</span>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                    </svg>
                   </div>
                 ) : (
                   <div className="flex items-center justify-center space-x-2">
