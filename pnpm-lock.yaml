@@ -54,7 +54,7 @@ dependencies:
     specifier: ^10.0.1
     version: 10.4.21(postcss@8.5.4)
   axios:
-    specifier: ^1.6.7
+    specifier: ^1.10.0
     version: 1.10.0
   browserify-zlib:
     specifier: ^0.2.0
