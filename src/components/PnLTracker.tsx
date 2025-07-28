@@ -1182,136 +1182,110 @@ export default function PnLTracker() {
                 </div>
               ) : (
                 <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
-                  {openPositions.map((position) => {
-                    const sellQuote = sellQuotes.get(position.id)
-                    const isQuoting = quotingTokenId === position.id
-                    
-                    return (
-                      <div
-                        key={position.id}
-                        className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[200px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
-                          position.isBotOperation 
-                            ? 'border-purple-500/30 bg-purple-900/10' 
-                            : 'border-gray-600/30'
-                        }`}
-                        title="Open position"
-                        onMouseEnter={() => handlePositionHover(position)}
-                        onMouseLeave={() => handlePositionHoverOut(position)}
-                      >
-                        {/* Header: P&L and Fast Sell Button */}
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center space-x-1">
-                            {position.isLoadingPrice ? (
-                              <div className="flex items-center space-x-1">
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
-                                <span className="text-xs text-gray-400">...</span>
-                              </div>
-                            ) : position.pnlPercentage !== undefined ? (
-                              <span className={`text-sm font-medium ${
-                                position.pnlPercentage > 0 
-                                  ? 'text-green-400' 
-                                  : position.pnlPercentage < 0 
-                                    ? 'text-red-400' 
-                                    : 'text-gray-400'
-                              }`}>
-                                {position.pnlPercentage > 0 ? '+' : ''}{position.pnlPercentage.toFixed(1)}%
-                              </span>
-                            ) : (
-                              <span className="text-blue-400 text-xs">OPEN</span>
-                            )}
-                            <BotOperationIndicator 
-                              isBotOperation={position.isBotOperation} 
-                              botStrategy={position.botStrategy} 
-                            />
-                          </div>
-                          
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleFastSell(position, e)
-                            }}
-                            disabled={isSelling && sellingTokenId === position.id}
-                            className={`px-1.5 py-0.5 text-white text-xs rounded transition-all ${
-                              sellQuote 
-                                ? 'bg-green-600 hover:bg-green-700 disabled:bg-green-800 opacity-100' 
-                                : 'bg-red-600 hover:bg-red-700 disabled:bg-red-800 opacity-0 group-hover:opacity-100'
-                            }`}
-                            title={sellQuote ? `Sell for ~${sellQuote.outAmount ? (Number(sellQuote.outAmount) / 1e9).toFixed(4) : '0'} SOL` : 'Sell position'}
-                          >
-                            {isSelling && sellingTokenId === position.id ? (
-                              <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
-                            ) : isQuoting ? (
-                              <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
-                            ) : sellQuote ? (
-                              '💰'
-                            ) : (
-                              '🔴'
-                            )}
-                          </button>
-                        </div>
-
-                        {/* Token display */}
-                        <div className="flex items-center space-x-2 mb-2">
-                          <div className="relative flex items-center">
-                            <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
-                              {position.logoURI ? (
-                                <img
-                                  src={position.logoURI}
-                                  alt={position.symbol || position.name || 'Token'}
-                                  className="w-full h-full object-cover"
-                                  onError={(e) => {
-                                    e.currentTarget.onerror = null
-                                    e.currentTarget.src = ''
-                                    const parent = e.currentTarget.parentElement as HTMLElement | null
-                                    if (parent) {
-                                      parent.textContent = (position.symbol || position.name || '?').charAt(0).toUpperCase()
-                                    }
-                                  }}
-                                />
-                              ) : ((position.symbol || position.name || '?').charAt(0).toUpperCase())}
+                  {openPositions.map((position) => (
+                    <div
+                      key={position.id}
+                      className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[200px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
+                        position.isBotOperation 
+                          ? 'border-purple-500/30 bg-purple-900/10' 
+                          : 'border-gray-600/30'
+                      }`}
+                      title="Open position"
+                    >
+                      {/* Header: P&L and Fast Sell Button */}
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center space-x-1">
+                          {position.isLoadingPrice ? (
+                            <div className="flex items-center space-x-1">
+                              <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
+                              <span className="text-xs text-gray-400">...</span>
                             </div>
-                          </div>
-                          
-                          <div className="flex items-center space-x-1 flex-1 min-w-0">
-                            <span className="text-xs text-gray-300 font-medium truncate">
-                              {position.symbol || position.name || 'Unknown'}
+                          ) : position.pnlPercentage !== undefined ? (
+                            <span className={`text-sm font-medium ${
+                              position.pnlPercentage > 0 
+                                ? 'text-green-400' 
+                                : position.pnlPercentage < 0 
+                                  ? 'text-red-400' 
+                                  : 'text-gray-400'
+                            }`}>
+                              {position.pnlPercentage > 0 ? '+' : ''}{position.pnlPercentage.toFixed(1)}%
                             </span>
+                          ) : (
+                            <span className="text-blue-400 text-xs">OPEN</span>
+                          )}
+                          <BotOperationIndicator 
+                            isBotOperation={position.isBotOperation} 
+                            botStrategy={position.botStrategy} 
+                          />
+                        </div>
+                        
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleFastSell(position, e)
+                          }}
+                          disabled={isSelling && sellingTokenId === position.id}
+                          className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          {isSelling && sellingTokenId === position.id ? (
+                            <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
+                          ) : (
+                            '🔴'
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Token display */}
+                      <div className="flex items-center space-x-2 mb-2">
+                        <div className="relative flex items-center">
+                          <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
+                            {position.logoURI ? (
+                              <img
+                                src={position.logoURI}
+                                alt={position.symbol || position.name || 'Token'}
+                                className="w-full h-full object-cover"
+                                onError={(e) => {
+                                  e.currentTarget.onerror = null
+                                  e.currentTarget.src = ''
+                                  const parent = e.currentTarget.parentElement as HTMLElement | null
+                                  if (parent) {
+                                    parent.textContent = (position.symbol || position.name || '?').charAt(0).toUpperCase()
+                                  }
+                                }}
+                              />
+                            ) : ((position.symbol || position.name || '?').charAt(0).toUpperCase())}
                           </div>
                         </div>
-
-                        {/* SOL amount and quote info */}
-                        <div className="text-xs text-gray-300 mb-1">
-                          <div>{position.solAmountBought.toFixed(3)} SOL</div>
-                          {sellQuote && (
-                            <div className="text-green-400 mt-0.5">
-                              → {sellQuote.outAmount ? (Number(sellQuote.outAmount) / 1e9).toFixed(4) : '0'} SOL
-                            </div>
-                          )}
-                          {isQuoting && (
-                            <div className="text-blue-400 mt-0.5 animate-pulse">
-                              Getting quote...
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Footer: USD value and indicators */}
-                        <div className="flex items-center justify-between text-xs text-gray-400">
-                          <span>~${(position.solAmountBought * solPriceUsd).toFixed(0)}</span>
-                          <div className="flex items-center space-x-1">
-                            {position.tradingSimulation && (
-                              <span className="text-purple-300" title="Trading Simulation">SIM</span>
-                            )}
-                            {position.tradeComparisonData && (
-                              <span className="text-cyan-400" title="Trade Comparison Available">📊</span>
-                            )}
-                            {position.waitingStartedAt && (
-                              <span className="text-yellow-400" title="Waiting">⏳</span>
-                            )}
-                          </div>
+                        
+                        <div className="flex items-center space-x-1 flex-1 min-w-0">
+                          <span className="text-xs text-gray-300 font-medium truncate">
+                            {position.symbol || position.name || 'Unknown'}
+                          </span>
                         </div>
                       </div>
-                    )
-                  })}
+
+                      {/* SOL amount */}
+                      <div className="text-xs text-gray-300 mb-1">
+                        {position.solAmountBought.toFixed(3)} SOL
+                      </div>
+
+                      {/* Footer: USD value and indicators */}
+                      <div className="flex items-center justify-between text-xs text-gray-400">
+                        <span>~${(position.solAmountBought * solPriceUsd).toFixed(0)}</span>
+                        <div className="flex items-center space-x-1">
+                          {position.tradingSimulation && (
+                            <span className="text-purple-300" title="Trading Simulation">SIM</span>
+                          )}
+                          {position.tradeComparisonData && (
+                            <span className="text-cyan-400" title="Trade Comparison Available">📊</span>
+                          )}
+                          {position.waitingStartedAt && (
+                            <span className="text-yellow-400" title="Waiting">⏳</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </>
