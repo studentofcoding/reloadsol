@@ -73,7 +73,7 @@ export default function TradeLayout({
           </div>
         )}
         
-        <div className="max-w-4xl mx-auto min-h-[300px]">
+        <div className="max-w-4xl mx-auto min-h-[300px] mt-4">
         {children}
         </div>
       </div>

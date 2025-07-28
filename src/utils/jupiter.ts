@@ -1971,46 +1971,104 @@ export async function executeBulkBuy(
         // Process tokens in this batch in parallel
         const batchPromises = batch.map(async (mint) => {
           try {
-            // Prepare swap API body for BUY (SOL -> Token)
-            const swapApiBody = {
-              from: NATIVE_MINT.toBase58(), // SOL (Native mint for buy operations)
-              to: mint,                     // Target token
-              amount: amountPerToken / 1000000000,       // Amount in SOL
-              slippage: request.slippage / 100,   // Slippage tolerance
-              payer: userPublicKey,         // User's wallet
-              priorityFee: request.priorityFee / 1000000000, // Priority fee in SOL
-              fee: `${FEE_CONFIG.DEV_WALLET}:0.5` // Dev wallet with 0.5% fee
+            // First, try Solana Tracker API
+            let tx: VersionedTransaction | null = null
+            let apiUsed = 'solana-tracker'
+
+            try {
+              // Prepare swap API body for BUY (SOL -> Token)
+              const swapApiBody = {
+                from: NATIVE_MINT.toBase58(), // SOL (Native mint for buy operations)
+                to: mint,                     // Target token
+                amount: amountPerToken / 1000000000,       // Amount in SOL
+                slippage: request.slippage / 100,   // Slippage tolerance
+                payer: userPublicKey,         // User's wallet
+                priorityFee: request.priorityFee / 1000000000, // Priority fee in SOL
+                fee: `${FEE_CONFIG.DEV_WALLET}:0.5` // Dev wallet with 0.5% fee
+              }
+
+              console.log(`Trying Solana Tracker API for ${mint}`)
+
+              // Call Solana Tracker swap API with timeout
+              const response = await fetch("https://swap-v2.solanatracker.io/swap", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Connection": "keep-alive"
+                },
+                body: JSON.stringify(swapApiBody),
+                signal: controller.signal,
+                keepalive: true
+              })
+
+              if (!response.ok) {
+                throw new Error(`Solana Tracker API failed: ${response.status} ${response.statusText}`)
+              }
+
+              const swapResult = await response.json()
+
+              if (!swapResult.txn) {
+                throw new Error('No transaction returned from Solana Tracker API')
+              }
+
+              // Deserialize and update blockhash
+              tx = VersionedTransaction.deserialize(
+                Buffer.from(swapResult.txn, 'base64')
+              )
+              tx.message.recentBlockhash = blockhash
+
+              console.log(`✅ Solana Tracker API successful for ${mint}`)
+
+            } catch (solanaTrackerError) {
+              console.warn(`Solana Tracker API failed for ${mint}:`, solanaTrackerError)
+              console.log(`Falling back to Jupiter API for ${mint}`)
+
+              try {
+                // Fallback to Jupiter API
+                apiUsed = 'jupiter'
+
+                // Get quote from Jupiter
+                const quote = await getSwapQuote(
+                  NATIVE_MINT.toBase58(), // SOL
+                  mint,                   // Target token
+                  amountPerToken,         // Amount in lamports
+                  request.slippage        // Slippage in basis points
+                )
+
+                if (!quote) {
+                  throw new Error('Jupiter API failed to provide quote')
+                }
+
+                // Get swap transaction from Jupiter
+                const swapTransaction = await getSwapTransaction(
+                  quote,
+                  userPublicKey,
+                  request.priorityFee
+                )
+
+                if (!swapTransaction || !swapTransaction.swapTransaction) {
+                  throw new Error('Jupiter API failed to provide transaction')
+                }
+
+                // Deserialize Jupiter transaction and update blockhash
+                tx = VersionedTransaction.deserialize(
+                  Buffer.from(swapTransaction.swapTransaction, 'base64')
+                )
+                tx.message.recentBlockhash = blockhash
+
+                console.log(`✅ Jupiter API fallback successful for ${mint}`)
+
+              } catch (jupiterError) {
+                console.error(`Jupiter API fallback also failed for ${mint}:`, jupiterError)
+                throw new Error(`Both APIs failed - Solana Tracker: ${solanaTrackerError instanceof Error ? solanaTrackerError.message : 'Unknown error'}, Jupiter: ${jupiterError instanceof Error ? jupiterError.message : 'Unknown error'}`)
+              }
             }
 
-            // Call Solana Tracker swap API with timeout
-            const response = await fetch("https://swap-v2.solanatracker.io/swap", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "Connection": "keep-alive"
-              },
-              body: JSON.stringify(swapApiBody),
-              signal: controller.signal,
-              keepalive: true
-            })
-
-            if (!response.ok) {
-              throw new Error(`Quote failed: ${response.status} ${response.statusText}`)
+            if (!tx) {
+              throw new Error('No transaction could be created from either API')
             }
 
-            const swapResult = await response.json()
-
-            if (!swapResult.txn) {
-              throw new Error('No transaction returned from swap API')
-            }
-
-            // Deserialize and update blockhash
-            const tx = VersionedTransaction.deserialize(
-              Buffer.from(swapResult.txn, 'base64')
-            )
-            tx.message.recentBlockhash = blockhash
-
-            return { success: true, mint, tx }
+            return { success: true, mint, tx, apiUsed }
           } catch (error) {
             console.error(`Failed to prepare buy for ${mint}:`, error)
             return { success: false, mint, error }
@@ -2025,6 +2083,7 @@ export async function executeBulkBuy(
           if (batchResult.success && batchResult.tx) {
             transactions.push(batchResult.tx)
             transactionMints.push(batchResult.mint)
+            console.log(`Transaction prepared for ${batchResult.mint} using ${batchResult.apiUsed} API`)
           } else {
             result.failedPurchases.push({
               mintAddress: batchResult.mint,

@@ -304,7 +304,7 @@ export default function TradingHistory() {
           {processedRecords.slice(0, 10).map((record: TrackingRecord) => (
             <div
               key={record.id}
-              className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[200px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
+              className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[100px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
                 record.is_bot_operation 
                   ? 'border-purple-500/30 bg-purple-900/10' 
                   : 'border-gray-600/30'

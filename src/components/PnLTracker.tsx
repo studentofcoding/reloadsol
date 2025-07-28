@@ -965,11 +965,10 @@ export default function PnLTracker() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-2">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-3">
-          <h2 className="text-2xl font-bold text-white">P&L Tracker</h2>
           {isBotSyncActive && (
             <div className="flex items-center space-x-2 text-purple-400">
               <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse"></div>
@@ -977,23 +976,6 @@ export default function PnLTracker() {
             </div>
           )}
         </div>
-        
-        {connected && (
-          <div className="flex items-center space-x-2">
-            {activeTab === 'open' && (
-              <button
-                onClick={refreshOpenPositionPrices}
-                disabled={isRefreshingPrices}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-sm rounded-lg flex items-center space-x-1 transition-colors"
-              >
-                <svg className={`w-4 h-4 ${isRefreshingPrices ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span>{isRefreshingPrices ? 'Refreshing...' : 'Refresh Prices'}</span>
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Tab Navigation */}
@@ -1018,6 +1000,21 @@ export default function PnLTracker() {
         >
           Open Positions ({openPositions.length})
         </button>
+        {connected && (
+          <div className="flex items-center space-x-2">
+            {activeTab === 'open' && (
+              <button
+                onClick={refreshOpenPositionPrices}
+                disabled={isRefreshingPrices}
+                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-sm rounded-lg flex items-center space-x-1 transition-colors"
+              >
+                <svg className={`w-4 h-4 ${isRefreshingPrices ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -1069,11 +1066,11 @@ export default function PnLTracker() {
                   <p className="text-gray-500 text-xs mt-1">Buy and sell tokens to see your P&L here</p>
                 </div>
               ) : (
-                <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
+                <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
                   {pnlRecords.map((record) => (
                     <div
                       key={record.id}
-                      className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[200px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
+                      className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 w-auto rounded-lg cursor-pointer group py-2 px-3 border ${
                         record.isBotOperation 
                           ? 'border-purple-500/30 bg-purple-900/10' 
                           : 'border-gray-600/30'
@@ -1181,11 +1178,11 @@ export default function PnLTracker() {
                   <p className="text-gray-500 text-xs mt-1">Buy some tokens to see your positions here</p>
                 </div>
               ) : (
-                <div className="flex space-x-0 overflow-x-auto mb-3 scrollbar-hide">
+                <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
                   {openPositions.map((position) => (
                     <div
                       key={position.id}
-                      className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[200px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
+                      className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[100px] rounded-lg cursor-pointer group py-2 px-3 border ${
                         position.isBotOperation 
                           ? 'border-purple-500/30 bg-purple-900/10' 
                           : 'border-gray-600/30'
