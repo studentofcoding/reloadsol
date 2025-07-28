@@ -42,7 +42,7 @@ export const PRIORITY_FEE_OPTIONS = [
 export async function getSolPriceUSD(): Promise<number> {
   try {
     // Use absolute URL for server-side compatibility
-    const baseUrl = process.env.API_HOST || 'http://localhost:3000';
+    const baseUrl = 'https://v2.reloadsol.xyz'
     const response = await fetch(`${baseUrl}/api/solprice`, {
       headers: {
         'Cache-Control': 'max-age=30' // Use 30-second cache

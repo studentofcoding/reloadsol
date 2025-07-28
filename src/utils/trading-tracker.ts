@@ -181,7 +181,7 @@ class TradingTracker {
   // Save record via API
   private async saveViaAPI(record: TrackingRecord): Promise<void> {
     // Use absolute URL for server-side compatibility
-    const baseUrl = process.env.API_HOST || 'http://localhost:3000';
+    const baseUrl = 'https://v2.reloadsol.xyz'
     const response = await fetch(`${baseUrl}/api/trading/records`, {
       method: 'POST',
       headers: {
