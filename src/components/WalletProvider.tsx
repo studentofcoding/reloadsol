@@ -81,42 +81,34 @@ export function WalletProvider({ children }: WalletProviderProps) {
     return () => clearTimeout(timer)
   }, [])
 
-  // Detect available wallets and load preferences (only after hydration)
+  // Detect available wallets and auto-connect (only when hydrated)
   useEffect(() => {
     if (!mounted || !hydrated) return
 
-    const detectAvailableWallets = () => {
-      const wallets: AvailableWallets = { phantom: false, embedded: false }
-      
+    const detectAvailableWallets = async () => {
       console.log('🔍 Starting wallet detection...')
-      
+      const wallets = { phantom: false, embedded: false }
+
       // Check for embedded wallet
-      try {
-        const embeddedWallet = localStorage.getItem('embeddedWallet')
-        console.log('📱 Checking embedded wallet in localStorage:', embeddedWallet ? 'Found data' : 'No data')
-        
-        if (embeddedWallet) {
-          console.log('📱 Raw embedded wallet data:', embeddedWallet)
+      const embeddedWallet = localStorage.getItem('embeddedWallet')
+      console.log('🔍 Checking for embedded wallet in localStorage:', embeddedWallet ? 'Found' : 'Not found')
+      if (embeddedWallet) {
+        try {
           const walletData = JSON.parse(embeddedWallet)
-          console.log('📱 Parsed embedded wallet data:', walletData)
-          
+          console.log('📋 Embedded wallet data:', walletData)
           if (walletData.publicKey) {
             wallets.embedded = true
             console.log('✅ Detected embedded wallet with publicKey:', walletData.publicKey)
           } else {
             console.log('❌ Embedded wallet data missing publicKey')
           }
-        } else {
-          console.log('❌ No embedded wallet data in localStorage')
+        } catch (error) {
+          console.error('❌ Failed to parse embedded wallet data:', error)
         }
-      } catch (error) {
-        console.error('❌ Error checking embedded wallet:', error)
-        localStorage.removeItem('embeddedWallet')
       }
 
       // Check for Phantom wallet
-      console.log('👻 Checking for Phantom wallet...')
-      if (typeof window !== 'undefined' && 'solana' in window) {
+      if (typeof window !== 'undefined' && window.solana) {
         const phantom = window.solana
         console.log('👻 Found window.solana:', phantom)
         if (phantom?.isPhantom) {
@@ -170,27 +162,33 @@ export function WalletProvider({ children }: WalletProviderProps) {
           const hasDisconnected = sessionStorage.getItem('hasDisconnected')
           const disconnectedWallet = sessionStorage.getItem('disconnectedWallet')
           const newEmbeddedWallet = sessionStorage.getItem('newEmbeddedWallet')
+          const redirectedFromHome = sessionStorage.getItem('redirectedFromHome')
           
           console.log('🔄 Auto-connect check:', {
             walletToAutoConnect,
             hasDisconnected,
             disconnectedWallet,
             newEmbeddedWallet,
+            redirectedFromHome,
             walletAvailable: wallets[walletToAutoConnect]
           })
           
-          // For newly created embedded wallets, always auto-connect regardless of previous disconnect state
+          // For newly created embedded wallets or redirected from home, always auto-connect
           const shouldAutoConnect = wallets[walletToAutoConnect] && (
             newEmbeddedWallet === 'true' || // Always connect newly created embedded wallets
+            redirectedFromHome === 'true' || // Always connect when redirected from home
             (!hasDisconnected && disconnectedWallet !== walletToAutoConnect) // Normal auto-connect logic
           )
           
           if (shouldAutoConnect) {
             console.log('🚀 Auto-connecting to preferred wallet:', walletToAutoConnect)
             
-            // Clear the new wallet flag after attempting connection
+            // Clear the flags after attempting connection
             if (newEmbeddedWallet === 'true') {
               sessionStorage.removeItem('newEmbeddedWallet')
+            }
+            if (redirectedFromHome === 'true') {
+              sessionStorage.removeItem('redirectedFromHome')
             }
             
             connectToWallet(walletToAutoConnect).catch(error => {
@@ -200,7 +198,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
           } else {
             console.log('⏸️ Skipping auto-connect - conditions not met')
           }
-        }, 500) // Increased timeout to ensure provider is fully set
+        }, 300) // Reduced timeout for faster connection
       }
 
       return wallets

@@ -28,7 +28,9 @@ export default function PhantomWalletButton() {
 
   return (
     <button
-      onClick={connect}
+      onClick={async () => {
+        await connect('phantom')
+      }}
       disabled={connecting}
       className={`
         flex items-center justify-center space-x-2 px-3 py-3 rounded-lg font-semibold transition-all duration-200 border mx-auto
@@ -53,4 +55,4 @@ export default function PhantomWalletButton() {
       )}
     </button>
   )
-} 
+}

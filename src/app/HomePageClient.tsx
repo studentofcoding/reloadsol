@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import LastReloadTracker from '@/components/LastReloadTracker'
 import WalletSwitcher from '@/components/WalletSwitcher'
 import Footer from '@/components/Footer'
@@ -12,6 +13,7 @@ import WelcomeModal from '@/components/WelcomeModal'
 function HomeContent() {
   const [showWelcome, setShowWelcome] = useState(false)
   const { connected, hydrated, mounted, availableWallets } = useWallet()
+  const router = useRouter()
 
   // Auto-redirect connected users to sell page, but only after hydration
   useEffect(() => {
@@ -28,13 +30,16 @@ function HomeContent() {
     }
 
     if (connected && !hasDisconnected) {
+      // Set a flag to indicate we're redirecting from home after connection
+      sessionStorage.setItem('redirectedFromHome', 'true')
+      
       // Small delay to ensure wallet connection is stable
       const timer = setTimeout(() => {
-        window.location.href = '/sell'
+        router.push('/sell')
       }, 500)
       return () => clearTimeout(timer)
     }
-  }, [connected, hydrated, mounted])
+  }, [connected, hydrated, mounted, router])
 
   // Check if user should see welcome modal (only for connected users after hydration)
   useEffect(() => {
