@@ -2173,8 +2173,9 @@ async function internalTrackPost(request: NextRequest) {
     // Filter tokens using quality criteria
     const filteredTokens = data.pools
       .filter(pool =>
-        // 1. Avoid total crashes (> 40% drops are ignored & less than 60% rises are ignored)
+        // 1. Avoid total crashes (> 40% drops in 5m & less than 100% rises in 1h & less than 60% rises are ignored)
         (pool.baseAsset.stats5m?.priceChange ?? 0) > -0.40 &&
+        (pool.baseAsset.stats1h?.priceChange ?? 0) < 1.00 &&
         (pool.baseAsset.stats6h?.priceChange ?? 0) < 0.60 &&
         // 2. Quality filters
         pool.baseAsset.organicScore >= 70 &&
