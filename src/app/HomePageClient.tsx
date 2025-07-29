@@ -219,12 +219,6 @@ function HomeContent() {
                     To get started, you need either a Phantom wallet or create an embedded wallet.
                   </p>
                   <div className="space-y-4">
-                    <Link 
-                      href="/wallet/setup" 
-                      className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition-colors"
-                    >
-                      Set Up Wallet
-                    </Link>
                     <p className="text-sm text-gray-500">
                       Or install <a href="https://phantom.app" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:text-purple-300">Phantom wallet</a> and refresh this page
                     </p>

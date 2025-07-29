@@ -19,6 +19,9 @@ export default function WalletSwitcher() {
   } = useWallet()
   
   const [switching, setSwitching] = useState(false)
+  const [showEmbeddedCreation, setShowEmbeddedCreation] = useState(false)
+  const [email, setEmail] = useState('')
+  const [creatingEmbedded, setCreatingEmbedded] = useState(false)
 
   // Prevent hydration mismatch by not rendering until fully hydrated
   if (!mounted || !hydrated) {
@@ -67,6 +70,56 @@ export default function WalletSwitcher() {
       await disconnect()
     } catch (error) {
       console.error('Failed to disconnect:', error)
+    }
+  }
+
+  const handleCreateEmbeddedWallet = async () => {
+    if (!email || creatingEmbedded) return
+    
+    try {
+      setCreatingEmbedded(true)
+      
+      const response = await fetch('/api/embedded-wallet/create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to create embedded wallet')
+      }
+
+      const data = await response.json()
+      
+      // Store the wallet data in localStorage
+      localStorage.setItem('embeddedWallet', JSON.stringify({
+        type: 'embedded',
+        publicKey: data.wallet.wallet_address,
+        email: data.wallet.email,
+        crossmintWalletId: data.wallet.crossmint_wallet_id,
+        userId: data.wallet.user_id
+      }))
+
+      // Set embedded wallet as preferred choice
+      localStorage.setItem('preferredWallet', 'embedded')
+      
+      // Clear any previous disconnect flags to ensure auto-connection works
+      sessionStorage.removeItem('hasDisconnected')
+      sessionStorage.removeItem('disconnectedWallet')
+      sessionStorage.removeItem('justDisconnected')
+      
+      // Set a flag to indicate this is a newly created wallet that should auto-connect
+      sessionStorage.setItem('newEmbeddedWallet', 'true')
+
+      // Reload the page to trigger wallet detection and auto-connection
+      window.location.reload()
+    } catch (error) {
+      console.error('Failed to create embedded wallet:', error)
+      alert('Failed to create embedded wallet. Please try again.')
+    } finally {
+      setCreatingEmbedded(false)
     }
   }
 
@@ -122,6 +175,61 @@ export default function WalletSwitcher() {
               </div>
             </div>
           )}
+        </div>
+      </div>
+    )
+  }
+
+  // Show embedded wallet creation form
+  if (showEmbeddedCreation) {
+    return (
+      <div className="max-w-md mx-auto">
+        <div className="bg-gray-900 rounded-xl p-6 border border-gray-700">
+          <div className="text-center mb-6">
+            <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-semibold text-white mb-2">Create Embedded Wallet</h3>
+            <p className="text-gray-400 text-sm">
+              Enter your email to create a managed wallet for seamless trading
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label htmlFor="email" className="block text-sm font-medium text-gray-300 mb-2">
+                Email Address
+              </label>
+              <input
+                type="email"
+                id="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="your@email.com"
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                disabled={creatingEmbedded}
+              />
+            </div>
+
+            <div className="flex space-x-3">
+              <button
+                onClick={() => setShowEmbeddedCreation(false)}
+                disabled={creatingEmbedded}
+                className="flex-1 px-4 py-2 border border-gray-600 text-gray-300 rounded-lg hover:bg-gray-800 disabled:opacity-50"
+              >
+                Back
+              </button>
+              <button
+                onClick={handleCreateEmbeddedWallet}
+                disabled={!email || creatingEmbedded}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {creatingEmbedded ? 'Creating...' : 'Create Wallet'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     )
@@ -189,7 +297,7 @@ export default function WalletSwitcher() {
           </div>
         )}
 
-        {/* Embedded Wallet Option */}
+        {/* Embedded Wallet Option - Show if exists */}
         {availableWallets.embedded && (
           <div 
             onClick={() => handleWalletSwitch('embedded')}
@@ -229,6 +337,40 @@ export default function WalletSwitcher() {
                 </span>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Create Embedded Wallet Option - Show if no embedded wallet exists */}
+        {!availableWallets.embedded && (
+          <div 
+            onClick={() => setShowEmbeddedCreation(true)}
+            className="bg-gray-900 rounded-xl p-6 border border-gray-700 hover:border-blue-500 cursor-pointer transition-all duration-200 hover:bg-gray-800"
+          >
+            <div className="flex items-center justify-center mb-4">
+              <div className="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center">
+                <svg className="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+              </div>
+            </div>
+            <h3 className="text-xl font-semibold text-white mb-2 text-center">Create Embedded Wallet</h3>
+            <p className="text-gray-400 text-sm text-center mb-4">
+              Create a managed wallet for seamless trading with automatic transaction signing.
+            </p>
+            <div className="space-y-2 text-xs text-gray-500">
+              <div className="flex items-center">
+                <span className="text-green-400 mr-2">✓</span>
+                <span>Auto-signing transactions</span>
+              </div>
+              <div className="flex items-center">
+                <span className="text-green-400 mr-2">✓</span>
+                <span>No browser extension needed</span>
+              </div>
+              <div className="flex items-center">
+                <span className="text-blue-400 mr-2">ℹ</span>
+                <span>Managed by Crossmint</span>
+              </div>
+            </div>
           </div>
         )}
       </div>

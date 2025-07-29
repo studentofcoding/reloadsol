@@ -14,7 +14,6 @@ import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS, getSolPriceUSD } from '@/utils/
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
 import { trackBuy } from '@/utils/operations-api'
 import { useTradingData } from './TradingDataProvider'
-import { connection } from '../utils/connection'
 import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom'
 
 export default function BulkTokenBuyer() {
@@ -1233,7 +1232,6 @@ export default function BulkTokenBuyer() {
                   trade faster and smarter with us
                 </p>
                 <WalletSwitcher />
-                {/* <PhantomWalletButton /> */}
               </div>
             </div>
           )}

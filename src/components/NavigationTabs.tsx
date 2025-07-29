@@ -14,9 +14,24 @@ interface NavigationTabsProps {
 
 export default function NavigationTabs({ activeInfoTab, setActiveInfoTab }: NavigationTabsProps) {
   const pathname = usePathname()
-  const { connected, publicKey } = useWallet()
+  const { connected, publicKey, walletType, wallet } = useWallet()
 
-  const isActive = (path: string) => pathname === path
+  const isActive = (path: string) => pathname === path || pathname.startsWith(path)
+  const isEmbeddedWallet = walletType === 'embedded'
+
+  // Debug logging to see what we're getting
+  React.useEffect(() => {
+    if (connected) {
+      console.log('🔍 NavigationTabs Debug:', {
+        connected,
+        walletType,
+        isEmbeddedWallet,
+        walletName: wallet?.adapter?.name,
+        embeddedWalletData: wallet?.embeddedWalletData ? 'present' : 'missing',
+        localStorage: localStorage.getItem('embeddedWallet') ? 'present' : 'missing'
+      })
+    }
+  }, [connected, walletType, wallet])
 
   if (!connected) return null
 
@@ -73,6 +88,25 @@ export default function NavigationTabs({ activeInfoTab, setActiveInfoTab }: Navi
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
                   </svg>
                   <span>Swap</span>
+                </div>
+              </Link>
+            )}
+
+            {/* Wallet Management for Embedded Wallets */}
+            {isEmbeddedWallet && (
+              <Link
+                href="/wallet"
+                className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
+                  isActive('/wallet')
+                    ? 'bg-blue-600 text-white'
+                    : 'text-blue-400 hover:text-white hover:bg-blue-700'
+                }`}
+              >
+                <div className="flex items-center space-x-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                  </svg>
+                  <span>Wallet</span>
                 </div>
               </Link>
             )}
@@ -184,16 +218,16 @@ export default function NavigationTabs({ activeInfoTab, setActiveInfoTab }: Navi
       {/* Mobile Navigation - Bottom Fixed */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 bg-black border-t border-gray-800 z-9999">
         <div className="flex items-center justify-around px-2 py-3">
-          {/* Main Trading Tabs Only */}
+          {/* Main Trading Tabs */}
           <Link
             href="/sell"
-            className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+            className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
               isActive('/sell')
                 ? 'bg-white text-black'
                 : 'text-gray-400'
             }`}
           >
-            <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
             <span className="text-xs font-medium">Reload</span>
@@ -201,13 +235,13 @@ export default function NavigationTabs({ activeInfoTab, setActiveInfoTab }: Navi
           
           <Link
             href="/buy"
-            className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+            className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
               isActive('/buy')
                 ? 'bg-white text-black'
                 : 'text-gray-400'
             }`}
           >
-            <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
             </svg>
             <span className="text-xs font-medium">Buy</span>
@@ -216,16 +250,33 @@ export default function NavigationTabs({ activeInfoTab, setActiveInfoTab }: Navi
           {isDevWallet(publicKey) && (
             <Link
               href="/swap"
-              className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+              className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
                 isActive('/swap')
                   ? 'bg-white text-black'
                   : 'text-gray-400'
               }`}
             >
-              <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
               </svg>
               <span className="text-xs font-medium">Swap</span>
+            </Link>
+          )}
+
+          {/* Wallet Management for Embedded Wallets */}
+          {isEmbeddedWallet && (
+            <Link
+              href="/wallet"
+              className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                isActive('/wallet')
+                  ? 'bg-blue-600 text-white'
+                  : 'text-blue-400'
+              }`}
+            >
+              <svg className="w-5 h-5 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+              </svg>
+              <span className="text-xs font-medium">Wallet</span>
             </Link>
           )}
         </div>

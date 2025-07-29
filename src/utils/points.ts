@@ -11,7 +11,7 @@ export const fetchWalletStats = async (walletAddress: string): Promise<WalletSta
       .from('token_operations')
       .select('swap_count, close_count')
       .eq('wallet_address', walletAddress)
-      .single();
+      .maybeSingle(); // Use maybeSingle() instead of single() to handle 0 rows
 
     if (error) throw error;
 
@@ -26,6 +26,7 @@ export const fetchWalletStats = async (walletAddress: string): Promise<WalletSta
       };
     }
 
+    // Return default values for new wallets with no operations
     return {
       points: 0,
       tokenCount: 0
@@ -37,4 +38,4 @@ export const fetchWalletStats = async (walletAddress: string): Promise<WalletSta
       tokenCount: 0
     };
   }
-}; 
+};

@@ -88,71 +88,135 @@ export function WalletProvider({ children }: WalletProviderProps) {
     const detectAvailableWallets = () => {
       const wallets: AvailableWallets = { phantom: false, embedded: false }
       
+      console.log('🔍 Starting wallet detection...')
+      
       // Check for embedded wallet
       try {
         const embeddedWallet = localStorage.getItem('embeddedWallet')
+        console.log('📱 Checking embedded wallet in localStorage:', embeddedWallet ? 'Found data' : 'No data')
+        
         if (embeddedWallet) {
+          console.log('📱 Raw embedded wallet data:', embeddedWallet)
           const walletData = JSON.parse(embeddedWallet)
+          console.log('📱 Parsed embedded wallet data:', walletData)
+          
           if (walletData.publicKey) {
             wallets.embedded = true
-            console.log('Detected embedded wallet:', walletData.publicKey)
+            console.log('✅ Detected embedded wallet with publicKey:', walletData.publicKey)
+          } else {
+            console.log('❌ Embedded wallet data missing publicKey')
           }
+        } else {
+          console.log('❌ No embedded wallet data in localStorage')
         }
       } catch (error) {
-        console.error('Error checking embedded wallet:', error)
+        console.error('❌ Error checking embedded wallet:', error)
         localStorage.removeItem('embeddedWallet')
       }
 
       // Check for Phantom wallet
+      console.log('👻 Checking for Phantom wallet...')
       if (typeof window !== 'undefined' && 'solana' in window) {
         const phantom = window.solana
+        console.log('👻 Found window.solana:', phantom)
         if (phantom?.isPhantom) {
           wallets.phantom = true
           setProvider(phantom)
-          console.log('Detected Phantom wallet')
+          console.log('✅ Detected Phantom wallet')
+        } else {
+          console.log('❌ window.solana exists but isPhantom is false')
         }
+      } else {
+        console.log('❌ No window.solana found')
       }
 
+      console.log('🎯 Final wallet detection results:', wallets)
       setAvailableWallets(wallets)
       
       // Load user preference
       const savedPreference = localStorage.getItem('preferredWallet') as 'phantom' | 'embedded' | null
+      console.log('💾 Saved preference:', savedPreference)
+      let walletToAutoConnect: 'phantom' | 'embedded' | null = null
+      
       if (savedPreference && wallets[savedPreference]) {
         setPreferredWallet(savedPreference)
-        console.log('Loaded preferred wallet:', savedPreference)
+        walletToAutoConnect = savedPreference
+        console.log('✅ Loaded preferred wallet:', savedPreference)
       } else if (wallets.phantom && wallets.embedded) {
         // If both available but no preference, don't auto-connect
-        console.log('Both wallets available, waiting for user choice')
-        return
+        console.log('🔄 Both wallets available, waiting for user choice')
+        return wallets
       } else if (wallets.phantom) {
         setPreferredWallet('phantom')
+        walletToAutoConnect = 'phantom'
+        console.log('🎯 Only Phantom available, setting as preferred')
       } else if (wallets.embedded) {
         setPreferredWallet('embedded')
+        walletToAutoConnect = 'embedded'
+        console.log('🎯 Only Embedded available, setting as preferred')
+        
+        // If this is a newly detected embedded wallet, ensure it gets connected
+        const newEmbeddedWallet = sessionStorage.getItem('newEmbeddedWallet')
+        if (newEmbeddedWallet === 'true') {
+          console.log('🆕 Newly created embedded wallet detected, will force auto-connect')
+        }
+      } else {
+        console.log('❌ No wallets available')
+      }
+
+      // Auto-connect to preferred wallet if available and not explicitly disconnected
+      if (walletToAutoConnect) {
+        setTimeout(() => {
+          const hasDisconnected = sessionStorage.getItem('hasDisconnected')
+          const disconnectedWallet = sessionStorage.getItem('disconnectedWallet')
+          const newEmbeddedWallet = sessionStorage.getItem('newEmbeddedWallet')
+          
+          console.log('🔄 Auto-connect check:', {
+            walletToAutoConnect,
+            hasDisconnected,
+            disconnectedWallet,
+            newEmbeddedWallet,
+            walletAvailable: wallets[walletToAutoConnect]
+          })
+          
+          // For newly created embedded wallets, always auto-connect regardless of previous disconnect state
+          const shouldAutoConnect = wallets[walletToAutoConnect] && (
+            newEmbeddedWallet === 'true' || // Always connect newly created embedded wallets
+            (!hasDisconnected && disconnectedWallet !== walletToAutoConnect) // Normal auto-connect logic
+          )
+          
+          if (shouldAutoConnect) {
+            console.log('🚀 Auto-connecting to preferred wallet:', walletToAutoConnect)
+            
+            // Clear the new wallet flag after attempting connection
+            if (newEmbeddedWallet === 'true') {
+              sessionStorage.removeItem('newEmbeddedWallet')
+            }
+            
+            connectToWallet(walletToAutoConnect).catch(error => {
+              console.error('❌ Auto-connection failed:', error)
+              // Don't throw error for auto-connection failures
+            })
+          } else {
+            console.log('⏸️ Skipping auto-connect - conditions not met')
+          }
+        }, 500) // Increased timeout to ensure provider is fully set
       }
 
       return wallets
     }
 
-    const wallets = detectAvailableWallets()
-    
-    // Auto-connect to preferred wallet if available and not explicitly disconnected
-    setTimeout(() => {
-      const hasDisconnected = sessionStorage.getItem('hasDisconnected')
-      const disconnectedWallet = sessionStorage.getItem('disconnectedWallet')
-      
-      if (!hasDisconnected && preferredWallet && wallets?.[preferredWallet]) {
-        // Don't auto-connect if user specifically disconnected this wallet type
-        if (disconnectedWallet !== preferredWallet) {
-          console.log('Auto-connecting to preferred wallet:', preferredWallet)
-          connectToWallet(preferredWallet)
-        }
-      }
-    }, 300)
+    detectAvailableWallets()
   }, [mounted, hydrated])
 
   // Helper function to connect to specific wallet type
   const connectToWallet = async (type: 'phantom' | 'embedded') => {
     if (!mounted || !hydrated) return
+
+    // Check if the requested wallet type is actually available
+    if (!availableWallets[type]) {
+      throw new Error(`${type === 'phantom' ? 'Phantom' : 'Embedded'} wallet not available`)
+    }
 
     try {
       setConnecting(true)
@@ -183,7 +247,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
         setPreferredWallet('embedded')
         
       } else if (type === 'phantom') {
-        if (!provider) throw new Error('Phantom wallet not found')
+        // Double-check provider availability
+        if (!provider) {
+          console.error('Phantom provider not available')
+          throw new Error('Phantom wallet not found')
+        }
         
         const response = await provider.connect()
         setPublicKey(response.publicKey)
@@ -290,6 +358,10 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
     // If type specified, connect to that specific wallet
     if (type) {
+      // Check availability before attempting connection
+      if (!availableWallets[type]) {
+        throw new Error(`${type === 'phantom' ? 'Phantom' : 'Embedded'} wallet not available`)
+      }
       await connectToWallet(type)
       return
     }
