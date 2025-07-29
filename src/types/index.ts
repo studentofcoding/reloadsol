@@ -245,6 +245,12 @@ export interface JupiterBaseAsset {
     buyVolume: number | null
     sellVolume?: number | null // Optional for backward compatibility
   }
+  stats6h: {
+    priceChange: number
+    numNetBuyers: number | null
+    buyVolume: number | null
+    sellVolume?: number | null // Optional for backward compatibility
+  }
   mcap: number
   organicScore: number
   audit: {
