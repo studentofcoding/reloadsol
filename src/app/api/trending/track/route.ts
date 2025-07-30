@@ -273,6 +273,22 @@ interface TradeExecutor {
   executeSell(params: TradeExecutionParams): Promise<TradeExecutionResult>
 }
 
+// Add new interfaces for filtering tracking
+interface TokenFilterResult {
+  token: any // Original pool data from Jupiter
+  passed: boolean
+  rejectionReasons: string[]
+  mappedToken?: any // Mapped token data if passed
+}
+
+interface FilteringSummary {
+  totalTokens: number
+  acceptedTokens: number
+  rejectedTokens: number
+  rejectionBreakdown: { [reason: string]: number }
+  processingTime: number
+}
+
 // Simulation executor (existing logic)
 class SimulationExecutor implements TradeExecutor {
   async executeBuy(params: TradeExecutionParams): Promise<TradeExecutionResult> {
@@ -971,6 +987,241 @@ async function sendSkippedTokenDiscord(params: {
   } catch (error) {
     console.error(`❌ Failed to send Discord notification for skipped token ${params.tokenSymbol}:`, error)
   }
+}
+
+// Add new Discord notification functions
+async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrading: boolean) {
+  try {
+    if (!shouldEnableNotifications()) {
+      logTradeOperation('Discord Filtering Summary Skipped', {
+        reason: 'Notifications disabled'
+      })
+      return
+    }
+
+    const emoji = isRealTrading ? '🔥' : '💻'
+    const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
+
+    const lines = [
+      `${emoji} Token Filtering Summary (${mode})`,
+      ``,
+      `📊 **Processing Results:**`,
+      `🔍 Total Scanned: ${summary.totalTokens}`,
+      `✅ Accepted: ${summary.acceptedTokens}`,
+      `❌ Rejected: ${summary.rejectedTokens}`,
+      `⚡ Processing Time: ${summary.processingTime}ms`,
+      ``,
+      `📋 **Rejection Breakdown:**`
+    ]
+
+    // Add rejection reasons breakdown
+    Object.entries(summary.rejectionBreakdown)
+      .sort(([, a], [, b]) => b - a) // Sort by count descending
+      .forEach(([reason, count]) => {
+        lines.push(`   ${getRejectionEmoji(reason)} ${reason}: ${count}`)
+      })
+
+    lines.push(``)
+    lines.push(`⏰ ${new Date().toLocaleString()}`)
+
+    const content = lines.join('\n')
+
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Discord webhook failed: ${response.status}`)
+    }
+
+    logTradeOperation('Discord Filtering Summary Success', {
+      totalTokens: summary.totalTokens,
+      acceptedTokens: summary.acceptedTokens,
+      rejectedTokens: summary.rejectedTokens
+    })
+  } catch (err) {
+    logTradeOperation('Discord Filtering Summary Error', {
+      totalTokens: summary.totalTokens
+    }, err as Error)
+  }
+}
+
+async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], isRealTrading: boolean) {
+  try {
+    if (!shouldEnableNotifications() || rejectedTokens.length === 0) {
+      return
+    }
+
+    const emoji = isRealTrading ? '🔥' : '💻'
+    const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
+
+    // Limit to top 10 rejected tokens to avoid message length limits
+    const topRejected = rejectedTokens.slice(0, 10)
+
+    const lines = [
+      `${emoji} Rejected Tokens Details (${mode})`,
+      ``,
+      `❌ **Top ${topRejected.length} Rejected Tokens:**`,
+      ``
+    ]
+
+    topRejected.forEach((result, index) => {
+      const token = result.token.baseAsset
+      const reasons = result.rejectionReasons.join(', ')
+
+      lines.push(`**${index + 1}. ${token.symbol || 'UNKNOWN'}**`)
+      lines.push(`   💰 Price: $${token.usdPrice?.toFixed(8) || 'N/A'}`)
+      lines.push(`   🏦 MCap: ${token.mcap ? `$${(token.mcap / 1000000).toFixed(2)}M` : 'N/A'}`)
+      lines.push(`   🎯 Score: ${token.organicScore?.toFixed(1) || 'N/A'}`)
+      lines.push(`   📈 1h: ${((token.stats1h?.priceChange || 0) * 100).toFixed(1)}%`)
+      lines.push(`   📉 5m: ${((token.stats5m?.priceChange || 0) * 100).toFixed(1)}%`)
+      lines.push(`   🚫 Reasons: ${reasons}`)
+      lines.push(``)
+    })
+
+    if (rejectedTokens.length > 10) {
+      lines.push(`... and ${rejectedTokens.length - 10} more rejected tokens`)
+      lines.push(``)
+    }
+
+    lines.push(`⏰ ${new Date().toLocaleString()}`)
+
+    const content = lines.join('\n')
+
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Discord webhook failed: ${response.status}`)
+    }
+
+    logTradeOperation('Discord Rejected Tokens Success', {
+      rejectedCount: rejectedTokens.length,
+      topShown: topRejected.length
+    })
+  } catch (err) {
+    logTradeOperation('Discord Rejected Tokens Error', {
+      rejectedCount: rejectedTokens.length
+    }, err as Error)
+  }
+}
+
+// Helper function to get appropriate emoji for rejection reasons
+function getRejectionEmoji(reason: string): string {
+  const emojiMap: { [key: string]: string } = {
+    'Price drop too severe': '📉',
+    'Price rise too high (1h)': '🚀',
+    'Price rise too high (6h)': '📈',
+    'Organic score too low': '🎯',
+    'Market cap too low': '💸',
+    'Market cap too high': '💰',
+    'Top holders percentage too high': '👥',
+    'Missing required data': '❓'
+  }
+  return emojiMap[reason] || '❌'
+}
+
+// Enhanced filtering function with detailed tracking
+function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[], summary: FilteringSummary } {
+  const startTime = Date.now()
+  const results: TokenFilterResult[] = []
+  const rejectionBreakdown: { [reason: string]: number } = {}
+
+  pools.forEach(pool => {
+    const rejectionReasons: string[] = []
+
+    // Check each filter condition and track reasons
+    const priceChange5m = pool.baseAsset.stats5m?.priceChange ?? 0
+    const priceChange1h = pool.baseAsset.stats1h?.priceChange ?? 0
+    const priceChange6h = pool.baseAsset.stats6h?.priceChange ?? 0
+    const organicScore = pool.baseAsset.organicScore
+    const mcap = pool.baseAsset.mcap
+    const topHoldersPercentage = pool.baseAsset.audit?.topHoldersPercentage
+
+    // Apply filters and track rejection reasons
+    if (priceChange5m <= -0.40) {
+      rejectionReasons.push('Price drop too severe')
+    }
+
+    if (priceChange1h >= 1.00) {
+      rejectionReasons.push('Price rise too high (1h)')
+    }
+
+    if (priceChange6h >= 0.60) {
+      rejectionReasons.push('Price rise too high (6h)')
+    }
+
+    if (!organicScore || organicScore < 70) {
+      rejectionReasons.push('Organic score too low')
+    }
+
+    if (!mcap || mcap <= 350_000) {
+      rejectionReasons.push('Market cap too low')
+    }
+
+    if (!mcap || mcap >= 2_000_000) {
+      rejectionReasons.push('Market cap too high')
+    }
+
+    if (!topHoldersPercentage || topHoldersPercentage >= 25) {
+      rejectionReasons.push('Top holders percentage too high')
+    }
+
+    // Check for missing required data
+    if (!pool.baseAsset.id || !pool.baseAsset.symbol || !pool.baseAsset.usdPrice) {
+      rejectionReasons.push('Missing required data')
+    }
+
+    const passed = rejectionReasons.length === 0
+
+    // Track rejection reasons
+    rejectionReasons.forEach(reason => {
+      rejectionBreakdown[reason] = (rejectionBreakdown[reason] || 0) + 1
+    })
+
+    const result: TokenFilterResult = {
+      token: pool,
+      passed,
+      rejectionReasons
+    }
+
+    // If passed, create mapped token data
+    if (passed) {
+      result.mappedToken = {
+        token_address: pool.baseAsset.id,
+        token_symbol: pool.baseAsset.symbol,
+        token_name: pool.baseAsset.name,
+        logo_url: pool.baseAsset.icon,
+        current_price: pool.baseAsset.usdPrice,
+        organic_score: pool.baseAsset.organicScore,
+        market_cap: pool.baseAsset.mcap,
+        volume_1h: pool.baseAsset.stats1h.buyVolume,
+        change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
+        change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100
+      }
+    }
+
+    results.push(result)
+  })
+
+  const processingTime = Date.now() - startTime
+  const acceptedTokens = results.filter(r => r.passed).length
+  const rejectedTokens = results.filter(r => !r.passed).length
+
+  const summary: FilteringSummary = {
+    totalTokens: pools.length,
+    acceptedTokens,
+    rejectedTokens,
+    rejectionBreakdown,
+    processingTime
+  }
+
+  return { results, summary }
 }
 
 // Helper function to check when last summary was run
@@ -2093,11 +2344,6 @@ async function internalTrackPost(request: NextRequest) {
     const secretKey = searchParams.get('key')
     const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
 
-    // Check if this is a Vercel cron job (has special headers)
-    const isVercelCron = request.headers.get('vercel-cron') === '1' ||
-      request.headers.get('user-agent')?.includes('vercel-cron') ||
-      process.env.VERCEL === '1' && !secretKey && !request.headers.get('referer')
-
     // Allow calls from:
     // 1. Vercel cron jobs (internal calls)
     // 2. Localhost in development (no secret needed)
@@ -2105,9 +2351,7 @@ async function internalTrackPost(request: NextRequest) {
     const isDevelopment = process.env.NODE_ENV === 'development'
     const isLocalhost = request.headers.get('host')?.includes('localhost') || request.headers.get('host')?.includes('127.0.0.1')
 
-    if (isVercelCron) {
-      console.log('🤖 Vercel cron job detected: allowing combined tracking+summary API call')
-    } else if (isDevelopment && isLocalhost && !secretKey) {
+    if (isDevelopment && isLocalhost && !secretKey) {
       console.log('🔓 Development mode: allowing combined tracking+summary API call without secret key')
     } else if (secretKey !== expectedSecretKey) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -2170,34 +2414,37 @@ async function internalTrackPost(request: NextRequest) {
 
     const data = await response.json() as JupiterResponse
 
-    // Filter tokens using quality criteria
-    const filteredTokens = data.pools
-      .filter(pool =>
-        // 1. Avoid total crashes (> 40% drops in 5m & less than 100% rises in 1h & less than 60% rises are ignored)
-        (pool.baseAsset.stats5m?.priceChange ?? 0) > -0.40 &&
-        (pool.baseAsset.stats1h?.priceChange ?? 0) < 1.00 &&
-        (pool.baseAsset.stats6h?.priceChange ?? 0) < 0.60 &&
-        // 2. Quality filters
-        pool.baseAsset.organicScore >= 70 &&
-        pool.baseAsset.mcap > 350_000 &&
-        pool.baseAsset.mcap < 2_000_000 &&
-        // 3. Filter > 25% Holders 
-        pool.baseAsset.audit.topHoldersPercentage < 25
-      )
-      .map(pool => ({
-        token_address: pool.baseAsset.id,
-        token_symbol: pool.baseAsset.symbol,
-        token_name: pool.baseAsset.name,
-        logo_url: pool.baseAsset.icon,
-        current_price: pool.baseAsset.usdPrice,
-        organic_score: pool.baseAsset.organicScore,
-        market_cap: pool.baseAsset.mcap,
-        volume_1h: pool.baseAsset.stats1h.buyVolume,
-        change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
-        change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100
-      }))
+    // Enhanced filtering with comprehensive tracking
+    console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
+    const { results: filterResults, summary: filteringSummary } = performEnhancedFiltering(data.pools)
 
-    console.log(`📊 Found ${filteredTokens.length} trending tokens to process`)
+    // Extract accepted tokens
+    const filteredTokens = filterResults
+      .filter(result => result.passed)
+      .map(result => result.mappedToken)
+
+    // Extract rejected tokens
+    const rejectedTokens = filterResults.filter(result => !result.passed)
+
+    console.log(`📊 Filtering complete: ${filteringSummary.acceptedTokens} accepted, ${filteringSummary.rejectedTokens} rejected`)
+
+    // Determine if real trading is enabled
+    const hasKeypair = !!process.env.TRADING_KEYPAIR_JSON
+    const hasWebhook = !!process.env.DISCORD_WEBHOOK_AUTO_TRADE
+    const isRealTrading = hasKeypair && hasWebhook
+
+    try {
+      // Send filtering summary
+      await sendFilteringSummaryDiscord(filteringSummary, isRealTrading)
+
+      // Send rejected tokens details (if any)
+      if (rejectedTokens.length > 0) {
+        await sendRejectedTokensDiscord(rejectedTokens, isRealTrading)
+      }
+    } catch (discordError) {
+      console.error('❌ Error sending Discord filtering notifications:', discordError)
+      // Continue processing even if Discord notifications fail
+    }
 
     // Get currently tracked and waiting tokens
     const { data: trackedTokens, error: fetchError } = await supabase
