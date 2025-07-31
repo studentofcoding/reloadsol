@@ -8,6 +8,254 @@ export const dynamic = 'force-dynamic'
 import type { TransformedToken } from '../route'
 import { tokenCache, fetchAndUpdateCache } from '../route'
 
+// Environment variable for Discord webhook URL
+const DISCORD_WEBHOOK_URL =
+    process.env.NODE_ENV === 'development'
+        ? process.env.DISCORD_WEBHOOK_URL_DEV || process.env.DISCORD_WEBHOOK_URL
+        : process.env.DISCORD_WEBHOOK_URL;
+const ENABLE_DISCORD_NOTIFICATIONS = process.env.ENABLE_DISCORD_NOTIFICATIONS === 'true';
+
+// Add auto-notification interval for filtered tokens (default 5 minutes = 300000ms)
+const AUTO_NOTIFICATION_INTERVAL_MS = parseInt(process.env.FILTERED_AUTO_NOTIFICATION_INTERVAL_MS || '300000');
+
+// Track last auto notification time for filtered tokens
+let lastFilteredAutoNotificationTime = 0;
+
+// Global cleanup tracking for filtered notifications
+let filteredGlobalTimers: {
+    notificationTimer?: NodeJS.Timeout;
+    initialDelayTimer?: NodeJS.Timeout;
+} = {};
+
+// Function to initialize the filtered notification timer
+function initializeFilteredNotificationTimer() {
+    if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !filteredGlobalTimers.notificationTimer) {
+        console.log('Initializing automatic filtered notification timer...');
+
+        // Initial delay of 45 seconds after server start before first check
+        filteredGlobalTimers.initialDelayTimer = setTimeout(() => {
+            console.log('Starting automatic filtered notification timer');
+
+            // Set interval for periodic notifications
+            filteredGlobalTimers.notificationTimer = setInterval(() => {
+                const currentTime = Date.now();
+
+                // Check if it's time for a notification
+                if (currentTime - lastFilteredAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) {
+                    console.log('Auto-filtered-notification interval triggered');
+
+                    // Trigger filtered notification with proper error handling
+                    sendFilteredTokensNotification()
+                        .then(() => {
+                            console.log('Scheduled filtered notification completed');
+                            lastFilteredAutoNotificationTime = currentTime;
+                        })
+                        .catch(error => {
+                            console.error('Error in scheduled filtered notification:', error);
+                        });
+                }
+            }, Math.min(60000, AUTO_NOTIFICATION_INTERVAL_MS / 2)); // Check at least every minute or half the notification interval
+
+            // Clear the initial delay timer reference
+            filteredGlobalTimers.initialDelayTimer = undefined;
+        }, 45000);
+    } else if (filteredGlobalTimers.notificationTimer) {
+        console.log('Filtered notification timer is already running.');
+    } else {
+        console.log('Automatic filtered notifications are disabled.');
+    }
+}
+
+// Cleanup function for graceful shutdown
+function cleanupFilteredGlobalTimers() {
+    if (filteredGlobalTimers.notificationTimer) {
+        clearInterval(filteredGlobalTimers.notificationTimer);
+        filteredGlobalTimers.notificationTimer = undefined;
+    }
+    if (filteredGlobalTimers.initialDelayTimer) {
+        clearTimeout(filteredGlobalTimers.initialDelayTimer);
+        filteredGlobalTimers.initialDelayTimer = undefined;
+    }
+}
+
+// Initialize the filtered timer when the module is loaded
+initializeFilteredNotificationTimer();
+
+// Handle process termination gracefully
+if (typeof process !== 'undefined') {
+    process.on('SIGTERM', cleanupFilteredGlobalTimers);
+    process.on('SIGINT', cleanupFilteredGlobalTimers);
+    process.on('exit', cleanupFilteredGlobalTimers);
+}
+
+// Function to send filtered tokens to Discord
+async function sendFilteredTokensNotification() {
+    if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
+        console.log('Discord notifications disabled or webhook URL not configured');
+        return;
+    }
+
+    const SERVER_URL = process.env.PUBLIC_SERVER_URL || process.env.VERCEL_URL || '';
+
+    if (SERVER_URL !== 'v2.reloadsol.xyz') {
+        console.log(`Skipping Discord notification: server URL is ${SERVER_URL}, not v2.reloadsol.xyz`);
+        return;
+    }
+
+    try {
+        // Get current filtered tokens
+        const currentTime = Date.now();
+        const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+        const FULL_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+
+        const needsFullRefresh = currentTime - tokenCache.lastFullRefresh >= FULL_REFRESH_INTERVAL_MS;
+
+        // Get the raw token data
+        let rawTokens: TransformedToken[];
+        if (tokenCache.tokens.size > 0 && currentTime < tokenCache.expiresAt && !needsFullRefresh) {
+            rawTokens = Array.from(tokenCache.tokens.values());
+        } else {
+            rawTokens = await fetchAndUpdateCache(needsFullRefresh, currentTime, false);
+        }
+
+        // Apply filtering criteria
+        const filterCriteria = {
+            min_change_5m: -0.4,
+            min_organic_score: 70.0,
+            min_mcap: 300000,
+            max_mcap: 2000000
+        };
+
+        const filteredTokens = rawTokens.filter(token =>
+            token.change_5m > filterCriteria.min_change_5m &&
+            token.organic_score >= filterCriteria.min_organic_score &&
+            token.mcap > filterCriteria.min_mcap &&
+            token.mcap < filterCriteria.max_mcap
+        );
+
+        // Sort tokens by organic score and price change
+        const sortedTokens = filteredTokens.sort((a, b) => {
+            if (b.organic_score !== a.organic_score) {
+                return b.organic_score - a.organic_score;
+            }
+            return Math.abs(b.change_1h || 0) - Math.abs(a.change_1h || 0);
+        });
+
+        if (sortedTokens.length === 0) {
+            console.log('No filtered tokens to report to Discord');
+            return;
+        }
+
+        // Group tokens by market cap categories
+        const categories = [
+            { label: '$300k - $500k', min: 300_000, max: 500_000 },
+            { label: '$501k - $800k', min: 501_000, max: 800_000 },
+            { label: '$801k - $1.2M', min: 801_000, max: 1_200_000 },
+            { label: '$1.2M - $2M', min: 1_200_001, max: 2_000_000 }
+        ];
+
+        // For each category, format up to 5 tokens
+        const categoryFields = categories.map(cat => {
+            const tokens = sortedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 5);
+            if (tokens.length === 0) return null;
+            return {
+                name: `${cat.label} MCap`,
+                value: tokens.map(token => {
+                    const hourChangeEmoji = token.change_1h
+                        ? (token.change_1h > 0 ? '🟢' : '🔴')
+                        : '';
+                    const fiveMinChangeEmoji = token.change_5m
+                        ? (token.change_5m > 0 ? '📈' : '📉')
+                        : '';
+                    return `**${token.token_symbol}** ${fiveMinChangeEmoji}\n` +
+                        `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
+                        `5m: ${(token.change_5m * 100).toFixed(2)}%, Score: ${token.organic_score.toFixed(1)}\n` +
+                        `MCap: $${(token.mcap).toLocaleString()}\n`;
+                }).join('\n')
+            };
+        }).filter(Boolean);
+
+        // If no tokens in any category, show a fallback field
+        const fields = categoryFields.length > 0 ? categoryFields : [{
+            name: 'No Filtered Tokens Found',
+            value: 'No tokens matching the filter criteria were found in this update.'
+        }];
+
+        // Format the message
+        const message = {
+            embeds: [
+                {
+                    title: `🔍 Filtered Token Update`,
+                    description: `**High-Quality Tokens:** ${sortedTokens.length} tokens found\n**Filter:** Score ≥70, MCap $300k-$2M, 5m change >-40%\n**Total tokens scanned:** ${rawTokens.length}`,
+                    color: 15844367, // Gold color for filtered tokens
+                    timestamp: new Date().toISOString(),
+                    fields,
+                    footer: {
+                        text: 'Buy Bulk Filtered Token Tracker'
+                    }
+                }
+            ]
+        };
+
+        // Send the message to Discord with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
+        try {
+            const response = await fetch(DISCORD_WEBHOOK_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(message),
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (!response.ok) {
+                throw new Error(`Discord API responded with status: ${response.status}`);
+            }
+
+            console.log('Discord filtered notification sent successfully');
+        } catch (error) {
+            clearTimeout(timeoutId);
+            throw error;
+        }
+    } catch (error) {
+        console.error('Error sending Discord filtered notification:', error);
+        // Don't throw the error to avoid disrupting the main flow
+    }
+}
+
+// Add a POST endpoint for scheduled filtered notifications
+export async function POST(request: NextRequest) {
+    try {
+        const { searchParams } = new URL(request.url);
+        const secretKey = searchParams.get('key');
+        const expectedSecretKey = process.env.NOTIFICATION_SECRET_KEY;
+
+        // Validate secret key if configured
+        if (expectedSecretKey && secretKey !== expectedSecretKey) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        // Send filtered notifications
+        await sendFilteredTokensNotification();
+
+        return NextResponse.json({
+            success: true,
+            message: 'Filtered notifications sent'
+        });
+    } catch (error) {
+        console.error('Error in scheduled filtered notification:', error);
+        return NextResponse.json({
+            error: 'Failed to send scheduled filtered notification',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        }, { status: 500 });
+    }
+}
+
 // Enhanced GET handler with unified logging
 export const GET = withUnifiedLogging(async (request: NextRequest, logger) => {
     const startTime = logger.startTimer()

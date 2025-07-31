@@ -21,6 +21,51 @@ let globalTimers: {
   initialDelayTimer?: NodeJS.Timeout;
 } = {};
 
+// --- ADD THIS --- 
+// Function to initialize the notification timer
+function initializeNotificationTimer() {
+  if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !globalTimers.notificationTimer) {
+    console.log('Initializing automatic notification timer...');
+
+    // Initial delay of 30 seconds after server start before first check
+    globalTimers.initialDelayTimer = setTimeout(() => {
+      console.log('Starting automatic notification timer');
+
+      // Set interval for periodic notifications
+      globalTimers.notificationTimer = setInterval(() => {
+        const currentTime = Date.now();
+
+        // Check if it's time for a notification
+        if (currentTime - lastAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) {
+          console.log('Auto-notification interval triggered');
+
+          // Determine if we need a full refresh
+          const needsFullRefresh = currentTime - tokenCache.lastFullRefresh >= FULL_REFRESH_INTERVAL_MS;
+
+          // Trigger notification with proper error handling
+          fetchAndUpdateCache(needsFullRefresh, currentTime, true)
+            .then(tokenArray => {
+              console.log(`Scheduled notification completed with ${tokenArray.length} tokens`);
+            })
+            .catch(error => {
+              console.error('Error in scheduled notification:', error);
+              // Reset refresh state on error to prevent permanent blocking
+              refreshState.promise = null;
+              refreshState.timeout = null;
+            });
+        }
+      }, Math.min(60000, AUTO_NOTIFICATION_INTERVAL_MS / 2)); // Check at least every minute or half the notification interval
+
+      // Clear the initial delay timer reference
+      globalTimers.initialDelayTimer = undefined;
+    }, 30000);
+  } else if (globalTimers.notificationTimer) {
+    console.log('Notification timer is already running.');
+  } else {
+    console.log('Automatic notifications are disabled.');
+  }
+}
+
 // Cleanup function for graceful shutdown
 function cleanupGlobalTimers() {
   if (globalTimers.notificationTimer) {
@@ -33,44 +78,8 @@ function cleanupGlobalTimers() {
   }
 }
 
-// Set up a timer to send notifications on schedule if enabled
-// Only initialize once and with proper cleanup
-if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !globalTimers.notificationTimer) {
-  console.log(`Setting up automatic notification timer (${AUTO_NOTIFICATION_INTERVAL_MS}ms interval)`);
-
-  // Initial delay of 30 seconds after server start before first check
-  globalTimers.initialDelayTimer = setTimeout(() => {
-    console.log('Starting automatic notification timer');
-
-    // Set interval for periodic notifications
-    globalTimers.notificationTimer = setInterval(() => {
-      const currentTime = Date.now();
-
-      // Check if it's time for a notification
-      if (currentTime - lastAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) {
-        console.log('Auto-notification interval triggered');
-
-        // Determine if we need a full refresh
-        const needsFullRefresh = currentTime - tokenCache.lastFullRefresh >= FULL_REFRESH_INTERVAL_MS;
-
-        // Trigger notification with proper error handling
-        fetchAndUpdateCache(needsFullRefresh, currentTime, true)
-          .then(tokenArray => {
-            console.log(`Scheduled notification completed with ${tokenArray.length} tokens`);
-          })
-          .catch(error => {
-            console.error('Error in scheduled notification:', error);
-            // Reset refresh state on error to prevent permanent blocking
-            refreshState.promise = null;
-            refreshState.timeout = null;
-          });
-      }
-    }, Math.min(60000, AUTO_NOTIFICATION_INTERVAL_MS / 2)); // Check at least every minute or half the notification interval
-
-    // Clear the initial delay timer reference
-    globalTimers.initialDelayTimer = undefined;
-  }, 30000);
-}
+// Initialize the timer when the module is loaded
+initializeNotificationTimer();
 
 // Handle process termination gracefully
 if (typeof process !== 'undefined') {
