@@ -597,7 +597,7 @@ class SynchronizedTradeExecutor {
     const startTime = Date.now()
 
     // Get shared Jupiter quote first
-    console.log(`🔄 Getting shared Jupiter quote for ${params.tokenSymbol}...`)
+    console.warn(`🔄 Getting shared Jupiter quote for ${params.tokenSymbol}...`)
     const quote = await getSwapQuote(
       params.inputMint,
       params.outputMint,
@@ -630,7 +630,7 @@ class SynchronizedTradeExecutor {
     // Execute real trade if requested and executor available
     let realResult: TradeExecutionResult | undefined
     if (executeReal && this.realExecutor) {
-      console.log(`🔥 Executing real trade with same quote...`)
+      console.warn(`🔥 Executing real trade with same quote...`)
       realResult = await this.realExecutor.executeBuy(params)
     }
 
@@ -1917,6 +1917,8 @@ async function sendSyncTradeNotificationDiscord(params: {
         ``
       )
 
+      console.warn('Real trade executed', lines)
+
       if (syncResult.real.signature) {
         lines.push(`🔗 Signature: \`${syncResult.real.signature}\``)
         lines.push(`📍 [View on Solscan](https://solscan.io/tx/${syncResult.real.signature})`)
@@ -1939,6 +1941,8 @@ async function sendSyncTradeNotificationDiscord(params: {
         `  ⏱️ Time Diff: ${deviation.responseTimeDiff}ms`,
         ``
       )
+
+      console.warn('Real trade executed with deviation', lines)
 
       // Add interpretation
       if (deviation.outputAmountDiffPercent > 10) {
@@ -2229,7 +2233,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     )
 
     if (significantDeviations.length > 0) {
-      console.log(`⚠️ Found ${significantDeviations.length} significant deviations (>2%) for ${token.token_symbol}`)
+      console.warn(`⚠️ Found ${significantDeviations.length} significant deviations (>2%) for ${token.token_symbol}`)
 
       // Send Discord alert for significant deviations
       if (shouldEnableNotifications()) {
