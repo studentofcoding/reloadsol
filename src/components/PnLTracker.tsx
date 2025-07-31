@@ -615,6 +615,12 @@ export default function PnLTracker() {
     setIsChartLoading(true)
   }, [])
 
+  // Add this function for opening charts
+  const handleOpenChart = useCallback((mintAddress: string, symbol?: string) => {
+    setSelectedToken(mintAddress)
+    setIsChartLoading(true)
+  }, [])
+
   // ✅ NEW: Manual share trigger function (for existing share buttons)
   const handleShare = useCallback(async (coinName: string, profitPercentage: number, tokenAddress?: string) => {
     await showShareModal({
@@ -947,11 +953,15 @@ export default function PnLTracker() {
     )
   }
 
+  // Add refresh handler
+  const handleRefreshPrices = React.useCallback(() => {
+    refreshOpenPositionPrices()
+  }, [refreshOpenPositionPrices])
+
   return (
-    <div className="space-y-2">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
+    <div className="rounded-lg px-4 h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center space-x-2">
           {isBotSyncActive && (
             <div className="flex items-center space-x-2 text-purple-400">
               <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse"></div>
@@ -961,14 +971,53 @@ export default function PnLTracker() {
         </div>
       </div>
 
+      {/* Chart Display Section */}
+      {selectedToken && (
+        <div className="mb-4 bg-gray-900/50 rounded-lg border border-gray-700">
+          <div className="flex items-center justify-between p-3 border-b border-gray-700">
+            <h3 className="text-lg font-semibold text-white">📈 Token Chart</h3>
+            <button
+              onClick={() => {
+                setSelectedToken('')
+                setIsChartLoading(false)
+              }}
+              className="text-gray-400 hover:text-white transition-colors"
+              title="Close Chart"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="p-3">
+            {isChartLoading && (
+              <div className="flex items-center justify-center py-8">
+                <div className="flex items-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="text-gray-400">Loading chart...</span>
+                </div>
+              </div>
+            )}
+            <iframe
+              src={`https://www.gmgn.cc/kline/sol/${selectedToken}?interval=1D`}
+              height="400"
+              className="w-full rounded-lg"
+              style={{ border: 'none', display: isChartLoading ? 'none' : 'block' }}
+              title={`Token Chart - ${selectedToken}`}
+              onLoad={() => setIsChartLoading(false)}
+              allowFullScreen
+              frameBorder="0"
+            />
+          </div>
+        </div>
+      )}
+
       {/* Tab Navigation */}
-      <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
+      <div className="flex space-x-1 bg-gray-700 rounded-lg p-1 mb-4">
         <button
           onClick={() => setActiveTab('completed')}
           className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
             activeTab === 'completed'
-              ? 'bg-blue-600 text-white'
-              : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              ? 'bg-gray-600 text-white'
+              : 'text-gray-200 hover:text-white hover:bg-gray-400'
           }`}
         >
           Past ({pnlRecords.length})
@@ -977,8 +1026,8 @@ export default function PnLTracker() {
           onClick={() => setActiveTab('open')}
           className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
             activeTab === 'open'
-              ? 'bg-blue-600 text-white'
-              : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              ? 'bg-gray-600 text-white'
+              : 'text-gray-200 hover:text-white hover:bg-gray-400'
           }`}
         >
           Open ({openPositions.length})
@@ -1001,17 +1050,18 @@ export default function PnLTracker() {
       </div>
 
       {/* Content */}
-      {isLoading ? (
-        <div className="space-y-4">
-          {[...Array(3)].map((_, i) => (
-            <TokenSkeleton key={i} />
-          ))}
-        </div>
-      ) : error ? (
-        <div className="text-center py-8">
-          <p className="text-red-400 text-sm">{error}</p>
-        </div>
-      ) : (
+      <div className="flex-1 overflow-hidden">
+        {isLoading ? (
+          <div className="space-y-4">
+            {[...Array(3)].map((_, i) => (
+              <TokenSkeleton key={i} />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="text-center py-8">
+            <p className="text-red-400 text-sm">{error}</p>
+          </div>
+        ) : (
         <>
           {activeTab === 'completed' && (
             <>
@@ -1061,7 +1111,7 @@ export default function PnLTracker() {
                       onClick={() => openTransactionOnSolscan(record.sellSignatures)}
                       title="Click to view transaction on Solscan"
                     >
-                      {/* Header: P&L and Share Button */}
+                      {/* Header: P&L and Action Buttons */}
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center space-x-1">
                           <span className={`text-sm font-medium ${
@@ -1079,19 +1129,33 @@ export default function PnLTracker() {
                           />
                         </div>
                         
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleShare(
-                              record.symbol || record.name || 'Token',
-                              record.pnlPercentage,
-                              record.mintAddress
-                            )
-                          }}
-                          className="px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          📤
-                        </button>
+                        <div className="flex items-center space-x-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleOpenChart(record.mintAddress, record.symbol)
+                            }}
+                            className="px-1.5 py-0.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Open Chart"
+                          >
+                            📈
+                          </button>
+                          
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleShare(
+                                record.symbol || record.name || 'Token',
+                                record.pnlPercentage,
+                                record.mintAddress
+                              )
+                            }}
+                            className="px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Share"
+                          >
+                            📤
+                          </button>
+                        </div>
                       </div>
 
                       {/* Token display */}
@@ -1172,7 +1236,7 @@ export default function PnLTracker() {
                       }`}
                       title="Open position"
                     >
-                      {/* Header: P&L and Fast Sell Button */}
+                      {/* Header: P&L and Action Buttons */}
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center space-x-1">
                           {position.isLoadingPrice ? (
@@ -1199,20 +1263,34 @@ export default function PnLTracker() {
                           />
                         </div>
                         
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleFastSell(position, e)
-                          }}
-                          disabled={isSelling && sellingTokenId === position.id}
-                          className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          {isSelling && sellingTokenId === position.id ? (
-                            <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
-                          ) : (
-                            '🔴'
-                          )}
-                        </button>
+                        <div className="flex items-center space-x-1">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleOpenChart(position.mintAddress, position.symbol)
+                            }}
+                            className="px-1.5 py-0.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Open Chart"
+                          >
+                            📈
+                          </button>
+                          
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleFastSell(position, e)
+                            }}
+                            disabled={isSelling && sellingTokenId === position.id}
+                            className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Fast Sell"
+                          >
+                            {isSelling && sellingTokenId === position.id ? (
+                              <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
+                            ) : (
+                              '🔴'
+                            )}
+                          </button>
+                        </div>
                       </div>
 
                       {/* Token display */}
@@ -1270,14 +1348,15 @@ export default function PnLTracker() {
               )}
             </>
           )}
-        </>
-      )}
+          </>
+        )}
 
-      {!connected && (
-        <div className="text-center py-4">
-          <p className="text-gray-400 text-sm">Connect your wallet to track trading performance</p>
-        </div>
-      )}
+        {!connected && (
+          <div className="text-center py-8">
+            <p className="text-gray-400 text-sm">Connect your wallet to track trading performance</p>
+          </div>
+        )}
+      </div>
 
       {/* ✅ NEW: Replace the old share modal with the new modular one */}
       <PnLShareModal
