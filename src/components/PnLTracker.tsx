@@ -13,26 +13,6 @@ import { usePnLShare } from '@/hooks/usePnLShare'
 import PnLShareModal from './PnLShareModal'
 import { pnlShareService } from '@/utils/pnl-share-service'
 
-const BotOperationIndicator = ({ isBotOperation, botStrategy }: { 
-  isBotOperation?: boolean, 
-  botStrategy?: string 
-}) => {
-  if (!isBotOperation) return null
-  
-  return (
-    <div className="flex items-center gap-1 text-xs">
-      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-        🤖 Bot
-      </span>
-      {botStrategy && (
-        <span className="text-gray-500 dark:text-gray-400">
-          {botStrategy}
-        </span>
-      )}
-    </div>
-  )
-}
-
 interface PnLRecord {
   id: string
   mintAddress: string
@@ -147,6 +127,26 @@ export default function PnLTracker() {
     setShowClosedPositionsHint(false)
     localStorage.setItem('pnl-closed-positions-hint-dismissed', 'true')
   }, [])
+
+  const BotOperationIndicator = ({ isBotOperation, botStrategy }: { 
+    isBotOperation?: boolean, 
+    botStrategy?: string 
+  }) => {
+    if (!isBotOperation) return null
+    
+    return (
+      <div className="flex items-center gap-1 text-xs">
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+          🤖 Bot
+        </span>
+        {botStrategy && (
+          <span className="text-gray-500 dark:text-gray-400">
+            {botStrategy}
+          </span>
+        )}
+      </div>
+    )
+  }
 
   // Add this useEffect after other useEffect hooks to persist dismissal state
   useEffect(() => {
@@ -950,11 +950,6 @@ export default function PnLTracker() {
       </div>
     )
   }
-
-  // Add refresh handler
-  const handleRefreshPrices = React.useCallback(() => {
-    refreshOpenPositionPrices()
-  }, [refreshOpenPositionPrices])
 
   return (
     <div className="rounded-lg px-4 h-full flex flex-col">
