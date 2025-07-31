@@ -1,6 +1,6 @@
 import { logTradeOperation } from '@/utils/logger'
 
-const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_AUTO_TRADE || ''
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_AUTO_TRADE || process.env.DISCORD_WEBHOOK_URL || ''
 
 // Helper to determine if notifications should be enabled
 export function shouldEnableNotifications(): boolean {
@@ -164,4 +164,4 @@ export async function sendTradeAlertDiscord(params: {
   const content = [title, ...lines].join('\n')
   logTradeOperation('Discord Trade Alert', { tokenSymbol, status })
   await postToWebhook(content)
-} 
+}
