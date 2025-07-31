@@ -5,6 +5,7 @@ import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/we
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
+import { withUnifiedLogging, log } from '@/utils/unified-logger'
 
 export const runtime = 'nodejs'
 
@@ -2706,13 +2707,14 @@ async function setTradingMode(isSimulated: boolean, keypairPath?: string): Promi
 }
 
 // Add endpoint to toggle trading mode
-export async function PUT(request: NextRequest) {
+export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
     const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
 
     if (secretKey !== expectedSecretKey) {
+      logger.warn('api_request', 'Unauthorized attempt to change trading mode', { ip: request.ip })
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -2720,14 +2722,17 @@ export async function PUT(request: NextRequest) {
     const { isSimulated, keypairPath } = body
 
     if (typeof isSimulated !== 'boolean') {
+      logger.warn('api_request', 'Invalid body for trading mode change', { body })
       return NextResponse.json({ error: 'isSimulated must be a boolean' }, { status: 400 })
     }
 
     if (!isSimulated && !keypairPath && !process.env.TRADING_KEYPAIR_JSON) {
+      logger.error('api_request', 'Trading keypair not configured for real mode')
       return NextResponse.json({ error: 'Trading keypair not configured. Provide keypairPath or set TRADING_KEYPAIR_JSON' }, { status: 400 })
     }
 
     await setTradingMode(isSimulated, keypairPath)
+    logger.info('api_request', `Trading mode changed to ${isSimulated ? 'simulated' : 'real'}`)
 
     // Send Discord notification about trading mode change
     if (shouldEnableNotifications()) {
@@ -2748,9 +2753,9 @@ export async function PUT(request: NextRequest) {
           body: JSON.stringify({ content })
         })
 
-        console.log(`✅ Discord notification sent for trading mode change: ${mode}`)
+        logger.info('discord_notification', 'Discord notification sent for trading mode change')
       } catch (discordError) {
-        console.error('❌ Failed to send Discord notification for trading mode change:', discordError)
+        logger.error('discord_notification', 'Failed to send Discord notification for trading mode change', discordError as Error)
         // Don't fail the operation if Discord fails
       }
     }
@@ -2762,19 +2767,18 @@ export async function PUT(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Error in PUT /api/trending/track:', error)
+    logger.critical('api_request', 'Error in PUT /api/trending/track', error as Error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-}
+})
 
-async function internalTrackPost(request: NextRequest) {
+async function internalTrackPost(request: NextRequest, logger: any) {
   const requestStartTime = Date.now()
   const requestId = Math.random().toString(36).substring(7)
 
   try {
     // Log incoming request
-    logTradeOperation('Tracking Request Started', {
-      requestId,
+    logger.info('api_request', 'Tracking Request Started', {
       userAgent: request.headers.get('user-agent'),
       source: request.headers.get('user-agent')?.includes('reloadsol-cron-service') ? 'cron' : 'browser'
     })
@@ -3760,34 +3764,34 @@ async function internalTrackPost(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
-    console.log('🚀 Starting trending token tracking...')
+    logger.info('api_request', 'Starting trending token tracking...')
 
     // Run wallet diagnostics to help troubleshoot balance issues
     await diagnoseTradingWallet()
 
-    return await internalTrackPost(request)
+    return await internalTrackPost(request, logger)
   } catch (error) {
-    console.error('❌ Error in POST handler:', error)
+    logger.critical('api_request', 'Error in POST handler', error as Error)
     return NextResponse.json({
       error: 'Failed to process tracking request',
       message: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 })
   }
-}
+})
 
-export async function GET(request: NextRequest) {
+export const GET = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
     const { searchParams } = new URL(request.url)
     const tokenAddress = searchParams.get('token')
 
     if (!tokenAddress) {
-      return NextResponse.json({
-        error: 'Token address is required',
-        example: '/api/trending/track?token=TOKEN_ADDRESS'
-      }, { status: 400 })
+      logger.warn('api_request', 'Token address missing from request')
+      return NextResponse.json({ error: 'Token address is required', example: '/api/trending/track?token=TOKEN_ADDRESS' }, { status: 400 })
     }
+
+    logger.info('api_request', 'Fetching token tracking data', { tokenAddress })
 
     // Get token data with trade comparison
     const { data: token, error } = await supabase
@@ -3797,11 +3801,11 @@ export async function GET(request: NextRequest) {
       .single()
 
     if (error || !token) {
-      return NextResponse.json({
-        error: 'Token not found',
-        token_address: tokenAddress
-      }, { status: 404 })
+      logger.warn('api_request', 'Tracked token not found', { tokenAddress, error })
+      return NextResponse.json({ error: 'Token not found', token_address: tokenAddress }, { status: 404 })
     }
+
+    logger.info('api_request', 'Successfully retrieved tracked token', { tokenAddress, status: token.status })
 
     return NextResponse.json({
       success: true,
@@ -3830,14 +3834,14 @@ export async function GET(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('❌ Error retrieving token trade comparison:', error)
+    logger.error('api_request', 'Error retrieving token trade comparison', error as Error)
     return NextResponse.json({
       error: 'Failed to retrieve token trade comparison',
       message: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString()
     }, { status: 500 })
   }
-}
+})
 
 // Helper function to determine notification status
 function getNotificationStatus(simulationStatus: TradingSimulationStatus): TradeAlertStatus {
