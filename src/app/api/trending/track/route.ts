@@ -5,6 +5,7 @@ import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/we
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
+import { withUnifiedLogging, log } from '@/utils/unified-logger'
 
 export const runtime = 'nodejs'
 
@@ -273,6 +274,35 @@ interface TradeExecutor {
   executeSell(params: TradeExecutionParams): Promise<TradeExecutionResult>
 }
 
+// Add synchronized trade execution interfaces
+interface SyncedTradeResult {
+  simulation: TradeExecutionResult
+  real?: TradeExecutionResult
+  quote: any // The shared Jupiter quote
+  deviation?: {
+    outputAmountDiff: number
+    outputAmountDiffPercent: number
+    feesDiff: number
+    responseTimeDiff: number
+  }
+}
+
+// Add new interfaces for filtering tracking
+interface TokenFilterResult {
+  token: any // Original pool data from Jupiter
+  passed: boolean
+  rejectionReasons: string[]
+  mappedToken?: any // Mapped token data if passed
+}
+
+interface FilteringSummary {
+  totalTokens: number
+  acceptedTokens: number
+  rejectedTokens: number
+  rejectionBreakdown: { [reason: string]: number }
+  processingTime: number
+}
+
 // Simulation executor (existing logic)
 class SimulationExecutor implements TradeExecutor {
   async executeBuy(params: TradeExecutionParams): Promise<TradeExecutionResult> {
@@ -331,6 +361,63 @@ class SimulationExecutor implements TradeExecutor {
   }
 }
 
+// Modified SimulationExecutor to use Jupiter quotes for synchronization
+class SyncedSimulationExecutor implements TradeExecutor {
+  async executeBuy(params: TradeExecutionParams): Promise<TradeExecutionResult> {
+    try {
+      // Use Jupiter quote directly (same as real trading) instead of multi-provider comparison
+      console.log(`🔄 Getting Jupiter quote for simulation ${params.tokenSymbol}...`)
+      const quote = await getSwapQuote(
+        params.inputMint,
+        params.outputMint,
+        params.amount,
+        params.slippageBps
+      )
+
+      if (!quote) {
+        return {
+          success: false,
+          inputAmount: params.amount.toString(),
+          outputAmount: '0',
+          fees: { totalFees: 0, feePercentage: 0 },
+          provider: 'jupiter',
+          rpcUsed: 'simulation',
+          responseTime: 0,
+          error: 'No Jupiter quote available'
+        }
+      }
+
+      return {
+        success: true,
+        inputAmount: quote.inAmount,
+        outputAmount: quote.outAmount,
+        fees: {
+          totalFees: quote.platformFee ? parseInt(quote.platformFee.amount) / 1e9 : 0,
+          feePercentage: quote.platformFee ? quote.platformFee.feeBps / 100 : 0
+        },
+        provider: 'jupiter',
+        rpcUsed: 'simulation',
+        responseTime: 100, // Simulated response time
+      }
+    } catch (error) {
+      return {
+        success: false,
+        inputAmount: params.amount.toString(),
+        outputAmount: '0',
+        fees: { totalFees: 0, feePercentage: 0 },
+        provider: 'jupiter',
+        rpcUsed: 'simulation',
+        responseTime: 0,
+        error: error instanceof Error ? error.message : 'Simulation failed'
+      }
+    }
+  }
+
+  async executeSell(params: TradeExecutionParams): Promise<TradeExecutionResult> {
+    return this.executeBuy(params)
+  }
+}
+
 // Real trade executor (new implementation)
 class RealTradeExecutor implements TradeExecutor {
   private connection: Connection
@@ -350,7 +437,7 @@ class RealTradeExecutor implements TradeExecutor {
   }
 
   private async executeSwap(params: TradeExecutionParams, direction: 'buy' | 'sell'): Promise<TradeExecutionResult> {
-    const startTime = Date.now()
+    const startTime = Date.now();
 
     // Enhanced logging for real trades
     logTradeOperation(`Real Trade ${direction.toUpperCase()} Started`, {
@@ -492,6 +579,121 @@ class RealTradeExecutor implements TradeExecutor {
   }
 }
 
+// Synchronized trade executor that runs both simulation and real trading with the same quote
+class SynchronizedTradeExecutor {
+  private realExecutor?: RealTradeExecutor
+  private simExecutor: SyncedSimulationExecutor
+
+  constructor(
+    connection?: Connection,
+    signer?: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
+  ) {
+    this.simExecutor = new SyncedSimulationExecutor()
+    if (connection && signer) {
+      this.realExecutor = new RealTradeExecutor(connection, signer)
+    }
+  }
+
+  async executeSyncedBuy(params: TradeExecutionParams, executeReal: boolean = false): Promise<SyncedTradeResult> {
+    const startTime = Date.now()
+
+    // Get shared Jupiter quote first
+    console.warn(`🔄 Getting shared Jupiter quote for ${params.tokenSymbol}...`)
+    const quote = await getSwapQuote(
+      params.inputMint,
+      params.outputMint,
+      params.amount,
+      params.slippageBps
+    )
+
+    if (!quote) {
+      const failedResult = {
+        success: false,
+        inputAmount: params.amount.toString(),
+        outputAmount: '0',
+        fees: { totalFees: 0, feePercentage: 0 },
+        provider: 'jupiter',
+        rpcUsed: 'none',
+        responseTime: Date.now() - startTime,
+        error: 'No Jupiter quote available'
+      }
+      return {
+        simulation: failedResult,
+        quote: null
+      }
+    }
+
+    console.log(`📊 Shared Jupiter quote: ${quote.inAmount} → ${quote.outAmount}`)
+
+    // Execute simulation (always)
+    const simulationResult = await this.simExecutor.executeBuy(params)
+
+    // Execute real trade if requested and executor available
+    let realResult: TradeExecutionResult | undefined
+    if (executeReal && this.realExecutor) {
+      console.warn(`🔥 Executing real trade with same quote...`)
+      realResult = await this.realExecutor.executeBuy(params)
+    }
+
+    // Calculate deviation if both results exist
+    let deviation: SyncedTradeResult['deviation']
+    if (realResult && simulationResult.success && realResult.success) {
+      const simOutput = parseFloat(simulationResult.outputAmount)
+      const realOutput = parseFloat(realResult.outputAmount)
+      const outputDiff = Math.abs(simOutput - realOutput)
+      const outputDiffPercent = simOutput > 0 ? (outputDiff / simOutput) * 100 : 0
+
+      deviation = {
+        outputAmountDiff: outputDiff,
+        outputAmountDiffPercent: outputDiffPercent,
+        feesDiff: Math.abs(simulationResult.fees.totalFees - realResult.fees.totalFees),
+        responseTimeDiff: Math.abs(simulationResult.responseTime - realResult.responseTime)
+      }
+
+      // Log significant deviations
+      if (outputDiffPercent > 2) { // More than 2% difference
+        logTradeOperation('Significant Trade Deviation Detected', {
+          tokenSymbol: params.tokenSymbol,
+          simulationOutput: simulationResult.outputAmount,
+          realOutput: realResult.outputAmount,
+          deviationPercent: outputDiffPercent.toFixed(2),
+          simulationFees: simulationResult.fees.totalFees,
+          realFees: realResult.fees.totalFees,
+          quote: {
+            inAmount: quote.inAmount,
+            outAmount: quote.outAmount
+          }
+        })
+      }
+    }
+
+    const syncResult = {
+      simulation: simulationResult,
+      real: realResult,
+      quote,
+      deviation
+    }
+
+    // Send Discord notification for sync results
+    if (shouldEnableNotifications() && (simulationResult.success || (realResult && realResult.success))) {
+      try {
+        await sendSyncTradeNotificationDiscord({
+          tokenSymbol: params.tokenSymbol,
+          tokenAddress: params.tokenAddress,
+          operationType: 'buy',
+          syncResult,
+          isRealTradeExecuted: executeReal && !!realResult
+        })
+      } catch (discordError) {
+        console.error('❌ Failed to send sync Discord notification:', discordError)
+        // Don't fail the trade if Discord notification fails
+      }
+    }
+
+    return syncResult
+  }
+}
+
 // Factory function to create appropriate executor
 function createTradeExecutor(
   isSimulated: boolean,
@@ -506,6 +708,14 @@ function createTradeExecutor(
     }
     return new RealTradeExecutor(connection, signer)
   }
+}
+
+// Update the factory function to support synchronized execution
+function createSynchronizedTradeExecutor(
+  connection?: Connection,
+  signer?: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
+): SynchronizedTradeExecutor {
+  return new SynchronizedTradeExecutor(connection, signer)
 }
 
 // Keypair management utilities
@@ -973,6 +1183,241 @@ async function sendSkippedTokenDiscord(params: {
   }
 }
 
+// Add new Discord notification functions
+async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrading: boolean) {
+  try {
+    if (!shouldEnableNotifications()) {
+      logTradeOperation('Discord Filtering Summary Skipped', {
+        reason: 'Notifications disabled'
+      })
+      return
+    }
+
+    const emoji = isRealTrading ? '🔥' : '💻'
+    const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
+
+    const lines = [
+      `${emoji} Token Filtering Summary (${mode})`,
+      ``,
+      `📊 **Processing Results:**`,
+      `🔍 Total Scanned: ${summary.totalTokens}`,
+      `✅ Accepted: ${summary.acceptedTokens}`,
+      `❌ Rejected: ${summary.rejectedTokens}`,
+      `⚡ Processing Time: ${summary.processingTime}ms`,
+      ``,
+      `📋 **Rejection Breakdown:**`
+    ]
+
+    // Add rejection reasons breakdown
+    Object.entries(summary.rejectionBreakdown)
+      .sort(([, a], [, b]) => b - a) // Sort by count descending
+      .forEach(([reason, count]) => {
+        lines.push(`   ${getRejectionEmoji(reason)} ${reason}: ${count}`)
+      })
+
+    lines.push(``)
+    lines.push(`⏰ ${new Date().toLocaleString()}`)
+
+    const content = lines.join('\n')
+
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Discord webhook failed: ${response.status}`)
+    }
+
+    logTradeOperation('Discord Filtering Summary Success', {
+      totalTokens: summary.totalTokens,
+      acceptedTokens: summary.acceptedTokens,
+      rejectedTokens: summary.rejectedTokens
+    })
+  } catch (err) {
+    logTradeOperation('Discord Filtering Summary Error', {
+      totalTokens: summary.totalTokens
+    }, err as Error)
+  }
+}
+
+async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], isRealTrading: boolean) {
+  try {
+    if (!shouldEnableNotifications() || rejectedTokens.length === 0) {
+      return
+    }
+
+    const emoji = isRealTrading ? '🔥' : '💻'
+    const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
+
+    // Limit to top 10 rejected tokens to avoid message length limits
+    const topRejected = rejectedTokens.slice(0, 10)
+
+    const lines = [
+      `${emoji} Rejected Tokens Details (${mode})`,
+      ``,
+      `❌ **Top ${topRejected.length} Rejected Tokens:**`,
+      ``
+    ]
+
+    topRejected.forEach((result, index) => {
+      const token = result.token.baseAsset
+      const reasons = result.rejectionReasons.join(', ')
+
+      lines.push(`**${index + 1}. ${token.symbol || 'UNKNOWN'}**`)
+      lines.push(`   💰 Price: $${token.usdPrice?.toFixed(8) || 'N/A'}`)
+      lines.push(`   🏦 MCap: ${token.mcap ? `$${(token.mcap / 1000000).toFixed(2)}M` : 'N/A'}`)
+      lines.push(`   🎯 Score: ${token.organicScore?.toFixed(1) || 'N/A'}`)
+      lines.push(`   📈 1h: ${((token.stats1h?.priceChange || 0) * 100).toFixed(1)}%`)
+      lines.push(`   📉 5m: ${((token.stats5m?.priceChange || 0) * 100).toFixed(1)}%`)
+      lines.push(`   🚫 Reasons: ${reasons}`)
+      lines.push(``)
+    })
+
+    if (rejectedTokens.length > 10) {
+      lines.push(`... and ${rejectedTokens.length - 10} more rejected tokens`)
+      lines.push(``)
+    }
+
+    lines.push(`⏰ ${new Date().toLocaleString()}`)
+
+    const content = lines.join('\n')
+
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Discord webhook failed: ${response.status}`)
+    }
+
+    logTradeOperation('Discord Rejected Tokens Success', {
+      rejectedCount: rejectedTokens.length,
+      topShown: topRejected.length
+    })
+  } catch (err) {
+    logTradeOperation('Discord Rejected Tokens Error', {
+      rejectedCount: rejectedTokens.length
+    }, err as Error)
+  }
+}
+
+// Helper function to get appropriate emoji for rejection reasons
+function getRejectionEmoji(reason: string): string {
+  const emojiMap: { [key: string]: string } = {
+    'Price drop too severe': '📉',
+    'Price rise too high (1h)': '🚀',
+    'Price rise too high (6h)': '📈',
+    'Organic score too low': '🎯',
+    'Market cap too low': '💸',
+    'Market cap too high': '💰',
+    'Top holders percentage too high': '👥',
+    'Missing required data': '❓'
+  }
+  return emojiMap[reason] || '❌'
+}
+
+// Enhanced filtering function with detailed tracking
+function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[], summary: FilteringSummary } {
+  const startTime = Date.now()
+  const results: TokenFilterResult[] = []
+  const rejectionBreakdown: { [reason: string]: number } = {}
+
+  pools.forEach(pool => {
+    const rejectionReasons: string[] = []
+
+    // Check each filter condition and track reasons
+    const priceChange5m = pool.baseAsset.stats5m?.priceChange ?? 0
+    const priceChange1h = pool.baseAsset.stats1h?.priceChange ?? 0
+    const priceChange6h = pool.baseAsset.stats6h?.priceChange ?? 0
+    const organicScore = pool.baseAsset.organicScore
+    const mcap = pool.baseAsset.mcap
+    const topHoldersPercentage = pool.baseAsset.audit?.topHoldersPercentage
+
+    // Apply filters and track rejection reasons
+    if (priceChange5m <= -0.40) {
+      rejectionReasons.push('Price drop too severe')
+    }
+
+    if (priceChange1h >= 1.00) {
+      rejectionReasons.push('Price rise too high (1h)')
+    }
+
+    if (priceChange6h >= 0.60) {
+      rejectionReasons.push('Price rise too high (6h)')
+    }
+
+    if (!organicScore || organicScore < 70) {
+      rejectionReasons.push('Organic score too low')
+    }
+
+    if (!mcap || mcap <= 350_000) {
+      rejectionReasons.push('Market cap too low')
+    }
+
+    if (!mcap || mcap >= 2_000_000) {
+      rejectionReasons.push('Market cap too high')
+    }
+
+    if (!topHoldersPercentage || topHoldersPercentage >= 25) {
+      rejectionReasons.push('Top holders percentage too high')
+    }
+
+    // Check for missing required data
+    if (!pool.baseAsset.id || !pool.baseAsset.symbol || !pool.baseAsset.usdPrice) {
+      rejectionReasons.push('Missing required data')
+    }
+
+    const passed = rejectionReasons.length === 0
+
+    // Track rejection reasons
+    rejectionReasons.forEach(reason => {
+      rejectionBreakdown[reason] = (rejectionBreakdown[reason] || 0) + 1
+    })
+
+    const result: TokenFilterResult = {
+      token: pool,
+      passed,
+      rejectionReasons
+    }
+
+    // If passed, create mapped token data
+    if (passed) {
+      result.mappedToken = {
+        token_address: pool.baseAsset.id,
+        token_symbol: pool.baseAsset.symbol,
+        token_name: pool.baseAsset.name,
+        logo_url: pool.baseAsset.icon,
+        current_price: pool.baseAsset.usdPrice,
+        organic_score: pool.baseAsset.organicScore,
+        market_cap: pool.baseAsset.mcap,
+        volume_1h: pool.baseAsset.stats1h.buyVolume,
+        change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
+        change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100
+      }
+    }
+
+    results.push(result)
+  })
+
+  const processingTime = Date.now() - startTime
+  const acceptedTokens = results.filter(r => r.passed).length
+  const rejectedTokens = results.filter(r => !r.passed).length
+
+  const summary: FilteringSummary = {
+    totalTokens: pools.length,
+    acceptedTokens,
+    rejectedTokens,
+    rejectionBreakdown,
+    processingTime
+  }
+
+  return { results, summary }
+}
+
 // Helper function to check when last summary was run
 async function checkLastSummaryTime(): Promise<Date | null> {
   try {
@@ -1415,12 +1860,226 @@ async function checkForManualSells(tokens: TrackedToken[]): Promise<void> {
   }
 }
 
+// Add new Discord notification for synchronized trade results
+async function sendSyncTradeNotificationDiscord(params: {
+  tokenSymbol: string | null
+  tokenAddress: string
+  operationType: 'buy' | 'sell'
+  syncResult: SyncedTradeResult
+  isRealTradeExecuted: boolean
+}) {
+  try {
+    if (!shouldEnableNotifications()) {
+      logTradeOperation('Discord Sync Notification Skipped', {
+        reason: 'Notifications disabled',
+        webhookStatus: 'not configured'
+      })
+      return
+    }
+
+    const {
+      tokenSymbol,
+      tokenAddress,
+      operationType,
+      syncResult,
+      isRealTradeExecuted
+    } = params
+
+    logTradeOperation('Discord Sync Notification Attempt', {
+      tokenSymbol,
+      tokenAddress,
+      operationType,
+      isRealTradeExecuted,
+      hasDeviation: !!syncResult.deviation
+    })
+
+    const emoji = operationType === 'buy' ? '💰' : '💸'
+    const title = `${emoji} ${operationType.toUpperCase()} Sync Results`
+
+    const lines = [
+      `🔄 **${title}**`,
+      ``,
+      `🪙 **${tokenSymbol || 'UNKNOWN'}**`,
+      `📊 **Simulation Result:**`,
+      `  ✅ Success: ${syncResult.simulation.success}`,
+      `  🎯 Output: ${parseFloat(syncResult.simulation.outputAmount).toLocaleString()} ${operationType === 'buy' ? 'tokens' : 'SOL'}`,
+      `  💸 Fees: ${syncResult.simulation.fees.totalFees.toFixed(6)} SOL`,
+      `  ⏱️ Time: ${syncResult.simulation.responseTime}ms`,
+      ``
+    ]
+
+    if (isRealTradeExecuted && syncResult.real) {
+      lines.push(
+        `🔥 **Real Trade Result:**`,
+        `  ✅ Success: ${syncResult.real.success}`,
+        `  🎯 Output: ${parseFloat(syncResult.real.outputAmount).toLocaleString()} ${operationType === 'buy' ? 'tokens' : 'SOL'}`,
+        `  💸 Fees: ${syncResult.real.fees.totalFees.toFixed(6)} SOL`,
+        `  ⏱️ Time: ${syncResult.real.responseTime}ms`,
+        ``
+      )
+
+      console.warn('Real trade executed', lines)
+
+      if (syncResult.real.signature) {
+        lines.push(`🔗 Signature: \`${syncResult.real.signature}\``)
+        lines.push(`📍 [View on Solscan](https://solscan.io/tx/${syncResult.real.signature})`)
+        lines.push(``)
+      }
+    } else {
+      lines.push(`💻 **Real Trade:** Not executed (simulation only)`, ``)
+    }
+
+    // Add deviation analysis if available
+    if (syncResult.deviation && isRealTradeExecuted) {
+      const deviation = syncResult.deviation
+      const deviationEmoji = deviation.outputAmountDiffPercent > 5 ? '⚠️' : '✅'
+
+      lines.push(
+        `${deviationEmoji} **Synchronization Analysis:**`,
+        `  📈 Output Deviation: ${deviation.outputAmountDiffPercent.toFixed(2)}%`,
+        `  💰 Amount Diff: ${deviation.outputAmountDiff.toFixed(6)}`,
+        `  💸 Fees Diff: ${deviation.feesDiff.toFixed(6)} SOL`,
+        `  ⏱️ Time Diff: ${deviation.responseTimeDiff}ms`,
+        ``
+      )
+
+      console.warn('Real trade executed with deviation', lines)
+
+      // Add interpretation
+      if (deviation.outputAmountDiffPercent > 10) {
+        lines.push(`🚨 **HIGH DEVIATION DETECTED** - Investigate quote timing or slippage`)
+      } else if (deviation.outputAmountDiffPercent > 5) {
+        lines.push(`⚠️ **Moderate deviation** - Monitor for patterns`)
+      } else {
+        lines.push(`✅ **Good synchronization** - Results align well`)
+      }
+      lines.push(``)
+    }
+
+    lines.push(`⏰ ${new Date().toLocaleString()}`)
+
+    const content = lines.join('\n')
+
+    const fetchStartTime = Date.now()
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    })
+
+    const webhookResponseTime = Date.now() - fetchStartTime
+
+    if (!response.ok) {
+      const responseText = await response.text()
+      throw new Error(`Discord webhook failed: ${response.status} ${response.statusText}\nResponse: ${responseText}`)
+    }
+
+    logTradeOperation('Discord Sync Notification Success', {
+      tokenSymbol,
+      operationType,
+      isRealTradeExecuted,
+      responseTime: webhookResponseTime,
+      httpStatus: response.status
+    })
+  } catch (err) {
+    logTradeOperation('Discord Sync Notification Error', {
+      tokenSymbol: params.tokenSymbol,
+      operationType: params.operationType,
+      isRealTradeExecuted: params.isRealTradeExecuted
+    }, err as Error)
+
+    throw err
+  }
+}
+
+// Discord notification for significant deviations summary
+async function sendSignificantDeviationsAlertDiscord(params: {
+  tokenSymbol: string | null
+  tokenAddress: string
+  deviations: SyncedTradeResult[]
+  operationType: 'buy' | 'sell'
+}) {
+  try {
+    if (!shouldEnableNotifications()) {
+      return
+    }
+
+    const { tokenSymbol, tokenAddress, deviations, operationType } = params
+
+    logTradeOperation('Discord Significant Deviations Alert', {
+      tokenSymbol,
+      operationType,
+      deviationCount: deviations.length
+    })
+
+    const lines = [
+      `🚨 **SIGNIFICANT DEVIATIONS DETECTED**`,
+      ``,
+      `🪙 **${tokenSymbol || 'UNKNOWN'}** (${operationType.toUpperCase()})`,
+      `📊 **${deviations.length} deviation(s) > 5%**`,
+      ``
+    ]
+
+    // Add details for each significant deviation
+    deviations.forEach((deviation, index) => {
+      if (deviation.deviation && deviation.deviation.outputAmountDiffPercent > 5) {
+        lines.push(
+          `**Deviation ${index + 1}:**`,
+          `  📈 Output Diff: ${deviation.deviation.outputAmountDiffPercent.toFixed(2)}%`,
+          `  💰 Amount Diff: ${deviation.deviation.outputAmountDiff.toFixed(6)}`,
+          `  💸 Fees Diff: ${deviation.deviation.feesDiff.toFixed(6)} SOL`,
+          ``
+        )
+      }
+    })
+
+    // Add recommendations
+    lines.push(
+      `🔍 **Possible Causes:**`,
+      `• Quote timing differences`,
+      `• Network latency variations`,
+      `• Slippage calculation differences`,
+      `• Market volatility during execution`,
+      ``,
+      `💡 **Recommended Actions:**`,
+      `• Review quote timing synchronization`,
+      `• Check RPC latency patterns`,
+      `• Monitor market conditions during trades`,
+      ``,
+      `⏰ ${new Date().toLocaleString()}`
+    )
+
+    const content = lines.join('\n')
+
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    })
+
+    if (!response.ok) {
+      throw new Error(`Discord webhook failed: ${response.status}`)
+    }
+
+    logTradeOperation('Discord Significant Deviations Alert Success', {
+      tokenSymbol,
+      operationType,
+      deviationCount: deviations.length
+    })
+  } catch (err) {
+    logTradeOperation('Discord Significant Deviations Alert Error', {
+      tokenSymbol: params.tokenSymbol,
+      operationType: params.operationType
+    }, err as Error)
+  }
+}
+
 // Unified buy operation (supports both simulation and real trading)
 async function performBuyOperation(token: any, simulation: TradingSimulation): Promise<BuyOperation | null> {
   try {
     const isSimulated = simulation.is_simulated
     const operationType = isSimulated ? 'simulation' : 'real trade'
-    console.log(`💰 Performing buy ${operationType} for ${token.token_symbol} (${token.token_address})`)
+    console.log(`💰 Performing synchronized buy ${operationType} for ${token.token_symbol} (${token.token_address})`)
 
     // SOL mint address and trading parameters
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
@@ -1474,40 +2133,32 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       console.log(`🔥 Real trading safety checks passed - RPC healthy (${rpcHealth.latency}ms), sufficient balance${isRebuy ? ' (re-buy scenario)' : ''}`)
     }
 
-    // Choose executors
-    const executor = createTradeExecutor(
-      isSimulated,
+    // Create synchronized executor
+    const syncExecutor = createSynchronizedTradeExecutor(
       isSimulated ? undefined : tradingConnection!,
       isSimulated ? undefined : tradingSigner!
     )
 
-    // When doing a real trade we still want paper comparisons for other slippages
-    const simExecutor = isSimulated ? executor : new SimulationExecutor()
-
-    // Test different slippage configurations
+    // Test different slippage configurations with synchronization
     const slippageConfigs = [
-      { key: 'slippage_1', bps: 100 },   // 1% for simulation comparison
-      { key: 'slippage_2', bps: 200 },   // 2% for simulation comparison  
       { key: 'slippage_3', bps: 300 }    // 3% - required for real trades
     ]
 
     const configurations: any = {}
     const allResults: TradeExecutionResult[] = []
+    const syncResults: SyncedTradeResult[] = []
 
     // For real trading, use 3% slippage for execution but test all for comparison
-    // For simulation, test all configurations
     const configsToTest = slippageConfigs
     const realTradeSlippage = 300 // 3% slippage for real trades
 
     for (const config of configsToTest) {
       try {
-        console.log(`  📊 Testing ${config.key} (${config.bps} bps slippage)...`)
+        console.log(`  📊 Testing ${config.key} (${config.bps} bps slippage) with synchronization...`)
 
-        // For real trades, only the 3 % config hits chain – others use SimulationExecutor
-        const shouldActuallyExecute = isSimulated || config.bps === realTradeSlippage
-        const exec = shouldActuallyExecute ? executor : simExecutor
-
-        const result = await exec.executeBuy({
+        // Execute synchronized trade
+        const shouldExecuteReal = !isSimulated && config.bps === realTradeSlippage
+        const syncResult = await syncExecutor.executeSyncedBuy({
           tokenAddress: token.token_address,
           tokenSymbol: token.token_symbol,
           inputMint: SOL_MINT,
@@ -1515,8 +2166,13 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
           amount: BUY_AMOUNT_LAMPORTS,
           slippageBps: config.bps,
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
-          priorityFee: shouldActuallyExecute ? PRIORITY_FEE_LAMPORTS : 0
-        })
+          priorityFee: shouldExecuteReal ? PRIORITY_FEE_LAMPORTS : 0
+        }, shouldExecuteReal)
+
+        syncResults.push(syncResult)
+
+        // Use the appropriate result (real if available, otherwise simulation)
+        const result = syncResult.real || syncResult.simulation
 
         configurations[config.key] = {
           success: result.success,
@@ -1527,19 +2183,29 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
           best_provider: result.provider,
           rpc_used: result.rpcUsed,
           signature: result.signature,
-          error: result.error
+          error: result.error,
+          // Add synchronization data
+          sync_data: syncResult.deviation ? {
+            output_deviation_percent: syncResult.deviation.outputAmountDiffPercent,
+            fees_diff: syncResult.deviation.feesDiff,
+            response_time_diff: syncResult.deviation.responseTimeDiff
+          } : undefined
         }
 
         if (result.success) {
           allResults.push(result)
           console.log(`    ✅ ${config.key}: ${result.provider} - ${result.outputAmount} tokens, ${result.responseTime}ms${result.signature ? ` (${result.signature.slice(0, 8)}...)` : ''}`)
+
+          // Log synchronization results
+          if (syncResult.deviation) {
+            console.log(`    📊 Sync deviation: ${syncResult.deviation.outputAmountDiffPercent.toFixed(2)}% output, ${syncResult.deviation.feesDiff.toFixed(6)} SOL fees`)
+          }
         } else {
           console.log(`    ❌ ${config.key}: ${result.error}`)
         }
 
-        // For real trading, break loop once the live 3 % trade succeeded –
-        // we already gathered simulation results for other configs.
-        if (!isSimulated && result.success && shouldActuallyExecute) {
+        // For real trading, break loop once the live 3% trade succeeded
+        if (!isSimulated && result.success && shouldExecuteReal) {
           break
         }
 
@@ -1560,6 +2226,32 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       if (isSimulated) {
         await new Promise(resolve => setTimeout(resolve, 200))
       }
+    }
+
+    // Log synchronization summary
+    const significantDeviations = syncResults.filter(r =>
+      r.deviation && r.deviation.outputAmountDiffPercent > 2
+    )
+
+    if (significantDeviations.length > 0) {
+      console.warn(`⚠️ Found ${significantDeviations.length} significant deviations (>2%) for ${token.token_symbol}`)
+
+      // Send Discord alert for significant deviations
+      if (shouldEnableNotifications()) {
+        try {
+          await sendSignificantDeviationsAlertDiscord({
+            tokenSymbol: token.token_symbol,
+            tokenAddress: token.token_address,
+            deviations: significantDeviations,
+            operationType: 'buy'
+          })
+        } catch (discordError) {
+          console.error('❌ Failed to send significant deviations Discord alert:', discordError)
+          // Don't fail the operation if Discord notification fails
+        }
+      }
+    } else {
+      console.log(`✅ All synchronization results within acceptable range for ${token.token_symbol}`)
     }
 
     // Find best result (considering both amount and fees for real trades)
@@ -2015,13 +2707,14 @@ async function setTradingMode(isSimulated: boolean, keypairPath?: string): Promi
 }
 
 // Add endpoint to toggle trading mode
-export async function PUT(request: NextRequest) {
+export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
     const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
 
     if (secretKey !== expectedSecretKey) {
+      logger.warn('api_request', 'Unauthorized attempt to change trading mode', { ip: request.ip })
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -2029,14 +2722,17 @@ export async function PUT(request: NextRequest) {
     const { isSimulated, keypairPath } = body
 
     if (typeof isSimulated !== 'boolean') {
+      logger.warn('api_request', 'Invalid body for trading mode change', { body })
       return NextResponse.json({ error: 'isSimulated must be a boolean' }, { status: 400 })
     }
 
     if (!isSimulated && !keypairPath && !process.env.TRADING_KEYPAIR_JSON) {
+      logger.error('api_request', 'Trading keypair not configured for real mode')
       return NextResponse.json({ error: 'Trading keypair not configured. Provide keypairPath or set TRADING_KEYPAIR_JSON' }, { status: 400 })
     }
 
     await setTradingMode(isSimulated, keypairPath)
+    logger.info('api_request', `Trading mode changed to ${isSimulated ? 'simulated' : 'real'}`)
 
     // Send Discord notification about trading mode change
     if (shouldEnableNotifications()) {
@@ -2057,9 +2753,9 @@ export async function PUT(request: NextRequest) {
           body: JSON.stringify({ content })
         })
 
-        console.log(`✅ Discord notification sent for trading mode change: ${mode}`)
+        logger.info('discord_notification', 'Discord notification sent for trading mode change')
       } catch (discordError) {
-        console.error('❌ Failed to send Discord notification for trading mode change:', discordError)
+        logger.error('discord_notification', 'Failed to send Discord notification for trading mode change', discordError as Error)
         // Don't fail the operation if Discord fails
       }
     }
@@ -2071,19 +2767,18 @@ export async function PUT(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('Error in PUT /api/trending/track:', error)
+    logger.critical('api_request', 'Error in PUT /api/trending/track', error as Error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-}
+})
 
-async function internalTrackPost(request: NextRequest) {
+async function internalTrackPost(request: NextRequest, logger: any) {
   const requestStartTime = Date.now()
   const requestId = Math.random().toString(36).substring(7)
 
   try {
     // Log incoming request
-    logTradeOperation('Tracking Request Started', {
-      requestId,
+    logger.info('api_request', 'Tracking Request Started', {
       userAgent: request.headers.get('user-agent'),
       source: request.headers.get('user-agent')?.includes('reloadsol-cron-service') ? 'cron' : 'browser'
     })
@@ -2093,11 +2788,6 @@ async function internalTrackPost(request: NextRequest) {
     const secretKey = searchParams.get('key')
     const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
 
-    // Check if this is a Vercel cron job (has special headers)
-    const isVercelCron = request.headers.get('vercel-cron') === '1' ||
-      request.headers.get('user-agent')?.includes('vercel-cron') ||
-      process.env.VERCEL === '1' && !secretKey && !request.headers.get('referer')
-
     // Allow calls from:
     // 1. Vercel cron jobs (internal calls)
     // 2. Localhost in development (no secret needed)
@@ -2105,9 +2795,7 @@ async function internalTrackPost(request: NextRequest) {
     const isDevelopment = process.env.NODE_ENV === 'development'
     const isLocalhost = request.headers.get('host')?.includes('localhost') || request.headers.get('host')?.includes('127.0.0.1')
 
-    if (isVercelCron) {
-      console.log('🤖 Vercel cron job detected: allowing combined tracking+summary API call')
-    } else if (isDevelopment && isLocalhost && !secretKey) {
+    if (isDevelopment && isLocalhost && !secretKey) {
       console.log('🔓 Development mode: allowing combined tracking+summary API call without secret key')
     } else if (secretKey !== expectedSecretKey) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -2170,33 +2858,37 @@ async function internalTrackPost(request: NextRequest) {
 
     const data = await response.json() as JupiterResponse
 
-    // Filter tokens using quality criteria
-    const filteredTokens = data.pools
-      .filter(pool =>
-        // 1. Avoid total crashes (> 40% drops are ignored & less than 60% rises are ignored)
-        (pool.baseAsset.stats5m?.priceChange ?? 0) > -0.40 &&
-        (pool.baseAsset.stats6h?.priceChange ?? 0) < 0.60 &&
-        // 2. Quality filters
-        pool.baseAsset.organicScore >= 70 &&
-        pool.baseAsset.mcap > 350_000 &&
-        pool.baseAsset.mcap < 2_000_000 &&
-        // 3. Filter > 25% Holders 
-        pool.baseAsset.audit.topHoldersPercentage < 25
-      )
-      .map(pool => ({
-        token_address: pool.baseAsset.id,
-        token_symbol: pool.baseAsset.symbol,
-        token_name: pool.baseAsset.name,
-        logo_url: pool.baseAsset.icon,
-        current_price: pool.baseAsset.usdPrice,
-        organic_score: pool.baseAsset.organicScore,
-        market_cap: pool.baseAsset.mcap,
-        volume_1h: pool.baseAsset.stats1h.buyVolume,
-        change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
-        change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100
-      }))
+    // Enhanced filtering with comprehensive tracking
+    console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
+    const { results: filterResults, summary: filteringSummary } = performEnhancedFiltering(data.pools)
 
-    console.log(`📊 Found ${filteredTokens.length} trending tokens to process`)
+    // Extract accepted tokens
+    const filteredTokens = filterResults
+      .filter(result => result.passed)
+      .map(result => result.mappedToken)
+
+    // Extract rejected tokens
+    const rejectedTokens = filterResults.filter(result => !result.passed)
+
+    console.log(`📊 Filtering complete: ${filteringSummary.acceptedTokens} accepted, ${filteringSummary.rejectedTokens} rejected`)
+
+    // Determine if real trading is enabled
+    const hasKeypair = !!process.env.TRADING_KEYPAIR_JSON
+    const hasWebhook = !!process.env.DISCORD_WEBHOOK_AUTO_TRADE
+    const isRealTrading = hasKeypair && hasWebhook
+
+    try {
+      // Send filtering summary
+      await sendFilteringSummaryDiscord(filteringSummary, isRealTrading)
+
+      // Send rejected tokens details (if any)
+      if (rejectedTokens.length > 0) {
+        await sendRejectedTokensDiscord(rejectedTokens, isRealTrading)
+      }
+    } catch (discordError) {
+      console.error('❌ Error sending Discord filtering notifications:', discordError)
+      // Continue processing even if Discord notifications fail
+    }
 
     // Get currently tracked and waiting tokens
     const { data: trackedTokens, error: fetchError } = await supabase
@@ -3072,34 +3764,34 @@ async function internalTrackPost(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
+export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
-    console.log('🚀 Starting trending token tracking...')
+    logger.info('api_request', 'Starting trending token tracking...')
 
     // Run wallet diagnostics to help troubleshoot balance issues
     await diagnoseTradingWallet()
 
-    return await internalTrackPost(request)
+    return await internalTrackPost(request, logger)
   } catch (error) {
-    console.error('❌ Error in POST handler:', error)
+    logger.critical('api_request', 'Error in POST handler', error as Error)
     return NextResponse.json({
       error: 'Failed to process tracking request',
       message: error instanceof Error ? error.message : 'Unknown error'
     }, { status: 500 })
   }
-}
+})
 
-export async function GET(request: NextRequest) {
+export const GET = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
     const { searchParams } = new URL(request.url)
     const tokenAddress = searchParams.get('token')
 
     if (!tokenAddress) {
-      return NextResponse.json({
-        error: 'Token address is required',
-        example: '/api/trending/track?token=TOKEN_ADDRESS'
-      }, { status: 400 })
+      logger.warn('api_request', 'Token address missing from request')
+      return NextResponse.json({ error: 'Token address is required', example: '/api/trending/track?token=TOKEN_ADDRESS' }, { status: 400 })
     }
+
+    logger.info('api_request', 'Fetching token tracking data', { tokenAddress })
 
     // Get token data with trade comparison
     const { data: token, error } = await supabase
@@ -3109,11 +3801,11 @@ export async function GET(request: NextRequest) {
       .single()
 
     if (error || !token) {
-      return NextResponse.json({
-        error: 'Token not found',
-        token_address: tokenAddress
-      }, { status: 404 })
+      logger.warn('api_request', 'Tracked token not found', { tokenAddress, error })
+      return NextResponse.json({ error: 'Token not found', token_address: tokenAddress }, { status: 404 })
     }
+
+    logger.info('api_request', 'Successfully retrieved tracked token', { tokenAddress, status: token.status })
 
     return NextResponse.json({
       success: true,
@@ -3142,14 +3834,14 @@ export async function GET(request: NextRequest) {
     })
 
   } catch (error) {
-    console.error('❌ Error retrieving token trade comparison:', error)
+    logger.error('api_request', 'Error retrieving token trade comparison', error as Error)
     return NextResponse.json({
       error: 'Failed to retrieve token trade comparison',
       message: error instanceof Error ? error.message : 'Unknown error',
       timestamp: new Date().toISOString()
     }, { status: 500 })
   }
-}
+})
 
 // Helper function to determine notification status
 function getNotificationStatus(simulationStatus: TradingSimulationStatus): TradeAlertStatus {

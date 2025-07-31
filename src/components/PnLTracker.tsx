@@ -12,7 +12,6 @@ import { trackSell } from '@/utils/operations-api'
 import { usePnLShare } from '@/hooks/usePnLShare'
 import PnLShareModal from './PnLShareModal'
 import { pnlShareService } from '@/utils/pnl-share-service'
-// Using emojis for bot operations to avoid dependencies
 
 interface PnLRecord {
   id: string
@@ -129,15 +128,6 @@ export default function PnLTracker() {
     localStorage.setItem('pnl-closed-positions-hint-dismissed', 'true')
   }, [])
 
-  // Add this useEffect after other useEffect hooks to persist dismissal state
-  useEffect(() => {
-    const hintDismissed = localStorage.getItem('pnl-closed-positions-hint-dismissed')
-    if (hintDismissed === 'true') {
-      setShowClosedPositionsHint(false)
-    }
-  }, [])
-
-  // ✅ NEW: Bot operation indicator component
   const BotOperationIndicator = ({ isBotOperation, botStrategy }: { 
     isBotOperation?: boolean, 
     botStrategy?: string 
@@ -157,6 +147,14 @@ export default function PnLTracker() {
       </div>
     )
   }
+
+  // Add this useEffect after other useEffect hooks to persist dismissal state
+  useEffect(() => {
+    const hintDismissed = localStorage.getItem('pnl-closed-positions-hint-dismissed')
+    if (hintDismissed === 'true') {
+      setShowClosedPositionsHint(false)
+    }
+  }, [])
 
   // Clear old localStorage data on component mount
   useEffect(() => {
@@ -615,6 +613,12 @@ export default function PnLTracker() {
     setIsChartLoading(true)
   }, [])
 
+  // Add this function for opening charts
+  const handleOpenChart = useCallback((mintAddress: string, symbol?: string) => {
+    setSelectedToken(mintAddress)
+    setIsChartLoading(true)
+  }, [])
+
   // ✅ NEW: Manual share trigger function (for existing share buttons)
   const handleShare = useCallback(async (coinName: string, profitPercentage: number, tokenAddress?: string) => {
     await showShareModal({
@@ -948,10 +952,9 @@ export default function PnLTracker() {
   }
 
   return (
-    <div className="space-y-2">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
+    <div className="rounded-lg h-full flex flex-col">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center space-x-2">
           {isBotSyncActive && (
             <div className="flex items-center space-x-2 text-purple-400">
               <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse"></div>
@@ -961,14 +964,63 @@ export default function PnLTracker() {
         </div>
       </div>
 
+      {/* Chart Display Section */}
+      {selectedToken && (
+        <div className="rounded-lg border border-gray-600">
+          <div className="flex items-center justify-between border-b border-gray-700">
+            <button
+              onClick={() => {
+                setSelectedToken('')
+                setIsChartLoading(false)
+              }}
+              className="text-gray-400 hover:text-white transition-colors"
+              title="Close Chart"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="p-3">
+            {isChartLoading && (
+              <div className="flex items-center justify-center py-8">
+                <div className="flex items-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="text-gray-400">Loading chart...</span>
+                </div>
+              </div>
+            )}
+            <iframe
+              src={`https://www.gmgn.cc/kline/sol/${selectedToken}?interval=1D&theme=dark`}
+              height="400"
+              className="w-full rounded-lg"
+              style={{ 
+                border: 'none', 
+                display: isChartLoading ? 'none' : 'block' 
+              }}
+              title={`GMGN Chart - ${selectedToken}`}
+              onLoad={() => setIsChartLoading(false)}
+              onError={() => {
+                console.error('Chart failed to load for token:', selectedToken)
+                setIsChartLoading(false)
+              }}
+              allowFullScreen
+              frameBorder="0"
+              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            />
+          </div>
+        </div>
+      )}
+
       {/* Tab Navigation */}
-      <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
+      <div className="flex space-x-1 rounded-lg p-1 mb-4">
+        <h2 className="text-lg font-semibold mr-4 bg-black text-white">
+          Your PnL
+        </h2>
         <button
           onClick={() => setActiveTab('completed')}
           className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
             activeTab === 'completed'
-              ? 'bg-blue-600 text-white'
-              : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              ? 'bg-gray-600 text-white'
+              : 'text-gray-200 hover:text-white hover:bg-gray-400'
           }`}
         >
           Past ({pnlRecords.length})
@@ -977,8 +1029,8 @@ export default function PnLTracker() {
           onClick={() => setActiveTab('open')}
           className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
             activeTab === 'open'
-              ? 'bg-blue-600 text-white'
-              : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              ? 'bg-gray-600 text-white'
+              : 'text-gray-200 hover:text-white hover:bg-gray-400'
           }`}
         >
           Open ({openPositions.length})
@@ -989,7 +1041,7 @@ export default function PnLTracker() {
               <button
                 onClick={refreshOpenPositionPrices}
                 disabled={isRefreshingPrices}
-                className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-sm rounded-lg flex items-center space-x-1 transition-colors"
+                className="px-3 py-1.5 text-white text-sm rounded-lg flex items-center space-x-1 transition-colors"
               >
                 <svg className={`w-4 h-4 ${isRefreshingPrices ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -1001,17 +1053,18 @@ export default function PnLTracker() {
       </div>
 
       {/* Content */}
-      {isLoading ? (
-        <div className="space-y-4">
-          {[...Array(3)].map((_, i) => (
-            <TokenSkeleton key={i} />
-          ))}
-        </div>
-      ) : error ? (
-        <div className="text-center py-8">
-          <p className="text-red-400 text-sm">{error}</p>
-        </div>
-      ) : (
+      <div className="flex-1 overflow-hidden">
+        {isLoading ? (
+          <div className="space-y-4">
+            {[...Array(3)].map((_, i) => (
+              <TokenSkeleton key={i} />
+            ))}
+          </div>
+        ) : error ? (
+          <div className="text-center py-8">
+            <p className="text-red-400 text-sm">{error}</p>
+          </div>
+        ) : (
         <>
           {activeTab === 'completed' && (
             <>
@@ -1050,104 +1103,144 @@ export default function PnLTracker() {
                 </div>
               ) : (
                 <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
-                  {pnlRecords.map((record) => (
-                    <div
-                      key={record.id}
-                      className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 w-auto rounded-lg cursor-pointer group py-2 px-3 border ${
-                        record.isBotOperation 
-                          ? 'border-purple-500/30 bg-purple-900/10' 
-                          : 'border-gray-600/30'
-                      }`}
-                      onClick={() => openTransactionOnSolscan(record.sellSignatures)}
-                      title="Click to view transaction on Solscan"
-                    >
-                      {/* Header: P&L and Share Button */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-1">
-                          <span className={`text-sm font-medium ${
-                            record.pnlPercentage > 0 
+                  {pnlRecords.map((record) => {
+                    // Calculate USD amounts
+                    const buyAmountUSD = record.solAmountBought * solPriceUsd
+                    const pnlAmountUSD = buyAmountUSD * (record.pnlPercentage / 100)
+                    
+                    return (
+                      <div
+                        key={record.id}
+                        className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 w-auto rounded-lg cursor-pointer group py-2 px-3 border ${
+                          record.isBotOperation 
+                            ? 'border-purple-500/30 bg-purple-900/10' 
+                            : 'border-gray-600/30'
+                        }`}
+                        onClick={() => openTransactionOnSolscan(record.sellSignatures)}
+                        title="Click to view transaction on Solscan"
+                      >
+                        {/* Header: P&L and Action Buttons */}
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center space-x-1">
+                            <span className={`text-sm font-medium ${
+                              record.pnlPercentage > 0 
+                                ? 'text-green-400' 
+                                : record.pnlPercentage < 0 
+                                  ? 'text-red-400' 
+                                  : 'text-gray-400'
+                            }`}>
+                              {record.pnlPercentage > 0 ? '+' : ''}{record.pnlPercentage.toFixed(1)}%
+                            </span>
+                            <BotOperationIndicator 
+                              isBotOperation={record.isBotOperation} 
+                              botStrategy={record.botStrategy} 
+                            />
+                          </div>
+                          
+                          <div className="flex items-center space-x-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleOpenChart(record.mintAddress, record.symbol)
+                              }}
+                              className="px-1.5 py-0.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Open Chart"
+                            >
+                              📈
+                            </button>
+                            
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleShare(
+                                  record.symbol || record.name || 'Token',
+                                  record.pnlPercentage,
+                                  record.mintAddress
+                                )
+                              }}
+                              className="px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Share"
+                            >
+                              📤
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Token display */}
+                        <div className="flex items-center space-x-2 mb-2">
+                          <div className="relative flex items-center">
+                            <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
+                              {record.logoURI ? (
+                                <img
+                                  src={record.logoURI}
+                                  alt={record.symbol || record.name || 'Token'}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    e.currentTarget.onerror = null
+                                    e.currentTarget.src = ''
+                                    const parent = e.currentTarget.parentElement as HTMLElement | null
+                                    if (parent) {
+                                      parent.textContent = (record.symbol || record.name || '?').charAt(0).toUpperCase()
+                                    }
+                                  }}
+                                />
+                              ) : ((record.symbol || record.name || '?').charAt(0).toUpperCase())}
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center space-x-1 flex-1 min-w-0">
+                            <span className="text-xs text-gray-300 font-medium truncate">
+                              {record.symbol || record.name || 'Unknown'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Buy Price Display */}
+                        <div className="text-xs text-gray-400 mb-1">
+                          <span className="text-gray-500">Buy Price: </span>
+                          <span className="text-gray-300">${record.buyPrice.toFixed(6)}</span>
+                        </div>
+
+                        {/* SOL amounts */}
+                        <div className="text-xs text-gray-300 mb-1">
+                          {record.solAmountBought.toFixed(3)} → {record.solAmountSold.toFixed(3)} SOL
+                        </div>
+
+                        {/* USD P&L Amount */}
+                        <div className="text-xs mb-1">
+                          <span className="text-gray-500">P&L: </span>
+                          <span className={`font-medium ${
+                            pnlAmountUSD > 0 
                               ? 'text-green-400' 
-                              : record.pnlPercentage < 0 
+                              : pnlAmountUSD < 0 
                                 ? 'text-red-400' 
                                 : 'text-gray-400'
                           }`}>
-                            {record.pnlPercentage > 0 ? '+' : ''}{record.pnlPercentage.toFixed(1)}%
+                            {pnlAmountUSD > 0 ? '+' : ''}${Math.abs(pnlAmountUSD).toFixed(2)}
                           </span>
-                          <BotOperationIndicator 
-                            isBotOperation={record.isBotOperation} 
-                            botStrategy={record.botStrategy} 
-                          />
                         </div>
-                        
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleShare(
-                              record.symbol || record.name || 'Token',
-                              record.pnlPercentage,
-                              record.mintAddress
-                            )
-                          }}
-                          className="px-1.5 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          📤
-                        </button>
-                      </div>
 
-                      {/* Token display */}
-                      <div className="flex items-center space-x-2 mb-2">
-                        <div className="relative flex items-center">
-                          <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
-                            {record.logoURI ? (
-                              <img
-                                src={record.logoURI}
-                                alt={record.symbol || record.name || 'Token'}
-                                className="w-full h-full object-cover"
-                                onError={(e) => {
-                                  e.currentTarget.onerror = null
-                                  e.currentTarget.src = ''
-                                  const parent = e.currentTarget.parentElement as HTMLElement | null
-                                  if (parent) {
-                                    parent.textContent = (record.symbol || record.name || '?').charAt(0).toUpperCase()
-                                  }
-                                }}
-                              />
-                            ) : ((record.symbol || record.name || '?').charAt(0).toUpperCase())}
+                        {/* Footer: Status and timestamp */}
+                        <div className="flex items-center justify-between text-xs text-gray-400">
+                          <span>{formatRelativeTime(record.sellTimestamp)}</span>
+                          <div className="flex items-center space-x-1">
+                            {record.status && (
+                              <span className={`text-xs px-1 py-0.5 rounded ${
+                                record.status === 'won' ? 'bg-green-900/50 text-green-300' :
+                                record.status === 'lost' ? 'bg-red-900/50 text-red-300' :
+                                'bg-gray-900/50 text-gray-300'
+                              }`}>
+                                {record.status.toUpperCase()}
+                              </span>
+                            )}
+                            {record.tradeComparisonData && (
+                              <span className="text-cyan-400" title="Trade Comparison Available">📊</span>
+                            )}
                           </div>
                         </div>
-                        
-                        <div className="flex items-center space-x-1 flex-1 min-w-0">
-                          <span className="text-xs text-gray-300 font-medium truncate">
-                            {record.symbol || record.name || 'Unknown'}
-                          </span>
-                        </div>
                       </div>
-
-                      {/* SOL amounts */}
-                      <div className="text-xs text-gray-300 mb-1">
-                        {record.solAmountBought.toFixed(3)} → {record.solAmountSold.toFixed(3)} SOL
-                      </div>
-
-                      {/* Footer: Status and timestamp */}
-                      <div className="flex items-center justify-between text-xs text-gray-400">
-                        <span>{formatRelativeTime(record.sellTimestamp)}</span>
-                        <div className="flex items-center space-x-1">
-                          {record.status && (
-                            <span className={`text-xs px-1 py-0.5 rounded ${
-                              record.status === 'won' ? 'bg-green-900/50 text-green-300' :
-                              record.status === 'lost' ? 'bg-red-900/50 text-red-300' :
-                              'bg-gray-900/50 text-gray-300'
-                            }`}>
-                              {record.status.toUpperCase()}
-                            </span>
-                          )}
-                          {record.tradeComparisonData && (
-                            <span className="text-cyan-400" title="Trade Comparison Available">📊</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </>
@@ -1162,122 +1255,169 @@ export default function PnLTracker() {
                 </div>
               ) : (
                 <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
-                  {openPositions.map((position) => (
-                    <div
-                      key={position.id}
-                      className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[100px] rounded-lg cursor-pointer group py-2 px-3 border ${
-                        position.isBotOperation 
-                          ? 'border-purple-500/30 bg-purple-900/10' 
-                          : 'border-gray-600/30'
-                      }`}
-                      title="Open position"
-                    >
-                      {/* Header: P&L and Fast Sell Button */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center space-x-1">
-                          {position.isLoadingPrice ? (
-                            <div className="flex items-center space-x-1">
-                              <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
-                              <span className="text-xs text-gray-400">...</span>
+                  {openPositions.map((position) => {
+                    // Calculate USD amounts for open positions
+                    const buyAmountUSD = position.solAmountBought * solPriceUsd
+                    const pnlAmountUSD = position.pnlPercentage !== undefined 
+                      ? buyAmountUSD * (position.pnlPercentage / 100) 
+                      : 0
+                    
+                    return (
+                      <div
+                        key={position.id}
+                        className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[100px] rounded-lg cursor-pointer group py-2 px-3 border ${
+                          position.isBotOperation 
+                            ? 'border-purple-500/30 bg-purple-900/10' 
+                            : 'border-gray-600/30'
+                        }`}
+                        title="Open position"
+                      >
+                        {/* Header: P&L and Action Buttons */}
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center space-x-1">
+                            {position.isLoadingPrice ? (
+                              <div className="flex items-center space-x-1">
+                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
+                                <span className="text-xs text-gray-400">...</span>
+                              </div>
+                            ) : position.pnlPercentage !== undefined ? (
+                              <span className={`text-sm font-medium ${
+                                position.pnlPercentage > 0 
+                                  ? 'text-green-400' 
+                                  : position.pnlPercentage < 0 
+                                    ? 'text-red-400' 
+                                    : 'text-gray-400'
+                              }`}>
+                                {position.pnlPercentage > 0 ? '+' : ''}{position.pnlPercentage.toFixed(1)}%
+                              </span>
+                            ) : (
+                              <span className="text-blue-400 text-xs">OPEN</span>
+                            )}
+                            <BotOperationIndicator 
+                              isBotOperation={position.isBotOperation} 
+                              botStrategy={position.botStrategy} 
+                            />
+                          </div>
+                          
+                          <div className="flex items-center space-x-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleOpenChart(position.mintAddress, position.symbol)
+                              }}
+                              className="px-1.5 py-0.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Open Chart"
+                            >
+                              📈
+                            </button>
+                            
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleFastSell(position, e)
+                              }}
+                              disabled={isSelling && sellingTokenId === position.id}
+                              className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Fast Sell"
+                            >
+                              {isSelling && sellingTokenId === position.id ? (
+                                <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
+                              ) : (
+                                '🔴'
+                              )}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Token display */}
+                        <div className="flex items-center space-x-2 mb-2">
+                          <div className="relative flex items-center">
+                            <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
+                              {position.logoURI ? (
+                                <img
+                                  src={position.logoURI}
+                                  alt={position.symbol || position.name || 'Token'}
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    e.currentTarget.onerror = null
+                                    e.currentTarget.src = ''
+                                    const parent = e.currentTarget.parentElement as HTMLElement | null
+                                    if (parent) {
+                                      parent.textContent = (position.symbol || position.name || '?').charAt(0).toUpperCase()
+                                    }
+                                  }}
+                                />
+                              ) : ((position.symbol || position.name || '?').charAt(0).toUpperCase())}
                             </div>
-                          ) : position.pnlPercentage !== undefined ? (
-                            <span className={`text-sm font-medium ${
-                              position.pnlPercentage > 0 
+                          </div>
+                          
+                          <div className="flex items-center space-x-1 flex-1 min-w-0">
+                            <span className="text-xs text-gray-300 font-medium truncate">
+                              {position.symbol || position.name || 'Unknown'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Buy Price Display */}
+                        <div className="text-xs text-gray-400 mb-1">
+                          <span className="text-gray-500">Buy Price: </span>
+                          <span className="text-gray-300">
+                            ${position.buyPriceUsd ? position.buyPriceUsd.toFixed(6) : (buyAmountUSD / position.solAmountBought).toFixed(6)}
+                          </span>
+                        </div>
+
+                        {/* SOL amount */}
+                        <div className="text-xs text-gray-300 mb-1">
+                          {position.solAmountBought.toFixed(3)} SOL
+                        </div>
+
+                        {/* USD P&L Amount */}
+                        {position.pnlPercentage !== undefined && (
+                          <div className="text-xs mb-1">
+                            <span className="text-gray-500">P&L: </span>
+                            <span className={`font-medium ${
+                              pnlAmountUSD > 0 
                                 ? 'text-green-400' 
-                                : position.pnlPercentage < 0 
+                                : pnlAmountUSD < 0 
                                   ? 'text-red-400' 
                                   : 'text-gray-400'
                             }`}>
-                              {position.pnlPercentage > 0 ? '+' : ''}{position.pnlPercentage.toFixed(1)}%
+                              {pnlAmountUSD > 0 ? '+' : ''}${Math.abs(pnlAmountUSD).toFixed(2)}
                             </span>
-                          ) : (
-                            <span className="text-blue-400 text-xs">OPEN</span>
-                          )}
-                          <BotOperationIndicator 
-                            isBotOperation={position.isBotOperation} 
-                            botStrategy={position.botStrategy} 
-                          />
-                        </div>
-                        
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            handleFastSell(position, e)
-                          }}
-                          disabled={isSelling && sellingTokenId === position.id}
-                          className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                        >
-                          {isSelling && sellingTokenId === position.id ? (
-                            <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
-                          ) : (
-                            '🔴'
-                          )}
-                        </button>
-                      </div>
+                          </div>
+                        )}
 
-                      {/* Token display */}
-                      <div className="flex items-center space-x-2 mb-2">
-                        <div className="relative flex items-center">
-                          <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
-                            {position.logoURI ? (
-                              <img
-                                src={position.logoURI}
-                                alt={position.symbol || position.name || 'Token'}
-                                className="w-full h-full object-cover"
-                                onError={(e) => {
-                                  e.currentTarget.onerror = null
-                                  e.currentTarget.src = ''
-                                  const parent = e.currentTarget.parentElement as HTMLElement | null
-                                  if (parent) {
-                                    parent.textContent = (position.symbol || position.name || '?').charAt(0).toUpperCase()
-                                  }
-                                }}
-                              />
-                            ) : ((position.symbol || position.name || '?').charAt(0).toUpperCase())}
+                        {/* Footer: USD value and indicators */}
+                        <div className="flex items-center justify-between text-xs text-gray-400">
+                          <span>~${buyAmountUSD.toFixed(0)}</span>
+                          <div className="flex items-center space-x-1">
+                            {position.tradingSimulation && (
+                              <span className="text-purple-300" title="Trading Simulation">SIM</span>
+                            )}
+                            {position.tradeComparisonData && (
+                              <span className="text-cyan-400" title="Trade Comparison Available">📊</span>
+                            )}
+                            {position.waitingStartedAt && (
+                              <span className="text-yellow-400" title="Waiting">⏳</span>
+                            )}
                           </div>
                         </div>
-                        
-                        <div className="flex items-center space-x-1 flex-1 min-w-0">
-                          <span className="text-xs text-gray-300 font-medium truncate">
-                            {position.symbol || position.name || 'Unknown'}
-                          </span>
-                        </div>
                       </div>
-
-                      {/* SOL amount */}
-                      <div className="text-xs text-gray-300 mb-1">
-                        {position.solAmountBought.toFixed(3)} SOL
-                      </div>
-
-                      {/* Footer: USD value and indicators */}
-                      <div className="flex items-center justify-between text-xs text-gray-400">
-                        <span>~${(position.solAmountBought * solPriceUsd).toFixed(0)}</span>
-                        <div className="flex items-center space-x-1">
-                          {position.tradingSimulation && (
-                            <span className="text-purple-300" title="Trading Simulation">SIM</span>
-                          )}
-                          {position.tradeComparisonData && (
-                            <span className="text-cyan-400" title="Trade Comparison Available">📊</span>
-                          )}
-                          {position.waitingStartedAt && (
-                            <span className="text-yellow-400" title="Waiting">⏳</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </>
           )}
-        </>
-      )}
+          </>
+        )}
 
-      {!connected && (
-        <div className="text-center py-4">
-          <p className="text-gray-400 text-sm">Connect your wallet to track trading performance</p>
-        </div>
-      )}
+        {!connected && (
+          <div className="text-center py-8">
+            <p className="text-gray-400 text-sm">Connect your wallet to track trading performance</p>
+          </div>
+        )}
+      </div>
 
       {/* ✅ NEW: Replace the old share modal with the new modular one */}
       <PnLShareModal

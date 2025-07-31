@@ -41,6 +41,28 @@ const nextConfig = {
 
   // ===== SECURITY HEADERS =====
   async headers() {
+    // Define allowed origins based on environment
+    const getAllowedOrigins = () => {
+      const baseOrigins = [
+        'https://v2.reloadsol.xyz',      // Production
+        'https://testing.reloadsol.xyz', // Testing/Staging
+      ];
+
+      // Add development origins in non-production
+      if (process.env.NODE_ENV !== 'production') {
+        baseOrigins.push(
+          'http://localhost:3000',
+          'http://localhost:3001',
+          'http://127.0.0.1:3000',
+          'http://127.0.0.1:3001'
+        );
+      }
+
+      return baseOrigins;
+    };
+
+    const allowedOrigins = getAllowedOrigins();
+
     return [
       {
         source: '/(.*)',
@@ -63,9 +85,7 @@ const nextConfig = {
           },
           {
             key: 'Access-Control-Allow-Origin',
-            value: process.env.NODE_ENV === 'production'
-              ? 'https://v2.reloadsol.xyz'
-              : '*'
+            value: allowedOrigins.join(', ')
           },
           {
             key: 'Access-Control-Allow-Methods',
@@ -79,10 +99,10 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: `
               default-src 'self';
-              script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com *.jup.ag;
+              script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com *.jup.ag *.simpleanalyticscdn.com;
               style-src 'self' 'unsafe-inline' fonts.googleapis.com;
               font-src 'self' fonts.gstatic.com;
-              img-src 'self' data: blob: *.githubusercontent.com *.coingecko.com *.1inch.io *.vercel.app s3.coinmarketcap.com pbs.twimg.com ipfs.io arweave.net cdn.jsdelivr.net cryptologos.cc *.degencdn.com static-create.jup.ag *.duckduckgo.com *.solana.fm *.cf-ipfs.com *.arweave.net;
+              img-src 'self' data: blob: https:;
               connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com wss: https:;
               frame-src 'self' https://auth.privy.io https://www.gmgn.cc https://gmgn.cc https://terminal.jup.ag/;
               object-src 'none';
@@ -160,7 +180,7 @@ const nextConfig = {
         cacheGroups: {
           default: false,
           vendors: false,
-          
+
           // ESSENTIAL: Only framework in initial bundle
           framework: {
             name: 'framework',
