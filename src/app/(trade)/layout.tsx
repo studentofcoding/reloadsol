@@ -7,7 +7,6 @@ import PnLTracker from '@/components/PnLTracker'
 import Footer from '@/components/Footer'
 import NavigationTabs from '@/components/NavigationTabs'
 import { useWallet } from '@/components/WalletProvider'
-import { isDevWallet } from '@/utils/dev-wallet'
 import { useState } from 'react'
 
 export default function TradeLayout({
@@ -57,16 +56,8 @@ export default function TradeLayout({
               </div>
             )}
             
-            {activeInfoTab === 'pnl' && isDevWallet(publicKey) && (
-              <div>
-                <div className="text-left mb-3">
-                  <h2 className="text-lg font-semibold text-white">
-                    Your PnL Performance 
-                    {isDevWallet(publicKey) && (
-                      <span className="ml-2 text-xs bg-yellow-600 text-yellow-100 px-2 py-1 rounded">DEV</span>
-                    )}
-                  </h2>
-                </div>
+            {activeInfoTab === 'pnl' && (
+              <div className="text-left mb-3">
                 <PnLTracker />
               </div>
             )}

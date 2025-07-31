@@ -16,9 +16,9 @@ export function logTradeOperation(operation: string, data: any, error?: Error) {
     'Discord Trade Alert': 'discord_notification',
     'Error Handling': 'error_handling'
   }
-  
+
   const mappedOperation = operationMap[operation] || 'api_request'
-  
+
   if (error) {
     log.error(mappedOperation, `${operation} failed`, error, data)
   } else {
