@@ -52,6 +52,9 @@ export default function RootLayout({
 }: {
   children: React.ReactNode
 }) {
+  // Only load Vercel Analytics when actually deployed on Vercel
+  const isVercelDeployment = process.env.VERCEL === '1' || process.env.VERCEL_URL;
+  
   return (
     <html lang="en">
       <body>
@@ -60,11 +63,11 @@ export default function RootLayout({
             {children}
           </TradingDataProvider>
         </WalletProvider>
-        <Analytics />
+        {isVercelDeployment && <Analytics />}
       </body>
       <script async src="https://scripts.simpleanalyticscdn.com/latest.js"></script>
       {/* Jupiter Terminal script to prevent hydration mismatches */}
       <script async src="https://terminal.jup.ag/main-v4.js" data-enable-lazy-load></script>
     </html>
   )
-} 
+}

@@ -41,6 +41,28 @@ const nextConfig = {
 
   // ===== SECURITY HEADERS =====
   async headers() {
+    // Define allowed origins based on environment
+    const getAllowedOrigins = () => {
+      const baseOrigins = [
+        'https://v2.reloadsol.xyz',      // Production
+        'https://testing.reloadsol.xyz', // Testing/Staging
+      ];
+
+      // Add development origins in non-production
+      if (process.env.NODE_ENV !== 'production') {
+        baseOrigins.push(
+          'http://localhost:3000',
+          'http://localhost:3001',
+          'http://127.0.0.1:3000',
+          'http://127.0.0.1:3001'
+        );
+      }
+
+      return baseOrigins;
+    };
+
+    const allowedOrigins = getAllowedOrigins();
+
     return [
       {
         source: '/(.*)',
@@ -63,9 +85,7 @@ const nextConfig = {
           },
           {
             key: 'Access-Control-Allow-Origin',
-            value: process.env.NODE_ENV === 'production'
-              ? 'https://v2.reloadsol.xyz'
-              : '*'
+            value: allowedOrigins.join(', ')
           },
           {
             key: 'Access-Control-Allow-Methods',
