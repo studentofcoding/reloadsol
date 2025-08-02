@@ -2706,16 +2706,133 @@ async function setTradingMode(isSimulated: boolean, keypairPath?: string): Promi
   }
 }
 
-// Add endpoint to toggle trading mode
+// Add endpoint to toggle trading mode and test Discord notifications
 export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
     const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+    const testDiscord = searchParams.get('test') === 'discord'
 
     if (secretKey !== expectedSecretKey) {
       logger.warn('api_request', 'Unauthorized attempt to change trading mode', { ip: request.ip })
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Handle Discord testing
+    if (testDiscord) {
+      // Check Discord configuration
+      const discordEnabled = shouldEnableNotifications()
+      const webhookUrl = DISCORD_WEBHOOK_URL
+      
+      console.log('Track Discord Configuration Test:', {
+        discordEnabled,
+        webhookConfigured: !!webhookUrl,
+        webhookUrl: webhookUrl ? `${webhookUrl.substring(0, 50)}...` : 'Not configured',
+        env: {
+          DISCORD_WEBHOOK_AUTO_TRADE: !!process.env.DISCORD_WEBHOOK_AUTO_TRADE,
+          DISCORD_WEBHOOK_URL: !!process.env.DISCORD_WEBHOOK_URL,
+          ENABLE_DISCORD_NOTIFICATIONS: process.env.ENABLE_DISCORD_NOTIFICATIONS
+        }
+      })
+
+      // Test different types of Discord notifications
+      const testResults = []
+
+      // Test 1: New Token Detection
+      try {
+        console.log('Testing new token detection notification...')
+        await sendNewTokenDetectionDiscord({
+          tokenAddress: 'TEST123456789',
+          tokenSymbol: 'TEST',
+          tokenName: 'Test Token',
+          currentPrice: 0.000123,
+          marketCap: 500000,
+          organicScore: 85.5,
+          volume1h: 25000,
+          isRealTrading: false
+        })
+        testResults.push({ type: 'new_token_detection', success: true })
+        console.log('New token detection test: SUCCESS')
+      } catch (error) {
+        testResults.push({ 
+          type: 'new_token_detection', 
+          success: false, 
+          error: error instanceof Error ? error.message : 'Unknown error' 
+        })
+        console.error('New token detection test: FAILED', error)
+      }
+
+      // Test 2: Buy Notification
+      try {
+        console.log('Testing buy notification...')
+        await sendBuyNotificationDiscord({
+          tokenSymbol: 'TEST',
+          tokenAddress: 'TEST123456789',
+          isSimulated: true,
+          amountSOL: 0.1,
+          tokensReceived: '1000000',
+          priceUSD: 0.000123,
+          provider: 'jupiter',
+          rpcUsed: 'test-rpc',
+          responseTime: 150,
+          totalFees: 0.001
+        })
+        testResults.push({ type: 'buy_notification', success: true })
+        console.log('Buy notification test: SUCCESS')
+      } catch (error) {
+        testResults.push({ 
+          type: 'buy_notification', 
+          success: false, 
+          error: error instanceof Error ? error.message : 'Unknown error' 
+        })
+        console.error('Buy notification test: FAILED', error)
+      }
+
+      // Test 3: Trade Alert
+      try {
+        console.log('Testing trade alert notification...')
+        await sendTradeAlertDiscord({
+          tokenSymbol: 'TEST',
+          status: 'buy' as any,
+          isSimulated: true,
+          currentGain: 15.5,
+          peakGain: 20.2,
+          priceUsd: 0.000145,
+          provider: 'jupiter',
+          rpcUsed: 'test-rpc',
+          responseTime: 200
+        })
+        testResults.push({ type: 'trade_alert', success: true })
+        console.log('Trade alert test: SUCCESS')
+      } catch (error) {
+        testResults.push({ 
+          type: 'trade_alert', 
+          success: false, 
+          error: error instanceof Error ? error.message : 'Unknown error' 
+        })
+        console.error('Trade alert test: FAILED', error)
+      }
+
+      const successCount = testResults.filter(r => r.success).length
+      const totalTests = testResults.length
+
+      return NextResponse.json({
+        success: true,
+        message: 'Track Discord configuration test completed',
+        discord: {
+          enabled: discordEnabled,
+          webhookConfigured: !!webhookUrl,
+          testResults,
+          summary: `${successCount}/${totalTests} tests passed`
+        },
+        environment: {
+          NODE_ENV: process.env.NODE_ENV,
+          DISCORD_WEBHOOK_AUTO_TRADE: !!process.env.DISCORD_WEBHOOK_AUTO_TRADE,
+          DISCORD_WEBHOOK_URL: !!process.env.DISCORD_WEBHOOK_URL,
+          ENABLE_DISCORD_NOTIFICATIONS: process.env.ENABLE_DISCORD_NOTIFICATIONS
+        }
+      })
     }
 
     const body = await request.json()

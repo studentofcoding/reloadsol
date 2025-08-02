@@ -21,7 +21,6 @@ let globalTimers: {
   initialDelayTimer?: NodeJS.Timeout;
 } = {};
 
-// --- ADD THIS --- 
 // Function to initialize the notification timer
 function initializeNotificationTimer() {
   if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !globalTimers.notificationTimer) {
@@ -281,6 +280,120 @@ async function sendDiscordNotification(
   } catch (error) {
     console.error('Error sending Discord notification:', error);
     // Don't throw the error to avoid disrupting the main flow
+  }
+}
+
+async function testDiscordNotification() {
+  if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
+    throw new Error('Discord notifications disabled or webhook URL not configured');
+  }
+
+  const testMessage = {
+    embeds: [
+      {
+        title: `🧪 Discord Test Notification`,
+        description: `**Test Message from Trending API**\nThis is a test notification to verify Discord webhook configuration.`,
+        color: 16776960, // Yellow color for test
+        timestamp: new Date().toISOString(),
+        fields: [
+          {
+            name: 'Configuration Status',
+            value: `✅ Webhook URL: Configured\n✅ Notifications: Enabled\n✅ Environment: ${process.env.NODE_ENV || 'unknown'}`
+          }
+        ],
+        footer: {
+          text: 'Buy Bulk Token Tracker - Test'
+        }
+      }
+    ]
+  };
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const response = await fetch(DISCORD_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(testMessage),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`Discord API responded with status: ${response.status}`);
+    }
+
+    return { success: true, message: 'Test notification sent successfully' };
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
+
+// Add a PUT endpoint for testing Discord notifications
+export async function PUT(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const secretKey = searchParams.get('key');
+    const expectedSecretKey = process.env.NOTIFICATION_SECRET_KEY;
+
+    // Validate secret key if configured
+    if (expectedSecretKey && secretKey !== expectedSecretKey) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    // Check Discord configuration
+    const webhookUrl = process.env.DISCORD_WEBHOOK_AUTO_TRADE || process.env.DISCORD_WEBHOOK_URL || '';
+
+    console.log('Discord Configuration Test:', {
+      enabled: ENABLE_DISCORD_NOTIFICATIONS,
+      webhookConfigured: !!webhookUrl,
+      webhookUrl: webhookUrl ? `${webhookUrl.substring(0, 50)}...` : 'Not configured',
+      env: {
+        DISCORD_WEBHOOK_AUTO_TRADE: !!process.env.DISCORD_WEBHOOK_AUTO_TRADE,
+        DISCORD_WEBHOOK_URL: !!process.env.DISCORD_WEBHOOK_URL,
+        DISCORD_WEBHOOK_URL_DEV: !!process.env.DISCORD_WEBHOOK_URL_DEV,
+        ENABLE_DISCORD_NOTIFICATIONS: process.env.ENABLE_DISCORD_NOTIFICATIONS
+      }
+    });
+
+    // Test Discord notification
+    let testResult;
+    try {
+      testResult = await testDiscordNotification();
+    } catch (error) {
+      testResult = {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: 'Discord configuration test completed',
+      discord: {
+        enabled: ENABLE_DISCORD_NOTIFICATIONS,
+        webhookConfigured: !!webhookUrl,
+        testResult
+      },
+      environment: {
+        NODE_ENV: process.env.NODE_ENV,
+        DISCORD_WEBHOOK_AUTO_TRADE: !!process.env.DISCORD_WEBHOOK_AUTO_TRADE,
+        DISCORD_WEBHOOK_URL: !!process.env.DISCORD_WEBHOOK_URL,
+        DISCORD_WEBHOOK_URL_DEV: !!process.env.DISCORD_WEBHOOK_URL_DEV,
+        ENABLE_DISCORD_NOTIFICATIONS: process.env.ENABLE_DISCORD_NOTIFICATIONS
+      }
+    });
+  } catch (error) {
+    console.error('Error in Discord test endpoint:', error);
+    return NextResponse.json({
+      error: 'Failed to test Discord configuration',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 });
   }
 }
 

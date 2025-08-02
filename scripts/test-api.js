@@ -155,6 +155,58 @@ async function runTests() {
     validator: (data) => data.testType === 'benchmark' && data.result
   });
 
+  // === DISCORD WEBHOOK TESTS ===
+  log.info('\n🔔 Testing Discord Webhook Endpoints...');
+
+  // Test Price Monitor Discord Test
+  await testEndpoint('Price Monitor Discord Test', '/api/trending/price-monitor', {
+    method: 'GET',
+    validator: (data) => {
+      return data.success && 
+             typeof data.webhookConfigured === 'boolean' &&
+             typeof data.testMessageSent === 'boolean' &&
+             data.message
+    }
+  });
+
+  // Test Trending Discord Test
+  await testEndpoint('Trending Discord Test', '/api/trending', {
+    method: 'PUT',
+    validator: (data) => {
+      return data.success && 
+             typeof data.webhookConfigured === 'boolean' &&
+             typeof data.testMessageSent === 'boolean' &&
+             data.message
+    }
+  });
+
+  // Test Filtered Trending Discord Test
+  await testEndpoint('Filtered Trending Discord Test', '/api/trending/filtered', {
+    method: 'PUT',
+    validator: (data) => {
+      return data.success && 
+             typeof data.webhookConfigured === 'boolean' &&
+             typeof data.testMessageSent === 'boolean' &&
+             data.message
+    }
+  });
+
+  // Test Track Discord Test (All notification types)
+  await testEndpoint('Track Discord Test', '/api/trending/track', {
+    method: 'PUT',
+    validator: (data) => {
+      return data.success && 
+             typeof data.webhookConfigured === 'boolean' &&
+             data.testResults &&
+             Array.isArray(data.testResults) &&
+             data.testResults.length === 3 && // Should test 3 notification types
+             data.testResults.every(result => 
+               typeof result.type === 'string' &&
+               typeof result.sent === 'boolean'
+             )
+    }
+  });
+
   // === NEW JUPITER METADATA API TESTS ===
   log.info('\n🚀 Testing Jupiter Metadata API v2...');
 
