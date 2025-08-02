@@ -454,6 +454,29 @@ export interface BulkSellResult {
   }
 }
 
+// Helper function to get a human-readable token identifier for logging
+function getTokenIdentifierForLogging(mintAddress: string): string {
+  // Check common tokens first
+  const tokenSymbols: Record<string, string> = {
+    [TOKENS.SOL]: 'SOL',
+    [TOKENS.USDC]: 'USDC',
+    [TOKENS.USDT]: 'USDT',
+  }
+
+  if (tokenSymbols[mintAddress]) {
+    return tokenSymbols[mintAddress]
+  }
+
+  // Check token cache for previously fetched metadata
+  const cached = tokenCache.get(mintAddress)
+  if (cached?.data?.symbol && cached.data.symbol !== 'Unknown') {
+    return `${cached.data.symbol} (${mintAddress.slice(0, 4)}...${mintAddress.slice(-4)})`
+  }
+
+  // Fallback to truncated address
+  return `${mintAddress.slice(0, 4)}...${mintAddress.slice(-4)}`
+}
+
 // Get quote for a single token swap
 export async function getSwapQuote(
   inputMint: string,
@@ -462,6 +485,19 @@ export async function getSwapQuote(
   slippageBps: number = 100
 ): Promise<SwapQuote | null> {
   try {
+    // Validate inputs
+    if (!inputMint || !outputMint) {
+      throw new Error('Input and output mint addresses are required')
+    }
+
+    if (amount <= 0) {
+      throw new Error('Amount must be greater than 0')
+    }
+
+    if (slippageBps < 0 || slippageBps > 10000) {
+      throw new Error('Slippage must be between 0 and 10000 bps')
+    }
+
     const params = new URLSearchParams({
       inputMint,
       outputMint,
@@ -474,13 +510,49 @@ export async function getSwapQuote(
     const response = await fetch(`${JUPITER_API.quote}?${params}`)
 
     if (!response.ok) {
-      throw new Error(`Quote API error: ${response.status}`)
+      // Get more detailed error information
+      let errorMessage = `Quote API error: ${response.status}`
+      try {
+        const errorData = await response.json()
+        if (errorData.error) {
+          errorMessage += ` - ${errorData.error}`
+        }
+      } catch {
+        // If we can't parse the error response, use the status text
+        errorMessage += ` - ${response.statusText}`
+      }
+      throw new Error(errorMessage)
     }
 
     const quote = await response.json()
     return quote
   } catch (error) {
-    console.error('Error getting swap quote:', error)
+    const inputTokenName = getTokenIdentifierForLogging(inputMint)
+    const outputTokenName = getTokenIdentifierForLogging(outputMint)
+
+    console.error(
+      'Error getting swap quote:', error,
+      `\n  Input: ${inputTokenName} (${inputMint})`,
+      `\n  Output: ${outputTokenName} (${outputMint})`,
+      `\n  Amount: ${amount}`,
+      `\n  Slippage: ${slippageBps} bps (${(slippageBps / 100).toFixed(2)}%)`
+    )
+
+    // Optionally attempt to fetch token info for better future logging (non-blocking)
+    Promise.all([
+      getTokenInfo(inputMint).catch(() => null),
+      getTokenInfo(outputMint).catch(() => null)
+    ]).then(([inputInfo, outputInfo]) => {
+      if (inputInfo || outputInfo) {
+        console.log('Token metadata fetched for future reference:', {
+          input: inputInfo ? `${inputInfo.symbol} (${inputInfo.name})` : 'Unknown',
+          output: outputInfo ? `${outputInfo.symbol} (${outputInfo.name})` : 'Unknown'
+        })
+      }
+    }).catch(() => {
+      // Silently ignore metadata fetch errors to avoid noise
+    })
+
     return null
   }
 }

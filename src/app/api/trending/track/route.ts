@@ -295,11 +295,25 @@ interface TokenFilterResult {
   mappedToken?: any // Mapped token data if passed
 }
 
+interface RejectionDetail {
+  reason: string
+  count: number
+  tokens: Array<{
+    name: string
+    symbol: string
+    address: string
+    price: number
+    mcap?: number
+    organicScore?: number
+  }>
+}
+
 interface FilteringSummary {
   totalTokens: number
   acceptedTokens: number
   rejectedTokens: number
   rejectionBreakdown: { [reason: string]: number }
+  rejectionDetails: RejectionDetail[] // New field for detailed token info
   processingTime: number
 }
 
@@ -1205,14 +1219,31 @@ async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrad
       `❌ Rejected: ${summary.rejectedTokens}`,
       `⚡ Processing Time: ${summary.processingTime}ms`,
       ``,
-      `📋 **Rejection Breakdown:**`
+      `📋 **Rejection Breakdown with Token Details:**`
     ]
 
-    // Add rejection reasons breakdown
-    Object.entries(summary.rejectionBreakdown)
-      .sort(([, a], [, b]) => b - a) // Sort by count descending
-      .forEach(([reason, count]) => {
-        lines.push(`   ${getRejectionEmoji(reason)} ${reason}: ${count}`)
+    // Add rejection reasons breakdown with token details
+    summary.rejectionDetails
+      .sort((a, b) => b.count - a.count) // Sort by count descending
+      .forEach(detail => {
+        lines.push(``)
+        lines.push(`${getRejectionEmoji(detail.reason)} **${detail.reason}: ${detail.count}**`)
+        
+        // Show top 3 tokens for each rejection reason to avoid message length limits
+        const topTokens = detail.tokens.slice(0, 3)
+        topTokens.forEach((token, index) => {
+          const tokenName = token.name || token.symbol || 'UNKNOWN'
+          const price = token.price ? `$${token.price.toFixed(8)}` : 'N/A'
+          const mcap = token.mcap ? `$${(token.mcap / 1000000).toFixed(2)}M` : 'N/A'
+          const score = token.organicScore ? token.organicScore.toFixed(1) : 'N/A'
+          
+          lines.push(`   ${index + 1}. **${tokenName}** (${token.symbol})`)
+          lines.push(`      💰 Price: ${price} | 🏦 MCap: ${mcap} | 🎯 Score: ${score}`)
+        })
+        
+        if (detail.tokens.length > 3) {
+          lines.push(`      ... and ${detail.tokens.length - 3} more tokens`)
+        }
       })
 
     lines.push(``)
@@ -1327,11 +1358,19 @@ function getRejectionEmoji(reason: string): string {
   return emojiMap[reason] || '❌'
 }
 
-// Enhanced filtering function with detailed tracking
+// Enhanced filtering function with detailed tracking and token collection
 function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[], summary: FilteringSummary } {
   const startTime = Date.now()
   const results: TokenFilterResult[] = []
   const rejectionBreakdown: { [reason: string]: number } = {}
+  const rejectionTokens: { [reason: string]: Array<{
+    name: string
+    symbol: string
+    address: string
+    price: number
+    mcap?: number
+    organicScore?: number
+  }> } = {}
 
   pools.forEach(pool => {
     const rejectionReasons: string[] = []
@@ -1380,9 +1419,24 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
 
     const passed = rejectionReasons.length === 0
 
-    // Track rejection reasons
+    // Track rejection reasons and collect token details
     rejectionReasons.forEach(reason => {
       rejectionBreakdown[reason] = (rejectionBreakdown[reason] || 0) + 1
+      
+      // Initialize array if it doesn't exist
+      if (!rejectionTokens[reason]) {
+        rejectionTokens[reason] = []
+      }
+      
+      // Add token details to the rejection reason
+      rejectionTokens[reason].push({
+        name: pool.baseAsset.name || pool.baseAsset.symbol || 'UNKNOWN',
+        symbol: pool.baseAsset.symbol || 'UNKNOWN',
+        address: pool.baseAsset.id || 'UNKNOWN',
+        price: pool.baseAsset.usdPrice || 0,
+        mcap: pool.baseAsset.mcap,
+        organicScore: pool.baseAsset.organicScore
+      })
     })
 
     const result: TokenFilterResult = {
@@ -1414,11 +1468,19 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
   const acceptedTokens = results.filter(r => r.passed).length
   const rejectedTokens = results.filter(r => !r.passed).length
 
+  // Create rejection details array
+  const rejectionDetails: RejectionDetail[] = Object.entries(rejectionBreakdown).map(([reason, count]) => ({
+    reason,
+    count,
+    tokens: rejectionTokens[reason] || []
+  }))
+
   const summary: FilteringSummary = {
     totalTokens: pools.length,
     acceptedTokens,
     rejectedTokens,
     rejectionBreakdown,
+    rejectionDetails, // Include the detailed token information
     processingTime
   }
 
