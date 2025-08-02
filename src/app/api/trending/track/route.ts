@@ -1264,14 +1264,21 @@ async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], is
     topRejected.forEach((result, index) => {
       const token = result.token.baseAsset
       const reasons = result.rejectionReasons.join(', ')
+      const tokenName = token.name || token.symbol || 'UNKNOWN'
+      const tokenPrice = token.usdPrice ? `$${token.usdPrice.toFixed(8)}` : 'N/A'
 
-      lines.push(`**${index + 1}. ${token.symbol || 'UNKNOWN'}**`)
-      lines.push(`   💰 Price: $${token.usdPrice?.toFixed(8) || 'N/A'}`)
+      // Create ReloadSOL chart link with token info as URL params
+      const chartUrl = `https://v2.reloadsol.xyz/chart/${token.id}?symbol=${encodeURIComponent(token.symbol || 'UNKNOWN')}&name=${encodeURIComponent(tokenName)}&price=${token.usdPrice || 0}`
+
+      lines.push(`**${index + 1}. ${tokenName}**`)
+      lines.push(`   🏷️ Symbol: ${token.symbol || 'UNKNOWN'}`)
+      lines.push(`   💰 Price: ${tokenPrice}`)
       lines.push(`   🏦 MCap: ${token.mcap ? `$${(token.mcap / 1000000).toFixed(2)}M` : 'N/A'}`)
       lines.push(`   🎯 Score: ${token.organicScore?.toFixed(1) || 'N/A'}`)
       lines.push(`   📈 1h: ${((token.stats1h?.priceChange || 0) * 100).toFixed(1)}%`)
       lines.push(`   📉 5m: ${((token.stats5m?.priceChange || 0) * 100).toFixed(1)}%`)
       lines.push(`   🚫 Reasons: ${reasons}`)
+      lines.push(`   📊 [View Chart](${chartUrl})`)
       lines.push(``)
     })
 
@@ -2724,7 +2731,7 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
       // Check Discord configuration
       const discordEnabled = shouldEnableNotifications()
       const webhookUrl = DISCORD_WEBHOOK_URL
-      
+
       console.log('Track Discord Configuration Test:', {
         discordEnabled,
         webhookConfigured: !!webhookUrl,
@@ -2743,9 +2750,9 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
       try {
         console.log('Testing new token detection notification...')
         await sendNewTokenDetectionDiscord({
-          tokenAddress: 'TEST123456789',
-          tokenSymbol: 'TEST',
-          tokenName: 'Test Token',
+          tokenAddress: 'TESTDISCORD1234567890',
+          tokenSymbol: 'DTEST',
+          tokenName: 'Discord Test Token',
           currentPrice: 0.000123,
           marketCap: 500000,
           organicScore: 85.5,
@@ -2755,10 +2762,10 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
         testResults.push({ type: 'new_token_detection', success: true })
         console.log('New token detection test: SUCCESS')
       } catch (error) {
-        testResults.push({ 
-          type: 'new_token_detection', 
-          success: false, 
-          error: error instanceof Error ? error.message : 'Unknown error' 
+        testResults.push({
+          type: 'new_token_detection',
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
         })
         console.error('New token detection test: FAILED', error)
       }
@@ -2767,8 +2774,8 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
       try {
         console.log('Testing buy notification...')
         await sendBuyNotificationDiscord({
-          tokenSymbol: 'TEST',
-          tokenAddress: 'TEST123456789',
+          tokenSymbol: 'DTEST',
+          tokenAddress: 'TESTDISCORD1234567890',
           isSimulated: true,
           amountSOL: 0.1,
           tokensReceived: '1000000',
@@ -2781,10 +2788,10 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
         testResults.push({ type: 'buy_notification', success: true })
         console.log('Buy notification test: SUCCESS')
       } catch (error) {
-        testResults.push({ 
-          type: 'buy_notification', 
-          success: false, 
-          error: error instanceof Error ? error.message : 'Unknown error' 
+        testResults.push({
+          type: 'buy_notification',
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
         })
         console.error('Buy notification test: FAILED', error)
       }
@@ -2806,10 +2813,10 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
         testResults.push({ type: 'trade_alert', success: true })
         console.log('Trade alert test: SUCCESS')
       } catch (error) {
-        testResults.push({ 
-          type: 'trade_alert', 
-          success: false, 
-          error: error instanceof Error ? error.message : 'Unknown error' 
+        testResults.push({
+          type: 'trade_alert',
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
         })
         console.error('Trade alert test: FAILED', error)
       }
