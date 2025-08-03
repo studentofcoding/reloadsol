@@ -41,6 +41,9 @@ const dbg = (...args: any[]): void => {
   }
 }
 
+const DISCORD_MAX_LENGTH = 2000
+const DISCORD_SAFE_LENGTH = 1900 // Leave some buffer
+
 // === Table selection (use alternate tables in local development to avoid prod collisions) ===
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
@@ -809,6 +812,58 @@ function logTradeOperation(operation: string, data: any, error?: Error) {
   console.log(`[${timestamp}] ${operation}:`, JSON.stringify(logData, null, 2))
 }
 
+// Helper function to truncate message content to fit Discord limits
+function truncateDiscordMessage(lines: string[], maxLength: number = DISCORD_SAFE_LENGTH): string {
+  let content = lines.join('\n')
+
+  if (content.length <= maxLength) {
+    return content
+  }
+
+  // Progressive truncation strategy
+  let truncatedLines = [...lines]
+
+  // Strategy 1: Remove detailed token information progressively
+  while (content.length > maxLength && truncatedLines.length > 10) {
+    // Find and remove the longest lines (usually token details)
+    const longestIndex = truncatedLines.reduce((maxIdx, line, idx, arr) =>
+      line.length > arr[maxIdx].length ? idx : maxIdx, 0)
+
+    if (truncatedLines[longestIndex].includes('💰 Price:') ||
+      truncatedLines[longestIndex].includes('🏷️ Symbol:') ||
+      truncatedLines[longestIndex].includes('📊 [View Chart]')) {
+      truncatedLines.splice(longestIndex, 1)
+      content = truncatedLines.join('\n')
+    } else {
+      break
+    }
+  }
+
+  // Strategy 2: If still too long, keep only essential information
+  if (content.length > maxLength) {
+    const essentialLines = truncatedLines.filter(line =>
+      line.includes('Token Filtering Summary') ||
+      line.includes('Processing Results:') ||
+      line.includes('Total Scanned:') ||
+      line.includes('Accepted:') ||
+      line.includes('Rejected:') ||
+      line.includes('Processing Time:') ||
+      line.includes('**') && line.includes(':') && !line.includes('💰') ||
+      line === '' ||
+      line.includes('⏰')
+    )
+
+    content = essentialLines.join('\n')
+  }
+
+  // Final fallback: Hard truncate with ellipsis
+  if (content.length > maxLength) {
+    content = content.substring(0, maxLength - 20) + '\n\n... (truncated)'
+  }
+
+  return content
+}
+
 // Helper to determine if notifications should be enabled
 function shouldEnableNotifications(): boolean {
   const enabled = DISCORD_WEBHOOK_URL !== ''
@@ -1209,10 +1264,10 @@ async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrad
 
   try {
     const notificationsEnabled = shouldEnableNotifications()
-    log.info('discord_notification', 'Discord notifications status check', { 
-      enabled: notificationsEnabled 
+    log.info('discord_notification', 'Discord notifications status check', {
+      enabled: notificationsEnabled
     })
-    
+
     if (!notificationsEnabled) {
       log.warn('discord_notification', 'Discord notifications disabled - skipping filtering summary', {
         webhookUrl: !!DISCORD_WEBHOOK_URL ? 'configured' : 'missing'
@@ -1238,45 +1293,71 @@ async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrad
       `❌ Rejected: ${summary.rejectedTokens}`,
       `⚡ Processing Time: ${summary.processingTime}ms`,
       ``,
-      `📋 **Rejection Breakdown with Token Details:**`
+      `📋 **Rejection Breakdown:**`
     ]
 
-    // Add rejection reasons breakdown with token details
-    summary.rejectionDetails
-      .sort((a, b) => b.count - a.count) // Sort by count descending
-      .forEach(detail => {
-        lines.push(``)
-        lines.push(`${getRejectionEmoji(detail.reason)} **${detail.reason}: ${detail.count}**`)
-        
-        // Show top 3 tokens for each rejection reason to avoid message length limits
-        const topTokens = detail.tokens.slice(0, 3)
-        topTokens.forEach((token, index) => {
-          const tokenName = token.name || token.symbol || 'UNKNOWN'
-          const price = token.price ? `$${token.price.toFixed(8)}` : 'N/A'
-          const mcap = token.mcap ? `$${(token.mcap / 1000000).toFixed(2)}M` : 'N/A'
-          const score = token.organicScore ? token.organicScore.toFixed(1) : 'N/A'
-          
-          lines.push(`   ${index + 1}. **${tokenName}** (${token.symbol})`)
-          lines.push(`      💰 Price: ${price} | 🏦 MCap: ${mcap} | 🎯 Score: ${score}`)
-        })
-        
-        if (detail.tokens.length > 3) {
-          lines.push(`      ... and ${detail.tokens.length - 3} more tokens`)
-        }
+    // Add rejection reasons breakdown with adaptive detail level
+    const sortedDetails = summary.rejectionDetails.sort((a, b) => b.count - a.count)
+
+    // Estimate space available for rejection details
+    const baseMessageLength = lines.join('\n').length + 50 // +50 for timestamp
+    const availableSpace = DISCORD_SAFE_LENGTH - baseMessageLength
+
+    let tokensPerReason = 2 // Start with 2 tokens per reason
+    let maxReasons = Math.min(sortedDetails.length, 8) // Limit reasons shown
+
+    // Adjust detail level based on available space
+    if (availableSpace < 800) {
+      tokensPerReason = 1
+      maxReasons = Math.min(sortedDetails.length, 5)
+    } else if (availableSpace < 1200) {
+      tokensPerReason = 2
+      maxReasons = Math.min(sortedDetails.length, 6)
+    }
+
+    sortedDetails.slice(0, maxReasons).forEach(detail => {
+      lines.push(``)
+      lines.push(`${getRejectionEmoji(detail.reason)} **${detail.reason}: ${detail.count}**`)
+
+      // Show limited tokens for each rejection reason
+      const topTokens = detail.tokens.slice(0, tokensPerReason)
+      topTokens.forEach((token, index) => {
+        const tokenName = token.name || token.symbol || 'UNKNOWN'
+        const price = token.price ? `$${token.price.toFixed(6)}` : 'N/A' // Reduced precision
+        const mcap = token.mcap ? `$${(token.mcap / 1000000).toFixed(1)}M` : 'N/A'
+        const score = token.organicScore ? token.organicScore.toFixed(0) : 'N/A' // Reduced precision
+
+        lines.push(`   ${index + 1}. **${tokenName}** (${token.symbol})`)
+        lines.push(`      💰 ${price} | 🏦 ${mcap} | 🎯 ${score}`)
       })
+
+      if (detail.tokens.length > tokensPerReason) {
+        lines.push(`      ... +${detail.tokens.length - tokensPerReason} more`)
+      }
+    })
+
+    if (sortedDetails.length > maxReasons) {
+      lines.push(``)
+      lines.push(`... and ${sortedDetails.length - maxReasons} more rejection reasons`)
+    }
 
     lines.push(``)
     lines.push(`⏰ ${new Date().toLocaleString()}`)
 
-    const content = lines.join('\n')
-    log.debug('discord_notification', 'Discord message prepared', { 
-      contentLength: content.length 
+    // Apply length management
+    const content = truncateDiscordMessage(lines)
+
+    log.debug('discord_notification', 'Discord message prepared with length management', {
+      originalLength: lines.join('\n').length,
+      finalLength: content.length,
+      withinLimit: content.length <= DISCORD_MAX_LENGTH
     })
 
     log.info('discord_notification', 'Sending Discord webhook request', {
-      webhookConfigured: !!DISCORD_WEBHOOK_URL
+      webhookConfigured: !!DISCORD_WEBHOOK_URL,
+      messageLength: content.length
     })
-    
+
     const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1293,7 +1374,8 @@ async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrad
       const errorText = await response.text()
       log.error('discord_notification', 'Discord webhook failed', new Error(`${response.status} - ${errorText}`), {
         status: response.status,
-        errorText
+        errorText,
+        messageLength: content.length
       })
       throw new Error(`Discord webhook failed: ${response.status} - ${errorText}`)
     }
@@ -1304,7 +1386,7 @@ async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrad
       rejectedTokens: summary.rejectedTokens,
       messageLength: content.length
     })
-    
+
     logTradeOperation('Discord Filtering Summary Success', {
       totalTokens: summary.totalTokens,
       acceptedTokens: summary.acceptedTokens,
@@ -1330,10 +1412,10 @@ async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], is
 
   try {
     const notificationsEnabled = shouldEnableNotifications()
-    log.info('discord_notification', 'Discord notifications status for rejected tokens', { 
-      enabled: notificationsEnabled 
+    log.info('discord_notification', 'Discord notifications status for rejected tokens', {
+      enabled: notificationsEnabled
     })
-    
+
     if (!notificationsEnabled || rejectedTokens.length === 0) {
       log.warn('discord_notification', 'Skipping rejected tokens Discord notification', {
         notificationsEnabled,
@@ -1347,51 +1429,58 @@ async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], is
     const emoji = isRealTrading ? '🔥' : '💻'
     const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
 
-    // Limit to top 10 rejected tokens to avoid message length limits
-    const topRejected = rejectedTokens.slice(0, 10)
+    // Dynamic limit based on total count - fewer tokens shown if many rejected
+    let maxTokensToShow = 5
+    if (rejectedTokens.length > 30) {
+      maxTokensToShow = 3
+    } else if (rejectedTokens.length > 15) {
+      maxTokensToShow = 4
+    }
+
+    const topRejected = rejectedTokens.slice(0, maxTokensToShow)
 
     const lines = [
       `${emoji} Rejected Tokens Details (${mode})`,
       ``,
-      `❌ **Top ${topRejected.length} Rejected Tokens:**`,
+      `❌ **Top ${topRejected.length} of ${rejectedTokens.length} Rejected Tokens:**`,
       ``
     ]
 
     topRejected.forEach((result, index) => {
       const token = result.token.baseAsset
-      const reasons = result.rejectionReasons.join(', ')
+      const reasons = result.rejectionReasons.slice(0, 2).join(', ') // Limit reasons shown
       const tokenName = token.name || token.symbol || 'UNKNOWN'
-      const tokenPrice = token.usdPrice ? `$${token.usdPrice.toFixed(8)}` : 'N/A'
+      const tokenPrice = token.usdPrice ? `$${token.usdPrice.toFixed(6)}` : 'N/A' // Reduced precision
 
-      // Create ReloadSOL chart link with token info as URL params
-      const chartUrl = `https://v2.reloadsol.xyz/chart/${token.id}?symbol=${encodeURIComponent(token.symbol || 'UNKNOWN')}&name=${encodeURIComponent(tokenName)}&price=${token.usdPrice || 0}`
-
-      lines.push(`**${index + 1}. ${tokenName}**`)
-      lines.push(`   🏷️ Symbol: ${token.symbol || 'UNKNOWN'}`)
-      lines.push(`   💰 Price: ${tokenPrice}`)
-      lines.push(`   🏦 MCap: ${token.mcap ? `$${(token.mcap / 1000000).toFixed(2)}M` : 'N/A'}`)
-      lines.push(`   🎯 Score: ${token.organicScore?.toFixed(1) || 'N/A'}`)
-      lines.push(`   📈 1h: ${((token.stats1h?.priceChange || 0) * 100).toFixed(1)}%`)
-      lines.push(`   📉 5m: ${((token.stats5m?.priceChange || 0) * 100).toFixed(1)}%`)
-      lines.push(`   🚫 Reasons: ${reasons}`)
-      lines.push(`   📊 [View Chart](${chartUrl})`)
+      // Shorter format to save space
+      lines.push(`**${index + 1}. ${tokenName}** (${token.symbol || 'UNKNOWN'})`)
+      lines.push(`   💰 ${tokenPrice} | 🏦 ${token.mcap ? `$${(token.mcap / 1000000).toFixed(1)}M` : 'N/A'} | 🎯 ${token.organicScore?.toFixed(0) || 'N/A'}`)
+      lines.push(`   📈 1h: ${((token.stats1h?.priceChange || 0) * 100).toFixed(1)}% | 📉 5m: ${((token.stats5m?.priceChange || 0) * 100).toFixed(1)}%`)
+      lines.push(`   🚫 ${reasons}${result.rejectionReasons.length > 2 ? ` +${result.rejectionReasons.length - 2} more` : ''}`)
       lines.push(``)
     })
 
-    if (rejectedTokens.length > 10) {
-      lines.push(`... and ${rejectedTokens.length - 10} more rejected tokens`)
+    if (rejectedTokens.length > maxTokensToShow) {
+      lines.push(`... and ${rejectedTokens.length - maxTokensToShow} more rejected tokens`)
       lines.push(``)
     }
 
     lines.push(`⏰ ${new Date().toLocaleString()}`)
 
-    const content = lines.join('\n')
-    log.debug('discord_notification', 'Discord rejected tokens message prepared', { 
-      contentLength: content.length 
+    // Apply length management
+    const content = truncateDiscordMessage(lines)
+
+    log.debug('discord_notification', 'Discord rejected tokens message prepared with length management', {
+      originalLength: lines.join('\n').length,
+      finalLength: content.length,
+      withinLimit: content.length <= DISCORD_MAX_LENGTH,
+      tokensShown: topRejected.length
     })
 
-    log.info('discord_notification', 'Sending Discord rejected tokens webhook request')
-    
+    log.info('discord_notification', 'Sending Discord rejected tokens webhook request', {
+      messageLength: content.length
+    })
+
     const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1408,20 +1497,21 @@ async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], is
       const errorText = await response.text()
       log.error('discord_notification', 'Discord rejected tokens webhook failed', new Error(`${response.status} - ${errorText}`), {
         status: response.status,
-        errorText
+        errorText,
+        messageLength: content.length
       })
       throw new Error(`Discord webhook failed: ${response.status} - ${errorText}`)
     }
 
     log.info('discord_notification', 'Discord rejected tokens notification sent successfully', {
       rejectedCount: rejectedTokens.length,
-      topShown: topRejected.length,
+      tokensShown: topRejected.length,
       messageLength: content.length
     })
 
     logTradeOperation('Discord Rejected Tokens Success', {
       rejectedCount: rejectedTokens.length,
-      topShown: topRejected.length,
+      tokensShown: topRejected.length,
       messageLength: content.length
     })
   } catch (err) {
@@ -1455,14 +1545,16 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
   const startTime = Date.now()
   const results: TokenFilterResult[] = []
   const rejectionBreakdown: { [reason: string]: number } = {}
-  const rejectionTokens: { [reason: string]: Array<{
-    name: string
-    symbol: string
-    address: string
-    price: number
-    mcap?: number
-    organicScore?: number
-  }> } = {}
+  const rejectionTokens: {
+    [reason: string]: Array<{
+      name: string
+      symbol: string
+      address: string
+      price: number
+      mcap?: number
+      organicScore?: number
+    }>
+  } = {}
 
   pools.forEach(pool => {
     const rejectionReasons: string[] = []
@@ -1514,12 +1606,12 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
     // Track rejection reasons and collect token details
     rejectionReasons.forEach(reason => {
       rejectionBreakdown[reason] = (rejectionBreakdown[reason] || 0) + 1
-      
+
       // Initialize array if it doesn't exist
       if (!rejectionTokens[reason]) {
         rejectionTokens[reason] = []
       }
-      
+
       // Add token details to the rejection reason
       rejectionTokens[reason].push({
         name: pool.baseAsset.name || pool.baseAsset.symbol || 'UNKNOWN',
