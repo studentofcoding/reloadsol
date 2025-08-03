@@ -1199,13 +1199,32 @@ async function sendSkippedTokenDiscord(params: {
 
 // Add new Discord notification functions
 async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrading: boolean) {
+  log.debug('discord_notification', 'sendFilteringSummaryDiscord called', {
+    totalTokens: summary.totalTokens,
+    acceptedTokens: summary.acceptedTokens,
+    rejectedTokens: summary.rejectedTokens,
+    isRealTrading,
+    rejectionDetailsCount: summary.rejectionDetails.length
+  })
+
   try {
-    if (!shouldEnableNotifications()) {
+    const notificationsEnabled = shouldEnableNotifications()
+    log.info('discord_notification', 'Discord notifications status check', { 
+      enabled: notificationsEnabled 
+    })
+    
+    if (!notificationsEnabled) {
+      log.warn('discord_notification', 'Discord notifications disabled - skipping filtering summary', {
+        webhookUrl: !!DISCORD_WEBHOOK_URL ? 'configured' : 'missing'
+      })
       logTradeOperation('Discord Filtering Summary Skipped', {
-        reason: 'Notifications disabled'
+        reason: 'Notifications disabled',
+        webhookUrl: !!DISCORD_WEBHOOK_URL ? 'configured' : 'missing'
       })
       return
     }
+
+    log.info('discord_notification', 'Proceeding with Discord filtering summary notification')
 
     const emoji = isRealTrading ? '🔥' : '💻'
     const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
@@ -1250,34 +1269,80 @@ async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrad
     lines.push(`⏰ ${new Date().toLocaleString()}`)
 
     const content = lines.join('\n')
+    log.debug('discord_notification', 'Discord message prepared', { 
+      contentLength: content.length 
+    })
 
+    log.info('discord_notification', 'Sending Discord webhook request', {
+      webhookConfigured: !!DISCORD_WEBHOOK_URL
+    })
+    
     const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content })
     })
 
+    log.info('discord_notification', 'Discord webhook response received', {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok
+    })
+
     if (!response.ok) {
-      throw new Error(`Discord webhook failed: ${response.status}`)
+      const errorText = await response.text()
+      log.error('discord_notification', 'Discord webhook failed', new Error(`${response.status} - ${errorText}`), {
+        status: response.status,
+        errorText
+      })
+      throw new Error(`Discord webhook failed: ${response.status} - ${errorText}`)
     }
 
+    log.info('discord_notification', 'Discord filtering summary sent successfully', {
+      totalTokens: summary.totalTokens,
+      acceptedTokens: summary.acceptedTokens,
+      rejectedTokens: summary.rejectedTokens,
+      messageLength: content.length
+    })
+    
     logTradeOperation('Discord Filtering Summary Success', {
       totalTokens: summary.totalTokens,
       acceptedTokens: summary.acceptedTokens,
-      rejectedTokens: summary.rejectedTokens
+      rejectedTokens: summary.rejectedTokens,
+      messageLength: content.length
     })
   } catch (err) {
-    logTradeOperation('Discord Filtering Summary Error', {
+    log.error('discord_notification', 'Error in sendFilteringSummaryDiscord', err as Error, {
       totalTokens: summary.totalTokens
+    })
+    logTradeOperation('Discord Filtering Summary Error', {
+      totalTokens: summary.totalTokens,
+      error: err instanceof Error ? err.message : String(err)
     }, err as Error)
   }
 }
 
 async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], isRealTrading: boolean) {
+  log.debug('discord_notification', 'sendRejectedTokensDiscord called', {
+    rejectedTokensCount: rejectedTokens.length,
+    isRealTrading
+  })
+
   try {
-    if (!shouldEnableNotifications() || rejectedTokens.length === 0) {
+    const notificationsEnabled = shouldEnableNotifications()
+    log.info('discord_notification', 'Discord notifications status for rejected tokens', { 
+      enabled: notificationsEnabled 
+    })
+    
+    if (!notificationsEnabled || rejectedTokens.length === 0) {
+      log.warn('discord_notification', 'Skipping rejected tokens Discord notification', {
+        notificationsEnabled,
+        hasRejectedTokens: rejectedTokens.length > 0
+      })
       return
     }
+
+    log.info('discord_notification', 'Proceeding with Discord rejected tokens notification')
 
     const emoji = isRealTrading ? '🔥' : '💻'
     const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
@@ -1321,24 +1386,51 @@ async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], is
     lines.push(`⏰ ${new Date().toLocaleString()}`)
 
     const content = lines.join('\n')
+    log.debug('discord_notification', 'Discord rejected tokens message prepared', { 
+      contentLength: content.length 
+    })
 
+    log.info('discord_notification', 'Sending Discord rejected tokens webhook request')
+    
     const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content })
     })
 
+    log.info('discord_notification', 'Discord rejected tokens webhook response received', {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok
+    })
+
     if (!response.ok) {
-      throw new Error(`Discord webhook failed: ${response.status}`)
+      const errorText = await response.text()
+      log.error('discord_notification', 'Discord rejected tokens webhook failed', new Error(`${response.status} - ${errorText}`), {
+        status: response.status,
+        errorText
+      })
+      throw new Error(`Discord webhook failed: ${response.status} - ${errorText}`)
     }
+
+    log.info('discord_notification', 'Discord rejected tokens notification sent successfully', {
+      rejectedCount: rejectedTokens.length,
+      topShown: topRejected.length,
+      messageLength: content.length
+    })
 
     logTradeOperation('Discord Rejected Tokens Success', {
       rejectedCount: rejectedTokens.length,
-      topShown: topRejected.length
+      topShown: topRejected.length,
+      messageLength: content.length
     })
   } catch (err) {
-    logTradeOperation('Discord Rejected Tokens Error', {
+    log.error('discord_notification', 'Error in sendRejectedTokensDiscord', err as Error, {
       rejectedCount: rejectedTokens.length
+    })
+    logTradeOperation('Discord Rejected Tokens Error', {
+      rejectedCount: rejectedTokens.length,
+      error: err instanceof Error ? err.message : String(err)
     }, err as Error)
   }
 }
@@ -3064,15 +3156,34 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     const isRealTrading = hasKeypair && hasWebhook
 
     try {
+      log.info('discord_notification', 'Starting Discord filtering notifications', {
+        totalTokens: filteringSummary.totalTokens,
+        acceptedTokens: filteringSummary.acceptedTokens,
+        rejectedTokens: filteringSummary.rejectedTokens,
+        rejectedTokensArrayLength: rejectedTokens.length,
+        isRealTrading
+      })
+
       // Send filtering summary
+      log.debug('discord_notification', 'Calling sendFilteringSummaryDiscord')
       await sendFilteringSummaryDiscord(filteringSummary, isRealTrading)
+      log.info('discord_notification', 'sendFilteringSummaryDiscord completed successfully')
 
       // Send rejected tokens details (if any)
       if (rejectedTokens.length > 0) {
+        log.debug('discord_notification', 'Calling sendRejectedTokensDiscord')
         await sendRejectedTokensDiscord(rejectedTokens, isRealTrading)
+        log.info('discord_notification', 'sendRejectedTokensDiscord completed successfully')
+      } else {
+        log.warn('discord_notification', 'No rejected tokens to send Discord notification for')
       }
+
+      log.info('discord_notification', 'All Discord filtering notifications completed successfully')
     } catch (discordError) {
-      console.error('❌ Error sending Discord filtering notifications:', discordError)
+      log.error('discord_notification', 'Error sending Discord filtering notifications', discordError as Error, {
+        message: discordError instanceof Error ? discordError.message : String(discordError),
+        stack: discordError instanceof Error ? discordError.stack : undefined
+      })
       // Continue processing even if Discord notifications fail
     }
 

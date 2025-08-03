@@ -1,14 +1,31 @@
 import { logTradeOperation } from '@/utils/logger'
+import { log } from '@/utils/unified-logger'
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_AUTO_TRADE || process.env.DISCORD_WEBHOOK_URL || ''
 
 // Helper to determine if notifications should be enabled
 export function shouldEnableNotifications(): boolean {
-  const enabled = DISCORD_WEBHOOK_URL !== ''
+  const webhookUrl = process.env.DISCORD_WEBHOOK_AUTO_TRADE || process.env.DISCORD_WEBHOOK_URL || ''
+  const enabled = webhookUrl !== ''
+  
+  log.debug('discord_notification', 'Discord notification status check', {
+    enabled,
+    webhookConfigured: !!webhookUrl,
+    webhookUrlLength: webhookUrl.length,
+    autoTradeWebhook: !!process.env.DISCORD_WEBHOOK_AUTO_TRADE,
+    regularWebhook: !!process.env.DISCORD_WEBHOOK_URL,
+    envVarsPresent: {
+      DISCORD_WEBHOOK_AUTO_TRADE: !!process.env.DISCORD_WEBHOOK_AUTO_TRADE,
+      DISCORD_WEBHOOK_URL: !!process.env.DISCORD_WEBHOOK_URL
+    }
+  })
+  
   logTradeOperation('Discord Status Check', {
     enabled,
-    webhookConfigured: !!DISCORD_WEBHOOK_URL
+    webhookConfigured: !!webhookUrl,
+    webhookUrlLength: webhookUrl.length
   })
+  
   return enabled
 }
 
