@@ -1429,39 +1429,36 @@ async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], is
     const emoji = isRealTrading ? '🔥' : '💻'
     const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
 
-    // Dynamic limit based on total count - fewer tokens shown if many rejected
-    let maxTokensToShow = 5
-    if (rejectedTokens.length > 30) {
-      maxTokensToShow = 3
-    } else if (rejectedTokens.length > 15) {
-      maxTokensToShow = 4
+    // Filter tokens with market cap <= 3M and get only symbols
+    const filteredTokens = rejectedTokens.filter(result => {
+      const mcap = result.token.baseAsset.mcap
+      return mcap && mcap <= 3_000_000
+    })
+
+    // Dynamic limit based on total count
+    let maxTokensToShow = Math.min(10, filteredTokens.length)
+    if (filteredTokens.length > 50) {
+      maxTokensToShow = 5
+    } else if (filteredTokens.length > 20) {
+      maxTokensToShow = 8
     }
 
-    const topRejected = rejectedTokens.slice(0, maxTokensToShow)
+    const topRejected = filteredTokens.slice(0, maxTokensToShow)
 
     const lines = [
-      `${emoji} Rejected Tokens Details (${mode})`,
+      `${emoji} Rejected Tokens (${mode}) - Max 3M Market Cap`,
       ``,
-      `❌ **Top ${topRejected.length} of ${rejectedTokens.length} Rejected Tokens:**`,
+      `❌ **Top ${topRejected.length} of ${filteredTokens.length} Rejected Tokens:**`,
       ``
     ]
 
-    topRejected.forEach((result, index) => {
-      const token = result.token.baseAsset
-      const reasons = result.rejectionReasons.slice(0, 2).join(', ') // Limit reasons shown
-      const tokenName = token.name || token.symbol || 'UNKNOWN'
-      const tokenPrice = token.usdPrice ? `$${token.usdPrice.toFixed(6)}` : 'N/A' // Reduced precision
+    // Simple format - only show symbols
+    const symbols = topRejected.map(result => result.token.baseAsset.symbol || 'UNKNOWN')
+    lines.push(symbols.join(', '))
+    lines.push(``)
 
-      // Shorter format to save space
-      lines.push(`**${index + 1}. ${tokenName}** (${token.symbol || 'UNKNOWN'})`)
-      lines.push(`   💰 ${tokenPrice} | 🏦 ${token.mcap ? `$${(token.mcap / 1000000).toFixed(1)}M` : 'N/A'} | 🎯 ${token.organicScore?.toFixed(0) || 'N/A'}`)
-      lines.push(`   📈 1h: ${((token.stats1h?.priceChange || 0) * 100).toFixed(1)}% | 📉 5m: ${((token.stats5m?.priceChange || 0) * 100).toFixed(1)}%`)
-      lines.push(`   🚫 ${reasons}${result.rejectionReasons.length > 2 ? ` +${result.rejectionReasons.length - 2} more` : ''}`)
-      lines.push(``)
-    })
-
-    if (rejectedTokens.length > maxTokensToShow) {
-      lines.push(`... and ${rejectedTokens.length - maxTokensToShow} more rejected tokens`)
+    if (filteredTokens.length > maxTokensToShow) {
+      lines.push(`... and ${filteredTokens.length - maxTokensToShow} more rejected tokens`)
       lines.push(``)
     }
 
@@ -1470,11 +1467,13 @@ async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], is
     // Apply length management
     const content = truncateDiscordMessage(lines)
 
-    log.debug('discord_notification', 'Discord rejected tokens message prepared with length management', {
+    log.debug('discord_notification', 'Discord rejected tokens message prepared with simplified format', {
       originalLength: lines.join('\n').length,
       finalLength: content.length,
       withinLimit: content.length <= DISCORD_MAX_LENGTH,
-      tokensShown: topRejected.length
+      tokensShown: topRejected.length,
+      filteredCount: filteredTokens.length,
+      totalRejected: rejectedTokens.length
     })
 
     log.info('discord_notification', 'Sending Discord rejected tokens webhook request', {
@@ -1505,12 +1504,14 @@ async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], is
 
     log.info('discord_notification', 'Discord rejected tokens notification sent successfully', {
       rejectedCount: rejectedTokens.length,
+      filteredCount: filteredTokens.length,
       tokensShown: topRejected.length,
       messageLength: content.length
     })
 
     logTradeOperation('Discord Rejected Tokens Success', {
       rejectedCount: rejectedTokens.length,
+      filteredCount: filteredTokens.length,
       tokensShown: topRejected.length,
       messageLength: content.length
     })
@@ -1588,7 +1589,7 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
       rejectionReasons.push('Market cap too low')
     }
 
-    if (!mcap || mcap >= 2_000_000) {
+    if (!mcap || mcap >= 3_000_000) {
       rejectionReasons.push('Market cap too high')
     }
 
