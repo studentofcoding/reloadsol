@@ -223,9 +223,23 @@ async function sendDiscordNotification(
           const hourChangeEmoji = token.change_1h
             ? (token.change_1h > 0 ? '🟢' : '🔴')
             : '';
+
+          // Risk assessment based on organic score and price volatility
+          let riskLevel = 'LOW';
+          if (token.organic_score < 75) riskLevel = 'HIGH';
+          else if (token.organic_score < 85) riskLevel = 'MED';
+
+          const volatility = Math.abs(token.change_1h || 0) * 100;
+          if (volatility > 100) riskLevel = 'HIGH';
+          else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MED';
+
+          // Construct chart link
+          const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
+
           return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
             `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
-            `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}\n`;
+            `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}, Risk: ${riskLevel}\n` +
+            `📈 [Trade here](${chartLink})\n`;
         }).join('\n')
       };
     }).filter(Boolean);
@@ -240,13 +254,13 @@ async function sendDiscordNotification(
     const message = {
       embeds: [
         {
-          title: `Token Update (${refreshType})`,
+          title: ` 🧪 Trending Token Update (${refreshType})`,
           description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased`,
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
           fields,
           footer: {
-            text: 'Buy Bulk Token Tracker'
+            text: 'Trending tokens (non filtered)'
           }
         }
       ]

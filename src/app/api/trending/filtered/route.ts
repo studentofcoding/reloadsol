@@ -201,59 +201,61 @@ async function sendFilteredTokensNotification() {
             { label: '$1M - $3M MCap', min: 1_000_001, max: 3_000_000 }
         ];
 
-        // Build the plain text message
-        const lines = [
-            `**Token Update (filtered)**`,
-            `Summary: ${addedCount} added, ${updatedCount} updated, ${removedCount} removed`,
-            `Price movements: ${increasedCount} increased, ${decreasedCount} decreased`,
-            ``
-        ];
-
-        // For each category, format tokens
-        categories.forEach(cat => {
+        // Create category fields for embed format
+        const categoryFields = categories.map(cat => {
             const tokens = sortedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 10);
-            if (tokens.length === 0) return;
+            if (tokens.length === 0) return null;
 
-            lines.push(`**${cat.label}**`);
+            return {
+                name: `${cat.label}`,
+                value: tokens.map(token => {
+                    const hourChangeEmoji = token.change_1h
+                        ? (token.change_1h > 0 ? '🟢' : '🔴')
+                        : '⚪';
 
-            tokens.forEach(token => {
-                const hourChangeEmoji = token.change_1h
-                    ? (token.change_1h > 0 ? '🟢' : '🔴')
-                    : '⚪';
+                    const hourChangePercent = token.change_1h ? (token.change_1h * 100).toFixed(2) : '0.00';
 
-                const hourChangePercent = token.change_1h ? (token.change_1h * 100).toFixed(2) : '0.00';
+                    // Risk assessment based on organic score and price volatility
+                    let riskLevel = 'LOW';
+                    if (token.organic_score < 75) riskLevel = 'HIGH';
+                    else if (token.organic_score < 85) riskLevel = 'MED';
 
-                // Risk assessment based on organic score and price volatility
-                let riskLevel = 'LOW';
-                if (token.organic_score < 75) riskLevel = 'HIGH';
-                else if (token.organic_score < 85) riskLevel = 'MED';
+                    const volatility = Math.abs(token.change_1h || 0) * 100;
+                    if (volatility > 100) riskLevel = 'HIGH';
+                    else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MED';
 
-                const volatility = Math.abs(token.change_1h || 0) * 100;
-                if (volatility > 100) riskLevel = 'HIGH';
-                else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MED';
+                    // Construct chart link
+                    const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
 
-                // Construct chart link
-                const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
+                    return `**${token.token_symbol}**\n` +
+                        `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +
+                        `Score: ${token.organic_score.toFixed(1)}, MCap: $${token.mcap.toLocaleString()}, Risk: ${riskLevel}\n` +
+                        `📈 [Trade here](${chartLink})\n`;
+                }).join('\n')
+            };
+        }).filter(Boolean);
 
-                lines.push(`**${token.token_symbol}**`);
-                lines.push(`Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%`);
-                lines.push(`Score: ${token.organic_score.toFixed(1)}, MCap: $${token.mcap.toLocaleString()}, Risk: ${riskLevel}`);
-                lines.push(`📈 [Trade here]](${chartLink})`);
-                lines.push(``);
-            });
-        });
+        // If no tokens in any category, show a fallback field
+        const fields = categoryFields.length > 0 ? categoryFields : [{
+            name: 'No Filtered Tokens Found',
+            value: 'No tokens match the current filter criteria.'
+        }];
 
-        lines.push(`⏰ ${new Date().toLocaleString()}`);
-        lines.push(`Filter: Score ≥${filterCriteria.min_organic_score}, MCap $${(filterCriteria.min_mcap / 1000).toFixed(0)}k-$${(filterCriteria.max_mcap / 1000000).toFixed(0)}M, 5m change >-40%`);
-
-        // Create plain text message (not embed)
-        const content = lines.join('\n');
-
-        // Ensure message is within Discord's character limit
-        const maxLength = 2000;
-        const finalContent = content.length > maxLength
-            ? content.substring(0, maxLength - 50) + '\n\n... (message truncated)'
-            : content;
+        // Create embed message
+        const message = {
+            embeds: [
+                {
+                    title: ` 🧪 Filtered Token Update`,
+                    description: `**Summary:** ${addedCount} added, ${updatedCount} updated, ${removedCount} removed\n**Price movements:** ${increasedCount} increased, ${decreasedCount} decreased`,
+                    color: 3447003, // Blue color
+                    timestamp: new Date().toISOString(),
+                    fields,
+                    footer: {
+                        text: `Filtered: Score ≥${filterCriteria.min_organic_score}, MCap $${(filterCriteria.min_mcap / 1000).toFixed(0)}k-$${(filterCriteria.max_mcap / 1000000).toFixed(0)}M, 5m change >-40%`
+                    }
+                }
+            ]
+        };
 
         // Send the message to Discord with timeout
         const controller = new AbortController();
@@ -265,7 +267,7 @@ async function sendFilteredTokensNotification() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ content: finalContent }),
+                body: JSON.stringify(message),
                 signal: controller.signal
             });
 
@@ -277,7 +279,7 @@ async function sendFilteredTokensNotification() {
 
             console.log('Discord filtered notification sent successfully', {
                 tokensCount: sortedTokens.length,
-                messageLength: finalContent.length,
+                fieldsCount: fields.length,
                 summary: { addedCount, updatedCount, removedCount, increasedCount, decreasedCount }
             });
         } catch (error) {
