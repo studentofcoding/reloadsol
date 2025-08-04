@@ -245,7 +245,7 @@ async function sendFilteredTokensNotification() {
         const message = {
             embeds: [
                 {
-                    title: ` 🧪 Filtered Token Update`,
+                    title: ` 📜 Filtered Token Update`,
                     description: `**Summary:** ${addedCount} added, ${updatedCount} updated, ${removedCount} removed\n**Price movements:** ${increasedCount} increased, ${decreasedCount} decreased`,
                     color: 3447003, // Blue color
                     timestamp: new Date().toISOString(),
