@@ -88,6 +88,9 @@ if (typeof process !== 'undefined') {
     process.on('exit', cleanupFilteredGlobalTimers);
 }
 
+// Track previous notification state for comparison
+let previousFilteredTokens: Map<string, TransformedToken> = new Map();
+
 // Function to send filtered tokens to Discord
 async function sendFilteredTokensNotification() {
     if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
@@ -97,8 +100,22 @@ async function sendFilteredTokensNotification() {
 
     const SERVER_URL = process.env.PUBLIC_SERVER_URL || process.env.VERCEL_URL || '';
 
-    if (SERVER_URL !== 'v2.reloadsol.xyz') {
-        console.log(`Skipping Discord notification: server URL is ${SERVER_URL}, not v2.reloadsol.xyz`);
+    // Extract hostname from URL for more robust comparison
+    let hostname = '';
+    try {
+        if (SERVER_URL) {
+            // Handle URLs with or without protocol
+            const urlToCheck = SERVER_URL.startsWith('http') ? SERVER_URL : `https://${SERVER_URL}`;
+            const url = new URL(urlToCheck);
+            hostname = url.hostname;
+        }
+    } catch (error) {
+        console.log(`Invalid server URL format: ${SERVER_URL}`);
+        return;
+    }
+
+    if (hostname !== 'v2.reloadsol.xyz') {
+        console.log(`Skipping Discord notification: server hostname is '${hostname}', not 'v2.reloadsol.xyz'`);
         return;
     }
 
@@ -118,12 +135,12 @@ async function sendFilteredTokensNotification() {
             rawTokens = await fetchAndUpdateCache(needsFullRefresh, currentTime, false);
         }
 
-        // Apply filtering criteria
+        // Updated filtering criteria with new market cap ranges
         const filterCriteria = {
             min_change_5m: -0.4,
             min_organic_score: 70.0,
-            min_mcap: 300000,
-            max_mcap: 2000000
+            min_mcap: 30000,      // Changed from 300k to 30k
+            max_mcap: 3000000     // Changed from 2M to 3M
         };
 
         const filteredTokens = rawTokens.filter(token =>
@@ -146,56 +163,93 @@ async function sendFilteredTokensNotification() {
             return;
         }
 
-        // Group tokens by market cap categories
+        // Calculate summary statistics
+        const currentTokensMap = new Map(sortedTokens.map(token => [token.token_address, token]));
+
+        let addedCount = 0;
+        let updatedCount = 0;
+        let increasedCount = 0;
+        let decreasedCount = 0;
+
+        // Compare with previous tokens to get statistics
+        Array.from(currentTokensMap).forEach(([address, token]) => {
+            const previousToken = previousFilteredTokens.get(address);
+            if (!previousToken) {
+                addedCount++;
+            } else {
+                updatedCount++;
+                if (token.price > previousToken.price) {
+                    increasedCount++;
+                } else if (token.price < previousToken.price) {
+                    decreasedCount++;
+                }
+            }
+        });
+
+        const removedCount = previousFilteredTokens.size - updatedCount;
+
+        // Update previous tokens for next comparison
+        previousFilteredTokens = currentTokensMap;
+
+        // Updated market cap categories
         const categories = [
-            { label: '$300k - $500k', min: 300_000, max: 500_000 },
-            { label: '$501k - $800k', min: 501_000, max: 800_000 },
-            { label: '$801k - $1.2M', min: 801_000, max: 1_200_000 },
-            { label: '$1.2M - $2M', min: 1_200_001, max: 2_000_000 }
+            { label: '$30k - $70k MCap', min: 30_000, max: 70_000 },
+            { label: '$71k - $120k MCap', min: 71_000, max: 120_000 },
+            { label: '$121k - $200k MCap', min: 121_000, max: 200_000 },
+            { label: '$201k - $500k MCap', min: 201_000, max: 500_000 },
+            { label: '$501k - $1M MCap', min: 501_000, max: 1_000_000 },
+            { label: '$1M - $3M MCap', min: 1_000_001, max: 3_000_000 }
         ];
 
-        // For each category, format up to 5 tokens
-        const categoryFields = categories.map(cat => {
-            const tokens = sortedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 5);
-            if (tokens.length === 0) return null;
-            return {
-                name: `${cat.label} MCap`,
-                value: tokens.map(token => {
-                    const hourChangeEmoji = token.change_1h
-                        ? (token.change_1h > 0 ? '🟢' : '🔴')
-                        : '';
-                    const fiveMinChangeEmoji = token.change_5m
-                        ? (token.change_5m > 0 ? '📈' : '📉')
-                        : '';
-                    return `**${token.token_symbol}** ${fiveMinChangeEmoji}\n` +
-                        `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
-                        `5m: ${(token.change_5m * 100).toFixed(2)}%, Score: ${token.organic_score.toFixed(1)}\n` +
-                        `MCap: $${(token.mcap).toLocaleString()}\n`;
-                }).join('\n')
-            };
-        }).filter(Boolean);
+        // Build the plain text message
+        const lines = [
+            `**Token Update (filtered)**`,
+            `Summary: ${addedCount} added, ${updatedCount} updated, ${removedCount} removed`,
+            `Price movements: ${increasedCount} increased, ${decreasedCount} decreased`,
+            ``
+        ];
 
-        // If no tokens in any category, show a fallback field
-        const fields = categoryFields.length > 0 ? categoryFields : [{
-            name: 'No Filtered Tokens Found',
-            value: 'No tokens matching the filter criteria were found in this update.'
-        }];
+        // For each category, format tokens
+        categories.forEach(cat => {
+            const tokens = sortedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 10);
+            if (tokens.length === 0) return;
 
-        // Format the message
-        const message = {
-            embeds: [
-                {
-                    title: `🔍 Filtered Token Update`,
-                    description: `**High-Quality Tokens:** ${sortedTokens.length} tokens found\n**Filter:** Score ≥70, MCap $300k-$2M, 5m change >-40%\n**Total tokens scanned:** ${rawTokens.length}`,
-                    color: 15844367, // Gold color for filtered tokens
-                    timestamp: new Date().toISOString(),
-                    fields,
-                    footer: {
-                        text: 'Buy Bulk Filtered Token Tracker'
-                    }
-                }
-            ]
-        };
+            lines.push(`**${cat.label}**`);
+
+            tokens.forEach(token => {
+                const hourChangeEmoji = token.change_1h
+                    ? (token.change_1h > 0 ? '🟢' : '🔴')
+                    : '⚪';
+
+                const hourChangePercent = token.change_1h ? (token.change_1h * 100).toFixed(2) : '0.00';
+
+                // Risk assessment based on organic score and price volatility
+                let riskLevel = 'LOW';
+                if (token.organic_score < 75) riskLevel = 'HIGH';
+                else if (token.organic_score < 85) riskLevel = 'MED';
+
+                const volatility = Math.abs(token.change_1h || 0) * 100;
+                if (volatility > 100) riskLevel = 'HIGH';
+                else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MED';
+
+                lines.push(`${token.token_symbol}`);
+                lines.push(`Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%`);
+                lines.push(`Score: ${token.organic_score.toFixed(1)}, MCap: $${token.mcap.toLocaleString()}, Risk: ${riskLevel}`);
+                lines.push(``);
+            });
+        });
+
+        lines.push(`⏰ ${new Date().toLocaleString()}`);
+        lines.push(`Filter: Score ≥${filterCriteria.min_organic_score}, MCap $${(filterCriteria.min_mcap / 1000).toFixed(0)}k-$${(filterCriteria.max_mcap / 1000000).toFixed(0)}M, 5m change >-40%`);
+
+        // Create plain text message (not embed)
+        const content = lines.join('\n');
+
+        // Ensure message is within Discord's character limit
+        const maxLength = 2000;
+        const finalContent = content.length > maxLength
+            ? content.substring(0, maxLength - 50) + '\n\n... (message truncated)'
+            : content;
 
         // Send the message to Discord with timeout
         const controller = new AbortController();
@@ -207,7 +261,7 @@ async function sendFilteredTokensNotification() {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(message),
+                body: JSON.stringify({ content: finalContent }),
                 signal: controller.signal
             });
 
@@ -217,7 +271,11 @@ async function sendFilteredTokensNotification() {
                 throw new Error(`Discord API responded with status: ${response.status}`);
             }
 
-            console.log('Discord filtered notification sent successfully');
+            console.log('Discord filtered notification sent successfully', {
+                tokensCount: sortedTokens.length,
+                messageLength: finalContent.length,
+                summary: { addedCount, updatedCount, removedCount, increasedCount, decreasedCount }
+            });
         } catch (error) {
             clearTimeout(timeoutId);
             throw error;
@@ -294,7 +352,7 @@ export async function PUT(request: NextRequest) {
 
         // Check Discord configuration
         const webhookUrl = process.env.DISCORD_WEBHOOK_AUTO_TRADE || process.env.DISCORD_WEBHOOK_URL || '';
-        
+
         console.log('Filtered Discord Configuration Test:', {
             enabled: ENABLE_DISCORD_NOTIFICATIONS,
             webhookConfigured: !!webhookUrl,
@@ -312,9 +370,9 @@ export async function PUT(request: NextRequest) {
         try {
             testResult = await testFilteredDiscordNotification();
         } catch (error) {
-            testResult = { 
-                success: false, 
-                error: error instanceof Error ? error.message : 'Unknown error' 
+            testResult = {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
             };
         }
 
