@@ -16,9 +16,9 @@ const http = require('http');
 // Configuration - All values now configurable via environment variables
 const BASE_URL = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
-  : process.env.TEST_BASE_URL || 'http://localhost:3000';
+  : process.env.TEST_BASE_URL || 'https://v2.reloadsol.xyz';
 
-const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET || 'trending-track-secret';
+const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending';
 const CONTENT_TYPE = process.env.TEST_CONTENT_TYPE || 'application/json';
 const USER_AGENT = process.env.TEST_USER_AGENT || 'trending-tracker-test-script';
 const EXPECTED_UNAUTHORIZED_STATUS = parseInt(process.env.TEST_EXPECTED_UNAUTHORIZED_STATUS) || 401;

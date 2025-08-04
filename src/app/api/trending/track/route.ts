@@ -1570,15 +1570,15 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
 
     // Apply filters and track rejection reasons
     if (priceChange5m <= -0.40) {
-      rejectionReasons.push('Price drop too severe')
+      rejectionReasons.push(`Price drop too severe on 5m, it drop ${priceChange5m.toFixed(2)}%`)
     }
 
     if (priceChange1h >= 1.00) {
-      rejectionReasons.push('Price rise too high (1h)')
+      rejectionReasons.push(`Price rise too high (1h), it pump ${priceChange1h.toFixed(2)}%`)
     }
 
     if (priceChange6h >= 0.60) {
-      rejectionReasons.push('Price rise too high (6h)')
+      rejectionReasons.push(`Price rise too high (6h), it pump ${priceChange6h.toFixed(2)}%`)
     }
 
     if (!organicScore || organicScore < 70) {
@@ -2967,10 +2967,122 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
     const secretKey = searchParams.get('key')
     const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
     const testDiscord = searchParams.get('test') === 'discord'
+    const testFilter = searchParams.get('test') === 'filter'
 
     if (secretKey !== expectedSecretKey) {
       logger.warn('api_request', 'Unauthorized attempt to change trading mode', { ip: request.ip })
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    if (testFilter) {
+      try {
+        console.log('Track Filter Test: Starting enhanced filtering test...')
+
+        // Fetch trending tokens from Jupiter API (same logic as main tracking)
+        const JUPITER_TRENDING_URLS = [
+          'https://datapi.jup.ag/v1/pools/toptrending/1h',
+        ]
+
+        let response: Response | null = null
+
+        for (const url of JUPITER_TRENDING_URLS) {
+          try {
+            console.log(`Fetching trending tokens from: ${url}`)
+            response = await fetch(url, {
+              headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'ReloadSol-TrendingTracker/1.0'
+              },
+              next: { revalidate: 0 }
+            })
+
+            if (response.ok) {
+              console.log(`✅ Successfully fetched from ${url}`)
+              break
+            }
+
+            if (response.status === 429) {
+              console.log(`⏳ Rate limited on ${url}, waiting 500ms...`)
+              await new Promise(res => setTimeout(res, 500))
+              continue
+            }
+
+            throw new Error(`Jupiter API responded with status: ${response.status}`)
+          } catch (err) {
+            console.error(`Error fetching trending tokens from ${url}:`, err)
+          }
+        }
+
+        if (!response || !response.ok) {
+          throw new Error('All Jupiter trending API endpoints failed')
+        }
+
+        const data = await response.json() as JupiterResponse
+        console.log(`Track Filter Test: Fetched ${data.pools.length} pools from Jupiter API`)
+
+        // Perform enhanced filtering
+        const { results: filterResults, summary: filteringSummary } = performEnhancedFiltering(data.pools)
+
+        // Extract accepted tokens
+        const acceptedTokens = filterResults
+          .filter(result => result.passed)
+          .map(result => ({
+            address: result.token.baseAsset.id,
+            symbol: result.token.baseAsset.symbol,
+            name: result.token.baseAsset.name,
+            marketCap: result.token.baseAsset.mcap,
+            volume1h: result.token.baseAsset.stats1h?.buyVolume || 0,
+            organicScore: result.token.baseAsset.organicScore,
+            currentPrice: result.token.baseAsset.usdPrice,
+            priceChange1h: result.token.baseAsset.stats1h?.priceChange || 0,
+            priceChange5m: result.token.baseAsset.stats5m?.priceChange || 0,
+            priceChange6h: result.token.baseAsset.stats6h?.priceChange || 0
+          }))
+
+        // Extract rejected tokens with their rejection reasons
+        const rejectedTokens = filterResults
+          .filter(result => !result.passed)
+          .map(result => ({
+            address: result.token.baseAsset.id,
+            symbol: result.token.baseAsset.symbol,
+            name: result.token.baseAsset.name,
+            marketCap: result.token.baseAsset.mcap,
+            volume1h: result.token.baseAsset.stats1h?.buyVolume || 0,
+            organicScore: result.token.baseAsset.organicScore,
+            currentPrice: result.token.baseAsset.usdPrice,
+            priceChange1h: result.token.baseAsset.stats1h?.priceChange || 0,
+            priceChange5m: result.token.baseAsset.stats5m?.priceChange || 0,
+            priceChange6h: result.token.baseAsset.stats6h?.priceChange || 0,
+            rejectionReasons: result.rejectionReasons
+          }))
+
+        const summary = {
+          totalTokens: data.pools.length,
+          acceptedCount: acceptedTokens.length,
+          rejectedCount: rejectedTokens.length,
+          acceptanceRate: `${((acceptedTokens.length / data.pools.length) * 100).toFixed(1)}%`,
+          processingTime: filteringSummary.processingTime
+        }
+
+        console.log('Track Filter Test: Filtering completed successfully', summary)
+
+        return NextResponse.json({
+          success: true,
+          message: 'Track filter test completed successfully',
+          summary,
+          acceptedTokens,
+          rejectedTokens,
+          rejectionDetails: filteringSummary.rejectionDetails
+        })
+
+      } catch (error) {
+        console.error('Track Filter Test: Error during filtering test', error)
+        return NextResponse.json({
+          success: false,
+          message: 'Track filter test failed',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }, { status: 500 })
+      }
     }
 
     // Handle Discord testing

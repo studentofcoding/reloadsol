@@ -229,7 +229,10 @@ async function runTests() {
     }
   });
 
-  // Test Track Discord Test (All notification types)
+  // === TRENDING TRACKER FILTERING TESTS ===
+  log.info('\n🔍 Testing Trending Tracker Filtering...');
+
+  // Test Enhanced Filtering with detailed results
   await testEndpoint('Track Discord Test', '/api/trending/track', {
     method: 'PUT',
     params: {
@@ -245,6 +248,98 @@ async function runTests() {
       )
     }
   });
+
+  // Test Track Filter Test (Enhanced Filtering)
+  await testEndpoint('Track Filter Test', '/api/trending/track', {
+    method: 'PUT',
+    params: {
+      key: 'r3l0ads0l-trending', // Required secret key
+      test: 'filter' // Required to trigger filter testing mode
+    },
+    timeout: 30000, // Longer timeout for filtering operations
+    validator: (data) => {
+      return data &&
+        data.success === true &&
+        data.message &&
+        typeof data.message === 'string' &&
+        data.summary &&
+        typeof data.summary.totalTokens === 'number' &&
+        typeof data.summary.acceptedCount === 'number' &&
+        typeof data.summary.rejectedCount === 'number' &&
+        typeof data.summary.acceptanceRate === 'string' &&
+        typeof data.summary.processingTime === 'number' &&
+        Array.isArray(data.acceptedTokens) &&
+        Array.isArray(data.rejectedTokens) &&
+        Array.isArray(data.rejectionDetails)
+    }
+  });
+
+  // Display detailed filtering results if available
+  const filterTestResult = await testEndpoint('Track Filter Test - Display Results', '/api/trending/track', {
+    method: 'PUT',
+    params: {
+      key: 'r3l0ads0l-trending',
+      test: 'filter'
+    },
+    timeout: 30000,
+    validator: (data) => data && data.success === true,
+    displayResults: true
+  });
+
+  if (filterTestResult && filterTestResult.success) {
+    console.log('\n🔍 FILTERING RESULTS:');
+    console.log('='.repeat(50));
+
+    const { summary, acceptedTokens, rejectedTokens, rejectionDetails } = filterTestResult;
+
+    // Summary
+    console.log(`📊 Summary:`);
+    console.log(`   Total Tokens: ${summary.totalTokens}`);
+    console.log(`   Accepted: ${summary.acceptedCount} (${summary.acceptanceRate})`);
+    console.log(`   Rejected: ${summary.rejectedCount}`);
+    console.log(`   Processing Time: ${summary.processingTime}ms`);
+
+    // Accepted Tokens
+    if (acceptedTokens.length > 0) {
+      console.log(`\n✅ ACCEPTED TOKENS (${acceptedTokens.length}):`);
+      acceptedTokens.slice(0, 5).forEach((token, index) => {
+        console.log(`   ${index + 1}. ${token.symbol} (${token.name})`);
+        console.log(`      Address: ${token.address}`);
+        console.log(`      Price: $${token.currentPrice?.toFixed(6) || 'N/A'}`);
+        console.log(`      Market Cap: $${token.marketCap?.toLocaleString() || 'N/A'}`);
+        console.log(`      Organic Score: ${token.organicScore || 'N/A'}`);
+        console.log(`      1h Change: ${token.priceChange1h?.toFixed(2) || 0}%`);
+      });
+      if (acceptedTokens.length > 5) {
+        console.log(`   ... and ${acceptedTokens.length - 5} more`);
+      }
+    }
+
+    // Rejected Tokens (show top 10)
+    if (rejectedTokens.length > 0) {
+      console.log(`\n❌ REJECTED TOKENS (showing first 10 of ${rejectedTokens.length}):`);
+      rejectedTokens.slice(0, 10).forEach((token, index) => {
+        console.log(`   ${index + 1}. ${token.symbol} (${token.name})`);
+        console.log(`      Address: ${token.address}`);
+        console.log(`      Price: $${token.currentPrice?.toFixed(6) || 'N/A'}`);
+        console.log(`      Market Cap: $${token.marketCap?.toLocaleString() || 'N/A'}`);
+        console.log(`      Organic Score: ${token.organicScore || 'N/A'}`);
+        console.log(`      Rejection Reasons: ${token.rejectionReasons?.join(', ') || 'N/A'}`);
+      });
+    }
+
+    // Rejection Breakdown
+    if (rejectionDetails && rejectionDetails.length > 0) {
+      console.log(`\n📋 REJECTION BREAKDOWN:`);
+      rejectionDetails
+        .sort((a, b) => b.count - a.count)
+        .forEach(detail => {
+          console.log(`   ${detail.reason}: ${detail.count} tokens`);
+        });
+    }
+
+    console.log('='.repeat(50));
+  }
 
   // === NEW JUPITER METADATA API TESTS ===
   log.info('\n🚀 Testing Jupiter Metadata API v2...');
