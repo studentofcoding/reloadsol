@@ -1465,29 +1465,31 @@ export default function PnLTracker() {
                           <span className="text-gray-300">${record.buyPrice.toFixed(6)}</span>
                         </div>
 
-                        {/* SOL amounts */}
-                        <div className="text-xs text-gray-300 mb-1">
-                          {record.solAmountBought.toFixed(3)} → {record.solAmountSold.toFixed(3)} SOL
-                        </div>
+                        {/* SOL amounts - Hidden when global toggle is active */}
+                        {!globalPnLHidden && (
+                          <div className="text-xs text-gray-300 mb-1">
+                            {record.solAmountBought.toFixed(3)} → {record.solAmountSold.toFixed(3)} SOL
+                          </div>
+                        )}
 
-                        {/* USD P&L Amount */}
-                        <div className="text-xs mb-1">
-                          <span className="text-gray-500">P&L: </span>
-                          <div className="inline-flex items-center space-x-1">
-                            {globalPnLHidden || hiddenPnLAmounts.has(record.id) ? (
-                              <span className="font-medium text-gray-400">••••</span>
-                            ) : (
-                              <span className={`font-medium ${
-                                pnlAmountUSD > 0 
-                                  ? 'text-green-400' 
-                                  : pnlAmountUSD < 0 
-                                    ? 'text-red-400' 
-                                    : 'text-gray-400'
-                              }`}>
-                                {pnlAmountUSD > 0 ? '+' : ''}${Math.abs(pnlAmountUSD).toFixed(2)}
-                              </span>
-                            )}
-                            {!globalPnLHidden && (
+                        {/* USD P&L Amount - Hidden when global toggle is active OR individual toggle is active */}
+                        {!globalPnLHidden && (
+                          <div className="text-xs mb-1">
+                            <span className="text-gray-500">P&L: </span>
+                            <div className="inline-flex items-center space-x-1">
+                              {hiddenPnLAmounts.has(record.id) ? (
+                                <span className="font-medium text-gray-400">••••</span>
+                              ) : (
+                                <span className={`font-medium ${
+                                  pnlAmountUSD > 0 
+                                    ? 'text-green-400' 
+                                    : pnlAmountUSD < 0 
+                                      ? 'text-red-400' 
+                                      : 'text-gray-400'
+                                }`}>
+                                  {pnlAmountUSD > 0 ? '+' : ''}${Math.abs(pnlAmountUSD).toFixed(2)}
+                                </span>
+                              )}
                               <button
                                 onClick={(e) => togglePnLVisibility(record.id, e)}
                                 className="text-gray-500 hover:text-gray-300 transition-colors"
@@ -1504,9 +1506,9 @@ export default function PnLTracker() {
                                   </svg>
                                 )}
                               </button>
-                            )}
+                            </div>
                           </div>
-                        </div>
+                        )}
 
                         {/* Footer: Status and timestamp */}
                         <div className="flex items-center justify-between text-xs text-gray-400">
