@@ -232,9 +232,13 @@ async function sendFilteredTokensNotification() {
                 if (volatility > 100) riskLevel = 'HIGH';
                 else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MED';
 
-                lines.push(`${token.token_symbol}`);
+                // Construct chart link
+                const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
+
+                lines.push(`**${token.token_symbol}**`);
                 lines.push(`Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%`);
                 lines.push(`Score: ${token.organic_score.toFixed(1)}, MCap: $${token.mcap.toLocaleString()}, Risk: ${riskLevel}`);
+                lines.push(`📈 [Trade here]](${chartLink})`);
                 lines.push(``);
             });
         });

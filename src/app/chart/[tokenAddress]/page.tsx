@@ -572,7 +572,7 @@ export default function ChartPage() {
       )}
 
       {/* Chart Container */}
-      <div className="relative w-full" style={{ height: '70vh' }}>
+      <div className="relative max-w-7xl mx-auto" style={{ height: '70vh' }}>
         {/* Loading indicator */}
         {isLoading && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
@@ -583,7 +583,7 @@ export default function ChartPage() {
         {/* GMGN Chart iframe */}
         <iframe 
           src={gmgnChartUrl}
-          className="w-full max-w-7xl h-full"
+          className="w-full h-full"
           style={{ 
             border: 'none',
             minHeight: '600px'
