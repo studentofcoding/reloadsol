@@ -2364,7 +2364,17 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
 
     // Safety checks for real trading
     if (!isSimulated) {
-      if (!simulation.keypair_path) {
+      // Add diagnostic logging
+      console.log(`🔧 Real trade safety check for ${token.token_symbol}:`)
+      console.log(`  - simulation.keypair_path: ${simulation.keypair_path || 'undefined'}`)
+      console.log(`  - TRADING_KEYPAIR_JSON env var: ${process.env.TRADING_KEYPAIR_JSON ? 'SET' : 'NOT SET'}`)
+      console.log(`  - Global tradingKeypair: ${tradingKeypair ? 'initialized' : 'null'}`)
+
+      // Enhanced keypair validation - check both simulation path and environment variable
+      const hasKeypairPath = !!simulation.keypair_path
+      const hasEnvKeypair = !!process.env.TRADING_KEYPAIR_JSON
+      
+      if (!hasKeypairPath && !hasEnvKeypair) {
         throw new Error('Trading keypair not configured (set TRADING_KEYPAIR_JSON or provide keypair_path)')
       }
 
