@@ -19,7 +19,7 @@ type TransactionResultModalProps = {
   balanceAfter?: number
   solToUsd?: (solValue: number) => number
   onSelectToken?: (mintAddress: string) => void
-  pointsEarned?: number
+  pointsEarned?: number | undefined
 }
 
 export default function TransactionResultModal({

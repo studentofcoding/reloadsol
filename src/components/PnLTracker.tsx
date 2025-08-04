@@ -94,6 +94,23 @@ export default function PnLTracker() {
   const [selectedToken, setSelectedToken] = useState<string>('')
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false)
 
+  // ✅ NEW: Notification state
+  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('pnl-notifications-enabled') === 'true'
+    }
+    return false
+  })
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
+  const [notificationThreshold, setNotificationThreshold] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('pnl-notification-threshold')
+      return saved ? parseFloat(saved) : 50
+    }
+    return 50
+  })
+  const [notifiedTokens, setNotifiedTokens] = useState<Set<string>>(new Set())
+
   // ✅ NEW: Use the modular PnL sharing system
   const { 
     shareData, 
@@ -128,6 +145,149 @@ export default function PnLTracker() {
     localStorage.setItem('pnl-closed-positions-hint-dismissed', 'true')
   }, [])
 
+  // Add this function for opening charts
+  const handleOpenChart = useCallback((mintAddress: string, symbol?: string) => {
+    setSelectedToken(mintAddress)
+    setIsChartLoading(true)
+  }, [])
+
+  // ✅ NEW: Check notification permission on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setNotificationPermission(Notification.permission)
+    }
+  }, [])
+
+  // ✅ NEW: Request notification permission
+  const requestNotificationPermission = useCallback(async () => {
+    if (!('Notification' in window)) {
+      console.warn('This browser does not support notifications')
+      return false
+    }
+
+    try {
+      const permission = await Notification.requestPermission()
+      setNotificationPermission(permission)
+      return permission === 'granted'
+    } catch (error) {
+      console.error('Error requesting notification permission:', error)
+      return false
+    }
+  }, [])
+
+  // ✅ NEW: Toggle notifications
+  const toggleNotifications = useCallback(async () => {
+    if (!notificationsEnabled) {
+      // Enabling notifications - request permission first
+      const hasPermission = notificationPermission === 'granted' || await requestNotificationPermission()
+      
+      if (hasPermission) {
+        setNotificationsEnabled(true)
+        localStorage.setItem('pnl-notifications-enabled', 'true')
+        console.log('🔔 PnL notifications enabled')
+      } else {
+        console.warn('Notification permission denied')
+      }
+    } else {
+      // Disabling notifications
+      setNotificationsEnabled(false)
+      localStorage.setItem('pnl-notifications-enabled', 'false')
+      setNotifiedTokens(new Set()) // Clear notified tokens when disabling
+      console.log('🔕 PnL notifications disabled')
+    }
+  }, [notificationsEnabled, notificationPermission, requestNotificationPermission])
+
+  // ✅ NEW: Send browser notification
+  const sendPnLNotification = useCallback((position: OpenPosition, pnlPercentage: number) => {
+    if (!notificationsEnabled || notificationPermission !== 'granted') return
+
+    const tokenName = position.symbol || position.name || 'Token'
+    const isProfit = pnlPercentage > 0
+    const emoji = isProfit ? '🚀' : '📉'
+    const direction = isProfit ? 'up' : 'down'
+    
+    const title = `${emoji} ${tokenName} ${direction} ${Math.abs(pnlPercentage).toFixed(1)}%`
+    const body = `Your ${tokenName} position is ${isProfit ? 'gaining' : 'losing'} ${Math.abs(pnlPercentage).toFixed(1)}%`
+    
+    try {
+      const notification = new Notification(title, {
+        body,
+        icon: position.logoURI || '/favicon.ico',
+        badge: '/favicon.ico',
+        tag: `pnl-${position.mintAddress}`, // Prevent duplicate notifications
+        requireInteraction: isProfit && Math.abs(pnlPercentage) >= 100, // Require interaction for 100%+ gains
+        silent: false,
+      })
+
+      // Auto-close notification after 10 seconds
+      setTimeout(() => {
+        notification.close()
+      }, 10000)
+
+      // Handle notification click - could open chart or focus window
+      notification.onclick = () => {
+        window.focus()
+        handleOpenChart(position.mintAddress, position.symbol)
+        notification.close()
+      }
+
+      console.log(`🔔 Sent notification for ${tokenName}: ${pnlPercentage.toFixed(1)}%`)
+    } catch (error) {
+      console.error('Error sending notification:', error)
+    }
+  }, [notificationsEnabled, notificationPermission, handleOpenChart])
+
+  // ✅ NEW: Clear notification flag for a specific token
+  const clearNotificationFlag = useCallback((mintAddress: string) => {
+    setNotifiedTokens(prev => {
+      const newSet = new Set(prev)
+      // Remove all notification flags for this token (all percentage thresholds)
+      Array.from(newSet).forEach(key => {
+        if (key.startsWith(`${mintAddress}-`)) {
+          newSet.delete(key)
+        }
+      })
+      return newSet
+    })
+    console.log(`🔕 Cleared notification flags for token: ${mintAddress}`)
+  }, [])
+
+  // ✅ NEW: Check for notification-worthy positions
+  const checkForNotifications = useCallback(() => {
+    if (!notificationsEnabled || !connected) return
+
+    openPositions.forEach(position => {
+      if (position.pnlPercentage === undefined) return
+
+      const pnlAbs = Math.abs(position.pnlPercentage)
+      const tokenKey = `${position.mintAddress}-${Math.floor(pnlAbs / 10) * 10}` // Group by 10% increments
+      
+      // Check if this position exceeds the threshold and hasn't been notified recently
+      if (pnlAbs >= notificationThreshold && !notifiedTokens.has(tokenKey)) {
+        sendPnLNotification(position, position.pnlPercentage)
+        
+        // Mark as notified
+        setNotifiedTokens(prev => new Set(prev).add(tokenKey))
+        
+        // Clear notification flag after 30 minutes to allow re-notification
+        setTimeout(() => {
+          setNotifiedTokens(prev => {
+            const newSet = new Set(prev)
+            newSet.delete(tokenKey)
+            return newSet
+          })
+        }, 30 * 60 * 1000) // 30 minutes
+      }
+    })
+  }, [notificationsEnabled, connected, openPositions, notificationThreshold, notifiedTokens, sendPnLNotification])
+
+  // ✅ NEW: Monitor positions for notifications
+  useEffect(() => {
+    if (notificationsEnabled && openPositions.length > 0) {
+      checkForNotifications()
+    }
+  }, [checkForNotifications, notificationsEnabled, openPositions])
+
   const BotOperationIndicator = ({ isBotOperation, botStrategy }: { 
     isBotOperation?: boolean, 
     botStrategy?: string 
@@ -147,6 +307,10 @@ export default function PnLTracker() {
       </div>
     )
   }
+
+
+
+
 
   // Add this useEffect after other useEffect hooks to persist dismissal state
   useEffect(() => {
@@ -560,6 +724,8 @@ export default function PnLTracker() {
             // Accurate calculation using actual token buy price vs current price
             const pnlPercentage = ((currentTokenPriceUsd - position.buyPriceUsd) / position.buyPriceUsd) * 100
             
+
+            
             // Estimate current USD value based on initial SOL investment and price change
             const initialUsdValue = position.solAmountBought * solPriceUsd
             const priceMultiplier = currentTokenPriceUsd / position.buyPriceUsd
@@ -582,6 +748,8 @@ export default function PnLTracker() {
             const priceMultiplier = currentTokenPriceUsd / (initialUsdValue / currentSolValue)
             const estimatedCurrentValue = initialUsdValue * Math.max(0.1, priceMultiplier)
             const pnlPercentage = ((estimatedCurrentValue - initialUsdValue) / initialUsdValue) * 100
+
+
 
             return {
               ...position,
@@ -609,12 +777,6 @@ export default function PnLTracker() {
 
   // Handle token selection for chart display
   const handleSelectToken = useCallback((mintAddress: string) => {
-    setSelectedToken(mintAddress)
-    setIsChartLoading(true)
-  }, [])
-
-  // Add this function for opening charts
-  const handleOpenChart = useCallback((mintAddress: string, symbol?: string) => {
     setSelectedToken(mintAddress)
     setIsChartLoading(true)
   }, [])
@@ -753,6 +915,9 @@ export default function PnLTracker() {
       )
 
       if (sellResult.success && sellResult.successfulSwaps.length > 0) {
+        // ✅ NEW: Clear notification flag when position is sold
+        clearNotificationFlag(position.mintAddress)
+        
         // Track the successful sell operation for points
         try {
           const trackResult = await trackSell(
@@ -851,7 +1016,7 @@ export default function PnLTracker() {
       setIsSelling(false)
       setSellingTokenId('')
     }
-  }, [connected, publicKey, signAllTransactions, connection, calculatePnL])
+  }, [connected, publicKey, signAllTransactions, connection, calculatePnL, clearNotificationFlag, sellQuotes, showShareModal, autoTriggerShare, trackOperation])
   // Initial price fetch and automatic refresh every 30 seconds
   useEffect(() => {
     if (openPositions.length > 0 && !hasInitialPricesFetched && !isRefreshingPrices) {
@@ -952,7 +1117,7 @@ export default function PnLTracker() {
   }
 
   return (
-    <div className="rounded-lg h-full flex flex-col">
+    <div className="space-y-4">
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center space-x-2">
           {isBotSyncActive && (
@@ -1010,46 +1175,83 @@ export default function PnLTracker() {
         </div>
       )}
 
-      {/* Tab Navigation */}
-      <div className="flex space-x-1 rounded-lg p-1 mb-4">
-        <h2 className="text-lg font-semibold mr-4 bg-black text-white">
-          Your PnL
-        </h2>
-        <button
-          onClick={() => setActiveTab('completed')}
-          className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-            activeTab === 'completed'
-              ? 'bg-gray-600 text-white'
-              : 'text-gray-200 hover:text-white hover:bg-gray-400'
-          }`}
-        >
-          Past ({pnlRecords.length})
-        </button>
-        <button
-          onClick={() => setActiveTab('open')}
-          className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-            activeTab === 'open'
-              ? 'bg-gray-600 text-white'
-              : 'text-gray-200 hover:text-white hover:bg-gray-400'
-          }`}
-        >
-          Open ({openPositions.length})
-        </button>
-        {connected && (
-          <div className="flex items-center space-x-2">
-            {activeTab === 'open' && (
-              <button
-                onClick={refreshOpenPositionPrices}
-                disabled={isRefreshingPrices}
-                className="px-3 py-1.5 text-white text-sm rounded-lg flex items-center space-x-1 transition-colors"
-              >
-                <svg className={`w-4 h-4 ${isRefreshingPrices ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
-            )}
+      {/* Header with tabs and controls */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center space-x-4">
+          <h2 className="text-lg font-semibold text-white">
+            Your PnL
+          </h2>
+          <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
+            <button
+              onClick={() => setActiveTab('completed')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                activeTab === 'completed'
+                  ? 'bg-gray-700 text-white'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Completed ({pnlRecords.length})
+            </button>
+            <button
+              onClick={() => setActiveTab('open')}
+              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                activeTab === 'open'
+                  ? 'bg-gray-700 text-white'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Open ({openPositions.length})
+            </button>
           </div>
-        )}
+        </div>
+
+        <div className="flex items-center space-x-2">
+          {/* ✅ NEW: Notification controls */}
+          {activeTab === 'open' && (
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={toggleNotifications}
+                className={`flex items-center space-x-1 px-2 py-1 text-xs rounded-md transition-colors ${
+                  notificationsEnabled
+                    ? 'bg-green-600 hover:bg-green-700 text-white'
+                    : 'bg-gray-600 hover:bg-gray-700 text-gray-300'
+                }`}
+                title={`${notificationsEnabled ? 'Disable' : 'Enable'} notifications for 50%+ P&L (once per token)`}
+              >
+                <span>{notificationsEnabled ? '🔔' : '🔕'}</span>
+                <span>50%+</span>
+              </button>
+              
+              {/* ✅ NEW: Reset notifications button */}
+              {notificationsEnabled && notifiedTokens.size > 0 && (
+                <button
+                  onClick={() => {
+                    setNotifiedTokens(new Set())
+                    localStorage.removeItem('pnl-notified-tokens')
+                    console.log('🔄 Reset all notification flags')
+                  }}
+                  className="px-2 py-1 text-xs bg-yellow-600 hover:bg-yellow-700 text-white rounded-md transition-colors"
+                  title={`Reset notifications for ${notifiedTokens.size} tokens`}
+                >
+                  🔄 Reset ({notifiedTokens.size})
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Existing refresh button */}
+          {activeTab === 'open' && openPositions.length > 0 && (
+            <button
+              onClick={refreshOpenPositionPrices}
+              disabled={isRefreshingPrices}
+              className="flex items-center space-x-1 px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-xs rounded-md transition-colors"
+              title="Refresh current prices"
+            >
+              <span className={isRefreshingPrices ? 'animate-spin' : ''}>🔄</span>
+              <span>Refresh</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Content */}
@@ -1265,6 +1467,7 @@ export default function PnLTracker() {
                     return (
                       <div
                         key={position.id}
+                        data-token-address={position.mintAddress}
                         className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[100px] rounded-lg cursor-pointer group py-2 px-3 border ${
                           position.isBotOperation 
                             ? 'border-purple-500/30 bg-purple-900/10' 

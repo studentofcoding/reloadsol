@@ -41,6 +41,9 @@ const dbg = (...args: any[]): void => {
   }
 }
 
+const DISCORD_MAX_LENGTH = 2000
+const DISCORD_SAFE_LENGTH = 1900 // Leave some buffer
+
 // === Table selection (use alternate tables in local development to avoid prod collisions) ===
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
@@ -295,11 +298,25 @@ interface TokenFilterResult {
   mappedToken?: any // Mapped token data if passed
 }
 
+interface RejectionDetail {
+  reason: string
+  count: number
+  tokens: Array<{
+    name: string
+    symbol: string
+    address: string
+    price: number
+    mcap?: number
+    organicScore?: number
+  }>
+}
+
 interface FilteringSummary {
   totalTokens: number
   acceptedTokens: number
   rejectedTokens: number
   rejectionBreakdown: { [reason: string]: number }
+  rejectionDetails: RejectionDetail[] // New field for detailed token info
   processingTime: number
 }
 
@@ -795,6 +812,58 @@ function logTradeOperation(operation: string, data: any, error?: Error) {
   console.log(`[${timestamp}] ${operation}:`, JSON.stringify(logData, null, 2))
 }
 
+// Helper function to truncate message content to fit Discord limits
+function truncateDiscordMessage(lines: string[], maxLength: number = DISCORD_SAFE_LENGTH): string {
+  let content = lines.join('\n')
+
+  if (content.length <= maxLength) {
+    return content
+  }
+
+  // Progressive truncation strategy
+  let truncatedLines = [...lines]
+
+  // Strategy 1: Remove detailed token information progressively
+  while (content.length > maxLength && truncatedLines.length > 10) {
+    // Find and remove the longest lines (usually token details)
+    const longestIndex = truncatedLines.reduce((maxIdx, line, idx, arr) =>
+      line.length > arr[maxIdx].length ? idx : maxIdx, 0)
+
+    if (truncatedLines[longestIndex].includes('💰 Price:') ||
+      truncatedLines[longestIndex].includes('🏷️ Symbol:') ||
+      truncatedLines[longestIndex].includes('📊 [View Chart]')) {
+      truncatedLines.splice(longestIndex, 1)
+      content = truncatedLines.join('\n')
+    } else {
+      break
+    }
+  }
+
+  // Strategy 2: If still too long, keep only essential information
+  if (content.length > maxLength) {
+    const essentialLines = truncatedLines.filter(line =>
+      line.includes('Token Filtering Summary') ||
+      line.includes('Processing Results:') ||
+      line.includes('Total Scanned:') ||
+      line.includes('Accepted:') ||
+      line.includes('Rejected:') ||
+      line.includes('Processing Time:') ||
+      line.includes('**') && line.includes(':') && !line.includes('💰') ||
+      line === '' ||
+      line.includes('⏰')
+    )
+
+    content = essentialLines.join('\n')
+  }
+
+  // Final fallback: Hard truncate with ellipsis
+  if (content.length > maxLength) {
+    content = content.substring(0, maxLength - 20) + '\n\n... (truncated)'
+  }
+
+  return content
+}
+
 // Helper to determine if notifications should be enabled
 function shouldEnableNotifications(): boolean {
   const enabled = DISCORD_WEBHOOK_URL !== ''
@@ -1185,13 +1254,32 @@ async function sendSkippedTokenDiscord(params: {
 
 // Add new Discord notification functions
 async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrading: boolean) {
+  log.debug('discord_notification', 'sendFilteringSummaryDiscord called', {
+    totalTokens: summary.totalTokens,
+    acceptedTokens: summary.acceptedTokens,
+    rejectedTokens: summary.rejectedTokens,
+    isRealTrading,
+    rejectionDetailsCount: summary.rejectionDetails.length
+  })
+
   try {
-    if (!shouldEnableNotifications()) {
+    const notificationsEnabled = shouldEnableNotifications()
+    log.info('discord_notification', 'Discord notifications status check', {
+      enabled: notificationsEnabled
+    })
+
+    if (!notificationsEnabled) {
+      log.warn('discord_notification', 'Discord notifications disabled - skipping filtering summary', {
+        webhookUrl: !!DISCORD_WEBHOOK_URL ? 'configured' : 'missing'
+      })
       logTradeOperation('Discord Filtering Summary Skipped', {
-        reason: 'Notifications disabled'
+        reason: 'Notifications disabled',
+        webhookUrl: !!DISCORD_WEBHOOK_URL ? 'configured' : 'missing'
       })
       return
     }
+
+    log.info('discord_notification', 'Proceeding with Discord filtering summary notification')
 
     const emoji = isRealTrading ? '🔥' : '💻'
     const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
@@ -1208,17 +1296,67 @@ async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrad
       `📋 **Rejection Breakdown:**`
     ]
 
-    // Add rejection reasons breakdown
-    Object.entries(summary.rejectionBreakdown)
-      .sort(([, a], [, b]) => b - a) // Sort by count descending
-      .forEach(([reason, count]) => {
-        lines.push(`   ${getRejectionEmoji(reason)} ${reason}: ${count}`)
+    // Add rejection reasons breakdown with adaptive detail level
+    const sortedDetails = summary.rejectionDetails.sort((a, b) => b.count - a.count)
+
+    // Estimate space available for rejection details
+    const baseMessageLength = lines.join('\n').length + 50 // +50 for timestamp
+    const availableSpace = DISCORD_SAFE_LENGTH - baseMessageLength
+
+    let tokensPerReason = 2 // Start with 2 tokens per reason
+    let maxReasons = Math.min(sortedDetails.length, 8) // Limit reasons shown
+
+    // Adjust detail level based on available space
+    if (availableSpace < 800) {
+      tokensPerReason = 1
+      maxReasons = Math.min(sortedDetails.length, 5)
+    } else if (availableSpace < 1200) {
+      tokensPerReason = 2
+      maxReasons = Math.min(sortedDetails.length, 6)
+    }
+
+    sortedDetails.slice(0, maxReasons).forEach(detail => {
+      lines.push(``)
+      lines.push(`${getRejectionEmoji(detail.reason)} **${detail.reason}: ${detail.count}**`)
+
+      // Show limited tokens for each rejection reason
+      const topTokens = detail.tokens.slice(0, tokensPerReason)
+      topTokens.forEach((token, index) => {
+        const tokenName = token.name || token.symbol || 'UNKNOWN'
+        const price = token.price ? `$${token.price.toFixed(6)}` : 'N/A' // Reduced precision
+        const mcap = token.mcap ? `$${(token.mcap / 1000000).toFixed(1)}M` : 'N/A'
+        const score = token.organicScore ? token.organicScore.toFixed(0) : 'N/A' // Reduced precision
+
+        lines.push(`   ${index + 1}. **${tokenName}** (${token.symbol})`)
+        lines.push(`      💰 ${price} | 🏦 ${mcap} | 🎯 ${score}`)
       })
+
+      if (detail.tokens.length > tokensPerReason) {
+        lines.push(`      ... +${detail.tokens.length - tokensPerReason} more`)
+      }
+    })
+
+    if (sortedDetails.length > maxReasons) {
+      lines.push(``)
+      lines.push(`... and ${sortedDetails.length - maxReasons} more rejection reasons`)
+    }
 
     lines.push(``)
     lines.push(`⏰ ${new Date().toLocaleString()}`)
 
-    const content = lines.join('\n')
+    // Apply length management
+    const content = truncateDiscordMessage(lines)
+
+    log.debug('discord_notification', 'Discord message prepared with length management', {
+      originalLength: lines.join('\n').length,
+      finalLength: content.length,
+      withinLimit: content.length <= DISCORD_MAX_LENGTH
+    })
+
+    log.info('discord_notification', 'Sending Discord webhook request', {
+      webhookConfigured: !!DISCORD_WEBHOOK_URL,
+      messageLength: content.length
+    })
 
     const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
@@ -1226,63 +1364,121 @@ async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrad
       body: JSON.stringify({ content })
     })
 
+    log.info('discord_notification', 'Discord webhook response received', {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok
+    })
+
     if (!response.ok) {
-      throw new Error(`Discord webhook failed: ${response.status}`)
+      const errorText = await response.text()
+      log.error('discord_notification', 'Discord webhook failed', new Error(`${response.status} - ${errorText}`), {
+        status: response.status,
+        errorText,
+        messageLength: content.length
+      })
+      throw new Error(`Discord webhook failed: ${response.status} - ${errorText}`)
     }
+
+    log.info('discord_notification', 'Discord filtering summary sent successfully', {
+      totalTokens: summary.totalTokens,
+      acceptedTokens: summary.acceptedTokens,
+      rejectedTokens: summary.rejectedTokens,
+      messageLength: content.length
+    })
 
     logTradeOperation('Discord Filtering Summary Success', {
       totalTokens: summary.totalTokens,
       acceptedTokens: summary.acceptedTokens,
-      rejectedTokens: summary.rejectedTokens
+      rejectedTokens: summary.rejectedTokens,
+      messageLength: content.length
     })
   } catch (err) {
-    logTradeOperation('Discord Filtering Summary Error', {
+    log.error('discord_notification', 'Error in sendFilteringSummaryDiscord', err as Error, {
       totalTokens: summary.totalTokens
+    })
+    logTradeOperation('Discord Filtering Summary Error', {
+      totalTokens: summary.totalTokens,
+      error: err instanceof Error ? err.message : String(err)
     }, err as Error)
   }
 }
 
 async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], isRealTrading: boolean) {
+  log.debug('discord_notification', 'sendRejectedTokensDiscord called', {
+    rejectedTokensCount: rejectedTokens.length,
+    isRealTrading
+  })
+
   try {
-    if (!shouldEnableNotifications() || rejectedTokens.length === 0) {
+    const notificationsEnabled = shouldEnableNotifications()
+    log.info('discord_notification', 'Discord notifications status for rejected tokens', {
+      enabled: notificationsEnabled
+    })
+
+    if (!notificationsEnabled || rejectedTokens.length === 0) {
+      log.warn('discord_notification', 'Skipping rejected tokens Discord notification', {
+        notificationsEnabled,
+        hasRejectedTokens: rejectedTokens.length > 0
+      })
       return
     }
+
+    log.info('discord_notification', 'Proceeding with Discord rejected tokens notification')
 
     const emoji = isRealTrading ? '🔥' : '💻'
     const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
 
-    // Limit to top 10 rejected tokens to avoid message length limits
-    const topRejected = rejectedTokens.slice(0, 10)
+    // Filter tokens with market cap <= 3M and get only symbols
+    const filteredTokens = rejectedTokens.filter(result => {
+      const mcap = result.token.baseAsset.mcap
+      return mcap && mcap <= 3_000_000
+    })
+
+    // Dynamic limit based on total count
+    let maxTokensToShow = Math.min(10, filteredTokens.length)
+    if (filteredTokens.length > 50) {
+      maxTokensToShow = 5
+    } else if (filteredTokens.length > 20) {
+      maxTokensToShow = 8
+    }
+
+    const topRejected = filteredTokens.slice(0, maxTokensToShow)
 
     const lines = [
-      `${emoji} Rejected Tokens Details (${mode})`,
+      `${emoji} Rejected Tokens (${mode}) - Max 3M Market Cap`,
       ``,
-      `❌ **Top ${topRejected.length} Rejected Tokens:**`,
+      `❌ **Top ${topRejected.length} of ${filteredTokens.length} Rejected Tokens:**`,
       ``
     ]
 
-    topRejected.forEach((result, index) => {
-      const token = result.token.baseAsset
-      const reasons = result.rejectionReasons.join(', ')
+    // Simple format - only show symbols
+    const symbols = topRejected.map(result => result.token.baseAsset.symbol || 'UNKNOWN')
+    lines.push(symbols.join(', '))
+    lines.push(``)
 
-      lines.push(`**${index + 1}. ${token.symbol || 'UNKNOWN'}**`)
-      lines.push(`   💰 Price: $${token.usdPrice?.toFixed(8) || 'N/A'}`)
-      lines.push(`   🏦 MCap: ${token.mcap ? `$${(token.mcap / 1000000).toFixed(2)}M` : 'N/A'}`)
-      lines.push(`   🎯 Score: ${token.organicScore?.toFixed(1) || 'N/A'}`)
-      lines.push(`   📈 1h: ${((token.stats1h?.priceChange || 0) * 100).toFixed(1)}%`)
-      lines.push(`   📉 5m: ${((token.stats5m?.priceChange || 0) * 100).toFixed(1)}%`)
-      lines.push(`   🚫 Reasons: ${reasons}`)
-      lines.push(``)
-    })
-
-    if (rejectedTokens.length > 10) {
-      lines.push(`... and ${rejectedTokens.length - 10} more rejected tokens`)
+    if (filteredTokens.length > maxTokensToShow) {
+      lines.push(`... and ${filteredTokens.length - maxTokensToShow} more rejected tokens`)
       lines.push(``)
     }
 
     lines.push(`⏰ ${new Date().toLocaleString()}`)
 
-    const content = lines.join('\n')
+    // Apply length management
+    const content = truncateDiscordMessage(lines)
+
+    log.debug('discord_notification', 'Discord rejected tokens message prepared with simplified format', {
+      originalLength: lines.join('\n').length,
+      finalLength: content.length,
+      withinLimit: content.length <= DISCORD_MAX_LENGTH,
+      tokensShown: topRejected.length,
+      filteredCount: filteredTokens.length,
+      totalRejected: rejectedTokens.length
+    })
+
+    log.info('discord_notification', 'Sending Discord rejected tokens webhook request', {
+      messageLength: content.length
+    })
 
     const response = await fetch(DISCORD_WEBHOOK_URL, {
       method: 'POST',
@@ -1290,17 +1486,42 @@ async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], is
       body: JSON.stringify({ content })
     })
 
+    log.info('discord_notification', 'Discord rejected tokens webhook response received', {
+      status: response.status,
+      statusText: response.statusText,
+      ok: response.ok
+    })
+
     if (!response.ok) {
-      throw new Error(`Discord webhook failed: ${response.status}`)
+      const errorText = await response.text()
+      log.error('discord_notification', 'Discord rejected tokens webhook failed', new Error(`${response.status} - ${errorText}`), {
+        status: response.status,
+        errorText,
+        messageLength: content.length
+      })
+      throw new Error(`Discord webhook failed: ${response.status} - ${errorText}`)
     }
+
+    log.info('discord_notification', 'Discord rejected tokens notification sent successfully', {
+      rejectedCount: rejectedTokens.length,
+      filteredCount: filteredTokens.length,
+      tokensShown: topRejected.length,
+      messageLength: content.length
+    })
 
     logTradeOperation('Discord Rejected Tokens Success', {
       rejectedCount: rejectedTokens.length,
-      topShown: topRejected.length
+      filteredCount: filteredTokens.length,
+      tokensShown: topRejected.length,
+      messageLength: content.length
     })
   } catch (err) {
-    logTradeOperation('Discord Rejected Tokens Error', {
+    log.error('discord_notification', 'Error in sendRejectedTokensDiscord', err as Error, {
       rejectedCount: rejectedTokens.length
+    })
+    logTradeOperation('Discord Rejected Tokens Error', {
+      rejectedCount: rejectedTokens.length,
+      error: err instanceof Error ? err.message : String(err)
     }, err as Error)
   }
 }
@@ -1320,11 +1541,21 @@ function getRejectionEmoji(reason: string): string {
   return emojiMap[reason] || '❌'
 }
 
-// Enhanced filtering function with detailed tracking
+// Enhanced filtering function with detailed tracking and token collection
 function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[], summary: FilteringSummary } {
   const startTime = Date.now()
   const results: TokenFilterResult[] = []
   const rejectionBreakdown: { [reason: string]: number } = {}
+  const rejectionTokens: {
+    [reason: string]: Array<{
+      name: string
+      symbol: string
+      address: string
+      price: number
+      mcap?: number
+      organicScore?: number
+    }>
+  } = {}
 
   pools.forEach(pool => {
     const rejectionReasons: string[] = []
@@ -1338,16 +1569,16 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
     const topHoldersPercentage = pool.baseAsset.audit?.topHoldersPercentage
 
     // Apply filters and track rejection reasons
-    if (priceChange5m <= -0.40) {
-      rejectionReasons.push('Price drop too severe')
+    if (priceChange5m <= -40.00) {
+      rejectionReasons.push(`Price drop too severe on 5m, it drop ${priceChange5m.toFixed(2)}%`)
     }
 
-    if (priceChange1h >= 1.00) {
-      rejectionReasons.push('Price rise too high (1h)')
+    if (priceChange1h >= 100.00) {
+      rejectionReasons.push(`Price rise too high (1h), it pump ${priceChange1h.toFixed(2)}%`)
     }
 
-    if (priceChange6h >= 0.60) {
-      rejectionReasons.push('Price rise too high (6h)')
+    if (priceChange6h >= 60.00) {
+      rejectionReasons.push(`Price rise too high (6h), it pump ${priceChange6h.toFixed(2)}%`)
     }
 
     if (!organicScore || organicScore < 70) {
@@ -1358,7 +1589,7 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
       rejectionReasons.push('Market cap too low')
     }
 
-    if (!mcap || mcap >= 2_000_000) {
+    if (!mcap || mcap >= 3_000_000) {
       rejectionReasons.push('Market cap too high')
     }
 
@@ -1373,9 +1604,24 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
 
     const passed = rejectionReasons.length === 0
 
-    // Track rejection reasons
+    // Track rejection reasons and collect token details
     rejectionReasons.forEach(reason => {
       rejectionBreakdown[reason] = (rejectionBreakdown[reason] || 0) + 1
+
+      // Initialize array if it doesn't exist
+      if (!rejectionTokens[reason]) {
+        rejectionTokens[reason] = []
+      }
+
+      // Add token details to the rejection reason
+      rejectionTokens[reason].push({
+        name: pool.baseAsset.name || pool.baseAsset.symbol || 'UNKNOWN',
+        symbol: pool.baseAsset.symbol || 'UNKNOWN',
+        address: pool.baseAsset.id || 'UNKNOWN',
+        price: pool.baseAsset.usdPrice || 0,
+        mcap: pool.baseAsset.mcap,
+        organicScore: pool.baseAsset.organicScore
+      })
     })
 
     const result: TokenFilterResult = {
@@ -1407,11 +1653,19 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
   const acceptedTokens = results.filter(r => r.passed).length
   const rejectedTokens = results.filter(r => !r.passed).length
 
+  // Create rejection details array
+  const rejectionDetails: RejectionDetail[] = Object.entries(rejectionBreakdown).map(([reason, count]) => ({
+    reason,
+    count,
+    tokens: rejectionTokens[reason] || []
+  }))
+
   const summary: FilteringSummary = {
     totalTokens: pools.length,
     acceptedTokens,
     rejectedTokens,
     rejectionBreakdown,
+    rejectionDetails, // Include the detailed token information
     processingTime
   }
 
@@ -2706,16 +2960,245 @@ async function setTradingMode(isSimulated: boolean, keypairPath?: string): Promi
   }
 }
 
-// Add endpoint to toggle trading mode
+// Add endpoint to toggle trading mode and test Discord notifications
 export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
   try {
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
     const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+    const testDiscord = searchParams.get('test') === 'discord'
+    const testFilter = searchParams.get('test') === 'filter'
 
     if (secretKey !== expectedSecretKey) {
       logger.warn('api_request', 'Unauthorized attempt to change trading mode', { ip: request.ip })
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    if (testFilter) {
+      try {
+        console.log('Track Filter Test: Starting enhanced filtering test...')
+
+        // Fetch trending tokens from Jupiter API (same logic as main tracking)
+        const JUPITER_TRENDING_URLS = [
+          'https://datapi.jup.ag/v1/pools/toptrending/1h',
+        ]
+
+        let response: Response | null = null
+
+        for (const url of JUPITER_TRENDING_URLS) {
+          try {
+            console.log(`Fetching trending tokens from: ${url}`)
+            response = await fetch(url, {
+              headers: {
+                'Accept': 'application/json',
+                'User-Agent': 'ReloadSol-TrendingTracker/1.0'
+              },
+              next: { revalidate: 0 }
+            })
+
+            if (response.ok) {
+              console.log(`✅ Successfully fetched from ${url}`)
+              break
+            }
+
+            if (response.status === 429) {
+              console.log(`⏳ Rate limited on ${url}, waiting 500ms...`)
+              await new Promise(res => setTimeout(res, 500))
+              continue
+            }
+
+            throw new Error(`Jupiter API responded with status: ${response.status}`)
+          } catch (err) {
+            console.error(`Error fetching trending tokens from ${url}:`, err)
+          }
+        }
+
+        if (!response || !response.ok) {
+          throw new Error('All Jupiter trending API endpoints failed')
+        }
+
+        const data = await response.json() as JupiterResponse
+        console.log(`Track Filter Test: Fetched ${data.pools.length} pools from Jupiter API`)
+
+        // Perform enhanced filtering
+        const { results: filterResults, summary: filteringSummary } = performEnhancedFiltering(data.pools)
+
+        // Extract accepted tokens
+        const acceptedTokens = filterResults
+          .filter(result => result.passed)
+          .map(result => ({
+            address: result.token.baseAsset.id,
+            symbol: result.token.baseAsset.symbol,
+            name: result.token.baseAsset.name,
+            marketCap: result.token.baseAsset.mcap,
+            volume1h: result.token.baseAsset.stats1h?.buyVolume || 0,
+            organicScore: result.token.baseAsset.organicScore,
+            currentPrice: result.token.baseAsset.usdPrice,
+            priceChange1h: result.token.baseAsset.stats1h?.priceChange || 0,
+            priceChange5m: result.token.baseAsset.stats5m?.priceChange || 0,
+            priceChange6h: result.token.baseAsset.stats6h?.priceChange || 0
+          }))
+
+        // Extract rejected tokens with their rejection reasons
+        const rejectedTokens = filterResults
+          .filter(result => !result.passed)
+          .map(result => ({
+            address: result.token.baseAsset.id,
+            symbol: result.token.baseAsset.symbol,
+            name: result.token.baseAsset.name,
+            marketCap: result.token.baseAsset.mcap,
+            volume1h: result.token.baseAsset.stats1h?.buyVolume || 0,
+            organicScore: result.token.baseAsset.organicScore,
+            currentPrice: result.token.baseAsset.usdPrice,
+            priceChange1h: result.token.baseAsset.stats1h?.priceChange || 0,
+            priceChange5m: result.token.baseAsset.stats5m?.priceChange || 0,
+            priceChange6h: result.token.baseAsset.stats6h?.priceChange || 0,
+            rejectionReasons: result.rejectionReasons
+          }))
+
+        const summary = {
+          totalTokens: data.pools.length,
+          acceptedCount: acceptedTokens.length,
+          rejectedCount: rejectedTokens.length,
+          acceptanceRate: `${((acceptedTokens.length / data.pools.length) * 100).toFixed(1)}%`,
+          processingTime: filteringSummary.processingTime
+        }
+
+        console.log('Track Filter Test: Filtering completed successfully', summary)
+
+        return NextResponse.json({
+          success: true,
+          message: 'Track filter test completed successfully',
+          summary,
+          acceptedTokens,
+          rejectedTokens,
+          rejectionDetails: filteringSummary.rejectionDetails
+        })
+
+      } catch (error) {
+        console.error('Track Filter Test: Error during filtering test', error)
+        return NextResponse.json({
+          success: false,
+          message: 'Track filter test failed',
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }, { status: 500 })
+      }
+    }
+
+    // Handle Discord testing
+    if (testDiscord) {
+      // Check Discord configuration
+      const discordEnabled = shouldEnableNotifications()
+      const webhookUrl = DISCORD_WEBHOOK_URL
+
+      console.log('Track Discord Configuration Test:', {
+        discordEnabled,
+        webhookConfigured: !!webhookUrl,
+        webhookUrl: webhookUrl ? `${webhookUrl.substring(0, 50)}...` : 'Not configured',
+        env: {
+          DISCORD_WEBHOOK_AUTO_TRADE: !!process.env.DISCORD_WEBHOOK_AUTO_TRADE,
+          DISCORD_WEBHOOK_URL: !!process.env.DISCORD_WEBHOOK_URL,
+          ENABLE_DISCORD_NOTIFICATIONS: process.env.ENABLE_DISCORD_NOTIFICATIONS
+        }
+      })
+
+      // Test different types of Discord notifications
+      const testResults = []
+
+      // Test 1: New Token Detection
+      try {
+        console.log('Testing new token detection notification...')
+        await sendNewTokenDetectionDiscord({
+          tokenAddress: 'TESTDISCORD1234567890',
+          tokenSymbol: 'DTEST',
+          tokenName: 'Discord Test Token',
+          currentPrice: 0.000123,
+          marketCap: 500000,
+          organicScore: 85.5,
+          volume1h: 25000,
+          isRealTrading: false
+        })
+        testResults.push({ type: 'new_token_detection', success: true })
+        console.log('New token detection test: SUCCESS')
+      } catch (error) {
+        testResults.push({
+          type: 'new_token_detection',
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        })
+        console.error('New token detection test: FAILED', error)
+      }
+
+      // Test 2: Buy Notification
+      try {
+        console.log('Testing buy notification...')
+        await sendBuyNotificationDiscord({
+          tokenSymbol: 'DTEST',
+          tokenAddress: 'TESTDISCORD1234567890',
+          isSimulated: true,
+          amountSOL: 0.1,
+          tokensReceived: '1000000',
+          priceUSD: 0.000123,
+          provider: 'jupiter',
+          rpcUsed: 'test-rpc',
+          responseTime: 150,
+          totalFees: 0.001
+        })
+        testResults.push({ type: 'buy_notification', success: true })
+        console.log('Buy notification test: SUCCESS')
+      } catch (error) {
+        testResults.push({
+          type: 'buy_notification',
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        })
+        console.error('Buy notification test: FAILED', error)
+      }
+
+      // Test 3: Trade Alert
+      try {
+        console.log('Testing trade alert notification...')
+        await sendTradeAlertDiscord({
+          tokenSymbol: 'TEST',
+          status: 'buy' as any,
+          isSimulated: true,
+          currentGain: 15.5,
+          peakGain: 20.2,
+          priceUsd: 0.000145,
+          provider: 'jupiter',
+          rpcUsed: 'test-rpc',
+          responseTime: 200
+        })
+        testResults.push({ type: 'trade_alert', success: true })
+        console.log('Trade alert test: SUCCESS')
+      } catch (error) {
+        testResults.push({
+          type: 'trade_alert',
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        })
+        console.error('Trade alert test: FAILED', error)
+      }
+
+      const successCount = testResults.filter(r => r.success).length
+      const totalTests = testResults.length
+
+      return NextResponse.json({
+        success: true,
+        message: 'Track Discord configuration test completed',
+        discord: {
+          enabled: discordEnabled,
+          webhookConfigured: !!webhookUrl,
+          testResults,
+          summary: `${successCount}/${totalTests} tests passed`
+        },
+        environment: {
+          NODE_ENV: process.env.NODE_ENV,
+          DISCORD_WEBHOOK_AUTO_TRADE: !!process.env.DISCORD_WEBHOOK_AUTO_TRADE,
+          DISCORD_WEBHOOK_URL: !!process.env.DISCORD_WEBHOOK_URL,
+          ENABLE_DISCORD_NOTIFICATIONS: process.env.ENABLE_DISCORD_NOTIFICATIONS
+        }
+      })
     }
 
     const body = await request.json()
@@ -2878,15 +3361,34 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     const isRealTrading = hasKeypair && hasWebhook
 
     try {
+      log.info('discord_notification', 'Starting Discord filtering notifications', {
+        totalTokens: filteringSummary.totalTokens,
+        acceptedTokens: filteringSummary.acceptedTokens,
+        rejectedTokens: filteringSummary.rejectedTokens,
+        rejectedTokensArrayLength: rejectedTokens.length,
+        isRealTrading
+      })
+
       // Send filtering summary
+      log.debug('discord_notification', 'Calling sendFilteringSummaryDiscord')
       await sendFilteringSummaryDiscord(filteringSummary, isRealTrading)
+      log.info('discord_notification', 'sendFilteringSummaryDiscord completed successfully')
 
       // Send rejected tokens details (if any)
       if (rejectedTokens.length > 0) {
+        log.debug('discord_notification', 'Calling sendRejectedTokensDiscord')
         await sendRejectedTokensDiscord(rejectedTokens, isRealTrading)
+        log.info('discord_notification', 'sendRejectedTokensDiscord completed successfully')
+      } else {
+        log.warn('discord_notification', 'No rejected tokens to send Discord notification for')
       }
+
+      log.info('discord_notification', 'All Discord filtering notifications completed successfully')
     } catch (discordError) {
-      console.error('❌ Error sending Discord filtering notifications:', discordError)
+      log.error('discord_notification', 'Error sending Discord filtering notifications', discordError as Error, {
+        message: discordError instanceof Error ? discordError.message : String(discordError),
+        stack: discordError instanceof Error ? discordError.stack : undefined
+      })
       // Continue processing even if Discord notifications fail
     }
 
