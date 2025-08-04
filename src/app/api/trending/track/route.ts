@@ -6,6 +6,7 @@ import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
+import { notifyTradingUpdate } from '@/utils/trading-notifications'
 
 export const runtime = 'nodejs'
 
@@ -2586,6 +2587,21 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       }
     }
 
+    // After successful buy operation, notify connected devices
+    if (!isSimulated && bestResult.success && tradingKeypair) {
+      try {
+        await notifyTradingUpdate(tradingKeypair.publicKey.toString(), 'trade_update', {
+          operationType: 'buy',
+          tokenAddress: token.token_address,
+          tokenSymbol: token.token_symbol,
+          amount: BUY_AMOUNT_SOL
+        })
+      } catch (notifyError) {
+        console.error('❌ Failed to notify trading update:', notifyError)
+        // Don't fail the operation if notification fails
+      }
+    }
+
     // Send Discord notification for successful buy operations
     if (shouldEnableNotifications() && bestResult.success) {
       try {
@@ -2860,6 +2876,22 @@ async function performSellOperation(
     }
 
     console.log(`✅ ${sellPercentage}% sell ${operationType} completed for ${token.token_symbol}: ${bestResult.outputAmount} SOL received, ${remainingTokens} tokens remaining${bestResult.signature ? ` (${bestResult.signature})` : ''}`)
+
+    // After successful sell operation, notify connected devices
+    if (!isSimulated && bestResult.success && tradingKeypair) {
+      try {
+        await notifyTradingUpdate(tradingKeypair.publicKey.toString(), 'trade_update', {
+          operationType: 'sell',
+          tokenAddress: token.token_address,
+          tokenSymbol: token.token_symbol,
+          amount: sellPercentage
+        })
+      } catch (notifyError) {
+        console.error('❌ Failed to notify trading update:', notifyError)
+        // Don't fail the operation if notification fails
+      }
+    }
+
     return sellOperation
 
   } catch (error) {

@@ -70,9 +70,12 @@ export interface TrackingStats {
 class TradingTracker {
   private readonly OLD_STORAGE_KEY = 'bulk_trading_records' // For cleanup
   private pollingInterval: NodeJS.Timeout | null = null
-  private subscribers: Set<(records: TrackingRecord[]) => void> = new Set()
+  private subscribers: Map<string, Set<(records: TrackingRecord[]) => void>> = new Map()
   private cache: Map<string, TrackingRecord[]> = new Map() // Per-wallet cache
   private isOnline: boolean = true
+  private sseConnection: EventSource | null = null
+  private reconnectAttempts = 0
+  private maxReconnectAttempts = 5
 
   constructor() {
     this.setupOnlineOfflineHandlers()
@@ -147,7 +150,7 @@ class TradingTracker {
       }
 
       // Update local cache
-      this.updateLocalCache(record.walletAddress, newRecord)
+      this.updateLocalCache(record.walletAddress, [newRecord])
 
       // Notify subscribers
       this.notifySubscribers(record.walletAddress)
@@ -257,9 +260,13 @@ class TradingTracker {
   }
 
   // Update local cache
-  private updateLocalCache(walletAddress: string, newRecord: TrackingRecord): void {
+  private updateLocalCache(walletAddress: string, records: TrackingRecord[]): void {
     const cached = this.cache.get(walletAddress) || []
-    cached.unshift(newRecord)
+
+    // If we're adding new records, prepend them
+    if (records.length > 0) {
+      cached.unshift(...records)
+    }
 
     // Limit cache to 500 records per wallet
     if (cached.length > 500) {
@@ -356,23 +363,152 @@ class TradingTracker {
     }
   }
 
-  // Subscribe to real-time updates for a wallet (using polling)
+  /**
+   * Subscribe to real-time wallet updates using SSE with polling fallback
+   */
   subscribeToWallet(walletAddress: string, callback: (records: TrackingRecord[]) => void): () => void {
-    // Add subscriber and immediately emit current cache (if any)
-    this.subscribers.add(callback)
-    callback(this.cache.get(walletAddress) || [])
+    console.log(`🔔 Setting up real-time subscription for wallet: ${walletAddress.slice(0, 8)}...`)
 
-    // Return unsubscribe function (no polling to clean up)
+    // Add callback to subscribers
+    if (!this.subscribers.has(walletAddress)) {
+      this.subscribers.set(walletAddress, new Set())
+    }
+    this.subscribers.get(walletAddress)!.add(callback)
+
+    // Immediately emit cached data
+    const cachedRecords = this.cache.get(walletAddress) || []
+    callback(cachedRecords)
+
+    // Set up SSE connection for real-time updates
+    this.setupSSEConnection(walletAddress)
+
+    // Fallback polling (reduced frequency when SSE is active)
+    const pollInterval = setInterval(async () => {
+      try {
+        const records = await this.getWalletRecords(walletAddress)
+        this.updateLocalCache(walletAddress, records)
+        this.notifySubscribers(walletAddress)
+      } catch (error) {
+        console.error('Polling error:', error)
+      }
+    }, this.sseConnection ? 30000 : 5000) // 30s with SSE, 5s without
+
+    // Return cleanup function
     return () => {
-      this.subscribers.delete(callback)
+      this.subscribers.get(walletAddress)?.delete(callback)
+      if (this.subscribers.get(walletAddress)?.size === 0) {
+        this.subscribers.delete(walletAddress)
+        this.cleanupSSEConnection()
+      }
+      clearInterval(pollInterval)
+    }
+  }
+
+  /**
+   * Set up Server-Sent Events connection for real-time updates
+   */
+  private setupSSEConnection(walletAddress: string) {
+    if (typeof window === 'undefined' || this.sseConnection) return
+
+    try {
+      this.sseConnection = new EventSource(`/api/trading/subscribe?wallet=${walletAddress}`)
+
+      this.sseConnection.onopen = () => {
+        console.log('📡 SSE connection established')
+        this.reconnectAttempts = 0
+      }
+
+      this.sseConnection.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+
+          switch (data.type) {
+            case 'connected':
+              console.log('✅ SSE connected for wallet:', data.wallet?.slice(0, 8) + '...')
+              break
+
+            case 'trade_update':
+            case 'pnl_update':
+            case 'balance_update':
+              console.log('🔄 Received trading update, refreshing data...')
+              this.handleRealTimeUpdate(walletAddress)
+              break
+
+            case 'keepalive':
+              // Keep connection alive
+              break
+
+            default:
+              console.log('📨 SSE message:', data)
+          }
+        } catch (error) {
+          console.error('Error parsing SSE message:', error)
+        }
+      }
+
+      this.sseConnection.onerror = (error) => {
+        console.error('SSE connection error:', error)
+        this.handleSSEReconnect(walletAddress)
+      }
+
+    } catch (error) {
+      console.error('Failed to establish SSE connection:', error)
+    }
+  }
+
+  /**
+   * Handle real-time update by refreshing data
+   */
+  private async handleRealTimeUpdate(walletAddress: string) {
+    try {
+      const records = await this.getWalletRecords(walletAddress)
+      this.updateLocalCache(walletAddress, records)
+      this.notifySubscribers(walletAddress)
+    } catch (error) {
+      console.error('Error handling real-time update:', error)
+    }
+  }
+
+  /**
+   * Handle SSE reconnection with exponential backoff
+   */
+  private handleSSEReconnect(walletAddress: string) {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.warn('Max SSE reconnection attempts reached, falling back to polling only')
+      return
+    }
+
+    this.cleanupSSEConnection()
+
+    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000)
+    this.reconnectAttempts++
+
+    console.log(`Reconnecting SSE in ${delay}ms (attempt ${this.reconnectAttempts})`)
+
+    setTimeout(() => {
+      this.setupSSEConnection(walletAddress)
+    }, delay)
+  }
+
+  /**
+   * Clean up SSE connection
+   */
+  private cleanupSSEConnection() {
+    if (this.sseConnection) {
+      this.sseConnection.close()
+      this.sseConnection = null
     }
   }
 
   // Notify subscribers of changes
   private notifySubscribers(walletAddress: string): void {
-    this.subscribers.forEach(callback => {
-      callback(this.cache.get(walletAddress) || [])
-    })
+    const walletSubscribers = this.subscribers.get(walletAddress)
+    if (walletSubscribers) {
+      const records = this.cache.get(walletAddress) || []
+      walletSubscribers.forEach(callback => {
+        callback(records)
+      })
+    }
   }
 
   getStats(records: TrackingRecord[]): TrackingStats {

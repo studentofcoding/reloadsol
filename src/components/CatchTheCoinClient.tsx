@@ -15,6 +15,7 @@ import {
 } from '@/utils/jupiter'
 import { TOKENS } from '@/utils/solana'
 import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom'
+import { notifyTradingUpdate } from '@/utils/trading-notifications'
 
 interface TrendingToken {
   token_address: string
@@ -539,6 +540,16 @@ export default function CatchTheCoinClient() {
 
       // Wait for confirmation
       await connection.confirmTransaction(signature, 'confirmed')
+      
+      // After successful sell, notify other devices
+      if (publicKey) {
+        await notifyTradingUpdate(publicKey.toString(), 'trade_update', {
+          operationType: 'sell',
+          tokenAddress: token.token_address,
+          tokenSymbol: token.token_symbol,
+          amount: 100 // 100% sell
+        })
+      }
       
       alert(`Successfully sold ${token.token_symbol} for ${expectedSol.toFixed(4)} SOL! Transaction: ${signature}`)
       
