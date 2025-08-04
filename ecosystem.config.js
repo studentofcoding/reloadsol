@@ -12,14 +12,14 @@ module.exports = {
       env: {
         NODE_ENV: 'development',
         PORT: 3000,
-        TZ: 'Asia/Jakarta',
+        TZ: 'Asia/Bangkok', // UTC+7 (more explicit than Jakarta)
         // FIX: Add hostname for Server Actions
         HOSTNAME: 'localhost',
       },
       env_production: {
         NODE_ENV: 'production',
         PORT: 3000,
-        TZ: 'Asia/Jakarta',
+        TZ: 'Asia/Bangkok', // UTC+7 (more explicit than Jakarta)
         // FIX: Add production hostname
         HOSTNAME: '161.97.82.10', // Your server IP
         // Or use your domain: HOSTNAME: 'reloadsol.xyz',
@@ -63,7 +63,8 @@ module.exports = {
       'post-deploy': 'pnpm install && pnpm run build && pm2 reload ecosystem.config.js --env production',
       'pre-setup': '',
       env: {
-        NODE_ENV: 'production'
+        NODE_ENV: 'production',
+        TZ: 'Asia/Bangkok' // Ensure timezone is set in deployment env too
       }
     }
   }

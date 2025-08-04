@@ -18,6 +18,7 @@ setInterval(() => {
     }
   }
 }, 60000)
+
 // GET /api/trading/subscribe?wallet=<address>
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -43,10 +44,14 @@ export async function GET(request: NextRequest) {
       // Clean up on close
       const cleanup = () => {
         activeConnections.delete(connectionId)
-        controller.close()
+        try {
+          controller.close()
+        } catch (error) {
+          // Controller already closed
+        }
       }
 
-      // Store cleanup function
+      // Store connection with controller reference
       activeConnections.set(connectionId, {
         controller,
         cleanup,
@@ -89,33 +94,47 @@ export async function GET(request: NextRequest) {
 // POST /api/trading/subscribe - Notify all subscribers of updates
 export async function POST(request: NextRequest) {
   try {
-    const { walletAddress, record } = await request.json()
+    const { walletAddress, type, data } = await request.json()
 
-    if (!walletAddress || !record) {
+    if (!walletAddress || !type) {
       return NextResponse.json(
-        { error: 'walletAddress and record are required' },
+        { error: 'walletAddress and type are required' },
         { status: 400 }
       )
     }
 
     // Notify all active connections for this wallet
     let notifiedCount = 0
-    for (const [connectionId, cleanup] of Array.from(activeConnections.entries())) {
+    const deadConnections: string[] = []
+
+    for (const [connectionId, connection] of Array.from(activeConnections.entries())) {
       if (connectionId.startsWith(walletAddress)) {
         try {
-          // This would need a proper implementation with stored controller references
-          // For now, we'll use a simpler polling approach in the client
+          const message = `data: ${JSON.stringify({ 
+            type, 
+            data,
+            timestamp: new Date().toISOString() 
+          })}\n\n`
+          
+          connection.controller.enqueue(new TextEncoder().encode(message))
           notifiedCount++
         } catch (error) {
-          // Connection is dead, clean it up
-          activeConnections.delete(connectionId)
+          // Connection is dead, mark for cleanup
+          deadConnections.push(connectionId)
+          connection.cleanup()
         }
       }
     }
 
+    // Clean up dead connections
+    deadConnections.forEach(id => activeConnections.delete(id))
+
+    console.log(`📡 Notified ${notifiedCount} connections for wallet ${walletAddress.slice(0, 8)}...`)
+
     return NextResponse.json({ 
       success: true, 
-      notified: notifiedCount 
+      notified: notifiedCount,
+      cleaned: deadConnections.length
     })
   } catch (error) {
     console.error('Error notifying subscribers:', error)
@@ -124,4 +143,25 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}
+
+// Utility function to notify all connections for a wallet
+export async function notifyWalletUpdate(
+  walletAddress: string, 
+  type: 'trade_update' | 'pnl_update' | 'balance_update',
+  data?: any
+) {
+  try {
+    const response = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/trading/subscribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ walletAddress, type, data })
+    })
+    
+    if (!response.ok) {
+      console.error('Failed to notify wallet update:', await response.text())
+    }
+  } catch (error) {
+    console.error('Error sending wallet notification:', error)
+  }
+}

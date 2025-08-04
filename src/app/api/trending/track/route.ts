@@ -6,6 +6,7 @@ import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
+import { notifyTradingUpdate } from '@/utils/trading-notifications'
 
 export const runtime = 'nodejs'
 
@@ -2364,7 +2365,17 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
 
     // Safety checks for real trading
     if (!isSimulated) {
-      if (!simulation.keypair_path) {
+      // Add diagnostic logging
+      console.log(`🔧 Real trade safety check for ${token.token_symbol}:`)
+      console.log(`  - simulation.keypair_path: ${simulation.keypair_path || 'undefined'}`)
+      console.log(`  - TRADING_KEYPAIR_JSON env var: ${process.env.TRADING_KEYPAIR_JSON ? 'SET' : 'NOT SET'}`)
+      console.log(`  - Global tradingKeypair: ${tradingKeypair ? 'initialized' : 'null'}`)
+
+      // Enhanced keypair validation - check both simulation path and environment variable
+      const hasKeypairPath = !!simulation.keypair_path
+      const hasEnvKeypair = !!process.env.TRADING_KEYPAIR_JSON
+      
+      if (!hasKeypairPath && !hasEnvKeypair) {
         throw new Error('Trading keypair not configured (set TRADING_KEYPAIR_JSON or provide keypair_path)')
       }
 
@@ -2573,6 +2584,21 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       } catch (trackError) {
         console.error('❌ Failed to track bot buy operation:', trackError)
         // Don't fail the operation if tracking fails
+      }
+    }
+
+    // After successful buy operation, notify connected devices
+    if (!isSimulated && bestResult.success && tradingKeypair) {
+      try {
+        await notifyTradingUpdate(tradingKeypair.publicKey.toString(), 'trade_update', {
+          operationType: 'buy',
+          tokenAddress: token.token_address,
+          tokenSymbol: token.token_symbol,
+          amount: BUY_AMOUNT_SOL
+        })
+      } catch (notifyError) {
+        console.error('❌ Failed to notify trading update:', notifyError)
+        // Don't fail the operation if notification fails
       }
     }
 
@@ -2850,6 +2876,22 @@ async function performSellOperation(
     }
 
     console.log(`✅ ${sellPercentage}% sell ${operationType} completed for ${token.token_symbol}: ${bestResult.outputAmount} SOL received, ${remainingTokens} tokens remaining${bestResult.signature ? ` (${bestResult.signature})` : ''}`)
+
+    // After successful sell operation, notify connected devices
+    if (!isSimulated && bestResult.success && tradingKeypair) {
+      try {
+        await notifyTradingUpdate(tradingKeypair.publicKey.toString(), 'trade_update', {
+          operationType: 'sell',
+          tokenAddress: token.token_address,
+          tokenSymbol: token.token_symbol,
+          amount: sellPercentage
+        })
+      } catch (notifyError) {
+        console.error('❌ Failed to notify trading update:', notifyError)
+        // Don't fail the operation if notification fails
+      }
+    }
+
     return sellOperation
 
   } catch (error) {

@@ -30,6 +30,12 @@ if [ ! -f package.json ]; then
   exit 1
 fi
 
+# Timezone verification and setup
+echo "🕐 Setting up timezone (UTC+7)"
+export TZ='Asia/Bangkok'
+echo "Current system time: $(date)"
+echo "Timezone set to: $TZ"
+
 # Detect package manager
 if [ -f pnpm-lock.yaml ] && command -v pnpm &>/dev/null; then
   PM=pnpm
@@ -49,9 +55,9 @@ fi
 if [ "$SKIP_BUILD" = false ]; then
   echo "🔨 Building ..."
   if [ "$PM" = pnpm ]; then
-    pnpm run build
+    TZ='Asia/Bangkok' pnpm run build
   else
-    npm run build
+    TZ='Asia/Bangkok' npm run build
   fi
 else
   echo "🚧 Skipping build (per flag)"
@@ -61,4 +67,8 @@ echo "♻️ Reloading PM2"
 pm2 reload ecosystem.config.js --env production || pm2 start ecosystem.config.js --env production
 pm2 save
 
-echo "✅ Update complete" 
+# Verify PM2 is running with correct timezone
+echo "🔍 Verifying PM2 timezone configuration"
+pm2 show reloadsol | grep -E "(TZ|timezone)" || echo "No explicit timezone info in PM2 process"
+
+echo "✅ Update complete with UTC+7 timezone"
