@@ -1569,15 +1569,15 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
     const topHoldersPercentage = pool.baseAsset.audit?.topHoldersPercentage
 
     // Apply filters and track rejection reasons
-    if (priceChange5m <= -0.40) {
+    if (priceChange5m <= -40.00) {
       rejectionReasons.push(`Price drop too severe on 5m, it drop ${priceChange5m.toFixed(2)}%`)
     }
 
-    if (priceChange1h >= 1.00) {
+    if (priceChange1h >= 100.00) {
       rejectionReasons.push(`Price rise too high (1h), it pump ${priceChange1h.toFixed(2)}%`)
     }
 
-    if (priceChange6h >= 0.60) {
+    if (priceChange6h >= 60.00) {
       rejectionReasons.push(`Price rise too high (6h), it pump ${priceChange6h.toFixed(2)}%`)
     }
 
