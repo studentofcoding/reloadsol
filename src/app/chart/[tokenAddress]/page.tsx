@@ -7,7 +7,7 @@ import PhantomWalletButton from '@/components/PhantomWalletButton'
 import RiskAnalysis from '@/components/RiskAnalysis'
 import TransactionResultModal from '@/components/TransactionResultModal'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
-import { executeBulkBuy, isValidMintAddress } from '@/utils/jupiter'
+import { executeBulkBuy, isValidMintAddress, fetchUserTokensEfficient, UserToken } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS, getSolPriceUSD } from '@/utils/solana'
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
 import { trackBuy } from '@/utils/operations-api'
@@ -46,6 +46,11 @@ export default function ChartPage() {
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null)
   const [riskInfo, setRiskInfo] = useState<RiskInfo | null>(null)
   
+  // Position tracking state
+  const [userTokens, setUserTokens] = useState<UserToken[]>([])
+  const [isLoadingPositions, setIsLoadingPositions] = useState(false)
+  const [currentPosition, setCurrentPosition] = useState<UserToken | null>(null)
+  
   // Buy form state
   const [buyAmount, setBuyAmount] = useState('0.1')
   const [slippage, setSlippage] = useState<number>(200) // 2%
@@ -66,6 +71,51 @@ export default function ChartPage() {
 
   // Create the GMGN chart URL with correct format
   const gmgnChartUrl = `https://www.gmgn.cc/kline/sol/${tokenAddress}?interval=1H`
+
+// Fetch user tokens when wallet connects
+useEffect(() => {
+    const loadUserTokens = async () => {
+      if (!connected || !publicKey) {
+        setUserTokens([])
+        setCurrentPosition(null)
+        return
+      }
+
+      setIsLoadingPositions(true)
+      try {
+        const tokens = await fetchUserTokensEfficient(
+          connection,
+          publicKey,
+          false, // includeZeroBalance
+          false, // includeNFTs
+          (progress) => {
+            // Optional progress callback
+            console.log(`Token fetching progress: ${progress}%`)
+          }
+        )
+        
+        // Filter for significant balances
+        const significantTokens = tokens.filter(token => 
+          token.uiAmount > 0.001 && !token.frozen && !token.isNFT
+        )
+        
+        setUserTokens(significantTokens)
+        
+        // Find current token position
+        const position = significantTokens.find(token => 
+          token.mintAddress === tokenAddress
+        )
+        setCurrentPosition(position || null)
+        
+      } catch (error) {
+        console.error('Error loading user tokens:', error)
+      } finally {
+        setIsLoadingPositions(false)
+      }
+    }
+
+    loadUserTokens()
+  }, [connected, publicKey, connection, tokenAddress])
 
   // Fetch wallet balance
   useEffect(() => {
@@ -417,6 +467,46 @@ export default function ChartPage() {
               </div>
             </div>
           </div>
+
+          {/* Current Position Display */}
+          {connected && (
+            <div className="bg-gray-800 border-b border-gray-700 p-4">
+              <div className="max-w-7xl mx-auto">
+                <h3 className="text-lg font-semibold text-white mb-3">Your Position</h3>
+                
+                {isLoadingPositions ? (
+                  <div className="flex items-center space-x-2 text-gray-400">
+                    <div className="w-4 h-4 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+                    <span>Loading positions...</span>
+                  </div>
+                ) : currentPosition ? (
+                  <div className="bg-gray-700/50 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="text-right">
+                        {currentPosition.usdValue && currentPosition.usdValue > 0 ? (
+                          <div className="text-white font-medium">
+                            ${currentPosition.usdValue.toFixed(2)}
+                          </div>
+                        ) : (
+                          <div className="text-gray-400 text-sm">
+                            Value calculating...
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-gray-700/30 rounded-lg p-4 border-2 border-dashed border-gray-600">
+                    <div className="text-center text-gray-400">
+                      <div className="text-lg mb-1">📊</div>
+                      <div>No position in this token</div>
+                      <div className="text-sm mt-1">Buy some tokens to see your position here</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           
           {/* Buy Section */}
           <div className="flex items-center space-x-3">
