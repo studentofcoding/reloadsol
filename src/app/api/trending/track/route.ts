@@ -2570,7 +2570,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       rpc_used: bestResult.rpcUsed,
       // Enhanced bot tracking
       is_bot_operation: true,
-      bot_strategy: 'auto-trending-tracker',
+      bot_strategy: 'att',
       signature: bestResult.signature
     }
 
@@ -2579,7 +2579,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     // Track bot operation in the trading tracker system
     if (bestResult.success) {
       try {
-        await trackBotOperation('buy', token, bestResult, isSimulated, 'auto-trending-tracker')
+        await trackBotOperation('buy', token, bestResult, isSimulated, 'att')
       } catch (trackError) {
         console.error('❌ Failed to track bot buy operation:', trackError)
         // Don't fail the operation if tracking fails
@@ -2857,7 +2857,7 @@ async function performSellOperation(
       hold_duration_hours: holdDurationHours,
       // Enhanced bot tracking
       is_bot_operation: true,
-      bot_strategy: 'auto-trending-tracker',
+      bot_strategy: 'att',
       signature: bestResult.signature
     }
 
@@ -2867,7 +2867,7 @@ async function performSellOperation(
     // Track bot sell operation in the trading tracker system
     if (bestResult.success) {
       try {
-        await trackBotOperation('sell', token, bestResult, isSimulated, 'auto-trending-tracker')
+        await trackBotOperation('sell', token, bestResult, isSimulated, 'att')
       } catch (trackError) {
         console.error('❌ Failed to track bot sell operation:', trackError)
         // Don't fail the operation if tracking fails
