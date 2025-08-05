@@ -321,7 +321,7 @@ class TradingTracker {
 
       // Fetch from API (client-side only)
       console.log('🌐 Making client-side fetch for wallet records');
-      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
       const apiUrl = `${baseUrl}/api/trading/records?wallet=${encodeURIComponent(walletAddress)}&limit=500`
       const response = await fetch(apiUrl)
 
@@ -382,7 +382,7 @@ class TradingTracker {
         return []
       }
 
-      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
       const apiUrl = `${baseUrl}/api/trading/records/all?limit=1000`
 
       const response = await fetch(apiUrl)
@@ -447,7 +447,7 @@ class TradingTracker {
     if (typeof window === 'undefined' || this.sseConnection) return
 
     try {
-      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
       const sseUrl = `${baseUrl}/api/trading/subscribe?wallet=${walletAddress}`
 
       this.sseConnection = new EventSource(sseUrl)
