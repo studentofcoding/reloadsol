@@ -76,6 +76,7 @@ class TradingTracker {
   private sseConnection: EventSource | null = null
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
+  private readonly API_HOST = process.env.API_HOST;
 
   constructor() {
     this.setupOnlineOfflineHandlers()
@@ -278,8 +279,20 @@ class TradingTracker {
 
   // Get records for specific wallet (with caching)
   async getWalletRecords(walletAddress: string, useCache: boolean = true): Promise<TrackingRecord[]> {
+    // Add diagnostic logging to identify execution context
+    console.log('🔍 getWalletRecords execution context:', {
+      isServer: typeof window === 'undefined',
+      hasProcess: typeof process !== 'undefined',
+      nodeEnv: process?.env?.NODE_ENV,
+      userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A',
+      walletAddress: walletAddress.substring(0, 8) + '...',
+      useCache,
+      stackTrace: new Error().stack?.split('\n').slice(1, 4).join('\n')
+    });
+
     // Return cached data if available and requested
     if (useCache && this.cache.has(walletAddress)) {
+      console.log('📦 Returning cached data for wallet:', walletAddress.substring(0, 8) + '...');
       return this.cache.get(walletAddress) || []
     }
 
@@ -299,8 +312,18 @@ class TradingTracker {
         return offlineRecords
       }
 
-      // Fetch from API
-      const response = await fetch(`/api/trading/records?wallet=${encodeURIComponent(walletAddress)}&limit=500`)
+      // Skip fetch in server-side contexts to prevent URL errors
+      if (typeof window === 'undefined') {
+        console.log('⚠️ Skipping fetch in server-side context, returning offline/cached data');
+        this.cache.set(walletAddress, offlineRecords)
+        return offlineRecords
+      }
+
+      // Fetch from API (client-side only)
+      console.log('🌐 Making client-side fetch for wallet records');
+      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+      const apiUrl = `${baseUrl}/api/trading/records?wallet=${encodeURIComponent(walletAddress)}&limit=500`
+      const response = await fetch(apiUrl)
 
       if (!response.ok) {
         console.error('Failed to fetch wallet records:', response.statusText)
@@ -331,6 +354,10 @@ class TradingTracker {
 
   // Get all records (limited for performance)
   async getAllRecords(): Promise<TrackingRecord[]> {
+    console.log('🔍 getAllRecords execution context:', {
+      isServer: typeof window === 'undefined',
+      nodeEnv: process?.env?.NODE_ENV
+    });
     try {
       if (!this.isOnline) {
         // Combine all offline caches when offline (only in browser)
@@ -349,7 +376,16 @@ class TradingTracker {
         return allOfflineRecords.sort((a, b) => b.timestamp - a.timestamp)
       }
 
-      const response = await fetch('/api/trading/records/all?limit=1000')
+      // Skip fetch in server-side contexts
+      if (typeof window === 'undefined') {
+        console.log('⚠️ Skipping getAllRecords fetch in server-side context');
+        return []
+      }
+
+      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+      const apiUrl = `${baseUrl}/api/trading/records/all?limit=1000`
+
+      const response = await fetch(apiUrl)
 
       if (!response.ok) {
         throw new Error(`Failed to fetch records: ${response.statusText}`)
@@ -411,7 +447,10 @@ class TradingTracker {
     if (typeof window === 'undefined' || this.sseConnection) return
 
     try {
-      this.sseConnection = new EventSource(`/api/trading/subscribe?wallet=${walletAddress}`)
+      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+      const sseUrl = `${baseUrl}/api/trading/subscribe?wallet=${walletAddress}`
+
+      this.sseConnection = new EventSource(sseUrl)
 
       this.sseConnection.onopen = () => {
         console.log('📡 SSE connection established')

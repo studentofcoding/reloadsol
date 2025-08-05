@@ -1729,7 +1729,6 @@ async function runPnLUpdate(): Promise<void> {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${pnlToken}`,
-        'User-Agent': 'vercel-cron-internal'
       }
     })
 
@@ -2374,7 +2373,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
       // Enhanced keypair validation - check both simulation path and environment variable
       const hasKeypairPath = !!simulation.keypair_path
       const hasEnvKeypair = !!process.env.TRADING_KEYPAIR_JSON
-      
+
       if (!hasKeypairPath && !hasEnvKeypair) {
         throw new Error('Trading keypair not configured (set TRADING_KEYPAIR_JSON or provide keypair_path)')
       }
@@ -2644,31 +2643,31 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
 }
 
 // Legacy function for backward compatibility
-async function performBuySimulation(token: any): Promise<BuyOperation | null> {
-  const mockSimulation: TradingSimulation = {
-    token_address: token.token_address,
-    token_symbol: token.token_symbol,
-    simulation_started_at: new Date().toISOString(),
-    buy_operation: null,
-    sell_operations: [],
-    current_status: 'buying',
-    remaining_token_amount: '0',
-    initial_token_amount: '0',
-    is_simulated: true,
-    take_profit_levels: {
-      tp1_percentage: 50,
-      tp1_sell_percentage: 50,
-      tp2_percentage: 100,
-      tp3_percentage: 200,
-      tp3_enabled: true
-    },
-    stop_loss_percentage: -30,
-    max_hold_hours: 24,
-    final_result: null
-  }
+// async function performBuySimulation(token: any): Promise<BuyOperation | null> {
+//   const mockSimulation: TradingSimulation = {
+//     token_address: token.token_address,
+//     token_symbol: token.token_symbol,
+//     simulation_started_at: new Date().toISOString(),
+//     buy_operation: null,
+//     sell_operations: [],
+//     current_status: 'buying',
+//     remaining_token_amount: '0',
+//     initial_token_amount: '0',
+//     is_simulated: true,
+//     take_profit_levels: {
+//       tp1_percentage: 50,
+//       tp1_sell_percentage: 50,
+//       tp2_percentage: 100,
+//       tp3_percentage: 200,
+//       tp3_enabled: true
+//     },
+//     stop_loss_percentage: -40,
+//     max_hold_hours: 24,
+//     final_result: null
+//   }
 
-  return performBuyOperation(token, mockSimulation)
-}
+//   return performBuyOperation(token, mockSimulation)
+// }
 
 // Unified sell operation (supports both simulation and real trading)
 async function performSellOperation(
@@ -2905,8 +2904,20 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
   const currentGain = calculateGainPercentage(token.last_price_usd, token.initial_price_usd)
   const hasTP1 = simulation.sell_operations.some(op => op.final_gain_percentage >= simulation.take_profit_levels.tp1_percentage)
 
+  // Add comprehensive logging for SL diagnosis
+  console.log(`🔍 SL Check for ${token.token_symbol}:`, {
+    currentPrice: token.last_price_usd,
+    initialPrice: token.initial_price_usd,
+    currentGain: currentGain.toFixed(2) + '%',
+    stopLossThreshold: simulation.stop_loss_percentage + '%',
+    simulationStatus: simulation.current_status,
+    hasTP1,
+    sellOperationsCount: simulation.sell_operations.length
+  })
+
   // Check stop loss (-50%)
   if (currentGain <= simulation.stop_loss_percentage) {
+    console.log(`🛑 STOP LOSS TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% <= ${simulation.stop_loss_percentage}%`)
     return {
       shouldSell: true,
       sellPercentage: 100, // Sell everything
@@ -2916,6 +2927,7 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
 
   // Check TP1 (80%) - Sell 80% of position
   if (!hasTP1 && currentGain >= simulation.take_profit_levels.tp1_percentage) {
+    console.log(`🎯 TP1 TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp1_percentage}%`)
     return {
       shouldSell: true,
       sellPercentage: simulation.take_profit_levels.tp1_sell_percentage,
@@ -2925,6 +2937,7 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
 
   // Check TP2 (100%) - Sell remaining position
   if (hasTP1 && currentGain >= simulation.take_profit_levels.tp2_percentage) {
+    console.log(`🎯 TP2 TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp2_percentage}%`)
     return {
       shouldSell: true,
       sellPercentage: 100,
@@ -2934,6 +2947,7 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
 
   // Check TP3 (30% after TP1) - Sell remaining position
   if (hasTP1 && simulation.take_profit_levels.tp3_enabled && currentGain <= simulation.take_profit_levels.tp3_percentage) {
+    console.log(`📉 TP3 TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% <= ${simulation.take_profit_levels.tp3_percentage}% after TP1`)
     return {
       shouldSell: true,
       sellPercentage: 100,
@@ -2947,6 +2961,7 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
   const holdDurationHours = (now.getTime() - simulationStart.getTime()) / (1000 * 60 * 60)
 
   if (holdDurationHours >= simulation.max_hold_hours) {
+    console.log(`⏰ MAX HOLD TIME TRIGGERED for ${token.token_symbol}: ${holdDurationHours.toFixed(1)}h >= ${simulation.max_hold_hours}h`)
     return {
       shouldSell: true,
       sellPercentage: 100,
@@ -2954,10 +2969,238 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
     }
   }
 
+  console.log(`✅ No sell conditions met for ${token.token_symbol}`)
   return {
     shouldSell: false,
     sellPercentage: 0,
     reason: ''
+  }
+}
+
+// Get manual position data from trading tracker
+async function getManualPositionData(mintAddress: string, currentBalance: number): Promise<{
+  symbol: string
+  averageBuyPrice: number
+  stopLossPercentage: number
+  shouldMonitorSL: boolean
+} | null> {
+  try {
+    if (!tradingKeypair) return null
+
+    const { tradingTracker } = await import('@/utils/trading-tracker')
+    const walletAddress = tradingKeypair.publicKey.toString()
+
+    // Get trading records for this wallet
+    const records = await tradingTracker.getWalletRecords(walletAddress)
+
+    // Find buy operations for this token
+    const buyRecords = records.filter(record =>
+      record.operationType === 'buy' &&
+      record.tokens.some(token => token.mintAddress === mintAddress)
+    )
+
+    if (buyRecords.length === 0) return null
+
+    // Calculate average buy price from buy records
+    let totalTokensBought = 0
+    let totalSolSpent = 0
+    let tokenSymbol = 'UNKNOWN'
+
+    for (const record of buyRecords) {
+      const tokenData = record.tokens.find(token => token.mintAddress === mintAddress)
+      if (tokenData) {
+        totalTokensBought += tokenData.tokenAmount || 0
+        totalSolSpent += tokenData.solAmount || 0
+        tokenSymbol = tokenData.symbol || tokenSymbol
+      }
+    }
+
+    if (totalTokensBought === 0) return null
+
+    const averageSolPrice = totalSolSpent / totalTokensBought
+    const { getSolPriceUSD } = await import('@/utils/solana')
+    const currentSolPrice = await getSolPriceUSD()
+    const averageBuyPrice = averageSolPrice * currentSolPrice
+
+    return {
+      symbol: tokenSymbol,
+      averageBuyPrice,
+      stopLossPercentage: -50, // Default SL threshold
+      shouldMonitorSL: true
+    }
+
+  } catch (error) {
+    console.error('❌ Error getting manual position data:', error)
+    return null
+  }
+}
+
+// Enhanced manual position monitoring with stop loss support
+async function checkForManualPositionsAndSL(tokens: TrackedToken[]): Promise<void> {
+  if (!tradingKeypair || !tradingConnection) return
+
+  try {
+    const { value: tokenAccounts } = await tradingConnection.getParsedTokenAccountsByOwner(
+      tradingKeypair.publicKey,
+      { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+    )
+
+    console.log(`🔍 Checking ${tokenAccounts.length} token accounts for manual positions and SL triggers`)
+
+    // Get current token prices for SL calculations
+    const tokenAddresses = tokenAccounts.map(account => account.account.data.parsed.info.mint)
+    const { fetchTokenPricesForTracking } = await import('@/utils/trading-tracker')
+    const tokenPrices = await fetchTokenPricesForTracking(tokenAddresses)
+
+    // Process each token account for manual positions
+    for (const tokenAccount of tokenAccounts) {
+      const mintAddress = tokenAccount.account.data.parsed.info.mint
+      const currentBalance = tokenAccount.account.data.parsed.info.tokenAmount.uiAmount || 0
+
+      // Skip if balance is too small (dust)
+      if (currentBalance < 0.001) continue
+
+      const currentPrice = tokenPrices[mintAddress]
+      if (!currentPrice) continue
+
+      // Check if this is a tracked token with simulation
+      const trackedToken = tokens.find(t => t.token_address === mintAddress)
+
+      if (trackedToken && trackedToken.trading_simulation) {
+        // This is an automatic position - already handled by main SL logic
+        continue
+      }
+
+      // This is a manual position - check for SL trigger
+      const manualPosition = await getManualPositionData(mintAddress, currentBalance)
+
+      if (manualPosition && manualPosition.shouldMonitorSL) {
+        const currentGain = calculateGainPercentage(currentPrice, manualPosition.averageBuyPrice)
+        const stopLossThreshold = manualPosition.stopLossPercentage || -50 // Default -50%
+
+        console.log(`🔍 Manual Position SL Check for ${manualPosition.symbol}:`, {
+          currentPrice,
+          averageBuyPrice: manualPosition.averageBuyPrice,
+          currentGain: currentGain.toFixed(2) + '%',
+          stopLossThreshold: stopLossThreshold + '%',
+          balance: currentBalance
+        })
+
+        if (currentGain <= stopLossThreshold) {
+          console.log(`🛑 MANUAL POSITION STOP LOSS TRIGGERED for ${manualPosition.symbol}: ${currentGain.toFixed(2)}% <= ${stopLossThreshold}%`)
+
+          // Execute sell for manual position
+          await executeManualPositionSL(mintAddress, manualPosition, currentBalance, currentPrice, currentGain)
+        }
+      }
+    }
+
+    // Also check existing tracked tokens for manual sell detection (existing logic)
+    await checkForManualSells(tokens)
+
+  } catch (error) {
+    console.error('❌ Error checking manual positions and SL:', error)
+  }
+}
+
+// Execute stop loss for manual position
+async function executeManualPositionSL(
+  mintAddress: string,
+  positionData: any,
+  balance: number,
+  currentPrice: number,
+  currentGain: number
+): Promise<void> {
+  try {
+    console.log(`🛑 Executing manual position stop loss for ${positionData.symbol}`)
+
+    // Create a mock token object for the sell operation
+    const mockToken = {
+      token_address: mintAddress,
+      token_symbol: positionData.symbol,
+      current_price: currentPrice
+    }
+
+    // Create a mock simulation for the sell operation
+    const mockSimulation: TradingSimulation = {
+      token_address: mintAddress,
+      token_symbol: positionData.symbol,
+      simulation_started_at: new Date().toISOString(),
+      is_simulated: false, // Execute real trade
+      current_status: 'holding',
+      remaining_token_amount: balance.toString(),
+      initial_token_amount: balance.toString(),
+      stop_loss_percentage: positionData.stopLossPercentage,
+      take_profit_levels: {
+        tp1_percentage: 80,
+        tp1_sell_percentage: 80,
+        tp2_percentage: 100,
+        tp3_percentage: 30,
+        tp3_enabled: true
+      },
+      max_hold_hours: 72,
+      buy_operation: null,
+      sell_operations: [],
+      final_result: null
+    }
+
+    // Execute the sell operation
+    const sellOperation = await performSellOperation(mockToken, mockSimulation, 100) // Sell 100%
+
+    if (sellOperation) {
+      console.log(`✅ Manual position SL executed for ${positionData.symbol}:`, {
+        solReceived: parseFloat(sellOperation.sol_received) / 1e9,
+        finalGain: currentGain.toFixed(2) + '%'
+      })
+
+      // Track the sell operation
+      if (tradingKeypair) {
+        const { tradingTracker } = await import('@/utils/trading-tracker')
+        await tradingTracker.trackOperation({
+          walletAddress: tradingKeypair.publicKey.toString(),
+          operationType: 'sell',
+          tokens: [{
+            mintAddress,
+            symbol: positionData.symbol,
+            tokenAmount: balance,
+            solAmount: parseFloat(sellOperation.sol_received) / 1e9,
+            priceUsd: currentPrice
+          }],
+          successCount: 1,
+          failureCount: 0,
+          totalTokens: 1,
+          solAmount: parseFloat(sellOperation.sol_received) / 1e9,
+          feesPaid: sellOperation.best_sell_config?.total_fees || 0,
+          signatures: sellOperation.signature ? [sellOperation.signature] : [],
+          is_bot_operation: true,
+          bot_strategy: 'manual-position-stop-loss'
+        })
+      }
+
+      // Send Discord notification
+      if (shouldEnableNotifications()) {
+        try {
+          await sendTradeAlertDiscord({
+            tokenSymbol: positionData.symbol,
+            status: 'completed',
+            isSimulated: false,
+            currentGain,
+            peakGain: currentGain, // Use current gain as peak for manual positions
+            priceUsd: currentPrice,
+            provider: sellOperation.best_sell_config?.provider || 'jupiter',
+            rpcUsed: sellOperation.best_sell_config?.rpc_used || 'default',
+            responseTime: sellOperation.best_sell_config?.response_time || 0
+          })
+        } catch (error) {
+          console.error('❌ Failed to send manual SL Discord notification:', error)
+        }
+      }
+    } else {
+      console.error(`❌ Failed to execute manual position SL for ${positionData.symbol}`)
+    }
+
+  } catch (error) {
+    console.error('❌ Error executing manual position SL:', error)
   }
 }
 
@@ -3297,6 +3540,26 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
   }
 })
 
+function isWithinTradingHours(): { allowed: boolean; reason?: string; currentTime?: string } {
+  const now = new Date()
+
+  // Convert to GMT+7 (Asia/Bangkok timezone)
+  const gmt7Time = new Date(now.getTime() + (7 * 60 * 60 * 1000))
+  const hours = gmt7Time.getUTCHours()
+  const minutes = gmt7Time.getUTCMinutes()
+  const timeString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} GMT+7`
+
+  // Trading allowed from 16:00 to 04:00 GMT+7
+  // This means: 16:00-23:59 and 00:00-03:59
+  const isAllowed = hours >= 16 || hours < 4
+
+  return {
+    allowed: isAllowed,
+    reason: isAllowed ? undefined : `Trading restricted outside 16:00-04:00 GMT+7. Current time: ${timeString}`,
+    currentTime: timeString
+  }
+}
+
 async function internalTrackPost(request: NextRequest, logger: any) {
   const requestStartTime = Date.now()
   const requestId = Math.random().toString(36).substring(7)
@@ -3325,6 +3588,47 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     } else if (secretKey !== expectedSecretKey) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    // Check trading hours restriction
+    const timeCheck = isWithinTradingHours()
+    if (!timeCheck.allowed) {
+      console.log(`⏰ ${timeCheck.reason}`)
+
+      // Send Discord notification about time restriction
+      if (shouldEnableNotifications()) {
+        try {
+          const content = [
+            `⏰ Trading Request Rejected - Outside Trading Hours`,
+            ``,
+            `Current Time: ${timeCheck.currentTime}`,
+            `Trading Hours: 16:00 - 04:00 GMT+7`,
+            `Reason: ${timeCheck.reason}`,
+            ``,
+            `⏰ ${new Date().toLocaleString()}`
+          ].join('\n')
+
+          await fetch(DISCORD_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+          })
+
+          logger.info('discord_notification', 'Discord notification sent for time restriction')
+        } catch (discordError) {
+          logger.error('discord_notification', 'Failed to send Discord notification for time restriction', discordError as Error)
+        }
+      }
+
+      return NextResponse.json({
+        error: 'Trading not allowed at this time',
+        message: timeCheck.reason,
+        currentTime: timeCheck.currentTime,
+        tradingHours: '16:00 - 04:00 GMT+7',
+        timestamp: new Date().toISOString()
+      }, { status: 403 })
+    }
+
+    console.log(`✅ Trading allowed at ${timeCheck.currentTime}`)
 
     // Determine if we should run daily summary (runs once per day at ~midnight)
     const currentTime = new Date()
@@ -3451,7 +3755,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     // Check for manual sells before processing new tokens
     if (trackedTokens && trackedTokens.length > 0) {
       try {
-        await checkForManualSells(trackedTokens as TrackedToken[])
+        // await checkForManualSells(trackedTokens as TrackedToken[])
+        await checkForManualPositionsAndSL(trackedTokens as TrackedToken[])
       } catch (error) {
         console.error('❌ Error checking for manual sells:', error)
         // Continue processing even if manual sell detection fails
@@ -3677,7 +3982,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 tp3_percentage: 30,
                 tp3_enabled: false
               },
-              stop_loss_percentage: -50,
+              stop_loss_percentage: -40,
               max_hold_hours: 24,
               final_result: null
             }
@@ -3860,7 +4165,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                   tp3_percentage: 30,
                   tp3_enabled: false
                 },
-                stop_loss_percentage: -50,
+                stop_loss_percentage: -40,
                 max_hold_hours: 24,
                 final_result: null
               }
@@ -4031,10 +4336,12 @@ async function internalTrackPost(request: NextRequest, logger: any) {
         let sellOperation = null
 
         if (existingToken.trading_simulation && existingToken.trading_simulation.current_status === 'holding') {
+          console.log(`🔍 Checking sell conditions for ${token.token_symbol} (${existingToken.trading_simulation.current_status})`)
+
           const sellDecision = shouldSellToken(existingToken, existingToken.trading_simulation)
 
           if (sellDecision.shouldSell) {
-            console.log(sellDecision.reason)
+            console.log(`🚨 SELL DECISION MADE: ${sellDecision.reason}`)
 
             // Perform sell simulation with the specified percentage
             const sellOperation = await performSellOperation(

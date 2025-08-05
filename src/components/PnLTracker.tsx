@@ -148,6 +148,14 @@ export default function PnLTracker() {
     return new Set()
   })
 
+  // ✅ NEW: Global P&L visibility state
+  const [globalPnLHidden, setGlobalPnLHidden] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('global-pnl-hidden') === 'true'
+    }
+    return false
+  })
+
   // Handler to dismiss the hint message
   const handleDismissHint = useCallback(() => {
     setShowClosedPositionsHint(false)
@@ -274,6 +282,15 @@ export default function PnLTracker() {
       // Save to localStorage
       localStorage.setItem('hidden-pnl-amounts', JSON.stringify(Array.from(newSet)))
       return newSet
+    })
+  }, [])
+
+  // ✅ NEW: Toggle global P&L visibility
+  const toggleGlobalPnLVisibility = useCallback(() => {
+    setGlobalPnLHidden(prev => {
+      const newValue = !prev
+      localStorage.setItem('global-pnl-hidden', newValue.toString())
+      return newValue
     })
   }, [])
 
@@ -1206,26 +1223,46 @@ export default function PnLTracker() {
           <h2 className="text-lg font-semibold text-white">
             Your PnL
           </h2>
-          <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
+          <div className="flex items-center space-x-2">
+            <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
+              <button
+                onClick={() => setActiveTab('completed')}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                  activeTab === 'completed'
+                    ? 'bg-gray-700 text-white'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                Completed ({pnlRecords.length})
+              </button>
+              <button
+                onClick={() => setActiveTab('open')}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                  activeTab === 'open'
+                    ? 'bg-gray-700 text-white'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                Open ({openPositions.length})
+              </button>
+            </div>
+            
+            {/* ✅ NEW: Global P&L visibility toggle */}
             <button
-              onClick={() => setActiveTab('completed')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                activeTab === 'completed'
-                  ? 'bg-gray-700 text-white'
-                  : 'text-gray-400 hover:text-white'
-              }`}
+              onClick={toggleGlobalPnLVisibility}
+              className="text-gray-500 hover:text-gray-300 transition-colors p-1"
+              title={globalPnLHidden ? "Show all P&L amounts" : "Hide all P&L amounts"}
             >
-              Completed ({pnlRecords.length})
-            </button>
-            <button
-              onClick={() => setActiveTab('open')}
-              className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                activeTab === 'open'
-                  ? 'bg-gray-700 text-white'
-                  : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              Open ({openPositions.length})
+              {globalPnLHidden ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                </svg>
+              )}
             </button>
           </div>
         </div>
@@ -1428,46 +1465,50 @@ export default function PnLTracker() {
                           <span className="text-gray-300">${record.buyPrice.toFixed(6)}</span>
                         </div>
 
-                        {/* SOL amounts */}
-                        <div className="text-xs text-gray-300 mb-1">
-                          {record.solAmountBought.toFixed(3)} → {record.solAmountSold.toFixed(3)} SOL
-                        </div>
-
-                        {/* USD P&L Amount */}
-                        <div className="text-xs mb-1">
-                          <span className="text-gray-500">P&L: </span>
-                          <div className="inline-flex items-center space-x-1">
-                            {hiddenPnLAmounts.has(record.id) ? (
-                              <span className="font-medium text-gray-400">••••</span>
-                            ) : (
-                              <span className={`font-medium ${
-                                pnlAmountUSD > 0 
-                                  ? 'text-green-400' 
-                                  : pnlAmountUSD < 0 
-                                    ? 'text-red-400' 
-                                    : 'text-gray-400'
-                              }`}>
-                                {pnlAmountUSD > 0 ? '+' : ''}${Math.abs(pnlAmountUSD).toFixed(2)}
-                              </span>
-                            )}
-                            <button
-                              onClick={(e) => togglePnLVisibility(record.id, e)}
-                              className="text-gray-500 hover:text-gray-300 transition-colors"
-                              title={hiddenPnLAmounts.has(record.id) ? "Show P&L amount" : "Hide P&L amount"}
-                            >
-                              {hiddenPnLAmounts.has(record.id) ? (
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                </svg>
-                              ) : (
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
-                                </svg>
-                              )}
-                            </button>
+                        {/* SOL amounts - Hidden when global toggle is active */}
+                        {!globalPnLHidden && (
+                          <div className="text-xs text-gray-300 mb-1">
+                            {record.solAmountBought.toFixed(3)} → {record.solAmountSold.toFixed(3)} SOL
                           </div>
-                        </div>
+                        )}
+
+                        {/* USD P&L Amount - Hidden when global toggle is active OR individual toggle is active */}
+                        {!globalPnLHidden && (
+                          <div className="text-xs mb-1">
+                            <span className="text-gray-500">P&L: </span>
+                            <div className="inline-flex items-center space-x-1">
+                              {hiddenPnLAmounts.has(record.id) ? (
+                                <span className="font-medium text-gray-400">••••</span>
+                              ) : (
+                                <span className={`font-medium ${
+                                  pnlAmountUSD > 0 
+                                    ? 'text-green-400' 
+                                    : pnlAmountUSD < 0 
+                                      ? 'text-red-400' 
+                                      : 'text-gray-400'
+                                }`}>
+                                  {pnlAmountUSD > 0 ? '+' : ''}${Math.abs(pnlAmountUSD).toFixed(2)}
+                                </span>
+                              )}
+                              <button
+                                onClick={(e) => togglePnLVisibility(record.id, e)}
+                                className="text-gray-500 hover:text-gray-300 transition-colors"
+                                title={hiddenPnLAmounts.has(record.id) ? "Show P&L amount" : "Hide P&L amount"}
+                              >
+                                {hiddenPnLAmounts.has(record.id) ? (
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                  </svg>
+                                ) : (
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                  </svg>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Footer: Status and timestamp */}
                         <div className="flex items-center justify-between text-xs text-gray-400">
@@ -1616,13 +1657,15 @@ export default function PnLTracker() {
                           </span>
                         </div>
 
-                        {/* SOL amount */}
-                        <div className="text-xs text-gray-300 mb-1">
-                          {position.solAmountBought.toFixed(3)} SOL
-                        </div>
+                        {/* SOL amount - Hidden when global toggle is active */}
+                        {!globalPnLHidden && (
+                          <div className="text-xs text-gray-300 mb-1">
+                            {position.solAmountBought.toFixed(3)} SOL
+                          </div>
+                        )}
 
-                        {/* USD P&L Amount */}
-                        {position.pnlPercentage !== undefined && (
+                        {/* USD P&L Amount - Hidden when global toggle is active OR individual toggle is active */}
+                        {!globalPnLHidden && position.pnlPercentage !== undefined && (
                           <div className="text-xs mb-1">
                             <span className="text-gray-500">P&L: </span>
                             <div className="inline-flex items-center space-x-1">
@@ -1659,9 +1702,9 @@ export default function PnLTracker() {
                           </div>
                         )}
 
-                        {/* Footer: USD value and indicators */}
+                        {/* Footer: USD value and indicators - USD value hidden when global toggle is active */}
                         <div className="flex items-center justify-between text-xs text-gray-400">
-                          <span>~${buyAmountUSD.toFixed(0)}</span>
+                          {!globalPnLHidden && <span>~${buyAmountUSD.toFixed(0)}</span>}
                           <div className="flex items-center space-x-1">
                             {position.tradingSimulation && (
                               <span className="text-purple-300" title="Trading Simulation">SIM</span>

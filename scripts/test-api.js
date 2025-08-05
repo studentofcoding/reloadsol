@@ -341,6 +341,136 @@ async function runTests() {
     console.log('='.repeat(50));
   }
 
+  // === TRADING TIME WINDOW TESTS ===
+  log.info('\n⏰ Testing Trading Time Window Restrictions...');
+
+  // Helper function to get current GMT+7 time info
+  const getCurrentTimeInfo = () => {
+    const now = new Date();
+    const gmt7Time = new Date(now.getTime() + (7 * 60 * 60 * 1000));
+    const hours = gmt7Time.getUTCHours();
+    const minutes = gmt7Time.getUTCMinutes();
+    const timeString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+    
+    // Trading window: 16:00 to 04:00 GMT+7 (next day)
+    const isWithinTradingHours = hours >= 16 || hours < 4;
+    
+    return {
+      currentTime: timeString,
+      currentHour: hours,
+      isWithinTradingHours,
+      tradingStatus: isWithinTradingHours ? 'ALLOWED' : 'RESTRICTED'
+    };
+  };
+
+  const timeInfo = getCurrentTimeInfo();
+  console.log(`\n🕐 Current GMT+7 Time: ${timeInfo.currentTime}`);
+  console.log(`📊 Trading Status: ${timeInfo.tradingStatus}`);
+  console.log(`⏰ Trading Window: 16:00-04:00 GMT+7`);
+
+  // Test 1: Current time window status
+  await testEndpoint('Trading Time Window - Current Status', '/api/trending/track', {
+    method: 'POST',
+    params: {
+      key: 'r3l0ads0l-trending'
+    },
+    expectError: !timeInfo.isWithinTradingHours,
+    expectedStatus: timeInfo.isWithinTradingHours ? 200 : 403,
+    validator: (data) => {
+      if (timeInfo.isWithinTradingHours) {
+        // During trading hours - should succeed or return normal response
+        return data && (
+          data.success === true || 
+          data.message || 
+          data.error // Normal API responses
+        );
+      } else {
+        // Outside trading hours - should be rejected with specific message
+        return data &&
+          data.success === false &&
+          data.error &&
+          data.error.includes('Trading is only allowed between 16:00 and 04:00 GMT+7') &&
+          data.currentTime &&
+          data.tradingWindow === '16:00-04:00 GMT+7';
+      }
+    }
+  });
+
+  // Test 2: Time window validation with detailed response check
+  const timeWindowResult = await testEndpoint('Trading Time Window - Detailed Check', '/api/trending/track', {
+    method: 'POST',
+    params: {
+      key: 'r3l0ads0l-trending'
+    },
+    expectError: !timeInfo.isWithinTradingHours,
+    expectedStatus: timeInfo.isWithinTradingHours ? 200 : 403,
+    validator: (data) => true // Accept any response for detailed analysis
+  });
+
+  // Display detailed time window results
+  if (timeWindowResult) {
+    console.log('\n⏰ TIME WINDOW ANALYSIS:');
+    console.log('='.repeat(40));
+    console.log(`Current GMT+7 Time: ${timeInfo.currentTime}`);
+    console.log(`Current Hour: ${timeInfo.currentHour}`);
+    console.log(`Expected Status: ${timeInfo.tradingStatus}`);
+    
+    if (timeInfo.isWithinTradingHours) {
+      console.log('✅ Currently within trading hours (16:00-04:00 GMT+7)');
+      console.log('   → API should accept trading requests');
+    } else {
+      console.log('❌ Currently outside trading hours');
+      console.log('   → API should reject with 403 status');
+      
+      if (timeWindowResult.error) {
+        console.log(`   → Rejection Message: ${timeWindowResult.error}`);
+      }
+      if (timeWindowResult.currentTime) {
+        console.log(`   → Server Time: ${timeWindowResult.currentTime}`);
+      }
+      if (timeWindowResult.tradingWindow) {
+        console.log(`   → Trading Window: ${timeWindowResult.tradingWindow}`);
+      }
+    }
+    
+    // Show next trading window
+    const nextTradingStart = timeInfo.currentHour < 4 ? 
+      `Today at 16:00 GMT+7` : 
+      timeInfo.currentHour < 16 ? 
+        `Today at 16:00 GMT+7` : 
+        `Tomorrow at 16:00 GMT+7`;
+    
+    const nextTradingEnd = timeInfo.currentHour >= 16 ? 
+      `Tomorrow at 04:00 GMT+7` : 
+      `Today at 04:00 GMT+7`;
+    
+    if (!timeInfo.isWithinTradingHours) {
+      console.log(`   → Next Trading Window: ${nextTradingStart} - ${nextTradingEnd}`);
+    }
+    
+    console.log('='.repeat(40));
+  }
+
+  // Test 3: Verify Discord notification for time restriction (if outside hours)
+  if (!timeInfo.isWithinTradingHours) {
+    await testEndpoint('Trading Time Window - Discord Notification', '/api/trending/track', {
+      method: 'POST',
+      params: {
+        key: 'r3l0ads0l-trending'
+      },
+      expectError: true,
+      expectedStatus: 403,
+      validator: (data) => {
+        return data &&
+          data.success === false &&
+          data.error &&
+          typeof data.error === 'string' &&
+          data.currentTime &&
+          data.tradingWindow;
+      }
+    });
+  }
+
   // === NEW JUPITER METADATA API TESTS ===
   log.info('\n🚀 Testing Jupiter Metadata API v2...');
 

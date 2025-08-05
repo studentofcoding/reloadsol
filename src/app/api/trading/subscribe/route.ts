@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
 
       // Store connection for notifications
       const connectionId = `${walletAddress}-${Date.now()}`
-      
+
       // Clean up on close
       const cleanup = () => {
         activeConnections.delete(connectionId)
@@ -110,12 +110,12 @@ export async function POST(request: NextRequest) {
     for (const [connectionId, connection] of Array.from(activeConnections.entries())) {
       if (connectionId.startsWith(walletAddress)) {
         try {
-          const message = `data: ${JSON.stringify({ 
-            type, 
+          const message = `data: ${JSON.stringify({
+            type,
             data,
-            timestamp: new Date().toISOString() 
+            timestamp: new Date().toISOString()
           })}\n\n`
-          
+
           connection.controller.enqueue(new TextEncoder().encode(message))
           notifiedCount++
         } catch (error) {
@@ -131,8 +131,8 @@ export async function POST(request: NextRequest) {
 
     console.log(`📡 Notified ${notifiedCount} connections for wallet ${walletAddress.slice(0, 8)}...`)
 
-    return NextResponse.json({ 
-      success: true, 
+    return NextResponse.json({
+      success: true,
       notified: notifiedCount,
       cleaned: deadConnections.length
     })
@@ -142,26 +142,5 @@ export async function POST(request: NextRequest) {
       { error: 'Failed to notify subscribers' },
       { status: 500 }
     )
-  }
-}
-
-// Utility function to notify all connections for a wallet
-export async function notifyWalletUpdate(
-  walletAddress: string, 
-  type: 'trade_update' | 'pnl_update' | 'balance_update',
-  data?: any
-) {
-  try {
-    const response = await fetch(`${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/trading/subscribe`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ walletAddress, type, data })
-    })
-    
-    if (!response.ok) {
-      console.error('Failed to notify wallet update:', await response.text())
-    }
-  } catch (error) {
-    console.error('Error sending wallet notification:', error)
   }
 }
