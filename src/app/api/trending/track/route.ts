@@ -1542,8 +1542,47 @@ function getRejectionEmoji(reason: string): string {
   return emojiMap[reason] || '❌'
 }
 
+// Helper function to check if tokens have been manually traded (batch check)
+async function checkManualTradingHistoryBatch(tokenAddresses: string[]): Promise<Set<string>> {
+  try {
+    const manuallyTradedTokens = new Set<string>()
+
+    // Query trading_records table for any manual trades (is_bot_operation = false or null)
+    const { data, error } = await supabase
+      .from('trading_records')
+      .select('data')
+      .or('data->>is_bot_operation.is.null,data->>is_bot_operation.eq.false')
+
+    if (error) {
+      console.error('Error checking manual trading history:', error)
+      return manuallyTradedTokens // Return empty set if we can't check
+    }
+
+    if (!data || data.length === 0) {
+      return manuallyTradedTokens // No manual trades found
+    }
+
+    // Check each record for tokens that match our list
+    for (const record of data) {
+      const recordData = record.data
+      if (recordData && recordData.tokens && Array.isArray(recordData.tokens)) {
+        recordData.tokens.forEach((token: any) => {
+          if (token.mintAddress && tokenAddresses.includes(token.mintAddress)) {
+            manuallyTradedTokens.add(token.mintAddress)
+          }
+        })
+      }
+    }
+
+    return manuallyTradedTokens
+  } catch (error) {
+    console.error('Error in checkManualTradingHistoryBatch:', error)
+    return new Set<string>() // Return empty set if error occurs
+  }
+}
+
 // Enhanced filtering function with detailed tracking and token collection
-function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[], summary: FilteringSummary } {
+async function performEnhancedFiltering(pools: any[]): Promise<{ results: TokenFilterResult[], summary: FilteringSummary }> {
   const startTime = Date.now()
   const results: TokenFilterResult[] = []
   const rejectionBreakdown: { [reason: string]: number } = {}
@@ -1557,6 +1596,16 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
       organicScore?: number
     }>
   } = {}
+
+  // Extract all token addresses for batch checking
+  const tokenAddresses = pools
+    .map(pool => pool.baseAsset.id)
+    .filter(id => id) // Remove null/undefined values
+
+  // Batch check for manually traded tokens
+  const manuallyTradedTokens = await checkManualTradingHistoryBatch(tokenAddresses)
+
+  console.log(`🔍 Found ${manuallyTradedTokens.size} manually traded tokens out of ${tokenAddresses.length} tokens`)
 
   pools.forEach(pool => {
     const rejectionReasons: string[] = []
@@ -1601,6 +1650,11 @@ function performEnhancedFiltering(pools: any[]): { results: TokenFilterResult[],
     // Check for missing required data
     if (!pool.baseAsset.id || !pool.baseAsset.symbol || !pool.baseAsset.usdPrice) {
       rejectionReasons.push('Missing required data')
+    }
+
+    // NEW: Check if token has been manually traded
+    if (pool.baseAsset.id && manuallyTradedTokens.has(pool.baseAsset.id)) {
+      rejectionReasons.push('Token already traded manually')
     }
 
     const passed = rejectionReasons.length === 0
@@ -3306,7 +3360,7 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
         console.log(`Track Filter Test: Fetched ${data.pools.length} pools from Jupiter API`)
 
         // Perform enhanced filtering
-        const { results: filterResults, summary: filteringSummary } = performEnhancedFiltering(data.pools)
+        const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(data.pools)
 
         // Extract accepted tokens
         const acceptedTokens = filterResults
@@ -3689,7 +3743,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
     // Enhanced filtering with comprehensive tracking
     console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
-    const { results: filterResults, summary: filteringSummary } = performEnhancedFiltering(data.pools)
+    const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(data.pools)
 
     // Extract accepted tokens
     const filteredTokens = filterResults
