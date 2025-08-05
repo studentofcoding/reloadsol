@@ -91,6 +91,87 @@ if (typeof process !== 'undefined') {
 // Track previous notification state for comparison
 let previousFilteredTokens: Map<string, TransformedToken> = new Map();
 
+// Add Discord message size validation constants (similar to track route)
+const DISCORD_MAX_LENGTH = 2000
+const DISCORD_SAFE_LENGTH = 1900
+const DISCORD_EMBED_MAX_LENGTH = 6000
+const DISCORD_FIELD_MAX_LENGTH = 1024
+const DISCORD_DESCRIPTION_MAX_LENGTH = 4096
+
+// Add message size validation function
+function validateDiscordMessage(message: any): { valid: boolean; issues: string[]; sizes: any } {
+    const issues: string[] = []
+    const sizes = {
+        totalFields: 0,
+        fieldSizes: [] as number[],
+        descriptionSize: 0,
+        totalEmbedSize: 0
+    }
+
+    if (message.embeds && message.embeds.length > 0) {
+        const embed = message.embeds[0]
+
+        // Check description size
+        if (embed.description) {
+            sizes.descriptionSize = embed.description.length
+            if (embed.description.length > DISCORD_DESCRIPTION_MAX_LENGTH) {
+                issues.push(`Description too long: ${embed.description.length}/${DISCORD_DESCRIPTION_MAX_LENGTH}`)
+            }
+        }
+
+        // Check fields
+        if (embed.fields) {
+            sizes.totalFields = embed.fields.length
+            if (embed.fields.length > 25) {
+                issues.push(`Too many fields: ${embed.fields.length}/25`)
+            }
+
+            embed.fields.forEach((field: any, index: number) => {
+                const fieldSize = (field.name?.length || 0) + (field.value?.length || 0)
+                sizes.fieldSizes.push(fieldSize)
+
+                if (field.value && field.value.length > DISCORD_FIELD_MAX_LENGTH) {
+                    issues.push(`Field ${index} value too long: ${field.value.length}/${DISCORD_FIELD_MAX_LENGTH}`)
+                }
+            })
+        }
+
+        // Estimate total embed size
+        const embedJson = JSON.stringify(embed)
+        sizes.totalEmbedSize = embedJson.length
+        if (embedJson.length > DISCORD_EMBED_MAX_LENGTH) {
+            issues.push(`Total embed too large: ${embedJson.length}/${DISCORD_EMBED_MAX_LENGTH}`)
+        }
+    }
+
+    return {
+        valid: issues.length === 0,
+        issues,
+        sizes
+    }
+}
+
+// Add field truncation function
+function truncateFieldValue(value: string, maxLength: number = DISCORD_FIELD_MAX_LENGTH - 50): string {
+    if (value.length <= maxLength) return value
+
+    // Try to truncate at a token boundary
+    const lines = value.split('\n')
+    let truncated = ''
+
+    for (const line of lines) {
+        if ((truncated + line + '\n').length > maxLength) {
+            break
+        }
+        truncated += line + '\n'
+    }
+
+    // Add truncation indicator
+    truncated += `\n... (${lines.length - truncated.split('\n').length + 1} more tokens truncated)`
+
+    return truncated.trim()
+}
+
 // Function to send filtered tokens to Discord
 async function sendFilteredTokensNotification() {
     if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
@@ -201,37 +282,42 @@ async function sendFilteredTokensNotification() {
             { label: '$1M - $3M MCap', min: 1_000_001, max: 3_000_000 }
         ];
 
-        // Create category fields for embed format
+        // Create category fields for embed format with size validation
         const categoryFields = categories.map(cat => {
             const tokens = sortedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 10);
             if (tokens.length === 0) return null;
 
+            const fieldValue = tokens.map(token => {
+                const hourChangeEmoji = token.change_1h
+                    ? (token.change_1h > 0 ? '🟢' : '🔴')
+                    : '⚪';
+
+                const hourChangePercent = token.change_1h ? (token.change_1h * 100).toFixed(2) : '0.00';
+
+                // Risk assessment based on organic score and price volatility
+                let riskLevel = 'LOW';
+                if (token.organic_score < 75) riskLevel = 'HIGH';
+                else if (token.organic_score < 85) riskLevel = 'MED';
+
+                const volatility = Math.abs(token.change_1h || 0) * 100;
+                if (volatility > 100) riskLevel = 'HIGH';
+                else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MED';
+
+                // Construct chart link
+                const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
+
+                return `**${token.token_symbol}**\n` +
+                    `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +
+                    `Score: ${token.organic_score.toFixed(1)}, MCap: $${token.mcap.toLocaleString()}, Risk: ${riskLevel}\n` +
+                    `📈 [Trade here](${chartLink})\n`;
+            }).join('\n');
+
+            // Truncate field value if too long
+            const truncatedValue = truncateFieldValue(fieldValue);
+
             return {
                 name: `${cat.label}`,
-                value: tokens.map(token => {
-                    const hourChangeEmoji = token.change_1h
-                        ? (token.change_1h > 0 ? '🟢' : '🔴')
-                        : '⚪';
-
-                    const hourChangePercent = token.change_1h ? (token.change_1h * 100).toFixed(2) : '0.00';
-
-                    // Risk assessment based on organic score and price volatility
-                    let riskLevel = 'LOW';
-                    if (token.organic_score < 75) riskLevel = 'HIGH';
-                    else if (token.organic_score < 85) riskLevel = 'MED';
-
-                    const volatility = Math.abs(token.change_1h || 0) * 100;
-                    if (volatility > 100) riskLevel = 'HIGH';
-                    else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MED';
-
-                    // Construct chart link
-                    const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
-
-                    return `**${token.token_symbol}**\n` +
-                        `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +
-                        `Score: ${token.organic_score.toFixed(1)}, MCap: $${token.mcap.toLocaleString()}, Risk: ${riskLevel}\n` +
-                        `📈 [Trade here](${chartLink})\n`;
-                }).join('\n')
+                value: truncatedValue
             };
         }).filter(Boolean);
 
@@ -257,6 +343,37 @@ async function sendFilteredTokensNotification() {
             ]
         };
 
+        // Validate message size before sending
+        const validation = validateDiscordMessage(message);
+
+        console.log('Discord message validation:', {
+            valid: validation.valid,
+            issues: validation.issues,
+            sizes: validation.sizes,
+            tokensCount: sortedTokens.length,
+            fieldsCount: fields.length
+        });
+
+        if (!validation.valid) {
+            console.warn('Discord message validation failed:', validation.issues);
+
+            // If validation fails, try to create a simplified message
+            const simplifiedMessage = {
+                embeds: [
+                    {
+                        title: ` 📜 Filtered Token Update (Simplified)`,
+                        description: `**Summary:** ${addedCount} added, ${updatedCount} updated, ${removedCount} removed\n**Price movements:** ${increasedCount} increased, ${decreasedCount} decreased\n\n**Total filtered tokens:** ${sortedTokens.length}\n\n*Message was too large for full display. Check the API directly for complete data.*`,
+                        color: 3447003,
+                        timestamp: new Date().toISOString(),
+                        fields: [], // Add empty fields array to match the expected type structure
+                        footer: {
+                            text: `Filtered: Score ≥${filterCriteria.min_organic_score}, MCap $${(filterCriteria.min_mcap / 1000).toFixed(0)}k-$${(filterCriteria.max_mcap / 1000000).toFixed(0)}M`
+                        }
+                    }
+                ]
+            };
+        }
+
         // Send the message to Discord with timeout
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
@@ -274,12 +391,14 @@ async function sendFilteredTokensNotification() {
             clearTimeout(timeoutId);
 
             if (!response.ok) {
-                throw new Error(`Discord API responded with status: ${response.status}`);
+                const responseText = await response.text().catch(() => 'Unable to read response');
+                throw new Error(`Discord API responded with status: ${response.status}, body: ${responseText}`);
             }
 
             console.log('Discord filtered notification sent successfully', {
                 tokensCount: sortedTokens.length,
                 fieldsCount: fields.length,
+                messageValid: validation.valid,
                 summary: { addedCount, updatedCount, removedCount, increasedCount, decreasedCount }
             });
         } catch (error) {
