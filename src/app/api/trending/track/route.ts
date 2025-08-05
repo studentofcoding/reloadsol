@@ -1729,7 +1729,6 @@ async function runPnLUpdate(): Promise<void> {
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${pnlToken}`,
-        'User-Agent': 'vercel-cron-internal'
       }
     })
 
@@ -3541,6 +3540,26 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
   }
 })
 
+function isWithinTradingHours(): { allowed: boolean; reason?: string; currentTime?: string } {
+  const now = new Date()
+
+  // Convert to GMT+7 (Asia/Bangkok timezone)
+  const gmt7Time = new Date(now.getTime() + (7 * 60 * 60 * 1000))
+  const hours = gmt7Time.getUTCHours()
+  const minutes = gmt7Time.getUTCMinutes()
+  const timeString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} GMT+7`
+
+  // Trading allowed from 16:00 to 04:00 GMT+7
+  // This means: 16:00-23:59 and 00:00-03:59
+  const isAllowed = hours >= 16 || hours < 4
+
+  return {
+    allowed: isAllowed,
+    reason: isAllowed ? undefined : `Trading restricted outside 16:00-04:00 GMT+7. Current time: ${timeString}`,
+    currentTime: timeString
+  }
+}
+
 async function internalTrackPost(request: NextRequest, logger: any) {
   const requestStartTime = Date.now()
   const requestId = Math.random().toString(36).substring(7)
@@ -3569,6 +3588,47 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     } else if (secretKey !== expectedSecretKey) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    // Check trading hours restriction
+    const timeCheck = isWithinTradingHours()
+    if (!timeCheck.allowed) {
+      console.log(`⏰ ${timeCheck.reason}`)
+
+      // Send Discord notification about time restriction
+      if (shouldEnableNotifications()) {
+        try {
+          const content = [
+            `⏰ Trading Request Rejected - Outside Trading Hours`,
+            ``,
+            `Current Time: ${timeCheck.currentTime}`,
+            `Trading Hours: 16:00 - 04:00 GMT+7`,
+            `Reason: ${timeCheck.reason}`,
+            ``,
+            `⏰ ${new Date().toLocaleString()}`
+          ].join('\n')
+
+          await fetch(DISCORD_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content })
+          })
+
+          logger.info('discord_notification', 'Discord notification sent for time restriction')
+        } catch (discordError) {
+          logger.error('discord_notification', 'Failed to send Discord notification for time restriction', discordError as Error)
+        }
+      }
+
+      return NextResponse.json({
+        error: 'Trading not allowed at this time',
+        message: timeCheck.reason,
+        currentTime: timeCheck.currentTime,
+        tradingHours: '16:00 - 04:00 GMT+7',
+        timestamp: new Date().toISOString()
+      }, { status: 403 })
+    }
+
+    console.log(`✅ Trading allowed at ${timeCheck.currentTime}`)
 
     // Determine if we should run daily summary (runs once per day at ~midnight)
     const currentTime = new Date()
