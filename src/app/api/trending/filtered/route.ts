@@ -372,6 +372,9 @@ async function sendFilteredTokensNotification() {
                     }
                 ]
             };
+
+            // Use simplified message instead
+            message.embeds = simplifiedMessage.embeds;
         }
 
         // Send the message to Discord with timeout
