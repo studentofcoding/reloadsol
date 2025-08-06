@@ -52,9 +52,9 @@ export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomRes
 
       // Fetch from our proxy API endpoint using the graduated pool
       // Construct absolute URL for the Axiom API call
-      const baseUrl = process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+      const baseUrl = process.env.API_HOST
+        ? `https://${process.env.API_HOST}`
+        : process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
 
       const response = await fetch(`${baseUrl}/api/axiom/token-info?pairAddress=${graduatedPool}`, {
         method: 'GET',
