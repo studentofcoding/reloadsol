@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
+import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from '@/utils/axiom'
 
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
@@ -211,38 +212,72 @@ async function sendDiscordNotification(
     }
 
     // For each category, filter and format up to 5 tokens
-    const categoryFields = categories.map(cat => {
+    const categoryFields = await Promise.all(categories.map(async cat => {
       const tokens = tokensToShare.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 5);
       if (tokens.length === 0) return null;
-      return {
-        name: `${cat.label} MCap`,
-        value: tokens.map(token => {
-          const priceChangeEmoji = token.price_change
-            ? (token.price_change > 0 ? '📈' : '📉')
-            : '';
-          const hourChangeEmoji = token.change_1h
-            ? (token.change_1h > 0 ? '🟢' : '🔴')
-            : '';
 
-          // Risk assessment based on organic score and price volatility
-          let riskLevel = 'LOW';
-          if (token.organic_score < 75) riskLevel = 'HIGH';
-          else if (token.organic_score < 85) riskLevel = 'MED';
+      const tokenValues = await Promise.all(tokens.map(async token => {
+        const priceChangeEmoji = token.price_change
+          ? (token.price_change > 0 ? '📈' : '📉')
+          : '';
+        const hourChangeEmoji = token.change_1h
+          ? (token.change_1h > 0 ? '🟢' : '🔴')
+          : '';
+
+        // Risk assessment based on organic score and price volatility
+        let riskLevel = 'LOW';
+
+        try {
+          // Try to get comprehensive risk assessment from Axiom
+          const axiomResult = await fetchAxiomTokenInfo(token.token_address);
+
+          if (axiomResult.success && axiomResult.data) {
+            const riskIndicators = getRiskIndicators(axiomResult.data, token.mcap);
+            riskLevel = riskIndicators.overallRisk;
+
+            console.log(`📊 Axiom risk assessment for ${token.token_symbol}: ${riskLevel}`, {
+              insider: riskIndicators.insiderRisk,
+              bundler: riskIndicators.bundlerRisk,
+              concentration: riskIndicators.concentrationRisk,
+              fee: riskIndicators.feeRisk
+            });
+          } else {
+            // Fallback to organic score and volatility assessment
+            if (token.organic_score < 60) riskLevel = 'HIGH';
+            else if (token.organic_score < 75) riskLevel = 'MEDIUM';
+
+            const volatility = Math.abs(token.change_1h || 0) * 100;
+            if (volatility > 100 && riskLevel !== 'HIGH') riskLevel = 'HIGH';
+            else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MEDIUM';
+
+            console.log(`📈 Fallback risk assessment for ${token.token_symbol}: ${riskLevel} (organic: ${token.organic_score}, volatility: ${volatility.toFixed(1)}%)`);
+          }
+        } catch (error) {
+          // Final fallback to basic assessment
+          if (token.organic_score < 60) riskLevel = 'HIGH';
+          else if (token.organic_score < 75) riskLevel = 'MEDIUM';
 
           const volatility = Math.abs(token.change_1h || 0) * 100;
-          if (volatility > 100) riskLevel = 'HIGH';
-          else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MED';
+          if (volatility > 100 && riskLevel !== 'HIGH') riskLevel = 'HIGH';
+          else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MEDIUM';
 
-          // Construct chart link
-          const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
+          console.warn(`⚠️ Risk assessment error for ${token.token_symbol}, using fallback: ${riskLevel}`, error);
+        }
 
-          return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
-            `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
-            `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}, Risk: ${riskLevel}\n` +
-            `📈 [Trade here](${chartLink})\n`;
-        }).join('\n')
+        // Construct chart link
+        const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
+
+        return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
+          `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
+          `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}, Risk: ${riskLevel}\n` +
+          `📈 [Trade here](${chartLink})\n`;
+      }));
+
+      return {
+        name: `${cat.label} MCap`,
+        value: tokenValues.join('\n')
       };
-    }).filter(Boolean);
+    }));
 
     // If no tokens in any category, show a fallback field
     const fields = categoryFields.length > 0 ? categoryFields : [{
