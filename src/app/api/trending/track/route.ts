@@ -740,6 +740,7 @@ interface TradeExecutionParams {
   slippageBps: number
   userPublicKey: string
   priorityFee?: number
+  strategy: string
 }
 
 interface TradeExecutionResult {
@@ -3179,7 +3180,8 @@ async function executeBuyOperationWithStrategy(
           amount: BUY_AMOUNT_LAMPORTS,
           slippageBps: config.bps,
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
-          priorityFee: shouldExecuteReal ? PRIORITY_FEE_LAMPORTS : 0
+          priorityFee: shouldExecuteReal ? PRIORITY_FEE_LAMPORTS : 0,
+          strategy: strategyId
         }, shouldExecuteReal)
 
         syncResults.push(syncResult)
@@ -3479,7 +3481,8 @@ async function performSellOperation(
           amount: Math.floor(tokenAmountToSell), // Convert to integer token amount
           slippageBps: config.bps,
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
-          priorityFee: shouldActuallyExecute ? PRIORITY_FEE_LAMPORTS : 0
+          priorityFee: shouldActuallyExecute ? PRIORITY_FEE_LAMPORTS : 0,
+          strategy: strategyId || 'unknown'
         })
 
         configurations[config.key] = {
@@ -4322,7 +4325,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
     // Get active strategies with their configurations
     const { strategies: activeStrategies, configs: activeConfigs, allocation } = getActiveStrategiesWithState()
-    
+
     if (activeStrategies.length === 0) {
       throw new Error('No active strategies available for trading')
     }
@@ -4587,6 +4590,10 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           const lastUpdateTime = existingAnyStatus.updated_at
             ? Math.round((Date.now() - new Date(existingAnyStatus.updated_at).getTime()) / (1000 * 60)) / 100
             : 'Unknown'
+
+          const { strategies: activeStrategies } = getActiveStrategies()
+          const strategyInfo = activeStrategies.length > 0 ? `[Strategies: ${activeStrategies.join(', ')}]` : '[No active strategies]'
+          console.warn(`⏭️ Token ${token.token_symbol}, from strategy:${strategyInfo} already exists in database. Skipping duplicate`)
 
           console.warn(`⏭️ Token ${token.token_symbol} already exists in database. Skipping duplicate.`)
           console.log(`📊 ${token.token_symbol} Details:`, {
