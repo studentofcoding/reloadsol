@@ -25,34 +25,60 @@ let globalTimers: {
 // Function to initialize the notification timer
 function initializeNotificationTimer() {
   if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !globalTimers.notificationTimer) {
-    console.log('Initializing automatic notification timer...');
+    console.log('🔔 Initializing automatic notification timer...', {
+      ENABLE_DISCORD_NOTIFICATIONS,
+      AUTO_NOTIFICATION_INTERVAL_MS,
+      intervalMinutes: AUTO_NOTIFICATION_INTERVAL_MS / 60000
+    });
 
     // Initial delay of 30 seconds after server start before first check
     globalTimers.initialDelayTimer = setTimeout(() => {
-      console.log('Starting automatic notification timer');
+      console.log('⏰ Starting automatic notification timer');
 
       // Set interval for periodic notifications
       globalTimers.notificationTimer = setInterval(() => {
         const currentTime = Date.now();
+        const timeSinceLastNotification = currentTime - lastAutoNotificationTime;
+
+        console.log('🔄 Auto-notification timer check', {
+          currentTime: new Date(currentTime).toISOString(),
+          lastAutoNotificationTime: new Date(lastAutoNotificationTime).toISOString(),
+          timeSinceLastNotification,
+          AUTO_NOTIFICATION_INTERVAL_MS,
+          shouldTrigger: timeSinceLastNotification >= AUTO_NOTIFICATION_INTERVAL_MS
+        });
 
         // Check if it's time for a notification
-        if (currentTime - lastAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) {
-          console.log('Auto-notification interval triggered');
+        if (timeSinceLastNotification >= AUTO_NOTIFICATION_INTERVAL_MS) {
+          console.log('🚨 Auto-notification interval triggered');
 
           // Determine if we need a full refresh
           const needsFullRefresh = currentTime - tokenCache.lastFullRefresh >= FULL_REFRESH_INTERVAL_MS;
 
+          console.log('🔄 Refresh check', {
+            currentTime,
+            lastFullRefresh: tokenCache.lastFullRefresh,
+            timeSinceFullRefresh: currentTime - tokenCache.lastFullRefresh,
+            FULL_REFRESH_INTERVAL_MS,
+            needsFullRefresh
+          });
+
           // Trigger notification with proper error handling
           fetchAndUpdateCache(needsFullRefresh, currentTime, true)
             .then(tokenArray => {
-              console.log(`Scheduled notification completed with ${tokenArray.length} tokens`);
+              console.log(`✅ Scheduled notification completed with ${tokenArray.length} tokens`);
             })
             .catch(error => {
-              console.error('Error in scheduled notification:', error);
+              console.error('❌ Error in scheduled notification:', error);
               // Reset refresh state on error to prevent permanent blocking
               refreshState.promise = null;
               refreshState.timeout = null;
             });
+        } else {
+          console.log('⏭️ Auto-notification timer check - not time yet', {
+            timeRemaining: AUTO_NOTIFICATION_INTERVAL_MS - timeSinceLastNotification,
+            timeRemainingMinutes: (AUTO_NOTIFICATION_INTERVAL_MS - timeSinceLastNotification) / 60000
+          });
         }
       }, Math.min(60000, AUTO_NOTIFICATION_INTERVAL_MS / 2)); // Check at least every minute or half the notification interval
 
@@ -60,9 +86,13 @@ function initializeNotificationTimer() {
       globalTimers.initialDelayTimer = undefined;
     }, 30000);
   } else if (globalTimers.notificationTimer) {
-    console.log('Notification timer is already running.');
+    console.log('⚠️ Notification timer is already running.');
   } else {
-    console.log('Automatic notifications are disabled.');
+    console.log('❌ Automatic notifications are disabled.', {
+      processExists: typeof process !== 'undefined',
+      ENABLE_DISCORD_NOTIFICATIONS,
+      hasExistingTimer: !!globalTimers.notificationTimer
+    });
   }
 }
 
@@ -171,26 +201,55 @@ async function sendDiscordNotification(
   forceSend: boolean = false,
   newlyAddedTokens: TransformedToken[] = []
 ) {
+  console.log('🔔 Discord notification check started', {
+    enabled: ENABLE_DISCORD_NOTIFICATIONS,
+    webhookConfigured: !!DISCORD_WEBHOOK_URL,
+    forceSend,
+    stats,
+    newlyAddedTokensCount: newlyAddedTokens.length
+  });
+
   if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
-    console.log('Discord notifications disabled or webhook URL not configured');
+    console.log('❌ Discord notifications disabled or webhook URL not configured', {
+      ENABLE_DISCORD_NOTIFICATIONS,
+      webhookConfigured: !!DISCORD_WEBHOOK_URL,
+      webhookUrl: DISCORD_WEBHOOK_URL ? `${DISCORD_WEBHOOK_URL.substring(0, 50)}...` : 'Not set'
+    });
     return;
   }
 
-  const SERVER_URL = process.env.PUBLIC_SERVER_URL || process.env.VERCEL_URL || '';
+  // const SERVER_URL = process.env.PUBLIC_SERVER_URL || process.env.VERCEL_URL || '';
+  // console.log('🌐 Server URL check', {
+  //   SERVER_URL,
+  //   PUBLIC_SERVER_URL: process.env.PUBLIC_SERVER_URL,
+  //   VERCEL_URL: process.env.VERCEL_URL,
+  //   matches: SERVER_URL === 'v2.reloadsol.xyz'
+  // });
 
-  if (SERVER_URL !== 'v2.reloadsol.xyz') {
-    console.log(`Skipping Discord notification: server URL is ${SERVER_URL}, not v2.reloadsol.xyz`);
-    return;
-  }
+  // if (SERVER_URL !== 'v2.reloadsol.xyz') {
+  //   console.log(`⏭️ Skipping Discord notification: server URL is ${SERVER_URL}, not v2.reloadsol.xyz`);
+  //   return;
+  // }
 
   // Always send if there are new tokens, updates, removals, or price movements in filter categories
   const hasPriceMovement = stats.price_increased > 0 || stats.price_decreased > 0;
-  if (!forceSend && stats.added === 0 && stats.updated === 0 && stats.removed === 0 && !hasPriceMovement) {
-    console.log('No changes to report to Discord');
+  const hasChanges = stats.added > 0 || stats.updated > 0 || stats.removed > 0 || hasPriceMovement;
+
+  console.log('📊 Change detection', {
+    hasChanges,
+    hasPriceMovement,
+    forceSend,
+    shouldSend: forceSend || hasChanges
+  });
+
+  if (!forceSend && !hasChanges) {
+    console.log('📭 No changes to report to Discord');
     return;
   }
 
   try {
+    console.log('🚀 Starting Discord notification preparation...');
+
     // Group newly added tokens by market cap categories
     const categories = [
       { label: '$30k - $70k', min: 30_000, max: 70_000 },
@@ -211,10 +270,18 @@ async function sendDiscordNotification(
       });
     }
 
-    // For each category, filter and format up to 5 tokens
+    console.log('🎯 Tokens to share', {
+      newlyAddedCount: newlyAddedTokens.length,
+      tokensToShareCount: tokensToShare.length,
+      hasPriceMovement
+    });
+
+    // For each category, filter and format up to 5 tokens with improved error handling
     const categoryFields = await Promise.all(categories.map(async cat => {
       const tokens = tokensToShare.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 5);
       if (tokens.length === 0) return null;
+
+      console.log(`📈 Processing ${tokens.length} tokens for category ${cat.label}`);
 
       const tokenValues = await Promise.all(tokens.map(async token => {
         const priceChangeEmoji = token.price_change
@@ -224,24 +291,32 @@ async function sendDiscordNotification(
           ? (token.change_1h > 0 ? '🟢' : '🔴')
           : '';
 
-        // Risk assessment based on organic score and price volatility
+        // Risk assessment with improved error handling and timeout
         let riskLevel = 'LOW';
 
         try {
-          // Try to get comprehensive risk assessment from Axiom
-          const axiomResult = await fetchAxiomTokenInfo(token.token_address);
+          console.log(`🔍 Fetching Axiom data for ${token.token_symbol}...`);
+
+          // Add timeout for Axiom API call to prevent hanging
+          const axiomPromise = fetchAxiomTokenInfo(token.token_address);
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Axiom API timeout')), 5000)
+          );
+
+          const axiomResult = await Promise.race([axiomPromise, timeoutPromise]) as any;
 
           if (axiomResult.success && axiomResult.data) {
             const riskIndicators = getRiskIndicators(axiomResult.data, token.mcap);
             riskLevel = riskIndicators.overallRisk;
 
-            console.log(`📊 Axiom risk assessment for ${token.token_symbol}: ${riskLevel}`, {
+            console.log(`✅ Axiom risk assessment for ${token.token_symbol}: ${riskLevel}`, {
               insider: riskIndicators.insiderRisk,
               bundler: riskIndicators.bundlerRisk,
               concentration: riskIndicators.concentrationRisk,
               fee: riskIndicators.feeRisk
             });
           } else {
+            console.log(`⚠️ Axiom API failed for ${token.token_symbol}, using fallback`);
             // Fallback to organic score and volatility assessment
             if (token.organic_score < 60) riskLevel = 'HIGH';
             else if (token.organic_score < 75) riskLevel = 'MEDIUM';
@@ -253,6 +328,8 @@ async function sendDiscordNotification(
             console.log(`📈 Fallback risk assessment for ${token.token_symbol}: ${riskLevel} (organic: ${token.organic_score}, volatility: ${volatility.toFixed(1)}%)`);
           }
         } catch (error) {
+          console.warn(`⚠️ Risk assessment error for ${token.token_symbol}, using fallback:`, error instanceof Error ? error.message : 'Unknown error');
+
           // Final fallback to basic assessment
           if (token.organic_score < 60) riskLevel = 'HIGH';
           else if (token.organic_score < 75) riskLevel = 'MEDIUM';
@@ -261,7 +338,7 @@ async function sendDiscordNotification(
           if (volatility > 100 && riskLevel !== 'HIGH') riskLevel = 'HIGH';
           else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MEDIUM';
 
-          console.warn(`⚠️ Risk assessment error for ${token.token_symbol}, using fallback: ${riskLevel}`, error);
+          console.log(`🔄 Final fallback risk assessment for ${token.token_symbol}: ${riskLevel}`);
         }
 
         // Construct chart link
@@ -279,8 +356,17 @@ async function sendDiscordNotification(
       };
     }));
 
+    // Filter out null categories and ensure we have content
+    const validFields = categoryFields.filter(field => field !== null);
+
+    console.log('📋 Discord message fields prepared', {
+      totalCategories: categories.length,
+      validFields: validFields.length,
+      hasContent: validFields.length > 0
+    });
+
     // If no tokens in any category, show a fallback field
-    const fields = categoryFields.length > 0 ? categoryFields : [{
+    const fields = validFields.length > 0 ? validFields : [{
       name: 'No New Tokens ≤ $3M MCap Added',
       value: 'No new tokens ≤ $3M market cap were added in this update.'
     }];
@@ -301,6 +387,12 @@ async function sendDiscordNotification(
       ]
     };
 
+    console.log('📤 Sending Discord message...', {
+      embedsCount: message.embeds.length,
+      fieldsCount: fields.length,
+      webhookUrl: DISCORD_WEBHOOK_URL.substring(0, 50) + '...'
+    });
+
     // Send the message to Discord with timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
@@ -318,16 +410,18 @@ async function sendDiscordNotification(
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`Discord API responded with status: ${response.status}`);
+        const errorText = await response.text().catch(() => 'Unable to read error response');
+        throw new Error(`Discord API responded with status: ${response.status} - ${errorText}`);
       }
 
-      console.log('Discord notification sent successfully');
+      console.log('✅ Discord notification sent successfully');
     } catch (error) {
       clearTimeout(timeoutId);
+      console.error('❌ Error sending Discord message:', error);
       throw error;
     }
   } catch (error) {
-    console.error('Error sending Discord notification:', error);
+    console.error('💥 Error in Discord notification process:', error);
     // Don't throw the error to avoid disrupting the main flow
   }
 }
