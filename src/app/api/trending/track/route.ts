@@ -4594,8 +4594,6 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           const { strategies: activeStrategies } = getActiveStrategies()
           const strategyInfo = activeStrategies.length > 0 ? `[Strategies: ${activeStrategies.join(', ')}]` : '[No active strategies]'
           console.warn(`⏭️ Token ${token.token_symbol}, from strategy:${strategyInfo} already exists in database. Skipping duplicate`)
-
-          console.warn(`⏭️ Token ${token.token_symbol} already exists in database. Skipping duplicate.`)
           console.log(`📊 ${token.token_symbol} Details:`, {
             status: existingAnyStatus.status,
             initial_price: `$${existingAnyStatus.initial_price_usd?.toFixed(6) || 'N/A'}`,
