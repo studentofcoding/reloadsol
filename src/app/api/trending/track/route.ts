@@ -164,6 +164,7 @@ interface TradingStrategyConfig {
   id: string
   name: string
   description: string
+  is_active: boolean
   take_profit_levels: {
     tp1_percentage: number
     tp1_sell_percentage: number
@@ -190,6 +191,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     id: 'att',
     name: 'Attention Strategy',
     description: 'Original aggressive trading strategy',
+    is_active: true,
     take_profit_levels: {
       tp1_percentage: 60,
       tp1_sell_percentage: 80,
@@ -234,6 +236,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     id: 'conservative',
     name: 'Conservative Strategy',
     description: 'Lower risk, steady gains approach',
+    is_active: false,
     take_profit_levels: {
       tp1_percentage: 30,
       tp1_sell_percentage: 50,
@@ -280,6 +283,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     id: 'scalper',
     name: 'Scalping Strategy',
     description: 'Quick profits, fast exits',
+    is_active: false,
     take_profit_levels: {
       tp1_percentage: 15,
       tp1_sell_percentage: 90,
@@ -326,6 +330,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     id: 'hodl',
     name: 'HODL Strategy',
     description: 'Long-term holding strategy',
+    is_active: false,
     take_profit_levels: {
       tp1_percentage: 100,
       tp1_sell_percentage: 25,
@@ -368,6 +373,166 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       checkManualTradingHistory: true
     }
   }
+}
+
+function isStrategyActive(strategyId: string): boolean {
+  const strategy = TRADING_STRATEGIES[strategyId]
+  if (!strategy) {
+    console.warn(`⚠️ Strategy '${strategyId}' not found`)
+    return false
+  }
+
+  // Check for environment variable override first
+  const envKey = `STRATEGY_ACTIVE_${strategyId.toUpperCase()}`
+  const envValue = process.env[envKey]
+
+  if (envValue !== undefined) {
+    const isActive = envValue.toLowerCase() === 'true'
+    console.log(`🔧 Strategy '${strategyId}' activation overridden by ${envKey}: ${isActive}`)
+    return isActive
+  }
+
+  // Check global strategies enabled flag
+  const globalEnabled = process.env.STRATEGIES_ENABLED
+  if (globalEnabled !== undefined) {
+    const isGlobalEnabled = globalEnabled.toLowerCase() === 'true'
+    if (!isGlobalEnabled) {
+      console.log(`🚫 All strategies disabled by STRATEGIES_ENABLED: false`)
+      return false
+    }
+  }
+
+  // Use default active state from strategy configuration
+  return strategy.is_active
+}
+
+// Helper function to get all active strategies with their configurations
+function getActiveStrategiesWithState(): { strategies: string[], configs: Record<string, TradingStrategyConfig>, allocation: Record<string, number> } {
+  // First, get strategies that are marked as active
+  const activeStrategyIds = Object.keys(TRADING_STRATEGIES).filter(strategyId => {
+    const isActive = isStrategyActive(strategyId)
+    console.log(`📊 Strategy '${strategyId}' (${TRADING_STRATEGIES[strategyId].name}): ${isActive ? '✅ ACTIVE' : '❌ INACTIVE'}`)
+    return isActive
+  })
+
+  // If environment variables specify active strategies, intersect with active state
+  const envStrategies = process.env.ACTIVE_STRATEGIES || process.env.BOT_STRATEGY || process.env.TRADING_STRATEGY
+  let finalActiveStrategies = activeStrategyIds
+
+  if (envStrategies) {
+    const envStrategyList = envStrategies.split(',').map(s => s.trim()).filter(s => s)
+    // Only include strategies that are both in environment AND marked as active
+    finalActiveStrategies = activeStrategyIds.filter(strategyId =>
+      envStrategyList.includes(strategyId)
+    )
+
+    console.log(`🔄 Environment strategies: [${envStrategyList.join(', ')}]`)
+    console.log(`🔄 Active strategies: [${activeStrategyIds.join(', ')}]`)
+    console.log(`🎯 Final active strategies: [${finalActiveStrategies.join(', ')}]`)
+  }
+
+  // Validate that we have at least one active strategy
+  if (finalActiveStrategies.length === 0) {
+    console.warn(`⚠️ No active strategies found! Falling back to 'att' strategy`)
+    // Force activate ATT as fallback
+    finalActiveStrategies = ['att']
+  }
+
+  // Get strategy configurations
+  const activeConfigs: Record<string, TradingStrategyConfig> = {}
+  finalActiveStrategies.forEach(strategyId => {
+    if (TRADING_STRATEGIES[strategyId]) {
+      activeConfigs[strategyId] = TRADING_STRATEGIES[strategyId]
+    }
+  })
+
+  // Calculate allocation
+  const allocationEnv = process.env.STRATEGY_ALLOCATION || ''
+  const allocation: Record<string, number> = {}
+
+  if (allocationEnv) {
+    // Parse allocation like "att:0.4,conservative:0.3,scalper:0.3"
+    const allocPairs = allocationEnv.split(',').map(s => s.trim())
+    let totalAllocation = 0
+
+    for (const pair of allocPairs) {
+      const [strategyId, percentStr] = pair.split(':')
+      const percent = parseFloat(percentStr)
+
+      if (finalActiveStrategies.includes(strategyId) && !isNaN(percent) && percent > 0) {
+        allocation[strategyId] = percent
+        totalAllocation += percent
+      }
+    }
+
+    // Normalize allocations to sum to 1.0
+    if (totalAllocation > 0) {
+      for (const strategyId of finalActiveStrategies) {
+        if (allocation[strategyId]) {
+          allocation[strategyId] = allocation[strategyId] / totalAllocation
+        }
+      }
+    }
+  }
+
+  // If no valid allocation provided, use equal distribution
+  if (Object.keys(allocation).length === 0) {
+    const equalShare = 1.0 / finalActiveStrategies.length
+    finalActiveStrategies.forEach(strategyId => {
+      allocation[strategyId] = equalShare
+    })
+  }
+
+  console.log(`🎯 Final active strategies with allocation:`, allocation)
+  return {
+    strategies: finalActiveStrategies,
+    configs: activeConfigs,
+    allocation
+  }
+}
+
+// Helper function to get strategy status summary
+function getStrategyStatusSummary(): { is_active: string[], is_inactive: string[], total: number } {
+  const allStrategies = Object.keys(TRADING_STRATEGIES)
+  const activeStrategies: string[] = []
+  const inactiveStrategies: string[] = []
+
+  allStrategies.forEach(strategyId => {
+    if (isStrategyActive(strategyId)) {
+      activeStrategies.push(strategyId)
+    } else {
+      inactiveStrategies.push(strategyId)
+    }
+  })
+
+  return {
+    is_active: activeStrategies,
+    is_inactive: inactiveStrategies,
+    total: allStrategies.length
+  }
+}
+
+function setStrategyActiveState(strategyId: string, is_active: boolean): boolean {
+  if (!TRADING_STRATEGIES[strategyId]) {
+    console.error(`❌ Strategy '${strategyId}' not found`)
+    return false
+  }
+
+  // Note: This modifies the in-memory configuration
+  // For persistent changes, environment variables should be used
+  TRADING_STRATEGIES[strategyId].is_active = is_active
+
+  console.log(`🔄 Strategy '${strategyId}' (${TRADING_STRATEGIES[strategyId].name}) set to: ${is_active ? '✅ ACTIVE' : '❌ INACTIVE'}`)
+
+  // Validate that at least one strategy remains is_active
+  const statusSummary = getStrategyStatusSummary()
+  if (statusSummary.is_active.length === 0) {
+    console.warn(`⚠️ No strategies would be is_active! Reverting change for '${strategyId}'`)
+    TRADING_STRATEGIES[strategyId].is_active = !is_active
+    return false
+  }
+
+  return true
 }
 
 // Strategy validation and selection functions
@@ -433,65 +598,8 @@ function createTradingSimulation(
 }
 
 function getActiveStrategies(): { strategies: string[], allocation: Record<string, number> } {
-  // Get active strategies from environment variable (comma-separated)
-  const strategiesEnv = process.env.ACTIVE_STRATEGIES || process.env.BOT_STRATEGY || process.env.TRADING_STRATEGY || 'att'
-  const strategies = strategiesEnv.split(',').map(s => s.trim()).filter(s => s)
-
-  // Validate all strategies exist
-  const validStrategies = strategies.filter(strategyId => {
-    if (TRADING_STRATEGIES[strategyId]) {
-      return true
-    } else {
-      console.warn(`⚠️ Invalid strategy '${strategyId}' in ACTIVE_STRATEGIES, skipping`)
-      return false
-    }
-  })
-
-  // Fallback to 'att' if no valid strategies
-  if (validStrategies.length === 0) {
-    console.warn(`⚠️ No valid strategies found, falling back to 'att'`)
-    return { strategies: ['att'], allocation: { att: 1.0 } }
-  }
-
-  // Get allocation percentages (default: equal distribution)
-  const allocationEnv = process.env.STRATEGY_ALLOCATION || ''
-  const allocation: Record<string, number> = {}
-
-  if (allocationEnv) {
-    // Parse allocation like "att:0.4,conservative:0.3,scalper:0.3"
-    const allocPairs = allocationEnv.split(',').map(s => s.trim())
-    let totalAllocation = 0
-
-    for (const pair of allocPairs) {
-      const [strategyId, percentStr] = pair.split(':')
-      const percent = parseFloat(percentStr)
-
-      if (validStrategies.includes(strategyId) && !isNaN(percent) && percent > 0) {
-        allocation[strategyId] = percent
-        totalAllocation += percent
-      }
-    }
-
-    // Normalize allocations to sum to 1.0
-    if (totalAllocation > 0) {
-      for (const strategyId of validStrategies) {
-        if (allocation[strategyId]) {
-          allocation[strategyId] = allocation[strategyId] / totalAllocation
-        }
-      }
-    }
-  }
-
-  // If no valid allocation provided, use equal distribution
-  if (Object.keys(allocation).length === 0) {
-    const equalShare = 1.0 / validStrategies.length
-    validStrategies.forEach(strategyId => {
-      allocation[strategyId] = equalShare
-    })
-  }
-
-  console.log(`🎯 Active strategies: ${validStrategies.join(', ')} with allocation:`, allocation)
-  return { strategies: validStrategies, allocation }
+  const { strategies, allocation } = getActiveStrategiesWithState()
+  return { strategies, allocation }
 }
 
 function getCurrentBotStrategy(): string {
@@ -4205,6 +4313,22 @@ async function internalTrackPost(request: NextRequest, logger: any) {
       source: request.headers.get('user-agent')?.includes('reloadsol-cron-service') ? 'cron' : 'browser'
     })
 
+    // Log strategy status at startup
+    const strategyStatus = getStrategyStatusSummary()
+    console.log(`🎯 Strategy Status Summary:`)
+    console.log(`  ✅ Active (${strategyStatus.is_active.length}): ${strategyStatus.is_active.join(', ') || 'none'}`)
+    console.log(`  ❌ Inactive (${strategyStatus.is_inactive.length}): ${strategyStatus.is_inactive.join(', ') || 'none'}`)
+    console.log(`  📊 Total: ${strategyStatus.total} strategies`)
+
+    // Get active strategies with their configurations
+    const { strategies: activeStrategies, configs: activeConfigs, allocation } = getActiveStrategiesWithState()
+    
+    if (activeStrategies.length === 0) {
+      throw new Error('No active strategies available for trading')
+    }
+
+    console.log(`🚀 Starting trading cycle with ${activeStrategies.length} active strategies`)
+
     // Validate authentication (server-side only)
     const { searchParams } = new URL(request.url)
     const secretKey = searchParams.get('key')
@@ -4430,7 +4554,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     // Assign strategies to filtered tokens
     console.log(`🎯 Assigning strategies to ${filteredTokens.length} filtered tokens...`)
 
-    const { strategies: activeStrategies, allocation } = getActiveStrategies()
+    // Use the already fetched active strategies from startup
     initializeStrategyTracking(activeStrategies)
 
     // Group tokens by assigned strategy
