@@ -42,6 +42,15 @@ const dbg = (...args: any[]): void => {
   }
 }
 
+// Unified buy operation (supports both simulation and real trading)
+// async function performBuyOperation(token: any, simulation: TradingSimulation): Promise<BuyOperation | null> {
+//   // Get the strategy for this token
+//   const strategyId = (simulation.buy_operation as any)?.bot_strategy || getCurrentBotStrategy()
+//   const operationType = simulation.is_simulated ? 'simulation' : 'real'
+
+//   return await executeBuyOperationWithStrategy(token, strategyId, operationType as 'simulation' | 'real', simulation)
+// }
+
 const DISCORD_MAX_LENGTH = 2000
 const DISCORD_SAFE_LENGTH = 1900 // Leave some buffer
 
@@ -122,6 +131,238 @@ interface TradeComparisonResult {
     total_fees: number
     rpc_used?: string
   }
+}
+
+// Add trading strategy configuration interfaces
+interface TradingStrategyConfig {
+  id: string
+  name: string
+  description: string
+  take_profit_levels: {
+    tp1_percentage: number
+    tp1_sell_percentage: number
+    tp2_percentage: number
+    tp3_percentage: number
+    tp3_enabled: boolean
+  }
+  stop_loss_percentage: number
+  max_hold_hours: number
+  conditions?: {
+    min_market_cap?: number
+    max_market_cap?: number
+    min_organic_score?: number
+    max_risk_level?: 'low' | 'medium' | 'high'
+  }
+}
+
+interface TradingConfigRegistry {
+  [strategyId: string]: TradingStrategyConfig
+}
+
+// Define available trading strategies
+const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
+  att: {
+    id: 'att',
+    name: 'Attention Strategy',
+    description: 'Original aggressive trading strategy',
+    take_profit_levels: {
+      tp1_percentage: 60,
+      tp1_sell_percentage: 80,
+      tp2_percentage: 100,
+      tp3_percentage: 30,
+      tp3_enabled: false
+    },
+    stop_loss_percentage: -40,
+    max_hold_hours: 24,
+    conditions: {
+      max_risk_level: 'high'
+    }
+  },
+  conservative: {
+    id: 'conservative',
+    name: 'Conservative Strategy',
+    description: 'Lower risk, steady gains approach',
+    take_profit_levels: {
+      tp1_percentage: 30,
+      tp1_sell_percentage: 50,
+      tp2_percentage: 60,
+      tp3_percentage: 100,
+      tp3_enabled: true
+    },
+    stop_loss_percentage: -20,
+    max_hold_hours: 48,
+    conditions: {
+      min_market_cap: 100000,
+      min_organic_score: 70,
+      max_risk_level: 'low'
+    }
+  },
+  scalper: {
+    id: 'scalper',
+    name: 'Scalping Strategy',
+    description: 'Quick profits, fast exits',
+    take_profit_levels: {
+      tp1_percentage: 15,
+      tp1_sell_percentage: 90,
+      tp2_percentage: 25,
+      tp3_percentage: 40,
+      tp3_enabled: true
+    },
+    stop_loss_percentage: -15,
+    max_hold_hours: 6,
+    conditions: {
+      max_risk_level: 'medium'
+    }
+  },
+  hodl: {
+    id: 'hodl',
+    name: 'HODL Strategy',
+    description: 'Long-term holding strategy',
+    take_profit_levels: {
+      tp1_percentage: 100,
+      tp1_sell_percentage: 25,
+      tp2_percentage: 200,
+      tp3_percentage: 500,
+      tp3_enabled: true
+    },
+    stop_loss_percentage: -60,
+    max_hold_hours: 168, // 7 days
+    conditions: {
+      min_market_cap: 500000,
+      min_organic_score: 80,
+      max_risk_level: 'low'
+    }
+  }
+}
+
+// Strategy validation and selection functions
+function validateStrategyConfig(config: TradingStrategyConfig): boolean {
+  // Validate percentage ranges
+  if (config.take_profit_levels.tp1_percentage < 5 || config.take_profit_levels.tp1_percentage > 1000) return false
+  if (config.take_profit_levels.tp1_sell_percentage < 10 || config.take_profit_levels.tp1_sell_percentage > 100) return false
+  if (config.stop_loss_percentage > -5 || config.stop_loss_percentage < -90) return false
+  if (config.max_hold_hours < 1 || config.max_hold_hours > 720) return false // Max 30 days
+
+  return true
+}
+
+function getTradingStrategy(strategyId?: string): TradingStrategyConfig {
+  // Default to 'att' if no strategy specified
+  const selectedId = strategyId || process.env.DEFAULT_TRADING_STRATEGY || 'att'
+
+  // Get strategy from registry
+  const strategy = TRADING_STRATEGIES[selectedId]
+
+  if (!strategy) {
+    console.warn(`⚠️ Unknown trading strategy '${selectedId}', falling back to 'att'`)
+    return TRADING_STRATEGIES.att
+  }
+
+  // Validate strategy configuration
+  if (!validateStrategyConfig(strategy)) {
+    console.error(`❌ Invalid strategy configuration for '${selectedId}', falling back to 'att'`)
+    return TRADING_STRATEGIES.att
+  }
+
+  return strategy
+}
+
+// Helper function to create TradingSimulation with strategy configuration
+function createTradingSimulation(
+  token: any,
+  strategyId?: string,
+  isRealTradingActive: boolean = false,
+  keypairPath?: string,
+  startTime?: string
+): TradingSimulation {
+  const strategy = getTradingStrategy(strategyId)
+
+  console.log(`🎯 Creating trading simulation for ${token.token_symbol} using '${strategy.name}' strategy`)
+
+  return {
+    token_address: token.token_address,
+    token_symbol: token.token_symbol,
+    simulation_started_at: startTime || new Date().toISOString(),
+    buy_operation: null,
+    sell_operations: [],
+    current_status: 'buying',
+    remaining_token_amount: '0',
+    initial_token_amount: '0',
+    is_simulated: !isRealTradingActive,
+    keypair_path: keypairPath,
+    take_profit_levels: { ...strategy.take_profit_levels },
+    stop_loss_percentage: strategy.stop_loss_percentage,
+    max_hold_hours: strategy.max_hold_hours,
+    final_result: null
+  }
+}
+
+function getActiveStrategies(): { strategies: string[], allocation: Record<string, number> } {
+  // Get active strategies from environment variable (comma-separated)
+  const strategiesEnv = process.env.ACTIVE_STRATEGIES || process.env.BOT_STRATEGY || process.env.TRADING_STRATEGY || 'att'
+  const strategies = strategiesEnv.split(',').map(s => s.trim()).filter(s => s)
+
+  // Validate all strategies exist
+  const validStrategies = strategies.filter(strategyId => {
+    if (TRADING_STRATEGIES[strategyId]) {
+      return true
+    } else {
+      console.warn(`⚠️ Invalid strategy '${strategyId}' in ACTIVE_STRATEGIES, skipping`)
+      return false
+    }
+  })
+
+  // Fallback to 'att' if no valid strategies
+  if (validStrategies.length === 0) {
+    console.warn(`⚠️ No valid strategies found, falling back to 'att'`)
+    return { strategies: ['att'], allocation: { att: 1.0 } }
+  }
+
+  // Get allocation percentages (default: equal distribution)
+  const allocationEnv = process.env.STRATEGY_ALLOCATION || ''
+  const allocation: Record<string, number> = {}
+
+  if (allocationEnv) {
+    // Parse allocation like "att:0.4,conservative:0.3,scalper:0.3"
+    const allocPairs = allocationEnv.split(',').map(s => s.trim())
+    let totalAllocation = 0
+
+    for (const pair of allocPairs) {
+      const [strategyId, percentStr] = pair.split(':')
+      const percent = parseFloat(percentStr)
+
+      if (validStrategies.includes(strategyId) && !isNaN(percent) && percent > 0) {
+        allocation[strategyId] = percent
+        totalAllocation += percent
+      }
+    }
+
+    // Normalize allocations to sum to 1.0
+    if (totalAllocation > 0) {
+      for (const strategyId of validStrategies) {
+        if (allocation[strategyId]) {
+          allocation[strategyId] = allocation[strategyId] / totalAllocation
+        }
+      }
+    }
+  }
+
+  // If no valid allocation provided, use equal distribution
+  if (Object.keys(allocation).length === 0) {
+    const equalShare = 1.0 / validStrategies.length
+    validStrategies.forEach(strategyId => {
+      allocation[strategyId] = equalShare
+    })
+  }
+
+  console.log(`🎯 Active strategies: ${validStrategies.join(', ')} with allocation:`, allocation)
+  return { strategies: validStrategies, allocation }
+}
+
+function getCurrentBotStrategy(): string {
+  // Maintain backward compatibility - return first active strategy
+  const { strategies } = getActiveStrategies()
+  return strategies[0]
 }
 
 // Add TradingSimulation interfaces
@@ -2382,11 +2623,18 @@ async function sendSignificantDeviationsAlertDiscord(params: {
   }
 }
 
-// Unified buy operation (supports both simulation and real trading)
-async function performBuyOperation(token: any, simulation: TradingSimulation): Promise<BuyOperation | null> {
+// Strategy-aware buy operation execution
+async function executeBuyOperationWithStrategy(
+  token: any,
+  strategyId: string,
+  operationType: 'simulation' | 'real' = 'simulation',
+  simulation: TradingSimulation
+): Promise<BuyOperation | null> {
+  const strategy = getTradingStrategy(strategyId)
+  console.log(`🎯 Executing buy operation for ${token.token_symbol} using ${strategy.name} strategy`)
+  const isSimulated = operationType === 'simulation'
+
   try {
-    const isSimulated = simulation.is_simulated
-    const operationType = isSimulated ? 'simulation' : 'real trade'
     console.log(`💰 Performing synchronized buy ${operationType} for ${token.token_symbol} (${token.token_address})`)
 
     // SOL mint address and trading parameters
@@ -2397,7 +2645,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
 
     // Check if this is a real trade and if we need to adjust the buy amount for re-buy
     if (!isSimulated) {
-      const tradeCheck = await canExecuteRealTrade(BUY_AMOUNT_SOL, token.token_address, token.token_symbol, token.current_price)
+      const tradeCheck = await canExecuteRealTradeWithStrategy(BUY_AMOUNT_SOL, strategyId, token.token_address, token.token_symbol, token.current_price)
 
       if (!tradeCheck.canTrade) {
         console.error(`❌ Cannot execute real trade for ${token.token_symbol}: ${tradeCheck.reason}`)
@@ -2410,6 +2658,11 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
         isRebuy = tradeCheck.isRebuy || false
         console.log(`🔄 Using adjusted buy amount for ${token.token_symbol}: ${BUY_AMOUNT_SOL} SOL ${isRebuy ? '(re-buy)' : ''}`)
       }
+
+      // Mark token as having active trade for this strategy
+      const strategyActiveTrades = activeTradesByStrategy.get(strategyId) || new Set()
+      strategyActiveTrades.add(token.token_address)
+      activeTradesByStrategy.set(strategyId, strategyActiveTrades)
     }
 
     const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9)
@@ -2622,9 +2875,9 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
         rpc_used: bestResult.rpcUsed
       },
       rpc_used: bestResult.rpcUsed,
-      // Enhanced bot tracking
+      // Enhanced bot tracking with strategy
       is_bot_operation: true,
-      bot_strategy: 'att',
+      bot_strategy: strategyId, // Use the assigned strategy
       signature: bestResult.signature
     }
 
@@ -2633,7 +2886,7 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     // Track bot operation in the trading tracker system
     if (bestResult.success) {
       try {
-        await trackBotOperation('buy', token, bestResult, isSimulated, 'att')
+        await trackBotOperation('buy', token, bestResult, isSimulated, strategyId)
       } catch (trackError) {
         console.error('❌ Failed to track bot buy operation:', trackError)
         // Don't fail the operation if tracking fails
@@ -2680,6 +2933,12 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     // Remove from active trades on completion (real trades only)
     if (!isSimulated) {
       activeTrades.delete(token.token_address)
+
+      // Also remove from strategy-specific tracking
+      const strategyActiveTrades = activeTradesByStrategy.get(strategyId)
+      if (strategyActiveTrades) {
+        strategyActiveTrades.delete(token.token_address)
+      }
     }
 
     return buyOperation
@@ -2688,40 +2947,19 @@ async function performBuyOperation(token: any, simulation: TradingSimulation): P
     console.error(`❌ Error performing buy ${simulation.is_simulated ? 'simulation' : 'real trade'} for ${token.token_symbol}:`, error)
 
     // Remove from active trades on error (real trades only)
-    if (!simulation.is_simulated) {
+    if (!isSimulated) {
       activeTrades.delete(token.token_address)
+
+      // Also remove from strategy-specific tracking
+      const strategyActiveTrades = activeTradesByStrategy.get(strategyId)
+      if (strategyActiveTrades) {
+        strategyActiveTrades.delete(token.token_address)
+      }
     }
 
     return null
   }
 }
-
-// Legacy function for backward compatibility
-// async function performBuySimulation(token: any): Promise<BuyOperation | null> {
-//   const mockSimulation: TradingSimulation = {
-//     token_address: token.token_address,
-//     token_symbol: token.token_symbol,
-//     simulation_started_at: new Date().toISOString(),
-//     buy_operation: null,
-//     sell_operations: [],
-//     current_status: 'buying',
-//     remaining_token_amount: '0',
-//     initial_token_amount: '0',
-//     is_simulated: true,
-//     take_profit_levels: {
-//       tp1_percentage: 50,
-//       tp1_sell_percentage: 50,
-//       tp2_percentage: 100,
-//       tp3_percentage: 200,
-//       tp3_enabled: true
-//     },
-//     stop_loss_percentage: -40,
-//     max_hold_hours: 24,
-//     final_result: null
-//   }
-
-//   return performBuyOperation(token, mockSimulation)
-// }
 
 // Unified sell operation (supports both simulation and real trading)
 async function performSellOperation(
@@ -2911,7 +3149,7 @@ async function performSellOperation(
       hold_duration_hours: holdDurationHours,
       // Enhanced bot tracking
       is_bot_operation: true,
-      bot_strategy: 'att',
+      bot_strategy: getCurrentBotStrategy(),
       signature: bestResult.signature
     }
 
@@ -2921,7 +3159,8 @@ async function performSellOperation(
     // Track bot sell operation in the trading tracker system
     if (bestResult.success) {
       try {
-        await trackBotOperation('sell', token, bestResult, isSimulated, 'att')
+        const currentStrategy = getCurrentBotStrategy()
+        await trackBotOperation('sell', token, bestResult, isSimulated, currentStrategy)
       } catch (trackError) {
         console.error('❌ Failed to track bot sell operation:', trackError)
         // Don't fail the operation if tracking fails
@@ -3841,6 +4080,16 @@ async function internalTrackPost(request: NextRequest, logger: any) {
       await supabase.from(TRACKER_TABLE).delete().in('id', purgeIds)
     }
 
+    // Assign strategies to filtered tokens
+    console.log(`🎯 Assigning strategies to ${filteredTokens.length} filtered tokens...`)
+
+    const { strategies: activeStrategies, allocation } = getActiveStrategies()
+    initializeStrategyTracking(activeStrategies)
+
+    // Group tokens by assigned strategy
+    const tokensByStrategy = new Map<string, any[]>()
+    activeStrategies.forEach(strategyId => tokensByStrategy.set(strategyId, []))
+
     // Process each trending token
     for (const token of filteredTokens) {
       const existingToken = trackedTokensMap.get(token.token_address)
@@ -4017,32 +4266,25 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               console.log(`💻 Simulation mode - new token ${token.token_symbol} will use simulation`)
             }
 
-            // Create initial simulation configuration (use detected trading mode)
-            const initialSimulation: TradingSimulation = {
-              token_address: token.token_address,
-              token_symbol: token.token_symbol,
-              simulation_started_at: new Date().toISOString(),
-              buy_operation: null,
-              sell_operations: [],
-              current_status: 'buying',
-              remaining_token_amount: '0',
-              initial_token_amount: '0',
-              is_simulated: !isRealTradingActive, // Use detected trading mode
-              keypair_path: keypairPath,
-              take_profit_levels: {
-                tp1_percentage: 60,
-                tp1_sell_percentage: 80,
-                tp2_percentage: 100,
-                tp3_percentage: 30,
-                tp3_enabled: false
-              },
-              stop_loss_percentage: -40,
-              max_hold_hours: 24,
-              final_result: null
-            }
+            // Assign token to strategy
+            const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation)
 
-            // Perform buy operation using the unified system
-            const buyOperation = await performBuyOperation(token, initialSimulation)
+            // Create initial simulation configuration (use detected trading mode)
+            const initialSimulation = createTradingSimulation(
+              token,
+              assignedStrategy, // Use assigned strategy instead of environment variable
+              isRealTradingActive,
+              keypairPath,
+              new Date().toISOString()
+            )
+
+            // Perform buy operation using the strategy-aware system
+            const buyOperation = await executeBuyOperationWithStrategy(
+              token,
+              assignedStrategy,
+              isRealTradingActive ? 'real' : 'simulation',
+              initialSimulation
+            )
 
             if (buyOperation) {
               initialSimulation.buy_operation = buyOperation
@@ -4051,7 +4293,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               initialSimulation.initial_token_amount = buyOperation.token_amount_received
               tradingSimulation = initialSimulation
 
-              console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'})`)
+              console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
             } else {
               console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
             }
@@ -4200,32 +4442,28 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 console.log(`💻 Simulation mode - ${token.token_symbol} will use simulation`)
               }
 
-              // Create initial simulation configuration (use detected trading mode)
-              const initialSimulation: TradingSimulation = {
-                token_address: token.token_address,
-                token_symbol: token.token_symbol,
-                simulation_started_at: currentTime.toISOString(),
-                buy_operation: null,
-                sell_operations: [],
-                current_status: 'buying',
-                remaining_token_amount: '0',
-                initial_token_amount: '0',
-                is_simulated: !isRealTradingActive, // Use detected trading mode
-                keypair_path: keypairPath,
-                take_profit_levels: {
-                  tp1_percentage: 60,
-                  tp1_sell_percentage: 95,
-                  tp2_percentage: 100,
-                  tp3_percentage: 30,
-                  tp3_enabled: false
-                },
-                stop_loss_percentage: -40,
-                max_hold_hours: 24,
-                final_result: null
-              }
+              // Assign token to strategy
+              const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation)
 
-              // Perform buy operation using the unified system
-              const buyOperation = await performBuyOperation(token, initialSimulation)
+              // Create initial simulation configuration (use detected trading mode)
+              const initialSimulation = createTradingSimulation(
+                token,
+                assignedStrategy, // Use assigned strategy instead of environment variable
+                isRealTradingActive,
+                keypairPath,
+                currentTime.toISOString()
+              )
+
+              // Override TP1 sell percentage for dip buys
+              initialSimulation.take_profit_levels.tp1_sell_percentage = 95
+
+              // Perform buy operation using the strategy-aware system
+              const buyOperation = await executeBuyOperationWithStrategy(
+                token,
+                assignedStrategy,
+                isRealTradingActive ? 'real' : 'simulation',
+                initialSimulation
+              )
 
               if (buyOperation) {
                 initialSimulation.buy_operation = buyOperation
@@ -4233,7 +4471,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 initialSimulation.remaining_token_amount = buyOperation.token_amount_received
                 initialSimulation.initial_token_amount = buyOperation.token_amount_received
 
-                console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'})`)
+                console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
 
                 // Update token status to tracking with buy simulation
                 updatesPromises.push(
@@ -4639,6 +4877,14 @@ async function internalTrackPost(request: NextRequest, logger: any) {
       console.debug('✅ 5-minute tracking completed:', summary)
     } else {
       console.log(`✅ 5-minute tracking completed: processed ${summary.processed} tokens; new ${summary.new_tokens_added}, updated ${summary.tokens_updated}`)
+
+      // Log strategy distribution summary
+      console.log('📊 Active strategy summary:')
+      activeStrategies.forEach(strategyId => {
+        const strategyActiveTrades = activeTradesByStrategy.get(strategyId)
+        const activeCount = strategyActiveTrades ? strategyActiveTrades.size : 0
+        console.log(`  ${strategyId}: ${activeCount} active trades`)
+      })
     }
 
     // Set a timestamp for cache invalidation (could be used by other APIs)
@@ -4647,7 +4893,20 @@ async function internalTrackPost(request: NextRequest, logger: any) {
       'Cache-Control': 'no-cache' // Track route should never be cached
     }
 
-    return NextResponse.json(summary, {
+    // Add strategy information to response
+    const strategyInfo = activeStrategies.reduce((acc, strategyId) => {
+      const strategyActiveTrades = activeTradesByStrategy.get(strategyId)
+      acc[strategyId] = {
+        active_trades: strategyActiveTrades ? strategyActiveTrades.size : 0,
+        strategy_name: TRADING_STRATEGIES[strategyId]?.name || strategyId
+      }
+      return acc
+    }, {} as Record<string, any>)
+
+    return NextResponse.json({
+      ...summary,
+      strategy_info: strategyInfo
+    }, {
       status: 200,
       headers
     })
@@ -4765,6 +5024,77 @@ const MIN_WALLET_BALANCE_FOR_DUPLICATE_CHECK = 1000 // Minimum token balance to 
 // Track active trades to prevent duplicates
 const activeTrades = new Set<string>()
 
+// Add strategy-specific active trades tracking
+const activeTradesByStrategy = new Map<string, Set<string>>()
+
+// Initialize strategy tracking
+function initializeStrategyTracking(strategies: string[]) {
+  strategies.forEach(strategyId => {
+    if (!activeTradesByStrategy.has(strategyId)) {
+      activeTradesByStrategy.set(strategyId, new Set<string>())
+    }
+  })
+}
+
+// Strategy assignment logic
+function assignTokenToStrategy(token: any, strategies: string[], allocation: Record<string, number>): string {
+  // Strategy assignment based on token characteristics
+  const marketCap = token.market_cap || 0
+  const organicScore = token.organic_score || 0
+  const volume1h = token.volume_1h || 0
+
+  // Rule-based assignment with fallback to allocation
+  for (const strategyId of strategies) {
+    const strategy = TRADING_STRATEGIES[strategyId]
+
+    // Check if token meets strategy conditions
+    if (strategy.conditions) {
+      let meetsConditions = true
+
+      if (strategy.conditions.min_market_cap && marketCap < strategy.conditions.min_market_cap) {
+        meetsConditions = false
+      }
+
+      if (strategy.conditions.min_organic_score && organicScore < strategy.conditions.min_organic_score) {
+        meetsConditions = false
+      }
+
+      if (strategy.conditions.max_risk_level) {
+        // Simple risk assessment based on market cap and volume
+        const riskLevel = marketCap < 100000 ? 'high' : marketCap < 500000 ? 'medium' : 'low'
+        const allowedRisks = strategy.conditions.max_risk_level === 'low' ? ['low'] :
+          strategy.conditions.max_risk_level === 'medium' ? ['low', 'medium'] :
+            ['low', 'medium', 'high']
+
+        if (!allowedRisks.includes(riskLevel)) {
+          meetsConditions = false
+        }
+      }
+
+      if (meetsConditions) {
+        console.log(`🎯 Token ${token.token_symbol} assigned to ${strategyId} strategy (rule-based)`)
+        return strategyId
+      }
+    }
+  }
+
+  // Fallback to weighted random selection based on allocation
+  const random = Math.random()
+  let cumulativeWeight = 0
+
+  for (const strategyId of strategies) {
+    cumulativeWeight += allocation[strategyId]
+    if (random <= cumulativeWeight) {
+      console.log(`🎯 Token ${token.token_symbol} assigned to ${strategyId} strategy (allocation-based)`)
+      return strategyId
+    }
+  }
+
+  // Final fallback to first strategy
+  console.log(`🎯 Token ${token.token_symbol} assigned to ${strategies[0]} strategy (fallback)`)
+  return strategies[0]
+}
+
 // Enhanced duplicate prevention: track recent purchases
 const recentPurchases = new Map<string, { count: number, lastPurchase: Date, purchaseDates: Date[] }>()
 
@@ -4864,6 +5194,50 @@ async function getTotalSOLAtRisk(): Promise<number> {
     // Only consider simulations whose buy actually reached the chain (has signature)
     const buySig = (simulation.buy_operation as any)?.signature
     if (!buySig) continue
+
+    // We only count positions that are still holding tokens
+    if (simulation.current_status !== 'holding') continue
+
+    const remaining = parseFloat(simulation.remaining_token_amount || '0')
+    const initial = parseFloat(simulation.initial_token_amount || '0')
+
+    // Ignore if effectively closed (dust remaining)
+    if (!initial || remaining < 1e-6) continue
+
+    // Pro-rate original SOL spent by the fraction of tokens still held
+    const proportionRemaining = Math.min(1, remaining / initial)
+    const spentSOL = simulation.buy_operation?.buy_amount_sol || 0
+
+    totalAtRisk += spentSOL * proportionRemaining
+  }
+
+  return totalAtRisk
+}
+
+// Add strategy-specific risk calculation
+async function getTotalSOLAtRiskByStrategy(strategyId: string): Promise<number> {
+  // Fetch only required fields to keep payload light
+  const { data: activeRealTrades } = await supabase
+    .from(TRACKER_TABLE)
+    .select('trading_simulation')
+    .eq('status', 'tracking')
+    .not('trading_simulation', 'is', null)
+
+  let totalAtRisk = 0
+
+  for (const trade of activeRealTrades || []) {
+    const simulation = trade.trading_simulation as TradingSimulation
+
+    // Skip simulated positions entirely
+    if (simulation.is_simulated) continue
+
+    // Only consider simulations whose buy actually reached the chain (has signature)
+    const buySig = (simulation.buy_operation as any)?.signature
+    if (!buySig) continue
+
+    // Only count trades from this strategy
+    const tradeStrategy = (simulation.buy_operation as any)?.bot_strategy
+    if (tradeStrategy !== strategyId) continue
 
     // We only count positions that are still holding tokens
     if (simulation.current_status !== 'holding') continue
@@ -5096,7 +5470,25 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
   adjustedBuyAmount?: number,
   isRebuy?: boolean
 }> {
-  console.log(`🔍 Checking if real trade can be executed for ${tokenSymbol || 'unknown'} (${buyAmountSOL} SOL)`)
+  // Maintain backward compatibility - use first active strategy
+  const { strategies } = getActiveStrategies()
+  return canExecuteRealTradeWithStrategy(buyAmountSOL, strategies[0], tokenAddress, tokenSymbol, currentPrice)
+}
+
+// Update balance checking for multi-strategy
+async function canExecuteRealTradeWithStrategy(
+  buyAmountSOL: number,
+  strategyId: string,
+  tokenAddress?: string,
+  tokenSymbol?: string,
+  currentPrice?: number
+): Promise<{
+  canTrade: boolean,
+  reason?: string,
+  adjustedBuyAmount?: number,
+  isRebuy?: boolean
+}> {
+  console.log(`🔍 Checking if real trade can be executed for ${tokenSymbol || 'unknown'} using ${strategyId} strategy (${buyAmountSOL} SOL)`)
 
   // Check if we can execute a real trade
   const { balance, canTrade: hasBalance } = await checkTradingBalance()
@@ -5112,8 +5504,14 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
   let adjustedBuyAmount = buyAmountSOL
   let isRebuy = false
 
-  // Enhanced duplicate prevention check
+  // Enhanced duplicate prevention check (strategy-aware)
   if (tokenAddress) {
+    const strategyActiveTrades = activeTradesByStrategy.get(strategyId) || new Set()
+
+    if (strategyActiveTrades.has(tokenAddress)) {
+      return { canTrade: false, reason: `Trade already in progress for ${tokenSymbol} in ${strategyId} strategy` }
+    }
+
     const duplicateCheck = await performEnhancedDuplicateCheck(tokenAddress, tokenSymbol || null, currentPrice)
     if (!duplicateCheck.canPurchase) {
       console.log(`❌ Duplicate check failed: ${duplicateCheck.reason}`)
@@ -5128,13 +5526,16 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
     }
   }
 
-  const totalAtRisk = await getTotalSOLAtRisk()
+  // Calculate strategy-specific risk
+  const totalAtRisk = await getTotalSOLAtRiskByStrategy(strategyId)
+  const { allocation } = getActiveStrategies()
+  const strategyMaxRisk = MAX_SOL_AT_RISK * (allocation[strategyId] || 0.25) // Default 25% if not specified
   const newTotalAtRisk = totalAtRisk + adjustedBuyAmount
 
-  console.log(`📊 Risk analysis: Current at risk: ${totalAtRisk.toFixed(4)} SOL, New total: ${newTotalAtRisk.toFixed(4)} SOL, Max allowed: ${MAX_SOL_AT_RISK} SOL`)
+  console.log(`📊 Strategy ${strategyId} risk analysis: Current at risk: ${totalAtRisk.toFixed(4)} SOL, New total: ${newTotalAtRisk.toFixed(4)} SOL, Max allowed: ${strategyMaxRisk.toFixed(4)} SOL`)
 
-  if (newTotalAtRisk > MAX_SOL_AT_RISK) {
-    const errorMsg = `Risk limit exceeded: ${newTotalAtRisk.toFixed(4)} SOL > ${MAX_SOL_AT_RISK} SOL maximum`
+  if (newTotalAtRisk > strategyMaxRisk) {
+    const errorMsg = `Strategy ${strategyId} risk limit exceeded: ${newTotalAtRisk.toFixed(4)} SOL > ${strategyMaxRisk.toFixed(4)} SOL maximum`
     console.error(`❌ ${errorMsg}`)
     return { canTrade: false, reason: errorMsg }
   }
@@ -5145,6 +5546,6 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
     return { canTrade: false, reason: errorMsg }
   }
 
-  console.log(`✅ Real trade check passed: ${adjustedBuyAmount} SOL trade approved`)
+  console.log(`✅ Real trade check passed for ${strategyId} strategy: ${adjustedBuyAmount} SOL trade approved`)
   return { canTrade: true, adjustedBuyAmount, isRebuy }
 }
