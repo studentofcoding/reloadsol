@@ -171,6 +171,8 @@ interface TradingStrategyConfig {
     tp3_percentage: number
     tp3_enabled: boolean
   }
+  buy_amount_sol: number
+  priority_fee_lamports: number
   stop_loss_percentage: number
   max_hold_hours: number
   conditions?: {
@@ -195,6 +197,8 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       tp3_percentage: 30,
       tp3_enabled: false
     },
+    buy_amount_sol: 0.015,
+    priority_fee_lamports: 1000000,
     stop_loss_percentage: -40,
     max_hold_hours: 24,
     conditions: {
@@ -237,6 +241,8 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       tp3_percentage: 100,
       tp3_enabled: true
     },
+    buy_amount_sol: 0.01,
+    priority_fee_lamports: 1000000,
     stop_loss_percentage: -20,
     max_hold_hours: 48,
     conditions: {
@@ -281,6 +287,8 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       tp3_percentage: 40,
       tp3_enabled: true
     },
+    buy_amount_sol: 0.008,
+    priority_fee_lamports: 1000000,
     stop_loss_percentage: -15,
     max_hold_hours: 6,
     conditions: {
@@ -325,6 +333,8 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       tp3_percentage: 500,
       tp3_enabled: true
     },
+    buy_amount_sol: 0.006,
+    priority_fee_lamports: 1000000,
     stop_loss_percentage: -60,
     max_hold_hours: 168, // 7 days
     conditions: {
@@ -2877,6 +2887,75 @@ async function sendSignificantDeviationsAlertDiscord(params: {
   }
 }
 
+function getBuyAmountForStrategy(strategyId?: string): number {
+  // Check for global environment override first
+  const envBuyAmount = process.env.BUY_AMOUNT_SOL
+  if (envBuyAmount) {
+    const amount = parseFloat(envBuyAmount)
+    if (!isNaN(amount) && amount > 0 && amount <= 1.0) { // Max 1 SOL safety limit
+      console.log(`💰 Using environment override BUY_AMOUNT_SOL: ${amount} SOL`)
+      return amount
+    } else {
+      console.warn(`⚠️ Invalid BUY_AMOUNT_SOL environment value: ${envBuyAmount}, using strategy default`)
+    }
+  }
+
+  // Check for strategy-specific environment override
+  if (strategyId) {
+    const strategyEnvKey = `BUY_AMOUNT_SOL_${strategyId.toUpperCase()}`
+    const strategyEnvAmount = process.env[strategyEnvKey]
+    if (strategyEnvAmount) {
+      const amount = parseFloat(strategyEnvAmount)
+      if (!isNaN(amount) && amount > 0 && amount <= 1.0) {
+        console.log(`💰 Using strategy-specific override ${strategyEnvKey}: ${amount} SOL`)
+        return amount
+      } else {
+        console.warn(`⚠️ Invalid ${strategyEnvKey} environment value: ${strategyEnvAmount}, using strategy default`)
+      }
+    }
+  }
+
+  // Use strategy-specific buy amount
+  const strategy = getTradingStrategy(strategyId)
+  console.log(`💰 Using ${strategy.name} buy amount: ${strategy.buy_amount_sol} SOL`)
+  return strategy.buy_amount_sol
+}
+
+// Helper function to get priority fee for strategy with environment override
+function getPriorityFeeForStrategy(strategyId?: string): number {
+  // Check for global environment override first
+  const envPriorityFee = process.env.PRIORITY_FEE_LAMPORTS
+  if (envPriorityFee) {
+    const fee = parseInt(envPriorityFee)
+    if (!isNaN(fee) && fee >= 0 && fee <= 1000000) { // Max 0.001 SOL safety limit
+      console.log(`⚡ Using environment override PRIORITY_FEE_LAMPORTS: ${fee} lamports`)
+      return fee
+    } else {
+      console.warn(`⚠️ Invalid PRIORITY_FEE_LAMPORTS environment value: ${envPriorityFee}, using strategy default`)
+    }
+  }
+
+  // Check for strategy-specific environment override
+  if (strategyId) {
+    const strategyEnvKey = `PRIORITY_FEE_LAMPORTS_${strategyId.toUpperCase()}`
+    const strategyEnvFee = process.env[strategyEnvKey]
+    if (strategyEnvFee) {
+      const fee = parseInt(strategyEnvFee)
+      if (!isNaN(fee) && fee >= 0 && fee <= 1000000) {
+        console.log(`⚡ Using strategy-specific override ${strategyEnvKey}: ${fee} lamports`)
+        return fee
+      } else {
+        console.warn(`⚠️ Invalid ${strategyEnvKey} environment value: ${strategyEnvFee}, using strategy default`)
+      }
+    }
+  }
+
+  // Use strategy-specific priority fee
+  const strategy = getTradingStrategy(strategyId)
+  console.log(`⚡ Using ${strategy.name} priority fee: ${strategy.priority_fee_lamports} lamports`)
+  return strategy.priority_fee_lamports
+}
+
 // Strategy-aware buy operation execution
 async function executeBuyOperationWithStrategy(
   token: any,
@@ -2893,7 +2972,8 @@ async function executeBuyOperationWithStrategy(
 
     // SOL mint address and trading parameters
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
-    let BUY_AMOUNT_SOL = 0.015 // Default 0.015 SOL per token as specified
+    let BUY_AMOUNT_SOL = getBuyAmountForStrategy(strategyId) // Dynamic based on strategy
+    let PRIORITY_FEE_SOL = getPriorityFeeForStrategy(strategyId) // Dynamic based on strategy
 
     let isRebuy = false
 
@@ -2920,7 +3000,7 @@ async function executeBuyOperationWithStrategy(
     }
 
     const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9)
-    const PRIORITY_FEE_SOL = 0.001 // 0.001 SOL priority fee as specified
+    // const PRIORITY_FEE_SOL = 0.001 // 0.001 SOL priority fee as specified
     const PRIORITY_FEE_LAMPORTS = Math.floor(PRIORITY_FEE_SOL * 1e9)
 
     // Safety checks for real trading
@@ -3219,7 +3299,8 @@ async function executeBuyOperationWithStrategy(
 async function performSellOperation(
   token: any,
   simulation: TradingSimulation,
-  sellPercentage: number
+  sellPercentage: number,
+  strategyId?: string
 ): Promise<SellOperation | null> {
   try {
     const isSimulated = simulation.is_simulated
