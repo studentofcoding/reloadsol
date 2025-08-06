@@ -105,32 +105,58 @@ interface TopWinner {
   status_changed_at: string
 }
 
-// Add TradeComparisonResult interface for trade analysis
-interface TradeComparisonResult {
-  token_address: string
-  token_symbol: string | null
-  timestamp: string
-  buy_amount_sol: number
-  comparisons: {
-    [key: string]: {
-      success: boolean
-      response_time: number
-      token_amount: string
-      total_fees: number
-      price_impact: string
-      best_provider: string
-      rpc_used?: string
-      error?: string
-    }
+interface TokenFilterConfig {
+  enabled: boolean
+  mcap?: {
+    min?: number
+    max?: number
   }
-  best_config: {
-    slippage: number
-    provider: string
-    token_amount: string
-    response_time: number
-    total_fees: number
-    rpc_used?: string
+  priceChange5m?: {
+    min?: number
+    max?: number
   }
+  priceChange1h?: {
+    min?: number
+    max?: number
+  }
+  priceChange6h?: {
+    min?: number
+    max?: number
+  }
+  organicScore?: {
+    min?: number
+  }
+  topHoldersPercentage?: {
+    max?: number
+  }
+  requireCompleteData?: boolean
+  checkManualTradingHistory?: boolean
+}
+
+// Default filter configuration
+const DEFAULT_FILTER_CONFIG: TokenFilterConfig = {
+  enabled: true,
+  mcap: {
+    min: 350_000,
+    max: 3_000_000
+  },
+  priceChange5m: {
+    max: -40.00
+  },
+  priceChange1h: {
+    max: 100.00
+  },
+  priceChange6h: {
+    max: 60.00
+  },
+  organicScore: {
+    min: 70
+  },
+  topHoldersPercentage: {
+    max: 25
+  },
+  requireCompleteData: true,
+  checkManualTradingHistory: true
 }
 
 // Add trading strategy configuration interfaces
@@ -153,10 +179,7 @@ interface TradingStrategyConfig {
     min_organic_score?: number
     max_risk_level?: 'low' | 'medium' | 'high'
   }
-}
-
-interface TradingConfigRegistry {
-  [strategyId: string]: TradingStrategyConfig
+  filtering?: TokenFilterConfig
 }
 
 // Define available trading strategies
@@ -176,6 +199,31 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     max_hold_hours: 24,
     conditions: {
       max_risk_level: 'high'
+    },
+    // Aggressive filtering - allows more volatile tokens
+    filtering: {
+      enabled: true,
+      mcap: {
+        min: 200_000,
+        max: 5_000_000
+      },
+      priceChange5m: {
+        max: -50.00 // Allow deeper drops
+      },
+      priceChange1h: {
+        max: 150.00 // Allow higher pumps
+      },
+      priceChange6h: {
+        max: 80.00
+      },
+      organicScore: {
+        min: 60 // Lower organic score requirement
+      },
+      topHoldersPercentage: {
+        max: 30
+      },
+      requireCompleteData: true,
+      checkManualTradingHistory: true
     }
   },
   conservative: {
@@ -195,6 +243,31 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       min_market_cap: 100000,
       min_organic_score: 70,
       max_risk_level: 'low'
+    },
+    // Conservative filtering - stricter requirements
+    filtering: {
+      enabled: true,
+      mcap: {
+        min: 500_000,
+        max: 2_000_000
+      },
+      priceChange5m: {
+        max: -25.00 // Less tolerance for drops
+      },
+      priceChange1h: {
+        max: 50.00 // Lower pump tolerance
+      },
+      priceChange6h: {
+        max: 40.00
+      },
+      organicScore: {
+        min: 80 // Higher organic score requirement
+      },
+      topHoldersPercentage: {
+        max: 20
+      },
+      requireCompleteData: true,
+      checkManualTradingHistory: true
     }
   },
   scalper: {
@@ -212,6 +285,33 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     max_hold_hours: 6,
     conditions: {
       max_risk_level: 'medium'
+    },
+    // Scalper filtering - focus on momentum
+    filtering: {
+      enabled: true,
+      mcap: {
+        min: 300_000,
+        max: 4_000_000
+      },
+      priceChange5m: {
+        min: -30.00, // Allow some drops but not too severe
+        max: -10.00
+      },
+      priceChange1h: {
+        min: 20.00, // Require some upward momentum
+        max: 80.00
+      },
+      priceChange6h: {
+        max: 70.00
+      },
+      organicScore: {
+        min: 65
+      },
+      topHoldersPercentage: {
+        max: 25
+      },
+      requireCompleteData: true,
+      checkManualTradingHistory: true
     }
   },
   hodl: {
@@ -231,6 +331,31 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       min_market_cap: 500000,
       min_organic_score: 80,
       max_risk_level: 'low'
+    },
+    // HODL filtering - quality over quantity
+    filtering: {
+      enabled: true,
+      mcap: {
+        min: 1_000_000,
+        max: 10_000_000 // Allow higher market cap
+      },
+      priceChange5m: {
+        max: -20.00 // Very conservative on drops
+      },
+      priceChange1h: {
+        max: 30.00 // Prefer steady growth
+      },
+      priceChange6h: {
+        max: 50.00
+      },
+      organicScore: {
+        min: 85 // Highest organic score requirement
+      },
+      topHoldersPercentage: {
+        max: 15 // Strictest holder distribution
+      },
+      requireCompleteData: true,
+      checkManualTradingHistory: true
     }
   }
 }
@@ -1823,7 +1948,11 @@ async function checkManualTradingHistoryBatch(tokenAddresses: string[]): Promise
 }
 
 // Enhanced filtering function with detailed tracking and token collection
-async function performEnhancedFiltering(pools: any[]): Promise<{ results: TokenFilterResult[], summary: FilteringSummary }> {
+async function performEnhancedFiltering(
+  pools: any[],
+  strategyId?: string,
+  customConfig?: Partial<TokenFilterConfig>
+): Promise<{ results: TokenFilterResult[], summary: FilteringSummary }> {
   const startTime = Date.now()
   const results: TokenFilterResult[] = []
   const rejectionBreakdown: { [reason: string]: number } = {}
@@ -1838,20 +1967,73 @@ async function performEnhancedFiltering(pools: any[]): Promise<{ results: TokenF
     }>
   } = {}
 
+  // Get filtering configuration based on strategy
+  let filterConfig: TokenFilterConfig
+
+  if (customConfig) {
+    // Use custom configuration if provided
+    filterConfig = { ...DEFAULT_FILTER_CONFIG, ...customConfig }
+  } else if (strategyId) {
+    // Use strategy-specific configuration
+    const strategy = getTradingStrategy(strategyId)
+    filterConfig = strategy.filtering || DEFAULT_FILTER_CONFIG
+  } else {
+    // Use default configuration
+    filterConfig = DEFAULT_FILTER_CONFIG
+  }
+
+  console.log(`🔍 Using filtering configuration for strategy '${strategyId || 'default'}':`, filterConfig)
+
+  // Skip filtering if disabled
+  if (!filterConfig.enabled) {
+    console.log('🚫 Filtering disabled, accepting all tokens')
+    const mappedResults = pools.map(pool => ({
+      token: pool,
+      passed: true,
+      rejectionReasons: [],
+      mappedToken: {
+        token_address: pool.baseAsset.id,
+        token_symbol: pool.baseAsset.symbol,
+        token_name: pool.baseAsset.name,
+        logo_url: pool.baseAsset.icon,
+        current_price: pool.baseAsset.usdPrice,
+        organic_score: pool.baseAsset.organicScore,
+        market_cap: pool.baseAsset.mcap,
+        volume_1h: pool.baseAsset.stats1h.buyVolume,
+        change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
+        change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100
+      }
+    }))
+
+    return {
+      results: mappedResults,
+      summary: {
+        totalTokens: pools.length,
+        acceptedTokens: pools.length,
+        rejectedTokens: 0,
+        rejectionBreakdown: {},
+        rejectionDetails: [],
+        processingTime: Date.now() - startTime
+      }
+    }
+  }
+
   // Extract all token addresses for batch checking
   const tokenAddresses = pools
     .map(pool => pool.baseAsset.id)
     .filter(id => id) // Remove null/undefined values
 
-  // Batch check for manually traded tokens
-  const manuallyTradedTokens = await checkManualTradingHistoryBatch(tokenAddresses)
-
-  console.log(`🔍 Found ${manuallyTradedTokens.size} manually traded tokens out of ${tokenAddresses.length} tokens`)
+  // Batch check for manually traded tokens (if enabled)
+  let manuallyTradedTokens = new Set<string>()
+  if (filterConfig.checkManualTradingHistory) {
+    manuallyTradedTokens = await checkManualTradingHistoryBatch(tokenAddresses)
+    console.log(`🔍 Found ${manuallyTradedTokens.size} manually traded tokens out of ${tokenAddresses.length} tokens`)
+  }
 
   pools.forEach(pool => {
     const rejectionReasons: string[] = []
 
-    // Check each filter condition and track reasons
+    // Extract token data
     const priceChange5m = pool.baseAsset.stats5m?.priceChange ?? 0
     const priceChange1h = pool.baseAsset.stats1h?.priceChange ?? 0
     const priceChange6h = pool.baseAsset.stats6h?.priceChange ?? 0
@@ -1859,42 +2041,65 @@ async function performEnhancedFiltering(pools: any[]): Promise<{ results: TokenF
     const mcap = pool.baseAsset.mcap
     const topHoldersPercentage = pool.baseAsset.audit?.topHoldersPercentage
 
-    // Apply filters and track rejection reasons
-    if (priceChange5m <= -40.00) {
-      rejectionReasons.push(`Price drop too severe on 5m, it drop ${priceChange5m.toFixed(2)}%`)
+    // Apply dynamic filters based on configuration
+
+    // Market cap filtering
+    if (filterConfig.mcap) {
+      if (filterConfig.mcap.min && (!mcap || mcap <= filterConfig.mcap.min)) {
+        rejectionReasons.push(`Market cap too low (${mcap ? `$${(mcap / 1000).toFixed(0)}k` : 'N/A'} <= $${(filterConfig.mcap.min / 1000).toFixed(0)}k)`)
+      }
+      if (filterConfig.mcap.max && (!mcap || mcap >= filterConfig.mcap.max)) {
+        rejectionReasons.push(`Market cap too high (${mcap ? `$${(mcap / 1000000).toFixed(1)}M` : 'N/A'} >= $${(filterConfig.mcap.max / 1000000).toFixed(1)}M)`)
+      }
     }
 
-    if (priceChange1h >= 100.00) {
-      rejectionReasons.push(`Price rise too high (1h), it pump ${priceChange1h.toFixed(2)}%`)
+    // Price change 5m filtering
+    if (filterConfig.priceChange5m) {
+      if (filterConfig.priceChange5m.min && priceChange5m <= filterConfig.priceChange5m.min) {
+        rejectionReasons.push(`5m price drop too severe (${priceChange5m.toFixed(2)}% <= ${filterConfig.priceChange5m.min}%)`)
+      }
+      if (filterConfig.priceChange5m.max && priceChange5m <= filterConfig.priceChange5m.max) {
+        rejectionReasons.push(`5m price drop too severe (${priceChange5m.toFixed(2)}% <= ${filterConfig.priceChange5m.max}%)`)
+      }
     }
 
-    if (priceChange6h >= 60.00) {
-      rejectionReasons.push(`Price rise too high (6h), it pump ${priceChange6h.toFixed(2)}%`)
+    // Price change 1h filtering
+    if (filterConfig.priceChange1h) {
+      if (filterConfig.priceChange1h.min && priceChange1h <= filterConfig.priceChange1h.min) {
+        rejectionReasons.push(`1h price rise insufficient (${priceChange1h.toFixed(2)}% <= ${filterConfig.priceChange1h.min}%)`)
+      }
+      if (filterConfig.priceChange1h.max && priceChange1h >= filterConfig.priceChange1h.max) {
+        rejectionReasons.push(`1h price rise too high (${priceChange1h.toFixed(2)}% >= ${filterConfig.priceChange1h.max}%)`)
+      }
     }
 
-    if (!organicScore || organicScore < 70) {
-      rejectionReasons.push('Organic score too low')
+    // Price change 6h filtering
+    if (filterConfig.priceChange6h) {
+      if (filterConfig.priceChange6h.min && priceChange6h <= filterConfig.priceChange6h.min) {
+        rejectionReasons.push(`6h price rise insufficient (${priceChange6h.toFixed(2)}% <= ${filterConfig.priceChange6h.min}%)`)
+      }
+      if (filterConfig.priceChange6h.max && priceChange6h >= filterConfig.priceChange6h.max) {
+        rejectionReasons.push(`6h price rise too high (${priceChange6h.toFixed(2)}% >= ${filterConfig.priceChange6h.max}%)`)
+      }
     }
 
-    if (!mcap || mcap <= 350_000) {
-      rejectionReasons.push('Market cap too low')
+    // Organic score filtering
+    if (filterConfig.organicScore?.min && (!organicScore || organicScore < filterConfig.organicScore.min)) {
+      rejectionReasons.push(`Organic score too low (${organicScore || 'N/A'} < ${filterConfig.organicScore.min})`)
     }
 
-    if (!mcap || mcap >= 3_000_000) {
-      rejectionReasons.push('Market cap too high')
+    // Top holders percentage filtering
+    if (filterConfig.topHoldersPercentage?.max && (!topHoldersPercentage || topHoldersPercentage >= filterConfig.topHoldersPercentage.max)) {
+      rejectionReasons.push(`Top holders percentage too high (${topHoldersPercentage || 'N/A'}% >= ${filterConfig.topHoldersPercentage.max}%)`)
     }
 
-    if (!topHoldersPercentage || topHoldersPercentage >= 25) {
-      rejectionReasons.push('Top holders percentage too high')
-    }
-
-    // Check for missing required data
-    if (!pool.baseAsset.id || !pool.baseAsset.symbol || !pool.baseAsset.usdPrice) {
+    // Data completeness check
+    if (filterConfig.requireCompleteData && (!pool.baseAsset.id || !pool.baseAsset.symbol || !pool.baseAsset.usdPrice)) {
       rejectionReasons.push('Missing required data')
     }
 
-    // NEW: Check if token has been manually traded
-    if (pool.baseAsset.id && manuallyTradedTokens.has(pool.baseAsset.id)) {
+    // Manual trading history check
+    if (filterConfig.checkManualTradingHistory && pool.baseAsset.id && manuallyTradedTokens.has(pool.baseAsset.id)) {
       rejectionReasons.push('Token already traded manually')
     }
 
@@ -1961,11 +2166,60 @@ async function performEnhancedFiltering(pools: any[]): Promise<{ results: TokenF
     acceptedTokens,
     rejectedTokens,
     rejectionBreakdown,
-    rejectionDetails, // Include the detailed token information
+    rejectionDetails,
     processingTime
   }
 
+  console.log(`🎯 Filtering completed for strategy '${strategyId || 'default'}': ${acceptedTokens}/${pools.length} tokens passed`)
+
   return { results, summary }
+}
+
+function parseCustomFilterConfig(): Partial<TokenFilterConfig> | null {
+  try {
+    // Check for environment variable with custom filter config
+    const customConfigEnv = process.env.CUSTOM_FILTER_CONFIG
+    if (customConfigEnv) {
+      return JSON.parse(customConfigEnv)
+    }
+
+    // Check for individual environment variables
+    const customConfig: Partial<TokenFilterConfig> = {}
+
+    if (process.env.FILTER_ENABLED !== undefined) {
+      customConfig.enabled = process.env.FILTER_ENABLED === 'true'
+    }
+
+    if (process.env.FILTER_MCAP_MIN) {
+      customConfig.mcap = { ...customConfig.mcap, min: parseInt(process.env.FILTER_MCAP_MIN) }
+    }
+
+    if (process.env.FILTER_MCAP_MAX) {
+      customConfig.mcap = { ...customConfig.mcap, max: parseInt(process.env.FILTER_MCAP_MAX) }
+    }
+
+    if (process.env.FILTER_PRICE_5M_MAX) {
+      customConfig.priceChange5m = { max: parseFloat(process.env.FILTER_PRICE_5M_MAX) }
+    }
+
+    if (process.env.FILTER_PRICE_1H_MAX) {
+      customConfig.priceChange1h = { max: parseFloat(process.env.FILTER_PRICE_1H_MAX) }
+    }
+
+    if (process.env.FILTER_PRICE_6H_MAX) {
+      customConfig.priceChange6h = { max: parseFloat(process.env.FILTER_PRICE_6H_MAX) }
+    }
+
+    if (process.env.FILTER_ORGANIC_SCORE_MIN) {
+      customConfig.organicScore = { min: parseInt(process.env.FILTER_ORGANIC_SCORE_MIN) }
+    }
+
+    // Return null if no custom config found
+    return Object.keys(customConfig).length > 0 ? customConfig : null
+  } catch (error) {
+    console.error('Error parsing custom filter configuration:', error)
+    return null
+  }
 }
 
 // Helper function to check when last summary was run
@@ -3599,7 +3853,13 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
         console.log(`Track Filter Test: Fetched ${data.pools.length} pools from Jupiter API`)
 
         // Perform enhanced filtering
-        const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(data.pools)
+        const currentStrategy = getCurrentBotStrategy()
+        const customFilterConfig = parseCustomFilterConfig()
+        const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(
+          data.pools,
+          currentStrategy,
+          customFilterConfig || {}
+        )
 
         // Extract accepted tokens
         const acceptedTokens = filterResults
@@ -3982,7 +4242,13 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
     // Enhanced filtering with comprehensive tracking
     console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
-    const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(data.pools)
+    const currentStrategy = getCurrentBotStrategy()
+    const customFilterConfig = parseCustomFilterConfig()
+    const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(
+      data.pools,
+      currentStrategy,
+      customFilterConfig || {}
+    )
 
     // Extract accepted tokens
     const filteredTokens = filterResults
