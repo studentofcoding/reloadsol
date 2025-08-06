@@ -131,7 +131,7 @@ async function fetchTokensFromJupiterV2(mintAddresses: string[], retryCount = 0)
 }
 
 // Legacy function for single token (now uses v2 search)
-async function fetchTokenMetadataFromJupiter(mintAddress: string, retryCount = 0): Promise<any> {
+export async function fetchTokenMetadataFromJupiter(mintAddress: string, retryCount = 0): Promise<any> {
   const results = await fetchTokensFromJupiterV2([mintAddress], retryCount)
   const tokenData = results[mintAddress]
 
