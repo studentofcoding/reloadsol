@@ -7,6 +7,7 @@ interface Connection {
   createdAt: number;
   walletAddress: string;
   isActive: boolean;
+  isClosed: boolean;
   keepAliveInterval?: NodeJS.Timeout;
   autoCleanupTimeout?: NodeJS.Timeout;
 }
@@ -25,18 +26,36 @@ setInterval(() => {
 }, 60000)
 
 // Helper function to safely enqueue data to controller
-function safeEnqueue(controller: ReadableStreamDefaultController, data: Uint8Array, connectionId: string): boolean {
+function safeEnqueue(controller: ReadableStreamDefaultController, data: Uint8Array, connectionId: string, connection?: Connection): boolean {
+  // First check if we have connection state and it's marked as closed
+  if (connection && (connection.isClosed || !connection.isActive)) {
+    console.log(`Connection ${connectionId} is marked as closed/inactive, skipping enqueue`)
+    return false
+  }
+
   try {
-    // Check if controller is still writable
+    // Double-check controller state right before enqueue
     if (controller.desiredSize === null) {
       console.log(`Controller already closed for connection: ${connectionId}`)
+      if (connection) {
+        connection.isClosed = true
+        connection.isActive = false
+      }
       return false
     }
-    
+
+    // Atomic enqueue operation
     controller.enqueue(data)
     return true
   } catch (error) {
     console.error(`Error enqueuing data for connection ${connectionId}:`, error)
+
+    // Mark connection as closed on any enqueue error
+    if (connection) {
+      connection.isClosed = true
+      connection.isActive = false
+    }
+
     return false
   }
 }
@@ -68,41 +87,30 @@ export async function GET(request: NextRequest) {
     start(controller) {
       const connectionId = `${walletAddress}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
       let connection: Connection
-      
-      // Send initial connection message
-      const initialData = `data: ${JSON.stringify({ 
-        type: 'connected', 
-        wallet: walletAddress,
-        timestamp: new Date().toISOString()
-      })}\n\n`
-      
-      if (!safeEnqueue(controller, new TextEncoder().encode(initialData), connectionId)) {
-        console.error('Failed to send initial SSE message')
-        return
-      }
 
       // Clean up function
       const cleanup = () => {
         console.log(`🧹 Cleaning up SSE connection: ${connectionId}`)
-        
+
         if (connection) {
           connection.isActive = false
-          
+          connection.isClosed = true
+
           // Clear intervals and timeouts
           if (connection.keepAliveInterval) {
             clearInterval(connection.keepAliveInterval)
             connection.keepAliveInterval = undefined
           }
-          
+
           if (connection.autoCleanupTimeout) {
             clearTimeout(connection.autoCleanupTimeout)
             connection.autoCleanupTimeout = undefined
           }
         }
-        
+
         // Remove from active connections
         activeConnections.delete(connectionId)
-        
+
         // Close controller if still open
         try {
           if (controller.desiredSize !== null) {
@@ -120,29 +128,44 @@ export async function GET(request: NextRequest) {
         cleanup,
         createdAt: Date.now(),
         walletAddress,
-        isActive: true
+        isActive: true,
+        isClosed: false
       }
 
       // Store connection
       activeConnections.set(connectionId, connection)
 
+      // Send initial connection message
+      const initialData = `data: ${JSON.stringify({
+        type: 'connected',
+        wallet: walletAddress,
+        timestamp: new Date().toISOString()
+      })}\n\n`
+
+      if (!safeEnqueue(controller, new TextEncoder().encode(initialData), connectionId, connection)) {
+        console.error('Failed to send initial SSE message')
+        cleanup()
+        return
+      }
+
       // Send keepalive every 30 seconds
       connection.keepAliveInterval = setInterval(() => {
-        // Double-check connection is still active
-        if (!connection.isActive || !activeConnections.has(connectionId)) {
-          if (connection.keepAliveInterval) {
+        // Check connection state before attempting to send
+        if (!connection || connection.isClosed || !connection.isActive || !activeConnections.has(connectionId)) {
+          console.log(`Connection ${connectionId} is inactive, stopping keepalive`)
+          if (connection?.keepAliveInterval) {
             clearInterval(connection.keepAliveInterval)
             connection.keepAliveInterval = undefined
           }
           return
         }
-        
-        const keepAliveData = `data: ${JSON.stringify({ 
+
+        const keepAliveData = `data: ${JSON.stringify({
           type: 'keepalive',
           timestamp: new Date().toISOString()
         })}\n\n`
-        
-        if (!safeEnqueue(controller, new TextEncoder().encode(keepAliveData), connectionId)) {
+
+        if (!safeEnqueue(controller, new TextEncoder().encode(keepAliveData), connectionId, connection)) {
           console.log(`Keepalive failed for ${connectionId}, cleaning up connection`)
           cleanup()
         }
@@ -154,10 +177,19 @@ export async function GET(request: NextRequest) {
         cleanup()
       }, 5 * 60 * 1000)
     },
-    
-    cancel() {
-      // Connection closed by client
-      console.log('SSE connection cancelled by client')
+
+    cancel(reason?: any) {
+      // Connection closed by client - find and cleanup the connection
+      console.log('SSE connection cancelled by client', reason)
+
+      // Find and cleanup connections for this wallet
+      for (const [id, conn] of Array.from(activeConnections.entries())) {
+        if (conn.walletAddress === walletAddress) {
+          console.log(`Cleaning up cancelled connection: ${id}`)
+          conn.cleanup()
+          break
+        }
+      }
     }
   })
 
@@ -190,14 +222,14 @@ export async function POST(request: NextRequest) {
     const deadConnections: string[] = []
 
     for (const [connectionId, connection] of Array.from(activeConnections.entries())) {
-      if (connection.walletAddress === walletAddress && connection.isActive) {
+      if (connection.walletAddress === walletAddress && connection.isActive && !connection.isClosed) {
         const message = `data: ${JSON.stringify({
           type,
           data,
           timestamp: new Date().toISOString()
         })}\n\n`
 
-        if (safeEnqueue(connection.controller, new TextEncoder().encode(message), connectionId)) {
+        if (safeEnqueue(connection.controller, new TextEncoder().encode(message), connectionId, connection)) {
           notifiedCount++
         } else {
           // Connection is dead, mark for cleanup
