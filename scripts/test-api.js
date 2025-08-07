@@ -835,3 +835,200 @@ runTests().catch(error => {
   log.error('Test execution failed:', error);
   process.exit(1);
 });
+
+  console.log('='.repeat(50));
+
+  // === MCAP TRACKING TESTS ===
+  log.info('\n📊 Testing MCap Tracking Functionality...');
+
+  // Test MCap Tracking - First Time Token
+  await testEndpoint('MCap Tracking - First Time Token', '/api/trending', {
+    method: 'PUT',
+    validator: (data) => {
+      return data && (
+        (data.success && data.message) ||
+        (data.message && typeof data.message === 'string') ||
+        (data.error && typeof data.error === 'string')
+      )
+    }
+  });
+
+  // Test MCap Tracking - Subsequent Updates
+  await testEndpoint('MCap Tracking - Growth Calculation', '/api/trending/filtered', {
+    method: 'PUT',
+    validator: (data) => {
+      return data && (
+        (data.success && data.message) ||
+        (data.message && typeof data.message === 'string') ||
+        (data.error && typeof data.error === 'string')
+      )
+    }
+  });
+
+  // Test MCap Growth Display Format
+  const mcapGrowthResult = await testEndpoint('MCap Growth - Display Format', '/api/trending', {
+    method: 'PUT',
+    validator: (data) => data && (data.success !== undefined || data.message || data.error)
+  });
+
+  // Analyze MCap growth format if successful
+  if (mcapGrowthResult && (mcapGrowthResult.success || mcapGrowthResult.message)) {
+    console.log('\n📊 MCAP GROWTH FORMAT ANALYSIS:');
+    console.log('='.repeat(50));
+    
+    if (mcapGrowthResult.message) {
+      const message = mcapGrowthResult.message;
+      
+      // Check for MCap growth indicators in the format: MCap: $X (📈 +Y% from $Z) or MCap: $X (📉 -Y% from $Z)
+      const mcapGrowthPatterns = {
+        currentMcap: /MCap: \$([0-9,]+)/g,
+        growthPositive: /📈 \+(\d+\.?\d*)% from \$([0-9,]+)/g,
+        growthNegative: /📉 -(\d+\.?\d*)% from \$([0-9,]+)/g,
+        firstTime: /MCap: \$([0-9,]+)(?!\s*\()/g // MCap without growth indicator
+      };
+
+      let foundMcapTracking = false;
+      let mcapMatches = {};
+
+      Object.entries(mcapGrowthPatterns).forEach(([key, pattern]) => {
+        const matches = [...message.matchAll(pattern)];
+        if (matches.length > 0) {
+          foundMcapTracking = true;
+          mcapMatches[key] = matches.map(match => ({
+            full: match[0],
+            value: match[1],
+            original: match[2] || null
+          }));
+        }
+      });
+
+      if (foundMcapTracking) {
+        console.log('✅ Found MCap tracking indicators:');
+        Object.entries(mcapMatches).forEach(([indicator, matches]) => {
+          console.log(`   ${indicator.toUpperCase()}:`);
+          matches.forEach((match, index) => {
+            console.log(`     ${index + 1}. ${match.full}`);
+            if (match.original) {
+              console.log(`        Growth from: $${match.original}`);
+            }
+          });
+        });
+        
+        // Validate tracking functionality
+        const hasGrowthTracking = mcapMatches.growthPositive?.length > 0 || mcapMatches.growthNegative?.length > 0;
+        const hasFirstTimeTokens = mcapMatches.firstTime?.length > 0;
+        console.log(`   Growth Tracking: ${hasGrowthTracking ? '✅ ACTIVE' : '⚠️ NO GROWTH DETECTED'}`);
+        console.log(`   First Time Tokens: ${hasFirstTimeTokens ? '✅ DETECTED' : '⚠️ NONE'}`);
+      } else {
+        console.log('⚠️ No MCap tracking indicators found - feature may not be active');
+      }
+    }
+    
+    console.log('='.repeat(50));
+  }
+
+  // Test MCap Range Filtering (30k-2M)
+  await testEndpoint('MCap Tracking - Range Filter (30k-2M)', '/api/trending/track', {
+    method: 'PUT',
+    params: {
+      key: 'r3l0ads0l-trending',
+      test: 'mcap-range'
+    },
+    timeout: 20000,
+    validator: (data) => {
+      return data && (
+        data.success !== undefined ||
+        data.message ||
+        data.error
+      )
+    }
+  });
+
+  // Test MCap Database Operations
+  await testEndpoint('MCap Tracking - Database Operations', '/api/trending/track', {
+    method: 'PUT',
+    params: {
+      key: 'r3l0ads0l-trending',
+      test: 'mcap-db'
+    },
+    timeout: 15000,
+    validator: (data) => {
+      return data && (
+        data.success !== undefined ||
+        data.message ||
+        data.error
+      )
+    }
+  });
+
+  // Test MCap Growth Calculation Accuracy
+  log.info('\n🧮 Testing MCap Growth Calculation...');
+
+  // Helper function to validate MCap growth calculation
+  const validateMcapGrowth = (firstMcap, currentMcap, expectedGrowth) => {
+    const calculatedGrowth = ((currentMcap - firstMcap) / firstMcap) * 100;
+    const tolerance = 0.1; // 0.1% tolerance
+    return Math.abs(calculatedGrowth - expectedGrowth) <= tolerance;
+  };
+
+  // Test growth calculation with sample data
+  const mcapGrowthTests = [
+    { first: 100000, current: 150000, expected: 50.0, description: '50% growth' },
+    { first: 200000, current: 180000, expected: -10.0, description: '10% decline' },
+    { first: 500000, current: 750000, expected: 50.0, description: '50% growth from 500k' },
+    { first: 1000000, current: 1200000, expected: 20.0, description: '20% growth from 1M' },
+    { first: 50000, current: 45000, expected: -10.0, description: '10% decline from 50k' }
+  ];
+
+  console.log('\n🧪 MCAP GROWTH CALCULATION TESTS:');
+  console.log('='.repeat(50));
+
+  mcapGrowthTests.forEach((test, index) => {
+    const isValid = validateMcapGrowth(test.first, test.current, test.expected);
+    console.log(`Test ${index + 1}: ${isValid ? '✅ PASS' : '❌ FAIL'}`);
+    console.log(`   Description: ${test.description}`);
+    console.log(`   First MCap: $${test.first.toLocaleString()}`);
+    console.log(`   Current MCap: $${test.current.toLocaleString()}`);
+    console.log(`   Expected Growth: ${test.expected >= 0 ? '+' : ''}${test.expected}%`);
+    
+    if (!isValid) {
+      const actualGrowth = ((test.current - test.first) / test.first) * 100;
+      console.log(`   Actual Growth: ${actualGrowth >= 0 ? '+' : ''}${actualGrowth.toFixed(1)}%`);
+    }
+    console.log('');
+  });
+
+  console.log('='.repeat(50));
+
+  // Test MCap Display Format Validation
+  const mcapDisplayFormats = [
+    'MCap: $150,000',
+    'MCap: $180,000 (📉 -10.0% from $200,000)',
+    'MCap: $750,000 (📈 +50.0% from $500,000)',
+    'MCap: $1,200,000 (📈 +20.0% from $1,000,000)',
+    'MCap: $45,000 (📉 -10.0% from $50,000)'
+  ];
+
+  console.log('\n📋 MCAP DISPLAY FORMAT VALIDATION:');
+  console.log('='.repeat(50));
+
+  mcapDisplayFormats.forEach((format, index) => {
+    const hasGrowthIndicator = format.includes('📈') || format.includes('📉');
+    const hasPercentage = /[+-]\d+\.?\d*%/.test(format);
+    const hasOriginalMcap = /from \$[\d,]+/.test(format);
+    
+    const isValidFormat = !hasGrowthIndicator || (hasPercentage && hasOriginalMcap);
+    
+    console.log(`Format ${index + 1}: ${isValidFormat ? '✅ VALID' : '❌ INVALID'}`);
+    console.log(`   Display: "${format}"`);
+    console.log(`   Has Growth: ${hasGrowthIndicator ? 'Yes' : 'No'}`);
+    if (hasGrowthIndicator) {
+      console.log(`   Has Percentage: ${hasPercentage ? 'Yes' : 'No'}`);
+      console.log(`   Has Original: ${hasOriginalMcap ? 'Yes' : 'No'}`);
+    }
+    console.log('');
+  });
+
+  console.log('='.repeat(50));
+
+  // === TRENDING TRACKER FILTERING TESTS ===

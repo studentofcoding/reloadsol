@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
 import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
+import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, bulkTrackTokenMcaps } from '@/utils/mcap-tracker'
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
@@ -245,6 +246,21 @@ async function sendFilteredTokensNotification() {
             return;
         }
 
+        // Track MCap for tokens in the tracking range (30k-2M)
+        const tokensInTrackingRange = sortedTokens.filter(token => isInTrackingRange(token.mcap));
+        let mcapTrackingResults = new Map();
+        
+        if (tokensInTrackingRange.length > 0) {
+            console.log(`Tracking MCap for ${tokensInTrackingRange.length} tokens in range 30k-2M`);
+            mcapTrackingResults = await bulkTrackTokenMcaps(
+                tokensInTrackingRange.map(token => ({
+                    address: token.token_address,
+                    symbol: token.token_symbol,
+                    mcap: token.mcap
+                }))
+            );
+        }
+
         // Calculate summary statistics
         const currentTokensMap = new Map(sortedTokens.map(token => [token.token_address, token]));
 
@@ -313,12 +329,18 @@ async function sendFilteredTokensNotification() {
                 const riskEmoji = getRiskEmoji(riskResult.riskLevel);
                 const riskDisplay = formatDetailedRiskForDiscord(token, riskResult);
 
+                // Get MCap tracking info
+                const mcapTracking = mcapTrackingResults.get(token.token_address);
+                const mcapDisplay = mcapTracking 
+                    ? getMcapDisplayString(mcapTracking)
+                    : `MCap: $${token.mcap.toLocaleString()}`;
+
                 // Construct chart link
                 const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
 
                 return `**[${token.token_symbol}](${chartLink})** ${riskEmoji}\n` +
                     `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +
-                    `MCap: $${token.mcap.toLocaleString()}\n` +
+                    `${mcapDisplay}\n` +
                     `${riskDisplay}\n`;
             }));
 
@@ -347,12 +369,12 @@ async function sendFilteredTokensNotification() {
             embeds: [
                 {
                     title: ` 📜 Filtered Token Update`,
-                    description: `**Summary:** ${addedCount} added, ${updatedCount} updated, ${removedCount} removed\n**Price movements:** ${increasedCount} increased, ${decreasedCount} decreased`,
+                    description: `**Summary:** ${addedCount} added, ${updatedCount} updated, ${removedCount} removed\n**Price movements:** ${increasedCount} increased, ${decreasedCount} decreased\n**MCap Tracking:** ${mcapTrackingResults.size} tokens tracked for growth`,
                     color: 3447003, // Blue color
                     timestamp: new Date().toISOString(),
                     fields,
                     footer: {
-                        text: `Filtered: Score ≥${filterCriteria.min_organic_score}, MCap $${(filterCriteria.min_mcap / 1000).toFixed(0)}k-$${(filterCriteria.max_mcap / 1000000).toFixed(0)}M, 5m change >-40%`
+                        text: `Filtered: Score ≥${filterCriteria.min_organic_score}, MCap $${(filterCriteria.min_mcap / 1000).toFixed(0)}k-$${(filterCriteria.max_mcap / 1000000).toFixed(0)}M, 5m change >-40% | MCap growth tracked for 30k-2M range`
                     }
                 }
             ]
