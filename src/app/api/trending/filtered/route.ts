@@ -318,6 +318,7 @@ async function sendFilteredTokensNotification() {
 
                 return `**[${token.token_symbol}](${chartLink})** ${riskEmoji}\n` +
                     `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +
+                    `MCap: $${token.mcap.toLocaleString()}\n` +
                     `${riskDisplay}\n`;
             }));
 
