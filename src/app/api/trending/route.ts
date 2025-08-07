@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from '@/utils/axiom'
+import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
 
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
@@ -186,6 +187,15 @@ function clearRefreshState() {
   refreshState.requestCount = 0;
 }
 
+// Helper function to truncate field values that are too long
+function truncateFieldValue(value: string, maxLength: number = 1024): string {
+  if (value.length <= maxLength) return value;
+
+  const truncated = value.substring(0, maxLength - 50);
+  const lastNewline = truncated.lastIndexOf('\n');
+  return lastNewline > 0 ? truncated.substring(0, lastNewline) + '\n\n*...truncated*' : truncated + '\n\n*...truncated*';
+}
+
 // Function to send updates to Discord
 async function sendDiscordNotification(
   tokenArray: TransformedToken[],
@@ -250,14 +260,14 @@ async function sendDiscordNotification(
   try {
     console.log('🚀 Starting Discord notification preparation...');
 
-    // Group newly added tokens by market cap categories
+    // Process tokens by market cap categories with risk assessment
     const categories = [
-      { label: '$30k - $70k', min: 30_000, max: 70_000 },
-      { label: '$71k - $120k', min: 71_000, max: 120_000 },
-      { label: '$121k - $200k', min: 121_000, max: 200_000 },
-      { label: '$201k - $500k', min: 201_000, max: 500_000 },
-      { label: '$501k - $1M', min: 501_000, max: 1_000_000 },
-      { label: '$1M - $3M', min: 1_000_001, max: 3_000_000 }
+      { label: '$30k - $70k MCap', min: 30_000, max: 70_000 },
+      { label: '$71k - $120k MCap', min: 71_000, max: 120_000 },
+      { label: '$121k - $200k MCap', min: 121_000, max: 200_000 },
+      { label: '$201k - $500k MCap', min: 201_000, max: 500_000 },
+      { label: '$501k - $1M MCap', min: 501_000, max: 1_000_000 },
+      { label: '$1M - $3M MCap', min: 1_000_001, max: 3_000_000 }
     ];
 
     // If no new tokens, but there are price movements, include those tokens in the message
@@ -276,83 +286,64 @@ async function sendDiscordNotification(
       hasPriceMovement
     });
 
-    // For each category, filter and format up to 5 tokens with improved error handling
+    // Sort tokens for better display
+    const sortedTokens = tokensToShare.sort((a, b) => {
+      if (b.organic_score !== a.organic_score) {
+        return b.organic_score - a.organic_score;
+      }
+      return Math.abs(b.change_1h || 0) - Math.abs(a.change_1h || 0);
+    });
+
+    console.log(`📊 Processing ${sortedTokens.length} tokens for Discord notification`);
+
+    // Create category fields for embed format with size validation
     const categoryFields = await Promise.all(categories.map(async cat => {
-      const tokens = tokensToShare.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 5);
+      const tokens = sortedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 10);
       if (tokens.length === 0) return null;
 
-      console.log(`📈 Processing ${tokens.length} tokens for category ${cat.label}`);
+      console.log(`🏷️ Processing ${tokens.length} tokens in category: ${cat.label}`);
 
-      const tokenValues = await Promise.all(tokens.map(async token => {
-        const priceChangeEmoji = token.price_change
-          ? (token.price_change > 0 ? '📈' : '📉')
-          : '';
+      const tokenEntries = await Promise.all(tokens.map(async token => {
         const hourChangeEmoji = token.change_1h
           ? (token.change_1h > 0 ? '🟢' : '🔴')
-          : '';
+          : '⚪';
 
-        // Risk assessment with improved error handling and timeout
-        let riskLevel = 'LOW';
+        const hourChangePercent = token.change_1h ? (token.change_1h * 100).toFixed(2) : '0.00';
 
-        try {
-          console.log(`🔍 Fetching Axiom data for ${token.token_symbol}...`);
+        // Use centralized risk assessment
+        const riskResult = await assessTokenRisk({
+          token_address: token.token_address,
+          token_symbol: token.token_symbol,
+          mcap: token.mcap,
+          price: token.price,
+          change_1h: token.change_1h,
+          change_5m: token.change_5m,
+          organic_score: token.organic_score
+        }, {
+          timeoutMs: 5000,
+          enableLogging: true,
+          fallbackToBasic: true
+        });
 
-          // Add timeout for Axiom API call to prevent hanging
-          const axiomPromise = fetchAxiomTokenInfo(token.token_address);
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Axiom API timeout')), 5000)
-          );
-
-          const axiomResult = await Promise.race([axiomPromise, timeoutPromise]) as any;
-
-          if (axiomResult.success && axiomResult.data) {
-            const riskIndicators = getRiskIndicators(axiomResult.data, token.mcap);
-            riskLevel = riskIndicators.overallRisk;
-
-            console.log(`✅ Axiom risk assessment for ${token.token_symbol}: ${riskLevel}`, {
-              insider: riskIndicators.insiderRisk,
-              bundler: riskIndicators.bundlerRisk,
-              concentration: riskIndicators.concentrationRisk,
-              fee: riskIndicators.feeRisk
-            });
-          } else {
-            console.log(`⚠️ Axiom API failed for ${token.token_symbol}, using fallback`);
-            // Fallback to organic score and volatility assessment
-            if (token.organic_score < 60) riskLevel = 'HIGH';
-            else if (token.organic_score < 75) riskLevel = 'MEDIUM';
-
-            const volatility = Math.abs(token.change_1h || 0) * 100;
-            if (volatility > 100 && riskLevel !== 'HIGH') riskLevel = 'HIGH';
-            else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MEDIUM';
-
-            console.log(`📈 Fallback risk assessment for ${token.token_symbol}: ${riskLevel} (organic: ${token.organic_score}, volatility: ${volatility.toFixed(1)}%)`);
-          }
-        } catch (error) {
-          console.warn(`⚠️ Risk assessment error for ${token.token_symbol}, using fallback:`, error instanceof Error ? error.message : 'Unknown error');
-
-          // Final fallback to basic assessment
-          if (token.organic_score < 60) riskLevel = 'HIGH';
-          else if (token.organic_score < 75) riskLevel = 'MEDIUM';
-
-          const volatility = Math.abs(token.change_1h || 0) * 100;
-          if (volatility > 100 && riskLevel !== 'HIGH') riskLevel = 'HIGH';
-          else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MEDIUM';
-
-          console.log(`🔄 Final fallback risk assessment for ${token.token_symbol}: ${riskLevel}`);
-        }
+        const riskEmoji = getRiskEmoji(riskResult.riskLevel);
+        const riskDisplay = formatDetailedRiskForDiscord(token, riskResult);
 
         // Construct chart link
         const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
 
-        return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
-          `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
-          `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}, Risk: ${riskLevel}\n` +
-          `📈 [Trade here](${chartLink})\n`;
+        return `**[${token.token_symbol}](${chartLink})** ${riskEmoji}\n` +
+          `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +
+          `${riskDisplay}\n`;
       }));
 
+      const fieldValue = tokenEntries.join('\n');
+
+      // Truncate field value if too long
+      const truncatedValue = truncateFieldValue(fieldValue);
+
       return {
-        name: `${cat.label} MCap`,
-        value: tokenValues.join('\n')
+        name: `${cat.label}`,
+        value: truncatedValue
       };
     }));
 

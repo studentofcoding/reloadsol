@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
+import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
@@ -283,46 +284,59 @@ async function sendFilteredTokensNotification() {
         ];
 
         // Create category fields for embed format with size validation
-        const categoryFields = categories.map(cat => {
+        const categoryFields = await Promise.all(categories.map(async cat => {
             const tokens = sortedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 10);
             if (tokens.length === 0) return null;
 
-            const fieldValue = tokens.map(token => {
+            const fieldValue = await Promise.all(tokens.map(async token => {
                 const hourChangeEmoji = token.change_1h
                     ? (token.change_1h > 0 ? '🟢' : '🔴')
                     : '⚪';
 
                 const hourChangePercent = token.change_1h ? (token.change_1h * 100).toFixed(2) : '0.00';
 
-                // Risk assessment based on organic score and price volatility
-                let riskLevel = 'LOW';
-                if (token.organic_score < 75) riskLevel = 'HIGH';
-                else if (token.organic_score < 85) riskLevel = 'MED';
+                // Use centralized risk assessment
+                const riskResult = await assessTokenRisk({
+                    token_address: token.token_address,
+                    token_symbol: token.token_symbol,
+                    mcap: token.mcap,
+                    price: token.price,
+                    change_1h: token.change_1h,
+                    change_5m: token.change_5m,
+                    organic_score: token.organic_score
+                }, {
+                    timeoutMs: 5000,
+                    enableLogging: true,
+                    fallbackToBasic: true
+                });
 
-                const volatility = Math.abs(token.change_1h || 0) * 100;
-                if (volatility > 100) riskLevel = 'HIGH';
-                else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MED';
+                const riskEmoji = getRiskEmoji(riskResult.riskLevel);
+                const riskDisplay = formatDetailedRiskForDiscord(token, riskResult);
 
                 // Construct chart link
                 const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
 
-                return `**${token.token_symbol}**\n` +
+                return `**[${token.token_symbol}](${chartLink})** ${riskEmoji}\n` +
                     `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +
-                    `Score: ${token.organic_score.toFixed(1)}, MCap: $${token.mcap.toLocaleString()}, Risk: ${riskLevel}\n` +
-                    `📈 [Trade here](${chartLink})\n`;
-            }).join('\n');
+                    `${riskDisplay}\n`;
+            }));
+
+            const joinedFieldValue = fieldValue.join('\n');
 
             // Truncate field value if too long
-            const truncatedValue = truncateFieldValue(fieldValue);
+            const truncatedValue = truncateFieldValue(joinedFieldValue);
 
             return {
                 name: `${cat.label}`,
                 value: truncatedValue
             };
-        }).filter(Boolean);
+        }));
+
+        // Filter out null values
+        const validCategoryFields = categoryFields.filter(Boolean);
 
         // If no tokens in any category, show a fallback field
-        const fields = categoryFields.length > 0 ? categoryFields : [{
+        const fields = validCategoryFields.length > 0 ? validCategoryFields : [{
             name: 'No Filtered Tokens Found',
             value: 'No tokens match the current filter criteria.'
         }];
