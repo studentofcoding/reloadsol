@@ -54,6 +54,20 @@ function safeEnqueue(controller: ReadableStreamDefaultController, data: Uint8Arr
     if (connection) {
       connection.isClosed = true
       connection.isActive = false
+      
+      // Immediately clear intervals to prevent further attempts
+      if (connection.keepAliveInterval) {
+        clearInterval(connection.keepAliveInterval)
+        connection.keepAliveInterval = undefined
+      }
+      
+      if (connection.autoCleanupTimeout) {
+        clearTimeout(connection.autoCleanupTimeout)
+        connection.autoCleanupTimeout = undefined
+      }
+      
+      // Remove from active connections map
+      activeConnections.delete(connectionId)
     }
 
     return false
@@ -92,7 +106,14 @@ export async function GET(request: NextRequest) {
       const cleanup = () => {
         console.log(`🧹 Cleaning up SSE connection: ${connectionId}`)
 
+        // First check if connection is already cleaned up
+        if (connection && (connection.isClosed || !connection.isActive)) {
+          console.log(`Connection ${connectionId} already cleaned up, skipping`)
+          return
+        }
+
         if (connection) {
+          // Mark as inactive and closed first to prevent race conditions
           connection.isActive = false
           connection.isClosed = true
 
@@ -183,12 +204,18 @@ export async function GET(request: NextRequest) {
       console.log('SSE connection cancelled by client', reason)
 
       // Find and cleanup connections for this wallet
+      let found = false;
       for (const [id, conn] of Array.from(activeConnections.entries())) {
         if (conn.walletAddress === walletAddress) {
           console.log(`Cleaning up cancelled connection: ${id}`)
           conn.cleanup()
+          found = true;
           break
         }
+      }
+      
+      if (!found) {
+        console.log(`No active connection found for wallet ${walletAddress.slice(0, 8)}... during cancel`);
       }
     }
   })
@@ -222,7 +249,13 @@ export async function POST(request: NextRequest) {
     const deadConnections: string[] = []
 
     for (const [connectionId, connection] of Array.from(activeConnections.entries())) {
-      if (connection.walletAddress === walletAddress && connection.isActive && !connection.isClosed) {
+      // Skip already closed or inactive connections
+      if (connection.isClosed || !connection.isActive) {
+        deadConnections.push(connectionId);
+        continue;
+      }
+      
+      if (connection.walletAddress === walletAddress) {
         const message = `data: ${JSON.stringify({
           type,
           data,
