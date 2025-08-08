@@ -94,8 +94,22 @@ async function initializeTradingConnection(): Promise<void> {
 // ✅ NEW: Function to get existing open positions using PnLTracker logic
 async function getExistingOpenPositions(walletAddress: string): Promise<OpenPositionCycle[]> {
     try {
-        // Get trading records from the API (same as PnLTracker)
-        const response = await fetch(`/api/trading/records?wallet=${encodeURIComponent(walletAddress)}`)
+        // Skip fetch in server-side contexts to prevent URL errors
+        if (typeof window === 'undefined') {
+            log.warn('price_tracking', 'Skipping fetch in server-side context for getExistingOpenPositions', { walletAddress: walletAddress.substring(0, 8) + '...' })
+            return []
+        }
+
+        // Get trading records from the API (client-side only)
+        const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+        const apiUrl = `${baseUrl}/api/trading/records?wallet=${encodeURIComponent(walletAddress)}`
+        
+        log.info('price_tracking', 'Fetching trading records for open positions', { 
+            walletAddress: walletAddress.substring(0, 8) + '...',
+            apiUrl: apiUrl.replace(walletAddress, walletAddress.substring(0, 8) + '...')
+        })
+        
+        const response = await fetch(apiUrl)
         if (!response.ok) {
             throw new Error(`Failed to fetch trading records: ${response.statusText}`)
         }
