@@ -1306,11 +1306,10 @@ export default function PnLTracker() {
             <button
               onClick={refreshOpenPositionPrices}
               disabled={isRefreshingPrices}
-              className="flex items-center space-x-1 px-2 py-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white text-xs rounded-md transition-colors"
+              className="flex items-center space-x-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 text-white text-xs rounded-md transition-colors"
               title="Refresh current prices"
             >
               <span className={isRefreshingPrices ? 'animate-spin' : ''}>🔄</span>
-              <span>Refresh</span>
             </button>
           )}
         </div>
