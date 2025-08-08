@@ -194,16 +194,37 @@ export default function PnLTracker() {
 
   // ✅ NEW: Toggle notifications
   const toggleNotifications = useCallback(async () => {
+    console.log('🔔 Toggling notifications:', { 
+      currentState: notificationsEnabled, 
+      permission: notificationPermission 
+    })
+    
     if (!notificationsEnabled) {
       // Enabling notifications - request permission first
+      console.log('🔔 Requesting notification permission...')
       const hasPermission = notificationPermission === 'granted' || await requestNotificationPermission()
       
       if (hasPermission) {
         setNotificationsEnabled(true)
         localStorage.setItem('pnl-notifications-enabled', 'true')
-        console.log('🔔 PnL notifications enabled')
+        console.log('✅ PnL notifications enabled successfully')
+        
+        // Test notification
+        if (Notification.permission === 'granted') {
+          try {
+            const testNotification = new Notification('🔔 PnL Notifications Enabled', {
+              body: 'You will now receive notifications when your positions reach the threshold',
+              icon: '/favicon.ico',
+              tag: 'pnl-test'
+            })
+            setTimeout(() => testNotification.close(), 3000)
+          } catch (error) {
+            console.error('Error sending test notification:', error)
+          }
+        }
       } else {
-        console.warn('Notification permission denied')
+        console.warn('❌ Notification permission denied')
+        alert('Please enable notifications in your browser settings to receive P&L alerts')
       }
     } else {
       // Disabling notifications
@@ -296,16 +317,45 @@ export default function PnLTracker() {
 
   // ✅ NEW: Check for notification-worthy positions
   const checkForNotifications = useCallback(() => {
-    if (!notificationsEnabled || !connected) return
+    console.log('🔔 Checking notifications:', {
+      notificationsEnabled,
+      connected,
+      openPositionsCount: openPositions.length,
+      notificationPermission,
+      notificationThreshold
+    })
+    
+    if (!notificationsEnabled || !connected) {
+      console.log('🔕 Notifications disabled or not connected')
+      return
+    }
+
+    if (notificationPermission !== 'granted') {
+      console.log('🔕 Notification permission not granted:', notificationPermission)
+      return
+    }
+
+    let checkedPositions = 0
+    let notifiablePositions = 0
 
     openPositions.forEach(position => {
-      if (position.pnlPercentage === undefined) return
+      checkedPositions++
+      
+      if (position.pnlPercentage === undefined) {
+        console.log(`⏳ Position ${position.symbol || 'Unknown'} has no P&L yet`)
+        return
+      }
 
       const pnlAbs = Math.abs(position.pnlPercentage)
-      const tokenKey = `${position.mintAddress}-${Math.floor(pnlAbs / 10) * 10}` // Group by 10% increments
+      const tokenKey = `${position.mintAddress}-${Math.floor(pnlAbs / 10) * 10}`
+      
+      console.log(`📊 Position ${position.symbol || 'Unknown'}: ${position.pnlPercentage.toFixed(1)}%, threshold: ${notificationThreshold}%, already notified: ${notifiedTokens.has(tokenKey)}`)
       
       // Check if this position exceeds the threshold and hasn't been notified recently
       if (pnlAbs >= notificationThreshold && !notifiedTokens.has(tokenKey)) {
+        notifiablePositions++
+        console.log(`🚨 Sending notification for ${position.symbol || 'Unknown'}: ${position.pnlPercentage.toFixed(1)}%`)
+        
         sendPnLNotification(position, position.pnlPercentage)
         
         // Mark as notified
@@ -321,12 +371,19 @@ export default function PnLTracker() {
         }, 30 * 60 * 1000) // 30 minutes
       }
     })
-  }, [notificationsEnabled, connected, openPositions, notificationThreshold, notifiedTokens, sendPnLNotification])
+    
+    console.log(`🔔 Notification check complete: ${checkedPositions} positions checked, ${notifiablePositions} notifications sent`)
+  }, [notificationsEnabled, connected, openPositions, notificationThreshold, notifiedTokens, sendPnLNotification, notificationPermission])
 
   // ✅ NEW: Monitor positions for notifications
   useEffect(() => {
     if (notificationsEnabled && openPositions.length > 0) {
-      checkForNotifications()
+      // Add a small delay to ensure P&L calculations are complete
+      const timeoutId = setTimeout(() => {
+        checkForNotifications()
+      }, 1000) // 1 second delay
+      
+      return () => clearTimeout(timeoutId)
     }
   }, [checkForNotifications, notificationsEnabled, openPositions])
 
@@ -635,7 +692,22 @@ export default function PnLTracker() {
 
         // Sort results (newest first)
         closedCycles.sort((a, b) => b.sellTimestamp - a.sellTimestamp)
-        openPositionsResult.sort((a, b) => b.buyTimestamp - a.buyTimestamp)
+        openPositionsResult.sort((a, b) => {
+          // First, prioritize positions with calculated P&L
+          const aHasPnL = a.pnlPercentage !== undefined
+          const bHasPnL = b.pnlPercentage !== undefined
+          
+          if (aHasPnL && !bHasPnL) return -1
+          if (!aHasPnL && bHasPnL) return 1
+          
+          // If both have P&L, sort by percentage (highest positive first)
+          if (aHasPnL && bHasPnL) {
+            return (b.pnlPercentage || 0) - (a.pnlPercentage || 0)
+          }
+          
+          // If neither has P&L, sort by timestamp (newest first)
+          return b.buyTimestamp - a.buyTimestamp
+        })
 
         // Update state and exit this calculation early – legacy logic below is skipped
         setPnlRecords(closedCycles)
