@@ -7,6 +7,7 @@ import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trad
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
 import { notifyTradingUpdate } from '@/utils/trading-notifications'
+import { addSLTPPosition } from '@/utils/sl-tp-tracker'
 
 export const runtime = 'nodejs'
 
@@ -193,15 +194,15 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     description: 'Original aggressive trading strategy',
     is_active: true,
     take_profit_levels: {
-      tp1_percentage: 60,
-      tp1_sell_percentage: 80,
+      tp1_percentage: 45,
+      tp1_sell_percentage: 90,
       tp2_percentage: 100,
       tp3_percentage: 30,
       tp3_enabled: false
     },
     buy_amount_sol: 0.015,
     priority_fee_lamports: 1000000,
-    stop_loss_percentage: -40,
+    stop_loss_percentage: -35,
     max_hold_hours: 24,
     conditions: {
       max_risk_level: 'high'
@@ -4758,7 +4759,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             ) || []
 
             console.log(`  - Existing real trade tokens found: ${existingRealTradeTokens.length}`)
-            
+
             // Find a token with both real trading AND a valid keypair_path
             const validRealTradeToken = existingRealTradeTokens.find(t =>
               t.trading_simulation?.keypair_path
@@ -4812,16 +4813,43 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             )
 
             if (buyOperation) {
-              initialSimulation.buy_operation = buyOperation
-              initialSimulation.current_status = 'holding'
-              initialSimulation.remaining_token_amount = buyOperation.token_amount_received
-              initialSimulation.initial_token_amount = buyOperation.token_amount_received
-              tradingSimulation = initialSimulation
+            initialSimulation.buy_operation = buyOperation
+            initialSimulation.current_status = 'holding'
+            initialSimulation.remaining_token_amount = buyOperation.token_amount_received
+            initialSimulation.initial_token_amount = buyOperation.token_amount_received
+            tradingSimulation = initialSimulation
 
-              console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
-            } else {
-              console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
+            console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
+
+            // Add position to SL/TP tracker for real-time monitoring
+            if (!initialSimulation.is_simulated && tradingKeypair) {
+              try {
+                const strategy = getTradingStrategy(assignedStrategy)
+                await addSLTPPosition({
+                  walletAddress: tradingKeypair.publicKey.toString(),
+                  tokenAddress: token.token_address,
+                  tokenSymbol: token.token_symbol,
+                  positionSize: parseFloat(buyOperation.token_amount_received),
+                  entryPrice: token.current_price,
+                  stopLossPercentage: strategy.stop_loss_percentage,
+                  takeProfitPercentage: strategy.take_profit_levels.tp2_percentage,
+                  positionType: 'bot',
+                  strategyId: assignedStrategy,
+                  tp1Percentage: strategy.take_profit_levels.tp1_percentage,
+                  tp1SellPercentage: strategy.take_profit_levels.tp1_sell_percentage,
+                  tp2Percentage: strategy.take_profit_levels.tp2_percentage,
+                  tp3Percentage: strategy.take_profit_levels.tp3_percentage,
+                  tp3Enabled: strategy.take_profit_levels.tp3_enabled
+                })
+                
+                console.log(`✅ Added ${token.token_symbol} to SL/TP tracker for real-time monitoring`)
+              } catch (slTpError) {
+                console.error('❌ Failed to add position to SL/TP tracker:', slTpError)
+              }
             }
+          } else {
+            console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
+          }
           } catch (error) {
             console.error(`❌ Buy operation error for ${token.token_symbol}:`, error)
           }
@@ -4965,7 +4993,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               ) || []
 
               console.log(`  - Existing real trade tokens found: ${existingRealTradeTokens.length}`)
-              
+
               // Find a token with both real trading AND a valid keypair_path
               const validRealTradeToken = existingRealTradeTokens.find(t =>
                 t.trading_simulation?.keypair_path
@@ -5022,12 +5050,39 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               )
 
               if (buyOperation) {
-                initialSimulation.buy_operation = buyOperation
-                initialSimulation.current_status = 'holding'
-                initialSimulation.remaining_token_amount = buyOperation.token_amount_received
-                initialSimulation.initial_token_amount = buyOperation.token_amount_received
+                  initialSimulation.buy_operation = buyOperation
+                  initialSimulation.current_status = 'holding'
+                  initialSimulation.remaining_token_amount = buyOperation.token_amount_received
+                  initialSimulation.initial_token_amount = buyOperation.token_amount_received
 
-                console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
+                  console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
+
+                  // Add position to SL/TP tracker for real-time monitoring
+                  if (!initialSimulation.is_simulated && tradingKeypair) {
+                    try {
+                      const strategy = getTradingStrategy(assignedStrategy)
+                      await addSLTPPosition({
+                        walletAddress: tradingKeypair.publicKey.toString(),
+                        tokenAddress: token.token_address,
+                        tokenSymbol: token.token_symbol,
+                        positionSize: parseFloat(buyOperation.token_amount_received),
+                        entryPrice: token.current_price,
+                        stopLossPercentage: strategy.stop_loss_percentage,
+                        takeProfitPercentage: strategy.take_profit_levels.tp2_percentage,
+                        positionType: 'bot',
+                        strategyId: assignedStrategy,
+                        tp1Percentage: strategy.take_profit_levels.tp1_percentage,
+                        tp1SellPercentage: strategy.take_profit_levels.tp1_sell_percentage,
+                        tp2Percentage: strategy.take_profit_levels.tp2_percentage,
+                        tp3Percentage: strategy.take_profit_levels.tp3_percentage,
+                        tp3Enabled: strategy.take_profit_levels.tp3_enabled
+                      })
+                      
+                      console.log(`✅ Added ${token.token_symbol} to SL/TP tracker for real-time monitoring`)
+                    } catch (slTpError) {
+                      console.error('❌ Failed to add position to SL/TP tracker:', slTpError)
+                    }
+                  }
 
                 // Update token status to tracking with buy simulation
                 updatesPromises.push(
