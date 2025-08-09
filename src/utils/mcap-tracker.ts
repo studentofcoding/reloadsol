@@ -320,14 +320,29 @@ export async function trackTokenMcap(
     }
 
     // Check database for existing record
-    const { data: existingRecord, error } = await supabase
-      .from('token_mcap_tracking')
-      .select('*')
-      .eq('token_address', tokenAddress)
-      .single()
+    let existingRecord: McapSnapshot | null = null
+    try {
+      const { data, error } = await supabase
+        .from('token_mcap_tracking')
+        .select('*')
+        .eq('token_address', tokenAddress)
+        .single()
 
-    if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
-      console.error('Error fetching MCap record:', error)
+      if (error && (error as any).code !== 'PGRST116') { // PGRST116 = no rows returned
+        throw error
+      }
+      existingRecord = (data as any) || null
+    } catch (fetchErr: any) {
+      // Handle transient fetch failures from undici/fetch
+      const message = String(fetchErr?.message || '').toLowerCase()
+      const isTransient = message.includes('fetch failed') || message.includes('timeout')
+      log.error('price_tracking', 'Error fetching MCap record', fetchErr as Error, {
+        tokenAddress,
+        tokenSymbol,
+        currentMcap: normalizedCurrentMcap,
+        transient: isTransient,
+      })
+      // Graceful degrade: proceed as first-time to avoid blocking tracking when DB is briefly unavailable
       return { isFirstTime: true, currentMcap: normalizedCurrentMcap }
     }
 
