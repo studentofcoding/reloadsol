@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from '@/utils/axiom'
+import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
+import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, bulkTrackTokenMcaps } from '@/utils/mcap-tracker'
 
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
@@ -25,34 +27,60 @@ let globalTimers: {
 // Function to initialize the notification timer
 function initializeNotificationTimer() {
   if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !globalTimers.notificationTimer) {
-    console.log('Initializing automatic notification timer...');
+    console.log('🔔 Initializing automatic notification timer...', {
+      ENABLE_DISCORD_NOTIFICATIONS,
+      AUTO_NOTIFICATION_INTERVAL_MS,
+      intervalMinutes: AUTO_NOTIFICATION_INTERVAL_MS / 60000
+    });
 
     // Initial delay of 30 seconds after server start before first check
     globalTimers.initialDelayTimer = setTimeout(() => {
-      console.log('Starting automatic notification timer');
+      console.log('⏰ Starting automatic notification timer');
 
       // Set interval for periodic notifications
       globalTimers.notificationTimer = setInterval(() => {
         const currentTime = Date.now();
+        const timeSinceLastNotification = currentTime - lastAutoNotificationTime;
+
+        console.log('🔄 Auto-notification timer check', {
+          currentTime: new Date(currentTime).toISOString(),
+          lastAutoNotificationTime: new Date(lastAutoNotificationTime).toISOString(),
+          timeSinceLastNotification,
+          AUTO_NOTIFICATION_INTERVAL_MS,
+          shouldTrigger: timeSinceLastNotification >= AUTO_NOTIFICATION_INTERVAL_MS
+        });
 
         // Check if it's time for a notification
-        if (currentTime - lastAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) {
-          console.log('Auto-notification interval triggered');
+        if (timeSinceLastNotification >= AUTO_NOTIFICATION_INTERVAL_MS) {
+          console.log('🚨 Auto-notification interval triggered');
 
           // Determine if we need a full refresh
           const needsFullRefresh = currentTime - tokenCache.lastFullRefresh >= FULL_REFRESH_INTERVAL_MS;
 
+          console.log('🔄 Refresh check', {
+            currentTime,
+            lastFullRefresh: tokenCache.lastFullRefresh,
+            timeSinceFullRefresh: currentTime - tokenCache.lastFullRefresh,
+            FULL_REFRESH_INTERVAL_MS,
+            needsFullRefresh
+          });
+
           // Trigger notification with proper error handling
           fetchAndUpdateCache(needsFullRefresh, currentTime, true)
             .then(tokenArray => {
-              console.log(`Scheduled notification completed with ${tokenArray.length} tokens`);
+              console.log(`✅ Scheduled notification completed with ${tokenArray.length} tokens`);
             })
             .catch(error => {
-              console.error('Error in scheduled notification:', error);
+              console.error('❌ Error in scheduled notification:', error);
               // Reset refresh state on error to prevent permanent blocking
               refreshState.promise = null;
               refreshState.timeout = null;
             });
+        } else {
+          console.log('⏭️ Auto-notification timer check - not time yet', {
+            timeRemaining: AUTO_NOTIFICATION_INTERVAL_MS - timeSinceLastNotification,
+            timeRemainingMinutes: (AUTO_NOTIFICATION_INTERVAL_MS - timeSinceLastNotification) / 60000
+          });
         }
       }, Math.min(60000, AUTO_NOTIFICATION_INTERVAL_MS / 2)); // Check at least every minute or half the notification interval
 
@@ -60,9 +88,13 @@ function initializeNotificationTimer() {
       globalTimers.initialDelayTimer = undefined;
     }, 30000);
   } else if (globalTimers.notificationTimer) {
-    console.log('Notification timer is already running.');
+    console.log('⚠️ Notification timer is already running.');
   } else {
-    console.log('Automatic notifications are disabled.');
+    console.log('❌ Automatic notifications are disabled.', {
+      processExists: typeof process !== 'undefined',
+      ENABLE_DISCORD_NOTIFICATIONS,
+      hasExistingTimer: !!globalTimers.notificationTimer
+    });
   }
 }
 
@@ -156,6 +188,15 @@ function clearRefreshState() {
   refreshState.requestCount = 0;
 }
 
+// Helper function to truncate field values that are too long
+function truncateFieldValue(value: string, maxLength: number = 1024): string {
+  if (value.length <= maxLength) return value;
+
+  const truncated = value.substring(0, maxLength - 50);
+  const lastNewline = truncated.lastIndexOf('\n');
+  return lastNewline > 0 ? truncated.substring(0, lastNewline) + '\n\n*...truncated*' : truncated + '\n\n*...truncated*';
+}
+
 // Function to send updates to Discord
 async function sendDiscordNotification(
   tokenArray: TransformedToken[],
@@ -171,34 +212,63 @@ async function sendDiscordNotification(
   forceSend: boolean = false,
   newlyAddedTokens: TransformedToken[] = []
 ) {
+  console.log('🔔 Discord notification check started', {
+    enabled: ENABLE_DISCORD_NOTIFICATIONS,
+    webhookConfigured: !!DISCORD_WEBHOOK_URL,
+    forceSend,
+    stats,
+    newlyAddedTokensCount: newlyAddedTokens.length
+  });
+
   if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
-    console.log('Discord notifications disabled or webhook URL not configured');
+    console.log('❌ Discord notifications disabled or webhook URL not configured', {
+      ENABLE_DISCORD_NOTIFICATIONS,
+      webhookConfigured: !!DISCORD_WEBHOOK_URL,
+      webhookUrl: DISCORD_WEBHOOK_URL ? `${DISCORD_WEBHOOK_URL.substring(0, 50)}...` : 'Not set'
+    });
     return;
   }
 
-  const SERVER_URL = process.env.PUBLIC_SERVER_URL || process.env.VERCEL_URL || '';
+  // const SERVER_URL = process.env.PUBLIC_SERVER_URL || process.env.VERCEL_URL || '';
+  // console.log('🌐 Server URL check', {
+  //   SERVER_URL,
+  //   PUBLIC_SERVER_URL: process.env.PUBLIC_SERVER_URL,
+  //   VERCEL_URL: process.env.VERCEL_URL,
+  //   matches: SERVER_URL === 'v2.reloadsol.xyz'
+  // });
 
-  if (SERVER_URL !== 'v2.reloadsol.xyz') {
-    console.log(`Skipping Discord notification: server URL is ${SERVER_URL}, not v2.reloadsol.xyz`);
-    return;
-  }
+  // if (SERVER_URL !== 'v2.reloadsol.xyz') {
+  //   console.log(`⏭️ Skipping Discord notification: server URL is ${SERVER_URL}, not v2.reloadsol.xyz`);
+  //   return;
+  // }
 
   // Always send if there are new tokens, updates, removals, or price movements in filter categories
   const hasPriceMovement = stats.price_increased > 0 || stats.price_decreased > 0;
-  if (!forceSend && stats.added === 0 && stats.updated === 0 && stats.removed === 0 && !hasPriceMovement) {
-    console.log('No changes to report to Discord');
+  const hasChanges = stats.added > 0 || stats.updated > 0 || stats.removed > 0 || hasPriceMovement;
+
+  console.log('📊 Change detection', {
+    hasChanges,
+    hasPriceMovement,
+    forceSend,
+    shouldSend: forceSend || hasChanges
+  });
+
+  if (!forceSend && !hasChanges) {
+    console.log('📭 No changes to report to Discord');
     return;
   }
 
   try {
-    // Group newly added tokens by market cap categories
+    console.log('🚀 Starting Discord notification preparation...');
+
+    // Process tokens by market cap categories with risk assessment
     const categories = [
-      { label: '$30k - $70k', min: 30_000, max: 70_000 },
-      { label: '$71k - $120k', min: 71_000, max: 120_000 },
-      { label: '$121k - $200k', min: 121_000, max: 200_000 },
-      { label: '$201k - $500k', min: 201_000, max: 500_000 },
-      { label: '$501k - $1M', min: 501_000, max: 1_000_000 },
-      { label: '$1M - $3M', min: 1_000_001, max: 3_000_000 }
+      { label: '$30k - $70k MCap', min: 30_000, max: 70_000 },
+      { label: '$71k - $120k MCap', min: 71_000, max: 120_000 },
+      { label: '$121k - $200k MCap', min: 121_000, max: 200_000 },
+      { label: '$201k - $500k MCap', min: 201_000, max: 500_000 },
+      { label: '$501k - $1M MCap', min: 501_000, max: 1_000_000 },
+      { label: '$1M - $3M MCap', min: 1_000_001, max: 3_000_000 }
     ];
 
     // If no new tokens, but there are price movements, include those tokens in the message
@@ -211,76 +281,106 @@ async function sendDiscordNotification(
       });
     }
 
-    // For each category, filter and format up to 5 tokens
+    console.log('🎯 Tokens to share', {
+      newlyAddedCount: newlyAddedTokens.length,
+      tokensToShareCount: tokensToShare.length,
+      hasPriceMovement
+    });
+
+    // Sort tokens for better display
+    const sortedTokens = tokensToShare.sort((a, b) => {
+      if (b.organic_score !== a.organic_score) {
+        return b.organic_score - a.organic_score;
+      }
+      return Math.abs(b.change_1h || 0) - Math.abs(a.change_1h || 0);
+    });
+
+    console.log(`📊 Processing ${sortedTokens.length} tokens for Discord notification`);
+
+    // Track MCap for tokens in the tracking range (30k-2M)
+    const tokensInTrackingRange = sortedTokens.filter(token => isInTrackingRange(token.mcap));
+    let mcapTrackingResults = new Map();
+    
+    if (tokensInTrackingRange.length > 0) {
+      console.log(`Tracking MCap for ${tokensInTrackingRange.length} tokens in range 30k-2M`);
+      mcapTrackingResults = await bulkTrackTokenMcaps(
+        tokensInTrackingRange.map(token => ({
+          address: token.token_address,
+          symbol: token.token_symbol,
+          mcap: token.mcap
+        }))
+      );
+    }
+
+    // Create category fields for embed format with size validation
     const categoryFields = await Promise.all(categories.map(async cat => {
-      const tokens = tokensToShare.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 5);
+      const tokens = sortedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 10);
       if (tokens.length === 0) return null;
 
-      const tokenValues = await Promise.all(tokens.map(async token => {
-        const priceChangeEmoji = token.price_change
-          ? (token.price_change > 0 ? '📈' : '📉')
-          : '';
+      console.log(`🏷️ Processing ${tokens.length} tokens in category: ${cat.label}`);
+
+      const tokenEntries = await Promise.all(tokens.map(async token => {
         const hourChangeEmoji = token.change_1h
           ? (token.change_1h > 0 ? '🟢' : '🔴')
-          : '';
+          : '⚪';
 
-        // Risk assessment based on organic score and price volatility
-        let riskLevel = 'LOW';
+        const hourChangePercent = token.change_1h ? (token.change_1h * 100).toFixed(2) : '0.00';
 
-        try {
-          // Try to get comprehensive risk assessment from Axiom
-          const axiomResult = await fetchAxiomTokenInfo(token.token_address);
+        // Use centralized risk assessment
+        const riskResult = await assessTokenRisk({
+          token_address: token.token_address,
+          token_symbol: token.token_symbol,
+          mcap: token.mcap,
+          price: token.price,
+          change_1h: token.change_1h,
+          change_5m: token.change_5m,
+          organic_score: token.organic_score
+        }, {
+          timeoutMs: 5000,
+          enableLogging: true,
+          fallbackToBasic: true
+        });
 
-          if (axiomResult.success && axiomResult.data) {
-            const riskIndicators = getRiskIndicators(axiomResult.data, token.mcap);
-            riskLevel = riskIndicators.overallRisk;
+        const riskEmoji = getRiskEmoji(riskResult.riskLevel);
+        const riskDisplay = formatDetailedRiskForDiscord(token, riskResult);
 
-            console.log(`📊 Axiom risk assessment for ${token.token_symbol}: ${riskLevel}`, {
-              insider: riskIndicators.insiderRisk,
-              bundler: riskIndicators.bundlerRisk,
-              concentration: riskIndicators.concentrationRisk,
-              fee: riskIndicators.feeRisk
-            });
-          } else {
-            // Fallback to organic score and volatility assessment
-            if (token.organic_score < 60) riskLevel = 'HIGH';
-            else if (token.organic_score < 75) riskLevel = 'MEDIUM';
-
-            const volatility = Math.abs(token.change_1h || 0) * 100;
-            if (volatility > 100 && riskLevel !== 'HIGH') riskLevel = 'HIGH';
-            else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MEDIUM';
-
-            console.log(`📈 Fallback risk assessment for ${token.token_symbol}: ${riskLevel} (organic: ${token.organic_score}, volatility: ${volatility.toFixed(1)}%)`);
-          }
-        } catch (error) {
-          // Final fallback to basic assessment
-          if (token.organic_score < 60) riskLevel = 'HIGH';
-          else if (token.organic_score < 75) riskLevel = 'MEDIUM';
-
-          const volatility = Math.abs(token.change_1h || 0) * 100;
-          if (volatility > 100 && riskLevel !== 'HIGH') riskLevel = 'HIGH';
-          else if (volatility > 50 && riskLevel === 'LOW') riskLevel = 'MEDIUM';
-
-          console.warn(`⚠️ Risk assessment error for ${token.token_symbol}, using fallback: ${riskLevel}`, error);
-        }
+        // Get MCap tracking info
+        const mcapTracking = mcapTrackingResults.get(token.token_address);
+        const mcapDisplay = mcapTracking 
+          ? getMcapDisplayString(mcapTracking)
+          : `MCap: $${token.mcap.toLocaleString()}`;
 
         // Construct chart link
         const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
 
-        return `**${token.token_symbol}** ${priceChangeEmoji}\n` +
-          `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${(token.change_1h * 100).toFixed(2)}%\n` +
-          `Score: ${token.organic_score.toFixed(1)}, MCap: $${(token.mcap).toLocaleString()}, Risk: ${riskLevel}\n` +
-          `📈 [Trade here](${chartLink})\n`;
+        return `**[${token.token_symbol}](${chartLink})** ${riskEmoji}\n` +
+          `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +
+          `${mcapDisplay}\n` +
+          `${riskDisplay}\n`;
       }));
 
+      const fieldValue = tokenEntries.join('\n');
+
+      // Truncate field value if too long
+      const truncatedValue = truncateFieldValue(fieldValue);
+
       return {
-        name: `${cat.label} MCap`,
-        value: tokenValues.join('\n')
+        name: `${cat.label}`,
+        value: truncatedValue
       };
     }));
 
+    // Filter out null categories and ensure we have content
+    const validFields = categoryFields.filter(field => field !== null);
+
+    console.log('📋 Discord message fields prepared', {
+      totalCategories: categories.length,
+      validFields: validFields.length,
+      hasContent: validFields.length > 0
+    });
+
     // If no tokens in any category, show a fallback field
-    const fields = categoryFields.length > 0 ? categoryFields : [{
+    const fields = validFields.length > 0 ? validFields : [{
       name: 'No New Tokens ≤ $3M MCap Added',
       value: 'No new tokens ≤ $3M market cap were added in this update.'
     }];
@@ -290,16 +390,22 @@ async function sendDiscordNotification(
       embeds: [
         {
           title: ` 🧪 Trending Token Update (${refreshType})`,
-          description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased`,
+          description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults.size} tokens tracked for growth`,
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
           fields,
           footer: {
-            text: 'Trending tokens (non filtered)'
+            text: 'Trending tokens (non filtered) | MCap growth tracked for 30k-2M range'
           }
         }
       ]
     };
+
+    console.log('📤 Sending Discord message...', {
+      embedsCount: message.embeds.length,
+      fieldsCount: fields.length,
+      webhookUrl: DISCORD_WEBHOOK_URL.substring(0, 50) + '...'
+    });
 
     // Send the message to Discord with timeout
     const controller = new AbortController();
@@ -318,16 +424,18 @@ async function sendDiscordNotification(
       clearTimeout(timeoutId);
 
       if (!response.ok) {
-        throw new Error(`Discord API responded with status: ${response.status}`);
+        const errorText = await response.text().catch(() => 'Unable to read error response');
+        throw new Error(`Discord API responded with status: ${response.status} - ${errorText}`);
       }
 
-      console.log('Discord notification sent successfully');
+      console.log('✅ Discord notification sent successfully');
     } catch (error) {
       clearTimeout(timeoutId);
+      console.error('❌ Error sending Discord message:', error);
       throw error;
     }
   } catch (error) {
-    console.error('Error sending Discord notification:', error);
+    console.error('💥 Error in Discord notification process:', error);
     // Don't throw the error to avoid disrupting the main flow
   }
 }

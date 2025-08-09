@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useWallet, useConnection } from '@/components/WalletProvider'
 import PhantomWalletButton from '@/components/PhantomWalletButton'
@@ -41,6 +41,11 @@ export default function ChartPage() {
   
   const tokenAddress = params.tokenAddress as string
   
+  // Refs for tracking
+  const lastUpdateRef = useRef<number>(Date.now())
+  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const sseConnectionRef = useRef<EventSource | null>(null)
+  
   // Token and risk data state
   const [isLoading, setIsLoading] = useState(true)
   const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null)
@@ -72,50 +77,115 @@ export default function ChartPage() {
   // Create the GMGN chart URL with correct format
   const gmgnChartUrl = `https://www.gmgn.cc/kline/sol/${tokenAddress}?interval=1H`
 
-// Fetch user tokens when wallet connects
-useEffect(() => {
-    const loadUserTokens = async () => {
-      if (!connected || !publicKey) {
-        setUserTokens([])
-        setCurrentPosition(null)
-        return
-      }
+  // Load user tokens function
+  const loadUserTokens = useCallback(async (showLoading = true) => {
+    if (!connected || !publicKey) {
+      setUserTokens([])
+      setCurrentPosition(null)
+      return
+    }
 
-      setIsLoadingPositions(true)
+    if (showLoading) setIsLoadingPositions(true)
+    try {
+      const tokens = await fetchUserTokensEfficient(
+        connection,
+        publicKey,
+        false, // includeZeroBalance
+        false, // includeNFTs
+        (progress) => {
+          // Optional progress callback
+          console.log(`Token fetching progress: ${progress}%`)
+        }
+      )
+      
+      // Filter for significant balances
+      const significantTokens = tokens.filter(token => 
+        token.uiAmount > 0.001 && !token.frozen && !token.isNFT
+      )
+      
+      setUserTokens(significantTokens)
+      
+      // Find current token position
+      const position = significantTokens.find(token => 
+        token.mintAddress === tokenAddress
+      )
+      setCurrentPosition(position || null)
+      
+      // Update last refresh time
+      lastUpdateRef.current = Date.now()
+      
+    } catch (error) {
+      console.error('Error loading user tokens:', error)
+    } finally {
+      if (showLoading) setIsLoadingPositions(false)
+    }
+  }, [connected, publicKey, connection, tokenAddress])
+
+  // Setup SSE connection for real-time updates
+  useEffect(() => {
+    if (!connected || !publicKey) {
+      // Cleanup SSE connection when wallet disconnects
+      if (sseConnectionRef.current) {
+        sseConnectionRef.current.close()
+        sseConnectionRef.current = null
+      }
+      return
+    }
+
+    const setupSSEConnection = async () => {
       try {
-        const tokens = await fetchUserTokensEfficient(
-          connection,
-          publicKey,
-          false, // includeZeroBalance
-          false, // includeNFTs
-          (progress) => {
-            // Optional progress callback
-            console.log(`Token fetching progress: ${progress}%`)
-          }
-        )
+        // Import trading tracker singleton instance
+        const { tradingTracker } = await import('@/utils/trading-tracker')
         
-        // Filter for significant balances
-        const significantTokens = tokens.filter(token => 
-          token.uiAmount > 0.001 && !token.frozen && !token.isNFT
-        )
+        // Subscribe to wallet updates using the singleton instance
+        await tradingTracker.subscribeToWallet(publicKey.toString(), (records) => {
+          console.log('📡 Received SSE update for wallet positions')
+          // Refresh positions when we get trading updates
+          loadUserTokens(false)
+        })
         
-        setUserTokens(significantTokens)
-        
-        // Find current token position
-        const position = significantTokens.find(token => 
-          token.mintAddress === tokenAddress
-        )
-        setCurrentPosition(position || null)
-        
+        console.log('📡 SSE connection established for position updates')
       } catch (error) {
-        console.error('Error loading user tokens:', error)
-      } finally {
-        setIsLoadingPositions(false)
+        console.error('Failed to setup SSE connection:', error)
       }
     }
 
+    setupSSEConnection()
+
+    return () => {
+      if (sseConnectionRef.current) {
+        sseConnectionRef.current.close()
+        sseConnectionRef.current = null
+      }
+    }
+  }, [connected, publicKey, loadUserTokens])
+
+  // Setup periodic refresh every 30 seconds
+  useEffect(() => {
+    if (!connected || !publicKey) {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current)
+        refreshIntervalRef.current = null
+      }
+      return
+    }
+
+    // Initial load
     loadUserTokens()
-  }, [connected, publicKey, connection, tokenAddress])
+
+    // Setup 30-second refresh interval
+    refreshIntervalRef.current = setInterval(() => {
+      console.log('🔄 Auto-refreshing positions (30s interval)')
+      loadUserTokens(false) // Silent refresh
+    }, 30000)
+
+    return () => {
+      if (refreshIntervalRef.current) {
+        clearInterval(refreshIntervalRef.current)
+        refreshIntervalRef.current = null
+      }
+    }
+  }, [connected, publicKey, loadUserTokens])
 
   // Fetch wallet balance
   useEffect(() => {
@@ -371,6 +441,12 @@ useEffect(() => {
       if (buyResult.success) {
         // Reset form on success
         setBuyAmount('0.1')
+        
+        // Immediately refresh positions after successful buy
+        console.log('✅ Buy successful, refreshing positions...')
+        setTimeout(() => {
+          loadUserTokens(false)
+        }, 2000) // Small delay to allow blockchain to update
       }
 
     } catch (err) {
@@ -378,7 +454,7 @@ useEffect(() => {
     } finally {
       setIsBuying(false)
     }
-  }, [connected, publicKey, signAllTransactions, connection, buyAmount, tokenAddress, slippage, priorityFee, tokenInfo, trackOperation])
+  }, [connected, publicKey, signAllTransactions, connection, buyAmount, tokenAddress, slippage, priorityFee, tokenInfo, trackOperation, loadUserTokens])
 
   const handleBackToHome = () => {
     router.push('/')
@@ -467,46 +543,6 @@ useEffect(() => {
               </div>
             </div>
           </div>
-
-          {/* Current Position Display */}
-          {connected && (
-            <div className="bg-gray-800 border-b border-gray-700 p-4">
-              <div className="max-w-7xl mx-auto">
-                <h3 className="text-lg font-semibold text-white mb-3">Your Position</h3>
-                
-                {isLoadingPositions ? (
-                  <div className="flex items-center space-x-2 text-gray-400">
-                    <div className="w-4 h-4 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
-                    <span>Loading positions...</span>
-                  </div>
-                ) : currentPosition ? (
-                  <div className="bg-gray-700/50 rounded-lg p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="text-right">
-                        {currentPosition.usdValue && currentPosition.usdValue > 0 ? (
-                          <div className="text-white font-medium">
-                            ${currentPosition.usdValue.toFixed(2)}
-                          </div>
-                        ) : (
-                          <div className="text-gray-400 text-sm">
-                            Value calculating...
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="bg-gray-700/30 rounded-lg p-4 border-2 border-dashed border-gray-600">
-                    <div className="text-center text-gray-400">
-                      <div className="text-lg mb-1">📊</div>
-                      <div>No position in this token</div>
-                      <div className="text-sm mt-1">Buy some tokens to see your position here</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
           
           {/* Buy Section */}
           <div className="flex items-center space-x-3">
@@ -647,6 +683,73 @@ useEffect(() => {
           </div>
         )}
       </div>
+
+      {/* Enhanced Current Position Display */}
+      {connected && (
+        <div className="bg-gray-800 border-b border-gray-700 p-4">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold text-white">Your Position</h3>
+              <div className="flex items-center space-x-2 text-xs text-gray-400">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                <span>Live updates every 30s</span>
+              </div>
+            </div>
+            
+            {isLoadingPositions ? (
+              <div className="flex items-center space-x-2 text-gray-400">
+                <div className="w-4 h-4 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+                <span>Loading positions...</span>
+              </div>
+            ) : currentPosition ? (
+              <div className="bg-gray-700/50 rounded-lg p-4">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <div className="text-xs text-gray-400 mb-1">Token Amount</div>
+                    <div className="text-white font-medium">
+                      {currentPosition.uiAmount.toLocaleString(undefined, {
+                        maximumFractionDigits: 6
+                      })}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400 mb-1">USD Value</div>
+                    {currentPosition.usdValue && currentPosition.usdValue > 0 ? (
+                      <div className="text-white font-medium">
+                        ${currentPosition.usdValue.toFixed(2)}
+                      </div>
+                    ) : (
+                      <div className="text-gray-400 text-sm">
+                        Calculating...
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400 mb-1">Token Price</div>
+                    <div className="text-white font-medium">
+                      {tokenInfo?.price ? `$${tokenInfo.price.toFixed(8)}` : 'N/A'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400 mb-1">Last Updated</div>
+                    <div className="text-white font-medium text-xs">
+                      {new Date(lastUpdateRef.current).toLocaleTimeString()}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-gray-700/30 rounded-lg p-4 border-2 border-dashed border-gray-600">
+                <div className="text-center text-gray-400">
+                  <div className="text-lg mb-1">📊</div>
+                  <div>No position in this token</div>
+                  <div className="text-sm mt-1">Buy some tokens to see your position here</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Risk Analysis Section */}
       {tokenInfo && tokenInfo.marketCap && tokenInfo.marketCap > 0 && (

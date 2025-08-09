@@ -1,0 +1,562 @@
+import { supabase } from '@/utils/supabase'
+import { log } from '@/utils/unified-logger'
+
+export interface McapSnapshot {
+  token_address: string
+  token_symbol: string
+  first_mcap: number
+  current_mcap: number
+  first_seen_at: string
+  last_updated_at: string
+  mcap_growth_percent: number
+  when_reach_80mc?: string | null
+  when_reach_120mc?: string | null
+  when_reach_200mc?: string | null
+}
+
+export interface McapTrackingResult {
+  isFirstTime: boolean
+  firstMcap?: number
+  currentMcap: number
+  growthPercent?: number
+  formattedGrowth?: string
+  firstSeenAt?: string
+}
+
+// Cache for MCap data to avoid frequent database calls
+const mcapCache = new Map<string, McapSnapshot>()
+const CACHE_TTL_MS = 2 * 60 * 1000 // 2 minutes cache
+
+// Growth thresholds for notifications (in percentages)
+const GROWTH_THRESHOLDS = [80, 120, 200]
+
+// Discord webhook configuration
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_AUTO_TRADE || process.env.DISCORD_WEBHOOK_URL || ''
+const ENABLE_MCAP_NOTIFICATIONS = process.env.ENABLE_MCAP_NOTIFICATIONS === 'true'
+
+// Helper function to check if notifications should be enabled
+function shouldEnableNotifications(): boolean {
+  const webhookUrl = DISCORD_WEBHOOK_URL
+  const enabled = ENABLE_MCAP_NOTIFICATIONS && webhookUrl !== ''
+
+  log.debug('discord_notification', 'MCap notification status check', {
+    enabled,
+    webhookConfigured: !!webhookUrl,
+    mcapNotificationsEnabled: ENABLE_MCAP_NOTIFICATIONS
+  })
+
+  return enabled
+}
+
+// Helper function to convert MCap to integer (round to nearest dollar)
+function normalizeMarketCap(mcap: number): number {
+  return Math.round(mcap)
+}
+
+// Helper function to format timestamp to GMT+7
+function formatTimestampGMT7(isoTimestamp: string): string {
+  const date = new Date(isoTimestamp)
+  // GMT+7 is UTC+7, so add 7 hours
+  const gmt7Date = new Date(date.getTime() + (7 * 60 * 60 * 1000))
+
+  const hours = gmt7Date.getUTCHours().toString().padStart(2, '0')
+  const minutes = gmt7Date.getUTCMinutes().toString().padStart(2, '0')
+
+  return `${hours}:${minutes} GMT+7`
+}
+
+// Helper function to get threshold column name
+type ThresholdColumnName = 'when_reach_80mc' | 'when_reach_120mc' | 'when_reach_200mc'
+
+function getThresholdColumnName(threshold: number): ThresholdColumnName {
+  switch (threshold) {
+    case 80: return 'when_reach_80mc'
+    case 120: return 'when_reach_120mc'
+    case 200: return 'when_reach_200mc'
+    default: throw new Error(`Unknown threshold: ${threshold}`)
+  }
+}
+
+// Helper function to check if threshold notification was already sent (within 24 hours)
+function wasThresholdNotified(record: McapSnapshot, threshold: number): boolean {
+  const columnName = getThresholdColumnName(threshold)
+  const notificationTime = record[columnName]
+
+  if (!notificationTime) {
+    return false
+  }
+
+  // Check if notification was sent within the last 24 hours
+  const notificationDate = new Date(notificationTime)
+  const now = new Date()
+  const hoursSinceNotification = (now.getTime() - notificationDate.getTime()) / (1000 * 60 * 60)
+
+  return hoursSinceNotification < 24
+}
+
+// Helper function to mark threshold as notified
+function markThresholdNotified(record: McapSnapshot, threshold: number): void {
+  const columnName = getThresholdColumnName(threshold)
+  record[columnName] = new Date().toISOString()
+}
+
+// Function to send Discord notification for growth threshold
+async function sendGrowthThresholdNotification(params: {
+  tokenAddress: string
+  tokenSymbol: string
+  threshold: number
+  currentMcap: number
+  firstMcap: number
+  growthPercent: number
+  firstSeenAt: string
+}): Promise<void> {
+  if (!shouldEnableNotifications()) {
+    return
+  }
+
+  const {
+    tokenAddress,
+    tokenSymbol,
+    threshold,
+    currentMcap,
+    firstMcap,
+    growthPercent,
+    firstSeenAt
+  } = params
+
+  try {
+    const chartLink = `https://v2.reloadsol.xyz/chart/${tokenAddress}`
+    const reloadSolLink = `https://v2.reloadsol.xyz/buy?sol=0.1&mints=${tokenAddress}`
+
+    // Determine emoji and color based on threshold
+    let emoji = '🚀'
+    let color = 3447003 // Blue
+
+    if (threshold >= 200) {
+      emoji = '🌟'
+      color = 16776960 // Gold
+    } else if (threshold >= 120) {
+      emoji = '🔥'
+      color = 16753920 // Orange
+    }
+
+    const message = {
+      embeds: [
+        {
+          title: `${emoji} Market Cap Growth Alert - ${threshold}%+`,
+          description: `**${tokenSymbol}** has reached **${growthPercent.toFixed(1)}%** growth! @everyone`,
+          color,
+          timestamp: new Date().toISOString(),
+          fields: [
+            {
+              name: '📊 Market Cap Details',
+              value: `**Current:** $${currentMcap.toLocaleString()}\n**Initial:** $${firstMcap.toLocaleString()}\n**Growth:** +${growthPercent.toFixed(1)}% (${formatGrowthPercent(growthPercent)})`,
+              inline: true
+            },
+            {
+              name: '⏰ Timeline',
+              value: `**First Seen:** ${formatTimestampGMT7(firstSeenAt)}\n**Alert Time:** ${formatTimestampGMT7(new Date().toISOString())}`,
+              inline: true
+            },
+            {
+              name: '🔗 Quick Actions',
+              value: `[📈 View Chart](${chartLink})\n[💰 Trade on reloadSOL](${reloadSolLink})`,
+              inline: false
+            }
+          ],
+          footer: {
+            text: `MCap Growth Tracker | Threshold: ${threshold}%`
+          }
+        }
+      ]
+    }
+
+    log.info('discord_notification', 'Sending growth threshold notification', {
+      tokenSymbol,
+      tokenAddress,
+      threshold,
+      growthPercent
+    })
+
+    // Send the message to Discord with timeout
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+
+    try {
+      const response = await fetch(DISCORD_WEBHOOK_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(message),
+        signal: controller.signal
+      })
+
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unable to read error response')
+        throw new Error(`Discord API responded with status: ${response.status} - ${errorText}`)
+      }
+
+      log.info('discord_notification', 'Growth threshold notification sent successfully', {
+        tokenSymbol,
+        threshold,
+        growthPercent
+      })
+
+    } catch (error) {
+      clearTimeout(timeoutId)
+      log.error('discord_notification', 'Error sending growth threshold notification', error as Error, {
+        tokenSymbol,
+        tokenAddress,
+        threshold
+      })
+      throw error
+    }
+  } catch (error) {
+    log.error('discord_notification', 'Error in sendGrowthThresholdNotification', error as Error, {
+      tokenSymbol,
+      tokenAddress,
+      threshold
+    })
+  }
+}
+
+// Helper function to check and send threshold notifications
+async function checkAndSendThresholdNotifications(
+  record: McapSnapshot,
+  tokenSymbol: string,
+  currentMcap: number,
+  firstMcap: number,
+  growthPercent: number,
+  firstSeenAt: string
+): Promise<boolean> {
+  if (!shouldEnableNotifications() || growthPercent <= 0) {
+    return false
+  }
+
+  let notificationSent = false
+
+  // Check each threshold
+  for (const threshold of GROWTH_THRESHOLDS) {
+    if (growthPercent >= threshold && !wasThresholdNotified(record, threshold)) {
+      log.info('discord_notification', 'Growth threshold reached', {
+        tokenSymbol,
+        tokenAddress: record.token_address,
+        threshold,
+        growthPercent
+      })
+
+      // Send notification
+      await sendGrowthThresholdNotification({
+        tokenAddress: record.token_address,
+        tokenSymbol,
+        threshold,
+        currentMcap,
+        firstMcap,
+        growthPercent,
+        firstSeenAt
+      })
+
+      // Mark threshold as notified
+      markThresholdNotified(record, threshold)
+      notificationSent = true
+    }
+  }
+
+  return notificationSent
+}
+
+// Function to track MCap for a token
+export async function trackTokenMcap(
+  tokenAddress: string,
+  tokenSymbol: string,
+  currentMcap: number
+): Promise<McapTrackingResult> {
+  try {
+    // Normalize MCap to integer
+    const normalizedCurrentMcap = normalizeMarketCap(currentMcap)
+
+    // Check cache first
+    const cached = mcapCache.get(tokenAddress)
+    const now = Date.now()
+
+    if (cached && (now - new Date(cached.last_updated_at).getTime()) < CACHE_TTL_MS) {
+      // Use cached data but update current MCap if different
+      if (Math.abs(cached.current_mcap - normalizedCurrentMcap) > cached.current_mcap * 0.01) { // 1% threshold
+        const previousGrowthPercent = cached.mcap_growth_percent
+        cached.current_mcap = normalizedCurrentMcap
+        cached.last_updated_at = new Date().toISOString()
+        cached.mcap_growth_percent = ((normalizedCurrentMcap - cached.first_mcap) / cached.first_mcap) * 100
+
+        // Check for threshold notifications
+        const notificationSent = await checkAndSendThresholdNotifications(
+          cached,
+          tokenSymbol,
+          cached.current_mcap,
+          cached.first_mcap,
+          cached.mcap_growth_percent,
+          cached.first_seen_at
+        )
+
+        // Update database asynchronously (include threshold columns if notifications were sent)
+        if (notificationSent) {
+          updateMcapInDatabase(cached).catch(console.error)
+        } else {
+          // Only update mcap-related fields if no notifications were sent
+          updateMcapInDatabase(cached, false).catch(console.error)
+        }
+      }
+
+      return {
+        isFirstTime: false,
+        firstMcap: cached.first_mcap,
+        currentMcap: cached.current_mcap,
+        growthPercent: cached.mcap_growth_percent,
+        formattedGrowth: formatGrowthPercent(cached.mcap_growth_percent),
+        firstSeenAt: cached.first_seen_at
+      }
+    }
+
+    // Check database for existing record
+    const { data: existingRecord, error } = await supabase
+      .from('token_mcap_tracking')
+      .select('*')
+      .eq('token_address', tokenAddress)
+      .single()
+
+    if (error && error.code !== 'PGRST116') { // PGRST116 = no rows returned
+      console.error('Error fetching MCap record:', error)
+      return { isFirstTime: true, currentMcap: normalizedCurrentMcap }
+    }
+
+    const currentTime = new Date().toISOString()
+
+    if (existingRecord) {
+      // Token exists, update current MCap
+      const previousGrowthPercent = existingRecord.mcap_growth_percent
+      const growthPercent = ((normalizedCurrentMcap - existingRecord.first_mcap) / existingRecord.first_mcap) * 100
+
+      const updatedRecord: McapSnapshot = {
+        ...existingRecord,
+        current_mcap: normalizedCurrentMcap,
+        last_updated_at: currentTime,
+        mcap_growth_percent: growthPercent
+      }
+
+      // Update cache
+      mcapCache.set(tokenAddress, updatedRecord)
+
+      // Check for threshold notifications
+      const notificationSent = await checkAndSendThresholdNotifications(
+        updatedRecord,
+        tokenSymbol,
+        normalizedCurrentMcap,
+        existingRecord.first_mcap,
+        growthPercent,
+        existingRecord.first_seen_at
+      )
+
+      // Update database asynchronously if MCap changed significantly
+      if (Math.abs(existingRecord.current_mcap - normalizedCurrentMcap) > existingRecord.current_mcap * 0.01) {
+        updateMcapInDatabase(updatedRecord, notificationSent).catch(console.error)
+      }
+
+      return {
+        isFirstTime: false,
+        firstMcap: existingRecord.first_mcap,
+        currentMcap: normalizedCurrentMcap,
+        growthPercent,
+        formattedGrowth: formatGrowthPercent(growthPercent),
+        firstSeenAt: existingRecord.first_seen_at
+      }
+    } else {
+      // First time seeing this token
+      const newRecord: McapSnapshot = {
+        token_address: tokenAddress,
+        token_symbol: tokenSymbol,
+        first_mcap: normalizedCurrentMcap,
+        current_mcap: normalizedCurrentMcap,
+        first_seen_at: currentTime,
+        last_updated_at: currentTime,
+        mcap_growth_percent: 0,
+        when_reach_80mc: null,
+        when_reach_120mc: null,
+        when_reach_200mc: null
+      }
+
+      // Add to cache
+      mcapCache.set(tokenAddress, newRecord)
+
+      // Insert into database asynchronously
+      insertMcapRecord(newRecord).catch(console.error)
+
+      return {
+        isFirstTime: true,
+        currentMcap: normalizedCurrentMcap,
+        firstSeenAt: currentTime
+      }
+    }
+  } catch (error) {
+    console.error('Error in trackTokenMcap:', error)
+    return { isFirstTime: true, currentMcap: normalizeMarketCap(currentMcap) }
+  }
+}
+
+// Helper function to insert new MCap record
+async function insertMcapRecord(record: McapSnapshot): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('token_mcap_tracking')
+      .insert({
+        token_address: record.token_address,
+        token_symbol: record.token_symbol,
+        first_mcap: record.first_mcap,
+        current_mcap: record.current_mcap,
+        first_seen_at: record.first_seen_at,
+        last_updated_at: record.last_updated_at,
+        mcap_growth_percent: record.mcap_growth_percent,
+        when_reach_80mc: record.when_reach_80mc,
+        when_reach_120mc: record.when_reach_120mc,
+        when_reach_200mc: record.when_reach_200mc
+      })
+
+    if (error) {
+      console.error('Error inserting MCap record:', error)
+    }
+  } catch (error) {
+    console.error('Error in insertMcapRecord:', error)
+  }
+}
+
+// Helper function to update MCap record
+async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boolean = true): Promise<void> {
+  try {
+    const updateData: any = {
+      current_mcap: record.current_mcap,
+      last_updated_at: record.last_updated_at,
+      mcap_growth_percent: record.mcap_growth_percent
+    }
+
+    // Only include threshold columns if they were updated
+    if (includeThresholds) {
+      updateData.when_reach_80mc = record.when_reach_80mc
+      updateData.when_reach_120mc = record.when_reach_120mc
+      updateData.when_reach_200mc = record.when_reach_200mc
+    }
+
+    const { error } = await supabase
+      .from('token_mcap_tracking')
+      .update(updateData)
+      .eq('token_address', record.token_address)
+
+    if (error) {
+      console.error('Error updating MCap record:', error)
+    }
+  } catch (error) {
+    console.error('Error in updateMcapInDatabase:', error)
+  }
+}
+
+// Helper function to format growth percentage
+function formatGrowthPercent(growthPercent: number): string {
+  const sign = growthPercent >= 0 ? '+' : ''
+  return `${sign}${growthPercent.toFixed(1)}%`
+}
+
+// Function to get MCap display string for Discord
+export function getMcapDisplayString(trackingResult: McapTrackingResult): string {
+  if (trackingResult.isFirstTime) {
+    const timeStr = trackingResult.firstSeenAt ?
+      ` (1st seen: ${formatTimestampGMT7(trackingResult.firstSeenAt)})` : ''
+    return `MCap: $${trackingResult.currentMcap.toLocaleString()}${timeStr}`
+  }
+
+  const firstMcapStr = trackingResult.firstMcap!.toLocaleString()
+  const currentMcapStr = trackingResult.currentMcap.toLocaleString()
+  const growthEmoji = trackingResult.growthPercent! >= 0 ? '📈' : '📉'
+  const timeStr = trackingResult.firstSeenAt ?
+    `, 1st seen: ${formatTimestampGMT7(trackingResult.firstSeenAt)}` : ''
+
+  return `MCap: $${currentMcapStr} (${growthEmoji} ${trackingResult.formattedGrowth} from $${firstMcapStr}${timeStr})`
+}
+
+// Function to check if token is in tracking range
+export function isInTrackingRange(mcap: number): boolean {
+  return mcap >= 30_000 && mcap <= 2_000_000 // 30k to 2M range
+}
+
+// Function to clean up old records (can be called periodically)
+export async function cleanupOldMcapRecords(daysOld: number = 30): Promise<void> {
+  try {
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - daysOld)
+
+    const { error } = await supabase
+      .from('token_mcap_tracking')
+      .delete()
+      .lt('last_updated_at', cutoffDate.toISOString())
+
+    if (error) {
+      console.error('Error cleaning up old MCap records:', error)
+    } else {
+      console.log(`Cleaned up MCap records older than ${daysOld} days`)
+    }
+  } catch (error) {
+    console.error('Error in cleanupOldMcapRecords:', error)
+  }
+}
+
+// Remove the separate notification cleanup function since we no longer need it
+// export async function cleanupOldNotificationRecords(daysOld: number = 7): Promise<void> {
+//   // This function is no longer needed with the single table approach
+// }
+
+// Function to clean up old notification records
+export async function cleanupOldNotificationRecords(daysOld: number = 7): Promise<void> {
+  try {
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - daysOld)
+
+    const { error } = await supabase
+      .from('mcap_threshold_notifications')
+      .delete()
+      .lt('notified_at', cutoffDate.toISOString())
+
+    if (error) {
+      console.error('Error cleaning up old notification records:', error)
+    } else {
+      console.log(`Cleaned up notification records older than ${daysOld} days`)
+    }
+  } catch (error) {
+    console.error('Error in cleanupOldNotificationRecords:', error)
+  }
+}
+
+// Function to get bulk MCap tracking for multiple tokens
+export async function bulkTrackTokenMcaps(
+  tokens: Array<{ address: string; symbol: string; mcap: number }>
+): Promise<Map<string, McapTrackingResult>> {
+  const results = new Map<string, McapTrackingResult>()
+
+  // Process tokens in parallel but limit concurrency
+  const BATCH_SIZE = 10
+  for (let i = 0; i < tokens.length; i += BATCH_SIZE) {
+    const batch = tokens.slice(i, i + BATCH_SIZE)
+    const batchPromises = batch.map(async token => {
+      const result = await trackTokenMcap(token.address, token.symbol, token.mcap)
+      return { address: token.address, result }
+    })
+
+    const batchResults = await Promise.all(batchPromises)
+    batchResults.forEach(({ address, result }) => {
+      results.set(address, result)
+    })
+  }
+
+  return results
+}
+
+// Export threshold constants for external use
+export { GROWTH_THRESHOLDS }

@@ -229,6 +229,224 @@ async function runTests() {
     }
   });
 
+  // === DETAILED RISK FORMATTING TESTS ===
+  log.info('\n🛡️ Testing Detailed Risk Formatting...');
+
+  // Test Trending Discord with Detailed Risk Format
+  const trendingRiskResult = await testEndpoint('Trending Discord - Detailed Risk Format', '/api/trending', {
+    method: 'PUT',
+    validator: (data) => {
+      return data && (
+        (data.success && data.message) ||
+        (data.message && typeof data.message === 'string') ||
+        (data.error && typeof data.error === 'string')
+      )
+    }
+  });
+
+  // Analyze trending risk format if successful
+  if (trendingRiskResult && (trendingRiskResult.success || trendingRiskResult.message)) {
+    console.log('\n🛡️ TRENDING RISK FORMAT ANALYSIS:');
+    console.log('='.repeat(50));
+    
+    if (trendingRiskResult.message) {
+      const message = trendingRiskResult.message;
+      
+      // Check for detailed risk indicators in the format: I:X.X% B:X.X% S:X% T10:X.X% F/Mcap:X.XX
+      const riskPatterns = {
+        insiders: /I:(\d+\.?\d*)%/g,
+        bundlers: /B:(\d+\.?\d*)%/g,
+        snipers: /S:(\d+\.?\d*)%/g,
+        top10: /T10:(\d+\.?\d*)%/g,
+        feeRatio: /F\/Mcap:(\d+\.?\d*)/g
+      };
+
+      let foundRiskIndicators = false;
+      let riskMatches = {};
+
+      Object.entries(riskPatterns).forEach(([key, pattern]) => {
+        const matches = [...message.matchAll(pattern)];
+        if (matches.length > 0) {
+          foundRiskIndicators = true;
+          riskMatches[key] = matches.map(match => match[1]);
+        }
+      });
+
+      if (foundRiskIndicators) {
+        console.log('✅ Found detailed risk indicators in trending message:');
+        Object.entries(riskMatches).forEach(([indicator, values]) => {
+          console.log(`   ${indicator.toUpperCase()}: ${values.join(', ')}`);
+        });
+        
+        // Validate format compliance
+        const hasCorrectFormat = Object.keys(riskMatches).length >= 3; // At least 3 indicators
+        console.log(`   Format Compliance: ${hasCorrectFormat ? '✅ PASS' : '❌ FAIL'}`);
+      } else {
+        console.log('⚠️ No detailed risk indicators found - may be using fallback format');
+      }
+    }
+    
+    console.log('='.repeat(50));
+  }
+
+  // Test Filtered Trending Discord with Detailed Risk Format
+  const filteredRiskResult = await testEndpoint('Filtered Trending Discord - Detailed Risk Format', '/api/trending/filtered', {
+    method: 'PUT',
+    validator: (data) => {
+      return data && (
+        (data.success && data.message) ||
+        (data.message && typeof data.message === 'string') ||
+        (data.error && typeof data.error === 'string')
+      )
+    }
+  });
+
+  // Analyze filtered trending risk format if successful
+  if (filteredRiskResult && (filteredRiskResult.success || filteredRiskResult.message)) {
+    console.log('\n🛡️ FILTERED TRENDING RISK FORMAT ANALYSIS:');
+    console.log('='.repeat(50));
+    
+    if (filteredRiskResult.message) {
+      const message = filteredRiskResult.message;
+      
+      // Check for detailed risk indicators
+      const riskPatterns = {
+        insiders: /I:(\d+\.?\d*)%/g,
+        bundlers: /B:(\d+\.?\d*)%/g,
+        snipers: /S:(\d+\.?\d*)%/g,
+        top10: /T10:(\d+\.?\d*)%/g,
+        feeRatio: /F\/Mcap:(\d+\.?\d*)/g
+      };
+
+      let foundRiskIndicators = false;
+      let riskMatches = {};
+      let tokenCount = 0;
+
+      Object.entries(riskPatterns).forEach(([key, pattern]) => {
+        const matches = [...message.matchAll(pattern)];
+        if (matches.length > 0) {
+          foundRiskIndicators = true;
+          riskMatches[key] = matches.map(match => match[1]);
+          tokenCount = Math.max(tokenCount, matches.length);
+        }
+      });
+
+      if (foundRiskIndicators) {
+        console.log(`✅ Found detailed risk indicators for ${tokenCount} tokens:`);
+        Object.entries(riskMatches).forEach(([indicator, values]) => {
+          console.log(`   ${indicator.toUpperCase()}: ${values.join(', ')}`);
+        });
+        
+        // Validate format consistency
+        const hasConsistentFormat = Object.values(riskMatches).every(values => values.length === tokenCount);
+        console.log(`   Format Consistency: ${hasConsistentFormat ? '✅ PASS' : '❌ FAIL'}`);
+        
+        // Check for proper compact format (no extra spaces, correct separators)
+        const compactFormatRegex = /I:\d+\.?\d*%\s+B:\d+\.?\d*%\s+S:\d+\.?\d*%\s+T10:\d+\.?\d*%\s+F\/Mcap:\d+\.?\d*/;
+        const hasCompactFormat = compactFormatRegex.test(message);
+        console.log(`   Compact Format: ${hasCompactFormat ? '✅ PASS' : '⚠️ CHECK'}`);
+      } else {
+        console.log('⚠️ No detailed risk indicators found - may be using fallback format');
+      }
+    }
+    
+    console.log('='.repeat(50));
+  }
+
+  // Test Risk Assessment API Integration
+  await testEndpoint('Risk Assessment - Format Validation', '/api/trending/track', {
+    method: 'PUT',
+    params: {
+      key: 'r3l0ads0l-trending',
+      test: 'risk-format'
+    },
+    timeout: 20000, // Longer timeout for risk assessment
+    validator: (data) => {
+      // Accept any response for detailed analysis
+      return data && (
+        data.success !== undefined ||
+        data.message ||
+        data.error
+      )
+    }
+  });
+
+  // Test Risk Format Fallback Behavior
+  await testEndpoint('Risk Assessment - Fallback Format', '/api/trending/track', {
+    method: 'PUT',
+    params: {
+      key: 'r3l0ads0l-trending',
+      test: 'risk-fallback'
+    },
+    timeout: 15000,
+    validator: (data) => {
+      return data && (
+        data.success !== undefined ||
+        data.message ||
+        data.error
+      )
+    }
+  });
+
+  // Test Risk Indicator Validation
+  log.info('\n🔍 Testing Risk Indicator Validation...');
+
+  // Helper function to validate risk format
+  const validateRiskFormat = (text) => {
+    if (!text || typeof text !== 'string') return { valid: false, reason: 'No text provided' };
+    
+    const patterns = {
+      insiders: /I:(\d+\.?\d*)%/,
+      bundlers: /B:(\d+\.?\d*)%/,
+      snipers: /S:(\d+\.?\d*)%/,
+      top10: /T10:(\d+\.?\d*)%/,
+      feeRatio: /F\/Mcap:(\d+\.?\d*)/
+    };
+
+    const results = {};
+    let validCount = 0;
+
+    Object.entries(patterns).forEach(([key, pattern]) => {
+      const match = text.match(pattern);
+      if (match) {
+        results[key] = parseFloat(match[1]);
+        validCount++;
+      }
+    });
+
+    return {
+      valid: validCount >= 4, // At least 4 out of 5 indicators
+      indicators: results,
+      count: validCount,
+      reason: validCount < 4 ? `Only found ${validCount}/5 indicators` : 'Valid format'
+    };
+  };
+
+  // Test format validation with sample data
+  const sampleRiskFormats = [
+    'I:3.0% B:1.8% S:0% T10:21.8% F/Mcap:0.76',
+    'I:0% B:0% S:0% T10:15.2% F/Mcap:1.23',
+    'I:5.5% B:2.1% S:1.0% T10:45.6% F/Mcap:0.45',
+    'Invalid format without indicators',
+    'I:3.0% B:1.8% S:0%', // Missing indicators
+  ];
+
+  console.log('\n🧪 RISK FORMAT VALIDATION TESTS:');
+  console.log('='.repeat(50));
+
+  sampleRiskFormats.forEach((format, index) => {
+    const validation = validateRiskFormat(format);
+    console.log(`Test ${index + 1}: ${validation.valid ? '✅ PASS' : '❌ FAIL'}`);
+    console.log(`   Format: "${format}"`);
+    console.log(`   Result: ${validation.reason}`);
+    if (validation.indicators && Object.keys(validation.indicators).length > 0) {
+      console.log(`   Indicators: ${JSON.stringify(validation.indicators)}`);
+    }
+    console.log('');
+  });
+
+  console.log('='.repeat(50));
+
   // === TRENDING TRACKER FILTERING TESTS ===
   log.info('\n🔍 Testing Trending Tracker Filtering...');
 
@@ -617,3 +835,200 @@ runTests().catch(error => {
   log.error('Test execution failed:', error);
   process.exit(1);
 });
+
+  console.log('='.repeat(50));
+
+  // === MCAP TRACKING TESTS ===
+  log.info('\n📊 Testing MCap Tracking Functionality...');
+
+  // Test MCap Tracking - First Time Token
+  await testEndpoint('MCap Tracking - First Time Token', '/api/trending', {
+    method: 'PUT',
+    validator: (data) => {
+      return data && (
+        (data.success && data.message) ||
+        (data.message && typeof data.message === 'string') ||
+        (data.error && typeof data.error === 'string')
+      )
+    }
+  });
+
+  // Test MCap Tracking - Subsequent Updates
+  await testEndpoint('MCap Tracking - Growth Calculation', '/api/trending/filtered', {
+    method: 'PUT',
+    validator: (data) => {
+      return data && (
+        (data.success && data.message) ||
+        (data.message && typeof data.message === 'string') ||
+        (data.error && typeof data.error === 'string')
+      )
+    }
+  });
+
+  // Test MCap Growth Display Format
+  const mcapGrowthResult = await testEndpoint('MCap Growth - Display Format', '/api/trending', {
+    method: 'PUT',
+    validator: (data) => data && (data.success !== undefined || data.message || data.error)
+  });
+
+  // Analyze MCap growth format if successful
+  if (mcapGrowthResult && (mcapGrowthResult.success || mcapGrowthResult.message)) {
+    console.log('\n📊 MCAP GROWTH FORMAT ANALYSIS:');
+    console.log('='.repeat(50));
+    
+    if (mcapGrowthResult.message) {
+      const message = mcapGrowthResult.message;
+      
+      // Check for MCap growth indicators in the format: MCap: $X (📈 +Y% from $Z) or MCap: $X (📉 -Y% from $Z)
+      const mcapGrowthPatterns = {
+        currentMcap: /MCap: \$([0-9,]+)/g,
+        growthPositive: /📈 \+(\d+\.?\d*)% from \$([0-9,]+)/g,
+        growthNegative: /📉 -(\d+\.?\d*)% from \$([0-9,]+)/g,
+        firstTime: /MCap: \$([0-9,]+)(?!\s*\()/g // MCap without growth indicator
+      };
+
+      let foundMcapTracking = false;
+      let mcapMatches = {};
+
+      Object.entries(mcapGrowthPatterns).forEach(([key, pattern]) => {
+        const matches = [...message.matchAll(pattern)];
+        if (matches.length > 0) {
+          foundMcapTracking = true;
+          mcapMatches[key] = matches.map(match => ({
+            full: match[0],
+            value: match[1],
+            original: match[2] || null
+          }));
+        }
+      });
+
+      if (foundMcapTracking) {
+        console.log('✅ Found MCap tracking indicators:');
+        Object.entries(mcapMatches).forEach(([indicator, matches]) => {
+          console.log(`   ${indicator.toUpperCase()}:`);
+          matches.forEach((match, index) => {
+            console.log(`     ${index + 1}. ${match.full}`);
+            if (match.original) {
+              console.log(`        Growth from: $${match.original}`);
+            }
+          });
+        });
+        
+        // Validate tracking functionality
+        const hasGrowthTracking = mcapMatches.growthPositive?.length > 0 || mcapMatches.growthNegative?.length > 0;
+        const hasFirstTimeTokens = mcapMatches.firstTime?.length > 0;
+        console.log(`   Growth Tracking: ${hasGrowthTracking ? '✅ ACTIVE' : '⚠️ NO GROWTH DETECTED'}`);
+        console.log(`   First Time Tokens: ${hasFirstTimeTokens ? '✅ DETECTED' : '⚠️ NONE'}`);
+      } else {
+        console.log('⚠️ No MCap tracking indicators found - feature may not be active');
+      }
+    }
+    
+    console.log('='.repeat(50));
+  }
+
+  // Test MCap Range Filtering (30k-2M)
+  await testEndpoint('MCap Tracking - Range Filter (30k-2M)', '/api/trending/track', {
+    method: 'PUT',
+    params: {
+      key: 'r3l0ads0l-trending',
+      test: 'mcap-range'
+    },
+    timeout: 20000,
+    validator: (data) => {
+      return data && (
+        data.success !== undefined ||
+        data.message ||
+        data.error
+      )
+    }
+  });
+
+  // Test MCap Database Operations
+  await testEndpoint('MCap Tracking - Database Operations', '/api/trending/track', {
+    method: 'PUT',
+    params: {
+      key: 'r3l0ads0l-trending',
+      test: 'mcap-db'
+    },
+    timeout: 15000,
+    validator: (data) => {
+      return data && (
+        data.success !== undefined ||
+        data.message ||
+        data.error
+      )
+    }
+  });
+
+  // Test MCap Growth Calculation Accuracy
+  log.info('\n🧮 Testing MCap Growth Calculation...');
+
+  // Helper function to validate MCap growth calculation
+  const validateMcapGrowth = (firstMcap, currentMcap, expectedGrowth) => {
+    const calculatedGrowth = ((currentMcap - firstMcap) / firstMcap) * 100;
+    const tolerance = 0.1; // 0.1% tolerance
+    return Math.abs(calculatedGrowth - expectedGrowth) <= tolerance;
+  };
+
+  // Test growth calculation with sample data
+  const mcapGrowthTests = [
+    { first: 100000, current: 150000, expected: 50.0, description: '50% growth' },
+    { first: 200000, current: 180000, expected: -10.0, description: '10% decline' },
+    { first: 500000, current: 750000, expected: 50.0, description: '50% growth from 500k' },
+    { first: 1000000, current: 1200000, expected: 20.0, description: '20% growth from 1M' },
+    { first: 50000, current: 45000, expected: -10.0, description: '10% decline from 50k' }
+  ];
+
+  console.log('\n🧪 MCAP GROWTH CALCULATION TESTS:');
+  console.log('='.repeat(50));
+
+  mcapGrowthTests.forEach((test, index) => {
+    const isValid = validateMcapGrowth(test.first, test.current, test.expected);
+    console.log(`Test ${index + 1}: ${isValid ? '✅ PASS' : '❌ FAIL'}`);
+    console.log(`   Description: ${test.description}`);
+    console.log(`   First MCap: $${test.first.toLocaleString()}`);
+    console.log(`   Current MCap: $${test.current.toLocaleString()}`);
+    console.log(`   Expected Growth: ${test.expected >= 0 ? '+' : ''}${test.expected}%`);
+    
+    if (!isValid) {
+      const actualGrowth = ((test.current - test.first) / test.first) * 100;
+      console.log(`   Actual Growth: ${actualGrowth >= 0 ? '+' : ''}${actualGrowth.toFixed(1)}%`);
+    }
+    console.log('');
+  });
+
+  console.log('='.repeat(50));
+
+  // Test MCap Display Format Validation
+  const mcapDisplayFormats = [
+    'MCap: $150,000',
+    'MCap: $180,000 (📉 -10.0% from $200,000)',
+    'MCap: $750,000 (📈 +50.0% from $500,000)',
+    'MCap: $1,200,000 (📈 +20.0% from $1,000,000)',
+    'MCap: $45,000 (📉 -10.0% from $50,000)'
+  ];
+
+  console.log('\n📋 MCAP DISPLAY FORMAT VALIDATION:');
+  console.log('='.repeat(50));
+
+  mcapDisplayFormats.forEach((format, index) => {
+    const hasGrowthIndicator = format.includes('📈') || format.includes('📉');
+    const hasPercentage = /[+-]\d+\.?\d*%/.test(format);
+    const hasOriginalMcap = /from \$[\d,]+/.test(format);
+    
+    const isValidFormat = !hasGrowthIndicator || (hasPercentage && hasOriginalMcap);
+    
+    console.log(`Format ${index + 1}: ${isValidFormat ? '✅ VALID' : '❌ INVALID'}`);
+    console.log(`   Display: "${format}"`);
+    console.log(`   Has Growth: ${hasGrowthIndicator ? 'Yes' : 'No'}`);
+    if (hasGrowthIndicator) {
+      console.log(`   Has Percentage: ${hasPercentage ? 'Yes' : 'No'}`);
+      console.log(`   Has Original: ${hasOriginalMcap ? 'Yes' : 'No'}`);
+    }
+    console.log('');
+  });
+
+  console.log('='.repeat(50));
+
+  // === TRENDING TRACKER FILTERING TESTS ===

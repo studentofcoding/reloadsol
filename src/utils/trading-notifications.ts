@@ -9,6 +9,10 @@ interface NotificationData {
     tokenSymbol?: string
     amount?: number
     signature?: string
+    // SL/TP specific fields
+    triggerType?: 'stop_loss' | 'take_profit_1' | 'take_profit_2' | 'take_profit_3' | 'max_hold_time'
+    gainPercentage?: number
+    sellPercentage?: number
 }
 
 /**
@@ -16,7 +20,7 @@ interface NotificationData {
  */
 export async function notifyTradingUpdate(
     walletAddress: string,
-    type: 'trade_update' | 'pnl_update' | 'balance_update',
+    type: 'trade_update' | 'pnl_update' | 'balance_update' | 'sl_tp_trigger',
     data?: NotificationData
 ) {
     try {
@@ -88,3 +92,21 @@ export const notifyPnLUpdate = (walletAddress: string) =>
 
 export const notifyBalanceUpdate = (walletAddress: string) =>
     notifyTradingUpdate(walletAddress, 'balance_update')
+
+/**
+ * Notify SL/TP trigger event
+ */
+export const notifySlTpTrigger = (
+    walletAddress: string,
+    tokenSymbol: string,
+    triggerType: 'stop_loss' | 'take_profit_1' | 'take_profit_2' | 'take_profit_3' | 'max_hold_time',
+    gainPercentage: number,
+    sellPercentage: number,
+    signature?: string
+) => notifyTradingUpdate(walletAddress, 'sl_tp_trigger', {
+    tokenSymbol,
+    triggerType,
+    gainPercentage,
+    sellPercentage,
+    signature
+})

@@ -7,6 +7,7 @@ import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trad
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
 import { notifyTradingUpdate } from '@/utils/trading-notifications'
+import { addSLTPPosition } from '@/utils/sl-tp-tracker'
 
 export const runtime = 'nodejs'
 
@@ -193,15 +194,15 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     description: 'Original aggressive trading strategy',
     is_active: true,
     take_profit_levels: {
-      tp1_percentage: 60,
-      tp1_sell_percentage: 80,
+      tp1_percentage: 45,
+      tp1_sell_percentage: 90,
       tp2_percentage: 100,
       tp3_percentage: 30,
       tp3_enabled: false
     },
     buy_amount_sol: 0.015,
     priority_fee_lamports: 1000000,
-    stop_loss_percentage: -40,
+    stop_loss_percentage: -35,
     max_hold_hours: 24,
     conditions: {
       max_risk_level: 'high'
@@ -3430,13 +3431,31 @@ async function performSellOperation(
 
     // Safety checks for real trading
     if (!isSimulated) {
-      if (!simulation.keypair_path) {
+      // Add diagnostic logging
+      console.log(`🔧 Real sell safety check for ${token.token_symbol}:`)
+      console.log(`  - simulation.keypair_path: ${simulation.keypair_path || 'undefined'}`)
+      console.log(`  - TRADING_KEYPAIR_JSON env var: ${process.env.TRADING_KEYPAIR_JSON ? 'SET' : 'NOT SET'}`)
+      console.log(`  - Global tradingKeypair: ${tradingKeypair ? 'initialized' : 'null'}`)
+
+      // Enhanced keypair validation - check both simulation path and environment variable
+      const hasKeypairPath = !!simulation.keypair_path
+      const hasEnvKeypair = !!process.env.TRADING_KEYPAIR_JSON
+
+      if (!hasKeypairPath && !hasEnvKeypair) {
         throw new Error('Trading keypair not configured (set TRADING_KEYPAIR_JSON or provide keypair_path)')
+      }
+
+      // Check RPC health before trading
+      const rpcHealth = await checkRpcHealth()
+      if (!rpcHealth.healthy) {
+        throw new Error(`Shyft RPC unhealthy: ${rpcHealth.error}`)
       }
 
       // Initialize trading infrastructure
       const connection = initializeTradingConnection()
       await initializeTradingKeypair(simulation.keypair_path)
+
+      console.log(`🔥 Real sell safety checks passed - proceeding with sell operation`)
     }
 
     // Create appropriate executor
@@ -4725,21 +4744,52 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           // Perform buy operation for new tokens (simulation or real trading)
           let tradingSimulation: TradingSimulation | null = null
           try {
-            // Check if real trading mode is activated by looking at existing tokens
+            // Check if real trading mode is activated - improved logic
             let isRealTradingActive = false
             let keypairPath: string | undefined = undefined
 
+            // First, check if TRADING_KEYPAIR_JSON environment variable is set
+            const hasEnvKeypair = !!process.env.TRADING_KEYPAIR_JSON
+            console.log(`🔑 Keypair detection for ${token.token_symbol}:`)
+            console.log(`  - TRADING_KEYPAIR_JSON env var: ${hasEnvKeypair ? 'SET' : 'NOT SET'}`)
+
             // Check if any existing tracked token has real trading enabled
-            const existingRealTradeToken = trackedTokens?.find(t =>
+            const existingRealTradeTokens = trackedTokens?.filter(t =>
               t.trading_simulation && !t.trading_simulation.is_simulated
+            ) || []
+
+            console.log(`  - Existing real trade tokens found: ${existingRealTradeTokens.length}`)
+
+            // Find a token with both real trading AND a valid keypair_path
+            const validRealTradeToken = existingRealTradeTokens.find(t =>
+              t.trading_simulation?.keypair_path
             )
 
-            if (existingRealTradeToken?.trading_simulation) {
+            if (validRealTradeToken?.trading_simulation) {
+              console.log(`  - Valid existing token with keypair found: ${validRealTradeToken.token_symbol}`)
+            }
+
+            // Determine trading mode and keypair path with better validation
+            if (hasEnvKeypair) {
+              // Environment variable is available - use real trading
               isRealTradingActive = true
-              keypairPath = existingRealTradeToken.trading_simulation.keypair_path
-              console.log(`🔥 Real trading mode detected - new token ${token.token_symbol} will use REAL trading`)
+              keypairPath = undefined // Will use environment variable
+              console.log(`🔥 Real trading mode detected via TRADING_KEYPAIR_JSON - new token ${token.token_symbol} will use REAL trading`)
+            } else if (validRealTradeToken?.trading_simulation?.keypair_path) {
+              // Copy from existing token that has valid keypair
+              isRealTradingActive = true
+              keypairPath = validRealTradeToken.trading_simulation.keypair_path
+              console.log(`🔥 Real trading mode detected via existing token ${validRealTradeToken.token_symbol} - new token ${token.token_symbol} will use REAL trading`)
             } else {
-              console.log(`💻 Simulation mode - new token ${token.token_symbol} will use simulation`)
+              // No valid keypair configuration found - use simulation
+              if (existingRealTradeTokens.length > 0) {
+                console.warn(`⚠️ Found ${existingRealTradeTokens.length} tokens with real trading enabled but no valid keypair_path!`)
+                console.warn(`⚠️ This indicates a configuration issue. Falling back to simulation mode for ${token.token_symbol}`)
+              } else {
+                console.log(`💻 No real trading configuration found - new token ${token.token_symbol} will use simulation`)
+              }
+              isRealTradingActive = false
+              keypairPath = undefined
             }
 
             // Assign token to strategy
@@ -4763,16 +4813,43 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             )
 
             if (buyOperation) {
-              initialSimulation.buy_operation = buyOperation
-              initialSimulation.current_status = 'holding'
-              initialSimulation.remaining_token_amount = buyOperation.token_amount_received
-              initialSimulation.initial_token_amount = buyOperation.token_amount_received
-              tradingSimulation = initialSimulation
+            initialSimulation.buy_operation = buyOperation
+            initialSimulation.current_status = 'holding'
+            initialSimulation.remaining_token_amount = buyOperation.token_amount_received
+            initialSimulation.initial_token_amount = buyOperation.token_amount_received
+            tradingSimulation = initialSimulation
 
-              console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
-            } else {
-              console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
+            console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
+
+            // Add position to SL/TP tracker for real-time monitoring
+            if (!initialSimulation.is_simulated && tradingKeypair) {
+              try {
+                const strategy = getTradingStrategy(assignedStrategy)
+                await addSLTPPosition({
+                  walletAddress: tradingKeypair.publicKey.toString(),
+                  tokenAddress: token.token_address,
+                  tokenSymbol: token.token_symbol,
+                  positionSize: parseFloat(buyOperation.token_amount_received),
+                  entryPrice: token.current_price,
+                  stopLossPercentage: strategy.stop_loss_percentage,
+                  takeProfitPercentage: strategy.take_profit_levels.tp2_percentage,
+                  positionType: 'bot',
+                  strategyId: assignedStrategy,
+                  tp1Percentage: strategy.take_profit_levels.tp1_percentage,
+                  tp1SellPercentage: strategy.take_profit_levels.tp1_sell_percentage,
+                  tp2Percentage: strategy.take_profit_levels.tp2_percentage,
+                  tp3Percentage: strategy.take_profit_levels.tp3_percentage,
+                  tp3Enabled: strategy.take_profit_levels.tp3_enabled
+                })
+                
+                console.log(`✅ Added ${token.token_symbol} to SL/TP tracker for real-time monitoring`)
+              } catch (slTpError) {
+                console.error('❌ Failed to add position to SL/TP tracker:', slTpError)
+              }
             }
+          } else {
+            console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
+          }
           } catch (error) {
             console.error(`❌ Buy operation error for ${token.token_symbol}:`, error)
           }
@@ -4901,21 +4978,52 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
             // Execute buy operation and convert to tracking
             try {
-              // Check if real trading mode is activated by looking at existing tokens
+              // Check if real trading mode is activated - improved logic
               let isRealTradingActive = false
               let keypairPath: string | undefined = undefined
 
+              // First, check if TRADING_KEYPAIR_JSON environment variable is set
+              const hasEnvKeypair = !!process.env.TRADING_KEYPAIR_JSON
+              console.log(`🔑 Keypair detection for ${token.token_symbol}:`)
+              console.log(`  - TRADING_KEYPAIR_JSON env var: ${hasEnvKeypair ? 'SET' : 'NOT SET'}`)
+
               // Check if any existing tracked token has real trading enabled
-              const existingRealTradeToken = trackedTokens?.find(t =>
+              const existingRealTradeTokens = trackedTokens?.filter(t =>
                 t.trading_simulation && !t.trading_simulation.is_simulated
+              ) || []
+
+              console.log(`  - Existing real trade tokens found: ${existingRealTradeTokens.length}`)
+
+              // Find a token with both real trading AND a valid keypair_path
+              const validRealTradeToken = existingRealTradeTokens.find(t =>
+                t.trading_simulation?.keypair_path
               )
 
-              if (existingRealTradeToken?.trading_simulation) {
+              if (validRealTradeToken?.trading_simulation) {
+                console.log(`  - Valid existing token with keypair found: ${validRealTradeToken.token_symbol}`)
+              }
+
+              // Determine trading mode and keypair path with better validation
+              if (hasEnvKeypair) {
+                // Environment variable is available - use real trading
                 isRealTradingActive = true
-                keypairPath = existingRealTradeToken.trading_simulation.keypair_path
-                console.log(`🔥 Real trading mode detected - ${token.token_symbol} will use REAL trading`)
+                keypairPath = undefined // Will use environment variable
+                console.log(`🔥 Real trading mode detected via TRADING_KEYPAIR_JSON - new token ${token.token_symbol} will use REAL trading`)
+              } else if (validRealTradeToken?.trading_simulation?.keypair_path) {
+                // Copy from existing token that has valid keypair
+                isRealTradingActive = true
+                keypairPath = validRealTradeToken.trading_simulation.keypair_path
+                console.log(`🔥 Real trading mode detected via existing token ${validRealTradeToken.token_symbol} - new token ${token.token_symbol} will use REAL trading`)
               } else {
-                console.log(`💻 Simulation mode - ${token.token_symbol} will use simulation`)
+                // No valid keypair configuration found - use simulation
+                if (existingRealTradeTokens.length > 0) {
+                  console.warn(`⚠️ Found ${existingRealTradeTokens.length} tokens with real trading enabled but no valid keypair_path!`)
+                  console.warn(`⚠️ This indicates a configuration issue. Falling back to simulation mode for ${token.token_symbol}`)
+                } else {
+                  console.log(`💻 No real trading configuration found - new token ${token.token_symbol} will use simulation`)
+                }
+                isRealTradingActive = false
+                keypairPath = undefined
               }
 
               // Assign token to strategy
@@ -4942,12 +5050,39 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               )
 
               if (buyOperation) {
-                initialSimulation.buy_operation = buyOperation
-                initialSimulation.current_status = 'holding'
-                initialSimulation.remaining_token_amount = buyOperation.token_amount_received
-                initialSimulation.initial_token_amount = buyOperation.token_amount_received
+                  initialSimulation.buy_operation = buyOperation
+                  initialSimulation.current_status = 'holding'
+                  initialSimulation.remaining_token_amount = buyOperation.token_amount_received
+                  initialSimulation.initial_token_amount = buyOperation.token_amount_received
 
-                console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
+                  console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
+
+                  // Add position to SL/TP tracker for real-time monitoring
+                  if (!initialSimulation.is_simulated && tradingKeypair) {
+                    try {
+                      const strategy = getTradingStrategy(assignedStrategy)
+                      await addSLTPPosition({
+                        walletAddress: tradingKeypair.publicKey.toString(),
+                        tokenAddress: token.token_address,
+                        tokenSymbol: token.token_symbol,
+                        positionSize: parseFloat(buyOperation.token_amount_received),
+                        entryPrice: token.current_price,
+                        stopLossPercentage: strategy.stop_loss_percentage,
+                        takeProfitPercentage: strategy.take_profit_levels.tp2_percentage,
+                        positionType: 'bot',
+                        strategyId: assignedStrategy,
+                        tp1Percentage: strategy.take_profit_levels.tp1_percentage,
+                        tp1SellPercentage: strategy.take_profit_levels.tp1_sell_percentage,
+                        tp2Percentage: strategy.take_profit_levels.tp2_percentage,
+                        tp3Percentage: strategy.take_profit_levels.tp3_percentage,
+                        tp3Enabled: strategy.take_profit_levels.tp3_enabled
+                      })
+                      
+                      console.log(`✅ Added ${token.token_symbol} to SL/TP tracker for real-time monitoring`)
+                    } catch (slTpError) {
+                      console.error('❌ Failed to add position to SL/TP tracker:', slTpError)
+                    }
+                  }
 
                 // Update token status to tracking with buy simulation
                 updatesPromises.push(

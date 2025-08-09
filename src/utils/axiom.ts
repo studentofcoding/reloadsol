@@ -1,3 +1,5 @@
+import { fetchTokenMetadataFromJupiter } from '@/app/api/jupiter/metadata/route'
+
 interface AxiomTokenInfo {
   numHolders: number
   numBotUsers: number
@@ -30,83 +32,85 @@ export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomRes
       return { success: true, data: cached.data }
     }
 
-    // First, get the graduated pool from Jupiter metadata
+    // Get the graduated pool directly from Jupiter metadata function
     console.log(`🔍 Getting graduated pool for mint: ${mintAddress}`)
-    const jupiterResponse = await fetch(`/api/jupiter/metadata?mint=${mintAddress}`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json'
-      },
-      signal: AbortSignal.timeout(5000) // 5 second timeout
-    })
 
-    if (!jupiterResponse.ok) {
-      throw new Error(`Failed to fetch Jupiter metadata: ${jupiterResponse.status}`)
-    }
+    try {
+      const jupiterData = await fetchTokenMetadataFromJupiter(mintAddress)
+      const graduatedPool = jupiterData?.graduatedPool
 
-    const jupiterData = await jupiterResponse.json()
-    const graduatedPool = jupiterData.data?.graduatedPool
+      if (!graduatedPool) {
+        console.warn(`No graduated pool found for mint: ${mintAddress}`)
+        return {
+          success: false,
+          error: 'No graduated pool available for this token',
+          pairNotFound: true
+        }
+      }
 
-    if (!graduatedPool) {
-      console.warn(`No graduated pool found for mint: ${mintAddress}`)
+      console.log(`🎯 Using graduated pool: ${graduatedPool} for mint: ${mintAddress}`)
+
+      // Fetch from our proxy API endpoint using the graduated pool
+      // Construct absolute URL for the Axiom API call
+      const baseUrl = process.env.API_HOST
+        ? process.env.API_HOST
+        : process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+
+      const response = await fetch(`${baseUrl}/api/axiom/token-info?pairAddress=${graduatedPool}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json'
+        },
+        // Add timeout
+        signal: AbortSignal.timeout(10000) // 10 second timeout
+      })
+
+      const result = await response.json()
+
+      // Handle authentication error
+      if (result.requiresAuth) {
+        return {
+          success: false,
+          error: 'Axiom API requires authentication',
+          requiresAuth: true
+        }
+      }
+
+      // Handle pair not found error
+      if (result.pairNotFound) {
+        return {
+          success: false,
+          error: 'Token not found in Axiom database',
+          pairNotFound: true
+        }
+      }
+
+      if (!response.ok) {
+        throw new Error(`Axiom API error: ${response.status} ${response.statusText}`)
+      }
+
+      if (!result.success || !result.data) {
+        throw new Error(result.error || 'Invalid response from Axiom API')
+      }
+
+      const data: AxiomTokenInfo = result.data
+
+      // Validate required fields
+      if (typeof data.numHolders !== 'number' || typeof data.insidersHoldPercent !== 'number' || typeof data.bundlersHoldPercent !== 'number') {
+        throw new Error('Invalid response format from Axiom API')
+      }
+
+      // Cache the result
+      axiomCache.set(mintAddress, { data, timestamp: Date.now() })
+
+      return { success: true, data }
+    } catch (error) {
+      console.error(`Failed to fetch Axiom token info for ${mintAddress}:`, error)
       return {
         success: false,
-        error: 'No graduated pool available for this token',
-        pairNotFound: true
+        error: error instanceof Error ? error.message : 'Unknown error'
       }
     }
-
-    console.log(`🎯 Using graduated pool: ${graduatedPool} for mint: ${mintAddress}`)
-
-    // Fetch from our proxy API endpoint using the graduated pool
-    const response = await fetch(`/api/axiom/token-info?pairAddress=${graduatedPool}`, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json'
-      },
-      // Add timeout
-      signal: AbortSignal.timeout(10000) // 10 second timeout
-    })
-
-    const result = await response.json()
-
-    // Handle authentication error
-    if (result.requiresAuth) {
-      return {
-        success: false,
-        error: 'Axiom API requires authentication',
-        requiresAuth: true
-      }
-    }
-
-    // Handle pair not found error
-    if (result.pairNotFound) {
-      return {
-        success: false,
-        error: 'Token not found in Axiom database',
-        pairNotFound: true
-      }
-    }
-
-    if (!response.ok) {
-      throw new Error(`Axiom API error: ${response.status} ${response.statusText}`)
-    }
-
-    if (!result.success || !result.data) {
-      throw new Error(result.error || 'Invalid response from Axiom API')
-    }
-
-    const data: AxiomTokenInfo = result.data
-
-    // Validate required fields
-    if (typeof data.numHolders !== 'number' || typeof data.insidersHoldPercent !== 'number' || typeof data.bundlersHoldPercent !== 'number') {
-      throw new Error('Invalid response format from Axiom API')
-    }
-
-    // Cache the result
-    axiomCache.set(mintAddress, { data, timestamp: Date.now() })
-
-    return { success: true, data }
   } catch (error) {
     console.error(`Failed to fetch Axiom token info for ${mintAddress}:`, error)
     return {
