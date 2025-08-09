@@ -1,47 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Resilient fetch with timeout and retries for transient network errors
-const MAX_RETRIES = 3;
-const INITIAL_DELAY_MS = 250;
-
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function isTransientNetworkError(err: unknown): boolean {
-  const message = String((err as any)?.message || err || '').toLowerCase();
-  return (
-    message.includes('fetch failed') ||
-    message.includes('econn') ||
-    message.includes('enotfound') ||
-    message.includes('eai_again') ||
-    message.includes('timeout') ||
-    (err as any)?.name === 'AbortError'
-  );
-}
-
-async function resilientFetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
-    const controller = new AbortController();
-    const timeoutMs = 8000; // 8s timeout per attempt
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const response = await fetch(input as any, { ...init, signal: controller.signal });
-      clearTimeout(timeoutId);
-      return response;
-    } catch (err) {
-      clearTimeout(timeoutId);
-      if (attempt === MAX_RETRIES || !isTransientNetworkError(err)) {
-        throw err;
-      }
-      const delay = INITIAL_DELAY_MS * Math.pow(2, attempt) + Math.floor(Math.random() * 100);
-      await sleep(delay);
-    }
-  }
-  throw new Error('resilientFetch failed unexpectedly');
-}
-
 // Environment detection
 const isServer = typeof window === 'undefined';
 
@@ -75,10 +33,7 @@ export const supabase = createClient(config.url, config.key, {
   auth: {
     persistSession: !isServer, // Only persist session on client
     autoRefreshToken: !isServer,
-  },
-  global: {
-    fetch: resilientFetch as any,
-  },
+  }
 });
 
 // Admin supabase client - server only
@@ -87,10 +42,7 @@ export const adminSupabase = isServer
       auth: {
         autoRefreshToken: false,
         persistSession: false
-      },
-      global: {
-        fetch: resilientFetch as any,
-      },
+      }
     })
   : supabase; // Fallback to main client on browser (will error appropriately)
 
