@@ -259,16 +259,16 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       enabled: true,
       mcap: {
         min: 35_000,
-        max: 150_000
+        max: 75_000
       },
       priceChange5m: {
         max: -25.00 // Less tolerance for drops
       },
       priceChange1h: {
-        max: 500.00 // Lower pump tolerance
+        max: 600.00 // Lower pump tolerance
       },
       priceChange6h: {
-        max: 500.00
+        max: 600.00
       },
       organicScore: {
         min: 5 // Higher organic score requirement
