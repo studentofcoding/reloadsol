@@ -233,48 +233,48 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       checkManualTradingHistory: true
     }
   },
-  conservative: {
-    id: 'conservative',
-    name: 'Conservative Strategy',
+  lowcap_moonbag: {
+    id: 'lowcap_moonbag',
+    name: 'low cap potentail moonback',
     description: 'Lower risk, steady gains approach',
-    is_active: false,
+    is_active: true,
     take_profit_levels: {
-      tp1_percentage: 30,
-      tp1_sell_percentage: 50,
-      tp2_percentage: 60,
-      tp3_percentage: 100,
+      tp1_percentage: 200,
+      tp1_sell_percentage: 900,
+      tp2_percentage: 400,
+      tp3_percentage: 600,
       tp3_enabled: true
     },
-    buy_amount_sol: 0.01,
+    buy_amount_sol: 0.025,
     priority_fee_lamports: 1000000,
-    stop_loss_percentage: -20,
-    max_hold_hours: 48,
+    stop_loss_percentage: -30,
+    max_hold_hours: 12,
     conditions: {
-      min_market_cap: 100000,
-      min_organic_score: 70,
+      min_market_cap: 35000,
+      min_organic_score: 0,
       max_risk_level: 'low'
     },
     // Conservative filtering - stricter requirements
     filtering: {
       enabled: true,
       mcap: {
-        min: 500_000,
-        max: 2_000_000
+        min: 35_000,
+        max: 150_000
       },
       priceChange5m: {
         max: -25.00 // Less tolerance for drops
       },
       priceChange1h: {
-        max: 50.00 // Lower pump tolerance
+        max: 500.00 // Lower pump tolerance
       },
       priceChange6h: {
-        max: 40.00
+        max: 500.00
       },
       organicScore: {
-        min: 80 // Higher organic score requirement
+        min: 5 // Higher organic score requirement
       },
       topHoldersPercentage: {
-        max: 20
+        max: 25
       },
       requireCompleteData: true,
       checkManualTradingHistory: true
@@ -4813,43 +4813,43 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             )
 
             if (buyOperation) {
-            initialSimulation.buy_operation = buyOperation
-            initialSimulation.current_status = 'holding'
-            initialSimulation.remaining_token_amount = buyOperation.token_amount_received
-            initialSimulation.initial_token_amount = buyOperation.token_amount_received
-            tradingSimulation = initialSimulation
+              initialSimulation.buy_operation = buyOperation
+              initialSimulation.current_status = 'holding'
+              initialSimulation.remaining_token_amount = buyOperation.token_amount_received
+              initialSimulation.initial_token_amount = buyOperation.token_amount_received
+              tradingSimulation = initialSimulation
 
-            console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
+              console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
 
-            // Add position to SL/TP tracker for real-time monitoring
-            if (!initialSimulation.is_simulated && tradingKeypair) {
-              try {
-                const strategy = getTradingStrategy(assignedStrategy)
-                await addSLTPPosition({
-                  walletAddress: tradingKeypair.publicKey.toString(),
-                  tokenAddress: token.token_address,
-                  tokenSymbol: token.token_symbol,
-                  positionSize: parseFloat(buyOperation.token_amount_received),
-                  entryPrice: token.current_price,
-                  stopLossPercentage: strategy.stop_loss_percentage,
-                  takeProfitPercentage: strategy.take_profit_levels.tp2_percentage,
-                  positionType: 'bot',
-                  strategyId: assignedStrategy,
-                  tp1Percentage: strategy.take_profit_levels.tp1_percentage,
-                  tp1SellPercentage: strategy.take_profit_levels.tp1_sell_percentage,
-                  tp2Percentage: strategy.take_profit_levels.tp2_percentage,
-                  tp3Percentage: strategy.take_profit_levels.tp3_percentage,
-                  tp3Enabled: strategy.take_profit_levels.tp3_enabled
-                })
-                
-                console.log(`✅ Added ${token.token_symbol} to SL/TP tracker for real-time monitoring`)
-              } catch (slTpError) {
-                console.error('❌ Failed to add position to SL/TP tracker:', slTpError)
+              // Add position to SL/TP tracker for real-time monitoring
+              if (!initialSimulation.is_simulated && tradingKeypair) {
+                try {
+                  const strategy = getTradingStrategy(assignedStrategy)
+                  await addSLTPPosition({
+                    walletAddress: tradingKeypair.publicKey.toString(),
+                    tokenAddress: token.token_address,
+                    tokenSymbol: token.token_symbol,
+                    positionSize: parseFloat(buyOperation.token_amount_received),
+                    entryPrice: token.current_price,
+                    stopLossPercentage: strategy.stop_loss_percentage,
+                    takeProfitPercentage: strategy.take_profit_levels.tp2_percentage,
+                    positionType: 'bot',
+                    strategyId: assignedStrategy,
+                    tp1Percentage: strategy.take_profit_levels.tp1_percentage,
+                    tp1SellPercentage: strategy.take_profit_levels.tp1_sell_percentage,
+                    tp2Percentage: strategy.take_profit_levels.tp2_percentage,
+                    tp3Percentage: strategy.take_profit_levels.tp3_percentage,
+                    tp3Enabled: strategy.take_profit_levels.tp3_enabled
+                  })
+
+                  console.log(`✅ Added ${token.token_symbol} to SL/TP tracker for real-time monitoring`)
+                } catch (slTpError) {
+                  console.error('❌ Failed to add position to SL/TP tracker:', slTpError)
+                }
               }
+            } else {
+              console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
             }
-          } else {
-            console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
-          }
           } catch (error) {
             console.error(`❌ Buy operation error for ${token.token_symbol}:`, error)
           }
@@ -5050,39 +5050,39 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               )
 
               if (buyOperation) {
-                  initialSimulation.buy_operation = buyOperation
-                  initialSimulation.current_status = 'holding'
-                  initialSimulation.remaining_token_amount = buyOperation.token_amount_received
-                  initialSimulation.initial_token_amount = buyOperation.token_amount_received
+                initialSimulation.buy_operation = buyOperation
+                initialSimulation.current_status = 'holding'
+                initialSimulation.remaining_token_amount = buyOperation.token_amount_received
+                initialSimulation.initial_token_amount = buyOperation.token_amount_received
 
-                  console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
+                console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
 
-                  // Add position to SL/TP tracker for real-time monitoring
-                  if (!initialSimulation.is_simulated && tradingKeypair) {
-                    try {
-                      const strategy = getTradingStrategy(assignedStrategy)
-                      await addSLTPPosition({
-                        walletAddress: tradingKeypair.publicKey.toString(),
-                        tokenAddress: token.token_address,
-                        tokenSymbol: token.token_symbol,
-                        positionSize: parseFloat(buyOperation.token_amount_received),
-                        entryPrice: token.current_price,
-                        stopLossPercentage: strategy.stop_loss_percentage,
-                        takeProfitPercentage: strategy.take_profit_levels.tp2_percentage,
-                        positionType: 'bot',
-                        strategyId: assignedStrategy,
-                        tp1Percentage: strategy.take_profit_levels.tp1_percentage,
-                        tp1SellPercentage: strategy.take_profit_levels.tp1_sell_percentage,
-                        tp2Percentage: strategy.take_profit_levels.tp2_percentage,
-                        tp3Percentage: strategy.take_profit_levels.tp3_percentage,
-                        tp3Enabled: strategy.take_profit_levels.tp3_enabled
-                      })
-                      
-                      console.log(`✅ Added ${token.token_symbol} to SL/TP tracker for real-time monitoring`)
-                    } catch (slTpError) {
-                      console.error('❌ Failed to add position to SL/TP tracker:', slTpError)
-                    }
+                // Add position to SL/TP tracker for real-time monitoring
+                if (!initialSimulation.is_simulated && tradingKeypair) {
+                  try {
+                    const strategy = getTradingStrategy(assignedStrategy)
+                    await addSLTPPosition({
+                      walletAddress: tradingKeypair.publicKey.toString(),
+                      tokenAddress: token.token_address,
+                      tokenSymbol: token.token_symbol,
+                      positionSize: parseFloat(buyOperation.token_amount_received),
+                      entryPrice: token.current_price,
+                      stopLossPercentage: strategy.stop_loss_percentage,
+                      takeProfitPercentage: strategy.take_profit_levels.tp2_percentage,
+                      positionType: 'bot',
+                      strategyId: assignedStrategy,
+                      tp1Percentage: strategy.take_profit_levels.tp1_percentage,
+                      tp1SellPercentage: strategy.take_profit_levels.tp1_sell_percentage,
+                      tp2Percentage: strategy.take_profit_levels.tp2_percentage,
+                      tp3Percentage: strategy.take_profit_levels.tp3_percentage,
+                      tp3Enabled: strategy.take_profit_levels.tp3_enabled
+                    })
+
+                    console.log(`✅ Added ${token.token_symbol} to SL/TP tracker for real-time monitoring`)
+                  } catch (slTpError) {
+                    console.error('❌ Failed to add position to SL/TP tracker:', slTpError)
                   }
+                }
 
                 // Update token status to tracking with buy simulation
                 updatesPromises.push(
