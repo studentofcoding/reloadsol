@@ -249,7 +249,7 @@ async function sendFilteredTokensNotification() {
         // Track MCap for tokens in the tracking range (30k-2M)
         const tokensInTrackingRange = sortedTokens.filter(token => isInTrackingRange(token.mcap));
         let mcapTrackingResults = new Map();
-        
+
         if (tokensInTrackingRange.length > 0) {
             console.log(`Tracking MCap for ${tokensInTrackingRange.length} tokens in range 30k-2M`);
             mcapTrackingResults = await bulkTrackTokenMcaps(
@@ -331,7 +331,7 @@ async function sendFilteredTokensNotification() {
 
                 // Get MCap tracking info
                 const mcapTracking = mcapTrackingResults.get(token.token_address);
-                const mcapDisplay = mcapTracking 
+                const mcapDisplay = mcapTracking
                     ? getMcapDisplayString(mcapTracking)
                     : `MCap: $${token.mcap.toLocaleString()}`;
 
@@ -569,28 +569,28 @@ export async function PUT(request: NextRequest) {
 // Add a POST endpoint for scheduled filtered notifications
 export async function POST(request: NextRequest) {
     try {
-        const { searchParams } = new URL(request.url);
-        const secretKey = searchParams.get('key');
-        const expectedSecretKey = process.env.NOTIFICATION_SECRET_KEY;
+        // Verify secret key
+        const { searchParams } = new URL(request.url)
+        const secretKey = searchParams.get('key')
+        const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
 
-        // Validate secret key if configured
-        if (expectedSecretKey && secretKey !== expectedSecretKey) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        if (secretKey !== expectedSecretKey) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
         }
 
-        // Send filtered notifications
-        await sendFilteredTokensNotification();
+        // Send filtered tokens notification
+        await sendFilteredTokensNotification()
 
         return NextResponse.json({
             success: true,
-            message: 'Filtered notifications sent'
-        });
+            message: 'Filtered tokens notification sent successfully'
+        })
     } catch (error) {
-        console.error('Error in scheduled filtered notification:', error);
+        console.error('Error in filtered trending POST handler:', error)
         return NextResponse.json({
-            error: 'Failed to send scheduled filtered notification',
+            error: 'Failed to process filtered trending request',
             message: error instanceof Error ? error.message : 'Unknown error'
-        }, { status: 500 });
+        }, { status: 500 })
     }
 }
 
