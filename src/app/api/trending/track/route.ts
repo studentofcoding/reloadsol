@@ -403,6 +403,32 @@ function isStrategyActive(strategyId: string): boolean {
     }
   }
 
+  // Check day type (weekend/weekday) specific overrides
+  const dayTypeInfo = isDayTypeWeekend()
+  console.log(`🗓️ Current day: ${dayTypeInfo.dayName} (${dayTypeInfo.dayType})`)
+  const dayTypeEnvKey = `STRATEGY_ACTIVE_${dayTypeInfo.dayType.toUpperCase()}_${strategyId.toUpperCase()}`
+  const dayTypeEnvValue = process.env[dayTypeEnvKey]
+
+  if (dayTypeEnvValue !== undefined) {
+    const isDayTypeActive = dayTypeEnvValue.toLowerCase() === 'true'
+    console.log(`🔧 Strategy '${strategyId}' ${dayTypeInfo.dayType} activation overridden by ${dayTypeEnvKey}: ${isDayTypeActive}`)
+    return isDayTypeActive
+  }
+
+  // Check global weekend/weekday override
+  const globalDayTypeEnvKey = `STRATEGIES_${dayTypeInfo.dayType.toUpperCase()}_ENABLED`
+  const globalDayTypeEnvValue = process.env[globalDayTypeEnvKey]
+
+  if (globalDayTypeEnvValue !== undefined) {
+    const isGlobalDayTypeEnabled = globalDayTypeEnvValue.toLowerCase() === 'true'
+    if (!isGlobalDayTypeEnabled) {
+      console.log(`🚫 All strategies disabled for ${dayTypeInfo.dayType} (${dayTypeInfo.dayName}) by ${globalDayTypeEnvKey}: false`)
+      return false
+    }
+  }
+
+  console.log(`🔄 Strategy '${strategyId}' final activation state: ${strategy.is_active ? '✅ ACTIVE' : '❌ INACTIVE'}`)
+
   // Use default active state from strategy configuration
   return strategy.is_active
 }
@@ -4314,13 +4340,38 @@ function isWithinTradingHours(): { allowed: boolean; reason?: string; currentTim
   const timeString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} GMT+7`
 
   // Trading allowed from 16:00 to 04:00 GMT+7
-  // This means: 16:00-23:59 and 00:00-03:59
-  const isAllowed = hours >= 16 || hours < 4
+  // This means: 15:00-23:59 and 00:00-05:59
+  const isAllowed = hours >= 15 || hours < 6
 
   return {
     allowed: isAllowed,
     reason: isAllowed ? undefined : `Trading restricted outside 16:00-04:00 GMT+7. Current time: ${timeString}`,
     currentTime: timeString
+  }
+}
+
+/**
+ * Checks if the current day is a weekend (Saturday or Sunday) or weekday (Monday-Friday)
+ * @returns Object with day type information
+ */
+function isDayTypeWeekend(): { isWeekend: boolean; dayType: 'weekend' | 'weekday'; dayName: string } {
+  const now = new Date()
+
+  // Convert to GMT+7 (Asia/Bangkok timezone) to match the isWithinTradingHours function
+  const gmt7Time = new Date(now.getTime() + (7 * 60 * 60 * 1000))
+  const dayOfWeek = gmt7Time.getUTCDay() // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+
+  // Weekend is Saturday (6) or Sunday (0)
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
+
+  // Get day name for logging
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  const dayName = dayNames[dayOfWeek]
+
+  return {
+    isWeekend,
+    dayType: isWeekend ? 'weekend' : 'weekday',
+    dayName
   }
 }
 
