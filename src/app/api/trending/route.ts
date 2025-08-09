@@ -300,7 +300,7 @@ async function sendDiscordNotification(
     // Track MCap for tokens in the tracking range (30k-2M)
     const tokensInTrackingRange = sortedTokens.filter(token => isInTrackingRange(token.mcap));
     let mcapTrackingResults = new Map();
-    
+
     if (tokensInTrackingRange.length > 0) {
       console.log(`Tracking MCap for ${tokensInTrackingRange.length} tokens in range 30k-2M`);
       mcapTrackingResults = await bulkTrackTokenMcaps(
@@ -346,7 +346,7 @@ async function sendDiscordNotification(
 
         // Get MCap tracking info
         const mcapTracking = mcapTrackingResults.get(token.token_address);
-        const mcapDisplay = mcapTracking 
+        const mcapDisplay = mcapTracking
           ? getMcapDisplayString(mcapTracking)
           : `MCap: $${token.mcap.toLocaleString()}`;
 
@@ -559,7 +559,7 @@ export async function POST(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const secretKey = searchParams.get('key');
-    const expectedSecretKey = process.env.NOTIFICATION_SECRET_KEY;
+    const expectedSecretKey = process.env.NOTIFICATION_SECRET_KEY || process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending';
 
     // Validate secret key if configured
     if (expectedSecretKey && secretKey !== expectedSecretKey) {
@@ -568,6 +568,9 @@ export async function POST(request: NextRequest) {
 
     // Force a full refresh and force notifications
     const tokenArray = await fetchAndUpdateCache(true, Date.now(), true);
+
+    // Update the last notification time
+    lastAutoNotificationTime = Date.now();
 
     return NextResponse.json({
       success: true,

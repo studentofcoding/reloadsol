@@ -326,25 +326,39 @@ export async function trackTokenMcap(
         .from('token_mcap_tracking')
         .select('*')
         .eq('token_address', tokenAddress)
-        .single()
-
-      if (error && (error as any).code !== 'PGRST116') { // PGRST116 = no rows returned
+        .order('last_updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (error) {
         throw error
       }
-      existingRecord = (data as any) || null
+      existingRecord = (data as any) ?? null
     } catch (fetchErr: any) {
-      // Handle transient fetch failures from undici/fetch
-      const message = String(fetchErr?.message || '').toLowerCase()
-      const isTransient = message.includes('fetch failed') || message.includes('timeout')
+      // Only degrade on transient fetch/network failures
+      const message = String(fetchErr?.message ?? '').toLowerCase()
+      const codeOrName = String(fetchErr?.code ?? fetchErr?.name ?? '').toLowerCase()
+      const isTransient =
+        message.includes('fetch failed') ||
+        message.includes('timeout') ||
+        message.includes('timed out') ||
+        message.includes('socket hang up') ||
+        codeOrName.includes('abort') ||
+        codeOrName.includes('econnreset') ||
+        codeOrName.includes('etimedout') ||
+        codeOrName.includes('enotfound') ||
+        codeOrName.includes('eai_again')
       log.error('price_tracking', 'Error fetching MCap record', fetchErr as Error, {
         tokenAddress,
         tokenSymbol,
         currentMcap: normalizedCurrentMcap,
         transient: isTransient,
       })
-      // Graceful degrade: proceed as first-time to avoid blocking tracking when DB is briefly unavailable
-      return { isFirstTime: true, currentMcap: normalizedCurrentMcap }
-    }
+      if (isTransient) {
+        // Graceful degrade: proceed as first-time to avoid blocking tracking when DB is briefly unavailable
+        return { isFirstTime: true, currentMcap: normalizedCurrentMcap }
+      }
+      throw fetchErr
+     }
 
     const currentTime = new Date().toISOString()
 
