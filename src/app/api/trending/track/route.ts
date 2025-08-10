@@ -272,7 +272,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
         max: 600.00
       },
       organicScore: {
-        min: 5 // Higher organic score requirement
+        min: 0 // Higher organic score requirement
       },
       topHoldersPercentage: {
         max: 25
