@@ -68,62 +68,39 @@ async function batchFetchPrices(mints: string[]): Promise<Record<string, number>
 
   startTimer('jupiter-batch')
 
-  const chunks = []
-  for (let i = 0; i < mints.length; i += BATCH_SIZE) {
-    chunks.push(mints.slice(i, i + BATCH_SIZE))
+  try {
+    // Use the new Jupiter API manager for better caching and rate limiting
+    const priceData = await jupiterAPI.fetchTokenPrices(mints, {
+      timeout: 10000,
+      retries: 0 // We handle retries at the manager level
+    })
+
+    const prices: Record<string, number> = {}
+
+    Object.entries(priceData).forEach(([mint, data]) => {
+      prices[mint] = data.price
+      // Cache the USD price
+      priceCache.set(mint, {
+        price: data.price,
+        timestamp: Date.now()
+      })
+    })
+
+    stopTimer('jupiter-batch')
+    console.log(`Fetched USD prices for ${Object.keys(prices).length}/${mints.length} tokens`)
+    return prices
+  } catch (error) {
+    console.error('Batch price fetch failed:', error)
+    
+    // Fallback: set all mints to 0 price
+    const prices: Record<string, number> = {}
+    mints.forEach(mint => {
+      prices[mint] = 0
+    })
+
+    stopTimer('jupiter-batch')
+    return prices
   }
-
-  const prices: Record<string, number> = {}
-  const RETRY_DELAY = 400
-  const MAX_RETRIES = 3
-
-  await Promise.all(chunks.map(async (chunk, index) => {
-    const chunkLabel = `Price Chunk ${index + 1}/${chunks.length}`
-    startTimer(chunkLabel)
-
-    for (let retry = 0; retry < MAX_RETRIES; retry++) {
-      try {
-        // Use the new Jupiter API utility
-        const { fetchTokenPrices } = await import('./jupiter-api')
-        const priceData = await fetchTokenPrices(chunk, {
-          timeout: 10000,
-          retries: 0 // We handle retries at this level
-        })
-
-        console.log(`Price data for chunk ${index + 1}:`, Object.keys(priceData).length, 'prices fetched')
-
-        Object.entries(priceData).forEach(([mint, data]) => {
-          prices[mint] = data.price
-          // Cache the USD price
-          priceCache.set(mint, {
-            price: data.price,
-            timestamp: Date.now()
-          })
-        })
-
-        break // Success, exit retry loop
-
-        await sleep(RETRY_DELAY)
-      } catch (error) {
-        console.warn(`Price fetch attempt ${retry + 1} failed:`, error)
-        if (retry === MAX_RETRIES - 1) {
-          console.error('Price fetch failed after all retries')
-          // Set all chunk mints to 0 price on final failure
-          chunk.forEach(mint => {
-            prices[mint] = 0
-          })
-        } else {
-          await sleep(RETRY_DELAY)
-        }
-      }
-    }
-
-    stopTimer(chunkLabel)
-  }))
-
-  stopTimer('jupiter-batch')
-  console.log(`Fetched USD prices for ${Object.keys(prices).length}/${mints.length} tokens`)
-  return prices
 }
 
 // Get cached price or fetch if expired - Returns price in USD
@@ -133,12 +110,20 @@ async function getCachedPrice(mint: string): Promise<number> {
     return cached.price
   }
 
-  // Use new price client for better rate limiting
+  // Use Jupiter API manager for better rate limiting
   try {
-    const { getTokenPrice } = await import('./price-client')
-    return await getTokenPrice(mint)
+    const priceData = await jupiterAPI.fetchTokenPrices([mint])
+    const price = priceData[mint]?.price || 0
+    
+    // Cache the price
+    priceCache.set(mint, {
+      price: price,
+      timestamp: Date.now()
+    })
+    
+    return price
   } catch (error) {
-    console.warn('Price client failed, falling back to direct fetch:', error)
+    console.warn('Jupiter API manager failed, falling back to direct fetch:', error)
     // Fallback to original method
     const prices = await batchFetchPrices([mint])
     return prices[mint] || 0
@@ -2514,6 +2499,17 @@ class JupiterAPIManager {
   private readonly MAX_RETRIES = 3
   private readonly RETRY_DELAYS = [400, 800, 1600]
 
+  // Get base URL for API calls - handles both client and server environments
+  private getBaseUrl(): string {
+    // Client-side: use relative URLs (browser will resolve against current domain)
+    if (typeof window !== 'undefined') {
+      return ''
+    }
+    
+    // Server-side: need absolute URL
+    return process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+  }
+
   private getCachedData(key: string): any | null {
     const cached = this.cache.get(key)
     if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
@@ -2545,7 +2541,8 @@ class JupiterAPIManager {
 
   private async makeServerRequest(mintAddress: string, retryCount = 0): Promise<any> {
     try {
-      const response = await fetch(`/api/jupiter/metadata?mint=${encodeURIComponent(mintAddress)}`)
+      const baseUrl = this.getBaseUrl()
+      const response = await fetch(`${baseUrl}/api/jupiter/metadata?mint=${encodeURIComponent(mintAddress)}`)
 
       if (!response.ok) {
         throw new Error(`Server API error: ${response.status} ${response.statusText}`)
@@ -2598,7 +2595,8 @@ class JupiterAPIManager {
         const batch = uncachedMints.slice(i, i + BATCH_SIZE)
 
         try {
-          const response = await fetch('/api/jupiter/metadata', {
+          const baseUrl = this.getBaseUrl()
+          const response = await fetch(`${baseUrl}/api/jupiter/metadata`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -2626,6 +2624,69 @@ class JupiterAPIManager {
           batch.forEach(mint => {
             if (!results[mint]) {
               results[mint] = { decimals: 6, symbol: 'TOKEN', name: 'Unknown Token' }
+            }
+          })
+        }
+      }
+    }
+
+    return results
+  }
+
+  // Fetch token prices using our server API
+  async fetchTokenPrices(mintAddresses: string[], options?: { timeout?: number; retries?: number }): Promise<Record<string, { price: number }>> {
+    if (mintAddresses.length === 0) return {}
+
+    const results: Record<string, { price: number }> = {}
+    const uncachedMints: string[] = []
+
+    // Check client cache first
+    mintAddresses.forEach(mint => {
+      const cached = this.getCachedData(`price_${mint}`)
+      if (cached) {
+        results[mint] = { price: cached }
+      } else {
+        uncachedMints.push(mint)
+      }
+    })
+
+    // Fetch uncached prices from server in batches
+    if (uncachedMints.length > 0) {
+      const BATCH_SIZE = 100 // Server supports up to 100 per request
+
+      for (let i = 0; i < uncachedMints.length; i += BATCH_SIZE) {
+        const batch = uncachedMints.slice(i, i + BATCH_SIZE)
+
+        try {
+          const baseUrl = this.getBaseUrl()
+          const response = await fetch(`${baseUrl}/api/jupiter/prices`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ mints: batch })
+          })
+
+          if (!response.ok) {
+            throw new Error(`Price API error: ${response.status} ${response.statusText}`)
+          }
+
+          const priceResult = await response.json()
+
+          if (priceResult.data) {
+            Object.entries(priceResult.data).forEach(([mint, priceData]: [string, any]) => {
+              if (priceData && typeof priceData.price === 'number') {
+                results[mint] = { price: priceData.price }
+                this.setCachedData(`price_${mint}`, priceData.price)
+              }
+            })
+          }
+        } catch (error) {
+          console.warn(`Failed to fetch batch token prices:`, error)
+          // Set zero prices for failed batch
+          batch.forEach(mint => {
+            if (!results[mint]) {
+              results[mint] = { price: 0 }
             }
           })
         }
