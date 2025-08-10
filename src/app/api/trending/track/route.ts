@@ -251,6 +251,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     max_hold_hours: 12,
     conditions: {
       min_market_cap: 35000,
+      max_market_cap: 75000,
       min_organic_score: 0,
       max_risk_level: 'low'
     },
@@ -2192,9 +2193,11 @@ async function performEnhancedFiltering(
     // Market cap filtering
     if (filterConfig.mcap) {
       if (filterConfig.mcap.min && (!mcap || mcap <= filterConfig.mcap.min)) {
+        console.log(`🔍 Token ${pool.baseAsset.symbol} rejected: Market cap ${mcap} below minimum ${filterConfig.mcap.min}`);
         rejectionReasons.push(`Market cap too low (${mcap ? `$${(mcap / 1000).toFixed(0)}k` : 'N/A'} <= $${(filterConfig.mcap.min / 1000).toFixed(0)}k)`)
       }
       if (filterConfig.mcap.max && (!mcap || mcap >= filterConfig.mcap.max)) {
+        console.log(`🔍 Token ${pool.baseAsset.symbol} rejected: Market cap ${mcap} above maximum ${filterConfig.mcap.max}`);
         rejectionReasons.push(`Market cap too high (${mcap ? `$${(mcap / 1000000).toFixed(1)}M` : 'N/A'} >= $${(filterConfig.mcap.max / 1000000).toFixed(1)}M)`)
       }
     }
@@ -5714,6 +5717,11 @@ function assignTokenToStrategy(token: any, strategies: string[], allocation: Rec
       let meetsConditions = true
 
       if (strategy.conditions.min_market_cap && marketCap < strategy.conditions.min_market_cap) {
+        meetsConditions = false
+      }
+
+      // Add check for max_market_cap if defined in conditions
+      if (strategy.conditions.max_market_cap && marketCap > strategy.conditions.max_market_cap) {
         meetsConditions = false
       }
 
