@@ -156,10 +156,6 @@ export default function PnLTracker() {
     return false
   })
 
-  // ✅ NEW: Add state to track processed records and enable incremental updates
-  const [processedRecordIds, setProcessedRecordIds] = useState<Set<string>>(new Set())
-  const [lastProcessedTimestamp, setLastProcessedTimestamp] = useState<number>(0)
-
   // Handler to dismiss the hint message
   const handleDismissHint = useCallback(() => {
     setShowClosedPositionsHint(false)
@@ -438,6 +434,382 @@ export default function PnLTracker() {
     }
   }, [])
 
+  // Calculate PnL records by matching buy and sell operations
+  const calculatePnL = useCallback(async () => {
+    if (!connected || !publicKey) {
+      setPnlRecords([])
+      setOpenPositions([])
+      return
+    }
+
+    setIsLoading(true)
+    setError('')
+
+    try {
+      const walletAddress = publicKey.toString()
+      const allRecords = records // Use records from React Query
+      
+      // Get successful buy and sell records
+      const buyRecords = allRecords.filter(record => 
+        record.operationType === 'buy' && record.successCount > 0
+      )
+      
+      // Process sell records with sell+close combination logic similar to TradingHistory
+      const allSellRecords = allRecords.filter(record => 
+        record.operationType === 'sell' && record.successCount > 0
+      )
+      
+      // Apply the same sell+close combination logic as TradingHistory for consistency
+      const processedSellRecords: TrackingRecord[] = []
+      const processedRecordIds = new Set<string>()
+
+      allSellRecords.forEach(sellRecord => {
+        if (processedRecordIds.has(sellRecord.id)) return
+
+        // Look for a close operation within 30 seconds (same logic as TradingHistory)
+        const closeRecord = allRecords.find(r => 
+          r.operationType === 'close' && 
+          r.successCount > 0 &&
+          !processedRecordIds.has(r.id) &&
+          Math.abs(r.timestamp - sellRecord.timestamp) <= 30000 // 30 seconds
+        )
+
+        if (closeRecord) {
+          // Combine sell and close into one record for P&L calculation
+          const combinedRecord: TrackingRecord = {
+            ...sellRecord,
+            // Combine tokens but prioritize sell tokens for P&L calculation
+            tokens: [...sellRecord.tokens, ...closeRecord.tokens].filter((token, index, self) => 
+              index === self.findIndex(t => t.mintAddress === token.mintAddress)
+            ),
+            successCount: sellRecord.successCount + closeRecord.successCount,
+            totalTokens: sellRecord.totalTokens + closeRecord.totalTokens,
+            signatures: [...sellRecord.signatures, ...closeRecord.signatures],
+            // ✅ NEW: Preserve bot operation flags when combining records
+            is_bot_operation: sellRecord.is_bot_operation || closeRecord.is_bot_operation,
+            bot_strategy: sellRecord.bot_strategy || closeRecord.bot_strategy,
+          }
+          
+          processedSellRecords.push(combinedRecord)
+          processedRecordIds.add(sellRecord.id)
+          processedRecordIds.add(closeRecord.id)
+        } else {
+          // No matching close operation, keep sell as is
+          processedSellRecords.push(sellRecord)
+          processedRecordIds.add(sellRecord.id)
+        }
+      })
+
+      // NEW CYCLE-AWARE PnL CALCULATION ----------------------------------------------------
+      // The legacy aggregation logic below mixes multiple buy/sell cycles of the same token
+      // into a single position.  That causes a reopened position (buying again after a full
+      // close) to inherit the previous PnL.  We now compute PnL on a per-cycle basis: once the
+      // remaining token amount for a cycle reaches ~0 the cycle is considered closed and we
+      // start a fresh one for any subsequent buys.
+      {
+        // Helper type for an open trade cycle
+        type Cycle = {
+          mintAddress: string
+          symbol?: string
+          name?: string
+          logoURI?: string
+          totalSolBought: number
+          totalSolSold: number
+          totalTokenBought: number
+          remainingTokenAmount: number
+          weightedBuyPriceUsd: number // simple average for now
+          weightedSellPriceUsd: number
+          buyCount: number
+          sellCount: number
+          buySignatures: string[]
+          sellSignatures: string[]
+          firstBuyTimestamp: number
+          // ✅ NEW: Track bot operation info
+          isBotOperation: boolean
+          botStrategy?: string
+        }
+
+        const allOpsUnsorted = [...buyRecords, ...processedSellRecords]
+        allOpsUnsorted.sort((a, b) => a.timestamp - b.timestamp)
+
+        const openCycles = new Map<string, Cycle>()
+        const closedCycles: PnLRecord[] = []
+
+        const solPriceCache = solPriceUsd // capture once
+
+        // Iterate chronologically through all operations and build cycles
+        for (const op of allOpsUnsorted) {
+          const isBuy = op.operationType === 'buy'
+          const tokensInOp = op.tokens || []
+
+          // Guard – skip malformed records
+          if (!op.solAmount || op.successCount === 0) continue
+
+          // Evenly distribute SOL across tokens in the operation (we usually have 1 token)
+          const solPerToken = op.solAmount / op.successCount
+
+          for (const tkn of tokensInOp) {
+            const mint = tkn.mintAddress
+            if (!mint) continue
+
+            if (isBuy) {
+              let cycle = openCycles.get(mint)
+              if (!cycle) {
+                cycle = {
+                  mintAddress: mint,
+                  symbol: tkn.symbol,
+                  name: tkn.name,
+                  logoURI: tkn.logoURI,
+                  totalSolBought: 0,
+                  totalSolSold: 0,
+                  totalTokenBought: 0,
+                  remainingTokenAmount: 0,
+                  weightedBuyPriceUsd: 0,
+                  weightedSellPriceUsd: 0,
+                  buyCount: 0,
+                  sellCount: 0,
+                  buySignatures: [],
+                  sellSignatures: [],
+                  firstBuyTimestamp: op.timestamp,
+                  // ✅ NEW: Initialize bot operation tracking
+                  isBotOperation: !!op.is_bot_operation,
+                  botStrategy: op.bot_strategy,
+                }
+                openCycles.set(mint, cycle)
+              }
+
+              const tokenAmt = tkn.tokenAmount || 0
+              cycle.totalSolBought += solPerToken
+              cycle.totalTokenBought += tokenAmt
+              cycle.remainingTokenAmount += tokenAmt
+              if (tkn.priceUsd) {
+                // simple running average
+                cycle.weightedBuyPriceUsd =
+                  (cycle.weightedBuyPriceUsd * cycle.buyCount + tkn.priceUsd) / (cycle.buyCount + 1)
+              }
+              cycle.buyCount += 1
+              cycle.buySignatures.push(...op.signatures)
+              
+              // ✅ NEW: Update bot operation info if this is a bot operation
+              if (op.is_bot_operation) {
+                cycle.isBotOperation = true
+                cycle.botStrategy = op.bot_strategy || cycle.botStrategy
+              }
+            } else {
+              // SELL branch
+              const cycle = openCycles.get(mint)
+              if (!cycle) {
+                // sell without open cycle (shouldn't happen) – skip
+                continue
+              }
+
+              const tokenAmt = tkn.tokenAmount || 0
+              cycle.totalSolSold += solPerToken
+              cycle.remainingTokenAmount = Math.max(0, cycle.remainingTokenAmount - tokenAmt)
+              if (tkn.priceUsd) {
+                cycle.weightedSellPriceUsd =
+                  (cycle.weightedSellPriceUsd * cycle.sellCount + tkn.priceUsd) / (cycle.sellCount + 1)
+              }
+              cycle.sellCount += 1
+              cycle.sellSignatures.push(...op.signatures)
+
+              // ✅ NEW: Update bot operation info if this is a bot operation
+              if (op.is_bot_operation) {
+                cycle.isBotOperation = true
+                cycle.botStrategy = op.bot_strategy || cycle.botStrategy
+              }
+
+              // If the cycle is fully closed, compute PnL record and remove from open map
+              if (cycle.remainingTokenAmount <= 1e-6) {
+                const pnlSOL = cycle.totalSolSold - cycle.totalSolBought
+                const pnlUSD = pnlSOL * solPriceCache
+                const pnlPerc = cycle.totalSolBought > 0 ? (pnlSOL / cycle.totalSolBought) * 100 : 0
+
+                const pnlRecord: PnLRecord = {
+                  id: `${mint}-${cycle.firstBuyTimestamp}-${op.timestamp}`,
+                  mintAddress: mint,
+                  symbol: cycle.symbol,
+                  name: cycle.name,
+                  logoURI: cycle.logoURI,
+                  buyTimestamp: cycle.firstBuyTimestamp,
+                  sellTimestamp: op.timestamp,
+                  buyPrice: cycle.weightedBuyPriceUsd,
+                  sellPrice: cycle.weightedSellPriceUsd,
+                  solAmountBought: cycle.totalSolBought,
+                  solAmountSold: cycle.totalSolSold,
+                  pnlSOL,
+                  pnlUSD,
+                  pnlPercentage: pnlPerc,
+                  buySignatures: cycle.buySignatures,
+                  sellSignatures: cycle.sellSignatures,
+                  isPartialSell: false,
+                  sellTransactionId: `${mint}-${op.timestamp}`,
+                  // ✅ NEW: Include bot operation info in PnL records
+                  isBotOperation: cycle.isBotOperation,
+                  botStrategy: cycle.botStrategy,
+                }
+
+                closedCycles.push(pnlRecord)
+
+                openCycles.delete(mint)
+              }
+            }
+          }
+        }
+
+        // Build open positions array by checking wallet holdings
+        let openPositionsResult: OpenPosition[] = []
+        if (openCycles.size > 0) {
+          try {
+            const walletTokens = await fetchUserTokens(connection, publicKey!, false, false)
+            openCycles.forEach((cycle) => {
+              const walletTok = walletTokens.find((wt) => wt.mintAddress === cycle.mintAddress)
+              if (walletTok && walletTok.uiAmount > 0.001) {
+                openPositionsResult.push({
+                  id: `open-${cycle.mintAddress}`,
+                  mintAddress: cycle.mintAddress,
+                  symbol: cycle.symbol || walletTok.symbol,
+                  name: cycle.name || walletTok.name,
+                  logoURI: cycle.logoURI || walletTok.logoURI,
+                  buyTimestamp: cycle.firstBuyTimestamp,
+                  solAmountBought: cycle.totalSolBought,
+                  buySignatures: cycle.buySignatures,
+                  isOpen: true,
+                  buyPriceUsd: cycle.weightedBuyPriceUsd,
+                  buyTokenAmount: cycle.totalTokenBought,
+                  actualWalletBalance: walletTok.uiAmount,
+                  walletTokenData: walletTok,
+                  // ✅ NEW: Include bot operation info in open positions
+                  isBotOperation: cycle.isBotOperation,
+                  botStrategy: cycle.botStrategy,
+                })
+              }
+            })
+          } catch (walletErr) {
+            console.error('Failed fetching wallet tokens for open cycle verification', walletErr)
+          }
+        }
+
+        // Sort results (newest first)
+        closedCycles.sort((a, b) => b.sellTimestamp - a.sellTimestamp)
+        openPositionsResult.sort((a, b) => {
+          // First, prioritize positions with calculated P&L
+          const aHasPnL = a.pnlPercentage !== undefined
+          const bHasPnL = b.pnlPercentage !== undefined
+          
+          if (aHasPnL && !bHasPnL) return -1
+          if (!aHasPnL && bHasPnL) return 1
+          
+          // If both have P&L, sort by percentage (highest positive first)
+          if (aHasPnL && bHasPnL) {
+            return (b.pnlPercentage || 0) - (a.pnlPercentage || 0)
+          }
+          
+          // If neither has P&L, sort by timestamp (newest first)
+          return b.buyTimestamp - a.buyTimestamp
+        })
+
+        // Update state and exit this calculation early – legacy logic below is skipped
+        setPnlRecords(closedCycles)
+        setOpenPositions(openPositionsResult)
+        setIsLoading(false)
+        return // <––    EARLY EXIT  (legacy aggregation will be skipped)
+      }
+    } catch (err) {
+      console.error('Error calculating PnL:', err)
+      setError('Failed to calculate PnL data')
+      setPnlRecords([])
+      setOpenPositions([])
+    } finally {
+      setIsLoading(false)
+    }
+  }, [connected, publicKey, records, solPriceUsd])
+
+  // ✅ NEW: Bot operation sync polling
+  useEffect(() => {
+    if (!connected || !publicKey) return
+
+    const walletAddress = publicKey.toString()
+    let syncInterval: NodeJS.Timeout
+
+    const checkForBotUpdates = async () => {
+      try {
+        const response = await fetch(`/api/trading/sync?wallet=${encodeURIComponent(walletAddress)}`)
+        if (response.ok) {
+          const { hasUpdate, lastUpdate, source } = await response.json()
+          
+          if (hasUpdate && lastUpdate > lastBotSync) {
+            console.log(`🤖 Bot operation detected from ${source}, refreshing PnL...`)
+            setLastBotSync(lastUpdate)
+            setIsBotSyncActive(true)
+            
+            // Force refresh the PnL calculation
+            await calculatePnL()
+            
+            // Reset sync indicator after a delay
+            setTimeout(() => setIsBotSyncActive(false), 2000)
+          }
+        }
+      } catch (error) {
+        // Silent fail - sync is best effort
+      }
+    }
+
+    // Check immediately and then every 10 seconds
+    checkForBotUpdates()
+    syncInterval = setInterval(checkForBotUpdates, 10000)
+
+    return () => {
+      if (syncInterval) clearInterval(syncInterval)
+    }
+  }, [connected, publicKey, lastBotSync, calculatePnL])
+
+  // Load PnL data when wallet connects or records change
+  useEffect(() => {
+    if (connected && publicKey && records.length >= 0) { // Allow for empty records array
+      calculatePnL()
+    }
+  }, [calculatePnL, connected, publicKey, records])
+
+  // Real-time updates are now handled by React Query in TradingDataProvider
+  // No need for manual subscription here
+
+  // Fetch SOL price on mount and periodically (reduced frequency)
+  useEffect(() => {
+    fetchSolPrice()
+    // Reduced frequency: every 5 minutes instead of 1 minute
+    const interval = setInterval(fetchSolPrice, 300000)
+    return () => clearInterval(interval)
+  }, [fetchSolPrice])
+
+  // Function to refresh wallet balances for open positions
+  const refreshWalletBalances = React.useCallback(async () => {
+    if (openPositions.length === 0) return
+
+    try {
+      const walletTokens = await fetchUserTokens(connection, publicKey!, false, false)
+      
+      setOpenPositions(prev => prev.map(position => {
+        const walletToken = walletTokens.find(token => token.mintAddress === position.mintAddress)
+        
+        if (walletToken && walletToken.uiAmount > 0) {
+          return {
+            ...position,
+            actualWalletBalance: walletToken.uiAmount,
+            walletTokenData: walletToken
+          }
+        } else {
+          // Token no longer in wallet, should be filtered out on next PnL calculation
+          console.log(`⚠️ Token ${position.symbol} no longer in wallet`)
+          return position
+        }
+      }))
+    } catch (error) {
+      console.error('Error refreshing wallet balances:', error)
+    }
+  }, [openPositions, connection, publicKey])
+
+  // Function to fetch current prices for open positions
   const refreshOpenPositionPrices = React.useCallback(async () => {
     if (openPositions.length === 0) return
 
@@ -516,384 +888,6 @@ export default function PnLTracker() {
       setIsRefreshingPrices(false)
     }
   }, [openPositions, solPriceUsd])
-
-  // ✅ OPTIMIZED: Incremental PnL calculation that only processes new/changed records
-  const calculatePnLIncremental = useCallback(async () => {
-    if (!connected || !publicKey) {
-      setPnlRecords([])
-      setOpenPositions([])
-      return
-    }
-
-    setIsLoading(true)
-    setError('')
-
-    try {
-      // Get SOL price
-      const solPriceCache = solPriceUsd
-
-      // ✅ OPTIMIZATION: Only process new records since last calculation
-      const newRecords = records.filter(record => 
-        !processedRecordIds.has(record.id) || record.timestamp > lastProcessedTimestamp
-      )
-
-      // If no new records and we have existing data, just refresh prices for open positions
-      if (newRecords.length === 0 && (pnlRecords.length > 0 || openPositions.length > 0)) {
-        console.log('📊 No new records, refreshing prices only...')
-        await refreshOpenPositionPrices()
-        setIsLoading(false)
-        return
-      }
-
-      console.log(`📊 Processing ${newRecords.length} new records out of ${records.length} total`)
-
-      // ✅ OPTIMIZATION: For incremental updates, we need to rebuild cycles but more efficiently
-      // We'll maintain the existing cycle-based logic but optimize the processing
-
-      // Separate records by type for efficient processing
-      const buyRecords = records.filter(r => r.operationType === 'buy' && r.successCount > 0)
-      const sellRecords = records.filter(r => r.operationType === 'sell' && r.successCount > 0)
-      const closeRecords = records.filter(r => r.operationType === 'close' && r.successCount > 0)
-
-      // Process sell/close combinations (existing logic)
-      const processedSellRecords = [...sellRecords]
-      const processedRecordIdsSet = new Set<string>()
-
-      closeRecords.forEach((closeRecord) => {
-        if (processedRecordIdsSet.has(closeRecord.id)) return
-
-        const matchingSellRecord = sellRecords.find((sellRecord) =>
-          !processedRecordIdsSet.has(sellRecord.id) &&
-          Math.abs(sellRecord.timestamp - closeRecord.timestamp) <= 30000
-        )
-
-        if (matchingSellRecord) {
-          const combinedTokens = [
-            ...(matchingSellRecord.tokens || []),
-            ...(closeRecord.tokens || [])
-          ]
-
-          const combinedRecord = {
-            ...matchingSellRecord,
-            solAmount: (matchingSellRecord.solAmount || 0) + (closeRecord.solAmount || 0),
-            successCount: (matchingSellRecord.successCount || 0) + (closeRecord.successCount || 0),
-            tokens: combinedTokens,
-            signatures: [...matchingSellRecord.signatures, ...closeRecord.signatures],
-            is_bot_operation: matchingSellRecord.is_bot_operation || closeRecord.is_bot_operation,
-            bot_strategy: matchingSellRecord.bot_strategy || closeRecord.bot_strategy,
-          }
-
-          const index = processedSellRecords.findIndex(r => r.id === matchingSellRecord.id)
-          if (index !== -1) {
-            processedSellRecords[index] = combinedRecord
-          }
-
-          processedRecordIdsSet.add(matchingSellRecord.id)
-          processedRecordIdsSet.add(closeRecord.id)
-        }
-      })
-
-      // ✅ CYCLE-AWARE PnL CALCULATION (optimized version)
-      type Cycle = {
-        mintAddress: string
-        symbol?: string
-        name?: string
-        logoURI?: string
-        totalSolBought: number
-        totalSolSold: number
-        totalTokenBought: number
-        remainingTokenAmount: number
-        weightedBuyPriceUsd: number
-        weightedSellPriceUsd: number
-        buyCount: number
-        sellCount: number
-        buySignatures: string[]
-        sellSignatures: string[]
-        firstBuyTimestamp: number
-        isBotOperation: boolean
-        botStrategy?: string
-      }
-
-      const allOpsUnsorted = [...buyRecords, ...processedSellRecords]
-      allOpsUnsorted.sort((a, b) => a.timestamp - b.timestamp)
-
-      const openCycles = new Map<string, Cycle>()
-      const closedCycles: PnLRecord[] = []
-
-      // Process all operations chronologically to build cycles
-      for (const op of allOpsUnsorted) {
-        const isBuy = op.operationType === 'buy'
-        const tokensInOp = op.tokens || []
-
-        if (!op.solAmount || op.successCount === 0) continue
-
-        const solPerToken = op.solAmount / op.successCount
-
-        for (const tkn of tokensInOp) {
-          const mint = tkn.mintAddress
-          if (!mint) continue
-
-          if (isBuy) {
-            let cycle = openCycles.get(mint)
-            if (!cycle) {
-              cycle = {
-                mintAddress: mint,
-                symbol: tkn.symbol,
-                name: tkn.name,
-                logoURI: tkn.logoURI,
-                totalSolBought: 0,
-                totalSolSold: 0,
-                totalTokenBought: 0,
-                remainingTokenAmount: 0,
-                weightedBuyPriceUsd: 0,
-                weightedSellPriceUsd: 0,
-                buyCount: 0,
-                sellCount: 0,
-                buySignatures: [],
-                sellSignatures: [],
-                firstBuyTimestamp: op.timestamp,
-                isBotOperation: !!op.is_bot_operation,
-                botStrategy: op.bot_strategy,
-              }
-              openCycles.set(mint, cycle)
-            }
-
-            const tokenAmt = tkn.tokenAmount || 0
-            cycle.totalSolBought += solPerToken
-            cycle.totalTokenBought += tokenAmt
-            cycle.remainingTokenAmount += tokenAmt
-            if (tkn.priceUsd) {
-              cycle.weightedBuyPriceUsd =
-                (cycle.weightedBuyPriceUsd * cycle.buyCount + tkn.priceUsd) / (cycle.buyCount + 1)
-            }
-            cycle.buyCount += 1
-            cycle.buySignatures.push(...op.signatures)
-            
-            if (op.is_bot_operation) {
-              cycle.isBotOperation = true
-              cycle.botStrategy = op.bot_strategy || cycle.botStrategy
-            }
-          } else {
-            // SELL branch
-            const cycle = openCycles.get(mint)
-            if (!cycle) continue
-
-            const tokenAmt = tkn.tokenAmount || 0
-            cycle.totalSolSold += solPerToken
-            cycle.remainingTokenAmount = Math.max(0, cycle.remainingTokenAmount - tokenAmt)
-            if (tkn.priceUsd) {
-              cycle.weightedSellPriceUsd =
-                (cycle.weightedSellPriceUsd * cycle.sellCount + tkn.priceUsd) / (cycle.sellCount + 1)
-            }
-            cycle.sellCount += 1
-            cycle.sellSignatures.push(...op.signatures)
-
-            if (op.is_bot_operation) {
-              cycle.isBotOperation = true
-              cycle.botStrategy = op.bot_strategy || cycle.botStrategy
-            }
-
-            // If cycle is fully closed, create PnL record
-            if (cycle.remainingTokenAmount <= 1e-6) {
-              const pnlSOL = cycle.totalSolSold - cycle.totalSolBought
-              const pnlUSD = pnlSOL * solPriceCache
-              const pnlPerc = cycle.totalSolBought > 0 ? (pnlSOL / cycle.totalSolBought) * 100 : 0
-
-              const pnlRecord: PnLRecord = {
-                id: `${mint}-${cycle.firstBuyTimestamp}-${op.timestamp}`,
-                mintAddress: mint,
-                symbol: cycle.symbol,
-                name: cycle.name,
-                logoURI: cycle.logoURI,
-                buyTimestamp: cycle.firstBuyTimestamp,
-                sellTimestamp: op.timestamp,
-                buyPrice: cycle.weightedBuyPriceUsd,
-                sellPrice: cycle.weightedSellPriceUsd,
-                solAmountBought: cycle.totalSolBought,
-                solAmountSold: cycle.totalSolSold,
-                pnlSOL,
-                pnlUSD,
-                pnlPercentage: pnlPerc,
-                buySignatures: cycle.buySignatures,
-                sellSignatures: cycle.sellSignatures,
-                isPartialSell: false,
-                sellTransactionId: `${mint}-${op.timestamp}`,
-                isBotOperation: cycle.isBotOperation,
-                botStrategy: cycle.botStrategy,
-              }
-
-              closedCycles.push(pnlRecord)
-              openCycles.delete(mint)
-            }
-          }
-        }
-      }
-
-      // ✅ OPTIMIZATION: Only fetch wallet tokens if we have open cycles
-      let openPositionsResult: OpenPosition[] = []
-      if (openCycles.size > 0) {
-        try {
-          const walletTokens = await fetchUserTokens(connection, publicKey!, false, false)
-          openCycles.forEach((cycle) => {
-            const walletTok = walletTokens.find((wt) => wt.mintAddress === cycle.mintAddress)
-            if (walletTok && walletTok.uiAmount > 0.001) {
-              openPositionsResult.push({
-                id: `open-${cycle.mintAddress}`,
-                mintAddress: cycle.mintAddress,
-                symbol: cycle.symbol || walletTok.symbol,
-                name: cycle.name || walletTok.name,
-                logoURI: cycle.logoURI || walletTok.logoURI,
-                buyTimestamp: cycle.firstBuyTimestamp,
-                solAmountBought: cycle.totalSolBought,
-                buySignatures: cycle.buySignatures,
-                isOpen: true,
-                buyPriceUsd: cycle.weightedBuyPriceUsd,
-                buyTokenAmount: cycle.totalTokenBought,
-                actualWalletBalance: walletTok.uiAmount,
-                walletTokenData: walletTok,
-                isBotOperation: cycle.isBotOperation,
-                botStrategy: cycle.botStrategy,
-              })
-            }
-          })
-        } catch (walletErr) {
-          console.error('Failed fetching wallet tokens for open cycle verification', walletErr)
-        }
-      }
-
-      // Sort results
-      closedCycles.sort((a, b) => b.sellTimestamp - a.sellTimestamp)
-      openPositionsResult.sort((a, b) => {
-        const aHasPnL = a.pnlPercentage !== undefined
-        const bHasPnL = b.pnlPercentage !== undefined
-        
-        if (aHasPnL && !bHasPnL) return -1
-        if (!aHasPnL && bHasPnL) return 1
-        
-        if (aHasPnL && bHasPnL) {
-          return (b.pnlPercentage || 0) - (a.pnlPercentage || 0)
-        }
-        
-        return b.buyTimestamp - a.buyTimestamp
-      })
-
-      // ✅ UPDATE: Track processed records for next incremental update
-      const newProcessedIds = new Set(records.map(r => r.id))
-      const newLastTimestamp = Math.max(...records.map(r => r.timestamp), lastProcessedTimestamp)
-      
-      setProcessedRecordIds(newProcessedIds)
-      setLastProcessedTimestamp(newLastTimestamp)
-
-      // Update state
-      setPnlRecords(closedCycles)
-      setOpenPositions(openPositionsResult)
-
-    } catch (err) {
-      console.error('Error calculating PnL:', err)
-      setError('Failed to calculate PnL data')
-      setPnlRecords([])
-      setOpenPositions([])
-    } finally {
-      setIsLoading(false)
-    }
-  }, [connected, publicKey, records, solPriceUsd, processedRecordIds, lastProcessedTimestamp, pnlRecords.length, openPositions.length, refreshOpenPositionPrices])
-
-  // ✅ OPTIMIZED: Replace the old calculatePnL with incremental version
-  const calculatePnL = calculatePnLIncremental
-
-  // ✅ NEW: Bot operation sync polling
-  useEffect(() => {
-    if (!connected || !publicKey) return
-
-    const walletAddress = publicKey.toString()
-    let syncInterval: NodeJS.Timeout
-
-    const checkForBotUpdates = async () => {
-      try {
-        const response = await fetch(`/api/trading/sync?wallet=${encodeURIComponent(walletAddress)}`)
-        if (response.ok) {
-          const { hasUpdate, lastUpdate, source } = await response.json()
-          
-          if (hasUpdate && lastUpdate > lastBotSync) {
-            console.log(`🤖 Bot operation detected from ${source}, refreshing PnL...`)
-            setLastBotSync(lastUpdate)
-            setIsBotSyncActive(true)
-            
-            // Force refresh the PnL calculation
-            await calculatePnL()
-            
-            // Reset sync indicator after a delay
-            setTimeout(() => setIsBotSyncActive(false), 2000)
-          }
-        }
-      } catch (error) {
-        // Silent fail - sync is best effort
-      }
-    }
-
-    // Check immediately and then every 10 seconds
-    checkForBotUpdates()
-    syncInterval = setInterval(checkForBotUpdates, 10000)
-
-    return () => {
-      if (syncInterval) clearInterval(syncInterval)
-    }
-  }, [connected, publicKey, lastBotSync, calculatePnL])
-
-  // ✅ OPTIMIZATION: Modified useEffect to prevent unnecessary recalculations
-  useEffect(() => {
-    if (connected && publicKey && records.length >= 0) {
-      // ✅ PREVENT: Don't recalculate if only close operations were added
-      const newRecords = records.filter(record => !processedRecordIds.has(record.id))
-      const hasOnlyCloseOperations = newRecords.length > 0 && 
-        newRecords.every(record => record.operationType === 'close')
-      
-      if (hasOnlyCloseOperations && openPositions.length === 0) {
-        console.log('📊 Skipping recalculation - only close operations detected with no open positions')
-        return
-      }
-      
-      calculatePnL()
-    }
-  }, [calculatePnL, connected, publicKey, records, processedRecordIds, openPositions.length])
-
-  // Real-time updates are now handled by React Query in TradingDataProvider
-  // No need for manual subscription here
-
-  // Fetch SOL price on mount and periodically (reduced frequency)
-  useEffect(() => {
-    fetchSolPrice()
-    // Reduced frequency: every 5 minutes instead of 1 minute
-    const interval = setInterval(fetchSolPrice, 300000)
-    return () => clearInterval(interval)
-  }, [fetchSolPrice])
-
-  // Function to refresh wallet balances for open positions
-  const refreshWalletBalances = React.useCallback(async () => {
-    if (openPositions.length === 0) return
-
-    try {
-      const walletTokens = await fetchUserTokens(connection, publicKey!, false, false)
-      
-      setOpenPositions(prev => prev.map(position => {
-        const walletToken = walletTokens.find(token => token.mintAddress === position.mintAddress)
-        
-        if (walletToken && walletToken.uiAmount > 0) {
-          return {
-            ...position,
-            actualWalletBalance: walletToken.uiAmount,
-            walletTokenData: walletToken
-          }
-        } else {
-          // Token no longer in wallet, should be filtered out on next PnL calculation
-          console.log(`⚠️ Token ${position.symbol} no longer in wallet`)
-          return position
-        }
-      }))
-    } catch (error) {
-      console.error('Error refreshing wallet balances:', error)
-    }
-  }, [openPositions, connection, publicKey])
 
   // Handle token selection for chart display
   const handleSelectToken = useCallback((mintAddress: string) => {
