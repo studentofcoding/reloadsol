@@ -3,6 +3,34 @@ import { NextRequest, NextResponse } from 'next/server'
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
 
+// Rate limiting state
+interface RateLimitState {
+  lastRequestTime: number;
+  consecutiveErrors: number;
+  backoffUntil: number;
+}
+
+// Global rate limit state (persists between requests in development)
+let rateLimitState: RateLimitState = {
+  lastRequestTime: 0,
+  consecutiveErrors: 0,
+  backoffUntil: 0
+};
+
+// Rate limit configuration
+const RATE_LIMIT_CONFIG = {
+  minInterval: 1000, // 1 second between requests
+  maxBackoff: 60000, // 1 minute max backoff
+  timeout: 10000     // 10 second timeout
+};
+
+// Helper function to calculate exponential backoff
+function calculateBackoff(consecutiveErrors: number, maxBackoff: number): number {
+  const baseBackoff = Math.min(1000 * Math.pow(2, consecutiveErrors - 1), maxBackoff);
+  // Add some jitter (±10%)
+  return baseBackoff * (0.9 + Math.random() * 0.2);
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -24,34 +52,27 @@ export async function GET(request: NextRequest) {
 
     console.log(`🔍 Fetching Axiom token info for mint: ${mintAddress}`)
 
-    // First, get the graduated pool from Jupiter metadata
-    console.log(`🔍 Getting graduated pool for mint: ${mintAddress}`)
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || `http://${request.headers.get('host')}`;
-    // const jupiterResponse = await fetch(`${baseUrl}/api/jupiter/metadata?mint=${mintAddress}`, {
-    //   method: 'GET',
-    //   headers: {
-    //     'Accept': 'application/json'
-    //   },
-    //   signal: AbortSignal.timeout(5000) // 5 second timeout
-    // })
+    // Check if we're in backoff period
+    const now = Date.now();
+    if (now < rateLimitState.backoffUntil) {
+      console.log(`Axiom API in backoff until ${new Date(rateLimitState.backoffUntil).toISOString()}`);
+      return NextResponse.json({
+        error: 'Rate limited',
+        details: 'Service temporarily unavailable due to rate limiting',
+        retryAfter: Math.ceil((rateLimitState.backoffUntil - now) / 1000)
+      }, { status: 429 });
+    }
 
-    // if (!jupiterResponse.ok) {
-    //   throw new Error(`Failed to fetch Jupiter metadata: ${jupiterResponse.status}`)
-    // }
+    // Enforce minimum interval between requests
+    const timeSinceLastRequest = now - rateLimitState.lastRequestTime;
+    if (timeSinceLastRequest < RATE_LIMIT_CONFIG.minInterval) {
+      const waitTime = RATE_LIMIT_CONFIG.minInterval - timeSinceLastRequest;
+      console.log(`Rate limiting Axiom API, waiting ${waitTime}ms`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
 
-    // const jupiterData = await jupiterResponse.json()
-    // const graduatedPool = jupiterData.data?.graduatedPool
-
-    // if (!graduatedPool) {
-    //   console.warn(`No graduated pool found for mint: ${mintAddress}`)
-    //   return NextResponse.json({
-    //     error: 'No graduated pool available for this token',
-    //     details: 'This token does not have a graduated pool in Jupiter',
-    //     pairNotFound: true
-    //   }, { status: 404 })
-    // }
-
-    // console.log(`🎯 Using graduated pool: ${graduatedPool} for mint: ${mintAddress}`)
+    // Update last request time
+    rateLimitState.lastRequestTime = Date.now();
 
     // Fetch from Axiom API with authentication cookies using the graduated pool
     const response = await fetch(`https://api.axiom.trade/token-info?pairAddress=${mintAddress}`, {
@@ -74,11 +95,27 @@ export async function GET(request: NextRequest) {
         'sec-ch-ua-platform': '"macOS"'
       },
       // Add timeout
-      signal: AbortSignal.timeout(10000) // 10 second timeout
+      signal: AbortSignal.timeout(RATE_LIMIT_CONFIG.timeout)
     })
 
+    // Handle rate limiting from Axiom API
+    if (response.status === 429) {
+      console.warn('Rate limited by Axiom API');
+      rateLimitState.consecutiveErrors++;
+      rateLimitState.backoffUntil = Date.now() + calculateBackoff(rateLimitState.consecutiveErrors, RATE_LIMIT_CONFIG.maxBackoff);
+      
+      return NextResponse.json({
+        error: 'Rate limited by upstream API',
+        details: 'The Axiom API has rate limited our request',
+        retryAfter: Math.ceil(calculateBackoff(rateLimitState.consecutiveErrors, RATE_LIMIT_CONFIG.maxBackoff) / 1000)
+      }, { status: 429 });
+    }
+
     if (!response.ok) {
-      console.error(`Axiom API error: ${response.status} ${response.statusText}`)
+      console.error(`Axiom API error: ${response.status} ${response.statusText}`);
+      
+      // Increase error count for non-OK responses
+      rateLimitState.consecutiveErrors++;
 
       // Handle authentication error specifically
       if (response.status === 500) {
@@ -120,13 +157,16 @@ export async function GET(request: NextRequest) {
 
     // Validate required fields
     if (typeof data.numHolders !== 'number' || typeof data.insidersHoldPercent !== 'number' || typeof data.bundlersHoldPercent !== 'number') {
+      rateLimitState.consecutiveErrors++;
       return NextResponse.json({
         error: 'Invalid response format from Axiom API',
         received: data
       }, { status: 500 })
     }
 
-    // console.log(`✅ Successfully fetched Axiom token info for ${mintAddress} using graduated pool ${graduatedPool}`)
+    // Reset error count on success
+    rateLimitState.consecutiveErrors = 0;
+    rateLimitState.backoffUntil = 0;
 
     return NextResponse.json({
       success: true,
@@ -140,6 +180,14 @@ export async function GET(request: NextRequest) {
 
   } catch (error) {
     console.error('❌ Axiom token info API error:', error)
+    
+    // Increase error count for exceptions
+    rateLimitState.consecutiveErrors++;
+    
+    // Set backoff if we have consecutive errors
+    if (rateLimitState.consecutiveErrors > 1) {
+      rateLimitState.backoffUntil = Date.now() + calculateBackoff(rateLimitState.consecutiveErrors, RATE_LIMIT_CONFIG.maxBackoff);
+    }
 
     return NextResponse.json({
       error: 'Failed to fetch token info from Axiom',
