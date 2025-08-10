@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { 
-  monitorSLTPPositions, 
   addSLTPPosition, 
   cleanupOldSLTPPositions,
-  syncExistingOpenPositions 
+  syncExistingOpenPositions,
+  runSLTPMonitorAndSummarize,
+  getSLTPTrackingSummary
 } from '@/utils/sl-tp-tracker'
 import { log } from '@/utils/unified-logger'
 
@@ -13,6 +14,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const action = searchParams.get('action')
     const wallet = searchParams.get('wallet')
+    const mode = searchParams.get('mode') // optional: 'summary' | 'monitor'
 
     if (action === 'sync' && wallet) {
       // Sync existing open positions for a specific wallet
@@ -25,12 +27,28 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Default action: monitor all positions
-    await monitorSLTPPositions()
+    // If client only wants the current summary without running monitor
+    if (mode === 'summary') {
+      const summary = await getSLTPTrackingSummary()
+      return NextResponse.json({
+        success: true,
+        message: 'SL/TP tracking summary fetched',
+        summary
+      })
+    }
+
+    // Default action: run monitoring and return comprehensive summary
+    const summary = await runSLTPMonitorAndSummarize()
     
     return NextResponse.json({
       success: true,
-      message: 'SL/TP monitoring completed'
+      message: 'SL/TP monitoring completed',
+      counts: {
+        active: summary.statistics.total_active,
+        finished: summary.statistics.total_finished,
+        totalTrackedTokens: summary.statistics.total_tracked_tokens,
+      },
+      summary
     })
 
   } catch (error) {
