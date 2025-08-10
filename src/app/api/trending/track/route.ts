@@ -240,7 +240,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     is_active: true,
     take_profit_levels: {
       tp1_percentage: 200,
-      tp1_sell_percentage: 900,
+      tp1_sell_percentage: 90,
       tp2_percentage: 400,
       tp3_percentage: 600,
       tp3_enabled: true
