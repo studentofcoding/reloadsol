@@ -91,7 +91,7 @@ async function batchFetchPrices(mints: string[]): Promise<Record<string, number>
     return prices
   } catch (error) {
     console.error('Batch price fetch failed:', error)
-    
+
     // Fallback: set all mints to 0 price
     const prices: Record<string, number> = {}
     mints.forEach(mint => {
@@ -114,13 +114,13 @@ async function getCachedPrice(mint: string): Promise<number> {
   try {
     const priceData = await jupiterAPI.fetchTokenPrices([mint])
     const price = priceData[mint]?.price || 0
-    
+
     // Cache the price
     priceCache.set(mint, {
       price: price,
       timestamp: Date.now()
     })
-    
+
     return price
   } catch (error) {
     console.warn('Jupiter API manager failed, falling back to direct fetch:', error)
@@ -2505,7 +2505,7 @@ class JupiterAPIManager {
     if (typeof window !== 'undefined') {
       return ''
     }
-    
+
     // Server-side: need absolute URL
     return process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
   }

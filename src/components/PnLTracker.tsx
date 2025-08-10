@@ -40,6 +40,7 @@ interface PnLRecord {
   // ✅ NEW: Bot operation fields
   isBotOperation?: boolean // Whether this was a bot operation
   botStrategy?: string // Bot strategy used
+  jupiter_swap?: boolean
 }
 
 interface OpenPosition {
@@ -70,6 +71,7 @@ interface OpenPosition {
   // ✅ NEW: Bot operation fields
   isBotOperation?: boolean // Whether this was a bot operation
   botStrategy?: string // Bot strategy used
+  jupiter_swap?: boolean
 }
 
 export default function PnLTracker() {
@@ -403,6 +405,18 @@ export default function PnLTracker() {
             {botStrategy}
           </span>
         )}
+      </div>
+    )
+  }
+
+  const JupiterSwapIndicator = ({ isJupiterSwap }: { isJupiterSwap?: boolean }) => {
+    if (!isJupiterSwap) return null
+    
+    return (
+      <div className="flex items-center gap-1 text-xs">
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+          ⚡ Jupiter
+        </span>
       </div>
     )
   }
@@ -1470,6 +1484,7 @@ export default function PnLTracker() {
                               isBotOperation={record.isBotOperation} 
                               botStrategy={record.botStrategy} 
                             />
+                            <JupiterSwapIndicator isJupiterSwap={record.jupiter_swap} />
                           </div>
                           
                           <div className="flex items-center space-x-1">
@@ -1659,6 +1674,7 @@ export default function PnLTracker() {
                               isBotOperation={position.isBotOperation} 
                               botStrategy={position.botStrategy} 
                             />
+                            <JupiterSwapIndicator isJupiterSwap={position.jupiter_swap} />
                           </div>
                           
                           <div className="flex items-center space-x-1">

@@ -6,22 +6,22 @@ interface Connection {
   walletAddress: string;
   createdAt: number;
   keepAliveInterval?: NodeJS.Timeout;
+  connectionId: string;
+  isActive: boolean;
 }
 
 const activeConnections = new Map<string, Connection>()
 
-// Simple cleanup of old connections every minute
+// Enhanced cleanup of old connections every minute
 setInterval(() => {
   const now = Date.now()
   const toDelete: string[] = []
 
   for (const [id, conn] of Array.from(activeConnections.entries())) {
-    // Clean up connections older than 5 minutes
-    if (now - conn.createdAt > 5 * 60 * 1000) {
-      console.log(`🧹 Cleaning up old connection: ${id}`)
-      if (conn.keepAliveInterval) {
-        clearInterval(conn.keepAliveInterval)
-      }
+    // Clean up connections older than 5 minutes or inactive connections
+    if (now - conn.createdAt > 5 * 60 * 1000 || !conn.isActive) {
+      console.log(`🧹 Cleaning up connection: ${id} (age: ${Math.round((now - conn.createdAt) / 1000)}s, active: ${conn.isActive})`)
+      cleanupConnection(id)
       toDelete.push(id)
     }
   }
@@ -29,10 +29,38 @@ setInterval(() => {
   toDelete.forEach(id => activeConnections.delete(id))
 }, 60000)
 
-// Simple enqueue function - just try and clean up on failure
+// Enhanced cleanup function
+function cleanupConnection(connectionId: string): void {
+  const connection = activeConnections.get(connectionId)
+  if (!connection) return
+
+  try {
+    // Clear keepalive interval
+    if (connection.keepAliveInterval) {
+      clearInterval(connection.keepAliveInterval)
+    }
+
+    // Mark as inactive
+    connection.isActive = false
+
+    // Try to close the controller gracefully
+    if (connection.controller) {
+      try {
+        connection.controller.close()
+      } catch (error) {
+        // Controller might already be closed
+        console.log(`Controller already closed for ${connectionId}`)
+      }
+    }
+  } catch (error) {
+    console.error(`Error cleaning up connection ${connectionId}:`, error)
+  }
+}
+
+// Enhanced enqueue function with better error handling
 function safeEnqueue(connectionId: string, data: Uint8Array): boolean {
   const connection = activeConnections.get(connectionId)
-  if (!connection) {
+  if (!connection || !connection.isActive) {
     return false
   }
 
@@ -40,13 +68,12 @@ function safeEnqueue(connectionId: string, data: Uint8Array): boolean {
     connection.controller.enqueue(data)
     return true
   } catch (error: unknown) {
-    // Any error means the connection is dead - clean it up immediately
-    console.log(`Connection ${connectionId} failed, cleaning up:`, (error as Error).message)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.log(`Connection ${connectionId} failed, cleaning up: ${errorMessage}`)
 
-    if (connection.keepAliveInterval) {
-      clearInterval(connection.keepAliveInterval)
-    }
-
+    // Mark as inactive and clean up
+    connection.isActive = false
+    cleanupConnection(connectionId)
     activeConnections.delete(connectionId)
     return false
   }
@@ -74,24 +101,36 @@ export async function GET(request: NextRequest) {
 
   console.log(`📡 New SSE connection for wallet: ${walletAddress.slice(0, 8)}...`)
 
+  // Clean up any existing connections for this wallet to prevent duplicates
+  for (const [id, conn] of Array.from(activeConnections.entries())) {
+    if (conn.walletAddress === walletAddress) {
+      console.log(`🔄 Cleaning up existing connection for wallet: ${id}`)
+      cleanupConnection(id)
+      activeConnections.delete(id)
+    }
+  }
+
   const stream = new ReadableStream({
     start(controller) {
       const connectionId = `${walletAddress}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
 
-      // Create simple connection object
+      // Create enhanced connection object
       const connection: Connection = {
         controller,
         walletAddress,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        connectionId,
+        isActive: true
       }
 
       // Store connection
       activeConnections.set(connectionId, connection)
 
-      // Send initial message
-      const initialData = `data: ${JSON.stringify({
+      // Send initial connection message with proper SSE format
+      const initialData = `id: ${connectionId}\ndata: ${JSON.stringify({
         type: 'connected',
         wallet: walletAddress,
+        connectionId,
         timestamp: new Date().toISOString()
       })}\n\n`
 
@@ -100,16 +139,27 @@ export async function GET(request: NextRequest) {
         return
       }
 
-      // Simple keepalive every 30 seconds
+      // Enhanced keepalive with connection health check
       connection.keepAliveInterval = setInterval(() => {
-        const keepAliveData = `data: ${JSON.stringify({
+        if (!connection.isActive) {
+          console.log(`Stopping keepalive for inactive connection: ${connectionId}`)
+          if (connection.keepAliveInterval) {
+            clearInterval(connection.keepAliveInterval)
+          }
+          return
+        }
+
+        const keepAliveData = `id: keepalive-${Date.now()}\ndata: ${JSON.stringify({
           type: 'keepalive',
+          connectionId,
           timestamp: new Date().toISOString()
         })}\n\n`
 
         // If keepalive fails, the connection is automatically cleaned up by safeEnqueue
-        safeEnqueue(connectionId, new TextEncoder().encode(keepAliveData))
-      }, 30000)
+        if (!safeEnqueue(connectionId, new TextEncoder().encode(keepAliveData))) {
+          console.log(`Keepalive failed for connection: ${connectionId}`)
+        }
+      }, 25000) // Slightly more frequent keepalive
     },
 
     cancel() {
@@ -117,9 +167,7 @@ export async function GET(request: NextRequest) {
       for (const [id, conn] of Array.from(activeConnections.entries())) {
         if (conn.walletAddress === walletAddress) {
           console.log(`Client cancelled connection: ${id}`)
-          if (conn.keepAliveInterval) {
-            clearInterval(conn.keepAliveInterval)
-          }
+          cleanupConnection(id)
           activeConnections.delete(id)
           break
         }
@@ -129,12 +177,16 @@ export async function GET(request: NextRequest) {
 
   return new Response(stream, {
     headers: {
-      'Content-Type': 'text/event-stream',
+      'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Connection': 'keep-alive',
+      'Transfer-Encoding': 'chunked',
       'Access-Control-Allow-Origin': process.env.NODE_ENV === 'development' ? '*' : 'https://v2.reloadsol.xyz',
       'Access-Control-Allow-Headers': 'Cache-Control',
       'X-Accel-Buffering': 'no',
+      // Additional headers for better streaming support
+      'Pragma': 'no-cache',
+      'Expires': '0',
     },
   })
 }
@@ -152,28 +204,40 @@ export async function POST(request: NextRequest) {
     }
 
     let notifiedCount = 0
+    const failedConnections: string[] = []
 
-    // Find all connections for this wallet and try to notify them
+    // Find all active connections for this wallet and try to notify them
     for (const [connectionId, connection] of Array.from(activeConnections.entries())) {
-      if (connection.walletAddress === walletAddress) {
-        const message = `data: ${JSON.stringify({
+      if (connection.walletAddress === walletAddress && connection.isActive) {
+        const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`
+        const message = `id: ${messageId}\ndata: ${JSON.stringify({
           type,
           data,
+          connectionId: connection.connectionId,
           timestamp: new Date().toISOString()
         })}\n\n`
 
         if (safeEnqueue(connectionId, new TextEncoder().encode(message))) {
           notifiedCount++
+        } else {
+          failedConnections.push(connectionId)
         }
-        // Dead connections are automatically cleaned up by safeEnqueue
       }
     }
 
-    console.log(`📡 Notified ${notifiedCount} connections for wallet ${walletAddress.slice(0, 8)}...`)
+    // Clean up failed connections
+    failedConnections.forEach(id => {
+      cleanupConnection(id)
+      activeConnections.delete(id)
+    })
+
+    console.log(`📡 Notified ${notifiedCount} connections for wallet ${walletAddress.slice(0, 8)}... (${failedConnections.length} failed)`)
 
     return NextResponse.json({
       success: true,
-      notified: notifiedCount
+      notified: notifiedCount,
+      failed: failedConnections.length,
+      activeConnections: activeConnections.size
     })
   } catch (error) {
     console.error('Error notifying subscribers:', error)
