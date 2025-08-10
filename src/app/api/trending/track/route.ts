@@ -2117,7 +2117,7 @@ async function performEnhancedFiltering(
   // Get filtering configuration based on strategy
   let filterConfig: TokenFilterConfig
 
-  if (customConfig) {
+  if (customConfig && Object.keys(customConfig).length > 0) {
     // Use custom configuration if provided
     filterConfig = { ...DEFAULT_FILTER_CONFIG, ...customConfig }
   } else if (strategyId) {
@@ -2197,7 +2197,7 @@ async function performEnhancedFiltering(
         rejectionReasons.push(`Market cap too low (${mcap ? `$${(mcap / 1000).toFixed(0)}k` : 'N/A'} <= $${(filterConfig.mcap.min / 1000).toFixed(0)}k)`)
       }
       if (filterConfig.mcap.max && (!mcap || mcap >= filterConfig.mcap.max)) {
-        console.log(`🔍 Token ${pool.baseAsset.symbol} rejected: Market cap ${mcap} above maximum ${filterConfig.mcap.max}`);
+        console.log(`🔍 Token ${pool.baseAsset.symbol} (${pool.baseAsset.id}) rejected: Market cap $${(mcap / 1000000).toFixed(2)}M above maximum $${(filterConfig.mcap.max / 1000).toFixed(0)}k`);
         rejectionReasons.push(`Market cap too high (${mcap ? `$${(mcap / 1000000).toFixed(1)}M` : 'N/A'} >= $${(filterConfig.mcap.max / 1000000).toFixed(1)}M)`)
       }
     }
@@ -2253,6 +2253,10 @@ async function performEnhancedFiltering(
     }
 
     const passed = rejectionReasons.length === 0
+
+    if (passed) {
+      console.log(`✅ Token ${pool.baseAsset.symbol} (${pool.baseAsset.id}) PASSED filters under strategy '${strategyId || 'default'}' with Market cap $${(mcap ? mcap/1000000 : 0).toFixed(2)}M`)
+    }
 
     // Track rejection reasons and collect token details
     rejectionReasons.forEach(reason => {
@@ -4525,10 +4529,20 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
     const currentStrategy = getCurrentBotStrategy()
     const customFilterConfig = parseCustomFilterConfig()
+    
+    // Add debug logging for strategy and configuration
+    console.log(`🎯 Current strategy: ${currentStrategy}`)
+    if (customFilterConfig && Object.keys(customFilterConfig).length > 0) {
+      console.log(`🔧 Custom filter config:`, customFilterConfig)
+    } else {
+      const strategy = getTradingStrategy(currentStrategy)
+      console.log(`🔧 Using strategy filter config:`, strategy.filtering)
+    }
+    
     const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(
       data.pools,
       currentStrategy,
-      customFilterConfig || {}
+      customFilterConfig && Object.keys(customFilterConfig).length > 0 ? customFilterConfig : undefined
     )
 
     // Extract accepted tokens
@@ -4848,6 +4862,17 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
             // Assign token to strategy
             const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation)
+            
+            // Enforce strategy-specific market cap constraints before proceeding
+            const strategy = getTradingStrategy(assignedStrategy)
+            if (strategy.conditions?.min_market_cap && token.market_cap < strategy.conditions.min_market_cap) {
+              console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000).toFixed(0)}k below minimum $${(strategy.conditions.min_market_cap / 1000).toFixed(0)}k`)
+              continue
+            }
+            if (strategy.conditions?.max_market_cap && token.market_cap > strategy.conditions.max_market_cap) {
+              console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000000).toFixed(2)}M above maximum $${(strategy.conditions.max_market_cap / 1000).toFixed(0)}k`)
+              continue
+            }
 
             // Create initial simulation configuration (use detected trading mode)
             const initialSimulation = createTradingSimulation(
