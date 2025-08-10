@@ -2659,12 +2659,12 @@ class JupiterAPIManager {
 
         try {
           const baseUrl = this.getBaseUrl()
-          const response = await fetch(`${baseUrl}/api/jupiter/prices`, {
+          const response = await fetch(`${baseUrl}/api/tokens/prices`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ mints: batch })
+            body: JSON.stringify({ tokens: batch })
           })
 
           if (!response.ok) {
@@ -2673,11 +2673,11 @@ class JupiterAPIManager {
 
           const priceResult = await response.json()
 
-          if (priceResult.data) {
-            Object.entries(priceResult.data).forEach(([mint, priceData]: [string, any]) => {
-              if (priceData && typeof priceData.price === 'number') {
-                results[mint] = { price: priceData.price }
-                this.setCachedData(`price_${mint}`, priceData.price)
+          if (priceResult.prices) {
+            Object.entries(priceResult.prices).forEach(([mint, price]: [string, any]) => {
+              if (typeof price === 'number') {
+                results[mint] = { price: price }
+                this.setCachedData(`price_${mint}`, price)
               }
             })
           }
