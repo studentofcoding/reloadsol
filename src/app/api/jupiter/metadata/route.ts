@@ -8,6 +8,11 @@ const serverTokenCache = new Map<string, {
     name: string
     logoURI?: string
     graduatedPool?: string | null
+    bondingCurve?: number | null
+    organicScore?: number | null
+    audit?: {
+      topHoldersPercentage?: number | null
+    }
   }
   timestamp: number
 }>()
@@ -104,7 +109,10 @@ async function fetchTokensFromJupiterV2(mintAddresses: string[], retryCount = 0)
             symbol: token.symbol,
             name: token.name,
             logoURI: token.icon,
-            graduatedPool: token.graduatedPool || null // Include graduated pool if available
+            graduatedPool: token.graduatedPool || null, // Include graduated pool if available
+            bondingCurve: typeof token.bondingCurve === 'number' ? token.bondingCurve : null,
+            organicScore: typeof token.organicScore === 'number' ? token.organicScore : null,
+            audit: token.audit ? { topHoldersPercentage: typeof token.audit.topHoldersPercentage === 'number' ? token.audit.topHoldersPercentage : null } : undefined
           }
         }
       })
@@ -117,7 +125,7 @@ async function fetchTokensFromJupiterV2(mintAddresses: string[], retryCount = 0)
         error.message.includes('ECONNREFUSED') ||
         error.message.includes('ETIMEDOUT') ||
         error.message.includes('timeout') ||
-        error.name === 'TypeError')) {
+        (error as any).name === 'TypeError')) {
       // Network error - retry with backoff
       const delay = RETRY_DELAYS[retryCount] || 1600
       console.warn(`Network error for batch request, retrying in ${delay}ms`)
