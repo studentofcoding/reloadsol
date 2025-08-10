@@ -252,7 +252,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     max_hold_hours: 12,
     conditions: {
       min_market_cap: 35000,
-      max_market_cap: 75000,
+      max_market_cap: 90000,
       min_organic_score: 0,
       max_risk_level: 'low'
     },
@@ -261,7 +261,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       enabled: true,
       mcap: {
         min: 35_000,
-        max: 75_000
+        max: 90_000
       },
       priceChange5m: {
         max: -25.00 // Less tolerance for drops
@@ -2256,7 +2256,7 @@ async function performEnhancedFiltering(
     const passed = rejectionReasons.length === 0
 
     if (passed) {
-      console.log(`✅ Token ${pool.baseAsset.symbol} (${pool.baseAsset.id}) PASSED filters under strategy '${strategyId || 'default'}' with Market cap $${(mcap ? mcap/1000000 : 0).toFixed(2)}M`)
+      console.log(`✅ Token ${pool.baseAsset.symbol} (${pool.baseAsset.id}) PASSED filters under strategy '${strategyId || 'default'}' with Market cap $${(mcap ? mcap / 1000000 : 0).toFixed(2)}M`)
     }
 
     // Track rejection reasons and collect token details
@@ -4530,7 +4530,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
     const currentStrategy = getCurrentBotStrategy()
     const customFilterConfig = parseCustomFilterConfig()
-    
+
     // Add debug logging for strategy and configuration
     console.log(`🎯 Current strategy: ${currentStrategy}`)
     if (customFilterConfig && Object.keys(customFilterConfig).length > 0) {
@@ -4539,7 +4539,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
       const strategy = getTradingStrategy(currentStrategy)
       console.log(`🔧 Using strategy filter config:`, strategy.filtering)
     }
-    
+
     const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(
       data.pools,
       currentStrategy,
@@ -4873,7 +4873,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 change_5m: token.change_5m,
                 organic_score: token.organic_score
               }, { enableLogging: true, fallbackToBasic: true })
-              
+
               console.log(`🔍 Risk assessment for ${token.token_symbol}: ${riskAssessment.riskLevel} (method: ${riskAssessment.assessmentMethod})`)
             } catch (riskError) {
               console.error(`❌ Risk assessment failed for ${token.token_symbol}:`, riskError)
@@ -4882,10 +4882,10 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
             // Assign token to strategy
             const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation)
-            
+
             // Enforce strategy-specific constraints before proceeding
             const strategy = getTradingStrategy(assignedStrategy)
-            
+
             // Market cap constraints
             if (strategy.conditions?.min_market_cap && token.market_cap < strategy.conditions.min_market_cap) {
               console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000).toFixed(0)}k below minimum $${(strategy.conditions.min_market_cap / 1000).toFixed(0)}k`)
