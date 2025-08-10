@@ -66,6 +66,9 @@ interface OpenPositionCycle {
 const positionCache = new Map<string, SLTPPosition>()
 const CACHE_TTL_MS = 30 * 1000 // 30 seconds cache for faster response
 
+// ✅ NEW: Threshold to determine zero/closed balance
+const ZERO_BALANCE_THRESHOLD = 0.000001
+
 // Trading connection (will be initialized when needed)
 let tradingConnection: Connection | null = null
 let tradingKeypair: Keypair | null = null
@@ -94,13 +97,7 @@ async function initializeTradingConnection(): Promise<void> {
 // ✅ NEW: Function to get existing open positions using PnLTracker logic
 async function getExistingOpenPositions(walletAddress: string): Promise<OpenPositionCycle[]> {
     try {
-        // Skip fetch in server-side contexts to prevent URL errors
-        if (typeof window === 'undefined') {
-            log.warn('price_tracking', 'Skipping fetch in server-side context for getExistingOpenPositions', { walletAddress: walletAddress.substring(0, 8) + '...' })
-            return []
-        }
-
-        // Get trading records from the API (client-side only)
+        // Get trading records from the API (works on server and client)
         const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
         const apiUrl = `${baseUrl}/api/trading/records?wallet=${encodeURIComponent(walletAddress)}`
         
@@ -583,6 +580,77 @@ function checkSLTPTriggers(position: SLTPPosition, currentPrice: number): SLTPTr
     }
 }
 
+// ✅ NEW: Build wallet token map for quick lookups
+async function getWalletTokenMap(walletAddress: string): Promise<Map<string, { uiAmount: number; decimals: number }>> {
+    try {
+        const pubkey = new PublicKey(walletAddress)
+        const tokens = await fetchUserTokens(connection, pubkey, false, false)
+        const map = new Map<string, { uiAmount: number; decimals: number }>()
+        for (const t of tokens) {
+            map.set(t.mintAddress, { uiAmount: t.uiAmount, decimals: t.decimals })
+        }
+        return map
+    } catch (e) {
+        log.error('error_handling', 'Failed building wallet token map', e as Error, { walletAddress })
+        return new Map()
+    }
+}
+
+// ✅ NEW: Reconcile active positions with actual wallet balances; deactivate if closed manually
+async function reconcileClosedPositions(positions: SLTPPosition[]): Promise<{ filteredPositions: SLTPPosition[]; pruned: number }> {
+    if (!positions || positions.length === 0) return { filteredPositions: [], pruned: 0 }
+
+    // Group by wallet
+    const byWallet = new Map<string, SLTPPosition[]>()
+    for (const p of positions) {
+        if (!byWallet.has(p.wallet_address)) byWallet.set(p.wallet_address, [])
+        byWallet.get(p.wallet_address)!.push(p)
+    }
+
+    let pruned = 0
+    const keep: SLTPPosition[] = []
+
+    for (const [wallet, walletPositions] of Array.from(byWallet.entries())) {
+        const tokenMap = await getWalletTokenMap(wallet)
+
+        for (const pos of walletPositions) {
+            const tokenInfo = tokenMap.get(pos.token_address)
+            const hasBalance = tokenInfo && tokenInfo.uiAmount > ZERO_BALANCE_THRESHOLD
+
+            if (!hasBalance) {
+                // Mark inactive in DB
+                try {
+                    await supabase
+                        .from('sl_tp_positions')
+                        .update({ is_active: false, updated_at: new Date().toISOString() })
+                        .eq('id', pos.id)
+
+                    // Remove from cache
+                    for (const [key, cached] of Array.from(positionCache.entries())) {
+                        if (cached.id === pos.id) {
+                            positionCache.delete(key)
+                            break
+                        }
+                    }
+
+                    log.info('price_tracking', 'Deactivated SL/TP position due to zero balance (manual close detected)', {
+                        positionId: pos.id,
+                        wallet: wallet.substring(0, 8) + '...',
+                        token: pos.token_symbol,
+                    })
+                } catch (e) {
+                    log.error('error_handling', 'Failed deactivating closed position', e as Error, { positionId: pos.id })
+                }
+                pruned += 1
+            } else {
+                keep.push(pos)
+            }
+        }
+    }
+
+    return { filteredPositions: keep, pruned }
+}
+
 // Function to execute sell order
 async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTriggerResult): Promise<boolean> {
     try {
@@ -596,15 +664,65 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
             return false
         }
 
-        // Calculate token amount to sell
-        const sellAmount = (position.position_size * triggerResult.sell_percentage) / 100
+        // ✅ Determine actual available token balance and decimals from wallet
+        let decimals = 6
+        let walletUiAmount = 0
+        try {
+            const pubkey = new PublicKey(position.wallet_address)
+            const walletTokens = await fetchUserTokens(connection, pubkey, false, false)
+            const t = walletTokens.find(tok => tok.mintAddress === position.token_address)
+            if (t) {
+                decimals = t.decimals
+                walletUiAmount = t.uiAmount
+            }
+        } catch (e) {
+            log.error('sell_execution', 'Failed fetching wallet tokens for sell execution', e as Error, {
+                positionId: position.id,
+                token: position.token_symbol
+            })
+        }
+
+        // If no balance remains, deactivate and stop
+        if (walletUiAmount <= ZERO_BALANCE_THRESHOLD) {
+            await supabase
+                .from('sl_tp_positions')
+                .update({ is_active: false, updated_at: new Date().toISOString(), current_price: triggerResult.current_price })
+                .eq('id', position.id)
+
+            log.info('sell_execution', 'No wallet balance left; deactivating position without executing swap', {
+                positionId: position.id,
+                tokenSymbol: position.token_symbol
+            })
+            return true
+        }
+
+        // Calculate token amount to sell from ACTUAL wallet balance
+        const sellAmountTokens = (walletUiAmount * triggerResult.sell_percentage) / 100
+        const multiplier = Math.pow(10, decimals)
+        const amountInUnits = Math.floor(sellAmountTokens * multiplier)
+
+        if (amountInUnits <= 0) {
+            log.warn('sell_execution', 'Computed sell amount is zero in units; deactivating position', {
+                positionId: position.id,
+                tokenSymbol: position.token_symbol,
+                walletUiAmount,
+                sellPercentage: triggerResult.sell_percentage
+            })
+            await supabase
+                .from('sl_tp_positions')
+                .update({ is_active: false, updated_at: new Date().toISOString(), current_price: triggerResult.current_price })
+                .eq('id', position.id)
+            return true
+        }
 
         log.info('sell_execution', 'Executing sell order', {
             positionId: position.id,
             tokenSymbol: position.token_symbol,
             triggerType: triggerResult.trigger_type,
             sellPercentage: triggerResult.sell_percentage,
-            sellAmount,
+            sellAmountTokens: sellAmountTokens,
+            amountInUnits,
+            decimals,
             currentPrice: triggerResult.current_price
         })
 
@@ -612,7 +730,7 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
         const quoteResult = await getSwapQuote(
             position.token_address,
             'So11111111111111111111111111111111111111112', // SOL
-            Math.floor(sellAmount * 1e6), // Convert to token decimals
+            amountInUnits, // Use real token decimals
             300 // 3% slippage
         )
 
@@ -712,14 +830,25 @@ export async function monitorSLTPPositions(): Promise<void> {
             return
         }
 
-        log.info('price_tracking', 'Monitoring SL/TP positions', { count: positions.length })
+        // ✅ Reconcile against wallet balances first to drop closed positions
+        const { filteredPositions, pruned } = await reconcileClosedPositions(positions)
+        if (pruned > 0) {
+            log.info('price_tracking', 'Pruned inactive/closed positions before monitoring', { pruned, remaining: filteredPositions.length })
+        }
+
+        if (!filteredPositions || filteredPositions.length === 0) {
+            log.debug('price_tracking', 'No active SL/TP positions to monitor after reconciliation')
+            return
+        }
+
+        log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
 
         // Get current prices for all tokens
-        const tokenAddresses = positions.map(p => p.token_address)
+        const tokenAddresses = filteredPositions.map(p => p.token_address)
         const currentPrices = await getCurrentTokenPrices(tokenAddresses)
 
         // Check each position for triggers
-        const triggerPromises = positions.map(async (position) => {
+        const triggerPromises = filteredPositions.map(async (position) => {
             const currentPrice = currentPrices.get(position.token_address)
 
             if (!currentPrice) {

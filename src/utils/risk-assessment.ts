@@ -1,5 +1,5 @@
 import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from './axiom'
-import { fetchTokenMetadataFromJupiter } from '@/app/api/jupiter/metadata/route'
+import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 
 // Types for risk assessment
 export interface RiskIndicators {
@@ -199,7 +199,7 @@ export async function assessTokenRisk(
     }
 
     let riskLevel: 'LOW' | 'MED' | 'HIGH' = 'LOW'
-    
+
     // Risk assessment based on organic score
     if (token.organic_score < 75) {
       riskLevel = 'HIGH'
@@ -292,7 +292,7 @@ export async function assessTokenRisk(
 export function formatRiskForDiscord(token: TokenData, riskResult: RiskAssessmentResult): string {
   const riskLevel = riskResult.riskLevel
   const organicScore = riskResult.organicScore || token.organic_score || 0
-  
+
   return `Score: ${organicScore.toFixed(1)}, MCap: $${token.mcap.toLocaleString()}, Risk: ${riskLevel}`
 }
 
@@ -321,7 +321,7 @@ export function formatDetailedRiskForDiscord(token: TokenData, riskResult: RiskA
     if (typeof thp === 'number') parts.push(`TopH:${thp.toFixed(1)}%`)
     if (parts.length) return parts.join(' ')
   }
-  
+
   // Fallback to regular format
   return formatRiskForDiscord(token, riskResult)
 }
@@ -338,10 +338,10 @@ export async function assessMultipleTokenRisks(
   options: RiskAssessmentOptions = {}
 ): Promise<Map<string, RiskAssessmentResult>> {
   const results = new Map<string, RiskAssessmentResult>()
-  
+
   // Process tokens in parallel with controlled concurrency
   const batchSize = 5 // Process 5 tokens at a time to avoid overwhelming the API
-  
+
   for (let i = 0; i < tokens.length; i += batchSize) {
     const batch = tokens.slice(i, i + batchSize)
     const batchPromises = batch.map(async (token) => {
@@ -359,13 +359,13 @@ export async function assessMultipleTokenRisks(
         }
       }
     })
-    
+
     const batchResults = await Promise.all(batchPromises)
     batchResults.forEach(({ address, result }) => {
       results.set(address, result)
     })
   }
-  
+
   return results
 }
 

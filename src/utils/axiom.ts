@@ -1,4 +1,4 @@
-import { fetchTokenMetadataFromJupiter } from '@/app/api/jupiter/metadata/route'
+import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 
 interface AxiomTokenInfo {
   numHolders: number
