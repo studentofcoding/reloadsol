@@ -8,6 +8,7 @@ import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
 import { notifyTradingUpdate } from '@/utils/trading-notifications'
 import { addSLTPPosition } from '@/utils/sl-tp-tracker'
+import { assessTokenRisk } from '@/utils/risk-assessment'
 
 export const runtime = 'nodejs'
 
@@ -4860,11 +4861,32 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               keypairPath = undefined
             }
 
+            // Perform comprehensive risk assessment before assignment
+            let riskAssessment: any
+            try {
+              riskAssessment = await assessTokenRisk({
+                token_address: token.token_address,
+                token_symbol: token.token_symbol,
+                mcap: token.market_cap,
+                price: token.current_price,
+                change_1h: token.change_1h,
+                change_5m: token.change_5m,
+                organic_score: token.organic_score
+              }, { enableLogging: true, fallbackToBasic: true })
+              
+              console.log(`🔍 Risk assessment for ${token.token_symbol}: ${riskAssessment.riskLevel} (method: ${riskAssessment.assessmentMethod})`)
+            } catch (riskError) {
+              console.error(`❌ Risk assessment failed for ${token.token_symbol}:`, riskError)
+              riskAssessment = { riskLevel: 'HIGH', assessmentMethod: 'error_fallback' }
+            }
+
             // Assign token to strategy
             const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation)
             
-            // Enforce strategy-specific market cap constraints before proceeding
+            // Enforce strategy-specific constraints before proceeding
             const strategy = getTradingStrategy(assignedStrategy)
+            
+            // Market cap constraints
             if (strategy.conditions?.min_market_cap && token.market_cap < strategy.conditions.min_market_cap) {
               console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000).toFixed(0)}k below minimum $${(strategy.conditions.min_market_cap / 1000).toFixed(0)}k`)
               continue
@@ -4872,6 +4894,21 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             if (strategy.conditions?.max_market_cap && token.market_cap > strategy.conditions.max_market_cap) {
               console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000000).toFixed(2)}M above maximum $${(strategy.conditions.max_market_cap / 1000).toFixed(0)}k`)
               continue
+            }
+
+            // Risk level constraints - using comprehensive risk assessment
+            if (strategy.conditions?.max_risk_level && riskAssessment) {
+              const tokenRisk = riskAssessment.riskLevel.toLowerCase() // Convert uppercase to lowercase
+              const allowedRisks = strategy.conditions.max_risk_level === 'low' ? ['low'] :
+                strategy.conditions.max_risk_level === 'medium' ? ['low', 'med'] :
+                  ['low', 'med', 'high']
+
+              if (!allowedRisks.includes(tokenRisk)) {
+                console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Risk level ${riskAssessment.riskLevel} exceeds maximum ${strategy.conditions.max_risk_level.toUpperCase()} (assessment: ${riskAssessment.assessmentMethod})`)
+                continue
+              } else {
+                console.log(`✅ Token ${token.token_symbol} approved for strategy '${assignedStrategy}': Risk level ${riskAssessment.riskLevel} within allowed ${strategy.conditions.max_risk_level.toUpperCase()} threshold`)
+              }
             }
 
             // Create initial simulation configuration (use detected trading mode)
@@ -5105,8 +5142,54 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 keypairPath = undefined
               }
 
+              // Perform comprehensive risk assessment before assignment
+              let riskAssessment: any
+              try {
+                riskAssessment = await assessTokenRisk({
+                  token_address: token.token_address,
+                  token_symbol: token.token_symbol,
+                  mcap: token.market_cap,
+                  price: token.current_price,
+                  change_1h: token.change_1h,
+                  change_5m: token.change_5m,
+                  organic_score: token.organic_score
+                }, { enableLogging: true, fallbackToBasic: true })
+                console.log(`🔍 Risk assessment for ${token.token_symbol}: ${riskAssessment.riskLevel} (method: ${riskAssessment.assessmentMethod})`)
+              } catch (riskError) {
+                console.error(`❌ Risk assessment failed for ${token.token_symbol}:`, riskError)
+                riskAssessment = { riskLevel: 'HIGH', assessmentMethod: 'error_fallback' }
+              }
+
               // Assign token to strategy
               const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation)
+
+              // Enforce strategy-specific constraints before proceeding
+              const strategy = getTradingStrategy(assignedStrategy)
+
+              // Market cap constraints
+              if (strategy.conditions?.min_market_cap && token.market_cap < strategy.conditions.min_market_cap) {
+                console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000).toFixed(0)}k below minimum $${(strategy.conditions.min_market_cap / 1000).toFixed(0)}k`)
+                continue
+              }
+              if (strategy.conditions?.max_market_cap && token.market_cap > strategy.conditions.max_market_cap) {
+                console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000000).toFixed(2)}M above maximum $${(strategy.conditions.max_market_cap / 1000).toFixed(0)}k`)
+                continue
+              }
+
+              // Risk level constraints - using comprehensive risk assessment
+              if (strategy.conditions?.max_risk_level && riskAssessment) {
+                const tokenRisk = riskAssessment.riskLevel.toLowerCase()
+                const allowedRisks = strategy.conditions.max_risk_level === 'low' ? ['low'] :
+                  strategy.conditions.max_risk_level === 'medium' ? ['low', 'med'] :
+                    ['low', 'med', 'high']
+
+                if (!allowedRisks.includes(tokenRisk)) {
+                  console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Risk level ${riskAssessment.riskLevel} exceeds maximum ${strategy.conditions.max_risk_level.toUpperCase()} (assessment: ${riskAssessment.assessmentMethod})`)
+                  continue
+                } else {
+                  console.log(`✅ Token ${token.token_symbol} approved for strategy '${assignedStrategy}': Risk level ${riskAssessment.riskLevel} within allowed ${strategy.conditions.max_risk_level.toUpperCase()} threshold`)
+                }
+              }
 
               // Create initial simulation configuration (use detected trading mode)
               const initialSimulation = createTradingSimulation(
@@ -5754,17 +5837,7 @@ function assignTokenToStrategy(token: any, strategies: string[], allocation: Rec
         meetsConditions = false
       }
 
-      if (strategy.conditions.max_risk_level) {
-        // Simple risk assessment based on market cap and volume
-        const riskLevel = marketCap < 100000 ? 'high' : marketCap < 500000 ? 'medium' : 'low'
-        const allowedRisks = strategy.conditions.max_risk_level === 'low' ? ['low'] :
-          strategy.conditions.max_risk_level === 'medium' ? ['low', 'medium'] :
-            ['low', 'medium', 'high']
-
-        if (!allowedRisks.includes(riskLevel)) {
-          meetsConditions = false
-        }
-      }
+      // Note: Risk assessment is now handled before assignment with comprehensive risk assessment
 
       if (meetsConditions) {
         console.log(`🎯 Token ${token.token_symbol} assigned to ${strategyId} strategy (rule-based)`)
