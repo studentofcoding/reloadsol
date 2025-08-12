@@ -771,7 +771,8 @@ interface TradeExecutionParams {
   slippageBps: number
   userPublicKey: string
   priorityFee?: number
-  strategy: string
+  strategy?: string
+  tokenData?: any // Add this field
 }
 
 interface TradeExecutionResult {
@@ -1216,7 +1217,8 @@ class SynchronizedTradeExecutor {
           tokenAddress: params.tokenAddress,
           operationType: 'buy',
           syncResult,
-          isRealTradeExecuted: executeReal && !!realResult
+          isRealTradeExecuted: executeReal && !!realResult,
+          tokenData: params.tokenData
         })
       } catch (discordError) {
         console.error('❌ Failed to send sync Discord notification:', discordError)
@@ -2863,6 +2865,7 @@ async function sendSyncTradeNotificationDiscord(params: {
   operationType: 'buy' | 'sell'
   syncResult: SyncedTradeResult
   isRealTradeExecuted: boolean
+  tokenData?: any
 }) {
   try {
     if (!shouldEnableNotifications()) {
@@ -2878,7 +2881,8 @@ async function sendSyncTradeNotificationDiscord(params: {
       tokenAddress,
       operationType,
       syncResult,
-      isRealTradeExecuted
+      isRealTradeExecuted,
+      tokenData
     } = params
 
     logTradeOperation('Discord Sync Notification Attempt', {
@@ -2911,8 +2915,22 @@ async function sendSyncTradeNotificationDiscord(params: {
         `  🎯 Output: ${parseFloat(syncResult.real.outputAmount).toLocaleString()} ${operationType === 'buy' ? 'tokens' : 'SOL'}`,
         `  💸 Fees: ${syncResult.real.fees.totalFees.toFixed(6)} SOL`,
         `  ⏱️ Time: ${syncResult.real.responseTime}ms`,
-        ``
       )
+
+      // Add market cap, graduatedAt, and launchpad data
+      if (tokenData) {
+        if (tokenData.market_cap) {
+          lines.push(`  📊 Market Cap: $${tokenData.market_cap.toLocaleString()}`)
+        }
+        if (tokenData.graduatedAt) {
+          lines.push(`  🎓 Graduated: ${new Date(tokenData.graduatedAt).toLocaleDateString()}`)
+        }
+        if (tokenData.launchpad) {
+          lines.push(`  🚀 Launchpad: ${tokenData.launchpad}`)
+        }
+      }
+
+      lines.push(``)
 
       console.warn('Real trade executed', lines)
 
@@ -3255,7 +3273,8 @@ async function executeBuyOperationWithStrategy(
           slippageBps: config.bps,
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
           priorityFee: shouldExecuteReal ? PRIORITY_FEE_LAMPORTS : 0,
-          strategy: strategyId
+          strategy: strategyId,
+          tokenData: token
         }, shouldExecuteReal)
 
         syncResults.push(syncResult)
@@ -5458,12 +5477,12 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           console.warn(`Invalid initial price for token ${token.token_symbol}: ${existingToken.initial_price_usd}`);
           continue; // Skip this token if initial price is invalid
         }
-        
+
         if (!token.current_price || token.current_price <= 0) {
           console.warn(`Invalid current price for token ${token.token_symbol}: ${token.current_price}`);
           continue; // Skip this token if current price is invalid
         }
-        
+
         const currentGain = calculateGainPercentage(token.current_price, existingToken.initial_price_usd)
 
         // Only update peak price and gain if current price is higher than existing peak
@@ -5481,7 +5500,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           peakGain,
           lastUpdated: new Date().toISOString()
         }
-        
+
         // Use priceTracking for logging/debugging (fixes unused variable warning)
         console.log(`📊 Price tracking for ${token.token_symbol}:`, {
           symbol: token.token_symbol,
