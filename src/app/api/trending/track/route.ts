@@ -10,6 +10,7 @@ import { notifyTradingUpdate } from '@/utils/trading-notifications'
 import { addSLTPPosition } from '@/utils/sl-tp-tracker'
 import { assessTokenRisk, formatDetailedRiskForDiscord } from '@/utils/risk-assessment'
 import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
+import { calculateGainPercentage } from '@/utils/trading-math'
 
 export const runtime = 'nodejs'
 
@@ -1276,17 +1277,6 @@ function createSignerFromKeypair(keypair: Keypair): (transactions: VersionedTran
       return tx
     })
   }
-}
-
-// Add helper functions for gain calculations
-function calculateGainPercentage(currentPrice: number, initialPrice: number): number {
-  if (!initialPrice || initialPrice <= 0) {
-    console.warn('Invalid initial price for gain calculation:', initialPrice)
-    return 0
-  }
-
-  // Round to 4 decimal places to avoid floating point precision issues
-  return Math.round(((currentPrice - initialPrice) / initialPrice) * 10000) / 100
 }
 
 function calculatePeakPrice(currentPrice: number, existingPeakPrice: number): number {
@@ -5463,6 +5453,17 @@ async function internalTrackPost(request: NextRequest, logger: any) {
         }
 
         // Calculate current gain for tracking tokens
+        // Add validation before calling calculateGainPercentage
+        if (!existingToken.initial_price_usd || existingToken.initial_price_usd <= 0) {
+          console.warn(`Invalid initial price for token ${token.token_symbol}: ${existingToken.initial_price_usd}`);
+          continue; // Skip this token if initial price is invalid
+        }
+        
+        if (!token.current_price || token.current_price <= 0) {
+          console.warn(`Invalid current price for token ${token.token_symbol}: ${token.current_price}`);
+          continue; // Skip this token if current price is invalid
+        }
+        
         const currentGain = calculateGainPercentage(token.current_price, existingToken.initial_price_usd)
 
         // Only update peak price and gain if current price is higher than existing peak
@@ -5480,6 +5481,12 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           peakGain,
           lastUpdated: new Date().toISOString()
         }
+        
+        // Use priceTracking for logging/debugging (fixes unused variable warning)
+        console.log(`📊 Price tracking for ${token.token_symbol}:`, {
+          symbol: token.token_symbol,
+          tracking: priceTracking
+        });
 
         // Check if token has dropped more than 50% from initial price (original loss condition)
         const isLost = currentGain <= -50

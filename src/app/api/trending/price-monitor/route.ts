@@ -153,6 +153,8 @@ export async function POST(request: NextRequest) {
         let currentGain = 0
         if (token.initial_price_usd && token.initial_price_usd > 0) {
           currentGain = calculateGainPercentage(priceUsd, token.initial_price_usd)
+        } else {
+          console.warn(`Skipping gain calculation for ${token.token_symbol}: invalid initial price ${token.initial_price_usd}`)
         }
 
         // Update Supabase
