@@ -8,7 +8,8 @@ import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
 import { notifyTradingUpdate } from '@/utils/trading-notifications'
 import { addSLTPPosition } from '@/utils/sl-tp-tracker'
-import { assessTokenRisk } from '@/utils/risk-assessment'
+import { assessTokenRisk, formatDetailedRiskForDiscord } from '@/utils/risk-assessment'
+import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 
 export const runtime = 'nodejs'
 
@@ -1492,7 +1493,7 @@ async function sendNewTokenDetectionDiscord(params: {
   }
 }
 
-// Discord notification for successful buy operations
+// Enhanced Discord notification for successful buy operations
 async function sendBuyNotificationDiscord(params: {
   tokenSymbol: string | null
   tokenAddress: string
@@ -1505,6 +1506,9 @@ async function sendBuyNotificationDiscord(params: {
   responseTime: number
   signature?: string
   totalFees: number
+  marketCap?: number
+  riskAssessment?: any
+  graduatedAt?: string | null
 }) {
   try {
     // Check if Discord notifications are enabled
@@ -1527,17 +1531,23 @@ async function sendBuyNotificationDiscord(params: {
       rpcUsed,
       responseTime,
       signature,
-      totalFees
+      totalFees,
+      marketCap,
+      riskAssessment,
+      graduatedAt
     } = params
 
-    // Log notification attempt
+    // Log notification attempt with new data
     logTradeOperation('Discord Buy Notification Attempt', {
       tokenSymbol,
       tokenAddress,
       isSimulated,
       amountSOL,
       provider,
-      signature: signature ? `${signature.slice(0, 8)}...` : 'none'
+      signature: signature ? `${signature.slice(0, 8)}...` : 'none',
+      marketCap,
+      riskLevel: riskAssessment?.riskLevel,
+      graduatedAt
     })
 
     const emoji = isSimulated ? '💻' : '🔥'
@@ -1556,6 +1566,32 @@ async function sendBuyNotificationDiscord(params: {
       `⏱️ Response: ${responseTime}ms`,
       `💸 Fees: ${totalFees.toFixed(6)} SOL`
     ]
+
+    // Add market cap if available
+    if (marketCap && marketCap > 0) {
+      lines.push(`💎 Market Cap: $${marketCap.toLocaleString()}`)
+    }
+
+    // Add risk assessment if available
+    if (riskAssessment) {
+      const riskEmoji = riskAssessment.riskLevel === 'LOW' ? '🟢' : 
+                       riskAssessment.riskLevel === 'MED' ? '🟡' : '🔴'
+      lines.push(`${riskEmoji} Risk: ${riskAssessment.riskLevel}`)
+      
+      // Add detailed risk metrics if available
+      if (riskAssessment.axiomData || riskAssessment.jupiterDetails) {
+        const detailedRisk = formatDetailedRiskForDiscord(
+          { token_address: tokenAddress, token_symbol: tokenSymbol || 'UNKNOWN', mcap: marketCap || 0, price: priceUSD },
+          riskAssessment
+        )
+        lines.push(`📈 Metrics: ${detailedRisk}`)
+      }
+    }
+
+    // Add graduatedAt if available
+    if (graduatedAt) {
+      lines.push(`🎓 Graduated: ${graduatedAt}`)
+    }
 
     // Add signature for real trades
     if (signature && !isSimulated) {
@@ -1583,13 +1619,16 @@ async function sendBuyNotificationDiscord(params: {
       throw new Error(`Discord webhook failed: ${response.status} ${response.statusText}\nResponse: ${responseText}`)
     }
 
-    // Log successful notification
+    // Log successful notification with enhanced data
     logTradeOperation('Discord Buy Notification Success', {
       tokenSymbol,
       isSimulated,
       signature: signature ? `${signature.slice(0, 8)}...` : 'none',
       responseTime: webhookResponseTime,
-      httpStatus: response.status
+      httpStatus: response.status,
+      marketCap,
+      riskLevel: riskAssessment?.riskLevel,
+      graduatedAt
     })
   } catch (err) {
     // Enhanced error logging
@@ -1597,7 +1636,9 @@ async function sendBuyNotificationDiscord(params: {
       tokenSymbol: params.tokenSymbol,
       isSimulated: params.isSimulated,
       amountSOL: params.amountSOL,
-      signature: params.signature ? `${params.signature.slice(0, 8)}...` : 'none'
+      signature: params.signature ? `${params.signature.slice(0, 8)}...` : 'none',
+      marketCap: params.marketCap,
+      riskLevel: params.riskAssessment?.riskLevel
     }, err as Error)
 
     // Re-throw for upstream handling if needed
@@ -3390,6 +3431,70 @@ async function executeBuyOperationWithStrategy(
     // Send Discord notification for successful buy operations
     if (shouldEnableNotifications() && bestResult.success) {
       try {
+        // Fetch additional data for enhanced notification
+        let marketCap: number | undefined
+        let riskAssessment: any
+        let graduatedAt: string | null = null
+
+        // Get market cap from token data
+        if (token.market_cap && token.market_cap > 0) {
+          marketCap = token.market_cap
+        }
+
+        // Fetch Jupiter metadata to get graduatedAt
+        try {
+          const jupiterMeta = await fetchTokenMetadataFromJupiter(token.token_address)
+          if (jupiterMeta?.graduatedAt) {
+            const graduatedTimestamp = new Date(jupiterMeta.graduatedAt * 1000)
+            graduatedAt = graduatedTimestamp.toISOString()
+            
+            // Log graduatedAt on server
+            logTradeOperation('Token Graduated Info', {
+              tokenSymbol: token.token_symbol,
+              tokenAddress: token.token_address,
+              graduatedAt: graduatedAt,
+              graduatedTimestamp: jupiterMeta.graduatedAt
+            })
+            
+            console.log(`🎓 Token ${token.token_symbol} graduated at: ${graduatedAt}`)
+          }
+        } catch (jupiterError) {
+          console.warn('Failed to fetch Jupiter metadata for graduatedAt:', jupiterError)
+        }
+
+        // Perform risk assessment
+        try {
+          riskAssessment = await assessTokenRisk({
+            token_address: token.token_address,
+            token_symbol: token.token_symbol,
+            mcap: marketCap || token.market_cap || 0,
+            price: token.current_price,
+            change_1h: token.change_1h,
+            change_5m: token.change_5m,
+            organic_score: token.organic_score
+          }, {
+            timeoutMs: 3000,
+            enableLogging: true,
+            fallbackToBasic: true
+          })
+          
+          // Log risk assessment results
+          logTradeOperation('Buy Risk Assessment', {
+            tokenSymbol: token.token_symbol,
+            tokenAddress: token.token_address,
+            riskLevel: riskAssessment.riskLevel,
+            assessmentMethod: riskAssessment.assessmentMethod,
+            marketCap
+          })
+        } catch (riskError) {
+          console.warn('Failed to perform risk assessment:', riskError)
+          riskAssessment = {
+            riskLevel: 'MED',
+            assessmentMethod: 'fallback',
+            error: 'Assessment failed'
+          }
+        }
+
         await sendBuyNotificationDiscord({
           tokenSymbol: token.token_symbol,
           tokenAddress: token.token_address,
@@ -3401,7 +3506,10 @@ async function executeBuyOperationWithStrategy(
           rpcUsed: bestResult.rpcUsed,
           responseTime: bestResult.responseTime,
           signature: bestResult.signature,
-          totalFees: bestResult.fees.totalFees
+          totalFees: bestResult.fees.totalFees,
+          marketCap,
+          riskAssessment,
+          graduatedAt
         })
       } catch (discordError) {
         console.error('❌ Failed to send buy Discord notification:', discordError)
@@ -4225,7 +4333,13 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
           provider: 'jupiter',
           rpcUsed: 'test-rpc',
           responseTime: 150,
-          totalFees: 0.001
+          totalFees: 0.001,
+          marketCap: 50000,
+          riskAssessment: {
+            riskLevel: 'LOW',
+            assessmentMethod: 'test'
+          },
+          graduatedAt: '2025-01-10T12:56:39Z'
         })
         testResults.push({ type: 'buy_notification', success: true })
         console.log('Buy notification test: SUCCESS')
