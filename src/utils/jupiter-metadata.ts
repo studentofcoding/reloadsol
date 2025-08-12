@@ -93,7 +93,8 @@ async function fetchTokensFromJupiterV2(mintAddresses: string[], retryCount = 0)
             bondingCurve: typeof token.bondingCurve === 'number' ? token.bondingCurve : null,
             organicScore: typeof token.organicScore === 'number' ? token.organicScore : null,
             audit: token.audit ? { topHoldersPercentage: typeof token.audit.topHoldersPercentage === 'number' ? token.audit.topHoldersPercentage : null } : undefined,
-            graduatedAt: token.graduatedAt ? Number(token.graduatedAt) : null
+            graduatedAt: token.graduatedAt ? Number(token.graduatedAt) : null,
+            launchpad: token.launchpad
           }
         }
       })

@@ -1509,6 +1509,7 @@ async function sendBuyNotificationDiscord(params: {
   marketCap?: number
   riskAssessment?: any
   graduatedAt?: string | null
+  launchpad?: string | null
 }) {
   try {
     // Check if Discord notifications are enabled
@@ -1534,7 +1535,8 @@ async function sendBuyNotificationDiscord(params: {
       totalFees,
       marketCap,
       riskAssessment,
-      graduatedAt
+      graduatedAt,
+      launchpad
     } = params
 
     // Log notification attempt with new data
@@ -1547,7 +1549,8 @@ async function sendBuyNotificationDiscord(params: {
       signature: signature ? `${signature.slice(0, 8)}...` : 'none',
       marketCap,
       riskLevel: riskAssessment?.riskLevel,
-      graduatedAt
+      graduatedAt,
+      launchpad
     })
 
     const emoji = isSimulated ? '💻' : '🔥'
@@ -1574,10 +1577,10 @@ async function sendBuyNotificationDiscord(params: {
 
     // Add risk assessment if available
     if (riskAssessment) {
-      const riskEmoji = riskAssessment.riskLevel === 'LOW' ? '🟢' : 
-                       riskAssessment.riskLevel === 'MED' ? '🟡' : '🔴'
+      const riskEmoji = riskAssessment.riskLevel === 'LOW' ? '🟢' :
+        riskAssessment.riskLevel === 'MED' ? '🟡' : '🔴'
       lines.push(`${riskEmoji} Risk: ${riskAssessment.riskLevel}`)
-      
+
       // Add detailed risk metrics if available
       if (riskAssessment.axiomData || riskAssessment.jupiterDetails) {
         const detailedRisk = formatDetailedRiskForDiscord(
@@ -1591,6 +1594,11 @@ async function sendBuyNotificationDiscord(params: {
     // Add graduatedAt if available
     if (graduatedAt) {
       lines.push(`🎓 Graduated: ${graduatedAt}`)
+    }
+
+    // Add launchpad if available
+    if (launchpad) {
+      lines.push(`From launchpad: ${launchpad}`)
     }
 
     // Add signature for real trades
@@ -3435,6 +3443,7 @@ async function executeBuyOperationWithStrategy(
         let marketCap: number | undefined
         let riskAssessment: any
         let graduatedAt: string | null = null
+        let launchpad: string | null = null
 
         // Get market cap from token data
         if (token.market_cap && token.market_cap > 0) {
@@ -3447,15 +3456,17 @@ async function executeBuyOperationWithStrategy(
           if (jupiterMeta?.graduatedAt) {
             const graduatedTimestamp = new Date(jupiterMeta.graduatedAt * 1000)
             graduatedAt = graduatedTimestamp.toISOString()
-            
+            launchpad = jupiterMeta.launchpad
+
             // Log graduatedAt on server
             logTradeOperation('Token Graduated Info', {
               tokenSymbol: token.token_symbol,
               tokenAddress: token.token_address,
               graduatedAt: graduatedAt,
-              graduatedTimestamp: jupiterMeta.graduatedAt
+              graduatedTimestamp: jupiterMeta.graduatedAt,
+              launchpad: launchpad
             })
-            
+
             console.log(`🎓 Token ${token.token_symbol} graduated at: ${graduatedAt}`)
           }
         } catch (jupiterError) {
@@ -3477,7 +3488,7 @@ async function executeBuyOperationWithStrategy(
             enableLogging: true,
             fallbackToBasic: true
           })
-          
+
           // Log risk assessment results
           logTradeOperation('Buy Risk Assessment', {
             tokenSymbol: token.token_symbol,

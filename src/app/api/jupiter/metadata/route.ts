@@ -15,6 +15,7 @@ const serverTokenCache = new Map<string, {
       topHoldersPercentage?: number | null
     }
     graduatedAt?: number | null
+    launchpad?: string | null
   }
   timestamp: number
 }>()
