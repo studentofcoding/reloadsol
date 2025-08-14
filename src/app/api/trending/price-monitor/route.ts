@@ -146,6 +146,18 @@ export async function POST(request: NextRequest) {
         const { priceUsd } = await priceResp.json()
         if (!priceUsd || priceUsd <= 0) continue
 
+        // Validate last_price_usd before calculating difference
+        if (!token.last_price_usd || token.last_price_usd <= 0) {
+          console.warn(`Skipping price difference calculation for ${token.token_symbol}: invalid last price ${token.last_price_usd}`)
+          // Initialize last_price_usd with current price for future calculations
+          const { error: initErr } = await supabase
+            .from(TRACKER_TABLE)
+            .update({ last_price_usd: priceUsd })
+            .eq('id', token.id)
+          if (initErr) console.error('Failed to initialize last_price_usd:', initErr)
+          continue
+        }
+
         const diffPercent = calculateGainPercentage(priceUsd, token.last_price_usd)
         if (Math.abs(diffPercent) < threshold) continue
 

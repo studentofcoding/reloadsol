@@ -1,6 +1,7 @@
-export function calculateGainPercentage(currentPrice: number, initialPrice: number): number {
+export function calculateGainPercentage(currentPrice: number, initialPrice: number, context?: string): number {
   if (!initialPrice || initialPrice <= 0) {
-    console.warn('Invalid initial price for gain calculation:', initialPrice)
+    const contextMsg = context ? ` (${context})` : ''
+    console.warn(`Invalid initial price for gain calculation${contextMsg}:`, initialPrice)
     return 0
   }
 
@@ -37,4 +38,4 @@ export function shouldRunPnLUpdate(currentTime: Date): boolean {
 
   // Run PnL update at 2 AM UTC (allow 5-minute window: 2:00-2:05)
   return hour === 2 && minute < 5
-} 
+}
