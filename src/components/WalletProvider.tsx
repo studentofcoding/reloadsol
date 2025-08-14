@@ -134,11 +134,33 @@ export function WalletProvider({ children }: WalletProviderProps) {
     }
 
     const handleAccountChanged = (publicKey: PublicKey | null) => {
+      console.log('Account changed event:', { publicKey: publicKey?.toString() })
+      
       if (publicKey) {
+        // Only update if we have a valid public key
         setPublicKey(publicKey)
         setConnected(true)
+        // Update wallet object for Jupiter Terminal compatibility
+        setWallet({
+          adapter: {
+            name: 'Phantom',
+            icon: 'https://phantom.app/img/phantom-logo.svg',
+            url: 'https://phantom.app',
+            publicKey,
+            connected: true,
+            connecting: false,
+            disconnecting: false
+          }
+        })
       } else {
-        handleDisconnect()
+        // Don't immediately disconnect on null - check if wallet is still actually connected
+        // This prevents disconnection during transaction processing
+        if (provider && !provider.isConnected) {
+          console.log('Wallet actually disconnected, updating state')
+          handleDisconnect()
+        } else {
+          console.log('Received null publicKey but wallet still connected, ignoring')
+        }
       }
     }
 
