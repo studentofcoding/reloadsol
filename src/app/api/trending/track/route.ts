@@ -2924,10 +2924,16 @@ async function sendSyncTradeNotificationDiscord(params: {
         }
         if (tokenData.graduatedAt) {
           lines.push(`  🎓 Graduated: ${new Date(tokenData.graduatedAt).toLocaleDateString()}`)
+        } else {
+          console.log(`⚠️ No graduatedAt data for token: ${tokenSymbol || 'UNKNOWN'}`)
         }
         if (tokenData.launchpad) {
           lines.push(`  🚀 Launchpad: ${tokenData.launchpad}`)
+        } else {
+          console.log(`⚠️ No launchpad data for token: ${tokenSymbol || 'UNKNOWN'}`)
         }
+      } else {
+        console.log(`⚠️ No tokenData available for token: ${tokenSymbol || 'UNKNOWN'}`)
       }
 
       lines.push(``)
