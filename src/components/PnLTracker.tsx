@@ -642,9 +642,12 @@ export default function PnLTracker() {
             console.error('Failed fetching wallet tokens for open cycle verification', walletErr)
           }
         }
-
-        // Sort results (newest first)
-        closedCycles.sort((a, b) => b.sellTimestamp - a.sellTimestamp)
+        
+        closedCycles.sort((a, b) => {
+          // Sort by P&L percentage (highest positive first)
+          return (b.pnlPercentage || 0) - (a.pnlPercentage || 0)
+        })
+        
         openPositionsResult.sort((a, b) => {
           // First, prioritize positions with calculated P&L
           const aHasPnL = a.pnlPercentage !== undefined
