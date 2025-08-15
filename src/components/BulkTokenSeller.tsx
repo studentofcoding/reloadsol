@@ -1475,6 +1475,20 @@ export default function BulkTokenSeller() {
                           <div className="font-semibold text-gray-300">
                             {token.name || token.symbol || 'Unknown'}
                           </div>
+
+                          {/* Chart Icon */}
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleSelectToken(token.mintAddress)
+                            }}
+                            className="ml-2 p-1 bg-gray-600 rounded hover:bg-gray-500 transition-colors"
+                            title="View Chart"
+                          >
+                            <svg className="w-3 h-3 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                            </svg>
+                          </button>
                         </div>
                       </div>
                     </div>

@@ -40,6 +40,7 @@ interface PnLRecord {
   // ✅ NEW: Bot operation fields
   isBotOperation?: boolean // Whether this was a bot operation
   botStrategy?: string // Bot strategy used
+  jupiter_swap?: boolean
 }
 
 interface OpenPosition {
@@ -70,6 +71,7 @@ interface OpenPosition {
   // ✅ NEW: Bot operation fields
   isBotOperation?: boolean // Whether this was a bot operation
   botStrategy?: string // Bot strategy used
+  jupiter_swap?: boolean
 }
 
 export default function PnLTracker() {
@@ -155,6 +157,76 @@ export default function PnLTracker() {
     }
     return false
   })
+
+  // ✅ NEW: Multi-select and drag functionality state
+  const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set())
+  const [isDragging, setIsDragging] = useState<boolean>(false)
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
+  const [dragEnd, setDragEnd] = useState<{ x: number; y: number } | null>(null)
+  const [showBulkSellOverlay, setShowBulkSellOverlay] = useState<boolean>(false)
+  const [isBulkSelling, setIsBulkSelling] = useState<boolean>(false)
+  const [bulkSellError, setBulkSellError] = useState<string>('')
+
+  // ✅ NEW: Drag selection handlers
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return // Only left mouse button
+    
+    const rect = e.currentTarget.getBoundingClientRect()
+    setDragStart({ x: e.clientX, y: e.clientY })
+    setDragEnd({ x: e.clientX, y: e.clientY })
+    setIsDragging(true)
+    e.preventDefault()
+  }, [])
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging || !dragStart) return
+    
+    setDragEnd({ x: e.clientX, y: e.clientY })
+    
+    // Get all token elements within the selection rectangle
+    const tokenElements = document.querySelectorAll('[data-token-address]')
+    const newSelection = new Set<string>()
+    
+    tokenElements.forEach((element) => {
+      const rect = element.getBoundingClientRect()
+      const tokenId = element.getAttribute('data-token-address')
+      
+      if (tokenId && isElementInSelection(rect, dragStart, { x: e.clientX, y: e.clientY })) {
+        const position = openPositions.find(pos => pos.mintAddress === tokenId)
+        if (position) {
+          newSelection.add(position.id)
+        }
+      }
+    })
+    
+    setSelectedTokens(newSelection)
+  }, [isDragging, dragStart, openPositions])
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false)
+    setDragStart(null)
+    setDragEnd(null)
+  }, [])
+
+  // Helper function to check if element is within selection rectangle
+  const isElementInSelection = useCallback((elementRect: DOMRect, start: { x: number; y: number }, end: { x: number; y: number }) => {
+    const selectionLeft = Math.min(start.x, end.x)
+    const selectionRight = Math.max(start.x, end.x)
+    const selectionTop = Math.min(start.y, end.y)
+    const selectionBottom = Math.max(start.y, end.y)
+    
+    return (
+      elementRect.left < selectionRight &&
+      elementRect.right > selectionLeft &&
+      elementRect.top < selectionBottom &&
+      elementRect.bottom > selectionTop
+    )
+  }, [])
+
+  // ✅ NEW: Clear selection helper
+  const clearSelection = useCallback(() => {
+    setSelectedTokens(new Set())
+  }, [])
 
   // Handler to dismiss the hint message
   const handleDismissHint = useCallback(() => {
@@ -315,126 +387,7 @@ export default function PnLTracker() {
     })
   }, [])
 
-  // ✅ NEW: Check for notification-worthy positions
-  const checkForNotifications = useCallback(() => {
-    console.log('🔔 Checking notifications:', {
-      notificationsEnabled,
-      connected,
-      openPositionsCount: openPositions.length,
-      notificationPermission,
-      notificationThreshold
-    })
-    
-    if (!notificationsEnabled || !connected) {
-      console.log('🔕 Notifications disabled or not connected')
-      return
-    }
-
-    if (notificationPermission !== 'granted') {
-      console.log('🔕 Notification permission not granted:', notificationPermission)
-      return
-    }
-
-    let checkedPositions = 0
-    let notifiablePositions = 0
-
-    openPositions.forEach(position => {
-      checkedPositions++
-      
-      if (position.pnlPercentage === undefined) {
-        console.log(`⏳ Position ${position.symbol || 'Unknown'} has no P&L yet`)
-        return
-      }
-
-      const pnlAbs = Math.abs(position.pnlPercentage)
-      const tokenKey = `${position.mintAddress}-${Math.floor(pnlAbs / 10) * 10}`
-      
-      console.log(`📊 Position ${position.symbol || 'Unknown'}: ${position.pnlPercentage.toFixed(1)}%, threshold: ${notificationThreshold}%, already notified: ${notifiedTokens.has(tokenKey)}`)
-      
-      // Check if this position exceeds the threshold and hasn't been notified recently
-      if (pnlAbs >= notificationThreshold && !notifiedTokens.has(tokenKey)) {
-        notifiablePositions++
-        console.log(`🚨 Sending notification for ${position.symbol || 'Unknown'}: ${position.pnlPercentage.toFixed(1)}%`)
-        
-        sendPnLNotification(position, position.pnlPercentage)
-        
-        // Mark as notified
-        setNotifiedTokens(prev => new Set(prev).add(tokenKey))
-        
-        // Clear notification flag after 30 minutes to allow re-notification
-        setTimeout(() => {
-          setNotifiedTokens(prev => {
-            const newSet = new Set(prev)
-            newSet.delete(tokenKey)
-            return newSet
-          })
-        }, 30 * 60 * 1000) // 30 minutes
-      }
-    })
-    
-    console.log(`🔔 Notification check complete: ${checkedPositions} positions checked, ${notifiablePositions} notifications sent`)
-  }, [notificationsEnabled, connected, openPositions, notificationThreshold, notifiedTokens, sendPnLNotification, notificationPermission])
-
-  // ✅ NEW: Monitor positions for notifications
-  useEffect(() => {
-    if (notificationsEnabled && openPositions.length > 0) {
-      // Add a small delay to ensure P&L calculations are complete
-      const timeoutId = setTimeout(() => {
-        checkForNotifications()
-      }, 1000) // 1 second delay
-      
-      return () => clearTimeout(timeoutId)
-    }
-  }, [checkForNotifications, notificationsEnabled, openPositions])
-
-  const BotOperationIndicator = ({ isBotOperation, botStrategy }: { 
-    isBotOperation?: boolean, 
-    botStrategy?: string 
-  }) => {
-    if (!isBotOperation) return null
-    
-    return (
-      <div className="flex items-center gap-1 text-xs">
-        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
-          🤖 Bot
-        </span>
-        {botStrategy && (
-          <span className="text-gray-500 dark:text-gray-400">
-            {botStrategy}
-          </span>
-        )}
-      </div>
-    )
-  }
-
-
-
-
-
-  // Add this useEffect after other useEffect hooks to persist dismissal state
-  useEffect(() => {
-    const hintDismissed = localStorage.getItem('pnl-closed-positions-hint-dismissed')
-    if (hintDismissed === 'true') {
-      setShowClosedPositionsHint(false)
-    }
-  }, [])
-
-  // Clear old localStorage data on component mount
-  useEffect(() => {
-    console.log('🧹 PnLTracker: Cleared old localStorage data, now using Supabase!')
-  }, [])
-
-  // Fetch SOL price
-  const fetchSolPrice = React.useCallback(async () => {
-    try {
-      const price = await getSolPriceUSD()
-      setSolPriceUsd(price)
-    } catch (error) {
-      console.error('Error fetching SOL price:', error)
-    }
-  }, [])
-
-  // Calculate PnL records by matching buy and sell operations
+    // Calculate PnL records by matching buy and sell operations
   const calculatePnL = useCallback(async () => {
     if (!connected || !publicKey) {
       setPnlRecords([])
@@ -689,9 +642,12 @@ export default function PnLTracker() {
             console.error('Failed fetching wallet tokens for open cycle verification', walletErr)
           }
         }
-
-        // Sort results (newest first)
-        closedCycles.sort((a, b) => b.sellTimestamp - a.sellTimestamp)
+        
+        closedCycles.sort((a, b) => {
+          // Sort by P&L percentage (highest positive first)
+          return (b.pnlPercentage || 0) - (a.pnlPercentage || 0)
+        })
+        
         openPositionsResult.sort((a, b) => {
           // First, prioritize positions with calculated P&L
           const aHasPnL = a.pnlPercentage !== undefined
@@ -724,6 +680,301 @@ export default function PnLTracker() {
       setIsLoading(false)
     }
   }, [connected, publicKey, records, solPriceUsd])
+
+  // ✅ NEW: Toggle token selection for bulk sell
+  const toggleTokenSelection = useCallback((tokenId: string, event: React.MouseEvent) => {
+    event.stopPropagation()
+    setSelectedTokens(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(tokenId)) {
+        newSet.delete(tokenId)
+      } else {
+        newSet.add(tokenId)
+      }
+      return newSet
+    })
+  }, [])
+
+  // ✅ NEW: Select all tokens
+  const selectAllTokens = useCallback(() => {
+    setSelectedTokens(new Set(openPositions.map(pos => pos.id)))
+  }, [openPositions])
+
+  // ✅ NEW: Clear all selections
+  const clearAllSelections = useCallback(() => {
+    setSelectedTokens(new Set())
+  }, [])
+
+  // ✅ NEW: Handle bulk sell
+  const handleBulkSell = useCallback(async () => {
+    if (!connected || !publicKey || !signAllTransactions || selectedTokens.size === 0) {
+      setBulkSellError('Please connect your wallet and select tokens to sell')
+      return
+    }
+
+    setIsBulkSelling(true)
+    setBulkSellError('')
+
+    try {
+      // Get selected positions
+      const positionsToSell = openPositions.filter(pos => selectedTokens.has(pos.id))
+      
+      if (positionsToSell.length === 0) {
+        throw new Error('No valid positions selected for selling')
+      }
+
+      // Prepare tokens for bulk sell
+      const tokensToSell: TokenToSell[] = []
+      
+      for (const position of positionsToSell) {
+        if (!position.walletTokenData || position.walletTokenData.uiAmount <= 0) {
+          console.warn(`Skipping ${position.symbol}: No wallet data or zero balance`)
+          continue
+        }
+
+        tokensToSell.push({
+          ...position.walletTokenData,
+          sellAmount: position.walletTokenData.balance,
+          sellPercentage: 100
+        })
+      }
+
+      if (tokensToSell.length === 0) {
+        throw new Error('No tokens available for selling')
+      }
+
+      console.log(`💰 Bulk selling ${tokensToSell.length} tokens...`)
+
+      // Prepare bulk sell request
+      const sellRequest: BulkSellRequest = {
+        tokens: tokensToSell,
+        slippage: 300, // 3% slippage
+        priorityFee: 30000, // 0.0003 SOL priority fee
+      }
+
+      // Execute bulk sell
+      const sellResult = await executeBulkSell(
+        sellRequest,
+        publicKey.toString(),
+        connection,
+        signAllTransactions
+      )
+
+      if (sellResult.success && sellResult.successfulSwaps.length > 0) {
+        // Clear notification flags for sold tokens
+        positionsToSell.forEach(position => {
+          clearNotificationFlag(position.mintAddress)
+        })
+
+        // Track the successful bulk sell operation
+        try {
+          const trackResult = await trackSell(
+            publicKey.toString(),
+            sellResult.successfulSwaps.length,
+            {
+              failureCount: sellResult.failedSwaps.length,
+              solAmount: sellResult.totalReceived || 0,
+              tokenMints: positionsToSell.map(pos => pos.mintAddress),
+              signatures: sellResult.signatures,
+            }
+          )
+          console.log(`🎉 Earned ${trackResult.pointsEarned} points from bulk sell!`)
+        } catch (trackError) {
+          console.error('Failed to track bulk sell operation for points:', trackError)
+        }
+
+        // Track operations for PnL and history
+        try {
+          const { fetchTokenPricesForTracking } = await import('@/utils/trading-tracker')
+          const tokenMints = positionsToSell.map(pos => pos.mintAddress)
+          const tokenPrices = await fetchTokenPricesForTracking(tokenMints)
+          const currentSolPrice = await getSolPriceUSD()
+
+          // Track each sold token
+          for (const position of positionsToSell) {
+            const enhancedTokenData = {
+              mintAddress: position.mintAddress,
+              symbol: position.symbol,
+              name: position.name,
+              logoURI: position.logoURI,
+              priceUsd: tokenPrices[position.mintAddress] || 0,
+              tokenAmount: position.walletTokenData?.balance || 0,
+              solPrice: currentSolPrice
+            }
+
+            await trackOperation({
+              walletAddress: publicKey.toString(),
+              operationType: 'sell',
+              tokens: [enhancedTokenData],
+              successCount: 1,
+              failureCount: 0,
+              totalTokens: 1,
+              solAmount: (sellResult.totalReceived || 0) / sellResult.successfulSwaps.length, // Approximate per token
+              feesPaid: 0,
+              solPriceUsd: currentSolPrice,
+              totalUsdValue: currentSolPrice ? ((sellResult.totalReceived || 0) / sellResult.successfulSwaps.length) * currentSolPrice : undefined,
+              signatures: sellResult.signatures,
+              slippage: 3,
+              priorityFee: 30000,
+              errors: undefined
+            })
+          }
+        } catch (trackError) {
+          console.error('Failed to track bulk sell operations:', trackError)
+          // Fallback: manual refresh
+          setTimeout(() => {
+            calculatePnL()
+            setHasInitialPricesFetched(false)
+          }, 200)
+        }
+
+        // Clear selections and close overlay
+        setSelectedTokens(new Set())
+        setShowBulkSellOverlay(false)
+        setBulkSellError('')
+
+        console.log(`✅ Bulk sell completed: ${sellResult.successfulSwaps.length} successful, ${sellResult.failedSwaps.length} failed`)
+      } else {
+        throw new Error(`Bulk sell failed: ${sellResult.failedSwaps[0]?.error || 'Unknown error'}`)
+      }
+    } catch (err) {
+      console.error('Bulk sell error:', err)
+      setBulkSellError(err instanceof Error ? err.message : 'Failed to execute bulk sell')
+    } finally {
+      setIsBulkSelling(false)
+    }
+  }, [connected, publicKey, signAllTransactions, connection, selectedTokens, openPositions, clearNotificationFlag, trackOperation, calculatePnL])
+
+  // ✅ NEW: Check for notification-worthy positions
+  const checkForNotifications = useCallback(() => {
+    console.log('🔔 Checking notifications:', {
+      notificationsEnabled,
+      connected,
+      openPositionsCount: openPositions.length,
+      notificationPermission,
+      notificationThreshold
+    })
+    
+    if (!notificationsEnabled || !connected) {
+      console.log('🔕 Notifications disabled or not connected')
+      return
+    }
+
+    if (notificationPermission !== 'granted') {
+      console.log('🔕 Notification permission not granted:', notificationPermission)
+      return
+    }
+
+    let checkedPositions = 0
+    let notifiablePositions = 0
+
+    openPositions.forEach(position => {
+      checkedPositions++
+      
+      if (position.pnlPercentage === undefined) {
+        console.log(`⏳ Position ${position.symbol || 'Unknown'} has no P&L yet`)
+        return
+      }
+
+      const pnlAbs = Math.abs(position.pnlPercentage)
+      const tokenKey = `${position.mintAddress}-${Math.floor(pnlAbs / 10) * 10}`
+      
+      console.log(`📊 Position ${position.symbol || 'Unknown'}: ${position.pnlPercentage.toFixed(1)}%, threshold: ${notificationThreshold}%, already notified: ${notifiedTokens.has(tokenKey)}`)
+      
+      // Check if this position exceeds the threshold and hasn't been notified recently
+      if (pnlAbs >= notificationThreshold && !notifiedTokens.has(tokenKey)) {
+        notifiablePositions++
+        console.log(`🚨 Sending notification for ${position.symbol || 'Unknown'}: ${position.pnlPercentage.toFixed(1)}%`)
+        
+        sendPnLNotification(position, position.pnlPercentage)
+        
+        // Mark as notified
+        setNotifiedTokens(prev => new Set(prev).add(tokenKey))
+        
+        // Clear notification flag after 30 minutes to allow re-notification
+        setTimeout(() => {
+          setNotifiedTokens(prev => {
+            const newSet = new Set(prev)
+            newSet.delete(tokenKey)
+            return newSet
+          })
+        }, 30 * 60 * 1000) // 30 minutes
+      }
+    })
+    
+    console.log(`🔔 Notification check complete: ${checkedPositions} positions checked, ${notifiablePositions} notifications sent`)
+  }, [notificationsEnabled, connected, openPositions, notificationThreshold, notifiedTokens, sendPnLNotification, notificationPermission])
+
+  // ✅ NEW: Monitor positions for notifications
+  useEffect(() => {
+    if (notificationsEnabled && openPositions.length > 0) {
+      // Add a small delay to ensure P&L calculations are complete
+      const timeoutId = setTimeout(() => {
+        checkForNotifications()
+      }, 1000) // 1 second delay
+      
+      return () => clearTimeout(timeoutId)
+    }
+  }, [checkForNotifications, notificationsEnabled, openPositions])
+
+  const BotOperationIndicator = ({ isBotOperation, botStrategy }: { 
+    isBotOperation?: boolean, 
+    botStrategy?: string 
+  }) => {
+    if (!isBotOperation) return null
+    
+    return (
+      <div className="flex items-center gap-1 text-xs">
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+          🤖 Bot
+        </span>
+        {botStrategy && (
+          <span className="text-gray-500 dark:text-gray-400">
+            {botStrategy}
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  const JupiterSwapIndicator = ({ isJupiterSwap }: { isJupiterSwap?: boolean }) => {
+    if (!isJupiterSwap) return null
+    
+    return (
+      <div className="flex items-center gap-1 text-xs">
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+          ⚡ Jupiter
+        </span>
+      </div>
+    )
+  }
+
+
+
+
+
+  // Add this useEffect after other useEffect hooks to persist dismissal state
+  useEffect(() => {
+    const hintDismissed = localStorage.getItem('pnl-closed-positions-hint-dismissed')
+    if (hintDismissed === 'true') {
+      setShowClosedPositionsHint(false)
+    }
+  }, [])
+
+  // Clear old localStorage data on component mount
+  useEffect(() => {
+    console.log('🧹 PnLTracker: Cleared old localStorage data, now using Supabase!')
+  }, [])
+
+  // Fetch SOL price
+  const fetchSolPrice = React.useCallback(async () => {
+    try {
+      const price = await getSolPriceUSD()
+      setSolPriceUsd(price)
+    } catch (error) {
+      console.error('Error fetching SOL price:', error)
+    }
+  }, [])
 
   // ✅ NEW: Bot operation sync polling
   useEffect(() => {
@@ -828,58 +1079,76 @@ export default function PnLTracker() {
       const prices = await getTokenPrices(mintAddresses)
 
       // Update positions with current prices and calculate P&L
-      setOpenPositions(prev => prev.map(position => {
-        const currentTokenPriceUsd = prices[position.mintAddress]
-        
-        if (currentTokenPriceUsd && currentTokenPriceUsd > 0) {
+      setOpenPositions(prev => {
+        const updatedPositions = prev.map(position => {
+          const currentTokenPriceUsd = prices[position.mintAddress]
           
-          // Use actual buy price if available for accurate P&L calculation
-          if (position.buyPriceUsd && position.buyPriceUsd > 0) {
-            // Accurate calculation using actual token buy price vs current price
-            const pnlPercentage = ((currentTokenPriceUsd - position.buyPriceUsd) / position.buyPriceUsd) * 100
+          if (currentTokenPriceUsd && currentTokenPriceUsd > 0) {
             
+            // Use actual buy price if available for accurate P&L calculation
+            if (position.buyPriceUsd && position.buyPriceUsd > 0) {
+              // Accurate calculation using actual token buy price vs current price
+              const pnlPercentage = ((currentTokenPriceUsd - position.buyPriceUsd) / position.buyPriceUsd) * 100
+              
+              // Estimate current USD value based on initial SOL investment and price change
+              const initialUsdValue = position.solAmountBought * solPriceUsd
+              const priceMultiplier = currentTokenPriceUsd / position.buyPriceUsd
+              const estimatedCurrentValue = initialUsdValue * priceMultiplier
 
-            
-            // Estimate current USD value based on initial SOL investment and price change
-            const initialUsdValue = position.solAmountBought * solPriceUsd
-            const priceMultiplier = currentTokenPriceUsd / position.buyPriceUsd
-            const estimatedCurrentValue = initialUsdValue * priceMultiplier
+              return {
+                ...position,
+                currentUsdValue: estimatedCurrentValue,
+                currentTokenPriceUsd,
+                pnlPercentage,
+                isLoadingPrice: false
+              }
+            } else {
+              // Fallback calculation for positions without stored buy price
+              const initialUsdValue = position.solAmountBought * solPriceUsd
+              const currentSolValue = position.solAmountBought
+              const currentUsdValue = currentSolValue * solPriceUsd
+              
+              // Rough estimation based on price action
+              const priceMultiplier = currentTokenPriceUsd / (initialUsdValue / currentSolValue)
+              const estimatedCurrentValue = initialUsdValue * Math.max(0.1, priceMultiplier)
+              const pnlPercentage = ((estimatedCurrentValue - initialUsdValue) / initialUsdValue) * 100
 
-            return {
-              ...position,
-              currentUsdValue: estimatedCurrentValue,
-              currentTokenPriceUsd,
-              pnlPercentage,
-              isLoadingPrice: false
-            }
-          } else {
-            // Fallback calculation for positions without stored buy price
-            const initialUsdValue = position.solAmountBought * solPriceUsd
-            const currentSolValue = position.solAmountBought
-            const currentUsdValue = currentSolValue * solPriceUsd
-            
-            // Rough estimation based on price action
-            const priceMultiplier = currentTokenPriceUsd / (initialUsdValue / currentSolValue)
-            const estimatedCurrentValue = initialUsdValue * Math.max(0.1, priceMultiplier)
-            const pnlPercentage = ((estimatedCurrentValue - initialUsdValue) / initialUsdValue) * 100
-
-
-
-            return {
-              ...position,
-              currentUsdValue: estimatedCurrentValue,
-              currentTokenPriceUsd,
-              pnlPercentage,
-              isLoadingPrice: false
+              return {
+                ...position,
+                currentUsdValue: estimatedCurrentValue,
+                currentTokenPriceUsd,
+                pnlPercentage,
+                isLoadingPrice: false
+              }
             }
           }
-        }
 
-        return {
-          ...position,
-          isLoadingPrice: false
-        }
-      }))
+          return {
+            ...position,
+            isLoadingPrice: false
+          }
+        })
+
+        // ✅ ADD: Sort the updated positions (same logic as in calculatePnL)
+        updatedPositions.sort((a, b) => {
+          // First, prioritize positions with calculated P&L
+          const aHasPnL = a.pnlPercentage !== undefined
+          const bHasPnL = b.pnlPercentage !== undefined
+          
+          if (aHasPnL && !bHasPnL) return -1
+          if (!aHasPnL && bHasPnL) return 1
+          
+          // If both have P&L, sort by percentage (highest positive first)
+          if (aHasPnL && bHasPnL) {
+            return (b.pnlPercentage || 0) - (a.pnlPercentage || 0)
+          }
+          
+          // If neither has P&L, sort by timestamp (newest first)
+          return b.buyTimestamp - a.buyTimestamp
+        })
+
+        return updatedPositions
+      })
     } catch (error) {
       console.error('Error refreshing open position prices:', error)
       // Remove loading state on error
@@ -1340,6 +1609,41 @@ export default function PnLTracker() {
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* ✅ NEW: Bulk sell controls */}
+          {activeTab === 'open' && openPositions.length > 0 && (
+            <div className="flex items-center space-x-2">
+              {selectedTokens.size > 0 ? (
+                <>
+                  <span className="text-xs text-gray-400">
+                    {selectedTokens.size} selected
+                  </span>
+                  <button
+                    onClick={() => setShowBulkSellOverlay(true)}
+                    className="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
+                    title={`Sell ${selectedTokens.size} selected tokens`}
+                  >
+                    Sell ({selectedTokens.size})
+                  </button>
+                  <button
+                    onClick={clearAllSelections}
+                    className="px-2 py-1 text-xs bg-gray-600 hover:bg-gray-700 text-white rounded-md transition-colors"
+                    title="Clear selection"
+                  >
+                    Clear
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={selectAllTokens}
+                  className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
+                  title="Select all tokens for bulk sell"
+                >
+                  Select All
+                </button>
+              )}
+            </div>
+          )}
+          
           {/* ✅ NEW: Notification controls */}
           {activeTab === 'open' && (
             <div className="flex items-center space-x-2">
@@ -1455,7 +1759,7 @@ export default function PnLTracker() {
                         title="Click to view transaction on Solscan"
                       >
                         {/* Header: P&L and Action Buttons */}
-                        <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center justify-between mb-2 ml-5">
                           <div className="flex items-center space-x-1">
                             <span className={`text-sm font-medium ${
                               record.pnlPercentage > 0 
@@ -1470,6 +1774,7 @@ export default function PnLTracker() {
                               isBotOperation={record.isBotOperation} 
                               botStrategy={record.botStrategy} 
                             />
+                            <JupiterSwapIndicator isJupiterSwap={record.jupiter_swap} />
                           </div>
                           
                           <div className="flex items-center space-x-1">
@@ -1502,7 +1807,7 @@ export default function PnLTracker() {
                         </div>
 
                         {/* Token display */}
-                        <div className="flex items-center space-x-2 mb-2">
+                        <div className="flex items-center space-x-2 mb-2 ml-5">
                           <div className="relative flex items-center">
                             <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
                               {record.logoURI ? (
@@ -1531,7 +1836,7 @@ export default function PnLTracker() {
                         </div>
 
                         {/* Buy Price Display */}
-                        <div className="text-xs text-gray-400 mb-1">
+                        <div className="text-xs text-gray-400 mb-1 ml-5">
                           <span className="text-gray-500">Buy Price: </span>
                           <span className="text-gray-300">${record.buyPrice.toFixed(6)}</span>
                         </div>
@@ -1581,7 +1886,6 @@ export default function PnLTracker() {
                           </div>
                         )}
 
-                        {/* Footer: Status and timestamp */}
                         <div className="flex items-center justify-between text-xs text-gray-400">
                           <span>{formatRelativeTime(record.sellTimestamp)}</span>
                           <div className="flex items-center space-x-1">
@@ -1615,187 +1919,228 @@ export default function PnLTracker() {
                   <p className="text-gray-500 text-xs mt-1">Buy some tokens to see your positions here</p>
                 </div>
               ) : (
-                <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
-                  {openPositions.map((position) => {
-                    // Calculate USD amounts for open positions
-                    const buyAmountUSD = position.solAmountBought * solPriceUsd
-                    const pnlAmountUSD = position.pnlPercentage !== undefined 
-                      ? buyAmountUSD * (position.pnlPercentage / 100) 
-                      : 0
-                    
-                    return (
+                <>
+                  {/* ✅ NEW: Drag selection container */}
+                  <div 
+                    className="relative flex space-x-2 overflow-x-auto mb-3 scrollbar-hide select-none"
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUp}
+                    style={{ cursor: isDragging ? 'crosshair' : 'default' }}
+                  >
+                    {/* ✅ NEW: Selection rectangle overlay */}
+                    {isDragging && dragStart && dragEnd && (
                       <div
-                        key={position.id}
-                        data-token-address={position.mintAddress}
-                        className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[100px] rounded-lg cursor-pointer group py-2 px-3 border ${
-                          position.isBotOperation 
-                            ? 'border-purple-500/30 bg-purple-900/10' 
-                            : 'border-gray-600/30'
-                        }`}
-                        title="Open position"
-                      >
-                        {/* Header: P&L and Action Buttons */}
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center space-x-1">
-                            {position.isLoadingPrice ? (
+                        className="fixed pointer-events-none border-2 border-blue-400 bg-blue-400/10 z-50"
+                        style={{
+                          left: Math.min(dragStart.x, dragEnd.x),
+                          top: Math.min(dragStart.y, dragEnd.y),
+                          width: Math.abs(dragEnd.x - dragStart.x),
+                          height: Math.abs(dragEnd.y - dragStart.y),
+                        }}
+                      />
+                    )}
+                    
+                    {openPositions.map((position) => {
+                      const isSelected = selectedTokens.has(position.id)
+                      const buyAmountUSD = position.solAmountBought * solPriceUsd
+                      const pnlAmountUSD = position.pnlPercentage !== undefined 
+                        ? buyAmountUSD * (position.pnlPercentage / 100) 
+                        : 0
+                      
+                      return (
+                        <div
+                          key={position.id}
+                          data-token-address={position.mintAddress}
+                          className={`flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[100px] rounded-lg cursor-pointer group py-2 px-3 border ${
+                            isSelected 
+                              ? 'border-blue-400 bg-blue-900/20 ring-2 ring-blue-400/50' 
+                              : position.isBotOperation 
+                                ? 'border-purple-500/30 bg-purple-900/10' 
+                                : 'border-gray-600/30'
+                          }`}
+                          title="Open position"
+                          onClick={(e) => {
+                            if (!isDragging) {
+                              toggleTokenSelection(position.id, e)
+                            }
+                          }}
+                        >
+                          {/* ✅ NEW: Selection indicator */}
+                          {isSelected && (
+                            <div className="absolute -top-1 -right-1 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
+                              <svg className="w-2 h-2 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                              </svg>
+                            </div>
+                          )}
+
+                        <div className="token-content">
+                            {/* Header: P&L and Action Buttons */}
+                            <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center space-x-1">
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
-                                <span className="text-xs text-gray-400">...</span>
-                              </div>
-                            ) : position.pnlPercentage !== undefined ? (
-                              <span className={`text-sm font-medium ${
-                                position.pnlPercentage > 0 
-                                  ? 'text-green-400' 
-                                  : position.pnlPercentage < 0 
-                                    ? 'text-red-400' 
-                                    : 'text-gray-400'
-                              }`}>
-                                {position.pnlPercentage > 0 ? '+' : ''}{position.pnlPercentage.toFixed(1)}%
-                              </span>
-                            ) : (
-                              <span className="text-blue-400 text-xs">OPEN</span>
-                            )}
-                            <BotOperationIndicator 
-                              isBotOperation={position.isBotOperation} 
-                              botStrategy={position.botStrategy} 
-                            />
-                          </div>
-                          
-                          <div className="flex items-center space-x-1">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleOpenChart(position.mintAddress, position.symbol)
-                              }}
-                              className="px-1.5 py-0.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                              title="Open Chart"
-                            >
-                              📈
-                            </button>
-                            
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleFastSell(position, e)
-                              }}
-                              disabled={isSelling && sellingTokenId === position.id}
-                              className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                              title="Fast Sell"
-                            >
-                              {isSelling && sellingTokenId === position.id ? (
-                                <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
-                              ) : (
-                                '🔴'
-                              )}
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Token display */}
-                        <div className="flex items-center space-x-2 mb-2">
-                          <div className="relative flex items-center">
-                            <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
-                              {position.logoURI ? (
-                                <img
-                                  src={position.logoURI}
-                                  alt={position.symbol || position.name || 'Token'}
-                                  className="w-full h-full object-cover"
-                                  onError={(e) => {
-                                    e.currentTarget.onerror = null
-                                    e.currentTarget.src = ''
-                                    const parent = e.currentTarget.parentElement as HTMLElement | null
-                                    if (parent) {
-                                      parent.textContent = (position.symbol || position.name || '?').charAt(0).toUpperCase()
-                                    }
-                                  }}
-                                />
-                              ) : ((position.symbol || position.name || '?').charAt(0).toUpperCase())}
-                            </div>
-                          </div>
-                          
-                          <div className="flex items-center space-x-1 flex-1 min-w-0">
-                            <span className="text-xs text-gray-300 font-medium truncate">
-                              {position.symbol || position.name || 'Unknown'}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Buy Price Display */}
-                        <div className="text-xs text-gray-400 mb-1">
-                          <span className="text-gray-500">Buy Price: </span>
-                          <span className="text-gray-300">
-                            ${position.buyPriceUsd ? position.buyPriceUsd.toFixed(6) : (buyAmountUSD / position.solAmountBought).toFixed(6)}
-                          </span>
-                        </div>
-
-                        {/* SOL amount - Hidden when global toggle is active */}
-                        {!globalPnLHidden && (
-                          <div className="text-xs text-gray-300 mb-1">
-                            {position.solAmountBought.toFixed(3)} SOL
-                          </div>
-                        )}
-
-                        {/* USD P&L Amount - Hidden when global toggle is active OR individual toggle is active */}
-                        {!globalPnLHidden && position.pnlPercentage !== undefined && (
-                          <div className="text-xs mb-1">
-                            <span className="text-gray-500">P&L: </span>
-                            <div className="inline-flex items-center space-x-1">
-                              {hiddenPnLAmounts.has(position.id) ? (
-                                <span className="font-medium text-gray-400">••••</span>
-                              ) : (
-                                <span className={`font-medium ${
-                                  pnlAmountUSD > 0 
-                                    ? 'text-green-400' 
-                                    : pnlAmountUSD < 0 
-                                      ? 'text-red-400' 
-                                      : 'text-gray-400'
-                                }`}>
-                                  {pnlAmountUSD > 0 ? '+' : ''}${Math.abs(pnlAmountUSD).toFixed(2)}
-                                </span>
-                              )}
-                              <button
-                                onClick={(e) => togglePnLVisibility(position.id, e)}
-                                className="text-gray-500 hover:text-gray-300 transition-colors"
-                                title={hiddenPnLAmounts.has(position.id) ? "Show P&L amount" : "Hide P&L amount"}
-                              >
-                                {hiddenPnLAmounts.has(position.id) ? (
-                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                  </svg>
+                                {position.isLoadingPrice ? (
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse"></div>
+                                    <span className="text-xs text-gray-400">...</span>
+                                  </div>
+                                ) : position.pnlPercentage !== undefined ? (
+                                  <span className={`text-sm font-medium ${
+                                    position.pnlPercentage > 0 
+                                      ? 'text-green-400' 
+                                      : position.pnlPercentage < 0 
+                                        ? 'text-red-400' 
+                                        : 'text-gray-400'
+                                  }`}>
+                                    {position.pnlPercentage > 0 ? '+' : ''}{position.pnlPercentage.toFixed(1)}%
+                                  </span>
                                 ) : (
-                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
-                                  </svg>
+                                  <span className="text-blue-400 text-xs">OPEN</span>
                                 )}
-                              </button>
+                                <BotOperationIndicator 
+                                  isBotOperation={position.isBotOperation} 
+                                  botStrategy={position.botStrategy} 
+                                />
+                                <JupiterSwapIndicator isJupiterSwap={position.jupiter_swap} />
+                              </div>
+                              
+                              <div className="flex items-center space-x-1">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleOpenChart(position.mintAddress, position.symbol)
+                                  }}
+                                  className="px-1.5 py-0.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                  title="Open Chart"
+                                >
+                                  📈
+                                </button>
+                                
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleFastSell(position, e)
+                                  }}
+                                  disabled={isSelling && sellingTokenId === position.id}
+                                  className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                  title="Fast Sell"
+                                >
+                                  {isSelling && sellingTokenId === position.id ? (
+                                    <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
+                                  ) : (
+                                    '🔴'
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Token display */}
+                            <div className="flex items-center space-x-2 mb-2">
+                              <div className="relative flex items-center">
+                                <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
+                                  {position.logoURI ? (
+                                    <img
+                                      src={position.logoURI}
+                                      alt={position.symbol || position.name || 'Token'}
+                                      className="w-full h-full object-cover"
+                                      onError={(e) => {
+                                        e.currentTarget.onerror = null
+                                        e.currentTarget.src = ''
+                                        const parent = e.currentTarget.parentElement as HTMLElement | null
+                                        if (parent) {
+                                          parent.textContent = (position.symbol || position.name || '?').charAt(0).toUpperCase()
+                                        }
+                                      }}
+                                    />
+                                  ) : ((position.symbol || position.name || '?').charAt(0).toUpperCase())}
+                                </div>
+                              </div>
+                              
+                              <div className="flex items-center space-x-1 flex-1 min-w-0">
+                                <span className="text-xs text-gray-300 font-medium truncate">
+                                  {position.symbol || position.name || 'Unknown'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Buy Price Display */}
+                            <div className="text-xs text-gray-400 mb-1">
+                              <span className="text-gray-500">Buy Price: </span>
+                              <span className="text-gray-300">
+                                ${position.buyPriceUsd ? position.buyPriceUsd.toFixed(6) : (buyAmountUSD / position.solAmountBought).toFixed(6)}
+                              </span>
+                            </div>
+
+                            {/* SOL amount - Hidden when global toggle is active */}
+                            {!globalPnLHidden && (
+                              <div className="text-xs text-gray-300 mb-1">
+                                {position.solAmountBought.toFixed(3)} SOL
+                              </div>
+                            )}
+
+                            {/* USD P&L Amount - Hidden when global toggle is active OR individual toggle is active */}
+                            {!globalPnLHidden && position.pnlPercentage !== undefined && (
+                              <div className="text-xs mb-1">
+                                <span className="text-gray-500">P&L: </span>
+                                <div className="inline-flex items-center space-x-1">
+                                  {hiddenPnLAmounts.has(position.id) ? (
+                                    <span className="font-medium text-gray-400">••••</span>
+                                  ) : (
+                                    <span className={`font-medium ${
+                                      pnlAmountUSD > 0 
+                                        ? 'text-green-400' 
+                                        : pnlAmountUSD < 0 
+                                          ? 'text-red-400' 
+                                          : 'text-gray-400'
+                                    }`}>
+                                      {pnlAmountUSD > 0 ? '+' : ''}${Math.abs(pnlAmountUSD).toFixed(2)}
+                                    </span>
+                                  )}
+                                  <button
+                                    onClick={(e) => togglePnLVisibility(position.id, e)}
+                                    className="text-gray-500 hover:text-gray-300 transition-colors"
+                                    title={hiddenPnLAmounts.has(position.id) ? "Show P&L amount" : "Hide P&L amount"}
+                                  >
+                                    {hiddenPnLAmounts.has(position.id) ? (
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                      </svg>
+                                    ) : (
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21" />
+                                      </svg>
+                                    )}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Footer: USD value and indicators - USD value hidden when global toggle is active */}
+                            <div className="flex items-center justify-between text-xs text-gray-400">
+                              {!globalPnLHidden && <span>~${buyAmountUSD.toFixed(0)}</span>}
+                              <div className="flex items-center space-x-1">
+                                {position.tradingSimulation && (
+                                  <span className="text-purple-300" title="Trading Simulation">SIM</span>
+                                )}
+                                {position.tradeComparisonData && (
+                                  <span className="text-cyan-400" title="Trade Comparison Available">📊</span>
+                                )}
+                                {position.waitingStartedAt && (
+                                  <span className="text-yellow-400" title="Waiting">⏳</span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        )}
-
-                        {/* Footer: USD value and indicators - USD value hidden when global toggle is active */}
-                        <div className="flex items-center justify-between text-xs text-gray-400">
-                          {!globalPnLHidden && <span>~${buyAmountUSD.toFixed(0)}</span>}
-                          <div className="flex items-center space-x-1">
-                            {position.tradingSimulation && (
-                              <span className="text-purple-300" title="Trading Simulation">SIM</span>
-                            )}
-                            {position.tradeComparisonData && (
-                              <span className="text-cyan-400" title="Trade Comparison Available">📊</span>
-                            )}
-                            {position.waitingStartedAt && (
-                              <span className="text-yellow-400" title="Waiting">⏳</span>
-                            )}
-                          </div>
                         </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                      )
+                    })}
+                  </div>
+                </>
               )}
             </>
           )}
-          </>
+        </>
         )}
 
         {!connected && (
@@ -1804,6 +2149,87 @@ export default function PnLTracker() {
           </div>
         )}
       </div>
+
+      {/* ✅ NEW: Bulk Sell Overlay */}
+      {showBulkSellOverlay && selectedTokens.size > 0 && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border border-gray-600">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-white">Bulk Sell Confirmation</h3>
+              <button
+                onClick={() => setShowBulkSellOverlay(false)}
+                className="text-gray-400 hover:text-gray-300"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="mb-4">
+              <p className="text-gray-300 mb-2">
+                You are about to sell <span className="font-semibold text-white">{selectedTokens.size}</span> tokens:
+              </p>
+              
+              <div className="max-h-32 overflow-y-auto space-y-1">
+                {openPositions
+                  .filter(pos => selectedTokens.has(pos.id))
+                  .map(position => (
+                    <div key={position.id} className="flex items-center space-x-2 text-sm">
+                      <div className="w-3 h-3 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden">
+                        {position.logoURI ? (
+                          <img src={position.logoURI} alt={position.symbol} className="w-full h-full object-cover" />
+                        ) : (
+                          (position.symbol || '?').charAt(0).toUpperCase()
+                        )}
+                      </div>
+                      <span className="text-gray-300">{position.symbol || position.name || 'Unknown'}</span>
+                      {position.pnlPercentage !== undefined && (
+                        <span className={`text-xs ${
+                          position.pnlPercentage > 0 ? 'text-green-400' : 
+                          position.pnlPercentage < 0 ? 'text-red-400' : 'text-gray-400'
+                        }`}>
+                          {position.pnlPercentage > 0 ? '+' : ''}{position.pnlPercentage.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                  ))
+                }
+              </div>
+            </div>
+            
+            {bulkSellError && (
+              <div className="mb-4 p-3 bg-red-900/20 border border-red-500/30 rounded text-red-400 text-sm">
+                {bulkSellError}
+              </div>
+            )}
+            
+            <div className="flex space-x-3">
+              <button
+                onClick={() => setShowBulkSellOverlay(false)}
+                className="flex-1 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded transition-colors"
+                disabled={isBulkSelling}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleBulkSell}
+                disabled={isBulkSelling}
+                className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white rounded transition-colors flex items-center justify-center"
+              >
+                {isBulkSelling ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
+                    Selling...
+                  </>
+                ) : (
+                  `Sell All (${selectedTokens.size})`
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ✅ NEW: Replace the old share modal with the new modular one */}
       <PnLShareModal

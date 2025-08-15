@@ -1,4 +1,5 @@
 import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from './axiom'
+import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 
 // Types for risk assessment
 export interface RiskIndicators {
@@ -23,7 +24,7 @@ export interface TokenData {
 export interface RiskAssessmentResult {
   riskLevel: 'LOW' | 'MED' | 'HIGH'
   riskIndicators?: RiskIndicators
-  assessmentMethod: 'axiom' | 'organic_volatility' | 'basic'
+  assessmentMethod: 'axiom' | 'organic_volatility' | 'basic' | 'jupiter_metadata'
   organicScore?: number
   volatility?: number
   error?: string
@@ -36,6 +37,12 @@ export interface RiskAssessmentResult {
     totalPairFeesPaid: number
     feeToMcapRatio: number
   }
+  // Add Jupiter metadata details for Discord formatting
+  jupiterDetails?: {
+    bondingCurve?: number | null
+    organicScore?: number | null
+    topHoldersPercentage?: number | null
+  }
 }
 
 export interface RiskAssessmentOptions {
@@ -45,7 +52,7 @@ export interface RiskAssessmentOptions {
 }
 
 /**
- * Comprehensive token risk assessment with multiple fallback levels
+ * Comprehensive token risk assessment with Jupiter-first bonding check and Axiom gating
  * 
  * @param token - Token data including address, symbol, market cap, price, and optional metrics
  * @param options - Configuration options for the assessment
@@ -78,7 +85,61 @@ export async function assessTokenRisk(
     console.log(`🔍 Starting risk assessment for ${token.token_symbol} (${token.token_address})`)
   }
 
-  // Primary assessment: Try Axiom API with timeout
+  // Step 0: Consult Jupiter metadata first to determine bonding curve and organic/audit fields
+  let jupMeta: any | null = null
+  try {
+    jupMeta = await fetchTokenMetadataFromJupiter(token.token_address)
+    if (enableLogging) {
+      console.log(`🛰️ Jupiter metadata for ${token.token_symbol}:`, {
+        bondingCurve: jupMeta?.bondingCurve,
+        organicScore: jupMeta?.organicScore,
+        topHoldersPercentage: jupMeta?.audit?.topHoldersPercentage
+      })
+    }
+  } catch (e) {
+    if (enableLogging) {
+      console.warn(`⚠️ Failed to fetch Jupiter metadata for ${token.token_symbol}:`, e instanceof Error ? e.message : 'Unknown error')
+    }
+  }
+
+  const bondingCurve = typeof jupMeta?.bondingCurve === 'number' ? jupMeta.bondingCurve : null
+
+  // If bondingCurve is not 100 (i.e., not fully graduated), skip Axiom and use Jupiter's organicScore and audit data
+  if (bondingCurve === null || bondingCurve !== 100) {
+    const organicScore = typeof jupMeta?.organicScore === 'number' ? jupMeta.organicScore : (token.organic_score ?? null)
+    const topHoldersPercentage = typeof jupMeta?.audit?.topHoldersPercentage === 'number' ? jupMeta.audit.topHoldersPercentage : null
+
+    // Derive a basic risk from these fields
+    let riskLevel: 'LOW' | 'MED' | 'HIGH' = 'MED'
+    if (organicScore !== null) {
+      if (organicScore >= 85) riskLevel = 'LOW'
+      else if (organicScore >= 70) riskLevel = 'MED'
+      else riskLevel = 'HIGH'
+    }
+
+    if (typeof topHoldersPercentage === 'number') {
+      // Penalize high concentration
+      if (topHoldersPercentage > 60) riskLevel = 'HIGH'
+      else if (topHoldersPercentage > 40 && riskLevel === 'LOW') riskLevel = 'MED'
+    }
+
+    if (enableLogging) {
+      console.log(`✅ Using Jupiter metadata assessment for ${token.token_symbol} (bondingCurve=${bondingCurve ?? 'N/A'}) => ${riskLevel}`)
+    }
+
+    return {
+      riskLevel,
+      assessmentMethod: 'jupiter_metadata',
+      organicScore: organicScore ?? undefined,
+      jupiterDetails: {
+        bondingCurve,
+        organicScore: organicScore ?? null,
+        topHoldersPercentage
+      }
+    }
+  }
+
+  // Primary assessment: Try Axiom API with timeout (only if bondingCurve === 100)
   try {
     if (enableLogging) {
       console.log(`📊 Attempting Axiom API assessment for ${token.token_symbol}`)
@@ -138,7 +199,7 @@ export async function assessTokenRisk(
     }
 
     let riskLevel: 'LOW' | 'MED' | 'HIGH' = 'LOW'
-    
+
     // Risk assessment based on organic score
     if (token.organic_score < 75) {
       riskLevel = 'HIGH'
@@ -231,12 +292,12 @@ export async function assessTokenRisk(
 export function formatRiskForDiscord(token: TokenData, riskResult: RiskAssessmentResult): string {
   const riskLevel = riskResult.riskLevel
   const organicScore = riskResult.organicScore || token.organic_score || 0
-  
+
   return `Score: ${organicScore.toFixed(1)}, MCap: $${token.mcap.toLocaleString()}, Risk: ${riskLevel}`
 }
 
 /**
- * Format detailed risk assessment result for Discord messages with Axiom metrics
+ * Format detailed risk assessment result for Discord messages with Axiom or Jupiter metrics
  * 
  * @param token - Token data
  * @param riskResult - Risk assessment result
@@ -248,7 +309,19 @@ export function formatDetailedRiskForDiscord(token: TokenData, riskResult: RiskA
     const { insidersHoldPercent, bundlersHoldPercent, snipersHoldPercent, top10HoldersPercent, feeToMcapRatio } = riskResult.axiomData
     return `I:${insidersHoldPercent.toFixed(1)}% B:${bundlersHoldPercent.toFixed(1)}% S:${snipersHoldPercent.toFixed(1)}% T10:${top10HoldersPercent.toFixed(1)}% F/Mcap:${feeToMcapRatio.toFixed(2)}`
   }
-  
+
+  // If we have Jupiter metadata details, show those
+  if (riskResult.jupiterDetails) {
+    const bc = riskResult.jupiterDetails.bondingCurve
+    const os = riskResult.jupiterDetails.organicScore
+    const thp = riskResult.jupiterDetails.topHoldersPercentage
+    const parts: string[] = []
+    if (typeof bc === 'number') parts.push(`BC:${bc}`)
+    if (typeof os === 'number') parts.push(`Org:${os.toFixed(1)}`)
+    if (typeof thp === 'number') parts.push(`TopH:${thp.toFixed(1)}%`)
+    if (parts.length) return parts.join(' ')
+  }
+
   // Fallback to regular format
   return formatRiskForDiscord(token, riskResult)
 }
@@ -265,10 +338,10 @@ export async function assessMultipleTokenRisks(
   options: RiskAssessmentOptions = {}
 ): Promise<Map<string, RiskAssessmentResult>> {
   const results = new Map<string, RiskAssessmentResult>()
-  
+
   // Process tokens in parallel with controlled concurrency
   const batchSize = 5 // Process 5 tokens at a time to avoid overwhelming the API
-  
+
   for (let i = 0; i < tokens.length; i += batchSize) {
     const batch = tokens.slice(i, i + batchSize)
     const batchPromises = batch.map(async (token) => {
@@ -286,13 +359,13 @@ export async function assessMultipleTokenRisks(
         }
       }
     })
-    
+
     const batchResults = await Promise.all(batchPromises)
     batchResults.forEach(({ address, result }) => {
       results.set(address, result)
     })
   }
-  
+
   return results
 }
 

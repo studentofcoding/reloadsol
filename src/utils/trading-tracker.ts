@@ -51,6 +51,10 @@ export interface TrackingRecord {
   price_history?: Array<{ timestamp: string; price_usd: number; volume?: number }>
   waiting_started_at?: string | null
   waiting_initial_price?: number | null
+
+  // ✅ NEW: Jupiter Terminal specific fields
+  jupiter_swap?: boolean // Whether this was a Jupiter Terminal swap
+  swap_route?: string // Jupiter swap route information
 }
 
 export interface TrackingStats {
@@ -406,20 +410,33 @@ class TradingTracker {
     if (typeof window === 'undefined' || this.sseConnection) return
 
     try {
-      // Fix: Use window.location.origin for client-side connections to ensure we connect to the same domain
-      const baseUrl = typeof window !== 'undefined' 
-        ? window.location.origin 
+      // Clean up any existing connection first
+      this.cleanupSSEConnection()
+
+      // Use window.location.origin for client-side connections to ensure we connect to the same domain
+      const baseUrl = typeof window !== 'undefined'
+        ? window.location.origin
         : (process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000')
-      
+
       const sseUrl = `${baseUrl}/api/trading/subscribe?wallet=${walletAddress}`
-      
+
       console.log(`🔌 Attempting SSE connection to: ${sseUrl}`)
 
       this.sseConnection = new EventSource(sseUrl)
 
+      // Add connection timeout with more aggressive cleanup
+      const connectionTimeout = setTimeout(() => {
+        if (this.sseConnection?.readyState === EventSource.CONNECTING) {
+          console.warn('SSE connection timeout, cleaning up and falling back to polling')
+          this.cleanupSSEConnection()
+          this.startPolling(walletAddress)
+        }
+      }, 15000) // 15 second timeout
+
       this.sseConnection.onopen = () => {
-        console.log('📡 SSE connection established')
+        console.log('📡 SSE connection established successfully')
         this.reconnectAttempts = 0
+        clearTimeout(connectionTimeout)
       }
 
       this.sseConnection.onmessage = (event) => {
@@ -428,7 +445,7 @@ class TradingTracker {
 
           switch (data.type) {
             case 'connected':
-              console.log('✅ SSE connected for wallet:', data.wallet?.slice(0, 8) + '...')
+              console.log('✅ SSE connected for wallet:', data.wallet?.slice(0, 8) + '...', 'Connection ID:', data.connectionId)
               break
 
             case 'trade_update':
@@ -439,35 +456,41 @@ class TradingTracker {
               break
 
             case 'keepalive':
-              // Keep connection alive
+              console.log('💓 SSE keepalive received')
               break
 
             default:
               console.log('📨 SSE message:', data)
           }
         } catch (error) {
-          console.error('Error parsing SSE message:', error)
+          console.error('Error parsing SSE message:', error, 'Raw data:', event.data)
         }
       }
 
       this.sseConnection.onerror = (error) => {
         console.error('SSE connection error:', error)
-        
-        // Check if this is a network error or server error
-        if (this.sseConnection?.readyState === EventSource.CLOSED) {
-          console.warn('SSE connection was closed by server')
-        }
-        
-        this.handleSSEReconnect(walletAddress)
-      }
+        clearTimeout(connectionTimeout)
 
-      // Add connection timeout
-      setTimeout(() => {
-        if (this.sseConnection?.readyState === EventSource.CONNECTING) {
-          console.warn('SSE connection timeout, falling back to polling')
-          this.cleanupSSEConnection()
+        // Enhanced error handling based on connection state
+        if (this.sseConnection) {
+          const readyState = this.sseConnection.readyState
+          console.log('SSE ReadyState:', readyState, {
+            0: 'CONNECTING',
+            1: 'OPEN',
+            2: 'CLOSED'
+          }[readyState])
+
+          // If connection was closed by server or network error
+          if (readyState === EventSource.CLOSED) {
+            console.warn('SSE connection was closed, attempting reconnection')
+            this.handleSSEReconnect(walletAddress)
+          } else if (readyState === EventSource.CONNECTING) {
+            console.warn('SSE connection failed during connection attempt')
+            this.cleanupSSEConnection()
+            this.handleSSEReconnect(walletAddress)
+          }
         }
-      }, 10000) // 10 second timeout
+      }
 
     } catch (error) {
       console.error('Failed to establish SSE connection:', error)
@@ -480,23 +503,26 @@ class TradingTracker {
    * Handle SSE reconnection with exponential backoff
    */
   private handleSSEReconnect(walletAddress: string) {
+    // Clean up current connection first
+    this.cleanupSSEConnection()
+
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.warn('Max SSE reconnection attempts reached, falling back to polling only')
       this.startPolling(walletAddress)
       return
     }
 
-    this.cleanupSSEConnection()
-
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000)
     this.reconnectAttempts++
 
-    console.log(`Reconnecting SSE in ${delay}ms (attempt ${this.reconnectAttempts})`)
+    console.log(`Reconnecting SSE in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`)
 
     setTimeout(() => {
       // Check if we should still attempt reconnection
       if (this.subscribers.has(walletAddress) && this.subscribers.get(walletAddress)!.size > 0) {
         this.setupSSEConnection(walletAddress)
+      } else {
+        console.log('No active subscribers, skipping SSE reconnection')
       }
     }, delay)
   }
@@ -508,7 +534,7 @@ class TradingTracker {
     if (this.pollingInterval) return // Already polling
 
     console.log('🔄 Starting polling fallback for wallet updates')
-    
+
     this.pollingInterval = setInterval(async () => {
       try {
         const records = await this.getWalletRecords(walletAddress)
@@ -525,6 +551,14 @@ class TradingTracker {
    */
   private cleanupSSEConnection() {
     if (this.sseConnection) {
+      console.log('🧹 Cleaning up SSE connection')
+
+      // Remove event listeners to prevent memory leaks
+      this.sseConnection.onopen = null
+      this.sseConnection.onmessage = null
+      this.sseConnection.onerror = null
+
+      // Close the connection
       this.sseConnection.close()
       this.sseConnection = null
     }
@@ -554,12 +588,12 @@ class TradingTracker {
       const walletSubscribers = this.subscribers.get(walletAddress)
       if (walletSubscribers) {
         walletSubscribers.delete(callback)
-        
+
         // Clean up if no more subscribers
         if (walletSubscribers.size === 0) {
           this.subscribers.delete(walletAddress)
           this.cleanupSSEConnection()
-          
+
           // Stop polling if no subscribers
           if (this.pollingInterval && this.subscribers.size === 0) {
             clearInterval(this.pollingInterval)
@@ -580,6 +614,122 @@ class TradingTracker {
       this.notifySubscribers(walletAddress)
     } catch (error) {
       console.error('Error handling real-time update:', error)
+    }
+  }
+
+  // ✅ NEW: Helper method specifically for Jupiter Terminal swaps
+  async trackJupiterSwap(params: {
+    walletAddress: string
+    operationType: 'buy' | 'sell'
+    inputMint: string
+    outputMint: string
+    inputAmount: number
+    outputAmount: number
+    inputDecimals: number
+    outputDecimals: number
+    inputSymbol?: string
+    outputSymbol?: string
+    inputName?: string
+    outputName?: string
+    inputLogoURI?: string
+    outputLogoURI?: string
+    txid: string
+    feeAmount?: number
+    slippageBps?: number
+    solPriceUsd: number
+    quoteResponse?: any
+  }): Promise<void> {
+    try {
+      const {
+        walletAddress,
+        operationType,
+        inputMint,
+        outputMint,
+        inputAmount,
+        outputAmount,
+        inputDecimals,
+        outputDecimals,
+        inputSymbol,
+        outputSymbol,
+        inputName,
+        outputName,
+        inputLogoURI,
+        outputLogoURI,
+        txid,
+        feeAmount = 0,
+        slippageBps,
+        solPriceUsd,
+        quoteResponse
+      } = params
+
+      const SOL_MINT = 'So11111111111111111111111111111111111111112'
+
+      // Convert amounts from raw to UI amounts
+      const inputUIAmount = inputAmount / Math.pow(10, inputDecimals)
+      const outputUIAmount = outputAmount / Math.pow(10, outputDecimals)
+
+      let tokenInfo: any
+      let solAmount: number
+
+      if (operationType === 'buy') {
+        // SOL -> Token
+        solAmount = inputUIAmount // SOL spent
+        tokenInfo = {
+          mintAddress: outputMint,
+          symbol: outputSymbol,
+          name: outputName,
+          logoURI: outputLogoURI,
+          tokenAmount: outputUIAmount,
+          solAmount,
+          priceUsd: outputUIAmount > 0 ? (solAmount * solPriceUsd) / outputUIAmount : 0,
+          solPrice: solPriceUsd
+        }
+      } else {
+        // Token -> SOL
+        solAmount = outputUIAmount // SOL received
+        tokenInfo = {
+          mintAddress: inputMint,
+          symbol: inputSymbol,
+          name: inputName,
+          logoURI: inputLogoURI,
+          tokenAmount: inputUIAmount,
+          solAmount,
+          priceUsd: inputUIAmount > 0 ? (solAmount * solPriceUsd) / inputUIAmount : 0,
+          solPrice: solPriceUsd
+        }
+      }
+
+      // Create tracking record
+      const record: Omit<TrackingRecord, 'id' | 'timestamp'> = {
+        walletAddress,
+        operationType,
+        tokens: [tokenInfo],
+        successCount: 1,
+        failureCount: 0,
+        totalTokens: 1,
+        solAmount,
+        feesPaid: feeAmount / Math.pow(10, 9), // Convert from lamports
+        solPriceUsd,
+        totalUsdValue: solAmount * solPriceUsd,
+        signatures: [txid],
+        slippage: slippageBps ? slippageBps / 100 : undefined,
+        is_bot_operation: false, // Jupiter Terminal swaps are manual
+        jupiter_swap: true,
+        swap_route: quoteResponse?.routePlan ? JSON.stringify(quoteResponse.routePlan) : undefined
+      }
+
+      await this.trackOperation(record)
+
+      console.log(`🎯 Jupiter ${operationType} tracked:`, {
+        token: tokenInfo.symbol || tokenInfo.name || 'Unknown',
+        amount: tokenInfo.tokenAmount,
+        solAmount,
+        txid: txid.slice(0, 8) + '...'
+      })
+
+    } catch (error) {
+      console.error('Failed to track Jupiter swap:', error)
+      throw error
     }
   }
 

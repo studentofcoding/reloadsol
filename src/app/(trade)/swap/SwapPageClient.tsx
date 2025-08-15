@@ -2,16 +2,14 @@
 
 import { useEffect, useState } from 'react'
 import JupiterTerminal from '@/components/JupiterTerminal'
-import { WalletProvider, useWallet } from '@/components/WalletProvider'
-import WalletSwitcher from '@/components/WalletSwitcher'
+import { WalletProvider } from '@/components/WalletProvider'
+import TradingDataProvider from '@/components/TradingDataProvider'
 
-function SwapContent() {
-  const { connected, mounted, hydrated } = useWallet()
-  const [isPageReady, setIsPageReady] = useState(false)
-
+export default function SwapPageClient() {
   // Fixed trading pair: SOL -> USDC
   const inputMint = 'So11111111111111111111111111111111111111112' // SOL
   const outputMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' // USDC
+  const [isPageReady, setIsPageReady] = useState(false)
 
   // Ensure page is ready before rendering Jupiter Terminal
   useEffect(() => {
@@ -22,40 +20,7 @@ function SwapContent() {
 
     return () => clearTimeout(timer)
   }, [])
-
-  // Show loading state during hydration
-  if (!mounted || !hydrated) {
-    return (
-      <div className="flex flex-col items-center justify-center" style={{ minHeight: '550px' }}>
-        <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 w-full max-w-2xl mx-auto">
-          <div className="flex items-center justify-center h-64">
-            <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // Show wallet connection UI when no wallet is connected
-  if (!connected) {
-    return (
-      <div className="flex flex-col items-center justify-center" style={{ minHeight: '550px' }}>
-        <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 w-full max-w-2xl mx-auto">
-          <div className="text-center space-y-6">
-            <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
-              <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-            </div>
-            <h2 className="text-2xl font-bold text-white mb-2">Connect Your Wallet</h2>
-            <p className="text-gray-400 mb-6">Connect your wallet to start swapping tokens with Jupiter</p>
-            <WalletSwitcher />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
+  
   // Jupiter Terminal cleanup logic - runs after terminal initialization
   useEffect(() => {
     // Enhanced function to find all shadow roots recursively
@@ -376,20 +341,16 @@ function SwapContent() {
   
   return (
     <div className="flex flex-col items-center justify-center" style={{ minHeight: '550px' }}>
-      {isPageReady && (
-        <JupiterTerminal 
-          initialInputMint={inputMint}
-          initialOutputMint={outputMint}
-        />
-      )}
+      <WalletProvider>
+        <TradingDataProvider>
+          {isPageReady && (
+            <JupiterTerminal 
+              initialInputMint={inputMint}
+              initialOutputMint={outputMint}
+            />
+          )}
+        </TradingDataProvider>
+      </WalletProvider>
     </div>
-  )
-}
-
-export default function SwapPageClient() {
-  return (
-    <WalletProvider>
-      <SwapContent />
-    </WalletProvider>
   )
 }

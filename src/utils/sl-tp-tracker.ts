@@ -66,6 +66,9 @@ interface OpenPositionCycle {
 const positionCache = new Map<string, SLTPPosition>()
 const CACHE_TTL_MS = 30 * 1000 // 30 seconds cache for faster response
 
+// ✅ NEW: Threshold to determine zero/closed balance
+const ZERO_BALANCE_THRESHOLD = 0.000001
+
 // Trading connection (will be initialized when needed)
 let tradingConnection: Connection | null = null
 let tradingKeypair: Keypair | null = null
@@ -94,21 +97,15 @@ async function initializeTradingConnection(): Promise<void> {
 // ✅ NEW: Function to get existing open positions using PnLTracker logic
 async function getExistingOpenPositions(walletAddress: string): Promise<OpenPositionCycle[]> {
     try {
-        // Skip fetch in server-side contexts to prevent URL errors
-        if (typeof window === 'undefined') {
-            log.warn('price_tracking', 'Skipping fetch in server-side context for getExistingOpenPositions', { walletAddress: walletAddress.substring(0, 8) + '...' })
-            return []
-        }
-
-        // Get trading records from the API (client-side only)
+        // Get trading records from the API (works on server and client)
         const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
         const apiUrl = `${baseUrl}/api/trading/records?wallet=${encodeURIComponent(walletAddress)}`
-        
-        log.info('price_tracking', 'Fetching trading records for open positions', { 
+
+        log.info('price_tracking', 'Fetching trading records for open positions', {
             walletAddress: walletAddress.substring(0, 8) + '...',
             apiUrl: apiUrl.replace(walletAddress, walletAddress.substring(0, 8) + '...')
         })
-        
+
         const response = await fetch(apiUrl)
         if (!response.ok) {
             throw new Error(`Failed to fetch trading records: ${response.statusText}`)
@@ -583,6 +580,77 @@ function checkSLTPTriggers(position: SLTPPosition, currentPrice: number): SLTPTr
     }
 }
 
+// ✅ NEW: Build wallet token map for quick lookups
+async function getWalletTokenMap(walletAddress: string): Promise<Map<string, { uiAmount: number; decimals: number }>> {
+    try {
+        const pubkey = new PublicKey(walletAddress)
+        const tokens = await fetchUserTokens(connection, pubkey, false, false)
+        const map = new Map<string, { uiAmount: number; decimals: number }>()
+        for (const t of tokens) {
+            map.set(t.mintAddress, { uiAmount: t.uiAmount, decimals: t.decimals })
+        }
+        return map
+    } catch (e) {
+        log.error('error_handling', 'Failed building wallet token map', e as Error, { walletAddress })
+        return new Map()
+    }
+}
+
+// ✅ NEW: Reconcile active positions with actual wallet balances; deactivate if closed manually
+async function reconcileClosedPositions(positions: SLTPPosition[]): Promise<{ filteredPositions: SLTPPosition[]; pruned: number }> {
+    if (!positions || positions.length === 0) return { filteredPositions: [], pruned: 0 }
+
+    // Group by wallet
+    const byWallet = new Map<string, SLTPPosition[]>()
+    for (const p of positions) {
+        if (!byWallet.has(p.wallet_address)) byWallet.set(p.wallet_address, [])
+        byWallet.get(p.wallet_address)!.push(p)
+    }
+
+    let pruned = 0
+    const keep: SLTPPosition[] = []
+
+    for (const [wallet, walletPositions] of Array.from(byWallet.entries())) {
+        const tokenMap = await getWalletTokenMap(wallet)
+
+        for (const pos of walletPositions) {
+            const tokenInfo = tokenMap.get(pos.token_address)
+            const hasBalance = tokenInfo && tokenInfo.uiAmount > ZERO_BALANCE_THRESHOLD
+
+            if (!hasBalance) {
+                // Mark inactive in DB
+                try {
+                    await supabase
+                        .from('sl_tp_positions')
+                        .update({ is_active: false, updated_at: new Date().toISOString() })
+                        .eq('id', pos.id)
+
+                    // Remove from cache
+                    for (const [key, cached] of Array.from(positionCache.entries())) {
+                        if (cached.id === pos.id) {
+                            positionCache.delete(key)
+                            break
+                        }
+                    }
+
+                    log.info('price_tracking', 'Deactivated SL/TP position due to zero balance (manual close detected)', {
+                        positionId: pos.id,
+                        wallet: wallet.substring(0, 8) + '...',
+                        token: pos.token_symbol,
+                    })
+                } catch (e) {
+                    log.error('error_handling', 'Failed deactivating closed position', e as Error, { positionId: pos.id })
+                }
+                pruned += 1
+            } else {
+                keep.push(pos)
+            }
+        }
+    }
+
+    return { filteredPositions: keep, pruned }
+}
+
 // Function to execute sell order
 async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTriggerResult): Promise<boolean> {
     try {
@@ -596,15 +664,65 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
             return false
         }
 
-        // Calculate token amount to sell
-        const sellAmount = (position.position_size * triggerResult.sell_percentage) / 100
+        // ✅ Determine actual available token balance and decimals from wallet
+        let decimals = 6
+        let walletUiAmount = 0
+        try {
+            const pubkey = new PublicKey(position.wallet_address)
+            const walletTokens = await fetchUserTokens(connection, pubkey, false, false)
+            const t = walletTokens.find(tok => tok.mintAddress === position.token_address)
+            if (t) {
+                decimals = t.decimals
+                walletUiAmount = t.uiAmount
+            }
+        } catch (e) {
+            log.error('sell_execution', 'Failed fetching wallet tokens for sell execution', e as Error, {
+                positionId: position.id,
+                token: position.token_symbol
+            })
+        }
+
+        // If no balance remains, deactivate and stop
+        if (walletUiAmount <= ZERO_BALANCE_THRESHOLD) {
+            await supabase
+                .from('sl_tp_positions')
+                .update({ is_active: false, updated_at: new Date().toISOString(), current_price: triggerResult.current_price })
+                .eq('id', position.id)
+
+            log.info('sell_execution', 'No wallet balance left; deactivating position without executing swap', {
+                positionId: position.id,
+                tokenSymbol: position.token_symbol
+            })
+            return true
+        }
+
+        // Calculate token amount to sell from ACTUAL wallet balance
+        const sellAmountTokens = (walletUiAmount * triggerResult.sell_percentage) / 100
+        const multiplier = Math.pow(10, decimals)
+        const amountInUnits = Math.floor(sellAmountTokens * multiplier)
+
+        if (amountInUnits <= 0) {
+            log.warn('sell_execution', 'Computed sell amount is zero in units; deactivating position', {
+                positionId: position.id,
+                tokenSymbol: position.token_symbol,
+                walletUiAmount,
+                sellPercentage: triggerResult.sell_percentage
+            })
+            await supabase
+                .from('sl_tp_positions')
+                .update({ is_active: false, updated_at: new Date().toISOString(), current_price: triggerResult.current_price })
+                .eq('id', position.id)
+            return true
+        }
 
         log.info('sell_execution', 'Executing sell order', {
             positionId: position.id,
             tokenSymbol: position.token_symbol,
             triggerType: triggerResult.trigger_type,
             sellPercentage: triggerResult.sell_percentage,
-            sellAmount,
+            sellAmountTokens: sellAmountTokens,
+            amountInUnits,
+            decimals,
             currentPrice: triggerResult.current_price
         })
 
@@ -612,7 +730,7 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
         const quoteResult = await getSwapQuote(
             position.token_address,
             'So11111111111111111111111111111111111111112', // SOL
-            Math.floor(sellAmount * 1e6), // Convert to token decimals
+            amountInUnits, // Use real token decimals
             300 // 3% slippage
         )
 
@@ -696,72 +814,6 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
     }
 }
 
-// Main function to monitor all active SL/TP positions
-export async function monitorSLTPPositions(): Promise<void> {
-    try {
-        // Get all active positions
-        const { data: positions, error } = await supabase
-            .from('sl_tp_positions')
-            .select('*')
-            .eq('is_active', true)
-
-        if (error) throw error
-
-        if (!positions || positions.length === 0) {
-            log.debug('price_tracking', 'No active SL/TP positions to monitor')
-            return
-        }
-
-        log.info('price_tracking', 'Monitoring SL/TP positions', { count: positions.length })
-
-        // Get current prices for all tokens
-        const tokenAddresses = positions.map(p => p.token_address)
-        const currentPrices = await getCurrentTokenPrices(tokenAddresses)
-
-        // Check each position for triggers
-        const triggerPromises = positions.map(async (position) => {
-            const currentPrice = currentPrices.get(position.token_address)
-
-            if (!currentPrice) {
-                log.warn('price_tracking', 'No price data for token', {
-                    tokenAddress: position.token_address,
-                    tokenSymbol: position.token_symbol
-                })
-                return
-            }
-
-            // Update current price in database
-            await supabase
-                .from('sl_tp_positions')
-                .update({
-                    current_price: currentPrice,
-                    updated_at: new Date().toISOString()
-                })
-                .eq('id', position.id)
-
-            // Check for triggers
-            const triggerResult = checkSLTPTriggers(position, currentPrice)
-
-            if (triggerResult.triggered) {
-                log.info('deviation_alert', 'SL/TP trigger detected', {
-                    positionId: position.id,
-                    tokenSymbol: position.token_symbol,
-                    triggerType: triggerResult.trigger_type,
-                    reason: triggerResult.reason
-                })
-
-                // Execute sell order
-                await executeSellOrder(position, triggerResult)
-            }
-        })
-
-        await Promise.all(triggerPromises)
-
-    } catch (error) {
-        log.error('error_handling', 'Error monitoring SL/TP positions', error as Error)
-    }
-}
-
 // Function to get active positions for a wallet
 export async function getWalletSLTPPositions(walletAddress: string): Promise<SLTPPosition[]> {
     try {
@@ -831,5 +883,272 @@ export async function cleanupOldSLTPPositions(daysOld: number = 30): Promise<voi
 
     } catch (error) {
         log.error('error_handling', 'Failed to cleanup old SL/TP positions', error as Error)
+    }
+}
+
+// ✅ NEW: Interface for tracking summary
+export interface SLTPTrackingSummary {
+    active_positions: SLTPPosition[]
+    finished_positions: SLTPPosition[]
+    statistics: {
+        total_active: number
+        total_finished: number
+        active_by_type: { manual: number; bot: number }
+        finished_by_trigger: {
+            stop_loss: number
+            take_profit_1: number
+            take_profit_2: number
+            take_profit_3: number
+        }
+        total_tracked_tokens: number
+        unique_wallets: number
+    }
+    last_monitor_run: string
+}
+
+// ✅ NEW: Get comprehensive tracking summary
+export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
+    try {
+        // Get all active positions
+        const { data: activePositions, error: activeError } = await supabase
+            .from('sl_tp_positions')
+            .select('*')
+            .eq('is_active', true)
+            .order('updated_at', { ascending: false })
+
+        if (activeError) throw activeError
+
+        // Get finished positions from last 24 hours for recent activity view
+        const last24h = new Date()
+        last24h.setHours(last24h.getHours() - 24)
+
+        const { data: finishedPositions, error: finishedError } = await supabase
+            .from('sl_tp_positions')
+            .select('*')
+            .eq('is_active', false)
+            .gte('updated_at', last24h.toISOString())
+            .order('updated_at', { ascending: false })
+
+        if (finishedError) throw finishedError
+
+        // Calculate statistics
+        const activeByType = { manual: 0, bot: 0 }
+        const finishedByTrigger = { stop_loss: 0, take_profit_1: 0, take_profit_2: 0, take_profit_3: 0 }
+
+        activePositions?.forEach(pos => {
+            activeByType[pos.position_type as 'manual' | 'bot']++
+        })
+
+        finishedPositions?.forEach(pos => {
+            if (pos.sl_executed) finishedByTrigger.stop_loss++
+            if (pos.tp1_executed) finishedByTrigger.take_profit_1++
+            if (pos.tp2_executed) finishedByTrigger.take_profit_2++
+            if (pos.tp3_executed) finishedByTrigger.take_profit_3++
+        })
+
+        const uniqueWallets = new Set([
+            ...(activePositions?.map(p => p.wallet_address) || []),
+            ...(finishedPositions?.map(p => p.wallet_address) || [])
+        ]).size
+
+        return {
+            active_positions: activePositions || [],
+            finished_positions: finishedPositions || [],
+            statistics: {
+                total_active: activePositions?.length || 0,
+                total_finished: finishedPositions?.length || 0,
+                active_by_type: activeByType,
+                finished_by_trigger: finishedByTrigger,
+                total_tracked_tokens: (activePositions?.length || 0) + (finishedPositions?.length || 0),
+                unique_wallets: uniqueWallets
+            },
+            last_monitor_run: new Date().toISOString()
+        }
+
+    } catch (error) {
+        log.error('error_handling', 'Failed to get SL/TP tracking summary', error as Error)
+        throw error
+    }
+}
+
+// ✅ MODIFIED: Enhanced monitoring function that can return summary data
+export async function monitorSLTPPositions(returnSummary: boolean = false): Promise<SLTPTrackingSummary | void> {
+    try {
+        // Get all active positions
+        const { data: positions, error } = await supabase
+            .from('sl_tp_positions')
+            .select('*')
+            .eq('is_active', true)
+
+        if (error) throw error
+
+        if (!positions || positions.length === 0) {
+            log.debug('price_tracking', 'No active SL/TP positions to monitor')
+            if (returnSummary) {
+                return await getSLTPTrackingSummary()
+            }
+            return
+        }
+
+        // ✅ Reconcile against wallet balances first to drop closed positions
+        const { filteredPositions, pruned } = await reconcileClosedPositions(positions)
+        if (pruned > 0) {
+            log.info('price_tracking', 'Pruned inactive/closed positions before monitoring', { pruned, remaining: filteredPositions.length })
+        }
+
+        if (!filteredPositions || filteredPositions.length === 0) {
+            log.debug('price_tracking', 'No active SL/TP positions to monitor after reconciliation')
+            if (returnSummary) {
+                return await getSLTPTrackingSummary()
+            }
+            return
+        }
+
+        log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
+
+        // Get current prices for all tokens
+        const tokenAddresses = filteredPositions.map(p => p.token_address)
+        const currentPrices = await getCurrentTokenPrices(tokenAddresses)
+
+        // Check each position for triggers
+        const triggerPromises = filteredPositions.map(async (position) => {
+            const currentPrice = currentPrices.get(position.token_address)
+
+            if (!currentPrice) {
+                log.warn('price_tracking', 'No price data for token', {
+                    tokenAddress: position.token_address,
+                    tokenSymbol: position.token_symbol
+                })
+                return
+            }
+
+            // Update current price in database
+            await supabase
+                .from('sl_tp_positions')
+                .update({
+                    current_price: currentPrice,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', position.id)
+
+            // Check for triggers
+            const triggerResult = checkSLTPTriggers(position, currentPrice)
+
+            if (triggerResult.triggered) {
+                log.info('deviation_alert', 'SL/TP trigger detected', {
+                    positionId: position.id,
+                    tokenSymbol: position.token_symbol,
+                    triggerType: triggerResult.trigger_type,
+                    reason: triggerResult.reason
+                })
+
+                // Execute sell order
+                await executeSellOrder(position, triggerResult)
+            }
+        })
+
+        await Promise.all(triggerPromises)
+
+        // Return summary if requested
+        if (returnSummary) {
+            return await getSLTPTrackingSummary()
+        }
+
+    } catch (error) {
+        log.error('error_handling', 'Error monitoring SL/TP positions', error as Error)
+        if (returnSummary) {
+            // Return summary even on error for cronjob visibility
+            try {
+                return await getSLTPTrackingSummary()
+            } catch (summaryError) {
+                log.error('error_handling', 'Error getting summary after monitor failure', summaryError as Error)
+                throw error
+            }
+        }
+        throw error
+    }
+}
+export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary> {
+    try {
+        // Get all active positions
+        const { data: positions, error } = await supabase
+            .from('sl_tp_positions')
+            .select('*')
+            .eq('is_active', true)
+
+        if (error) throw error
+
+        if (!positions || positions.length === 0) {
+            log.debug('price_tracking', 'No active SL/TP positions to monitor')
+            return await getSLTPTrackingSummary()
+        }
+
+        // ✅ Reconcile against wallet balances first to drop closed positions
+        const { filteredPositions, pruned } = await reconcileClosedPositions(positions)
+        if (pruned > 0) {
+            log.info('price_tracking', 'Pruned inactive/closed positions before monitoring', { pruned, remaining: filteredPositions.length })
+        }
+
+        if (!filteredPositions || filteredPositions.length === 0) {
+            log.debug('price_tracking', 'No active SL/TP positions to monitor after reconciliation')
+            return await getSLTPTrackingSummary()
+        }
+
+        log.info('price_tracking', 'Monitoring SL/TP positions', { count: filteredPositions.length })
+
+        // Get current prices for all tokens
+        const tokenAddresses = filteredPositions.map(p => p.token_address)
+        const currentPrices = await getCurrentTokenPrices(tokenAddresses)
+
+        // Check each position for triggers
+        const triggerPromises = filteredPositions.map(async (position) => {
+            const currentPrice = currentPrices.get(position.token_address)
+
+            if (!currentPrice) {
+                log.warn('price_tracking', 'No price data for token', {
+                    tokenAddress: position.token_address,
+                    tokenSymbol: position.token_symbol
+                })
+                return
+            }
+
+            // Update current price in database
+            await supabase
+                .from('sl_tp_positions')
+                .update({
+                    current_price: currentPrice,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', position.id)
+
+            // Check for triggers
+            const triggerResult = checkSLTPTriggers(position, currentPrice)
+
+            if (triggerResult.triggered) {
+                log.info('deviation_alert', 'SL/TP trigger detected', {
+                    positionId: position.id,
+                    tokenSymbol: position.token_symbol,
+                    triggerType: triggerResult.trigger_type,
+                    reason: triggerResult.reason
+                })
+
+                // Execute sell order
+                await executeSellOrder(position, triggerResult)
+            }
+        })
+
+        await Promise.all(triggerPromises)
+
+        // Return summary
+        return await getSLTPTrackingSummary()
+
+    } catch (error) {
+        log.error('error_handling', 'Error monitoring SL/TP positions', error as Error)
+        // Try to return summary even on failure
+        try {
+            return await getSLTPTrackingSummary()
+        } catch {
+            throw error
+        }
     }
 }

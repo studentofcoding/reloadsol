@@ -8,6 +8,9 @@ import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
 import { notifyTradingUpdate } from '@/utils/trading-notifications'
 import { addSLTPPosition } from '@/utils/sl-tp-tracker'
+import { assessTokenRisk, formatDetailedRiskForDiscord } from '@/utils/risk-assessment'
+import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
+import { calculateGainPercentage } from '@/utils/trading-math'
 
 export const runtime = 'nodejs'
 
@@ -251,7 +254,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
     max_hold_hours: 12,
     conditions: {
       min_market_cap: 35000,
-      max_market_cap: 75000,
+      max_market_cap: 90000,
       min_organic_score: 0,
       max_risk_level: 'low'
     },
@@ -260,7 +263,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       enabled: true,
       mcap: {
         min: 35_000,
-        max: 75_000
+        max: 90_000
       },
       priceChange5m: {
         max: -25.00 // Less tolerance for drops
@@ -272,7 +275,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
         max: 600.00
       },
       organicScore: {
-        min: 5 // Higher organic score requirement
+        min: 0 // Higher organic score requirement
       },
       topHoldersPercentage: {
         max: 25
@@ -768,7 +771,8 @@ interface TradeExecutionParams {
   slippageBps: number
   userPublicKey: string
   priorityFee?: number
-  strategy: string
+  strategy?: string
+  tokenData?: any // Add this field
 }
 
 interface TradeExecutionResult {
@@ -1213,7 +1217,8 @@ class SynchronizedTradeExecutor {
           tokenAddress: params.tokenAddress,
           operationType: 'buy',
           syncResult,
-          isRealTradeExecuted: executeReal && !!realResult
+          isRealTradeExecuted: executeReal && !!realResult,
+          tokenData: params.tokenData
         })
       } catch (discordError) {
         console.error('❌ Failed to send sync Discord notification:', discordError)
@@ -1274,17 +1279,6 @@ function createSignerFromKeypair(keypair: Keypair): (transactions: VersionedTran
       return tx
     })
   }
-}
-
-// Add helper functions for gain calculations
-function calculateGainPercentage(currentPrice: number, initialPrice: number): number {
-  if (!initialPrice || initialPrice <= 0) {
-    console.warn('Invalid initial price for gain calculation:', initialPrice)
-    return 0
-  }
-
-  // Round to 4 decimal places to avoid floating point precision issues
-  return Math.round(((currentPrice - initialPrice) / initialPrice) * 10000) / 100
 }
 
 function calculatePeakPrice(currentPrice: number, existingPeakPrice: number): number {
@@ -1491,7 +1485,7 @@ async function sendNewTokenDetectionDiscord(params: {
   }
 }
 
-// Discord notification for successful buy operations
+// Enhanced Discord notification for successful buy operations
 async function sendBuyNotificationDiscord(params: {
   tokenSymbol: string | null
   tokenAddress: string
@@ -1504,6 +1498,10 @@ async function sendBuyNotificationDiscord(params: {
   responseTime: number
   signature?: string
   totalFees: number
+  marketCap?: number
+  riskAssessment?: any
+  graduatedAt?: string | null
+  launchpad?: string | null
 }) {
   try {
     // Check if Discord notifications are enabled
@@ -1526,17 +1524,25 @@ async function sendBuyNotificationDiscord(params: {
       rpcUsed,
       responseTime,
       signature,
-      totalFees
+      totalFees,
+      marketCap,
+      riskAssessment,
+      graduatedAt,
+      launchpad
     } = params
 
-    // Log notification attempt
+    // Log notification attempt with new data
     logTradeOperation('Discord Buy Notification Attempt', {
       tokenSymbol,
       tokenAddress,
       isSimulated,
       amountSOL,
       provider,
-      signature: signature ? `${signature.slice(0, 8)}...` : 'none'
+      signature: signature ? `${signature.slice(0, 8)}...` : 'none',
+      marketCap,
+      riskLevel: riskAssessment?.riskLevel,
+      graduatedAt,
+      launchpad
     })
 
     const emoji = isSimulated ? '💻' : '🔥'
@@ -1555,6 +1561,37 @@ async function sendBuyNotificationDiscord(params: {
       `⏱️ Response: ${responseTime}ms`,
       `💸 Fees: ${totalFees.toFixed(6)} SOL`
     ]
+
+    // Add market cap if available
+    if (marketCap && marketCap > 0) {
+      lines.push(`💎 Market Cap: $${marketCap.toLocaleString()}`)
+    }
+
+    // Add risk assessment if available
+    if (riskAssessment) {
+      const riskEmoji = riskAssessment.riskLevel === 'LOW' ? '🟢' :
+        riskAssessment.riskLevel === 'MED' ? '🟡' : '🔴'
+      lines.push(`${riskEmoji} Risk: ${riskAssessment.riskLevel}`)
+
+      // Add detailed risk metrics if available
+      if (riskAssessment.axiomData || riskAssessment.jupiterDetails) {
+        const detailedRisk = formatDetailedRiskForDiscord(
+          { token_address: tokenAddress, token_symbol: tokenSymbol || 'UNKNOWN', mcap: marketCap || 0, price: priceUSD },
+          riskAssessment
+        )
+        lines.push(`📈 Metrics: ${detailedRisk}`)
+      }
+    }
+
+    // Add graduatedAt if available
+    if (graduatedAt) {
+      lines.push(`🎓 Graduated: ${graduatedAt}`)
+    }
+
+    // Add launchpad if available
+    if (launchpad) {
+      lines.push(`From launchpad: ${launchpad}`)
+    }
 
     // Add signature for real trades
     if (signature && !isSimulated) {
@@ -1582,13 +1619,16 @@ async function sendBuyNotificationDiscord(params: {
       throw new Error(`Discord webhook failed: ${response.status} ${response.statusText}\nResponse: ${responseText}`)
     }
 
-    // Log successful notification
+    // Log successful notification with enhanced data
     logTradeOperation('Discord Buy Notification Success', {
       tokenSymbol,
       isSimulated,
       signature: signature ? `${signature.slice(0, 8)}...` : 'none',
       responseTime: webhookResponseTime,
-      httpStatus: response.status
+      httpStatus: response.status,
+      marketCap,
+      riskLevel: riskAssessment?.riskLevel,
+      graduatedAt
     })
   } catch (err) {
     // Enhanced error logging
@@ -1596,7 +1636,9 @@ async function sendBuyNotificationDiscord(params: {
       tokenSymbol: params.tokenSymbol,
       isSimulated: params.isSimulated,
       amountSOL: params.amountSOL,
-      signature: params.signature ? `${params.signature.slice(0, 8)}...` : 'none'
+      signature: params.signature ? `${params.signature.slice(0, 8)}...` : 'none',
+      marketCap: params.marketCap,
+      riskLevel: params.riskAssessment?.riskLevel
     }, err as Error)
 
     // Re-throw for upstream handling if needed
@@ -2117,7 +2159,7 @@ async function performEnhancedFiltering(
   // Get filtering configuration based on strategy
   let filterConfig: TokenFilterConfig
 
-  if (customConfig) {
+  if (customConfig && Object.keys(customConfig).length > 0) {
     // Use custom configuration if provided
     filterConfig = { ...DEFAULT_FILTER_CONFIG, ...customConfig }
   } else if (strategyId) {
@@ -2197,7 +2239,7 @@ async function performEnhancedFiltering(
         rejectionReasons.push(`Market cap too low (${mcap ? `$${(mcap / 1000).toFixed(0)}k` : 'N/A'} <= $${(filterConfig.mcap.min / 1000).toFixed(0)}k)`)
       }
       if (filterConfig.mcap.max && (!mcap || mcap >= filterConfig.mcap.max)) {
-        console.log(`🔍 Token ${pool.baseAsset.symbol} rejected: Market cap ${mcap} above maximum ${filterConfig.mcap.max}`);
+        console.log(`🔍 Token ${pool.baseAsset.symbol} (${pool.baseAsset.id}) rejected: Market cap $${(mcap / 1000000).toFixed(2)}M above maximum $${(filterConfig.mcap.max / 1000).toFixed(0)}k`);
         rejectionReasons.push(`Market cap too high (${mcap ? `$${(mcap / 1000000).toFixed(1)}M` : 'N/A'} >= $${(filterConfig.mcap.max / 1000000).toFixed(1)}M)`)
       }
     }
@@ -2253,6 +2295,10 @@ async function performEnhancedFiltering(
     }
 
     const passed = rejectionReasons.length === 0
+
+    if (passed) {
+      console.log(`✅ Token ${pool.baseAsset.symbol} (${pool.baseAsset.id}) PASSED filters under strategy '${strategyId || 'default'}' with Market cap $${(mcap ? mcap / 1000000 : 0).toFixed(2)}M`)
+    }
 
     // Track rejection reasons and collect token details
     rejectionReasons.forEach(reason => {
@@ -2819,6 +2865,7 @@ async function sendSyncTradeNotificationDiscord(params: {
   operationType: 'buy' | 'sell'
   syncResult: SyncedTradeResult
   isRealTradeExecuted: boolean
+  tokenData?: any
 }) {
   try {
     if (!shouldEnableNotifications()) {
@@ -2834,7 +2881,8 @@ async function sendSyncTradeNotificationDiscord(params: {
       tokenAddress,
       operationType,
       syncResult,
-      isRealTradeExecuted
+      isRealTradeExecuted,
+      tokenData
     } = params
 
     logTradeOperation('Discord Sync Notification Attempt', {
@@ -2867,8 +2915,28 @@ async function sendSyncTradeNotificationDiscord(params: {
         `  🎯 Output: ${parseFloat(syncResult.real.outputAmount).toLocaleString()} ${operationType === 'buy' ? 'tokens' : 'SOL'}`,
         `  💸 Fees: ${syncResult.real.fees.totalFees.toFixed(6)} SOL`,
         `  ⏱️ Time: ${syncResult.real.responseTime}ms`,
-        ``
       )
+
+      // Add market cap, graduatedAt, and launchpad data
+      if (tokenData) {
+        if (tokenData.market_cap) {
+          lines.push(`  📊 Market Cap: $${tokenData.market_cap.toLocaleString()}`)
+        }
+        if (tokenData.graduatedAt) {
+          lines.push(`  🎓 Graduated: ${new Date(tokenData.graduatedAt).toLocaleDateString()}`)
+        } else {
+          console.log(`⚠️ No graduatedAt data for token: ${tokenSymbol || 'UNKNOWN'}`)
+        }
+        if (tokenData.launchpad) {
+          lines.push(`  🚀 Launchpad: ${tokenData.launchpad}`)
+        } else {
+          console.log(`⚠️ No launchpad data for token: ${tokenSymbol || 'UNKNOWN'}`)
+        }
+      } else {
+        console.log(`⚠️ No tokenData available for token: ${tokenSymbol || 'UNKNOWN'}`)
+      }
+
+      lines.push(``)
 
       console.warn('Real trade executed', lines)
 
@@ -3211,7 +3279,8 @@ async function executeBuyOperationWithStrategy(
           slippageBps: config.bps,
           userPublicKey: isSimulated ? '11111111111111111111111111111111' : tradingKeypair!.publicKey.toBase58(),
           priorityFee: shouldExecuteReal ? PRIORITY_FEE_LAMPORTS : 0,
-          strategy: strategyId
+          strategy: strategyId,
+          tokenData: token
         }, shouldExecuteReal)
 
         syncResults.push(syncResult)
@@ -3385,6 +3454,73 @@ async function executeBuyOperationWithStrategy(
     // Send Discord notification for successful buy operations
     if (shouldEnableNotifications() && bestResult.success) {
       try {
+        // Fetch additional data for enhanced notification
+        let marketCap: number | undefined
+        let riskAssessment: any
+        let graduatedAt: string | null = null
+        let launchpad: string | null = null
+
+        // Get market cap from token data
+        if (token.market_cap && token.market_cap > 0) {
+          marketCap = token.market_cap
+        }
+
+        // Fetch Jupiter metadata to get graduatedAt
+        try {
+          const jupiterMeta = await fetchTokenMetadataFromJupiter(token.token_address)
+          if (jupiterMeta?.graduatedAt) {
+            const graduatedTimestamp = new Date(jupiterMeta.graduatedAt * 1000)
+            graduatedAt = graduatedTimestamp.toISOString()
+            launchpad = jupiterMeta.launchpad
+
+            // Log graduatedAt on server
+            logTradeOperation('Token Graduated Info', {
+              tokenSymbol: token.token_symbol,
+              tokenAddress: token.token_address,
+              graduatedAt: graduatedAt,
+              graduatedTimestamp: jupiterMeta.graduatedAt,
+              launchpad: launchpad
+            })
+
+            console.log(`🎓 Token ${token.token_symbol} graduated at: ${graduatedAt}`)
+          }
+        } catch (jupiterError) {
+          console.warn('Failed to fetch Jupiter metadata for graduatedAt:', jupiterError)
+        }
+
+        // Perform risk assessment
+        try {
+          riskAssessment = await assessTokenRisk({
+            token_address: token.token_address,
+            token_symbol: token.token_symbol,
+            mcap: marketCap || token.market_cap || 0,
+            price: token.current_price,
+            change_1h: token.change_1h,
+            change_5m: token.change_5m,
+            organic_score: token.organic_score
+          }, {
+            timeoutMs: 3000,
+            enableLogging: true,
+            fallbackToBasic: true
+          })
+
+          // Log risk assessment results
+          logTradeOperation('Buy Risk Assessment', {
+            tokenSymbol: token.token_symbol,
+            tokenAddress: token.token_address,
+            riskLevel: riskAssessment.riskLevel,
+            assessmentMethod: riskAssessment.assessmentMethod,
+            marketCap
+          })
+        } catch (riskError) {
+          console.warn('Failed to perform risk assessment:', riskError)
+          riskAssessment = {
+            riskLevel: 'MED',
+            assessmentMethod: 'fallback',
+            error: 'Assessment failed'
+          }
+        }
+
         await sendBuyNotificationDiscord({
           tokenSymbol: token.token_symbol,
           tokenAddress: token.token_address,
@@ -3396,7 +3532,10 @@ async function executeBuyOperationWithStrategy(
           rpcUsed: bestResult.rpcUsed,
           responseTime: bestResult.responseTime,
           signature: bestResult.signature,
-          totalFees: bestResult.fees.totalFees
+          totalFees: bestResult.fees.totalFees,
+          marketCap,
+          riskAssessment,
+          graduatedAt
         })
       } catch (discordError) {
         console.error('❌ Failed to send buy Discord notification:', discordError)
@@ -4220,7 +4359,13 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
           provider: 'jupiter',
           rpcUsed: 'test-rpc',
           responseTime: 150,
-          totalFees: 0.001
+          totalFees: 0.001,
+          marketCap: 50000,
+          riskAssessment: {
+            riskLevel: 'LOW',
+            assessmentMethod: 'test'
+          },
+          graduatedAt: '2025-01-10T12:56:39Z'
         })
         testResults.push({ type: 'buy_notification', success: true })
         console.log('Buy notification test: SUCCESS')
@@ -4525,10 +4670,20 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
     const currentStrategy = getCurrentBotStrategy()
     const customFilterConfig = parseCustomFilterConfig()
+
+    // Add debug logging for strategy and configuration
+    console.log(`🎯 Current strategy: ${currentStrategy}`)
+    if (customFilterConfig && Object.keys(customFilterConfig).length > 0) {
+      console.log(`🔧 Custom filter config:`, customFilterConfig)
+    } else {
+      const strategy = getTradingStrategy(currentStrategy)
+      console.log(`🔧 Using strategy filter config:`, strategy.filtering)
+    }
+
     const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(
       data.pools,
       currentStrategy,
-      customFilterConfig || {}
+      customFilterConfig && Object.keys(customFilterConfig).length > 0 ? customFilterConfig : undefined
     )
 
     // Extract accepted tokens
@@ -4846,8 +5001,55 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               keypairPath = undefined
             }
 
+            // Perform comprehensive risk assessment before assignment
+            let riskAssessment: any
+            try {
+              riskAssessment = await assessTokenRisk({
+                token_address: token.token_address,
+                token_symbol: token.token_symbol,
+                mcap: token.market_cap,
+                price: token.current_price,
+                change_1h: token.change_1h,
+                change_5m: token.change_5m,
+                organic_score: token.organic_score
+              }, { enableLogging: true, fallbackToBasic: true })
+
+              console.log(`🔍 Risk assessment for ${token.token_symbol}: ${riskAssessment.riskLevel} (method: ${riskAssessment.assessmentMethod})`)
+            } catch (riskError) {
+              console.error(`❌ Risk assessment failed for ${token.token_symbol}:`, riskError)
+              riskAssessment = { riskLevel: 'HIGH', assessmentMethod: 'error_fallback' }
+            }
+
             // Assign token to strategy
             const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation)
+
+            // Enforce strategy-specific constraints before proceeding
+            const strategy = getTradingStrategy(assignedStrategy)
+
+            // Market cap constraints
+            if (strategy.conditions?.min_market_cap && token.market_cap < strategy.conditions.min_market_cap) {
+              console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000).toFixed(0)}k below minimum $${(strategy.conditions.min_market_cap / 1000).toFixed(0)}k`)
+              continue
+            }
+            if (strategy.conditions?.max_market_cap && token.market_cap > strategy.conditions.max_market_cap) {
+              console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000000).toFixed(2)}M above maximum $${(strategy.conditions.max_market_cap / 1000).toFixed(0)}k`)
+              continue
+            }
+
+            // Risk level constraints - using comprehensive risk assessment
+            if (strategy.conditions?.max_risk_level && riskAssessment) {
+              const tokenRisk = riskAssessment.riskLevel.toLowerCase() // Convert uppercase to lowercase
+              const allowedRisks = strategy.conditions.max_risk_level === 'low' ? ['low'] :
+                strategy.conditions.max_risk_level === 'medium' ? ['low', 'med'] :
+                  ['low', 'med', 'high']
+
+              if (!allowedRisks.includes(tokenRisk)) {
+                console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Risk level ${riskAssessment.riskLevel} exceeds maximum ${strategy.conditions.max_risk_level.toUpperCase()} (assessment: ${riskAssessment.assessmentMethod})`)
+                continue
+              } else {
+                console.log(`✅ Token ${token.token_symbol} approved for strategy '${assignedStrategy}': Risk level ${riskAssessment.riskLevel} within allowed ${strategy.conditions.max_risk_level.toUpperCase()} threshold`)
+              }
+            }
 
             // Create initial simulation configuration (use detected trading mode)
             const initialSimulation = createTradingSimulation(
@@ -5080,8 +5282,54 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 keypairPath = undefined
               }
 
+              // Perform comprehensive risk assessment before assignment
+              let riskAssessment: any
+              try {
+                riskAssessment = await assessTokenRisk({
+                  token_address: token.token_address,
+                  token_symbol: token.token_symbol,
+                  mcap: token.market_cap,
+                  price: token.current_price,
+                  change_1h: token.change_1h,
+                  change_5m: token.change_5m,
+                  organic_score: token.organic_score
+                }, { enableLogging: true, fallbackToBasic: true })
+                console.log(`🔍 Risk assessment for ${token.token_symbol}: ${riskAssessment.riskLevel} (method: ${riskAssessment.assessmentMethod})`)
+              } catch (riskError) {
+                console.error(`❌ Risk assessment failed for ${token.token_symbol}:`, riskError)
+                riskAssessment = { riskLevel: 'HIGH', assessmentMethod: 'error_fallback' }
+              }
+
               // Assign token to strategy
               const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation)
+
+              // Enforce strategy-specific constraints before proceeding
+              const strategy = getTradingStrategy(assignedStrategy)
+
+              // Market cap constraints
+              if (strategy.conditions?.min_market_cap && token.market_cap < strategy.conditions.min_market_cap) {
+                console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000).toFixed(0)}k below minimum $${(strategy.conditions.min_market_cap / 1000).toFixed(0)}k`)
+                continue
+              }
+              if (strategy.conditions?.max_market_cap && token.market_cap > strategy.conditions.max_market_cap) {
+                console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000000).toFixed(2)}M above maximum $${(strategy.conditions.max_market_cap / 1000).toFixed(0)}k`)
+                continue
+              }
+
+              // Risk level constraints - using comprehensive risk assessment
+              if (strategy.conditions?.max_risk_level && riskAssessment) {
+                const tokenRisk = riskAssessment.riskLevel.toLowerCase()
+                const allowedRisks = strategy.conditions.max_risk_level === 'low' ? ['low'] :
+                  strategy.conditions.max_risk_level === 'medium' ? ['low', 'med'] :
+                    ['low', 'med', 'high']
+
+                if (!allowedRisks.includes(tokenRisk)) {
+                  console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Risk level ${riskAssessment.riskLevel} exceeds maximum ${strategy.conditions.max_risk_level.toUpperCase()} (assessment: ${riskAssessment.assessmentMethod})`)
+                  continue
+                } else {
+                  console.log(`✅ Token ${token.token_symbol} approved for strategy '${assignedStrategy}': Risk level ${riskAssessment.riskLevel} within allowed ${strategy.conditions.max_risk_level.toUpperCase()} threshold`)
+                }
+              }
 
               // Create initial simulation configuration (use detected trading mode)
               const initialSimulation = createTradingSimulation(
@@ -5230,6 +5478,17 @@ async function internalTrackPost(request: NextRequest, logger: any) {
         }
 
         // Calculate current gain for tracking tokens
+        // Add validation before calling calculateGainPercentage
+        if (!existingToken.initial_price_usd || existingToken.initial_price_usd <= 0) {
+          console.warn(`Invalid initial price for token ${token.token_symbol}: ${existingToken.initial_price_usd}`);
+          continue; // Skip this token if initial price is invalid
+        }
+
+        if (!token.current_price || token.current_price <= 0) {
+          console.warn(`Invalid current price for token ${token.token_symbol}: ${token.current_price}`);
+          continue; // Skip this token if current price is invalid
+        }
+
         const currentGain = calculateGainPercentage(token.current_price, existingToken.initial_price_usd)
 
         // Only update peak price and gain if current price is higher than existing peak
@@ -5247,6 +5506,12 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           peakGain,
           lastUpdated: new Date().toISOString()
         }
+
+        // Use priceTracking for logging/debugging (fixes unused variable warning)
+        console.log(`📊 Price tracking for ${token.token_symbol}:`, {
+          symbol: token.token_symbol,
+          tracking: priceTracking
+        });
 
         // Check if token has dropped more than 50% from initial price (original loss condition)
         const isLost = currentGain <= -50
@@ -5729,17 +5994,7 @@ function assignTokenToStrategy(token: any, strategies: string[], allocation: Rec
         meetsConditions = false
       }
 
-      if (strategy.conditions.max_risk_level) {
-        // Simple risk assessment based on market cap and volume
-        const riskLevel = marketCap < 100000 ? 'high' : marketCap < 500000 ? 'medium' : 'low'
-        const allowedRisks = strategy.conditions.max_risk_level === 'low' ? ['low'] :
-          strategy.conditions.max_risk_level === 'medium' ? ['low', 'medium'] :
-            ['low', 'medium', 'high']
-
-        if (!allowedRisks.includes(riskLevel)) {
-          meetsConditions = false
-        }
-      }
+      // Note: Risk assessment is now handled before assignment with comprehensive risk assessment
 
       if (meetsConditions) {
         console.log(`🎯 Token ${token.token_symbol} assigned to ${strategyId} strategy (rule-based)`)

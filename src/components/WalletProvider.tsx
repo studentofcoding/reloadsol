@@ -18,12 +18,6 @@ interface PhantomProvider {
   removeListener(event: string, callback: Function): void
 }
 
-// Available wallets interface
-interface AvailableWallets {
-  phantom: boolean
-  embedded: boolean
-}
-
 // Wallet context interface compatible with Jupiter Terminal
 interface WalletContextType {
   publicKey: PublicKey | null
@@ -31,17 +25,11 @@ interface WalletContextType {
   connecting: boolean
   disconnecting: boolean
   wallet: any | null
-  walletType: 'phantom' | 'embedded' | null
-  mounted: boolean
-  hydrated: boolean
-  availableWallets: AvailableWallets
-  preferredWallet: 'phantom' | 'embedded' | null
   signTransaction?: <T extends Transaction | VersionedTransaction>(transaction: T) => Promise<T>
   signAllTransactions?: <T extends Transaction | VersionedTransaction>(transactions: T[]) => Promise<T[]>
   signMessage?: (message: Uint8Array) => Promise<{ signature: Uint8Array }>
-  connect: (walletType?: 'phantom' | 'embedded') => Promise<void>
+  connect: () => Promise<void>
   disconnect: () => Promise<void>
-  switchWallet: (walletType: 'phantom' | 'embedded') => Promise<void>
   sendTransaction?: (transaction: Transaction | VersionedTransaction, connection: SolanaConnection, options?: any) => Promise<string>
 }
 
@@ -59,244 +47,64 @@ interface WalletProviderProps {
 }
 
 export function WalletProvider({ children }: WalletProviderProps) {
-  const [mounted, setMounted] = useState(false)
-  const [hydrated, setHydrated] = useState(false)
   const [publicKey, setPublicKey] = useState<PublicKey | null>(null)
   const [connected, setConnected] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const [provider, setProvider] = useState<PhantomProvider | null>(null)
   const [wallet, setWallet] = useState<any>(null)
-  const [walletType, setWalletType] = useState<'phantom' | 'embedded' | null>(null)
-  const [availableWallets, setAvailableWallets] = useState<AvailableWallets>({ phantom: false, embedded: false })
-  const [preferredWallet, setPreferredWallet] = useState<'phantom' | 'embedded' | null>(null)
 
-  // Handle mounting and hydration safety
+  // Check for Phantom wallet
   useEffect(() => {
-    setMounted(true)
-    // Add a small delay to ensure hydration is complete
-    const timer = setTimeout(() => {
-      setHydrated(true)
-    }, 100)
-    return () => clearTimeout(timer)
+    const getProvider = () => {
+      if ('solana' in window) {
+        const phantom = window.solana
+        if (phantom?.isPhantom) {
+          setProvider(phantom)
+          return phantom
+        }
+      }
+      return null
+    }
+
+    const phantom = getProvider()
+    
+    if (phantom) {
+      // Only try to auto-connect if we haven't explicitly disconnected
+      const hasDisconnected = sessionStorage.getItem('hasDisconnected')
+      console.log('Auto-connect check:', { hasDisconnected, isConnected: phantom.isConnected })
+      
+      // For debugging: uncomment the next line to reset disconnect state
+      // sessionStorage.removeItem('hasDisconnected')
+      
+      if (!hasDisconnected) {
+        console.log('Attempting auto-connect...')
+        phantom.connect({ onlyIfTrusted: true })
+          .then(() => {
+            console.log('Auto-connect successful')
+          })
+          .catch(() => {
+            console.log('Auto-connect failed - user hasn\'t connected before')
+          })
+      } else {
+        console.log('Skipping auto-connect - user previously disconnected')
+      }
+    } else {
+      console.log('Phantom wallet not found')
+    }
   }, [])
 
-  // Detect available wallets and auto-connect (only when hydrated)
+  // Set up event listeners
   useEffect(() => {
-    if (!mounted || !hydrated) return
-
-    const detectAvailableWallets = async () => {
-      console.log('🔍 Starting wallet detection...')
-      const wallets = { phantom: false, embedded: false }
-
-      // Check for embedded wallet
-      const embeddedWallet = localStorage.getItem('embeddedWallet')
-      console.log('🔍 Checking for embedded wallet in localStorage:', embeddedWallet ? 'Found' : 'Not found')
-      if (embeddedWallet) {
-        try {
-          const walletData = JSON.parse(embeddedWallet)
-          console.log('📋 Embedded wallet data:', walletData)
-          if (walletData.publicKey) {
-            wallets.embedded = true
-            console.log('✅ Detected embedded wallet with publicKey:', walletData.publicKey)
-          } else {
-            console.log('❌ Embedded wallet data missing publicKey')
-          }
-        } catch (error) {
-          console.error('❌ Failed to parse embedded wallet data:', error)
-        }
-      }
-
-      // Check for Phantom wallet
-      if (typeof window !== 'undefined' && window.solana) {
-        const phantom = window.solana
-        console.log('👻 Found window.solana:', phantom)
-        if (phantom?.isPhantom) {
-          wallets.phantom = true
-          setProvider(phantom)
-          console.log('✅ Detected Phantom wallet')
-        } else {
-          console.log('❌ window.solana exists but isPhantom is false')
-        }
-      } else {
-        console.log('❌ No window.solana found')
-      }
-
-      console.log('🎯 Final wallet detection results:', wallets)
-      setAvailableWallets(wallets)
-      
-      // Load user preference
-      const savedPreference = localStorage.getItem('preferredWallet') as 'phantom' | 'embedded' | null
-      console.log('💾 Saved preference:', savedPreference)
-      let walletToAutoConnect: 'phantom' | 'embedded' | null = null
-      
-      if (savedPreference && wallets[savedPreference]) {
-        setPreferredWallet(savedPreference)
-        walletToAutoConnect = savedPreference
-        console.log('✅ Loaded preferred wallet:', savedPreference)
-      } else if (wallets.phantom && wallets.embedded) {
-        // If both available but no preference, don't auto-connect
-        console.log('🔄 Both wallets available, waiting for user choice')
-        return wallets
-      } else if (wallets.phantom) {
-        setPreferredWallet('phantom')
-        walletToAutoConnect = 'phantom'
-        console.log('🎯 Only Phantom available, setting as preferred')
-      } else if (wallets.embedded) {
-        setPreferredWallet('embedded')
-        walletToAutoConnect = 'embedded'
-        console.log('🎯 Only Embedded available, setting as preferred')
-        
-        // If this is a newly detected embedded wallet, ensure it gets connected
-        const newEmbeddedWallet = sessionStorage.getItem('newEmbeddedWallet')
-        if (newEmbeddedWallet === 'true') {
-          console.log('🆕 Newly created embedded wallet detected, will force auto-connect')
-        }
-      } else {
-        console.log('❌ No wallets available')
-      }
-
-      // Auto-connect to preferred wallet if available and not explicitly disconnected
-      if (walletToAutoConnect) {
-        setTimeout(() => {
-          const hasDisconnected = sessionStorage.getItem('hasDisconnected')
-          const disconnectedWallet = sessionStorage.getItem('disconnectedWallet')
-          const newEmbeddedWallet = sessionStorage.getItem('newEmbeddedWallet')
-          const redirectedFromHome = sessionStorage.getItem('redirectedFromHome')
-          
-          console.log('🔄 Auto-connect check:', {
-            walletToAutoConnect,
-            hasDisconnected,
-            disconnectedWallet,
-            newEmbeddedWallet,
-            redirectedFromHome,
-            walletAvailable: wallets[walletToAutoConnect]
-          })
-          
-          // For newly created embedded wallets or redirected from home, always auto-connect
-          const shouldAutoConnect = wallets[walletToAutoConnect] && (
-            newEmbeddedWallet === 'true' || // Always connect newly created embedded wallets
-            redirectedFromHome === 'true' || // Always connect when redirected from home
-            (!hasDisconnected && disconnectedWallet !== walletToAutoConnect) // Normal auto-connect logic
-          )
-          
-          if (shouldAutoConnect) {
-            console.log('🚀 Auto-connecting to preferred wallet:', walletToAutoConnect)
-            
-            // Clear the flags after attempting connection
-            if (newEmbeddedWallet === 'true') {
-              sessionStorage.removeItem('newEmbeddedWallet')
-            }
-            if (redirectedFromHome === 'true') {
-              sessionStorage.removeItem('redirectedFromHome')
-            }
-            
-            connectToWallet(walletToAutoConnect).catch(error => {
-              console.error('❌ Auto-connection failed:', error)
-              // Don't throw error for auto-connection failures
-            })
-          } else {
-            console.log('⏸️ Skipping auto-connect - conditions not met')
-          }
-        }, 300) // Reduced timeout for faster connection
-      }
-
-      return wallets
-    }
-
-    detectAvailableWallets()
-  }, [mounted, hydrated])
-
-  // Helper function to connect to specific wallet type
-  const connectToWallet = async (type: 'phantom' | 'embedded') => {
-    if (!mounted || !hydrated) return
-
-    // Check if the requested wallet type is actually available
-    if (!availableWallets[type]) {
-      throw new Error(`${type === 'phantom' ? 'Phantom' : 'Embedded'} wallet not available`)
-    }
-
-    try {
-      setConnecting(true)
-      
-      if (type === 'embedded') {
-        const embeddedWallet = localStorage.getItem('embeddedWallet')
-        if (!embeddedWallet) throw new Error('Embedded wallet not found')
-        
-        const walletData = JSON.parse(embeddedWallet)
-        setPublicKey(new PublicKey(walletData.publicKey))
-        setConnected(true)
-        setWalletType('embedded')
-        setWallet({
-          adapter: {
-            name: 'Embedded Wallet',
-            icon: '/logo.png',
-            url: 'https://crossmint.com',
-            publicKey: new PublicKey(walletData.publicKey),
-            connected: true,
-            connecting: false,
-            disconnecting: false
-          },
-          embeddedWalletData: walletData
-        })
-        
-        // Save preference
-        localStorage.setItem('preferredWallet', 'embedded')
-        setPreferredWallet('embedded')
-        
-      } else if (type === 'phantom') {
-        // Double-check provider availability
-        if (!provider) {
-          console.error('Phantom provider not available')
-          throw new Error('Phantom wallet not found')
-        }
-        
-        const response = await provider.connect()
-        setPublicKey(response.publicKey)
-        setConnected(true)
-        setWalletType('phantom')
-        setWallet({
-          adapter: {
-            name: 'Phantom',
-            icon: 'https://phantom.app/img/phantom-logo.svg',
-            url: 'https://phantom.app',
-            publicKey: response.publicKey,
-            connected: true,
-            connecting: false,
-            disconnecting: false
-          }
-        })
-        
-        // Save preference
-        localStorage.setItem('preferredWallet', 'phantom')
-        setPreferredWallet('phantom')
-      }
-      
-      // Clear disconnect flags
-      sessionStorage.removeItem('hasDisconnected')
-      sessionStorage.removeItem('disconnectedWallet')
-      
-    } catch (error) {
-      console.error(`Failed to connect to ${type} wallet:`, error)
-      throw error
-    } finally {
-      setConnecting(false)
-    }
-  }
-
-  // Set up Phantom event listeners (only when hydrated)
-  useEffect(() => {
-    if (!mounted || !hydrated || !provider) return
+    if (!provider) return
 
     const handleConnect = (publicKey: PublicKey) => {
-      if (walletType !== 'phantom') return // Only handle if we're expecting Phantom connection
-      
-      console.log('Phantom wallet connected:', publicKey.toString())
+      console.log('Wallet connected:', publicKey.toString())
       setPublicKey(publicKey)
       setConnected(true)
       setConnecting(false)
       setDisconnecting(false)
-      setWalletType('phantom')
+      // Create wallet object for Jupiter Terminal compatibility
       setWallet({
         adapter: {
           name: 'Phantom',
@@ -311,31 +119,48 @@ export function WalletProvider({ children }: WalletProviderProps) {
     }
 
     const handleDisconnect = () => {
-      if (walletType !== 'phantom') return // Only handle if we're connected to Phantom
-      
-      console.log('Phantom wallet disconnected')
+      console.log('Wallet disconnected')
       setPublicKey(null)
       setConnected(false)
       setConnecting(false)
       setDisconnecting(false)
       setWallet(null)
-      setWalletType(null)
 
-      // Set wallet-specific disconnect flags
-      sessionStorage.setItem('justDisconnected', 'true')
-      sessionStorage.setItem('hasDisconnected', 'true')
-      sessionStorage.setItem('disconnectedWallet', 'phantom')
+      // Set flags to prevent auto-connect and redirect loop
+      if (typeof window !== 'undefined') {
+        sessionStorage.setItem('justDisconnected', 'true')
+        sessionStorage.setItem('hasDisconnected', 'true')
+      }
     }
 
     const handleAccountChanged = (publicKey: PublicKey | null) => {
-      if (walletType !== 'phantom') return
+      console.log('Account changed event:', { publicKey: publicKey?.toString() })
       
       if (publicKey) {
+        // Only update if we have a valid public key
         setPublicKey(publicKey)
         setConnected(true)
-        setWalletType('phantom')
+        // Update wallet object for Jupiter Terminal compatibility
+        setWallet({
+          adapter: {
+            name: 'Phantom',
+            icon: 'https://phantom.app/img/phantom-logo.svg',
+            url: 'https://phantom.app',
+            publicKey,
+            connected: true,
+            connecting: false,
+            disconnecting: false
+          }
+        })
       } else {
-        handleDisconnect()
+        // Don't immediately disconnect on null - check if wallet is still actually connected
+        // This prevents disconnection during transaction processing
+        if (provider && !provider.isConnected) {
+          console.log('Wallet actually disconnected, updating state')
+          handleDisconnect()
+        } else {
+          console.log('Received null publicKey but wallet still connected, ignoring')
+        }
       }
     }
 
@@ -343,78 +168,73 @@ export function WalletProvider({ children }: WalletProviderProps) {
     provider.on('disconnect', handleDisconnect)
     provider.on('accountChanged', handleAccountChanged)
 
+    // Check if already connected, but respect disconnect state
+    const hasDisconnected = sessionStorage.getItem('hasDisconnected')
+    console.log('Checking existing connection:', {
+      hasDisconnected,
+      isConnected: provider.isConnected,
+      hasPublicKey: !!provider.publicKey,
+      publicKey: provider.publicKey?.toString()
+    })
+    if (!hasDisconnected && provider.isConnected && provider.publicKey) {
+      console.log('Found existing connection, auto-connecting...')
+      handleConnect(provider.publicKey)
+    }
+
     return () => {
       provider.removeListener('connect', handleConnect)
       provider.removeListener('disconnect', handleDisconnect)
       provider.removeListener('accountChanged', handleAccountChanged)
     }
-  }, [mounted, hydrated, provider, walletType])
+  }, [provider])
 
-  // Connect function with optional wallet type
-  const connect = async (type?: 'phantom' | 'embedded') => {
-    if (!mounted || !hydrated) return
-
-    // If type specified, connect to that specific wallet
-    if (type) {
-      // Check availability before attempting connection
-      if (!availableWallets[type]) {
-        throw new Error(`${type === 'phantom' ? 'Phantom' : 'Embedded'} wallet not available`)
-      }
-      await connectToWallet(type)
-      return
+  // Connect function
+  const connect = async () => {
+    if (!provider) {
+      throw new Error('Phantom wallet not found! Please install Phantom wallet.')
     }
 
-    // If no type specified, use preferred wallet or show selection
-    if (preferredWallet && availableWallets[preferredWallet]) {
-      await connectToWallet(preferredWallet)
-    } else {
-      throw new Error('No wallet type specified and no preferred wallet available')
+    setConnecting(true)
+    setDisconnecting(false)
+    try {
+      // Clear any previous disconnect state when explicitly connecting
+      sessionStorage.removeItem('hasDisconnected')
+      
+      const response = await provider.connect()
+      setPublicKey(response.publicKey)
+      setConnected(true)
+      // Create wallet object for Jupiter Terminal compatibility
+      setWallet({
+        adapter: {
+          name: 'Phantom',
+          icon: 'https://phantom.app/img/phantom-logo.svg',
+          url: 'https://phantom.app',
+          publicKey: response.publicKey,
+          connected: true,
+          connecting: false,
+          disconnecting: false
+        }
+      })
+    } catch (error) {
+      console.error('Failed to connect to Phantom:', error)
+      throw error
+    } finally {
+      setConnecting(false)
     }
-  }
-
-  // Switch wallet function
-  const switchWallet = async (type: 'phantom' | 'embedded') => {
-    if (!mounted || !hydrated) return
-    if (!availableWallets[type]) {
-      throw new Error(`${type} wallet not available`)
-    }
-
-    // Disconnect current wallet first
-    if (connected) {
-      await disconnect()
-      // Small delay to ensure clean disconnect
-      await new Promise(resolve => setTimeout(resolve, 100))
-    }
-
-    // Connect to new wallet
-    await connectToWallet(type)
   }
 
   // Disconnect function
   const disconnect = async () => {
-    if (!mounted || !hydrated) return
+    if (!provider) return
 
     setDisconnecting(true)
     try {
-      if (walletType === 'embedded') {
-        // Don't remove embedded wallet data, just disconnect
-        sessionStorage.setItem('disconnectedWallet', 'embedded')
-      } else if (walletType === 'phantom' && provider) {
-        await provider.disconnect()
-        sessionStorage.setItem('disconnectedWallet', 'phantom')
-      }
-      
+      await provider.disconnect()
       setPublicKey(null)
       setConnected(false)
       setWallet(null)
-      setWalletType(null)
-      
-      // Set general disconnect flag
-      sessionStorage.setItem('hasDisconnected', 'true')
-      sessionStorage.setItem('justDisconnected', 'true')
-      
     } catch (error) {
-      console.error('Failed to disconnect wallet:', error)
+      console.error('Failed to disconnect from Phantom:', error)
     } finally {
       setDisconnecting(false)
     }
@@ -424,10 +244,6 @@ export function WalletProvider({ children }: WalletProviderProps) {
   const signTransaction = async <T extends Transaction | VersionedTransaction>(
     transaction: T
   ): Promise<T> => {
-    if (walletType === 'embedded') {
-      throw new Error('Embedded wallet auto-signing not yet implemented')
-    }
-    
     if (!provider) throw new Error('Phantom wallet not connected')
     return await provider.signTransaction(transaction)
   }
@@ -436,20 +252,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
   const signAllTransactions = async <T extends Transaction | VersionedTransaction>(
     transactions: T[]
   ): Promise<T[]> => {
-    if (walletType === 'embedded') {
-      throw new Error('Embedded wallet auto-signing not yet implemented')
-    }
-    
     if (!provider) throw new Error('Phantom wallet not connected')
     return await provider.signAllTransactions(transactions)
   }
 
   // Sign message
   const signMessage = async (message: Uint8Array) => {
-    if (walletType === 'embedded') {
-      throw new Error('Embedded wallet message signing not yet implemented')
-    }
-    
     if (!provider) throw new Error('Phantom wallet not connected')
     return await provider.signMessage(message)
   }
@@ -460,10 +268,6 @@ export function WalletProvider({ children }: WalletProviderProps) {
     connection: SolanaConnection,
     options?: any
   ): Promise<string> => {
-    if (walletType === 'embedded') {
-      throw new Error('Embedded wallet transaction sending not yet implemented')
-    }
-    
     if (!provider) throw new Error('Phantom wallet not connected')
     
     const signedTransaction = await provider.signTransaction(transaction)
@@ -482,18 +286,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
     connecting,
     disconnecting,
     wallet,
-    walletType,
-    mounted,
-    hydrated,
-    availableWallets,
-    preferredWallet,
     signTransaction,
     signAllTransactions,
     signMessage,
     sendTransaction,
     connect,
     disconnect,
-    switchWallet,
   }
 
   return (
@@ -522,6 +320,7 @@ interface ConnectionProviderProps {
 }
 
 function ConnectionProvider({ children }: ConnectionProviderProps) {
+  // Use our proxy-aware connection
   const connection = useMemo(() => createConnection('mainnet'), [])
   
   return (
