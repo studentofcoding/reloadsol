@@ -1759,7 +1759,7 @@ export default function PnLTracker() {
                         title="Click to view transaction on Solscan"
                       >
                         {/* Header: P&L and Action Buttons */}
-                        <div className="flex items-center justify-between mb-2 ml-5">
+                        <div className="flex items-center justify-between mb-2 ml-1">
                           <div className="flex items-center space-x-1">
                             <span className={`text-sm font-medium ${
                               record.pnlPercentage > 0 
@@ -1807,7 +1807,7 @@ export default function PnLTracker() {
                         </div>
 
                         {/* Token display */}
-                        <div className="flex items-center space-x-2 mb-2 ml-5">
+                        <div className="flex items-center space-x-2 mb-2 ml-1">
                           <div className="relative flex items-center">
                             <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
                               {record.logoURI ? (
@@ -1836,7 +1836,7 @@ export default function PnLTracker() {
                         </div>
 
                         {/* Buy Price Display */}
-                        <div className="text-xs text-gray-400 mb-1 ml-5">
+                        <div className="text-xs text-gray-400 mb-1 ml-1">
                           <span className="text-gray-500">Buy Price: </span>
                           <span className="text-gray-300">${record.buyPrice.toFixed(6)}</span>
                         </div>
