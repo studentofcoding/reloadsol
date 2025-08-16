@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useWallet, useConnection } from '@/components/WalletProvider'
-import PhantomWalletButton from '@/components/PhantomWalletButton'
+import WalletButton from '@/components/WalletButton'
 import RiskAnalysis from '@/components/RiskAnalysis'
 import TransactionResultModal from '@/components/TransactionResultModal'
 import { LAMPORTS_PER_SOL } from '@solana/web3.js'
@@ -547,7 +547,7 @@ export default function ChartPage() {
           {/* Buy Section */}
           <div className="flex items-center space-x-3">
             {!connected ? (
-              <PhantomWalletButton />
+              <WalletButton />
             ) : (
               <>
                 <div className="flex flex-col">

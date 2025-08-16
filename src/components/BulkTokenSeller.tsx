@@ -2,7 +2,7 @@
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { useWallet, useConnection } from '../components/WalletProvider'
-import PhantomWalletButton from './PhantomWalletButton'
+import WalletButton from './WalletButton'
 import TransactionResultModal from './TransactionResultModal'
 import TokenSkeleton from './TokenSkeleton'
 import ProgressiveTokenItem from './ProgressiveTokenItem'
@@ -1249,7 +1249,7 @@ export default function BulkTokenSeller() {
         <div className="flex justify-between items-center w-full">
           <h2 className="text-3xl font-bold text-white">Bulk Sell & Reload</h2>
           <div className="shrink-0">
-            <PhantomWalletButton />
+            <WalletButton />
           </div>
         </div>
       </div>

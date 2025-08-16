@@ -4,7 +4,7 @@ import React from 'react'
 import { usePrivy } from '@privy-io/react-auth'
 import { useWallet } from './WalletProvider'
 
-export default function PhantomWalletButton() {
+export default function WalletButton() {
   const { login, logout, ready, authenticated } = usePrivy()
   const { publicKey, connected } = useWallet()
 
