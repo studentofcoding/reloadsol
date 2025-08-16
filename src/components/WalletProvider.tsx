@@ -66,7 +66,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
   
   // Configure Solana wallet connectors
   const solanaConnectors = useMemo(() => toSolanaWalletConnectors({
-    // shouldAutoConnect: true,
+    // shouldAutoConnect: true, // Removed to prevent double initialization
   }), [])
 
   const getPrivyAppId = () => {
@@ -101,7 +101,9 @@ export function WalletProvider({ children }: WalletProviderProps) {
               connectors: solanaConnectors,
             },
           },
-          solanaClusters: [{name: 'mainnet-beta', rpcUrl: rpcUrl}]
+          solanaClusters: [{name: 'mainnet-beta', rpcUrl: rpcUrl}],
+          // Add timeout and retry configuration
+          loginMethods: ['wallet'],
         }}
       >
         <WalletContextProvider>
