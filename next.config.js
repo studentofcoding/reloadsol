@@ -47,7 +47,7 @@ const nextConfig = {
         'https://v2.reloadsol.xyz',      // Production
         'https://testing.reloadsol.xyz', // Testing/Staging
       ];
-
+  
       // Add development origins in non-production
       if (process.env.NODE_ENV !== 'production') {
         baseOrigins.push(
@@ -61,12 +61,13 @@ const nextConfig = {
           'http://127.0.0.1:4001',
         );
       }
-
+  
       return baseOrigins;
     };
-
+  
     const allowedOrigins = getAllowedOrigins();
-
+    const frameAncestorsDirective = allowedOrigins.map(origin => origin).join(' ');
+  
     return [
       {
         source: '/(.*)',
@@ -96,7 +97,7 @@ const nextConfig = {
               object-src 'none';
               base-uri 'self';
               form-action 'self';
-              frame-ancestors 'none';
+              frame-ancestors 'self' ${frameAncestorsDirective} https://auth.privy.io;
               child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org;
               worker-src 'self';
               manifest-src 'self';

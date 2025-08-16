@@ -69,10 +69,17 @@ export function WalletProvider({ children }: WalletProviderProps) {
     // shouldAutoConnect: true,
   }), [])
 
+  const getPrivyAppId = () => {
+    if (process.env.NODE_ENV === 'production') {
+      return process.env.PRIVY_APP_ID_PROD || process.env.NEXT_PUBLIC_PRIVY_APP_ID_PROD || 'cmc93cu77004xlb0n4uc72i27';
+    }
+    return process.env.PRIVY_APP_ID_DEV  || process.env.NEXT_PUBLIC_PRIVY_APP_ID_DEV || 'cmc93cu77004xlb0n4uc72i27';
+  };
+
   return (
     <ClientOnlyWrapper>
       <PrivyProvider
-        appId="cmc93cu77004xlb0n4uc72i27"
+        appId={getPrivyAppId()}
         config={{
           appearance: {
             walletChainType: 'solana-only',
