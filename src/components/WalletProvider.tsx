@@ -66,7 +66,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
   
   // Configure Solana wallet connectors
   const solanaConnectors = useMemo(() => toSolanaWalletConnectors({
-    shouldAutoConnect: true,
+    // shouldAutoConnect: true,
   }), [])
 
   return (
@@ -208,7 +208,8 @@ function WalletContextProvider({ children }: { children: React.ReactNode }) {
       setAuthError(null)
       
       console.log('🔄 Attempting wallet connection...')
-      console.log('Phantom detected:', typeof window !== 'undefined' && window.phantom?.solana?.isPhantom)
+      console.log('Environment:', process.env.NODE_ENV)
+      console.log('Domain:', typeof window !== 'undefined' ? window.location.origin : 'SSR')
       
       const result = await login({
         loginMethods: ['wallet'],
@@ -222,12 +223,12 @@ function WalletContextProvider({ children }: { children: React.ReactNode }) {
       
       // Enhanced error handling for specific cases
       if (error instanceof Error) {
-        if (error.message.includes('User rejected')) {
+        if (error.message.includes('403') || error.message.includes('Forbidden')) {
+          setAuthError('Domain not configured in Privy dashboard. Please contact support.')
+        } else if (error.message.includes('User rejected')) {
           setAuthError('Connection was cancelled by user')
         } else if (error.message.includes('Wallet not found')) {
           setAuthError('Phantom wallet not found. Please install Phantom extension.')
-        } else if (error.message.includes('Already connected')) {
-          setAuthError('Wallet is already connected')
         } else {
           setAuthError(`Connection failed: ${error.message}`)
         }
