@@ -1,18 +1,47 @@
 'use client'
 
-import React from 'react'
+import React, { useEffect } from 'react'
 import { usePrivy } from '@privy-io/react-auth'
 import { useWallet } from './WalletProvider'
 
+// Type declaration for Phantom wallet
+declare global {
+  interface Window {
+    phantom?: {
+      solana?: {
+        isPhantom?: boolean
+        connect?: () => Promise<{ publicKey: { toString: () => string } }>
+        disconnect?: () => Promise<void>
+        signTransaction?: (transaction: any) => Promise<any>
+        signAllTransactions?: (transactions: any[]) => Promise<any[]>
+        signMessage?: (message: Uint8Array) => Promise<{ signature: Uint8Array }>
+      }
+    }
+  }
+}
+
 export default function WalletButton() {
   const { login, logout, ready, authenticated } = usePrivy()
-  const { publicKey, connected } = useWallet()
+  const { publicKey, connected, connecting } = useWallet()
+
+  // Enhanced logging for debugging
+  useEffect(() => {
+    console.log('WalletButton State:', {
+      ready,
+      authenticated,
+      connected,
+      connecting,
+      hasPublicKey: !!publicKey,
+      phantomDetected: typeof window !== 'undefined' && window.phantom?.solana?.isPhantom
+    })
+  }, [ready, authenticated, connected, connecting, publicKey])
 
   if (connected && publicKey) {
     return (
       <div className="flex items-center space-x-3">
         <button
           onClick={async () => {
+            console.log('🔄 Disconnecting wallet...')
             await logout()
             window.location.href = '/'
           }}
@@ -29,15 +58,18 @@ export default function WalletButton() {
 
   return (
     <button
-      onClick={() => login({
-        loginMethods: ['wallet'],
-        walletChainType: 'solana-only',
-        disableSignup: false
-      })}
-      disabled={!ready}
+      onClick={() => {
+        console.log('🔄 Connect button clicked')
+        login({
+          loginMethods: ['wallet'],
+          walletChainType: 'solana-only',
+          disableSignup: false
+        })
+      }}
+      disabled={!ready || connecting}
       className={`
         flex items-center justify-center space-x-2 px-3 py-3 rounded-lg font-semibold transition-all duration-200 border mx-auto
-        ${!ready 
+        ${!ready || connecting
           ? 'bg-gray-600 text-gray-400 cursor-not-allowed border-gray-500' 
           : 'bg-white hover:bg-gray-100 text-black border-gray-300 shadow-lg hover:shadow-xl'
         }
@@ -47,6 +79,11 @@ export default function WalletButton() {
         <>
           <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
           <span>Loading...</span>
+        </>
+      ) : connecting ? (
+        <>
+          <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
+          <span>Connecting...</span>
         </>
       ) : (
         <>

@@ -54,7 +54,11 @@ const nextConfig = {
           'http://localhost:3000',
           'http://localhost:3001',
           'http://127.0.0.1:3000',
-          'http://127.0.0.1:3001'
+          'http://127.0.0.1:3001',
+          'http://localhost:4000',
+          'http://localhost:4001',
+          'http://127.0.0.1:4000',
+          'http://127.0.0.1:4001',
         );
       }
 
@@ -68,10 +72,6 @@ const nextConfig = {
         source: '/(.*)',
         headers: [
           {
-            key: 'X-Frame-Options',
-            value: 'DENY'
-          },
-          {
             key: 'X-Content-Type-Options',
             value: 'nosniff'
           },
@@ -84,30 +84,22 @@ const nextConfig = {
             value: 'geolocation=(), microphone=(), camera=()'
           },
           {
-            key: 'Access-Control-Allow-Origin',
-            value: allowedOrigins.join(', ')
-          },
-          {
-            key: 'Access-Control-Allow-Methods',
-            value: 'GET, POST, PUT, OPTIONS'
-          },
-          {
-            key: 'Access-Control-Allow-Headers',
-            value: 'Content-Type, Authorization, X-Requested-With, Origin'
-          },
-          {
             key: 'Content-Security-Policy',
             value: `
               default-src 'self';
-              script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com *.jup.ag *.simpleanalyticscdn.com;
+              script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com *.jup.ag *.simpleanalyticscdn.com https://challenges.cloudflare.com;
               style-src 'self' 'unsafe-inline' fonts.googleapis.com;
               font-src 'self' fonts.gstatic.com;
               img-src 'self' data: blob: https:;
-              connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com wss: https:;
-              frame-src 'self' https://auth.privy.io https://www.gmgn.cc https://gmgn.cc https://terminal.jup.ag/;
+              connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com https://auth.privy.io/ wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org https://*.rpc.privy.systems https://explorer-api.walletconnect.com wss: https:;
+              frame-src 'self' https://auth.privy.io https://www.gmgn.cc https://gmgn.cc https://terminal.jup.ag/ https://verify.walletconnect.com https://verify.walletconnect.org https://challenges.cloudflare.com;
               object-src 'none';
               base-uri 'self';
               form-action 'self';
+              frame-ancestors 'none';
+              child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org;
+              worker-src 'self';
+              manifest-src 'self';
             `.replace(/\s+/g, ' ').trim()
           }
         ]
