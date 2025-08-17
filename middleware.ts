@@ -18,19 +18,21 @@ export function middleware(request: NextRequest) {
   const origin = request.headers.get('origin');
   const response = NextResponse.next();
 
-  // Handle CORS for ALL routes (not just API routes)
-  if (origin && allowedOrigins.includes(origin)) {
-    response.headers.set('Access-Control-Allow-Origin', origin);
-  }
+  // Handle CORS for API routes
+  if (request.nextUrl.pathname.startsWith('/api/')) {
+    // Check if origin is allowed
+    if (origin && allowedOrigins.includes(origin)) {
+      response.headers.set('Access-Control-Allow-Origin', origin);
+    }
 
-  // Set CORS headers for all routes
-  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Origin');
-  response.headers.set('Access-Control-Max-Age', '86400'); // 24 hours
+    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Origin');
+    response.headers.set('Access-Control-Max-Age', '86400'); // 24 hours
 
-  // Handle preflight requests for all routes
-  if (request.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers: response.headers });
+    // Handle preflight requests
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { status: 200, headers: response.headers });
+    }
   }
 
   // Clone the request headers
