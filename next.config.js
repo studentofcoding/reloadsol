@@ -85,18 +85,6 @@ const nextConfig = {
             value: 'geolocation=(), microphone=(), camera=()'
           },
           {
-            key: 'Access-Control-Allow-Origin',
-            value: allowedOrigins.join(', ')
-          },
-          {
-            key: 'Access-Control-Allow-Methods',
-            value: 'GET, POST, PUT, OPTIONS'
-          },
-          {
-            key: 'Access-Control-Allow-Headers',
-            value: 'Content-Type, Authorization, X-Requested-With, Origin'
-          },
-          {
             key: 'Content-Security-Policy',
             value: `
               default-src 'self';
