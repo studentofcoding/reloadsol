@@ -6,6 +6,7 @@ export function middleware(request: NextRequest) {
   const allowedOrigins = [
     'https://v2.reloadsol.xyz',
     'https://testing.reloadsol.xyz',
+    'https://reloadsol.xyz',
     ...(process.env.NODE_ENV !== 'production' ? [
       'http://localhost:3000',
       'http://localhost:3001',

@@ -45,6 +45,7 @@ const nextConfig = {
     const getAllowedOrigins = () => {
       const baseOrigins = [
         'https://v2.reloadsol.xyz',      // Production
+        'https://reloadsol.xyz',
         'https://testing.reloadsol.xyz', // Testing/Staging
       ];
 
