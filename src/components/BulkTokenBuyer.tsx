@@ -2,13 +2,14 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { useWallet, useConnection } from '../components/WalletProvider'
+import { usePrivy, useSolanaWallets } from '@privy-io/react-auth'
+import { useConnection } from '@/components/WalletProvider'
 import WalletButton from './WalletButton'
 import TrendingTokens from './TrendingTokens'
 import TransactionResultModal from './TransactionResultModal'
 import TokenSkeleton from './TokenSkeleton'
 import RiskAnalysis from './RiskAnalysis'
-import { LAMPORTS_PER_SOL } from '@solana/web3.js'
+import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
 import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates, fetchUserTokensEfficient, setMetadataUpdateCallback, clearMetadataUpdateCallback, UserToken } from '@/utils/jupiter'
 import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS, getSolPriceUSD } from '@/utils/solana'
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
@@ -18,10 +19,25 @@ import { connection } from '../utils/connection'
 import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom'
 
 export default function BulkTokenBuyer() {
-  const { publicKey, signAllTransactions, connected } = useWallet()
+  // Use Privy hooks directly
+  const { ready, authenticated, user } = usePrivy()
+  const { wallets } = useSolanaWallets()
   const { connection } = useConnection()
   const { trackOperation } = useTradingData()
   const searchParams = useSearchParams()
+  
+  // Get the active Solana wallet
+  const activeWallet = wallets.length > 0 ? wallets[0] : null
+  const publicKey = activeWallet?.address ? new PublicKey(activeWallet.address) : null
+  const connected = ready && authenticated && !!activeWallet
+  
+  // Custom transaction signing function using Privy wallet
+  const signAllTransactions = useCallback(async (transactions: any[]) => {
+    if (!activeWallet || !activeWallet.signAllTransactions) {
+      throw new Error('Wallet not available for signing')
+    }
+    return await activeWallet.signAllTransactions(transactions)
+  }, [activeWallet])
   
   // Form state
   const [solAmount, setSolAmount] = useState<string>('0.1')
@@ -342,7 +358,7 @@ export default function BulkTokenBuyer() {
 
   // Handle form submission
   const handleBulkBuy = useCallback(async () => {
-    if (!connected || !publicKey || !signAllTransactions) {
+    if (!connected || !publicKey || !activeWallet) {
       setError('Please connect your wallet first')
       return
     }
@@ -499,7 +515,7 @@ export default function BulkTokenBuyer() {
     } finally {
       setIsLoading(false)
     }
-  }, [connected, publicKey, signAllTransactions, connection, solAmount, validMints, slippage, priorityFee])
+  }, [connected, publicKey, activeWallet, signAllTransactions, connection, solAmount, validMints, slippage, priorityFee])
 
   // Fetch wallet balance and user tokens
   useEffect(() => {
