@@ -100,6 +100,7 @@ export default function BulkTokenSeller() {
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({})
   const [isGettingQuotes, setIsGettingQuotes] = useState<boolean>(false)
   const [lastQuoteTime, setLastQuoteTime] = useState<number>(0)
+  const [showSettings, setShowSettings] = useState<boolean>(false) 
 
   const feeRates = getAllFeeRates()
 
@@ -1247,7 +1248,7 @@ export default function BulkTokenSeller() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex justify-between items-center w-full">
-          <h2 className="text-3xl font-bold text-white">Bulk Sell & Reload</h2>
+          <h2 className="text-3xl font-bold text-white">Sell Bulk & Reload your solana</h2>
           <div className="shrink-0">
             <PhantomWalletButton />
           </div>
@@ -1502,158 +1503,186 @@ export default function BulkTokenSeller() {
         {/* Settings and Summary */}
         {(selectedTokens.length > 0 || selectedZeroBalanceTokens.length > 0) && (
           <>
-            {/* Settings Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {/* Swap Provider */}
-              <div className="space-y-3">
-                <label htmlFor="swapProvider" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                  Swap Provider
-                </label>
-                <select
-                  id="swapProvider"
-                  value={swapProvider}
-                  onChange={(e) => setSwapProvider(e.target.value as 'jupiter' | 'gmgn')}
-                  className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
-                  disabled={isLoading}
-                >
-                  {PROVIDER_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value} className="bg-gray-800">
-                      {option.icon} {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Slippage */}
-              <div className="space-y-3">
-                <label htmlFor="slippage" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                  Slippage Tolerance
-                </label>
-                <select
-                  id="slippage"
-                  value={slippage}
-                  onChange={(e) => setSlippage(Number(e.target.value))}
-                  className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
-                  disabled={isLoading}
-                >
-                  {SLIPPAGE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value} className="bg-gray-800">
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Priority Fee */}
-              <div className="space-y-3">
-                <label htmlFor="priorityFee" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                  Priority Fee
-                </label>
-                <select
-                  id="priorityFee"
-                  value={priorityFee}
-                  onChange={(e) => setPriorityFee(Number(e.target.value))}
-                  className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
-                  disabled={isLoading}
-                >
-                  {PRIORITY_FEE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value} className="bg-gray-800">
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Quote Controls */}
-            <div className="bg-gray-800 border border-gray-600 rounded-xl p-4">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+            {/* Collapsible Settings Section */}
+            <div className="bg-gray-800 border border-gray-600 rounded-xl">
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="w-full p-4 flex items-center justify-between text-left hover:bg-gray-700 transition-colors rounded-xl"
+              >
                 <div>
-                  <h3 className="text-lg font-semibold text-white mb-1">
-                    {swapProvider.charAt(0).toUpperCase() + swapProvider.slice(1)} Quotes
+                  <h3 className="text-sm font-semibold text-white mb-1">
+                    Trading Settings & Quotes
                   </h3>
-                  <p className="text-gray-400 text-sm">
-                    {Object.keys(quotes).length} quote{Object.keys(quotes).length !== 1 ? 's' : ''} loaded
-                    {lastQuoteTime > 0 && (
-                      <span className="ml-2">• Last updated {Math.floor((Date.now() - lastQuoteTime) / 1000)}s ago</span>
-                    )}
-                  </p>
                 </div>
-                <div className="flex items-center space-x-3">
-                  {/* Auto-quote toggle */}
-                  <label className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={autoQuote}
-                      onChange={(e) => setAutoQuote(e.target.checked)}
-                      className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
-                    />
-                    <span className="text-sm text-gray-300">Auto-quote (10s)</span>
-                  </label>
-                  
-                  {/* Manual quote button */}
-                  <button
-                    onClick={fetchAllQuotes}
-                    disabled={isGettingQuotes || selectedTokens.length === 0}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm flex items-center space-x-2"
-                  >
-                    {isGettingQuotes ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        <span>Getting Quotes...</span>
-                      </>
-                    ) : (
-                      <>
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                        <span>Get Quotes</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
+                <svg 
+                  className={`w-5 h-5 text-gray-400 transition-transform duration-200 ${
+                    showSettings ? 'rotate-180' : ''
+                  }`} 
+                  fill="none" 
+                  stroke="currentColor" 
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
               
-              {/* Quote Summary */}
-              {Object.keys(quotes).length > 0 && (
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
-                  <div className="text-center p-3 bg-gray-700 rounded-lg">
-                    <div className="font-medium text-white">Total SOL Output</div>
-                    <div className="text-green-400 font-bold text-lg">
-                      {selectedTokens.reduce((total, token) => {
-                        const quote = getQuoteForToken(token.mintAddress)
-                        if (quote && isQuoteValid(quote)) {
-                          return total + (parseFloat(quote.outAmount) / 1e9) // Convert lamports to SOL
-                        }
-                        return total
-                      }, 0).toFixed(6)} SOL
+              {showSettings && (
+                <div className="px-4 pb-4 space-y-6">
+                  {/* Settings Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    {/* Swap Provider */}
+                    <div className="space-y-3">
+                      <label htmlFor="swapProvider" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                        Swap Provider
+                      </label>
+                      <select
+                        id="swapProvider"
+                        value={swapProvider}
+                        onChange={(e) => setSwapProvider(e.target.value as 'jupiter' | 'gmgn')}
+                        className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-xl text-white focus:bg-gray-600 focus:border-gray-400 transition-all duration-200"
+                        disabled={isLoading}
+                      >
+                        {PROVIDER_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value} className="bg-gray-700">
+                            {option.icon} {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Slippage */}
+                    <div className="space-y-3">
+                      <label htmlFor="slippage" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                        Slippage Tolerance
+                      </label>
+                      <select
+                        id="slippage"
+                        value={slippage}
+                        onChange={(e) => setSlippage(Number(e.target.value))}
+                        className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-xl text-white focus:bg-gray-600 focus:border-gray-400 transition-all duration-200"
+                        disabled={isLoading}
+                      >
+                        {SLIPPAGE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value} className="bg-gray-700">
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Priority Fee */}
+                    <div className="space-y-3">
+                      <label htmlFor="priorityFee" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
+                        Priority Fee
+                      </label>
+                      <select
+                        id="priorityFee"
+                        value={priorityFee}
+                        onChange={(e) => setPriorityFee(Number(e.target.value))}
+                        className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-xl text-white focus:bg-gray-600 focus:border-gray-400 transition-all duration-200"
+                        disabled={isLoading}
+                      >
+                        {PRIORITY_FEE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value} className="bg-gray-700">
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                   </div>
-                  <div className="text-center p-3 bg-gray-700 rounded-lg">
-                    <div className="font-medium text-white">Avg Price Impact</div>
-                    <div className="text-yellow-400 font-bold text-lg">
-                      {selectedTokens.length > 0 ? (
-                        selectedTokens.reduce((total, token) => {
-                          const quote = getQuoteForToken(token.mintAddress)
-                          if (quote && isQuoteValid(quote)) {
-                            return total + quote.priceImpact
-                          }
-                          return total
-                        }, 0) / selectedTokens.filter(token => {
-                          const quote = getQuoteForToken(token.mintAddress)
-                          return quote && isQuoteValid(quote)
-                        }).length
-                      ).toFixed(2) : '0.00'}%
+
+                  {/* Quote Controls */}
+                  <div className="border-t border-gray-600 pt-4">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
+                      <div>
+                        <h4 className="text-md font-semibold text-white mb-1">
+                          {swapProvider.charAt(0).toUpperCase() + swapProvider.slice(1)} Quotes
+                        </h4>
+                        <p className="text-gray-400 text-sm">
+                          {Object.keys(quotes).length} quote{Object.keys(quotes).length !== 1 ? 's' : ''} loaded
+                          {lastQuoteTime > 0 && (
+                            <span className="ml-2">• Last updated {Math.floor((Date.now() - lastQuoteTime) / 1000)}s ago</span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex items-center space-x-3">
+                        {/* Auto-quote toggle */}
+                        <label className="flex items-center space-x-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={autoQuote}
+                            onChange={(e) => setAutoQuote(e.target.checked)}
+                            className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2"
+                          />
+                          <span className="text-sm text-gray-300">Auto-quote (5s)</span>
+                        </label>
+                        
+                        {/* Manual quote button */}
+                        <button
+                          onClick={fetchAllQuotes}
+                          disabled={isGettingQuotes || selectedTokens.length === 0}
+                          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white rounded-lg transition-colors text-sm flex items-center space-x-2"
+                        >
+                          {isGettingQuotes ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                              <span>Getting Quotes...</span>
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                              </svg>
+                              <span>Get Quotes</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-center p-3 bg-gray-700 rounded-lg">
-                    <div className="font-medium text-white">Valid Quotes</div>
-                    <div className="text-blue-400 font-bold text-lg">
-                      {selectedTokens.filter(token => {
-                        const quote = getQuoteForToken(token.mintAddress)
-                        return quote && isQuoteValid(quote)
-                      }).length}/{selectedTokens.length}
-                    </div>
+                    
+                    {/* Quote Summary */}
+                    {Object.keys(quotes).length > 0 && (
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+                        <div className="text-center p-3 bg-gray-700 rounded-lg">
+                          <div className="font-medium text-white">Total SOL Output</div>
+                          <div className="text-green-400 font-bold text-lg">
+                            {selectedTokens.reduce((total, token) => {
+                              const quote = getQuoteForToken(token.mintAddress)
+                              if (quote && isQuoteValid(quote)) {
+                                return total + (parseFloat(quote.outAmount) / 1e9) // Convert lamports to SOL
+                              }
+                              return total
+                            }, 0).toFixed(6)} SOL
+                          </div>
+                        </div>
+                        <div className="text-center p-3 bg-gray-700 rounded-lg">
+                          <div className="font-medium text-white">Avg Price Impact</div>
+                          <div className="text-yellow-400 font-bold text-lg">
+                            {selectedTokens.length > 0 ? (
+                              selectedTokens.reduce((total, token) => {
+                                const quote = getQuoteForToken(token.mintAddress)
+                                if (quote && isQuoteValid(quote)) {
+                                  return total + quote.priceImpact
+                                }
+                                return total
+                              }, 0) / selectedTokens.filter(token => {
+                                const quote = getQuoteForToken(token.mintAddress)
+                                return quote && isQuoteValid(quote)
+                              }).length
+                            ).toFixed(2) : '0.00'}%
+                          </div>
+                        </div>
+                        <div className="text-center p-3 bg-gray-700 rounded-lg">
+                          <div className="font-medium text-white">Valid Quotes</div>
+                          <div className="text-blue-400 font-bold text-lg">
+                            {selectedTokens.filter(token => {
+                              const quote = getQuoteForToken(token.mintAddress)
+                              return quote && isQuoteValid(quote)
+                            }).length}/{selectedTokens.length}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1661,64 +1690,77 @@ export default function BulkTokenSeller() {
 
             {/* Action Buttons */}
             <div className="flex flex-col md:flex-row gap-4">
-              {/* Sell (with optional close) */}
-              <button
-                onClick={handleBulkSell}
-                disabled={isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)}
-                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
-                  isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)
-                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                    : 'bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl'
-                }`}
-              >
-                {isLoading ? (
-                  <div className="flex items-center justify-center space-x-3">
-                    <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
-                    <span>Processing...</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center space-x-2">
-                    <span>
-                      {selectedTokens.length > 0 && selectedZeroBalanceTokens.length > 0
-                        ? `Sell ${selectedTokens.length} & Close ${tokensToClose} Accounts`
-                        : selectedTokens.length > 0
-                        ? `Sell ${selectedTokens.length} Token${selectedTokens.length !== 1 ? 's' : ''} ${tokensToClose > 0 ? `& Close ${tokensToClose}` : ''}`
-                        : `Close ${selectedZeroBalanceTokens.length} Account${selectedZeroBalanceTokens.length !== 1 ? 's' : ''}`
-                      }
-                    </span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
-                    </svg>
-                  </div>
-                )}
-              </button>
+              {/* Show Sell button only when there are sellable tokens selected */}
+              {selectedTokens.length > 0 && (
+                <button
+                  onClick={handleBulkSell}
+                  disabled={isLoading}
+                  className={`${selectedZeroBalanceTokens.length > 0 ? 'md:w-3/4' : 'w-full'} w-full py-4 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
+                    isLoading
+                      ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                      : 'bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl'
+                  }`}
+                >
+                  {isLoading ? (
+                    <div className="flex items-center justify-center space-x-3">
+                      <div className="w-5 h-5 border-2 border-gray-400 border-t-black rounded-full animate-spin"></div>
+                      <span>Processing...</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center space-x-2">
+                      <span>
+                        {(() => {
+                          const totalSolOutput = selectedTokens.reduce((total, token) => {
+                            const quote = getQuoteForToken(token.mintAddress)
+                            if (quote && isQuoteValid(quote)) {
+                              return total + (parseFloat(quote.outAmount) / 1e9)
+                            }
+                            return total
+                          }, 0)
+                          
+                          const tokenText = selectedTokens.length === 1 ? 'token' : `${selectedTokens.length} tokens`
+                          
+                          return totalSolOutput > 0 
+                            ? `Sell & close ${tokenText} for ${totalSolOutput.toFixed(4)} SOL`
+                            : `Sell & close ${tokenText}`
+                        })()} 
+                      </span>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
+                      </svg>
+                    </div>
+                  )}
+                </button>
+              )}
 
-              {/* Close Only */}
-              <button
-                onClick={handleCloseOnly}
-                disabled={isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)}
-                className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
-                  isLoading || (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0)
-                    ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-                    : 'bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg hover:shadow-xl'
-                }`}
-              >
-                {isLoading ? (
-                  <div className="flex items-center justify-center space-x-3">
-                    <div className="w-5 h-5 border-2 border-yellow-300 border-t-white rounded-full animate-spin"></div>
-                    <span>Processing...</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center space-x-2">
-                    <span>
-                      Close {selectedTokens.length + selectedZeroBalanceTokens.length} Account{(selectedTokens.length + selectedZeroBalanceTokens.length) !== 1 ? 's' : ''}
-                    </span>
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </div>
-                )}
-              </button>
+              {/* Close Only - Show only when there are zero-balance tokens to close */}
+              {selectedZeroBalanceTokens.length > 0 && (
+                <button
+                  onClick={handleCloseOnly}
+                  disabled={isLoading}
+                  className={`${selectedTokens.length === 0 ? 'w-full' : 'md:w-1/4 w-full'} py-4 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
+                    isLoading
+                      ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                      : 'bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg hover:shadow-xl'
+                  }`}
+                >
+                  {isLoading ? (
+                    <div className="flex items-center justify-center space-x-3">
+                      <div className="w-5 h-5 border-2 border-yellow-300 border-t-white rounded-full animate-spin"></div>
+                      <span>Processing...</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center space-x-2">
+                      <span>
+                        Directly Close {selectedTokens.length + selectedZeroBalanceTokens.length} Token{(selectedTokens.length + selectedZeroBalanceTokens.length) !== 1 ? 's' : ''}
+                      </span>
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </div>
+                  )}
+                </button>
+              )}
             </div>
           </>
         )}
