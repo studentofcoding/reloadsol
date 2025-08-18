@@ -97,7 +97,6 @@ const nextConfig = {
               object-src 'none';
               base-uri 'self';
               form-action 'self';
-              frame-ancestors 'self' https://auth.privy.io;
               child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org;
               worker-src 'self';
               manifest-src 'self';
