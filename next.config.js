@@ -67,7 +67,6 @@ const nextConfig = {
     };
 
     const allowedOrigins = getAllowedOrigins();
-    const frameAncestorsDirective = allowedOrigins.map(origin => origin).join(' ');
 
     return [
       {
@@ -85,24 +84,24 @@ const nextConfig = {
             key: 'Permissions-Policy',
             value: 'geolocation=(), microphone=(), camera=()'
           },
-          {
-            key: 'Content-Security-Policy',
-            value: `
-              default-src 'self';
-              script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com *.jup.ag *.simpleanalyticscdn.com https://challenges.cloudflare.com;
-              style-src 'self' 'unsafe-inline' fonts.googleapis.com;
-              font-src 'self' fonts.gstatic.com;
-              img-src 'self' data: blob: https:;
-              connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com https://auth.privy.io/ wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org https://*.rpc.privy.systems https://explorer-api.walletconnect.com wss: https:;
-              frame-src 'self' https://auth.privy.io/ https://www.gmgn.cc https://gmgn.cc https://terminal.jup.ag/ https://verify.walletconnect.com https://verify.walletconnect.org https://challenges.cloudflare.com;
-              object-src 'none';
-              base-uri 'self';
-              form-action 'self';
-              child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org;
-              worker-src 'self';
-              manifest-src 'self';
-            `.replace(/\s+/g, ' ').trim()
-          }
+          // {
+          //   key: 'Content-Security-Policy',
+          //   value: `
+          //     default-src 'self';
+          //     script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com *.jup.ag *.simpleanalyticscdn.com https://challenges.cloudflare.com;
+          //     style-src 'self' 'unsafe-inline' fonts.googleapis.com;
+          //     font-src 'self' fonts.gstatic.com;
+          //     img-src 'self' data: blob: https:;
+          //     connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com https://auth.privy.io/ wss://relay.walletconnect.com wss://relay.walletconnect.org wss://www.walletlink.org https://*.rpc.privy.systems https://explorer-api.walletconnect.com wss: https:;
+          //     frame-src 'self' https://auth.privy.io/ https://www.gmgn.cc https://gmgn.cc https://terminal.jup.ag/ https://verify.walletconnect.com https://verify.walletconnect.org https://challenges.cloudflare.com;
+          //     object-src 'none';
+          //     base-uri 'self';
+          //     form-action 'self';
+          //     child-src https://auth.privy.io https://verify.walletconnect.com https://verify.walletconnect.org;
+          //     worker-src 'self';
+          //     manifest-src 'self';
+          //   `.replace(/\s+/g, ' ').trim()
+          // }
         ]
       },
       {
