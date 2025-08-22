@@ -1,3 +1,5 @@
+import { TokenMetrics } from './anomaly-detection';
+
 class CorrelationAnalyzer {
   calculatePearsonCorrelation(x: number[], y: number[]): number {
     const n = Math.min(x.length, y.length);
@@ -18,7 +20,7 @@ class CorrelationAnalyzer {
     beta: number;
     independenceScore: number;
   } {
-    const tokenReturns = this.calculateReturns(tokenData.map(d => d.mcap));
+    const tokenReturns = this.calculateReturns(tokenData.map(d => d.marketCap));
     const solReturns = this.calculateReturns(solPrices);
     
     const correlation = this.calculatePearsonCorrelation(tokenReturns, solReturns);
@@ -51,3 +53,5 @@ class CorrelationAnalyzer {
     return values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
   }
 }
+
+export default CorrelationAnalyzer;

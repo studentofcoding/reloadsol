@@ -471,6 +471,137 @@ export default function McapTrackerPage() {
           </>
         )}
 
+        {/* PnL Time Windows Analysis */}
+        {stats && stats.pnlTimeWindows && (
+          <div className="bg-gray-800 rounded-lg p-6 mb-8">
+            <h3 className="text-xl font-bold mb-4">PnL Time Windows Analysis</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {Object.entries(stats.pnlTimeWindows)
+                .sort(([a], [b]) => {
+                  const aNum = parseFloat(a.replace('%', ''))
+                  const bNum = parseFloat(b.replace('%', ''))
+                  return aNum - bNum
+                })
+                .map(([threshold, data]) => {
+                  const thresholdNum = parseFloat(threshold.replace('%', ''))
+                  const getThresholdColor = (num: number) => {
+                    if (num >= 1000) return 'text-purple-400'
+                    if (num >= 500) return 'text-pink-400'
+                    if (num >= 200) return 'text-yellow-400'
+                    if (num >= 100) return 'text-green-400'
+                    return 'text-blue-400'
+                  }
+                  
+                  const formatTimeToReach = (hours: number) => {
+                    if (hours < 1) return `${Math.round(hours * 60)}m`
+                    if (hours < 24) return `${hours.toFixed(1)}h`
+                    const days = Math.floor(hours / 24)
+                    const remainingHours = Math.round(hours % 24)
+                    return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
+                  }
+
+                  return (
+                    <div key={threshold} className="bg-gray-700 rounded-lg p-4">
+                      <h4 className={`text-lg font-semibold mb-3 ${getThresholdColor(thresholdNum)}`}>
+                        {threshold} Threshold
+                      </h4>
+                      
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Tokens Reached:</span>
+                          <span className="text-white font-medium">{data.count}</span>
+                        </div>
+                        
+                        {data.avgTimeToReach > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Avg Time:</span>
+                            <span className="text-white">{formatTimeToReach(data.avgTimeToReach)}</span>
+                          </div>
+                        )}
+                        
+                        {data.peakHours && data.peakHours.length > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Peak Hours:</span>
+                            <span className="text-white text-xs">
+                              {data.peakHours.slice(0, 3).join(', ')}
+                              {data.peakHours.length > 3 && '...'}
+                            </span>
+                          </div>
+                        )}
+                        
+                        {/* Time Distribution Visualization */}
+                        {Object.keys(data.timeDistribution).length > 0 && (
+                          <div className="mt-3">
+                            <span className="text-gray-400 text-xs mb-2 block">Hourly Distribution:</span>
+                            <div className="grid grid-cols-6 gap-1">
+                              {Array.from({ length: 24 }, (_, hour) => {
+                                const count = data.timeDistribution[hour.toString()] || 0
+                                const maxCount = Math.max(...Object.values(data.timeDistribution))
+                                const intensity = maxCount > 0 ? count / maxCount : 0
+                                const opacity = Math.max(0.1, intensity)
+                                
+                                return (
+                                  <div
+                                    key={hour}
+                                    className={`h-2 rounded-sm ${getThresholdColor(thresholdNum).replace('text-', 'bg-').replace('-400', '-500')}`}
+                                    style={{ opacity }}
+                                    title={`${hour}:00 - ${count} tokens`}
+                                  />
+                                )
+                              })}
+                            </div>
+                            <div className="flex justify-between text-xs text-gray-500 mt-1">
+                              <span>0h</span>
+                              <span>12h</span>
+                              <span>24h</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })}
+            </div>
+            
+            {/* Summary Stats */}
+            <div className="mt-6 pt-4 border-t border-gray-700">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-400">
+                    {Object.values(stats.pnlTimeWindows).reduce((sum, data) => sum + data.count, 0)}
+                  </div>
+                  <div className="text-gray-400">Total Threshold Breaches</div>
+                </div>
+                
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-400">
+                    {Object.entries(stats.pnlTimeWindows)
+                      .filter(([_, data]) => data.count > 0)
+                      .length}
+                  </div>
+                  <div className="text-gray-400">Active Thresholds</div>
+                </div>
+                
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-purple-400">
+                    {(() => {
+                      const avgTimes = Object.values(stats.pnlTimeWindows)
+                        .filter(data => data.avgTimeToReach > 0)
+                        .map(data => data.avgTimeToReach)
+                      
+                      if (avgTimes.length === 0) return 'N/A'
+                      
+                      const overallAvg = avgTimes.reduce((sum, time) => sum + time, 0) / avgTimes.length
+                      return overallAvg < 24 ? `${overallAvg.toFixed(1)}h` : `${(overallAvg / 24).toFixed(1)}d`
+                    })()} 
+                  </div>
+                  <div className="text-gray-400">Avg Time to Threshold</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Filters and Controls */}
         <div className="bg-gray-800 rounded-lg p-6 mb-8">
           <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
@@ -659,13 +790,6 @@ export default function McapTrackerPage() {
                       {formatPercentage(token.solPerToken.growth)}
                     </div>
                   </div>
-                  
-                  <div className="text-center lg:text-left">
-                    <div className="text-sm text-gray-400">Last Updated</div>
-                    <div className="text-lg font-semibold text-white">
-                      {formatDistanceToNow(new Date(token.last_updated_at), { addSuffix: true })}
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -738,6 +862,13 @@ export default function McapTrackerPage() {
                       </span>
                     </div>
                   )}
+
+                  <div className="flex justify-end">
+                    <span className="text-gray-400">Last Updated:</span>
+                    <span className="ml-2 text-white">
+                      {formatDistanceToNow(new Date(token.last_updated_at), { addSuffix: true })}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
