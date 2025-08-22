@@ -18,8 +18,8 @@ setInterval(() => {
   const toDelete: string[] = []
 
   for (const [id, conn] of Array.from(activeConnections.entries())) {
-    // Clean up connections older than 5 minutes or inactive connections
-    if (now - conn.createdAt > 5 * 60 * 1000 || !conn.isActive) {
+    // ✅ NEW: More aggressive cleanup - 2 minutes instead of 5
+    if (now - conn.createdAt > 2 * 60 * 1000 || !conn.isActive) {
       console.log(`🧹 Cleaning up connection: ${id} (age: ${Math.round((now - conn.createdAt) / 1000)}s, active: ${conn.isActive})`)
       cleanupConnection(id)
       toDelete.push(id)
@@ -27,7 +27,7 @@ setInterval(() => {
   }
 
   toDelete.forEach(id => activeConnections.delete(id))
-}, 60000)
+}, 30000) // ✅ NEW: Run cleanup every 30 seconds instead of 60
 
 // Enhanced cleanup function
 function cleanupConnection(connectionId: string): void {
@@ -101,14 +101,23 @@ export async function GET(request: NextRequest) {
 
   console.log(`📡 New SSE connection for wallet: ${walletAddress.slice(0, 8)}...`)
 
-  // Clean up any existing connections for this wallet to prevent duplicates
+  // ✅ NEW: Enhanced cleanup with delay to prevent race conditions
+  const connectionsToCleanup: string[] = []
   for (const [id, conn] of Array.from(activeConnections.entries())) {
     if (conn.walletAddress === walletAddress) {
       console.log(`🔄 Cleaning up existing connection for wallet: ${id}`)
-      cleanupConnection(id)
-      activeConnections.delete(id)
+      connectionsToCleanup.push(id)
     }
   }
+
+  // Clean up existing connections
+  connectionsToCleanup.forEach(id => {
+    cleanupConnection(id)
+    activeConnections.delete(id)
+  })
+
+  // ✅ NEW: Small delay to ensure cleanup completes
+  await new Promise(resolve => setTimeout(resolve, 100))
 
   const stream = new ReadableStream({
     start(controller) {

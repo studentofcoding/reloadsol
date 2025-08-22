@@ -82,6 +82,14 @@ class TradingTracker {
   private maxReconnectAttempts = 5
   private readonly API_HOST = process.env.API_HOST;
 
+  // ✅ NEW: Connection state management
+  private connectionState: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = 'disconnected'
+  private currentWallet: string | null = null
+  private reconnectTimeout: NodeJS.Timeout | null = null
+  private connectionDebounceTimeout: NodeJS.Timeout | null = null
+  private lastConnectionAttempt = 0
+  private readonly CONNECTION_DEBOUNCE_MS = 1000 // Prevent rapid reconnections
+
   constructor() {
     this.setupOnlineOfflineHandlers()
     this.clearOldLocalStorageData()
@@ -407,11 +415,37 @@ class TradingTracker {
    * Set up Server-Sent Events connection for real-time updates
    */
   private setupSSEConnection(walletAddress: string) {
-    if (typeof window === 'undefined' || this.sseConnection) return
+    if (typeof window === 'undefined') return
+
+    // ✅ NEW: Prevent duplicate connections for same wallet
+    if (this.currentWallet === walletAddress &&
+      (this.connectionState === 'connected' || this.connectionState === 'connecting')) {
+      console.log('SSE connection already exists for wallet:', walletAddress.slice(0, 8) + '...')
+      return
+    }
+
+    // ✅ NEW: Debounce connection attempts
+    const now = Date.now()
+    if (now - this.lastConnectionAttempt < this.CONNECTION_DEBOUNCE_MS) {
+      console.log('SSE connection debounced, waiting...')
+      if (this.connectionDebounceTimeout) {
+        clearTimeout(this.connectionDebounceTimeout)
+      }
+      this.connectionDebounceTimeout = setTimeout(() => {
+        this.setupSSEConnection(walletAddress)
+      }, this.CONNECTION_DEBOUNCE_MS)
+      return
+    }
+
+    this.lastConnectionAttempt = now
 
     try {
       // Clean up any existing connection first
       this.cleanupSSEConnection()
+
+      // ✅ NEW: Set connection state
+      this.connectionState = 'connecting'
+      this.currentWallet = walletAddress
 
       // Use window.location.origin for client-side connections to ensure we connect to the same domain
       const baseUrl = typeof window !== 'undefined'
@@ -426,8 +460,9 @@ class TradingTracker {
 
       // Add connection timeout with more aggressive cleanup
       const connectionTimeout = setTimeout(() => {
-        if (this.sseConnection?.readyState === EventSource.CONNECTING) {
+        if (this.connectionState === 'connecting') {
           console.warn('SSE connection timeout, cleaning up and falling back to polling')
+          this.connectionState = 'disconnected'
           this.cleanupSSEConnection()
           this.startPolling(walletAddress)
         }
@@ -435,6 +470,7 @@ class TradingTracker {
 
       this.sseConnection.onopen = () => {
         console.log('📡 SSE connection established successfully')
+        this.connectionState = 'connected'
         this.reconnectAttempts = 0
         clearTimeout(connectionTimeout)
       }
@@ -446,6 +482,7 @@ class TradingTracker {
           switch (data.type) {
             case 'connected':
               console.log('✅ SSE connected for wallet:', data.wallet?.slice(0, 8) + '...', 'Connection ID:', data.connectionId)
+              this.connectionState = 'connected'
               break
 
             case 'trade_update':
@@ -456,7 +493,10 @@ class TradingTracker {
               break
 
             case 'keepalive':
-              console.log('💓 SSE keepalive received')
+              // ✅ NEW: Only log keepalive in debug mode to reduce noise
+              if (process.env.NODE_ENV === 'development') {
+                console.log('💓 SSE keepalive received')
+              }
               break
 
             default:
@@ -480,12 +520,14 @@ class TradingTracker {
             2: 'CLOSED'
           }[readyState])
 
-          // If connection was closed by server or network error
+          // ✅ NEW: Better state management
           if (readyState === EventSource.CLOSED) {
             console.warn('SSE connection was closed, attempting reconnection')
+            this.connectionState = 'disconnected'
             this.handleSSEReconnect(walletAddress)
-          } else if (readyState === EventSource.CONNECTING) {
+          } else if (readyState === EventSource.CONNECTING && this.connectionState === 'connecting') {
             console.warn('SSE connection failed during connection attempt')
+            this.connectionState = 'disconnected'
             this.cleanupSSEConnection()
             this.handleSSEReconnect(walletAddress)
           }
@@ -494,6 +536,7 @@ class TradingTracker {
 
     } catch (error) {
       console.error('Failed to establish SSE connection:', error)
+      this.connectionState = 'disconnected'
       // Fall back to polling immediately on setup failure
       this.startPolling(walletAddress)
     }
@@ -503,47 +546,38 @@ class TradingTracker {
    * Handle SSE reconnection with exponential backoff
    */
   private handleSSEReconnect(walletAddress: string) {
+    // ✅ NEW: Clear any existing reconnect timeout
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout)
+      this.reconnectTimeout = null
+    }
+
     // Clean up current connection first
     this.cleanupSSEConnection()
 
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.warn('Max SSE reconnection attempts reached, falling back to polling only')
+      this.connectionState = 'disconnected'
       this.startPolling(walletAddress)
       return
     }
 
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000)
     this.reconnectAttempts++
+    this.connectionState = 'reconnecting'
 
     console.log(`Reconnecting SSE in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`)
 
-    setTimeout(() => {
+    this.reconnectTimeout = setTimeout(() => {
+      this.reconnectTimeout = null
       // Check if we should still attempt reconnection
       if (this.subscribers.has(walletAddress) && this.subscribers.get(walletAddress)!.size > 0) {
         this.setupSSEConnection(walletAddress)
       } else {
         console.log('No active subscribers, skipping SSE reconnection')
+        this.connectionState = 'disconnected'
       }
     }, delay)
-  }
-
-  /**
-   * Start polling as fallback when SSE fails
-   */
-  private startPolling(walletAddress: string) {
-    if (this.pollingInterval) return // Already polling
-
-    console.log('🔄 Starting polling fallback for wallet updates')
-
-    this.pollingInterval = setInterval(async () => {
-      try {
-        const records = await this.getWalletRecords(walletAddress)
-        this.updateLocalCache(walletAddress, records)
-        this.notifySubscribers(walletAddress)
-      } catch (error) {
-        console.error('Polling error:', error)
-      }
-    }, 30000) // Poll every 30 seconds
   }
 
   /**
@@ -561,6 +595,61 @@ class TradingTracker {
       // Close the connection
       this.sseConnection.close()
       this.sseConnection = null
+    }
+
+    // ✅ NEW: Clean up timeouts and reset state
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout)
+      this.reconnectTimeout = null
+    }
+
+    if (this.connectionDebounceTimeout) {
+      clearTimeout(this.connectionDebounceTimeout)
+      this.connectionDebounceTimeout = null
+    }
+
+    this.connectionState = 'disconnected'
+    this.currentWallet = null
+  }
+
+  /**
+   * Start polling as fallback when SSE fails
+   */
+  private startPolling(walletAddress: string) {
+    // Prevent multiple polling intervals
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval)
+      this.pollingInterval = null
+    }
+
+    console.log('🔄 Starting polling fallback for wallet updates')
+
+    this.pollingInterval = setInterval(async () => {
+      try {
+        // Only poll if we still have active subscribers for this wallet
+        if (this.subscribers.has(walletAddress) && this.subscribers.get(walletAddress)!.size > 0) {
+          const records = await this.getWalletRecords(walletAddress, false) // Force fresh data
+          this.updateLocalCache(walletAddress, records)
+          this.notifySubscribers(walletAddress)
+        } else {
+          // No active subscribers, stop polling
+          console.log('No active subscribers, stopping polling')
+          this.stopPolling()
+        }
+      } catch (error) {
+        console.error('Polling error:', error)
+      }
+    }, 30000) // Poll every 30 seconds
+  }
+
+  /**
+   * Stop polling
+   */
+  private stopPolling() {
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval)
+      this.pollingInterval = null
+      console.log('🛑 Stopped polling')
     }
   }
 
@@ -580,8 +669,10 @@ class TradingTracker {
     const cachedRecords = this.cache.get(walletAddress) || []
     callback(cachedRecords)
 
-    // Set up SSE connection for real-time updates (with fallback to polling)
-    this.setupSSEConnection(walletAddress)
+    // ✅ NEW: Only setup connection if not already connected to this wallet
+    if (this.currentWallet !== walletAddress || this.connectionState === 'disconnected') {
+      this.setupSSEConnection(walletAddress)
+    }
 
     // Return unsubscribe function
     return () => {
@@ -592,7 +683,11 @@ class TradingTracker {
         // Clean up if no more subscribers
         if (walletSubscribers.size === 0) {
           this.subscribers.delete(walletAddress)
-          this.cleanupSSEConnection()
+
+          // ✅ NEW: Only cleanup if this was the current wallet
+          if (this.currentWallet === walletAddress) {
+            this.cleanupSSEConnection()
+          }
 
           // Stop polling if no subscribers
           if (this.pollingInterval && this.subscribers.size === 0) {
