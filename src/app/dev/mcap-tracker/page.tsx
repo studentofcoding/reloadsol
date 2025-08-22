@@ -100,6 +100,7 @@ export default function McapTrackerPage() {
   const [isChartLoading, setIsChartLoading] = useState(false)
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(new Set())
   const [isPnlTimeWindowsExpanded, setIsPnlTimeWindowsExpanded] = useState(true)
+  const [activeMcapFilter, setActiveMcapFilter] = useState<string | null>(null)
 
   const [analyticsData, setAnalyticsData] = useState<Record<string, EnrichedTokenData>>({})
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
@@ -123,7 +124,6 @@ export default function McapTrackerPage() {
     excludeZeroPnl: false
   })
 
-
   const fetchTokens = useCallback(async (page = 1) => {
     setLoading(true)
     setError('')
@@ -141,8 +141,30 @@ export default function McapTrackerPage() {
       if (filters.search) params.append('search', filters.search)
       if (filters.minGrowth) params.append('minGrowth', filters.minGrowth)
       if (filters.maxGrowth) params.append('maxGrowth', filters.maxGrowth)
-      if (filters.minMcap) params.append('minMcap', filters.minMcap)
-      if (filters.maxMcap) params.append('maxMcap', filters.maxMcap)
+      
+      // MCap range filtering takes precedence over manual MCap filters
+      if (activeMcapFilter) {
+        const mcapRanges = {
+          'under50k': { min: 0, max: 49999 },
+          'from51to100k': { min: 50000, max: 100000 },
+          'from101to200k': { min: 100001, max: 200000 },
+          'from201to500k': { min: 200001, max: 500000 },
+          'from501kto1M': { min: 500001, max: 1000000 },
+          'over1M': { min: 1000001, max: Number.MAX_SAFE_INTEGER }
+        }
+        
+        const range = mcapRanges[activeMcapFilter as keyof typeof mcapRanges]
+        if (range) {
+          params.append('minMcap', range.min.toString())
+          if (range.max !== Number.MAX_SAFE_INTEGER) {
+            params.append('maxMcap', range.max.toString())
+          }
+        }
+      } else {
+        // Only use manual MCap filters if no range filter is active
+        if (filters.minMcap) params.append('minMcap', filters.minMcap)
+        if (filters.maxMcap) params.append('maxMcap', filters.maxMcap)
+      }
       
       const response = await fetch(`/api/mcap-tracking?${params}`)
       const data: ApiResponse = await response.json()
@@ -159,11 +181,11 @@ export default function McapTrackerPage() {
     } finally {
       setLoading(false)
     }
-  }, [filters, pagination.limit])
+  }, [filters, pagination.limit, activeMcapFilter])
 
   useEffect(() => {
     fetchTokens(1)
-  }, [filters])
+  }, [filters, activeMcapFilter])
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -261,9 +283,22 @@ export default function McapTrackerPage() {
     return 'text-green-400'
   }
 
-  useEffect(() => {
-    fetchTokens(1)
-  }, [filters])
+  const handleMcapRangeFilter = (rangeKey: string) => {
+    if (activeMcapFilter === rangeKey) {
+      // If clicking the same filter, clear it
+      setActiveMcapFilter(null)
+    } else {
+      // Set new filter and clear any conflicting manual MCap filters
+      setActiveMcapFilter(rangeKey)
+      setFilters(prev => ({
+        ...prev,
+        minMcap: '',
+        maxMcap: ''
+      }))
+    }
+    // Reset to first page when filtering
+    setPagination(prev => ({ ...prev, page: 1 }))
+  }
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -662,9 +697,24 @@ export default function McapTrackerPage() {
 
             {/* MCap Range Analysis */}
             <div className="bg-gray-800 rounded-lg p-6 mb-8">
-              <h3 className="text-xl font-bold mb-4">MCap Range Analysis</h3>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xl font-bold">MCap Range Analysis</h3>
+                {activeMcapFilter && (
+                  <button
+                    onClick={() => setActiveMcapFilter(null)}
+                    className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded-md text-sm transition-colors"
+                  >
+                    Clear Filter
+                  </button>
+                )}
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-gray-700 rounded-lg p-4">
+                <button
+                  onClick={() => handleMcapRangeFilter('under50k')}
+                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                    activeMcapFilter === 'under50k' ? 'ring-2 ring-blue-400 bg-gray-600' : ''
+                  }`}
+                >
                   <h4 className="text-lg font-semibold text-blue-400 mb-2">&lt;50K MCap</h4>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
@@ -688,8 +738,14 @@ export default function McapTrackerPage() {
                       </span>
                     </div>
                   </div>
-                </div>
-                <div className="bg-gray-700 rounded-lg p-4">
+                </button>
+                
+                <button
+                  onClick={() => handleMcapRangeFilter('from51to100k')}
+                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                    activeMcapFilter === 'from51to100k' ? 'ring-2 ring-green-400 bg-gray-600' : ''
+                  }`}
+                >
                   <h4 className="text-lg font-semibold text-green-400 mb-2">50K-100K MCap</h4>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
@@ -713,8 +769,14 @@ export default function McapTrackerPage() {
                       </span>
                     </div>
                   </div>
-                </div>
-                <div className="bg-gray-700 rounded-lg p-4">
+                </button>
+                
+                <button
+                  onClick={() => handleMcapRangeFilter('from101to200k')}
+                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                    activeMcapFilter === 'from101to200k' ? 'ring-2 ring-purple-400 bg-gray-600' : ''
+                  }`}
+                >
                   <h4 className="text-lg font-semibold text-purple-400 mb-2">101K-200K MCap</h4>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
@@ -738,8 +800,14 @@ export default function McapTrackerPage() {
                       </span>
                     </div>
                   </div>
-                </div>
-                <div className="bg-gray-700 rounded-lg p-4">
+                </button>
+                
+                <button
+                  onClick={() => handleMcapRangeFilter('from201to500k')}
+                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                    activeMcapFilter === 'from201to500k' ? 'ring-2 ring-yellow-400 bg-gray-600' : ''
+                  }`}
+                >
                   <h4 className="text-lg font-semibold text-yellow-400 mb-2">201K-500K MCap</h4>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
@@ -763,8 +831,14 @@ export default function McapTrackerPage() {
                       </span>
                     </div>
                   </div>
-                </div>
-                <div className="bg-gray-700 rounded-lg p-4">
+                </button>
+                
+                <button
+                  onClick={() => handleMcapRangeFilter('from501kto1M')}
+                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                    activeMcapFilter === 'from501kto1M' ? 'ring-2 ring-orange-400 bg-gray-600' : ''
+                  }`}
+                >
                   <h4 className="text-lg font-semibold text-orange-400 mb-2">501K-1M MCap</h4>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
@@ -788,8 +862,14 @@ export default function McapTrackerPage() {
                       </span>
                     </div>
                   </div>
-                </div>
-                <div className="bg-gray-700 rounded-lg p-4">
+                </button>
+                
+                <button
+                  onClick={() => handleMcapRangeFilter('over1M')}
+                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                    activeMcapFilter === 'over1M' ? 'ring-2 ring-pink-400 bg-gray-600' : ''
+                  }`}
+                >
                   <h4 className="text-lg font-semibold text-pink-400 mb-2">&gt;1M MCap</h4>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
@@ -813,7 +893,7 @@ export default function McapTrackerPage() {
                       </span>
                     </div>
                   </div>
-                </div>
+                </button>
               </div>
             </div>
           </>
