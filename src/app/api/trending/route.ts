@@ -210,7 +210,8 @@ async function sendDiscordNotification(
   },
   refreshType: 'full' | 'incremental',
   forceSend: boolean = false,
-  newlyAddedTokens: TransformedToken[] = []
+  newlyAddedTokens: TransformedToken[] = [],
+  mcapTrackingResults?: Map<string, any>
 ) {
   console.log('🔔 Discord notification check started', {
     enabled: ENABLE_DISCORD_NOTIFICATIONS,
@@ -297,21 +298,6 @@ async function sendDiscordNotification(
 
     console.log(`📊 Processing ${sortedTokens.length} tokens for Discord notification`);
 
-    // Track MCap for tokens in the tracking range (30k-2M)
-    const tokensInTrackingRange = sortedTokens.filter(token => isInTrackingRange(token.mcap));
-    let mcapTrackingResults = new Map();
-
-    if (tokensInTrackingRange.length > 0) {
-      console.log(`Tracking MCap for ${tokensInTrackingRange.length} tokens in range 30k-2M`);
-      mcapTrackingResults = await bulkTrackTokenMcaps(
-        tokensInTrackingRange.map(token => ({
-          address: token.token_address,
-          symbol: token.token_symbol,
-          mcap: token.mcap
-        }))
-      );
-    }
-
     // Create category fields for embed format with size validation
     const categoryFields = await Promise.all(categories.map(async cat => {
       const tokens = sortedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 10);
@@ -345,7 +331,8 @@ async function sendDiscordNotification(
         const riskDisplay = formatDetailedRiskForDiscord(token, riskResult);
 
         // Get MCap tracking info
-        const mcapTracking = mcapTrackingResults.get(token.token_address);
+        const trackingResults = mcapTrackingResults || new Map();
+        const mcapTracking = trackingResults.get(token.token_address);
         const mcapDisplay = mcapTracking
           ? getMcapDisplayString(mcapTracking)
           : `MCap: $${token.mcap.toLocaleString()}`;
@@ -390,7 +377,7 @@ async function sendDiscordNotification(
       embeds: [
         {
           title: ` 🧪 Trending Token Update (${refreshType})`,
-          description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults.size} tokens tracked for growth`,
+          description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults?.size || 0} tokens tracked for growth`,
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
           fields,
@@ -1078,6 +1065,29 @@ async function fetchAndUpdateCache(
       return Math.abs(b.change_1h || 0) - Math.abs(a.change_1h || 0);
     });
 
+    // Track MCap for tokens in the tracking range (30k-2M)
+    const tokensInTrackingRange = tokenArray.filter(token => isInTrackingRange(token.mcap));
+    let mcapTrackingResults: Map<string, any> = new Map(); // Initialize at function scope
+
+    if (tokensInTrackingRange.length > 0) {
+      console.log(`🎯 Tracking MCap for ${tokensInTrackingRange.length} tokens in range 30k-2M`);
+      try {
+        mcapTrackingResults = await bulkTrackTokenMcaps(
+          tokensInTrackingRange.map(token => ({
+            address: token.token_address,
+            symbol: token.token_symbol,
+            mcap: token.mcap
+          }))
+        );
+        console.log(`✅ MCap tracking completed for ${mcapTrackingResults.size} tokens`);
+      } catch (error) {
+        console.error('❌ Error in MCap tracking:', error);
+        // Continue execution even if MCap tracking fails
+      }
+    } else {
+      console.log('ℹ️ No tokens in MCap tracking range (30k-2M)');
+    }
+
     // Only send notification if this is a scheduled run or forced notification
     // Regular frontend API calls will no longer trigger notifications
     const shouldSendNotification =
@@ -1092,7 +1102,8 @@ async function fetchAndUpdateCache(
         stats,
         needsFullRefresh ? 'full' : 'incremental',
         forceSendNotification,
-        newlyAddedTokens
+        newlyAddedTokens,
+        mcapTrackingResults
       );
     } else {
       console.log('Skipping Discord notification - not on schedule');

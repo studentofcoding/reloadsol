@@ -274,6 +274,12 @@ export async function trackTokenMcap(
   tokenSymbol: string,
   currentMcap: number
 ): Promise<McapTrackingResult> {
+  // Validate input data
+  if (!currentMcap || currentMcap <= 0) {
+    console.warn('Invalid MCap value for tracking:', { tokenAddress, currentMcap })
+    return { isFirstTime: true, currentMcap: 0 }
+  }
+
   try {
     // Normalize MCap to integer
     const normalizedCurrentMcap = normalizeMarketCap(currentMcap)
@@ -358,14 +364,65 @@ export async function trackTokenMcap(
         return { isFirstTime: true, currentMcap: normalizedCurrentMcap }
       }
       throw fetchErr
-     }
+    }
 
     const currentTime = new Date().toISOString()
+
+    // Prevent too frequent updates
+    if (existingRecord) {
+      const timeSinceLastUpdate = new Date().getTime() - new Date(existingRecord.last_updated_at).getTime()
+      const minUpdateInterval = 60000 // 1 minute minimum
+
+      if (timeSinceLastUpdate < minUpdateInterval) {
+        // Return cached data
+        return {
+          isFirstTime: false,
+          firstMcap: existingRecord.first_mcap,
+          currentMcap: existingRecord.current_mcap,
+          growthPercent: existingRecord.mcap_growth_percent,
+          formattedGrowth: formatGrowthPercent(existingRecord.mcap_growth_percent),
+          firstSeenAt: existingRecord.first_seen_at
+        }
+      }
+    }
+
+    // In trackTokenMcap function, add minimum change threshold
+    if (existingRecord) {
+      const mcapDifference = Math.abs(normalizedCurrentMcap - existingRecord.current_mcap)
+      const changeThreshold = existingRecord.current_mcap * 0.001 // 0.1% minimum change
+
+      if (mcapDifference < changeThreshold) {
+        // Skip update if change is too small
+        return {
+          isFirstTime: false,
+          firstMcap: existingRecord.first_mcap,
+          currentMcap: existingRecord.current_mcap,
+          growthPercent: existingRecord.mcap_growth_percent,
+          formattedGrowth: formatGrowthPercent(existingRecord.mcap_growth_percent),
+          firstSeenAt: existingRecord.first_seen_at
+        }
+      }
+    }
 
     if (existingRecord) {
       // Token exists, update current MCap
       const previousGrowthPercent = existingRecord.mcap_growth_percent
       const growthPercent = ((normalizedCurrentMcap - existingRecord.first_mcap) / existingRecord.first_mcap) * 100
+
+      // 🔍 DEBUG: Log zero PnL cases
+      if (Math.abs(growthPercent) < 0.01) {
+        console.log('🔍 ZERO PNL DEBUG:', {
+          tokenAddress,
+          tokenSymbol,
+          firstMcap: existingRecord.first_mcap,
+          currentMcap: normalizedCurrentMcap,
+          growthPercent,
+          firstSeenAt: existingRecord.first_seen_at,
+          lastUpdatedAt: existingRecord.last_updated_at,
+          timeSinceFirstSeen: new Date().getTime() - new Date(existingRecord.first_seen_at).getTime(),
+          mcapDifference: normalizedCurrentMcap - existingRecord.first_mcap
+        })
+      }
 
       const updatedRecord: McapSnapshot = {
         ...existingRecord,
