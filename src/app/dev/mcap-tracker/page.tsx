@@ -171,32 +171,45 @@ export default function McapTrackerPage() {
 
   // Move analytics hooks BEFORE any early returns
   const fetchAnalyticsForTokens = useCallback(async (tokenAddresses: string[]) => {
-    if (tokenAddresses.length === 0) return
+  if (tokenAddresses.length === 0) return;
+  
+  // tokenAddresses is already the correct format
+  
+  try {
+    const response = await fetch('/api/analytics/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        tokenAddresses,
+        maxAge: 60 // Only recent data
+      })
+    });
     
-    setAnalyticsLoading(true)
-    try {
-      const enrichedData: Record<string, EnrichedTokenData> = {}
-      
-      await Promise.all(
-        tokenAddresses.map(async (address) => {
-          try {
-            const enriched = await getTokenWithAnalytics(address)
-            if (enriched) {
-              enrichedData[address] = enriched
-            }
-          } catch (error) {
-            console.warn(`Failed to fetch analytics for ${address}:`, error)
-          }
-        })
-      )
-      
-      setAnalyticsData(prev => ({ ...prev, ...enrichedData }))
-    } catch (error) {
-      console.error('Failed to fetch analytics:', error)
-    } finally {
-      setAnalyticsLoading(false)
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status}`);
     }
-  }, [])
+    
+    const result = await response.json();
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Analytics request failed');
+    }
+    
+    // Update analytics data state
+    const newAnalyticsData: Record<string, EnrichedTokenData> = {};
+    result.data.forEach((token: EnrichedTokenData) => {
+      newAnalyticsData[token.token_address] = token;
+    });
+    
+    setAnalyticsData(prev => ({ ...prev, ...newAnalyticsData }));
+    
+  } catch (error) {
+    console.error('Failed to fetch analytics for tokens:', error);
+    // Don't throw here to prevent breaking the UI
+  }
+}, []);
 
   const toggleAnalytics = (tokenAddress: string) => {
     setExpandedAnalytics(prev => ({
