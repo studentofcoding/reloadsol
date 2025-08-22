@@ -127,8 +127,8 @@ export async function GET(request: NextRequest) {
       // 30-day PnL summary calculation
       const thirtyDaysAgo = new Date()
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-      
-      const recentTokens = allData.filter(item => 
+
+      const recentTokens = allData.filter(item =>
         new Date(item.first_seen_at) >= thirtyDaysAgo
       )
 
@@ -139,12 +139,12 @@ export async function GET(request: NextRequest) {
         date.setDate(date.getDate() - i)
         const dayStart = new Date(date.setHours(0, 0, 0, 0))
         const dayEnd = new Date(date.setHours(23, 59, 59, 999))
-        
+
         const dayTokens = allData.filter(item => {
           const tokenDate = new Date(item.first_seen_at)
           return tokenDate >= dayStart && tokenDate <= dayEnd
         })
-        
+
         const dayStats = {
           date: dayStart.toISOString().split('T')[0],
           tokensAdded: dayTokens.length,
@@ -154,7 +154,7 @@ export async function GET(request: NextRequest) {
           gainers: dayTokens.filter(item => item.mcap_growth_percent > 0).length,
           losers: dayTokens.filter(item => item.mcap_growth_percent < 0).length
         }
-        
+
         dailyBreakdown.push(dayStats)
       }
 
@@ -222,6 +222,66 @@ export async function GET(request: NextRequest) {
         success: true,
         message: `Cleaned up MCap records older than ${days} days`
       })
+    }
+
+    // New refetch action to get current MCap and update tracking
+    if (action === 'refetch' && tokenAddress) {
+      try {
+        // Fetch current price and market cap from trending API
+        const trendingResponse = await fetch(`${process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/trending/search?query=${tokenAddress}`)
+
+        if (!trendingResponse.ok) {
+          throw new Error('Failed to fetch current token data')
+        }
+
+        const trendingData = await trendingResponse.json()
+        const tokenData = Array.isArray(trendingData) ? trendingData.find(t => t.id === tokenAddress) : null
+
+        if (!tokenData || !tokenData.mcap) {
+          return NextResponse.json({
+            success: false,
+            error: 'Token not found or no market cap data available'
+          }, { status: 404 })
+        }
+
+        // Get token symbol from database if not provided
+        let symbol = tokenSymbol || 'UNKNOWN'
+        if (!symbol) {
+          const { data: existingRecord } = await supabase
+            .from('token_mcap_tracking')
+            .select('token_symbol')
+            .eq('token_address', tokenAddress)
+            .single()
+
+          symbol = existingRecord?.token_symbol || tokenData.symbol || 'UNKNOWN'
+        }
+
+        // Track the updated MCap
+        const result = await trackTokenMcap(tokenAddress, symbol, tokenData.mcap)
+        const displayString = getMcapDisplayString(result)
+
+        return NextResponse.json({
+          success: true,
+          tracking: result,
+          display: displayString,
+          inRange: isInTrackingRange(tokenData.mcap),
+          currentMcap: tokenData.mcap,
+          currentPrice: tokenData.price || 0,
+          tokenData: {
+            symbol: tokenData.symbol,
+            name: tokenData.name,
+            price: tokenData.price,
+            mcap: tokenData.mcap,
+            volume24h: tokenData.volume24h
+          }
+        })
+      } catch (error) {
+        console.error('Error refetching MCap data:', error)
+        return NextResponse.json({
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to refetch MCap data'
+        }, { status: 500 })
+      }
     }
 
     return NextResponse.json({

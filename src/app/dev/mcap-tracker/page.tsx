@@ -88,6 +88,7 @@ export default function McapTrackerPage() {
   const [stats, setStats] = useState<ApiResponse['stats'] | null>(null)
   const [expandedChart, setExpandedChart] = useState<string | null>(null)
   const [isChartLoading, setIsChartLoading] = useState(false)
+  const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(new Set())
   
   const [pagination, setPagination] = useState({
     page: 1,
@@ -184,13 +185,65 @@ export default function McapTrackerPage() {
     return percent >= 0 ? '📈' : '📉'
   }
 
-  const handleChartToggle = (tokenAddress: string) => {
+  const handleChartToggle = async (tokenAddress: string) => {
     if (expandedChart === tokenAddress) {
       setExpandedChart(null)
       setIsChartLoading(false)
     } else {
       setExpandedChart(tokenAddress)
       setIsChartLoading(true)
+      
+      // Refetch current MCap data when opening chart
+      await refetchTokenMcap(tokenAddress)
+    }
+  }
+
+  const refetchTokenMcap = async (tokenAddress: string) => {
+    if (refetchingTokens.has(tokenAddress)) return
+    
+    setRefetchingTokens(prev => new Set(prev).add(tokenAddress))
+    
+    try {
+      const response = await fetch(`/api/mcap-tracking?action=refetch&token=${tokenAddress}`)
+      const data = await response.json()
+      
+      if (data.success) {
+        // Update the token in the current list with new data
+        setTokens(prevTokens => 
+          prevTokens.map(token => {
+            if (token.token_address === tokenAddress) {
+              const solPriceUSD = stats?.solPriceUSD || 1
+              return {
+                ...token,
+                current_mcap: data.currentMcap,
+                mcap_growth_percent: data.tracking.growthPercent || token.mcap_growth_percent,
+                last_updated_at: new Date().toISOString(),
+                solPerToken: {
+                  first: token.first_mcap / solPriceUSD,
+                  current: data.currentMcap / solPriceUSD,
+                  growth: ((data.currentMcap / solPriceUSD) - (token.first_mcap / solPriceUSD)) / (token.first_mcap / solPriceUSD) * 100
+                }
+              }
+            }
+            return token
+          })
+        )
+        
+        // Refresh the full data to update stats
+        await fetchTokens(pagination.page)
+        
+        console.log(`MCap refetched for ${tokenAddress}:`, data.display)
+      } else {
+        console.error('Failed to refetch MCap:', data.error)
+      }
+    } catch (error) {
+      console.error('Error refetching MCap:', error)
+    } finally {
+      setRefetchingTokens(prev => {
+        const newSet = new Set(prev)
+        newSet.delete(tokenAddress)
+        return newSet
+      })
     }
   }
 
@@ -558,10 +611,15 @@ export default function McapTrackerPage() {
                       </span>
                       <button
                         onClick={() => handleChartToggle(token.token_address)}
-                        className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors"
-                        title="Toggle Chart"
+                        disabled={refetchingTokens.has(token.token_address)}
+                        className={`px-2 py-1 text-white text-xs rounded transition-colors ${
+                          refetchingTokens.has(token.token_address)
+                            ? 'bg-yellow-600 hover:bg-yellow-700'
+                            : 'bg-green-600 hover:bg-green-700'
+                        }`}
+                        title={refetchingTokens.has(token.token_address) ? 'Refetching MCap...' : 'Toggle Chart & Refetch MCap'}
                       >
-                        📈
+                        {refetchingTokens.has(token.token_address) ? '🔄' : '📈'}
                       </button>
                     </div>
                     <p className="text-sm text-gray-400 font-mono truncate">{token.token_address}</p>
