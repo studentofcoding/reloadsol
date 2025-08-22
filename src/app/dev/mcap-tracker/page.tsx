@@ -52,6 +52,12 @@ interface ApiResponse {
     avgGrowthExcludingZero: number
     totalMcap: number
     solPriceUSD: number
+    pnlTimeWindows: Record<string, {
+      count: number
+      timeDistribution: Record<string, number>
+      peakHours: string[]
+      avgTimeToReach: number
+    }>
     mcapRangeAnalysis: {
       under50k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }
       under200k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }

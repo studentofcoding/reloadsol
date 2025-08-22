@@ -89,6 +89,59 @@ export async function GET(request: NextRequest) {
       const avgGrowthExcludingZero = nonZeroTokens.length > 0 ?
         nonZeroTokens.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / nonZeroTokens.length : 0
 
+      // PnL Time Window Analysis
+      const pnlThresholds = [50, 100, 200, 500, 1000, 2000, 5000]
+      const pnlTimeWindows: Record<string, {
+        count: number
+        timeDistribution: Record<string, number>
+        peakHours: string[]
+        avgTimeToReach: number
+      }> = {}
+
+      pnlThresholds.forEach(threshold => {
+        const tokensAboveThreshold = allData.filter(item => item.mcap_growth_percent >= threshold)
+
+        // Time distribution analysis (24-hour format)
+        const hourlyDistribution: Record<string, number> = {}
+        for (let hour = 0; hour < 24; hour++) {
+          hourlyDistribution[hour.toString().padStart(2, '0')] = 0
+        }
+
+        let totalTimeToReach = 0
+        let validTimeCalculations = 0
+
+        tokensAboveThreshold.forEach(token => {
+          // Analyze when the token first reached this threshold
+          const firstSeenDate = new Date(token.first_seen_at)
+          const lastUpdatedDate = new Date(token.last_updated_at)
+
+          // Use last_updated_at as the time when threshold was reached
+          const reachedHour = lastUpdatedDate.getHours()
+          hourlyDistribution[reachedHour.toString().padStart(2, '0')]++
+
+          // Calculate time to reach threshold (in hours)
+          const timeDiff = (lastUpdatedDate.getTime() - firstSeenDate.getTime()) / (1000 * 60 * 60)
+          if (timeDiff >= 0 && timeDiff <= 168) { // Within a week
+            totalTimeToReach += timeDiff
+            validTimeCalculations++
+          }
+        })
+
+        // Find peak hours (top 3 hours with most occurrences)
+        const sortedHours = Object.entries(hourlyDistribution)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 3)
+          .filter(([, count]) => count > 0)
+          .map(([hour]) => `${hour}:00`)
+
+        pnlTimeWindows[`PnL > ${threshold}%`] = {
+          count: tokensAboveThreshold.length,
+          timeDistribution: hourlyDistribution,
+          peakHours: sortedHours,
+          avgTimeToReach: validTimeCalculations > 0 ? totalTimeToReach / validTimeCalculations : 0
+        }
+      })
+
       // MCap-based analysis
       const under50k = allData.filter(item => item.current_mcap < 50000)
       const under200k = allData.filter(item => item.current_mcap < 200000)
@@ -179,6 +232,7 @@ export async function GET(request: NextRequest) {
         avgGrowthExcludingZero,
         totalMcap: allData.reduce((sum, item) => sum + item.current_mcap, 0),
         solPriceUSD,
+        pnlTimeWindows, // Add the new PnL time window analysis
         mcapRangeAnalysis,
         thirtyDaysSummary: {
           totalTokensAdded: recentTokens.length,
