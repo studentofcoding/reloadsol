@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react'
 import { formatDistanceToNow } from 'date-fns'
+import { getTokenWithAnalytics, EnrichedTokenData } from '@/utils/data-aggregation'
 
 interface McapTrackingData {
   token_address: string
@@ -95,6 +96,10 @@ export default function McapTrackerPage() {
   const [expandedChart, setExpandedChart] = useState<string | null>(null)
   const [isChartLoading, setIsChartLoading] = useState(false)
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(new Set())
+
+  const [analyticsData, setAnalyticsData] = useState<Record<string, EnrichedTokenData>>({})
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [expandedAnalytics, setExpandedAnalytics] = useState<Record<string, boolean>>({})
   
   const [pagination, setPagination] = useState({
     page: 1,
@@ -113,6 +118,7 @@ export default function McapTrackerPage() {
     maxMcap: '',
     excludeZeroPnl: false
   })
+
 
   const fetchTokens = useCallback(async (page = 1) => {
     setLoading(true)
@@ -162,6 +168,83 @@ export default function McapTrackerPage() {
     
     return () => clearInterval(interval)
   }, [fetchTokens, pagination.page])
+
+  // Move analytics hooks BEFORE any early returns
+  const fetchAnalyticsForTokens = useCallback(async (tokenAddresses: string[]) => {
+    if (tokenAddresses.length === 0) return
+    
+    setAnalyticsLoading(true)
+    try {
+      const enrichedData: Record<string, EnrichedTokenData> = {}
+      
+      await Promise.all(
+        tokenAddresses.map(async (address) => {
+          try {
+            const enriched = await getTokenWithAnalytics(address)
+            if (enriched) {
+              enrichedData[address] = enriched
+            }
+          } catch (error) {
+            console.warn(`Failed to fetch analytics for ${address}:`, error)
+          }
+        })
+      )
+      
+      setAnalyticsData(prev => ({ ...prev, ...enrichedData }))
+    } catch (error) {
+      console.error('Failed to fetch analytics:', error)
+    } finally {
+      setAnalyticsLoading(false)
+    }
+  }, [])
+
+  const toggleAnalytics = (tokenAddress: string) => {
+    setExpandedAnalytics(prev => ({
+      ...prev,
+      [tokenAddress]: !prev[tokenAddress]
+    }))
+  }
+
+  const getAnomalyColor = (anomalyType?: string) => {
+    if (!anomalyType) return 'text-gray-400'
+    if (anomalyType === 'high') return 'text-red-400'
+    if (anomalyType === 'low') return 'text-blue-400'
+    return 'text-yellow-400'
+  }
+
+  const getMomentumColor = (momentum?: number) => {
+    if (momentum === undefined || momentum === null) return 'text-gray-400'
+    if (momentum > 0.1) return 'text-green-400'
+    if (momentum < -0.1) return 'text-red-400'
+    return 'text-yellow-400'
+  }
+
+  const getRiskColor = (riskScore?: number) => {
+    if (riskScore === undefined || riskScore === null) return 'text-gray-400'
+    if (riskScore > 0.7) return 'text-red-400'
+    if (riskScore > 0.4) return 'text-yellow-400'
+    return 'text-green-400'
+  }
+
+  useEffect(() => {
+    fetchTokens(1)
+  }, [filters])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchTokens(pagination.page)
+    }, 30000)
+    
+    return () => clearInterval(interval)
+  }, [fetchTokens, pagination.page])
+
+  // Analytics useEffect - also moved before early return
+  useEffect(() => {
+    if (tokens.length > 0) {
+      const tokenAddresses = tokens.map(t => t.token_address)
+      fetchAnalyticsForTokens(tokenAddresses)
+    }
+  }, [tokens, fetchAnalyticsForTokens])
 
   // Utility functions
   const formatNumber = (num: number): string => {
@@ -298,7 +381,7 @@ export default function McapTrackerPage() {
       </div>
     )
   }
-
+  
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-7xl mx-auto">
@@ -871,6 +954,144 @@ export default function McapTrackerPage() {
                   </div>
                 </div>
               </div>
+            
+            {/* Analytics Section - Add this after the existing token information */}
+                <div className="mt-4 pt-4 border-t border-gray-700">
+                  <button
+                    onClick={() => toggleAnalytics(token.token_address)}
+                    className="flex items-center justify-between w-full text-left hover:text-blue-400 transition-colors"
+                  >
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm font-medium text-gray-300">Analytics & Risk Assessment</span>
+                      {analyticsLoading && (
+                        <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                      )}
+                    </div>
+                    <svg
+                      className={`w-4 h-4 transition-transform ${expandedAnalytics[token.token_address] ? 'rotate-180' : ''}`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+
+                  {expandedAnalytics[token.token_address] && (
+                    <div className="mt-4 space-y-4 bg-gray-750 rounded-lg p-4">
+                      {analyticsData[token.token_address] ? (
+                        <>
+                          {/* Z-Score Anomaly Detection */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                <div className="bg-gray-800 rounded-lg p-3">
+                                <div className="text-xs text-gray-400 mb-1">Z-Score</div>
+                                <div className={`text-lg font-semibold ${
+                                    analyticsData[token.token_address]?.z_score !== undefined ? 
+                                    Math.abs(analyticsData[token.token_address].z_score!) > 2 ? 'text-red-400' :
+                                    Math.abs(analyticsData[token.token_address].z_score!) > 1 ? 'text-yellow-400' : 'text-green-400'
+                                    : 'text-gray-400'
+                                }`}>
+                                    {analyticsData[token.token_address]?.z_score?.toFixed(2) ?? 'N/A'}
+                                </div>
+                                </div>
+
+                                <div className="bg-gray-800 rounded-lg p-3">
+                                <div className="text-xs text-gray-400 mb-1">Anomaly Type</div>
+                                <div className={`text-sm font-medium capitalize ${getAnomalyColor(analyticsData[token.token_address]?.anomaly_type)}`}>
+                                    {analyticsData[token.token_address]?.anomaly_type || 'neutral'}
+                                </div>
+                                </div>
+
+                                <div className="bg-gray-800 rounded-lg p-3">
+                                <div className="text-xs text-gray-400 mb-1">Momentum</div>
+                                <div className={`text-sm font-medium capitalize ${getMomentumColor(analyticsData[token.token_address]?.momentum_category)}`}>
+                                    {analyticsData[token.token_address]?.momentum_category || 'neutral'}
+                                </div>
+                                </div>
+
+                                <div className="bg-gray-800 rounded-lg p-3">
+                                <div className="text-xs text-gray-400 mb-1">Risk Score</div>
+                                <div className={`text-lg font-semibold ${getRiskColor(analyticsData[token.token_address]?.risk_score)}`}>
+                                    {analyticsData[token.token_address]?.risk_score ? `${(analyticsData[token.token_address].risk_score! * 100).toFixed(0)}%` : 'N/A'}
+                                </div>
+                                </div>
+                            </div>
+
+                          {/* Momentum Signal Details */}
+                          {analyticsData[token.token_address].momentum_signal && (
+                            <div className="bg-gray-800 rounded-lg p-3">
+                              <div className="text-xs text-gray-400 mb-2">Momentum Signal</div>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                                <div>
+                                  <span className="text-gray-400">Type:</span>
+                                  <span className={`ml-2 capitalize ${getMomentumColor(analyticsData[token.token_address]?.momentum_signal?.type)}`}>
+                                    {analyticsData[token.token_address]?.momentum_signal?.type?.replace('_', ' ') ?? 'N/A'}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">Strength:</span>
+                                  <span className="ml-2 text-white">
+                                    {(analyticsData[token.token_address]?.momentum_signal?.strength ?? 0 * 100).toFixed(1)}%
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">Confidence:</span>
+                                  <span className="ml-2 text-white">
+                                    {(analyticsData[token.token_address]?.momentum_signal?.confidence ?? 0 * 100).toFixed(1)}%
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Additional Metrics */}
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {analyticsData[token.token_address]?.current_price_usd && (
+                            <div className="bg-gray-800 rounded-lg p-3">
+                                <div className="text-xs text-gray-400 mb-1">Current Price</div>
+                                <div className="text-sm text-white">
+                                ${analyticsData[token.token_address].current_price_usd!.toFixed(6)}
+                                </div>
+                            </div>
+                            )}
+
+                            {analyticsData[token.token_address]?.liquidity_score !== undefined && (
+                              <div className="bg-gray-800 rounded-lg p-3">
+                                <div className="text-xs text-gray-400 mb-1">Liquidity Score</div>
+                                <div className="text-sm text-white">
+                                  {(analyticsData[token.token_address]!.liquidity_score! * 100).toFixed(0)}%
+                                </div>
+                              </div>
+                            )}
+
+                            {analyticsData[token.token_address]?.volume_24h !== undefined && (
+                              <div className="bg-gray-800 rounded-lg p-3">
+                                <div className="text-xs text-gray-400 mb-1">24h Volume</div>
+                                <div className="text-sm text-white">
+                                  ${analyticsData[token.token_address]!.volume_24h!.toLocaleString()}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="text-xs text-gray-500 mt-2">
+                            Analytics updated: {formatDistanceToNow(new Date(analyticsData[token.token_address].last_updated_at), { addSuffix: true })}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-center py-4">
+                          <div className="text-gray-400">Analytics data not available</div>
+                          <button
+                            onClick={() => fetchAnalyticsForTokens([token.token_address])}
+                            className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors"
+                          >
+                            Retry Analytics
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
             </div>
           ))}
           
