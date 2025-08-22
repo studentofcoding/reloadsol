@@ -219,6 +219,24 @@ export default function McapTrackerPage() {
     return 'text-yellow-400'
   }
 
+  const getMomentumCategoryColor = (category?: string) => {
+    if (!category) return 'text-gray-400'
+    if (category === 'explosive') return 'text-green-500'
+    if (category === 'strong') return 'text-green-400'
+    if (category === 'moderate') return 'text-yellow-400'
+    if (category === 'weak') return 'text-orange-400'
+    if (category === 'negative') return 'text-red-400'
+    return 'text-gray-400'
+  }
+
+  const getMomentumSignalColor = (signalType?: string) => {
+    if (!signalType) return 'text-gray-400'
+    if (signalType === 'bullish_breakout') return 'text-green-400'
+    if (signalType === 'bearish_breakout') return 'text-red-400'
+    if (signalType === 'neutral') return 'text-yellow-400'
+    return 'text-gray-400'
+  }
+
   const getRiskColor = (riskScore?: number) => {
     if (riskScore === undefined || riskScore === null) return 'text-gray-400'
     if (riskScore > 0.7) return 'text-red-400'
@@ -1004,9 +1022,9 @@ export default function McapTrackerPage() {
 
                                 <div className="bg-gray-800 rounded-lg p-3">
                                 <div className="text-xs text-gray-400 mb-1">Momentum</div>
-                                <div className={`text-sm font-medium capitalize ${getMomentumColor(analyticsData[token.token_address]?.momentum_category)}`}>
-                                    {analyticsData[token.token_address]?.momentum_category || 'neutral'}
-                                </div>
+                                <div className={`text-sm font-medium capitalize ${getMomentumCategoryColor(analyticsData[token.token_address]?.momentum_category)}`}>
+                                {analyticsData[token.token_address]?.momentum_category || 'N/A'}
+                              </div>
                                 </div>
 
                                 <div className="bg-gray-800 rounded-lg p-3">
@@ -1018,31 +1036,19 @@ export default function McapTrackerPage() {
                             </div>
 
                           {/* Momentum Signal Details */}
-                          {analyticsData[token.token_address].momentum_signal && (
-                            <div className="bg-gray-800 rounded-lg p-3">
-                              <div className="text-xs text-gray-400 mb-2">Momentum Signal</div>
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                                <div>
-                                  <span className="text-gray-400">Type:</span>
-                                  <span className={`ml-2 capitalize ${getMomentumColor(analyticsData[token.token_address]?.momentum_signal?.type)}`}>
-                                    {analyticsData[token.token_address]?.momentum_signal?.type?.replace('_', ' ') ?? 'N/A'}
+                            {analyticsData[token.token_address]?.momentum_signal && (
+                              <div className="bg-gray-800 rounded-lg p-3">
+                                <div className="text-xs text-gray-400 mb-1">Signal</div>
+                                <div className="text-sm">
+                                  <span className={`capitalize ${getMomentumSignalColor(analyticsData[token.token_address]?.momentum_signal?.type)}`}>
+                                    {analyticsData[token.token_address]?.momentum_signal?.type?.replace('_', ' ')}
                                   </span>
-                                </div>
-                                <div>
-                                  <span className="text-gray-400">Strength:</span>
-                                  <span className="ml-2 text-white">
-                                    {(analyticsData[token.token_address]?.momentum_signal?.strength ?? 0 * 100).toFixed(1)}%
-                                  </span>
-                                </div>
-                                <div>
-                                  <span className="text-gray-400">Confidence:</span>
-                                  <span className="ml-2 text-white">
-                                    {(analyticsData[token.token_address]?.momentum_signal?.confidence ?? 0 * 100).toFixed(1)}%
-                                  </span>
+                                  <div className="text-xs text-gray-400 mt-1">
+                                    Strength: {(analyticsData[token.token_address]?.momentum_signal?.strength ?? 0 * 100).toFixed(0)}%
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          )}
+                            )}
 
                           {/* Additional Metrics */}
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
