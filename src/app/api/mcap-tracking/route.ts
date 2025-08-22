@@ -64,16 +64,30 @@ export async function GET(request: NextRequest) {
 
       if (error) throw error
 
-      // Get all data for comprehensive statistics
+      // Get all data for comprehensive statistics with proper validation
       const allDataQuery = await supabase
         .from('token_mcap_tracking')
         .select('mcap_growth_percent, current_mcap, first_mcap, first_seen_at, last_updated_at')
+        .not('mcap_growth_percent', 'is', null)
+        .not('current_mcap', 'is', null)
+        .not('first_mcap', 'is', null)
+        .gt('first_mcap', 0)
+        .gt('current_mcap', 0)
 
       const { data: allData } = allDataQuery
 
       if (!allData) {
         throw new Error('Failed to fetch statistics data')
       }
+
+      // Filter out any remaining invalid records
+      const validData = allData.filter(item =>
+        item.current_mcap != null &&
+        item.first_mcap != null &&
+        item.mcap_growth_percent != null &&
+        item.current_mcap > 0 &&
+        item.first_mcap > 0
+      )
 
       // Enhanced statistics calculations
       const totalTokens = allData.length
@@ -142,40 +156,92 @@ export async function GET(request: NextRequest) {
         }
       })
 
-      // MCap-based analysis
-      const under50k = allData.filter(item => item.current_mcap < 50000)
-      const under200k = allData.filter(item => item.current_mcap < 200000)
-      const under1M = allData.filter(item => item.current_mcap < 1000000)
+      // MCap-based analysis with debugging
+      const under50k = validData.filter(item => item.current_mcap < 50000)
+      const from51to100k = validData.filter(item => item.current_mcap >= 50001 && item.current_mcap <= 100000)
+      const from101to200k = validData.filter(item => item.current_mcap >= 100001 && item.current_mcap <= 200000)
+      const from201to500k = validData.filter(item => item.current_mcap >= 200001 && item.current_mcap <= 500000)
+      const from501kto1M = validData.filter(item => item.current_mcap >= 500001 && item.current_mcap <= 1000000)
+      const over1M = validData.filter(item => item.current_mcap > 1000000)
+
+      // Add debugging logs
+      console.log('MCap Range Debug Info:');
+      console.log('Total validData:', validData.length);
+      console.log('under50k count:', under50k.length);
+      console.log('from51to100k count:', from51to100k.length);
+      console.log('from101to200k count:', from101to200k.length);
+      console.log('from201to500k count:', from201to500k.length);
+      console.log('from501kto1M count:', from501kto1M.length);
+      console.log('over1M count:', over1M.length);
+
+      // Sample data from each range for debugging
+      if (from51to100k.length > 0) {
+        console.log('Sample from51to100k record:', {
+          current_mcap: from51to100k[0].current_mcap,
+          first_mcap: from51to100k[0].first_mcap,
+          mcap_growth_percent: from51to100k[0].mcap_growth_percent
+        });
+      }
+
+      // Helper function to safely calculate statistics with enhanced debugging
+      const calculateRangeStats = (data: typeof validData, rangeName: string) => {
+        console.log(`\nCalculating stats for ${rangeName}:`);
+        console.log(`Total records: ${data.length}`);
+
+        if (data.length === 0) {
+          console.log(`${rangeName}: No data, returning zeros`);
+          return {
+            count: 0,
+            avgMultiplier: 0,
+            maxDrawdown: 0,
+            avgGrowth: 0
+          }
+        }
+
+        const validRecords = data.filter(item =>
+          item.first_mcap > 0 &&
+          item.current_mcap > 0 &&
+          !isNaN(item.mcap_growth_percent)
+        )
+
+        console.log(`${rangeName}: Valid records after filtering: ${validRecords.length}`);
+
+        if (validRecords.length === 0) {
+          console.log(`${rangeName}: No valid records, returning count only`);
+          return {
+            count: data.length,
+            avgMultiplier: 0,
+            maxDrawdown: 0,
+            avgGrowth: 0
+          }
+        }
+
+        const multipliers = validRecords.map(item => item.current_mcap / item.first_mcap)
+        const growthPercentages = validRecords.map(item => ((item.current_mcap - item.first_mcap) / item.first_mcap) * 100)
+
+        console.log(`${rangeName}: Sample multiplier: ${multipliers[0]}, Sample growth: ${growthPercentages[0]}`);
+
+        const result = {
+          count: data.length,
+          avgMultiplier: multipliers.reduce((sum, mult) => sum + mult, 0) / multipliers.length,
+          maxDrawdown: Math.min(...growthPercentages),
+          avgGrowth: validRecords.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / validRecords.length
+        }
+
+        console.log(`${rangeName}: Final result:`, result);
+        return result;
+      }
 
       const mcapRangeAnalysis = {
-        under50k: {
-          count: under50k.length,
-          avgMultiplier: under50k.length > 0 ?
-            under50k.reduce((sum, item) => sum + (item.current_mcap / item.first_mcap), 0) / under50k.length : 0,
-          maxDrawdown: under50k.length > 0 ?
-            Math.min(...under50k.map(item => ((item.current_mcap - item.first_mcap) / item.first_mcap) * 100)) : 0,
-          avgGrowth: under50k.length > 0 ?
-            under50k.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / under50k.length : 0
-        },
-        under200k: {
-          count: under200k.length,
-          avgMultiplier: under200k.length > 0 ?
-            under200k.reduce((sum, item) => sum + (item.current_mcap / item.first_mcap), 0) / under200k.length : 0,
-          maxDrawdown: under200k.length > 0 ?
-            Math.min(...under200k.map(item => ((item.current_mcap - item.first_mcap) / item.first_mcap) * 100)) : 0,
-          avgGrowth: under200k.length > 0 ?
-            under200k.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / under200k.length : 0
-        },
-        under1M: {
-          count: under1M.length,
-          avgMultiplier: under1M.length > 0 ?
-            under1M.reduce((sum, item) => sum + (item.current_mcap / item.first_mcap), 0) / under1M.length : 0,
-          maxDrawdown: under1M.length > 0 ?
-            Math.min(...under1M.map(item => ((item.current_mcap - item.first_mcap) / item.first_mcap) * 100)) : 0,
-          avgGrowth: under1M.length > 0 ?
-            under1M.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / under1M.length : 0
-        }
+        under50k: calculateRangeStats(under50k, 'under50k'),
+        from51to100k: calculateRangeStats(from51to100k, 'from51to100k'),
+        from101to200k: calculateRangeStats(from101to200k, 'from101to200k'),
+        from201to500k: calculateRangeStats(from201to500k, 'from201to500k'),
+        from501kto1M: calculateRangeStats(from501kto1M, 'from501kto1M'),
+        over1M: calculateRangeStats(over1M, 'over1M')
       }
+
+      console.log('Final mcapRangeAnalysis:', JSON.stringify(mcapRangeAnalysis, null, 2));
 
       // 30-day PnL summary calculation
       const thirtyDaysAgo = new Date()
