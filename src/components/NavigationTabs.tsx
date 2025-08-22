@@ -129,6 +129,18 @@ export default function NavigationTabs({ activeInfoTab, setActiveInfoTab }: Navi
                   </svg>
                 </button>
               )}
+              {isDevWallet(publicKey) && (
+                <button
+                  onClick={() => window.open('/dev/mcap-tracker', '_blank')}
+                  className="px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 text-gray-400 hover:text-white hover:bg-gray-800"
+                  title="MCap Tracker (Dev)"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2v6m0 0v6m0-6h6m-6 0H6" opacity="0.5" />
+                  </svg>
+                </button>
+              )}
             </div>
           </div>
 
