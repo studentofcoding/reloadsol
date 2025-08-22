@@ -14,6 +14,11 @@ interface McapTrackingData {
   when_reach_80mc: string | null
   when_reach_120mc: string | null
   when_reach_200mc: string | null
+  solPerToken: {
+    first: number
+    current: number
+    growth: number
+  }
 }
 
 interface FilterOptions {
@@ -24,6 +29,7 @@ interface FilterOptions {
   maxGrowth: string
   minMcap: string
   maxMcap: string
+  excludeZeroPnl: boolean
 }
 
 interface ApiResponse {
@@ -39,8 +45,30 @@ interface ApiResponse {
     total: number
     gainers: number
     losers: number
+    zeroPercent: number
+    zeroPercentage: number
     avgGrowth: number
+    avgGrowthAll: number
+    avgGrowthExcludingZero: number
     totalMcap: number
+    solPriceUSD: number
+    mcapRangeAnalysis: {
+      under50k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }
+      under200k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }
+      under1M: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }
+    }
+    thirtyDaysSummary: {
+      totalTokensAdded: number
+      avgDailyGrowth: number
+      dailyBreakdown: Array<{
+        date: string
+        tokensAdded: number
+        avgGrowth: number
+        totalMcap: number
+        gainers: number
+        losers: number
+      }>
+    }
   }
   error: string
 }
@@ -56,9 +84,17 @@ const LoadingSkeleton = () => (
 export default function McapTrackerPage() {
   const [tokens, setTokens] = useState<McapTrackingData[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState('')
   const [stats, setStats] = useState<ApiResponse['stats'] | null>(null)
-  const [pagination, setPagination] = useState({ page: 1, limit: 50, total: 0, totalPages: 0 })
+  const [expandedChart, setExpandedChart] = useState<string | null>(null)
+  const [isChartLoading, setIsChartLoading] = useState(false)
+  
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 50,
+    total: 0,
+    totalPages: 0
+  })
   
   const [filters, setFilters] = useState<FilterOptions>({
     search: '',
@@ -67,36 +103,39 @@ export default function McapTrackerPage() {
     minGrowth: '',
     maxGrowth: '',
     minMcap: '',
-    maxMcap: ''
+    maxMcap: '',
+    excludeZeroPnl: false
   })
 
   const fetchTokens = useCallback(async (page = 1) => {
+    setLoading(true)
+    setError('')
+    
     try {
-      setLoading(true)
-      setError(null)
-      
       const params = new URLSearchParams({
         action: 'list',
         page: page.toString(),
         limit: pagination.limit.toString(),
         sortBy: filters.sortBy,
         sortOrder: filters.sortOrder,
-        ...(filters.search && { search: filters.search }),
-        ...(filters.minGrowth && { minGrowth: filters.minGrowth }),
-        ...(filters.maxGrowth && { maxGrowth: filters.maxGrowth }),
-        ...(filters.minMcap && { minMcap: filters.minMcap }),
-        ...(filters.maxMcap && { maxMcap: filters.maxMcap })
+        excludeZeroPnl: filters.excludeZeroPnl.toString()
       })
       
-      const response = await fetch(`/api/mcap-tracking?${params}`)
-      const result: ApiResponse = await response.json()
+      if (filters.search) params.append('search', filters.search)
+      if (filters.minGrowth) params.append('minGrowth', filters.minGrowth)
+      if (filters.maxGrowth) params.append('maxGrowth', filters.maxGrowth)
+      if (filters.minMcap) params.append('minMcap', filters.minMcap)
+      if (filters.maxMcap) params.append('maxMcap', filters.maxMcap)
       
-      if (result.success) {
-        setTokens(result.data)
-        setPagination(result.pagination)
-        setStats(result.stats)
+      const response = await fetch(`/api/mcap-tracking?${params}`)
+      const data: ApiResponse = await response.json()
+      
+      if (data.success) {
+        setTokens(data.data)
+        setPagination(data.pagination)
+        setStats(data.stats)
       } else {
-        setError(result.error || 'Failed to fetch data')
+        setError(data.error || 'Failed to fetch data')
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
@@ -110,14 +149,25 @@ export default function McapTrackerPage() {
   }, [filters])
 
   useEffect(() => {
-    setPagination(prev => ({ ...prev, page: 1 }))
-  }, [filters.search, filters.minGrowth, filters.maxGrowth, filters.minMcap, filters.maxMcap])
+    const interval = setInterval(() => {
+      fetchTokens(pagination.page)
+    }, 30000) // Refresh every 30 seconds
+    
+    return () => clearInterval(interval)
+  }, [fetchTokens, pagination.page])
 
+  // Utility functions
   const formatNumber = (num: number): string => {
     if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`
     if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`
-    if (num >= 1e3) return `$${(num / 1e3).toFixed(2)}K`
-    return `$${num.toFixed(2)}`
+    if (num >= 1e3) return `$${(num / 1e3).toFixed(0)}K`
+    return `$${num.toFixed(0)}`
+  }
+
+  const formatSolAmount = (solAmount: number): string => {
+    if (solAmount >= 1000) return `${(solAmount / 1000).toFixed(2)}K SOL`
+    if (solAmount >= 1) return `${solAmount.toFixed(2)} SOL`
+    return `${solAmount.toFixed(4)} SOL`
   }
 
   const formatPercentage = (percent: number): string => {
@@ -125,25 +175,40 @@ export default function McapTrackerPage() {
   }
 
   const getGrowthColor = (percent: number): string => {
-    if (percent > 0) return 'text-green-400'
-    if (percent < 0) return 'text-red-400'
-    return 'text-gray-400'
+    if (Math.abs(percent) < 0.01) return 'text-gray-400'
+    return percent >= 0 ? 'text-green-400' : 'text-red-400'
   }
 
   const getGrowthIcon = (percent: number): string => {
-    if (percent > 0) return '📈'
-    if (percent < 0) return '📉'
-    return '➖'
+    if (Math.abs(percent) < 0.01) return '➖'
+    return percent >= 0 ? '📈' : '📉'
+  }
+
+  const handleChartToggle = (tokenAddress: string) => {
+    if (expandedChart === tokenAddress) {
+      setExpandedChart(null)
+      setIsChartLoading(false)
+    } else {
+      setExpandedChart(tokenAddress)
+      setIsChartLoading(true)
+    }
   }
 
   const exportToCSV = () => {
-    const headers = ['Symbol', 'Address', 'First MCap', 'Current MCap', 'Growth %', 'First Seen', 'Last Updated']
+    const headers = [
+      'Symbol', 'Address', 'First MCap', 'Current MCap', 'Growth %', 
+      'First SOL', 'Current SOL', 'SOL Growth %', 'First Seen', 'Last Updated'
+    ]
+    
     const csvData = tokens.map(token => [
       token.token_symbol,
       token.token_address,
       token.first_mcap,
       token.current_mcap,
       token.mcap_growth_percent,
+      token.solPerToken.first,
+      token.solPerToken.current,
+      token.solPerToken.growth,
       token.first_seen_at,
       token.last_updated_at
     ])
@@ -184,39 +249,194 @@ export default function McapTrackerPage() {
           <p className="text-gray-400">
             Monitor token market cap changes and growth patterns over time
           </p>
+          {stats && (
+            <p className="text-sm text-blue-400 mt-2">
+              SOL Price: ${stats.solPriceUSD.toFixed(2)}
+            </p>
+          )}
         </div>
 
-        {/* Statistics Overview */}
+        {/* Enhanced Statistics Overview */}
         {stats && (
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className="text-2xl font-bold text-blue-400">{stats.total.toLocaleString()}</div>
-              <div className="text-sm text-gray-400">Total Tokens</div>
-            </div>
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className="text-2xl font-bold text-green-400">{stats.gainers.toLocaleString()}</div>
-              <div className="text-sm text-gray-400">Gainers</div>
-            </div>
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className="text-2xl font-bold text-red-400">{stats.losers.toLocaleString()}</div>
-              <div className="text-sm text-gray-400">Losers</div>
-            </div>
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className={`text-2xl font-bold ${getGrowthColor(stats.avgGrowth)}`}>
-                {formatPercentage(stats.avgGrowth)}
+          <>
+            {/* Main Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-8">
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="text-2xl font-bold text-blue-400">{stats.total.toLocaleString()}</div>
+                <div className="text-sm text-gray-400">Total Tokens</div>
               </div>
-              <div className="text-sm text-gray-400">Avg Growth</div>
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="text-2xl font-bold text-green-400">{stats.gainers.toLocaleString()}</div>
+                <div className="text-sm text-gray-400">Gainers</div>
+              </div>
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="text-2xl font-bold text-red-400">{stats.losers.toLocaleString()}</div>
+                <div className="text-sm text-gray-400">Losers</div>
+              </div>
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="text-2xl font-bold text-gray-400">{stats.zeroPercent.toLocaleString()}</div>
+                <div className="text-sm text-gray-400">0% PnL ({stats.zeroPercentage.toFixed(1)}%)</div>
+              </div>
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className={`text-2xl font-bold ${getGrowthColor(stats.avgGrowth)}`}>
+                  {formatPercentage(stats.avgGrowth)}
+                </div>
+                <div className="text-sm text-gray-400">Avg Growth</div>
+              </div>
+              <div className="bg-gray-800 rounded-lg p-4">
+                <div className="text-2xl font-bold text-purple-400">{formatNumber(stats.totalMcap)}</div>
+                <div className="text-sm text-gray-400">Total MCap</div>
+              </div>
             </div>
-            <div className="bg-gray-800 rounded-lg p-4">
-              <div className="text-2xl font-bold text-purple-400">{formatNumber(stats.totalMcap)}</div>
-              <div className="text-sm text-gray-400">Total MCap</div>
+
+            {/* MCap Range Analysis */}
+            <div className="bg-gray-800 rounded-lg p-6 mb-8">
+              <h3 className="text-xl font-bold mb-4">MCap Range Analysis</h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-gray-700 rounded-lg p-4">
+                  <h4 className="text-lg font-semibold text-blue-400 mb-2">&lt;50K MCap</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Count:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.under50k.count}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Avg Multiplier:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.under50k.avgMultiplier.toFixed(2)}x</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Max Drawdown:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.under50k.maxDrawdown)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.under50k.maxDrawdown)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Avg Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.under50k.avgGrowth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.under50k.avgGrowth)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-gray-700 rounded-lg p-4">
+                  <h4 className="text-lg font-semibold text-green-400 mb-2">&lt;200K MCap</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Count:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.under200k.count}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Avg Multiplier:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.under200k.avgMultiplier.toFixed(2)}x</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Max Drawdown:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.under200k.maxDrawdown)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.under200k.maxDrawdown)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Avg Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.under200k.avgGrowth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.under200k.avgGrowth)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-gray-700 rounded-lg p-4">
+                  <h4 className="text-lg font-semibold text-purple-400 mb-2">&lt;1M MCap</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Count:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.under1M.count}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Avg Multiplier:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.under1M.avgMultiplier.toFixed(2)}x</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Max Drawdown:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.under1M.maxDrawdown)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.under1M.maxDrawdown)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Avg Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.under1M.avgGrowth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.under1M.avgGrowth)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
+
+            {/* 30-Day Summary */}
+            <div className="bg-gray-800 rounded-lg p-6 mb-8">
+              <h3 className="text-xl font-bold mb-4">30-Day PnL Summary</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Tokens Added (30 days):</span>
+                      <span className="text-white">{stats.thirtyDaysSummary.totalTokensAdded}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Avg Daily Growth:</span>
+                      <span className={getGrowthColor(stats.thirtyDaysSummary.avgDailyGrowth)}>
+                        {formatPercentage(stats.thirtyDaysSummary.avgDailyGrowth)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold text-gray-300 mb-2">Recent Daily Breakdown (Last 7 days)</h4>
+                  <div className="space-y-1 text-xs">
+                    {stats.thirtyDaysSummary.dailyBreakdown.slice(-7).map((day, index) => (
+                      <div key={index} className="flex justify-between items-center">
+                        <span className="text-gray-400">{day.date}:</span>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-white">{day.tokensAdded} tokens</span>
+                          <span className={getGrowthColor(day.avgGrowth)}>
+                            {formatPercentage(day.avgGrowth)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
         )}
 
-        {/* Filters and Search */}
+        {/* Filters and Controls */}
         <div className="bg-gray-800 rounded-lg p-6 mb-8">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
+            <h2 className="text-xl font-semibold">Filters & Search</h2>
+            <div className="flex items-center space-x-2">
+              <label className="flex items-center space-x-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={filters.excludeZeroPnl}
+                  onChange={(e) => setFilters(prev => ({ ...prev, excludeZeroPnl: e.target.checked }))}
+                  className="rounded"
+                />
+                <span>Exclude 0% PnL from avg</span>
+              </label>
+              <button
+                onClick={exportToCSV}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors"
+              >
+                Export CSV
+              </button>
+            </div>
+          </div>
+          
+          {/* ... existing filter controls ... */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2">Search</label>
               <input
@@ -245,7 +465,7 @@ export default function McapTrackerPage() {
             </div>
             
             <div>
-              <label className="block text-sm font-medium mb-2">Sort Order</label>
+              <label className="block text-sm font-medium mb-2">Order</label>
               <select
                 value={filters.sortOrder}
                 onChange={(e) => setFilters(prev => ({ ...prev, sortOrder: e.target.value as 'asc' | 'desc' }))}
@@ -255,19 +475,9 @@ export default function McapTrackerPage() {
                 <option value="asc">Ascending</option>
               </select>
             </div>
-            
-            <div className="flex items-end">
-              <button
-                onClick={exportToCSV}
-                disabled={tokens.length === 0}
-                className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-md font-medium transition-colors"
-              >
-                Export CSV
-              </button>
-            </div>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
             <div>
               <label className="block text-sm font-medium mb-2">Min Growth %</label>
               <input
@@ -294,7 +504,7 @@ export default function McapTrackerPage() {
               <label className="block text-sm font-medium mb-2">Min MCap</label>
               <input
                 type="number"
-                placeholder="e.g., 30000"
+                placeholder="e.g., 50000"
                 value={filters.minMcap}
                 onChange={(e) => setFilters(prev => ({ ...prev, minMcap: e.target.value }))}
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -346,27 +556,43 @@ export default function McapTrackerPage() {
                       <span className={`text-2xl ${getGrowthColor(token.mcap_growth_percent)}`}>
                         {getGrowthIcon(token.mcap_growth_percent)}
                       </span>
+                      <button
+                        onClick={() => handleChartToggle(token.token_address)}
+                        className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors"
+                        title="Toggle Chart"
+                      >
+                        📈
+                      </button>
                     </div>
                     <p className="text-sm text-gray-400 font-mono truncate">{token.token_address}</p>
                   </div>
                 </div>
 
                 {/* Performance Metrics */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 lg:gap-6">
                   <div className="text-center lg:text-left">
                     <div className="text-sm text-gray-400">First MCap</div>
                     <div className="text-lg font-semibold text-white">{formatNumber(token.first_mcap)}</div>
+                    <div className="text-xs text-blue-400">{formatSolAmount(token.solPerToken.first)}</div>
                   </div>
                   
                   <div className="text-center lg:text-left">
                     <div className="text-sm text-gray-400">Current MCap</div>
                     <div className="text-lg font-semibold text-white">{formatNumber(token.current_mcap)}</div>
+                    <div className="text-xs text-blue-400">{formatSolAmount(token.solPerToken.current)}</div>
                   </div>
                   
                   <div className="text-center lg:text-left">
-                    <div className="text-sm text-gray-400">Growth</div>
+                    <div className="text-sm text-gray-400">USD Growth</div>
                     <div className={`text-lg font-semibold ${getGrowthColor(token.mcap_growth_percent)}`}>
                       {formatPercentage(token.mcap_growth_percent)}
+                    </div>
+                  </div>
+                  
+                  <div className="text-center lg:text-left">
+                    <div className="text-sm text-gray-400">SOL Growth</div>
+                    <div className={`text-lg font-semibold ${getGrowthColor(token.solPerToken.growth)}`}>
+                      {formatPercentage(token.solPerToken.growth)}
                     </div>
                   </div>
                   
@@ -378,6 +604,39 @@ export default function McapTrackerPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Inline Chart */}
+              {expandedChart === token.token_address && (
+                <div className="mt-4 pt-4 border-t border-gray-700">
+                  <div className="relative" style={{ height: '400px' }}>
+                    {isChartLoading && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-gray-800 rounded-lg">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                          <span className="text-gray-400">Loading chart...</span>
+                        </div>
+                      </div>
+                    )}
+                    <iframe
+                      src={`https://www.gmgn.cc/kline/sol/${token.token_address}?interval=1D&theme=dark`}
+                      className="w-full h-full rounded-lg"
+                      style={{ 
+                        border: 'none', 
+                        display: isChartLoading ? 'none' : 'block' 
+                      }}
+                      title={`GMGN Chart - ${token.token_symbol}`}
+                      onLoad={() => setIsChartLoading(false)}
+                      onError={() => {
+                        console.error('Chart failed to load for token:', token.token_address)
+                        setIsChartLoading(false)
+                      }}
+                      allowFullScreen
+                      frameBorder="0"
+                      sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Additional Information */}
               <div className="mt-4 pt-4 border-t border-gray-700">

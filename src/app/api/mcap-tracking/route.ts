@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords } from '@/utils/mcap-tracker'
 import { supabase } from '@/utils/supabase'
+import { getSolPriceUSD } from '@/utils/solana'
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
     const tokenSymbol = searchParams.get('symbol')
     const mcap = searchParams.get('mcap')
 
-    // New action to fetch all MCap tracking data
+    // New action to fetch all MCap tracking data with enhanced statistics
     if (action === 'list') {
       const page = parseInt(searchParams.get('page') || '1')
       const limit = parseInt(searchParams.get('limit') || '50')
@@ -21,8 +22,12 @@ export async function GET(request: NextRequest) {
       const maxGrowth = searchParams.get('maxGrowth')
       const minMcap = searchParams.get('minMcap')
       const maxMcap = searchParams.get('maxMcap')
+      const excludeZeroPnl = searchParams.get('excludeZeroPnl') === 'true'
 
       const offset = (page - 1) * limit
+
+      // Get current SOL price for calculations
+      const solPriceUSD = await getSolPriceUSD()
 
       // Build query
       let query = supabase
@@ -59,25 +64,133 @@ export async function GET(request: NextRequest) {
 
       if (error) throw error
 
-      // Calculate statistics
-      const statsQuery = await supabase
+      // Get all data for comprehensive statistics
+      const allDataQuery = await supabase
         .from('token_mcap_tracking')
-        .select('mcap_growth_percent, current_mcap, first_mcap')
+        .select('mcap_growth_percent, current_mcap, first_mcap, first_seen_at, last_updated_at')
 
-      const { data: statsData } = statsQuery
+      const { data: allData } = allDataQuery
+
+      if (!allData) {
+        throw new Error('Failed to fetch statistics data')
+      }
+
+      // Enhanced statistics calculations
+      const totalTokens = allData.length
+      const gainers = allData.filter(item => item.mcap_growth_percent > 0).length
+      const losers = allData.filter(item => item.mcap_growth_percent < 0).length
+      const zeroPercentTokens = allData.filter(item => Math.abs(item.mcap_growth_percent) < 0.01).length
+      const zeroPercentage = totalTokens > 0 ? (zeroPercentTokens / totalTokens) * 100 : 0
+
+      // Calculate average growth with and without 0% PnL
+      const nonZeroTokens = allData.filter(item => Math.abs(item.mcap_growth_percent) >= 0.01)
+      const avgGrowthAll = totalTokens > 0 ?
+        allData.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / totalTokens : 0
+      const avgGrowthExcludingZero = nonZeroTokens.length > 0 ?
+        nonZeroTokens.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / nonZeroTokens.length : 0
+
+      // MCap-based analysis
+      const under50k = allData.filter(item => item.current_mcap < 50000)
+      const under200k = allData.filter(item => item.current_mcap < 200000)
+      const under1M = allData.filter(item => item.current_mcap < 1000000)
+
+      const mcapRangeAnalysis = {
+        under50k: {
+          count: under50k.length,
+          avgMultiplier: under50k.length > 0 ?
+            under50k.reduce((sum, item) => sum + (item.current_mcap / item.first_mcap), 0) / under50k.length : 0,
+          maxDrawdown: under50k.length > 0 ?
+            Math.min(...under50k.map(item => ((item.current_mcap - item.first_mcap) / item.first_mcap) * 100)) : 0,
+          avgGrowth: under50k.length > 0 ?
+            under50k.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / under50k.length : 0
+        },
+        under200k: {
+          count: under200k.length,
+          avgMultiplier: under200k.length > 0 ?
+            under200k.reduce((sum, item) => sum + (item.current_mcap / item.first_mcap), 0) / under200k.length : 0,
+          maxDrawdown: under200k.length > 0 ?
+            Math.min(...under200k.map(item => ((item.current_mcap - item.first_mcap) / item.first_mcap) * 100)) : 0,
+          avgGrowth: under200k.length > 0 ?
+            under200k.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / under200k.length : 0
+        },
+        under1M: {
+          count: under1M.length,
+          avgMultiplier: under1M.length > 0 ?
+            under1M.reduce((sum, item) => sum + (item.current_mcap / item.first_mcap), 0) / under1M.length : 0,
+          maxDrawdown: under1M.length > 0 ?
+            Math.min(...under1M.map(item => ((item.current_mcap - item.first_mcap) / item.first_mcap) * 100)) : 0,
+          avgGrowth: under1M.length > 0 ?
+            under1M.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / under1M.length : 0
+        }
+      }
+
+      // 30-day PnL summary calculation
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+      
+      const recentTokens = allData.filter(item => 
+        new Date(item.first_seen_at) >= thirtyDaysAgo
+      )
+
+      // Calculate daily breakdown for the past 30 days
+      const dailyBreakdown = []
+      for (let i = 29; i >= 0; i--) {
+        const date = new Date()
+        date.setDate(date.getDate() - i)
+        const dayStart = new Date(date.setHours(0, 0, 0, 0))
+        const dayEnd = new Date(date.setHours(23, 59, 59, 999))
+        
+        const dayTokens = allData.filter(item => {
+          const tokenDate = new Date(item.first_seen_at)
+          return tokenDate >= dayStart && tokenDate <= dayEnd
+        })
+        
+        const dayStats = {
+          date: dayStart.toISOString().split('T')[0],
+          tokensAdded: dayTokens.length,
+          avgGrowth: dayTokens.length > 0 ?
+            dayTokens.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / dayTokens.length : 0,
+          totalMcap: dayTokens.reduce((sum, item) => sum + item.current_mcap, 0),
+          gainers: dayTokens.filter(item => item.mcap_growth_percent > 0).length,
+          losers: dayTokens.filter(item => item.mcap_growth_percent < 0).length
+        }
+        
+        dailyBreakdown.push(dayStats)
+      }
+
+      // Add SOL per token calculations to the data
+      const enhancedData = (data || []).map(token => ({
+        ...token,
+        solPerToken: {
+          first: token.first_mcap / solPriceUSD,
+          current: token.current_mcap / solPriceUSD,
+          growth: ((token.current_mcap / solPriceUSD) - (token.first_mcap / solPriceUSD)) / (token.first_mcap / solPriceUSD) * 100
+        }
+      }))
 
       const stats = {
         total: count || 0,
-        gainers: statsData?.filter(item => item.mcap_growth_percent > 0).length || 0,
-        losers: statsData?.filter(item => item.mcap_growth_percent < 0).length || 0,
-        avgGrowth: statsData?.length ?
-          statsData.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / statsData.length : 0,
-        totalMcap: statsData?.reduce((sum, item) => sum + item.current_mcap, 0) || 0
+        gainers,
+        losers,
+        zeroPercent: zeroPercentTokens,
+        zeroPercentage,
+        avgGrowth: excludeZeroPnl ? avgGrowthExcludingZero : avgGrowthAll,
+        avgGrowthAll,
+        avgGrowthExcludingZero,
+        totalMcap: allData.reduce((sum, item) => sum + item.current_mcap, 0),
+        solPriceUSD,
+        mcapRangeAnalysis,
+        thirtyDaysSummary: {
+          totalTokensAdded: recentTokens.length,
+          avgDailyGrowth: recentTokens.length > 0 ?
+            recentTokens.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / recentTokens.length : 0,
+          dailyBreakdown
+        }
       }
 
       return NextResponse.json({
         success: true,
-        data: data || [],
+        data: enhancedData,
         pagination: {
           page,
           limit,
