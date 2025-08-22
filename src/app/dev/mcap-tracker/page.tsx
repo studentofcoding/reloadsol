@@ -99,6 +99,7 @@ export default function McapTrackerPage() {
   const [expandedChart, setExpandedChart] = useState<string | null>(null)
   const [isChartLoading, setIsChartLoading] = useState(false)
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(new Set())
+  const [isPnlTimeWindowsExpanded, setIsPnlTimeWindowsExpanded] = useState(true)
 
   const [analyticsData, setAnalyticsData] = useState<Record<string, EnrichedTokenData>>({})
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
@@ -505,8 +506,31 @@ export default function McapTrackerPage() {
             {/* PnL Time Windows Analysis */}
             {stats && stats.pnlTimeWindows && (
               <div className="bg-gray-800 rounded-lg p-6 mb-8">
-                <h3 className="text-xl font-bold mb-4">PnL Time Windows Analysis</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xl font-bold">PnL Time Windows Analysis</h3>
+                  <button
+                    onClick={() => setIsPnlTimeWindowsExpanded(!isPnlTimeWindowsExpanded)}
+                    className="flex items-center space-x-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors duration-200"
+                  >
+                    <span className="text-sm text-gray-300">
+                      {isPnlTimeWindowsExpanded ? 'Collapse' : 'Expand'}
+                    </span>
+                    <svg
+                      className={`w-4 h-4 text-gray-300 transition-transform duration-200 ${
+                        isPnlTimeWindowsExpanded ? 'rotate-180' : ''
+                      }`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                </div>
+                
+                {isPnlTimeWindowsExpanded && (
+                  <div className="transition-all duration-300 ease-in-out">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                   {Object.entries(stats.pnlTimeWindows)
                     .sort(([a], [b]) => {
                       const aNum = parseFloat(a.replace('%', ''))
@@ -594,9 +618,10 @@ export default function McapTrackerPage() {
                     })}
                 </div>
                 
-                {/* Summary Stats */}
-                <div className="mt-6 pt-4 border-t border-gray-700">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                {/* Summary Statistics */}
+                <div className="mt-6 pt-6 border-t border-gray-700">
+                  <h4 className="text-lg font-semibold mb-4 text-center">Overall Summary</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="text-center">
                       <div className="text-2xl font-bold text-blue-400">
                         {Object.values(stats.pnlTimeWindows).reduce((sum, data) => sum + data.count, 0)}
@@ -630,6 +655,8 @@ export default function McapTrackerPage() {
                     </div>
                   </div>
                 </div>
+                  </div>
+                )}
               </div>
             )}
 
