@@ -317,11 +317,16 @@ export default function McapTrackerPage() {
   }, [tokens, fetchAnalyticsForTokens])
 
   // Utility functions
-  const formatNumber = (num: number): string => {
-    if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`
-    if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`
-    if (num >= 1e3) return `$${(num / 1e3).toFixed(0)}K`
-    return `$${num.toFixed(0)}`
+  const formatNumber = (num?: number | null): string => {
+    // Guard against undefined, null, or non-finite values
+    if (num === null || num === undefined) return '$0'
+    const n = Number(num)
+    if (!Number.isFinite(n)) return '$0'
+
+    if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`
+    if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`
+    if (n >= 1e3) return `$${(n / 1e3).toFixed(0)}K`
+    return `$${n.toFixed(0)}`
   }
 
   const formatSolAmount = (solAmount: number): string => {
