@@ -89,6 +89,8 @@ class TradingTracker {
   private connectionDebounceTimeout: NodeJS.Timeout | null = null
   private lastConnectionAttempt = 0
   private readonly CONNECTION_DEBOUNCE_MS = 1000 // Prevent rapid reconnections
+  private lastMessageTime: number = 0
+  private healthCheckInterval: NodeJS.Timeout | null = null
 
   constructor() {
     this.setupOnlineOfflineHandlers()
@@ -412,9 +414,43 @@ class TradingTracker {
   }
 
   /**
+   * Check browser limits for connection management
+   */
+  private checkBrowserLimits(): void {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return
+
+    const maxConnections = navigator.hardwareConcurrency || 4
+    console.log(`🌐 Browser info:`, {
+      userAgent: navigator.userAgent,
+      hardwareConcurrency: navigator.hardwareConcurrency,
+      connection: (navigator as any).connection?.effectiveType,
+      onLine: navigator.onLine,
+      estimatedMaxConnections: maxConnections * 6 // Typical browser limit
+    })
+  }
+
+  /**
+   * Check network connectivity before attempting connections
+   */
+  private async checkNetworkConnectivity(): Promise<boolean> {
+    try {
+      const response = await fetch(`${this.API_HOST || ''}/api/health`, {
+        method: 'HEAD',
+        cache: 'no-cache'
+      })
+      const isHealthy = response.ok
+      console.log(`🌐 Network connectivity check: ${isHealthy ? 'HEALTHY' : 'UNHEALTHY'} (${response.status})`)
+      return isHealthy
+    } catch (error) {
+      console.error('🌐 Network connectivity check failed:', error)
+      return false
+    }
+  }
+
+  /**
    * Set up Server-Sent Events connection for real-time updates
    */
-  private setupSSEConnection(walletAddress: string) {
+  private async setupSSEConnection(walletAddress: string) {
     if (typeof window === 'undefined') return
 
     // ✅ NEW: Prevent duplicate connections for same wallet
@@ -439,6 +475,19 @@ class TradingTracker {
 
     this.lastConnectionAttempt = now
 
+    // Check network connectivity first
+    const isConnected = await this.checkNetworkConnectivity()
+    if (!isConnected) {
+      console.warn('🌐 Network connectivity issues detected, falling back to polling')
+      this.startPolling(walletAddress)
+      return
+    }
+
+    // Add comprehensive connection attempt logging
+    const connectionAttemptId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    console.log(`🔄 [${connectionAttemptId}] Starting SSE connection attempt for wallet: ${walletAddress.slice(0, 8)}...`)
+    console.log(`🔄 [${connectionAttemptId}] Connection state: ${this.connectionState}, Reconnect attempts: ${this.reconnectAttempts}`)
+
     try {
       // Clean up any existing connection first
       this.cleanupSSEConnection()
@@ -454,14 +503,15 @@ class TradingTracker {
 
       const sseUrl = `${baseUrl}/api/trading/subscribe?wallet=${walletAddress}`
 
-      console.log(`🔌 Attempting SSE connection to: ${sseUrl}`)
+      console.log(`🔄 [${connectionAttemptId}] Connecting to: ${sseUrl}`)
 
       this.sseConnection = new EventSource(sseUrl)
+      console.log(`🔄 [${connectionAttemptId}] EventSource created, readyState: ${this.sseConnection.readyState}`)
 
       // Add connection timeout with more aggressive cleanup
       const connectionTimeout = setTimeout(() => {
         if (this.connectionState === 'connecting') {
-          console.warn('SSE connection timeout, cleaning up and falling back to polling')
+          console.warn(`⏰ [${connectionAttemptId}] SSE connection timeout, cleaning up and falling back to polling`)
           this.connectionState = 'disconnected'
           this.cleanupSSEConnection()
           this.startPolling(walletAddress)
@@ -469,73 +519,102 @@ class TradingTracker {
       }, 15000) // 15 second timeout
 
       this.sseConnection.onopen = () => {
-        console.log('📡 SSE connection established successfully')
+        console.log(`📡 [${connectionAttemptId}] SSE connection established successfully`)
         this.connectionState = 'connected'
         this.reconnectAttempts = 0
         clearTimeout(connectionTimeout)
       }
 
       this.sseConnection.onmessage = (event) => {
+        this.lastMessageTime = Date.now() // Track message timing
+        
         try {
           const data = JSON.parse(event.data)
 
           switch (data.type) {
             case 'connected':
-              console.log('✅ SSE connected for wallet:', data.wallet?.slice(0, 8) + '...', 'Connection ID:', data.connectionId)
+              console.log(`✅ [${connectionAttemptId}] SSE connected for wallet:`, data.wallet?.slice(0, 8) + '...', 'Connection ID:', data.connectionId)
               this.connectionState = 'connected'
+              // Start health check monitoring
+              this.setupConnectionHealthCheck(connectionAttemptId, walletAddress)
               break
 
             case 'trade_update':
             case 'pnl_update':
             case 'balance_update':
-              console.log('🔄 Received trading update, refreshing data...')
+              console.log(`🔄 [${connectionAttemptId}] Received trading update, refreshing data...`)
               this.handleRealTimeUpdate(walletAddress)
               break
 
             case 'keepalive':
               // ✅ NEW: Only log keepalive in debug mode to reduce noise
               if (process.env.NODE_ENV === 'development') {
-                console.log('💓 SSE keepalive received')
+                console.log(`💓 [${connectionAttemptId}] SSE keepalive received`)
               }
               break
 
             default:
-              console.log('📨 SSE message:', data)
+              console.log(`📨 [${connectionAttemptId}] SSE message:`, data)
           }
         } catch (error) {
-          console.error('Error parsing SSE message:', error, 'Raw data:', event.data)
+          console.error(`❌ [${connectionAttemptId}] Error parsing SSE message:`, error, 'Raw data:', event.data)
         }
       }
 
       this.sseConnection.onerror = (error) => {
-        console.error('SSE connection error:', error)
+        console.error(`❌ [${connectionAttemptId}] SSE connection error:`, error)
+        console.log(`❌ [${connectionAttemptId}] Error details:`, {
+          readyState: this.sseConnection?.readyState,
+          connectionState: this.connectionState,
+          reconnectAttempts: this.reconnectAttempts,
+          timestamp: new Date().toISOString(),
+          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A',
+          url: sseUrl
+        })
         clearTimeout(connectionTimeout)
 
         // Enhanced error handling based on connection state
         if (this.sseConnection) {
           const readyState = this.sseConnection.readyState
-          console.log('SSE ReadyState:', readyState, {
+          console.log(`❌ [${connectionAttemptId}] SSE ReadyState:`, readyState, {
             0: 'CONNECTING',
             1: 'OPEN',
             2: 'CLOSED'
           }[readyState])
 
-          // ✅ NEW: Better state management
+          // ✅ FIXED: Handle all readyState scenarios
           if (readyState === EventSource.CLOSED) {
-            console.warn('SSE connection was closed, attempting reconnection')
+            console.warn(`❌ [${connectionAttemptId}] SSE connection was closed, attempting reconnection`)
             this.connectionState = 'disconnected'
             this.handleSSEReconnect(walletAddress)
           } else if (readyState === EventSource.CONNECTING && this.connectionState === 'connecting') {
-            console.warn('SSE connection failed during connection attempt')
+            console.warn(`❌ [${connectionAttemptId}] SSE connection failed during connection attempt`)
             this.connectionState = 'disconnected'
             this.cleanupSSEConnection()
             this.handleSSEReconnect(walletAddress)
+          } else if (readyState === EventSource.OPEN) {
+            // ✅ NEW: Handle "phantom connection" - appears open but has server-side issues
+            console.warn(`❌ [${connectionAttemptId}] SSE error on OPEN connection (phantom connection detected)`)
+            console.log(`🔄 [${connectionAttemptId}] Cleaning up phantom connection and reconnecting...`)
+            this.connectionState = 'disconnected'
+            this.cleanupSSEConnection()
+            
+            // Add small delay before reconnection to let server-side cleanup complete
+            setTimeout(() => {
+              this.handleSSEReconnect(walletAddress)
+            }, 2000) // 2-second delay for server cleanup
           }
         }
       }
 
     } catch (error) {
-      console.error('Failed to establish SSE connection:', error)
+      console.error(`❌ [${connectionAttemptId}] Failed to establish SSE connection:`, error)
+      console.log(`❌ [${connectionAttemptId}] Setup failure details:`, {
+        errorType: error instanceof Error ? error.constructor.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        connectionState: this.connectionState,
+        timestamp: new Date().toISOString()
+      })
       this.connectionState = 'disconnected'
       // Fall back to polling immediately on setup failure
       this.startPolling(walletAddress)
@@ -581,6 +660,37 @@ class TradingTracker {
   }
 
   /**
+   * Set up connection health check monitoring
+   */
+  private setupConnectionHealthCheck(connectionAttemptId: string, walletAddress: string): void {
+    // Clear any existing health check
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval)
+    }
+
+    this.healthCheckInterval = setInterval(() => {
+      if (this.sseConnection && this.connectionState === 'connected') {
+        // Check if we've received any messages recently
+        const now = Date.now()
+        const timeSinceLastMessage = now - (this.lastMessageTime || now)
+        
+        // If no messages for 60 seconds, consider connection stale
+        if (timeSinceLastMessage > 60000) {
+          console.warn(`⚠️ [${connectionAttemptId}] No SSE messages for ${Math.round(timeSinceLastMessage/1000)}s, checking connection health`)
+          
+          // Test connection by checking readyState
+          if (this.sseConnection.readyState !== EventSource.OPEN) {
+            console.warn(`⚠️ [${connectionAttemptId}] Connection health check failed, reconnecting...`)
+            this.connectionState = 'disconnected'
+            this.cleanupSSEConnection()
+            this.handleSSEReconnect(walletAddress)
+          }
+        }
+      }
+    }, 30000) // Check every 30 seconds
+  }
+
+  /**
    * Clean up SSE connection
    */
   private cleanupSSEConnection() {
@@ -606,6 +716,11 @@ class TradingTracker {
     if (this.connectionDebounceTimeout) {
       clearTimeout(this.connectionDebounceTimeout)
       this.connectionDebounceTimeout = null
+    }
+
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval)
+      this.healthCheckInterval = null
     }
 
     this.connectionState = 'disconnected'

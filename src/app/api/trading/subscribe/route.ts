@@ -58,9 +58,11 @@ function cleanupConnection(connectionId: string): void {
 }
 
 // Enhanced enqueue function with better error handling
+// In safeEnqueue function, around line 61
 function safeEnqueue(connectionId: string, data: Uint8Array): boolean {
   const connection = activeConnections.get(connectionId)
   if (!connection || !connection.isActive) {
+    console.log(`⚠️ Connection ${connectionId} not found or inactive`)
     return false
   }
 
@@ -69,7 +71,16 @@ function safeEnqueue(connectionId: string, data: Uint8Array): boolean {
     return true
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-    console.log(`Connection ${connectionId} failed, cleaning up: ${errorMessage}`)
+    console.log(`❌ Connection ${connectionId} failed, cleaning up: ${errorMessage}`)
+
+    // ✅ Enhanced error logging for debugging
+    console.log(`❌ Controller state:`, {
+      connectionId,
+      isActive: connection.isActive,
+      createdAt: connection.createdAt,
+      age: Date.now() - connection.createdAt,
+      errorType: error instanceof Error ? error.constructor.name : typeof error
+    })
 
     // Mark as inactive and clean up
     connection.isActive = false
@@ -80,9 +91,21 @@ function safeEnqueue(connectionId: string, data: Uint8Array): boolean {
 }
 
 // GET /api/trading/subscribe?wallet=<address>
+// In the GET function, around line 100
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const walletAddress = searchParams.get('wallet')
+  const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+
+  console.log(`📡 [${requestId}] New SSE connection request for wallet: ${walletAddress?.slice(0, 8)}...`)
+  console.log(`📡 [${requestId}] Request headers:`, {
+    userAgent: request.headers.get('user-agent'),
+    origin: request.headers.get('origin'),
+    referer: request.headers.get('referer'),
+    connection: request.headers.get('connection'),
+    cacheControl: request.headers.get('cache-control')
+  })
+  console.log(`📡 [${requestId}] Active connections before cleanup: ${activeConnections.size}`)
 
   if (!walletAddress) {
     return NextResponse.json(
@@ -122,6 +145,7 @@ export async function GET(request: NextRequest) {
   const stream = new ReadableStream({
     start(controller) {
       const connectionId = `${walletAddress}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      console.log(`✅ [${requestId}] Creating connection: ${connectionId}`)
 
       // Create enhanced connection object
       const connection: Connection = {
@@ -136,6 +160,7 @@ export async function GET(request: NextRequest) {
       activeConnections.set(connectionId, connection)
 
       // Send initial connection message with proper SSE format
+      // Enhanced initial message logging
       const initialData = `id: ${connectionId}\ndata: ${JSON.stringify({
         type: 'connected',
         wallet: walletAddress,
@@ -144,34 +169,14 @@ export async function GET(request: NextRequest) {
       })}\n\n`
 
       if (!safeEnqueue(connectionId, new TextEncoder().encode(initialData))) {
-        console.error('Failed to send initial SSE message')
+        console.error(`❌ [${requestId}] Failed to send initial SSE message for ${connectionId}`)
         return
       }
-
-      // Enhanced keepalive with connection health check
-      connection.keepAliveInterval = setInterval(() => {
-        if (!connection.isActive) {
-          console.log(`Stopping keepalive for inactive connection: ${connectionId}`)
-          if (connection.keepAliveInterval) {
-            clearInterval(connection.keepAliveInterval)
-          }
-          return
-        }
-
-        const keepAliveData = `id: keepalive-${Date.now()}\ndata: ${JSON.stringify({
-          type: 'keepalive',
-          connectionId,
-          timestamp: new Date().toISOString()
-        })}\n\n`
-
-        // If keepalive fails, the connection is automatically cleaned up by safeEnqueue
-        if (!safeEnqueue(connectionId, new TextEncoder().encode(keepAliveData))) {
-          console.log(`Keepalive failed for connection: ${connectionId}`)
-        }
-      }, 25000) // Slightly more frequent keepalive
+      console.log(`✅ [${requestId}] Initial message sent for ${connectionId}`)
     },
 
     cancel() {
+      console.log(`🔌 [${requestId}] Client cancelled connection for wallet: ${walletAddress?.slice(0, 8)}...`)
       // Find and clean up connection for this wallet
       for (const [id, conn] of Array.from(activeConnections.entries())) {
         if (conn.walletAddress === walletAddress) {
@@ -184,6 +189,7 @@ export async function GET(request: NextRequest) {
     }
   })
 
+  console.log(`📡 [${requestId}] SSE stream created successfully`)
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
