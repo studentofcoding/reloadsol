@@ -505,6 +505,48 @@ export async function trackTokenMcap(
         })
       }
 
+      // Add new environment variable for stop loss threshold
+      const STOP_LOSS_THRESHOLD = parseFloat(process.env.MCAP_STOP_LOSS_THRESHOLD || process.env.NEXT_PUBLIC_MCAP_STOP_LOSS_THRESHOLD || '-50') // -50%
+
+      // In trackTokenMcap function, after calculating growthPercent:
+      if (existingRecord) {
+        const growthPercent = ((normalizedCurrentMcap - existingRecord.first_mcap) / existingRecord.first_mcap) * 100
+
+        // Check for stop loss condition
+        if (growthPercent <= STOP_LOSS_THRESHOLD) {
+          log.info('price_tracking', 'Stop loss triggered - halting tracking', {
+            tokenAddress,
+            tokenSymbol,
+            growthPercent,
+            stopLossThreshold: STOP_LOSS_THRESHOLD,
+            firstMcap: existingRecord.first_mcap,
+            currentMcap: normalizedCurrentMcap
+          })
+
+          // Mark token as stopped and remove from cache
+          mcapCache.delete(tokenAddress)
+
+          // Optionally update database with final state
+          const stoppedRecord = {
+            ...existingRecord,
+            current_mcap: normalizedCurrentMcap,
+            last_updated_at: new Date().toISOString(),
+            mcap_growth_percent: growthPercent,
+            is_tracking_stuck: true // Use this flag to indicate stopped tracking
+          }
+          updateMcapInDatabase(stoppedRecord, false).catch(console.error)
+
+          return {
+            isFirstTime: false,
+            firstMcap: existingRecord.first_mcap,
+            currentMcap: normalizedCurrentMcap,
+            growthPercent,
+            formattedGrowth: formatGrowthPercent(growthPercent),
+            firstSeenAt: existingRecord.first_seen_at
+          }
+        }
+      }
+
       const updatedRecord: McapSnapshot = {
         ...existingRecord,
         current_mcap: normalizedCurrentMcap,
