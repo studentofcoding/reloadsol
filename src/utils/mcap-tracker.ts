@@ -12,6 +12,7 @@ export interface McapSnapshot {
   when_reach_80mc?: string | null
   when_reach_120mc?: string | null
   when_reach_200mc?: string | null
+  is_tracking_stuck?: boolean
 }
 
 export interface McapTrackingResult {
@@ -288,13 +289,40 @@ export async function trackTokenMcap(
     const cached = mcapCache.get(tokenAddress)
     const now = Date.now()
 
+    // Configurable thresholds (perf-sensible defaults)
+    const HEARTBEAT_INTERVAL_MS = parseInt(process.env.MCAP_HEARTBEAT_MS || '600000') // 10 minutes
+    const MIN_CHANGE_PERCENT = parseFloat(process.env.MCAP_MIN_CHANGE_PERCENT || '0.1') // 0.1%
+    const DB_WRITE_PERCENT = parseFloat(process.env.MCAP_DB_WRITE_PERCENT || '1') // 1%
+    const STUCK_MIN_AGE_MS = parseInt(process.env.MCAP_STUCK_MIN_AGE_MS || '600000') // 10 minutes
+    const STUCK_EPSILON_PERCENT = parseFloat(process.env.MCAP_STUCK_EPSILON_PERCENT || '0.01') // 0.01%
+
     if (cached && (now - new Date(cached.last_updated_at).getTime()) < CACHE_TTL_MS) {
       // Use cached data but update current MCap if different
-      if (Math.abs(cached.current_mcap - normalizedCurrentMcap) > cached.current_mcap * 0.01) { // 1% threshold
+      const absDelta = Math.abs(cached.current_mcap - normalizedCurrentMcap)
+      const dbWriteThreshold = cached.current_mcap * (DB_WRITE_PERCENT / 100)
+      const timeSinceLastDbUpdate = now - new Date(cached.last_updated_at).getTime()
+
+      if (absDelta > dbWriteThreshold) {
         const previousGrowthPercent = cached.mcap_growth_percent
         cached.current_mcap = normalizedCurrentMcap
         cached.last_updated_at = new Date().toISOString()
         cached.mcap_growth_percent = ((normalizedCurrentMcap - cached.first_mcap) / cached.first_mcap) * 100
+
+        // Compute stuck flag
+        const ageMs = now - new Date(cached.first_seen_at).getTime()
+        const isZero = Math.abs(cached.mcap_growth_percent) <= STUCK_EPSILON_PERCENT
+        const prevStuck = cached.is_tracking_stuck === true
+        cached.is_tracking_stuck = isZero && ageMs >= STUCK_MIN_AGE_MS
+
+        if (prevStuck !== cached.is_tracking_stuck) {
+          log.info('price_tracking', 'Stuck status changed (cached path)', {
+            tokenAddress,
+            tokenSymbol,
+            is_tracking_stuck: cached.is_tracking_stuck,
+            growthPercent: cached.mcap_growth_percent,
+            ageMs
+          })
+        }
 
         // Check for threshold notifications
         const notificationSent = await checkAndSendThresholdNotifications(
@@ -310,9 +338,51 @@ export async function trackTokenMcap(
         if (notificationSent) {
           updateMcapInDatabase(cached).catch(console.error)
         } else {
-          // Only update mcap-related fields if no notifications were sent
           updateMcapInDatabase(cached, false).catch(console.error)
         }
+      } else if (timeSinceLastDbUpdate >= HEARTBEAT_INTERVAL_MS) {
+        // Heartbeat: update without threshold columns, and record latest currentMcap and growth
+        const prev = { current: cached.current_mcap, growth: cached.mcap_growth_percent }
+        cached.current_mcap = normalizedCurrentMcap
+        cached.mcap_growth_percent = ((normalizedCurrentMcap - cached.first_mcap) / cached.first_mcap) * 100
+        cached.last_updated_at = new Date().toISOString()
+
+        // Compute stuck flag on heartbeat
+        const ageMs = now - new Date(cached.first_seen_at).getTime()
+        const isZero = Math.abs(cached.mcap_growth_percent) <= STUCK_EPSILON_PERCENT
+        const prevStuck = cached.is_tracking_stuck === true
+        cached.is_tracking_stuck = isZero && ageMs >= STUCK_MIN_AGE_MS
+
+        if (prevStuck !== cached.is_tracking_stuck) {
+          log.info('price_tracking', 'Stuck status changed (heartbeat cached path)', {
+            tokenAddress,
+            tokenSymbol,
+            is_tracking_stuck: cached.is_tracking_stuck,
+            growthPercent: cached.mcap_growth_percent,
+            ageMs
+          })
+        }
+
+        updateMcapInDatabase(cached, false).catch(console.error)
+        log.info('price_tracking', 'Heartbeat DB write executed', {
+          tokenAddress,
+          tokenSymbol,
+          prevCurrentMcap: prev.current,
+          newCurrentMcap: cached.current_mcap,
+          prevGrowth: prev.growth,
+          newGrowth: cached.mcap_growth_percent,
+          timeSinceLastDbUpdate
+        })
+      } else {
+        // Skip small change in cached path; just return cached snapshot
+        log.info('price_tracking', 'Skip: cached path small-change or db-write gating', {
+          tokenAddress,
+          tokenSymbol,
+          absDelta,
+          dbWriteThreshold,
+          timeSinceLastDbUpdate,
+          heartbeatInterval: HEARTBEAT_INTERVAL_MS
+        })
       }
 
       return {
@@ -374,7 +444,12 @@ export async function trackTokenMcap(
       const minUpdateInterval = 60000 // 1 minute minimum
 
       if (timeSinceLastUpdate < minUpdateInterval) {
-        // Return cached data
+        log.info('price_tracking', 'Skip: min-interval gating', {
+          tokenAddress,
+          tokenSymbol,
+          timeSinceLastUpdate,
+          minUpdateInterval
+        })
         return {
           isFirstTime: false,
           firstMcap: existingRecord.first_mcap,
@@ -386,13 +461,19 @@ export async function trackTokenMcap(
       }
     }
 
-    // In trackTokenMcap function, add minimum change threshold
+    // Minimum change threshold gating
     if (existingRecord) {
       const mcapDifference = Math.abs(normalizedCurrentMcap - existingRecord.current_mcap)
-      const changeThreshold = existingRecord.current_mcap * 0.001 // 0.1% minimum change
+      const changeThreshold = existingRecord.current_mcap * (MIN_CHANGE_PERCENT / 100) // e.g. 0.1%
 
       if (mcapDifference < changeThreshold) {
-        // Skip update if change is too small
+        log.info('price_tracking', 'Skip: small-change gating', {
+          tokenAddress,
+          tokenSymbol,
+          mcapDifference,
+          changeThreshold,
+          percent: MIN_CHANGE_PERCENT
+        })
         return {
           isFirstTime: false,
           firstMcap: existingRecord.first_mcap,
@@ -431,6 +512,22 @@ export async function trackTokenMcap(
         mcap_growth_percent: growthPercent
       }
 
+      // Compute stuck flag in DB path
+      const ageMs = new Date(currentTime).getTime() - new Date(existingRecord.first_seen_at).getTime()
+      const isZero = Math.abs(growthPercent) <= STUCK_EPSILON_PERCENT
+      const prevStuck = existingRecord.is_tracking_stuck === true
+      updatedRecord.is_tracking_stuck = isZero && ageMs >= STUCK_MIN_AGE_MS
+
+      if (prevStuck !== updatedRecord.is_tracking_stuck) {
+        log.info('price_tracking', 'Stuck status changed (db path)', {
+          tokenAddress,
+          tokenSymbol,
+          is_tracking_stuck: updatedRecord.is_tracking_stuck,
+          growthPercent,
+          ageMs
+        })
+      }
+
       // Update cache
       mcapCache.set(tokenAddress, updatedRecord)
 
@@ -444,9 +541,31 @@ export async function trackTokenMcap(
         existingRecord.first_seen_at
       )
 
-      // Update database asynchronously if MCap changed significantly
-      if (Math.abs(existingRecord.current_mcap - normalizedCurrentMcap) > existingRecord.current_mcap * 0.01) {
+      // Update database asynchronously:
+      const absDelta = Math.abs(existingRecord.current_mcap - normalizedCurrentMcap)
+      const dbWriteThreshold = existingRecord.current_mcap * (DB_WRITE_PERCENT / 100)
+      const timeSinceLastDbUpdate = new Date().getTime() - new Date(existingRecord.last_updated_at).getTime()
+
+      if (absDelta > dbWriteThreshold) {
         updateMcapInDatabase(updatedRecord, notificationSent).catch(console.error)
+      } else if (timeSinceLastDbUpdate >= HEARTBEAT_INTERVAL_MS) {
+        updateMcapInDatabase(updatedRecord, false).catch(console.error)
+        log.info('price_tracking', 'Heartbeat DB write executed (db path)', {
+          tokenAddress,
+          tokenSymbol,
+          absDelta,
+          dbWriteThreshold,
+          timeSinceLastDbUpdate
+        })
+      } else {
+        log.info('price_tracking', 'Skip: db-write gating (db path)', {
+          tokenAddress,
+          tokenSymbol,
+          absDelta,
+          dbWriteThreshold,
+          timeSinceLastDbUpdate,
+          heartbeatInterval: HEARTBEAT_INTERVAL_MS
+        })
       }
 
       return {
@@ -469,7 +588,8 @@ export async function trackTokenMcap(
         mcap_growth_percent: 0,
         when_reach_80mc: null,
         when_reach_120mc: null,
-        when_reach_200mc: null
+        when_reach_200mc: null,
+        is_tracking_stuck: false
       }
 
       // Add to cache
@@ -505,7 +625,8 @@ async function insertMcapRecord(record: McapSnapshot): Promise<void> {
         mcap_growth_percent: record.mcap_growth_percent,
         when_reach_80mc: record.when_reach_80mc,
         when_reach_120mc: record.when_reach_120mc,
-        when_reach_200mc: record.when_reach_200mc
+        when_reach_200mc: record.when_reach_200mc,
+        is_tracking_stuck: record.is_tracking_stuck === true
       })
 
     if (error) {
@@ -522,7 +643,8 @@ async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boo
     const updateData: any = {
       current_mcap: record.current_mcap,
       last_updated_at: record.last_updated_at,
-      mcap_growth_percent: record.mcap_growth_percent
+      mcap_growth_percent: record.mcap_growth_percent,
+      is_tracking_stuck: record.is_tracking_stuck === true
     }
 
     // Only include threshold columns if they were updated
