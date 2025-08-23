@@ -374,6 +374,7 @@ export default function McapTrackerPage() {
               const solPriceUSD = stats?.solPriceUSD || 1
               return {
                 ...token,
+                first_mcap: data.firstMcap,
                 current_mcap: data.currentMcap,
                 mcap_growth_percent: data.tracking.growthPercent || token.mcap_growth_percent,
                 last_updated_at: new Date().toISOString(),

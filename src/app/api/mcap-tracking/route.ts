@@ -49,10 +49,10 @@ export async function GET(request: NextRequest) {
 
       // Apply MCap filters
       if (minMcap !== null) {
-        query = query.gte('current_mcap', parseFloat(minMcap))
+        query = query.gte('first_mcap', parseFloat(minMcap))
       }
       if (maxMcap !== null) {
-        query = query.lte('current_mcap', parseFloat(maxMcap))
+        query = query.lte('first_mcap', parseFloat(maxMcap))
       }
 
       // Apply sorting and pagination
@@ -157,12 +157,12 @@ export async function GET(request: NextRequest) {
       })
 
       // MCap-based analysis with debugging
-      const under50k = validData.filter(item => item.current_mcap < 50000)
-      const from51to100k = validData.filter(item => item.current_mcap >= 50001 && item.current_mcap <= 100000)
-      const from101to200k = validData.filter(item => item.current_mcap >= 100001 && item.current_mcap <= 200000)
-      const from201to500k = validData.filter(item => item.current_mcap >= 200001 && item.current_mcap <= 500000)
-      const from501kto1M = validData.filter(item => item.current_mcap >= 500001 && item.current_mcap <= 1000000)
-      const over1M = validData.filter(item => item.current_mcap > 1000000)
+      const under50k = validData.filter(item => item.first_mcap < 50000)
+      const from51to100k = validData.filter(item => item.first_mcap >= 50001 && item.first_mcap <= 100000)
+      const from101to200k = validData.filter(item => item.first_mcap >= 100001 && item.first_mcap <= 200000)
+      const from201to500k = validData.filter(item => item.first_mcap >= 200001 && item.first_mcap <= 500000)
+      const from501kto1M = validData.filter(item => item.first_mcap >= 500001 && item.first_mcap <= 1000000)
+      const over1M = validData.filter(item => item.first_mcap > 1000000)
 
       // Add debugging logs
       console.log('MCap Range Debug Info:');
