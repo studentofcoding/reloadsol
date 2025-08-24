@@ -229,6 +229,32 @@ export async function GET(request: NextRequest) {
           return Math.sqrt(variance)
         }
 
+        const buildHistogram = (values: number[]) => {
+          const bins = [
+            { label: '<= -90%', min: -Infinity, max: -90 },
+            { label: '-90% to -50%', min: -90, max: -50 },
+            { label: '-50% to 0%', min: -50, max: 0 },
+            { label: '0% to 20%', min: 0, max: 20 },
+            { label: '20% to 50%', min: 20, max: 50 },
+            { label: '50% to 100%', min: 50, max: 100 },
+            { label: '100% to 200%', min: 100, max: 200 },
+            { label: '200% to 500%', min: 200, max: 500 },
+            { label: '500% to 1000%', min: 500, max: 1000 },
+            { label: '> 1000%', min: 1000, max: Infinity }
+          ]
+          return bins.map(b => {
+            const count = values.reduce((acc, v) => {
+              if (v >= b.min && v < b.max) return acc + 1
+              // include upper Infinity
+              if (b.max === Infinity && v >= b.min) return acc + 1
+              // include lower -Infinity
+              if (b.min === -Infinity && v < b.max) return acc + 1
+              return acc
+            }, 0)
+            return { range: b.label, count }
+          })
+        }
+
         if (data.length === 0) {
           console.log(`${rangeName}: No data, returning zeros`);
           return {
@@ -245,7 +271,9 @@ export async function GET(request: NextRequest) {
             stopLossRate: 0,
             stuckRate: 0,
             hitRate120: 0,
-            bucketVolatility: 0
+            bucketVolatility: 0,
+            p75Multiplier: 0,
+            growthHistogram: []
           }
         }
 
@@ -264,7 +292,6 @@ export async function GET(request: NextRequest) {
             avgMultiplier: 0,
             maxDrawdown: 0,
             avgGrowth: 0,
-            // New fields
             medianMultiplier: 0,
             medianGrowth: 0,
             p75Growth: 0,
@@ -274,7 +301,9 @@ export async function GET(request: NextRequest) {
             stopLossRate: 0,
             stuckRate: 0,
             hitRate120: 0,
-            bucketVolatility: 0
+            bucketVolatility: 0,
+            p75Multiplier: 0,
+            growthHistogram: []
           }
         }
 
@@ -303,13 +332,14 @@ export async function GET(request: NextRequest) {
           ? (validRecords.filter(item => item.mcap_growth_percent >= 120).length / validRecords.length) * 100
           : 0
         const bucketVolatility = stddev(growthPercentages)
+        const p75Multiplier = percentile(multipliers, 75)
+        const growthHistogram = buildHistogram(growthPercentages)
 
         const result = {
           count: data.length,
           avgMultiplier,
-          maxDrawdown: worstGrowth, // backward-compatible alias
+          maxDrawdown: worstGrowth,
           avgGrowth,
-          // New fields
           medianMultiplier,
           medianGrowth,
           p75Growth,
@@ -319,7 +349,9 @@ export async function GET(request: NextRequest) {
           stopLossRate,
           stuckRate,
           hitRate120,
-          bucketVolatility
+          bucketVolatility,
+          p75Multiplier,
+          growthHistogram
         }
 
         console.log(`${rangeName}: Final result:`, result);

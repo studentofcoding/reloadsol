@@ -60,12 +60,12 @@ interface ApiResponse {
       avgTimeToReach: number
     }>
     mcapRangeAnalysis: {
-      under50k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
-      from51to100k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
-      from101to200k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
-      from201to500k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
-      from501kto1M: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
-      over1M: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
+      under50k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number; p75Multiplier: number; growthHistogram: number[] }
+      from51to100k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number; p75Multiplier: number; growthHistogram: number[] }
+      from101to200k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number; p75Multiplier: number; growthHistogram: number[] }
+      from201to500k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number; p75Multiplier: number; growthHistogram: number[] }
+      from501kto1M: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number; p75Multiplier: number; growthHistogram: number[] }
+      over1M: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number; p75Multiplier: number; growthHistogram: number[] }
     }
     thirtyDaysSummary: {
       totalTokensAdded: number
@@ -105,10 +105,14 @@ export default function McapTrackerPage() {
   const [analyticsData, setAnalyticsData] = useState<Record<string, EnrichedTokenData>>({})
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
   const [expandedAnalytics, setExpandedAnalytics] = useState<Record<string, boolean>>({})
+  const [expandedBuckets, setExpandedBuckets] = useState<Record<string, boolean>>({})
+  const toggleBucketDetails = (key: string) => {
+     setExpandedBuckets(prev => ({ ...prev, [key]: !prev[key] }))
+  }
   
   const [pagination, setPagination] = useState({
     page: 1,
-    limit: 50,
+    limit: 100,
     total: 0,
     totalPages: 0
   })
@@ -721,7 +725,23 @@ export default function McapTrackerPage() {
                     activeMcapFilter === 'under50k' ? 'ring-2 ring-blue-400 bg-gray-600' : ''
                   }`}
                 >
-                  <h4 className="text-lg font-semibold text-blue-400 mb-2">&lt;50K MCap</h4>
+                  <div className="flex items-start justify-between">
+                    <h4 className="text-lg font-semibold text-blue-400 mb-2">&lt;50K MCap</h4>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleMcapRangeFilter('under50k') }}
+                        className="px-2 py-1 text-xs rounded bg-blue-500 hover:bg-blue-600"
+                      >
+                        Filter
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleBucketDetails('under50k') }}
+                        className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
+                      >
+                        {expandedBuckets['under50k'] ? 'Hide' : 'Details'}
+                      </button>
+                    </div>
+                  </div>
                   <div className="space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-400">Count:</span>
@@ -743,31 +763,93 @@ export default function McapTrackerPage() {
                         {formatPercentage(stats.mcapRangeAnalysis.under50k.avgGrowth)}
                       </span>
                     </div>
-                    {/* New metrics */}
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Median Growth:</span>
-                      <span className={getGrowthColor(stats.mcapRangeAnalysis.under50k.medianGrowth)}>
-                        {formatPercentage(stats.mcapRangeAnalysis.under50k.medianGrowth)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">P75 Growth:</span>
-                      <span className={getGrowthColor(stats.mcapRangeAnalysis.under50k.p75Growth)}>
-                        {formatPercentage(stats.mcapRangeAnalysis.under50k.p75Growth)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Stop Loss Rate:</span>
-                      <span className="text-white">{stats.mcapRangeAnalysis.under50k.stopLossRate.toFixed(1)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Stuck Rate:</span>
-                      <span className="text-white">{stats.mcapRangeAnalysis.under50k.stuckRate.toFixed(1)}%</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Hit Rate ≥120%:</span>
-                      <span className="text-white">{stats.mcapRangeAnalysis.under50k.hitRate120.toFixed(1)}%</span>
-                    </div>
+
+                    {expandedBuckets['under50k'] && (
+                      <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
+                        {/* Extra metrics in details */}
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Median Growth:</span>
+                          <span className={getGrowthColor(stats.mcapRangeAnalysis.under50k.medianGrowth)}>
+                            {formatPercentage(stats.mcapRangeAnalysis.under50k.medianGrowth)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">P75 Growth:</span>
+                          <span className={getGrowthColor(stats.mcapRangeAnalysis.under50k.p75Growth)}>
+                            {formatPercentage(stats.mcapRangeAnalysis.under50k.p75Growth)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Median Multiplier:</span>
+                          <span className="text-white">
+                            {stats.mcapRangeAnalysis.under50k.medianMultiplier.toFixed(2)}x
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">P75 Multiplier:</span>
+                          <span className="text-white">
+                            {stats.mcapRangeAnalysis.under50k.p75Multiplier.toFixed(2)}x
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Stop Loss Rate:</span>
+                          <span className="text-white">
+                            {stats.mcapRangeAnalysis.under50k.stopLossRate.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Stuck Rate:</span>
+                          <span className="text-white">
+                            {stats.mcapRangeAnalysis.under50k.stuckRate.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Hit Rate ≥120%:</span>
+                          <span className="text-white">
+                            {stats.mcapRangeAnalysis.under50k.hitRate120.toFixed(1)}%
+                          </span>
+                        </div>
+
+                        {/* PnL Distribution Chart */}
+                        <div className="mt-3">
+                          <div className="text-gray-300 text-xs mb-1">PnL distribution</div>
+                          <div className="space-y-1">
+                          {(() => {
+                            interface HistogramData {
+                              count: number;
+                              range: string;
+                            }
+
+                            const hist = (stats.mcapRangeAnalysis.under50k.growthHistogram || []).map(num => ({
+                              count: num,
+                              range: '', // Add appropriate range string based on your data structure
+                            })) as HistogramData[];
+                            const maxCount = Math.max(1, ...hist.map(h => h.count));
+                            
+                            return hist.map((h, idx) => {
+                              const widthPct = Math.round((h.count / maxCount) * 100);
+                              const isNegative = h.range.includes('-');
+                              
+                              return (
+                                <div key={idx} className="flex items-center gap-2">
+                                  <div className="w-36 text-gray-400 text-xs">{h.range}</div>
+                                  <div className="flex-1 bg-gray-600 rounded h-3">
+                                    <div
+                                      className={`h-3 rounded ${
+                                        isNegative ? 'bg-red-500' : 'bg-green-500'
+                                      }`}
+                                      style={{ width: `${widthPct}%` }}
+                                    />
+                                  </div>
+                                  <div className="w-8 text-right text-gray-300 text-xs">{h.count}</div>
+                                </div>
+                              );
+                            });
+                          })()}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </button>
 
