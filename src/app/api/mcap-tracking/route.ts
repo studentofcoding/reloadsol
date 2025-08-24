@@ -182,6 +182,62 @@ export async function GET(request: NextRequest) {
         }
       })
 
+      // Buy Time Window Analysis (ENTRY): based on first_seen_at UTC hour
+      const pnlBuyTimeWindows: Record<string, {
+        count: number
+        timeDistribution: Record<string, number>
+        peakHours: string[]
+        avgTimeToReach: number
+      }> = {}
+
+      pnlThresholds.forEach(threshold => {
+        const tokensAboveThreshold = allData.filter(item => item.mcap_growth_percent >= threshold)
+
+        const hourlyDistribution: Record<string, number> = {}
+        for (let hour = 0; hour < 24; hour++) {
+          hourlyDistribution[hour.toString().padStart(2, '0')] = 0
+        }
+
+        let totalTimeToReach = 0
+        let validTimeCalculations = 0
+
+        tokensAboveThreshold.forEach(token => {
+          const firstSeenDate = new Date(token.first_seen_at)
+          const lastUpdatedDate = new Date(token.last_updated_at)
+
+          // Use UTC hour of when the token was first_seen as the ENTRY bucket
+          const startHourUTC = firstSeenDate.getUTCHours()
+          hourlyDistribution[startHourUTC.toString().padStart(2, '0')]++
+
+          // Keep the same average time-to-target calculation for comparability
+          const timeDiff = (lastUpdatedDate.getTime() - firstSeenDate.getTime()) / (1000 * 60 * 60)
+          if (timeDiff >= 0 && timeDiff <= 168) {
+            totalTimeToReach += timeDiff
+            validTimeCalculations++
+          }
+        })
+
+        const sortedHours = Object.entries(hourlyDistribution)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 3)
+          .filter(([, count]) => count > 0)
+          .map(([hour]) => `${hour}:00`)
+
+        pnlBuyTimeWindows[`PnL > ${threshold}%`] = {
+          count: tokensAboveThreshold.length,
+          timeDistribution: hourlyDistribution,
+          peakHours: sortedHours,
+          avgTimeToReach: validTimeCalculations > 0 ? totalTimeToReach / validTimeCalculations : 0
+        }
+      })
+
+      // Optional: single info-level log to document bases/timezones (no noisy per-token logs)
+      log.info('mcap_tracker', 'Computed PnL time windows', {
+        sellPeaks: 'last_updated_at (server local time)',
+        buyPeaks: 'first_seen_at (UTC)',
+        thresholds: pnlThresholds
+      })
+
       // MCap-based analysis with debugging
       const under50k = validData.filter(item => item.first_mcap < 50000)
       const from51to100k = validData.filter(item => item.first_mcap >= 50001 && item.first_mcap <= 100000)
@@ -428,7 +484,14 @@ export async function GET(request: NextRequest) {
         avgGrowthExcludingZero,
         totalMcap: allData.reduce((sum, item) => sum + item.current_mcap, 0),
         solPriceUSD,
-        pnlTimeWindows, // Add the new PnL time window analysis
+        pnlTimeWindows, // Sell/exit timing (by last_updated_at, server local time)
+        pnlBuyTimeWindows, // Buy/entry timing (by first_seen_at, UTC)
+        timeWindowMeta: {
+          sellPeakHourBasis: 'last_updated_at',
+          sellPeakHourTimezone: 'server_local',
+          buyPeakHourBasis: 'first_seen_at',
+          buyPeakHourTimezone: 'UTC'
+        },
         mcapRangeAnalysis,
         thirtyDaysSummary: {
           totalTokensAdded: recentTokens.length,

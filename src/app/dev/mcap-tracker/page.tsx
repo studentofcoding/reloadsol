@@ -59,6 +59,18 @@ interface ApiResponse {
       peakHours: string[]
       avgTimeToReach: number
     }>
+    pnlBuyTimeWindows?: Record<string, {
+      count: number
+      timeDistribution: Record<string, number> // keys "00".."23" (UTC-based before conversion)
+      peakHours: string[]
+      avgTimeToReach: number
+    }>
+    timeWindowMeta?: {
+      sellPeakHourBasis: string
+      sellPeakHourTimezone: string
+      buyPeakHourBasis: string
+      buyPeakHourTimezone: string
+    }
     mcapRangeAnalysis: {
       under50k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number; p75Multiplier: number; growthHistogram: number[] }
       from51to100k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number; p75Multiplier: number; growthHistogram: number[] }
@@ -181,6 +193,13 @@ export default function McapTrackerPage() {
   const [isPnlTimeWindowsExpanded, setIsPnlTimeWindowsExpanded] = useState(true)
   const [activeMcapFilter, setActiveMcapFilter] = useState<string | null>(null)
 
+  // New: Buy analysis expand/collapse and timezone settings
+  const [isPnlBuyTimeWindowsExpanded, setIsPnlBuyTimeWindowsExpanded] = useState(true)
+  // Desired display GMT offset (GMT+X), integer hours from -12 to +14
+  const [displayGmtOffset, setDisplayGmtOffset] = useState<number>(0)
+  // Base offset for Sell section (server local timezone; unknown => default 0)
+  const [sellServerBaseOffset, setSellServerBaseOffset] = useState<number>(0)
+
   const [analyticsData, setAnalyticsData] = useState<Record<string, EnrichedTokenData>>({})
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
   const [expandedAnalytics, setExpandedAnalytics] = useState<Record<string, boolean>>({})
@@ -206,6 +225,38 @@ export default function McapTrackerPage() {
     maxMcap: '',
     excludeZeroPnl: false
   })
+
+  // Helpers: hour bin utilities
+    const padHourStr = (h: number | string) => {
+      const n = typeof h === 'string' ? parseInt(h, 10) : h
+      const norm = ((n % 24) + 24) % 24
+      return norm.toString().padStart(2, '0')
+    }
+
+    // Shift a { "HH": count } map by 'shift' hours; returns a new normalized map "00".."23"
+    const shiftDistribution = (dist: Record<string, number>, shift: number) => {
+      const result: Record<string, number> = {}
+      for (let i = 0; i < 24; i++) {
+        result[i.toString().padStart(2, '0')] = 0
+      }
+      Object.entries(dist || {}).forEach(([k, v]) => {
+        const fromH = parseInt(k, 10)
+        const toH = ((fromH + shift) % 24 + 24) % 24
+        const toKey = toH.toString().padStart(2, '0')
+        result[toKey] = (result[toKey] || 0) + (Number.isFinite(v) ? v : 0)
+      })
+      return result
+    }
+
+    const recomputePeakHoursFromDistribution = (dist: Record<string, number>, topN = 3) => {
+      return Object.entries(dist)
+        .sort(([, a], [, b]) => (b ?? 0) - (a ?? 0))
+        .slice(0, topN)
+        .filter(([, count]) => (count ?? 0) > 0)
+        .map(([hour]) => `${hour}:00`)
+    }
+
+    const gmtOptions = Array.from({ length: 27 }, (_, idx) => idx - 12) // -12..+14
 
   const fetchTokens = useCallback(async (page = 1) => {
     setLoading(true)
@@ -627,11 +678,53 @@ export default function McapTrackerPage() {
               </div>
             </div>
 
-            {/* PnL Time Windows Analysis */}
+            {/* Optional: Timezone Controls for Time Window Analyses */}
+            <div className="bg-gray-800 rounded-lg p-4 mb-6">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-semibold">Timezone Settings</h3>
+                  <p className="text-xs text-gray-400">
+                    Buy analysis is based on UTC; Sell analysis is based on server local time. Use controls to display in your desired GMT.
+                  </p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <label className="text-sm text-gray-300 flex items-center gap-2">
+                    Display in:
+                    <select
+                      className="bg-gray-700 rounded px-2 py-1 text-sm"
+                      value={displayGmtOffset}
+                      onChange={(e) => setDisplayGmtOffset(parseInt(e.target.value, 10))}
+                    >
+                      {gmtOptions.map((off) => (
+                        <option key={off} value={off}>
+                          {off >= 0 ? `GMT+${off}` : `GMT${off}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm text-gray-300 flex items-center gap-2">
+                    Server base offset (Sell):
+                    <select
+                      className="bg-gray-700 rounded px-2 py-1 text-sm"
+                      value={sellServerBaseOffset}
+                      onChange={(e) => setSellServerBaseOffset(parseInt(e.target.value, 10))}
+                    >
+                      {gmtOptions.map((off) => (
+                        <option key={off} value={off}>
+                          {off >= 0 ? `GMT+${off}` : `GMT${off}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* PnL Time Windows Analysis (Sell/Exit) */}
             {stats && stats.pnlTimeWindows && (
               <div className="bg-gray-800 rounded-lg p-6 mb-8">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-xl font-bold">PnL Time Windows Analysis</h3>
+                  <h3 className="text-xl font-bold">PnL Time Windows Analysis (Sell/Exit)</h3>
                   <button
                     onClick={() => setIsPnlTimeWindowsExpanded(!isPnlTimeWindowsExpanded)}
                     className="flex items-center space-x-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors duration-200"
@@ -651,134 +744,260 @@ export default function McapTrackerPage() {
                     </svg>
                   </button>
                 </div>
-                
+
+                <div className="text-xs text-gray-400 mb-4">
+                  Basis: {stats.timeWindowMeta?.sellPeakHourBasis ?? 'last_updated_at'} | Source TZ: {stats.timeWindowMeta?.sellPeakHourTimezone ?? 'server_local'} | Display TZ: {displayGmtOffset >= 0 ? `GMT+${displayGmtOffset}` : `GMT${displayGmtOffset}`}
+                </div>
+
                 {isPnlTimeWindowsExpanded && (
                   <div className="transition-all duration-300 ease-in-out">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {Object.entries(stats.pnlTimeWindows)
-                    .sort(([a], [b]) => {
-                      const aNum = parseFloat(a.replace('%', ''))
-                      const bNum = parseFloat(b.replace('%', ''))
-                      return aNum - bNum
-                    })
-                    .map(([threshold, data]) => {
-                      const thresholdNum = parseFloat(threshold.replace('%', ''))
-                      const getThresholdColor = (num: number) => {
-                        if (num >= 1000) return 'text-purple-400'
-                        if (num >= 500) return 'text-pink-400'
-                        if (num >= 200) return 'text-yellow-400'
-                        if (num >= 100) return 'text-green-400'
-                        return 'text-blue-400'
-                      }
-                      
-                      const formatTimeToReach = (hours: number) => {
-                        if (hours < 1) return `${Math.round(hours * 60)}m`
-                        if (hours < 24) return `${hours.toFixed(1)}h`
-                        const days = Math.floor(hours / 24)
-                        const remainingHours = Math.round(hours % 24)
-                        return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
-                      }
+                      {Object.entries(stats.pnlTimeWindows)
+                        .sort(([a], [b]) => parseFloat(a.replace('%', '')) - parseFloat(b.replace('%', '')))
+                        .map(([threshold, data]) => {
+                          const thresholdNum = parseFloat(threshold.replace('%', ''))
+                          const getThresholdColor = (num: number) => {
+                            if (num >= 1000) return 'text-purple-400'
+                            if (num >= 500) return 'text-pink-400'
+                            if (num >= 200) return 'text-yellow-400'
+                            if (num >= 100) return 'text-green-400'
+                            return 'text-blue-400'
+                          }
 
-                      return (
-                        <div key={threshold} className="bg-gray-700 rounded-lg p-4">
-                          <h4 className={`text-lg font-semibold mb-3 ${getThresholdColor(thresholdNum)}`}>
-                            {threshold} Threshold
-                          </h4>
-                          
-                          <div className="space-y-2 text-sm">
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">Tokens Reached:</span>
-                              <span className="text-white font-medium">{data.count}</span>
+                          // Adjust distribution from server local -> desired GMT
+                          const shift = displayGmtOffset - sellServerBaseOffset
+                          const adjustedDistribution = shiftDistribution(data.timeDistribution, shift)
+                          const displayPeakHours = recomputePeakHoursFromDistribution(adjustedDistribution)
+
+                          const formatTimeToReach = (hours: number) => {
+                            if (hours < 1) return `${Math.round(hours * 60)}m`
+                            if (hours < 24) return `${hours.toFixed(1)}h`
+                            const days = Math.floor(hours / 24)
+                            const remainingHours = Math.round(hours % 24)
+                            return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
+                          }
+
+                          return (
+                            <div key={threshold} className="bg-gray-700 rounded-lg p-4">
+                              <h4 className={`text-lg font-semibold mb-3 ${getThresholdColor(thresholdNum)}`}>
+                                {threshold} Threshold
+                              </h4>
+
+                              <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-gray-400">Tokens Reached:</span>
+                                  <span className="text-white font-medium">{data.count}</span>
+                                </div>
+
+                                {data.avgTimeToReach > 0 && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Avg Time:</span>
+                                    <span className="text-white">{formatTimeToReach(data.avgTimeToReach)}</span>
+                                  </div>
+                                )}
+
+                                {displayPeakHours.length > 0 && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Peak Hours:</span>
+                                    <span className="text-white text-xs">
+                                      {displayPeakHours.slice(0, 3).join(', ')}
+                                      {displayPeakHours.length > 3 && '...'}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {/* Time Distribution Visualization (using padded keys) */}
+                                {Object.keys(adjustedDistribution).length > 0 && (
+                                  <div className="mt-3">
+                                    <span className="text-gray-400 text-xs mb-2 block">Hourly Distribution (display TZ):</span>
+                                    <div className="grid grid-cols-6 gap-1">
+                                      {Array.from({ length: 24 }, (_, hour) => {
+                                        const key = hour.toString().padStart(2, '0')
+                                        const count = adjustedDistribution[key] || 0
+                                        const maxCount = Math.max(...Object.values(adjustedDistribution))
+                                        const intensity = maxCount > 0 ? count / maxCount : 0
+                                        const opacity = Math.max(0.1, intensity)
+
+                                        return (
+                                          <div
+                                            key={key}
+                                            className={`h-2 rounded-sm ${getThresholdColor(thresholdNum).replace('text-', 'bg-').replace('-400', '-500')}`}
+                                            style={{ opacity }}
+                                            title={`${key}:00 - ${count} tokens`}
+                                          />
+                                        )
+                                      })}
+                                    </div>
+                                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                      <span>00h</span>
+                                      <span>12h</span>
+                                      <span>24h</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            
-                            {data.avgTimeToReach > 0 && (
-                              <div className="flex justify-between">
-                                <span className="text-gray-400">Avg Time:</span>
-                                <span className="text-white">{formatTimeToReach(data.avgTimeToReach)}</span>
-                              </div>
-                            )}
-                            
-                            {data.peakHours && data.peakHours.length > 0 && (
-                              <div className="flex justify-between">
-                                <span className="text-gray-400">Peak Hours:</span>
-                                <span className="text-white text-xs">
-                                  {data.peakHours.slice(0, 3).join(', ')}
-                                  {data.peakHours.length > 3 && '...'}
-                                </span>
-                              </div>
-                            )}
-                            
-                            {/* Time Distribution Visualization */}
-                            {Object.keys(data.timeDistribution).length > 0 && (
-                              <div className="mt-3">
-                                <span className="text-gray-400 text-xs mb-2 block">Hourly Distribution:</span>
-                                <div className="grid grid-cols-6 gap-1">
-                                  {Array.from({ length: 24 }, (_, hour) => {
-                                    const count = data.timeDistribution[hour.toString()] || 0
-                                    const maxCount = Math.max(...Object.values(data.timeDistribution))
-                                    const intensity = maxCount > 0 ? count / maxCount : 0
-                                    const opacity = Math.max(0.1, intensity)
-                                    
-                                    return (
-                                      <div
-                                        key={hour}
-                                        className={`h-2 rounded-sm ${getThresholdColor(thresholdNum).replace('text-', 'bg-').replace('-400', '-500')}`}
-                                        style={{ opacity }}
-                                        title={`${hour}:00 - ${count} tokens`}
-                                      />
-                                    )
-                                  })}
-                                </div>
-                                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                  <span>0h</span>
-                                  <span>12h</span>
-                                  <span>24h</span>
-                                </div>
-                              </div>
-                            )}
+                          )
+                        })}
+                    </div>
+
+                    {/* Summary stays as-is (no timezone dependency) */}
+                    <div className="mt-6 pt-6 border-t border-gray-700">
+                      <h4 className="text-lg font-semibold mb-4 text-center">Overall Summary</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-blue-400">
+                            {Object.values(stats.pnlTimeWindows).reduce((sum, data) => sum + data.count, 0)}
                           </div>
+                          <div className="text-gray-400">Total Threshold Breaches</div>
                         </div>
-                      )
-                    })}
-                </div>
-                
-                {/* Summary Statistics */}
-                <div className="mt-6 pt-6 border-t border-gray-700">
-                  <h4 className="text-lg font-semibold mb-4 text-center">Overall Summary</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-blue-400">
-                        {Object.values(stats.pnlTimeWindows).reduce((sum, data) => sum + data.count, 0)}
+
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-green-400">
+                            {Object.entries(stats.pnlTimeWindows).filter(([_, data]) => data.count > 0).length}
+                          </div>
+                          <div className="text-gray-400">Active Thresholds</div>
+                        </div>
+
+                        <div className="text-center">
+                          <div className="text-2xl font-bold text-purple-400">
+                            {(() => {
+                              const avgTimes = Object.values(stats.pnlTimeWindows)
+                                .filter(data => data.avgTimeToReach > 0)
+                                .map(data => data.avgTimeToReach)
+                              if (avgTimes.length === 0) return 'N/A'
+                              const overallAvg = avgTimes.reduce((sum, time) => sum + time, 0) / avgTimes.length
+                              return overallAvg < 24 ? `${overallAvg.toFixed(1)}h` : `${(overallAvg / 24).toFixed(1)}d`
+                            })()}
+                          </div>
+                          <div className="text-gray-400">Avg Time to Threshold</div>
+                        </div>
                       </div>
-                      <div className="text-gray-400">Total Threshold Breaches</div>
-                    </div>
-                    
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-green-400">
-                        {Object.entries(stats.pnlTimeWindows)
-                          .filter(([_, data]) => data.count > 0)
-                          .length}
-                      </div>
-                      <div className="text-gray-400">Active Thresholds</div>
-                    </div>
-                    
-                    <div className="text-center">
-                      <div className="text-2xl font-bold text-purple-400">
-                        {(() => {
-                          const avgTimes = Object.values(stats.pnlTimeWindows)
-                            .filter(data => data.avgTimeToReach > 0)
-                            .map(data => data.avgTimeToReach)
-                          
-                          if (avgTimes.length === 0) return 'N/A'
-                          
-                          const overallAvg = avgTimes.reduce((sum, time) => sum + time, 0) / avgTimes.length
-                          return overallAvg < 24 ? `${overallAvg.toFixed(1)}h` : `${(overallAvg / 24).toFixed(1)}d`
-                        })()} 
-                      </div>
-                      <div className="text-gray-400">Avg Time to Threshold</div>
                     </div>
                   </div>
+                )}
+              </div>
+            )}
+
+            {/* New: Buy Time Windows Analysis (Entry) */}
+            {stats && stats.pnlBuyTimeWindows && (
+              <div className="bg-gray-800 rounded-lg p-6 mb-8">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xl font-bold">Buy Time Windows Analysis (Entry)</h3>
+                  <button
+                    onClick={() => setIsPnlBuyTimeWindowsExpanded(!isPnlBuyTimeWindowsExpanded)}
+                    className="flex items-center space-x-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded-md transition-colors duration-200"
+                  >
+                    <span className="text-sm text-gray-300">
+                      {isPnlBuyTimeWindowsExpanded ? 'Collapse' : 'Expand'}
+                    </span>
+                    <svg
+                      className={`w-4 h-4 text-gray-300 transition-transform duration-200 ${
+                        isPnlBuyTimeWindowsExpanded ? 'rotate-180' : ''
+                      }`}
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
                 </div>
+
+                <div className="text-xs text-gray-400 mb-4">
+                  Basis: {stats.timeWindowMeta?.buyPeakHourBasis ?? 'first_seen_at'} | Source TZ: {stats.timeWindowMeta?.buyPeakHourTimezone ?? 'UTC'} | Display TZ: {displayGmtOffset >= 0 ? `GMT+${displayGmtOffset}` : `GMT${displayGmtOffset}`}
+                </div>
+
+                {isPnlBuyTimeWindowsExpanded && (
+                  <div className="transition-all duration-300 ease-in-out">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {Object.entries(stats.pnlBuyTimeWindows)
+                        .sort(([a], [b]) => parseFloat(a.replace('%', '')) - parseFloat(b.replace('%', '')))
+                        .map(([threshold, data]) => {
+                          const thresholdNum = parseFloat(threshold.replace('%', ''))
+                          const getThresholdColor = (num: number) => {
+                            if (num >= 1000) return 'text-purple-400'
+                            if (num >= 500) return 'text-pink-400'
+                            if (num >= 200) return 'text-yellow-400'
+                            if (num >= 100) return 'text-green-400'
+                            return 'text-blue-400'
+                          }
+
+                          // Adjust distribution from UTC -> desired GMT
+                          const adjustedDistribution = shiftDistribution(data.timeDistribution, displayGmtOffset)
+                          const displayPeakHours = recomputePeakHoursFromDistribution(adjustedDistribution)
+
+                          const formatTimeToReach = (hours: number) => {
+                            if (hours < 1) return `${Math.round(hours * 60)}m`
+                            if (hours < 24) return `${hours.toFixed(1)}h`
+                            const days = Math.floor(hours / 24)
+                            const remainingHours = Math.round(hours % 24)
+                            return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
+                          }
+
+                          return (
+                            <div key={threshold} className="bg-gray-700 rounded-lg p-4">
+                              <h4 className={`text-lg font-semibold mb-3 ${getThresholdColor(thresholdNum)}`}>
+                                {threshold} Threshold
+                              </h4>
+
+                              <div className="space-y-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-gray-400">Tokens Reached:</span>
+                                  <span className="text-white font-medium">{data.count}</span>
+                                </div>
+
+                                {data.avgTimeToReach > 0 && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Avg Time:</span>
+                                    <span className="text-white">{formatTimeToReach(data.avgTimeToReach)}</span>
+                                  </div>
+                                )}
+
+                                {displayPeakHours.length > 0 && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-400">Peak Hours:</span>
+                                    <span className="text-white text-xs">
+                                      {displayPeakHours.slice(0, 3).join(', ')}
+                                      {displayPeakHours.length > 3 && '...'}
+                                    </span>
+                                  </div>
+                                )}
+
+                                {/* Time Distribution Visualization (using padded keys) */}
+                                {Object.keys(adjustedDistribution).length > 0 && (
+                                  <div className="mt-3">
+                                    <span className="text-gray-400 text-xs mb-2 block">Hourly Distribution (display TZ):</span>
+                                    <div className="grid grid-cols-6 gap-1">
+                                      {Array.from({ length: 24 }, (_, hour) => {
+                                        const key = hour.toString().padStart(2, '0')
+                                        const count = adjustedDistribution[key] || 0
+                                        const maxCount = Math.max(...Object.values(adjustedDistribution))
+                                        const intensity = maxCount > 0 ? count / maxCount : 0
+                                        const opacity = Math.max(0.1, intensity)
+
+                                        return (
+                                          <div
+                                            key={key}
+                                            className={`h-2 rounded-sm ${getThresholdColor(thresholdNum).replace('text-', 'bg-').replace('-400', '-500')}`}
+                                            style={{ opacity }}
+                                            title={`${key}:00 - ${count} tokens`}
+                                          />
+                                        )
+                                      })}
+                                    </div>
+                                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                      <span>00h</span>
+                                      <span>12h</span>
+                                      <span>24h</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1412,7 +1631,7 @@ export default function McapTrackerPage() {
               </div>
             </div>
           </>
-        )}
+            )}
 
         {/* Filters and Controls */}
         <div className="bg-gray-800 rounded-lg p-6 mb-8">
