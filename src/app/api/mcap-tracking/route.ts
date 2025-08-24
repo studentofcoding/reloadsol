@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
       // Get all data for comprehensive statistics with proper validation
       const allDataQuery = await supabase
         .from('token_mcap_tracking')
-        .select('mcap_growth_percent, current_mcap, first_mcap, first_seen_at, last_updated_at')
+        .select('mcap_growth_percent, current_mcap, first_mcap, first_seen_at, last_updated_at, when_reach_80mc, when_reach_120mc, when_reach_200mc, is_tracking_stuck')
         .not('mcap_growth_percent', 'is', null)
         .not('current_mcap', 'is', null)
         .not('first_mcap', 'is', null)
@@ -207,13 +207,45 @@ export async function GET(request: NextRequest) {
         console.log(`\nCalculating stats for ${rangeName}:`);
         console.log(`Total records: ${data.length}`);
 
+        // Local STOP_LOSS threshold aligned with tracker defaults
+        const STOP_LOSS_THRESHOLD = parseFloat(process.env.MCAP_STOP_LOSS_THRESHOLD || process.env.NEXT_PUBLIC_MCAP_STOP_LOSS_THRESHOLD || '-50')
+
+        // Simple percentile with linear interpolation
+        const percentile = (values: number[], p: number) => {
+          if (values.length === 0) return 0
+          const sorted = [...values].sort((a, b) => a - b)
+          const rank = (p / 100) * (sorted.length - 1)
+          const low = Math.floor(rank)
+          const high = Math.ceil(rank)
+          if (low === high) return sorted[low]
+          const weight = rank - low
+          return sorted[low] + (sorted[high] - sorted[low]) * weight
+        }
+
+        const stddev = (values: number[]) => {
+          if (values.length === 0) return 0
+          const mean = values.reduce((s, v) => s + v, 0) / values.length
+          const variance = values.reduce((s, v) => s + (v - mean) * (v - mean), 0) / values.length
+          return Math.sqrt(variance)
+        }
+
         if (data.length === 0) {
           console.log(`${rangeName}: No data, returning zeros`);
           return {
             count: 0,
             avgMultiplier: 0,
             maxDrawdown: 0,
-            avgGrowth: 0
+            avgGrowth: 0,
+            medianMultiplier: 0,
+            medianGrowth: 0,
+            p75Growth: 0,
+            p90Growth: 0,
+            p25Growth: 0,
+            worstGrowth: 0,
+            stopLossRate: 0,
+            stuckRate: 0,
+            hitRate120: 0,
+            bucketVolatility: 0
           }
         }
 
@@ -231,20 +263,63 @@ export async function GET(request: NextRequest) {
             count: data.length,
             avgMultiplier: 0,
             maxDrawdown: 0,
-            avgGrowth: 0
+            avgGrowth: 0,
+            // New fields
+            medianMultiplier: 0,
+            medianGrowth: 0,
+            p75Growth: 0,
+            p90Growth: 0,
+            p25Growth: 0,
+            worstGrowth: 0,
+            stopLossRate: 0,
+            stuckRate: 0,
+            hitRate120: 0,
+            bucketVolatility: 0
           }
         }
 
         const multipliers = validRecords.map(item => item.current_mcap / item.first_mcap)
-        const growthPercentages = validRecords.map(item => ((item.current_mcap - item.first_mcap) / item.first_mcap) * 100)
+        // Use tracked growth for consistency
+        const growthPercentages = validRecords.map(item => item.mcap_growth_percent)
 
         console.log(`${rangeName}: Sample multiplier: ${multipliers[0]}, Sample growth: ${growthPercentages[0]}`);
 
+        const avgMultiplier = multipliers.reduce((sum, mult) => sum + mult, 0) / multipliers.length
+        const avgGrowth = validRecords.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / validRecords.length
+
+        const medianMultiplier = percentile(multipliers, 50)
+        const medianGrowth = percentile(growthPercentages, 50)
+        const p75Growth = percentile(growthPercentages, 75)
+        const p90Growth = percentile(growthPercentages, 90)
+        const p25Growth = percentile(growthPercentages, 25)
+        const worstGrowth = Math.min(...growthPercentages)
+        const stopLossRate = validRecords.length > 0
+          ? (validRecords.filter(item => item.mcap_growth_percent <= STOP_LOSS_THRESHOLD).length / validRecords.length) * 100
+          : 0
+        const stuckRate = validRecords.length > 0
+          ? (validRecords.filter(item => item.is_tracking_stuck === true).length / validRecords.length) * 100
+          : 0
+        const hitRate120 = validRecords.length > 0
+          ? (validRecords.filter(item => item.mcap_growth_percent >= 120).length / validRecords.length) * 100
+          : 0
+        const bucketVolatility = stddev(growthPercentages)
+
         const result = {
           count: data.length,
-          avgMultiplier: multipliers.reduce((sum, mult) => sum + mult, 0) / multipliers.length,
-          maxDrawdown: Math.min(...growthPercentages),
-          avgGrowth: validRecords.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / validRecords.length
+          avgMultiplier,
+          maxDrawdown: worstGrowth, // backward-compatible alias
+          avgGrowth,
+          // New fields
+          medianMultiplier,
+          medianGrowth,
+          p75Growth,
+          p90Growth,
+          p25Growth,
+          worstGrowth,
+          stopLossRate,
+          stuckRate,
+          hitRate120,
+          bucketVolatility
         }
 
         console.log(`${rangeName}: Final result:`, result);

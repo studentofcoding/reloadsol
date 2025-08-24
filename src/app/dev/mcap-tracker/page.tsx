@@ -60,12 +60,12 @@ interface ApiResponse {
       avgTimeToReach: number
     }>
     mcapRangeAnalysis: {
-      under50k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }
-      from51to100k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }
-      from101to200k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }
-      from201to500k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }
-      from501kto1M: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }
-      over1M: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number }
+      under50k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
+      from51to100k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
+      from101to200k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
+      from201to500k: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
+      from501kto1M: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
+      over1M: { count: number; avgMultiplier: number; maxDrawdown: number; avgGrowth: number; medianMultiplier: number; medianGrowth: number; p75Growth: number; p90Growth: number; p25Growth: number; worstGrowth: number; stopLossRate: number; stuckRate: number; hitRate120: number; bucketVolatility: number }
     }
     thirtyDaysSummary: {
       totalTokensAdded: number
@@ -743,9 +743,34 @@ export default function McapTrackerPage() {
                         {formatPercentage(stats.mcapRangeAnalysis.under50k.avgGrowth)}
                       </span>
                     </div>
+                    {/* New metrics */}
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Median Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.under50k.medianGrowth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.under50k.medianGrowth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">P75 Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.under50k.p75Growth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.under50k.p75Growth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stop Loss Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.under50k.stopLossRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stuck Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.under50k.stuckRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Hit Rate ≥120%:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.under50k.hitRate120.toFixed(1)}%</span>
+                    </div>
                   </div>
                 </button>
-                
+
                 <button
                   onClick={() => handleMcapRangeFilter('from51to100k')}
                   className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
@@ -774,9 +799,34 @@ export default function McapTrackerPage() {
                         {formatPercentage(stats.mcapRangeAnalysis.from51to100k.avgGrowth)}
                       </span>
                     </div>
+                    {/* New metrics */}
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Median Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.from51to100k.medianGrowth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.from51to100k.medianGrowth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">P75 Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.from51to100k.p75Growth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.from51to100k.p75Growth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stop Loss Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from51to100k.stopLossRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stuck Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from51to100k.stuckRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Hit Rate ≥120%:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from51to100k.hitRate120.toFixed(1)}%</span>
+                    </div>
                   </div>
                 </button>
-                
+
                 <button
                   onClick={() => handleMcapRangeFilter('from101to200k')}
                   className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
@@ -805,9 +855,34 @@ export default function McapTrackerPage() {
                         {formatPercentage(stats.mcapRangeAnalysis.from101to200k.avgGrowth)}
                       </span>
                     </div>
+                    {/* New metrics */}
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Median Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.from101to200k.medianGrowth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.from101to200k.medianGrowth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">P75 Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.from101to200k.p75Growth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.from101to200k.p75Growth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stop Loss Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from101to200k.stopLossRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stuck Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from101to200k.stuckRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Hit Rate ≥120%:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from101to200k.hitRate120.toFixed(1)}%</span>
+                    </div>
                   </div>
                 </button>
-                
+
                 <button
                   onClick={() => handleMcapRangeFilter('from201to500k')}
                   className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
@@ -836,9 +911,34 @@ export default function McapTrackerPage() {
                         {formatPercentage(stats.mcapRangeAnalysis.from201to500k.avgGrowth)}
                       </span>
                     </div>
+                    {/* New metrics */}
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Median Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.from201to500k.medianGrowth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.from201to500k.medianGrowth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">P75 Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.from201to500k.p75Growth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.from201to500k.p75Growth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stop Loss Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from201to500k.stopLossRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stuck Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from201to500k.stuckRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Hit Rate ≥120%:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from201to500k.hitRate120.toFixed(1)}%</span>
+                    </div>
                   </div>
                 </button>
-                
+
                 <button
                   onClick={() => handleMcapRangeFilter('from501kto1M')}
                   className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
@@ -867,9 +967,34 @@ export default function McapTrackerPage() {
                         {formatPercentage(stats.mcapRangeAnalysis.from501kto1M.avgGrowth)}
                       </span>
                     </div>
+                    {/* New metrics */}
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Median Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.from501kto1M.medianGrowth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.from501kto1M.medianGrowth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">P75 Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.from501kto1M.p75Growth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.from501kto1M.p75Growth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stop Loss Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from501kto1M.stopLossRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stuck Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from501kto1M.stuckRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Hit Rate ≥120%:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.from501kto1M.hitRate120.toFixed(1)}%</span>
+                    </div>
                   </div>
                 </button>
-                
+
                 <button
                   onClick={() => handleMcapRangeFilter('over1M')}
                   className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
@@ -897,6 +1022,31 @@ export default function McapTrackerPage() {
                       <span className={getGrowthColor(stats.mcapRangeAnalysis.over1M.avgGrowth)}>
                         {formatPercentage(stats.mcapRangeAnalysis.over1M.avgGrowth)}
                       </span>
+                    </div>
+                    {/* New metrics */}
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Median Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.over1M.medianGrowth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.over1M.medianGrowth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">P75 Growth:</span>
+                      <span className={getGrowthColor(stats.mcapRangeAnalysis.over1M.p75Growth)}>
+                        {formatPercentage(stats.mcapRangeAnalysis.over1M.p75Growth)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stop Loss Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.over1M.stopLossRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Stuck Rate:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.over1M.stuckRate.toFixed(1)}%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">Hit Rate ≥120%:</span>
+                      <span className="text-white">{stats.mcapRangeAnalysis.over1M.hitRate120.toFixed(1)}%</span>
                     </div>
                   </div>
                 </button>
