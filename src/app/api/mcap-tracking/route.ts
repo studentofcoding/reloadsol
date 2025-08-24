@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords } from '@/utils/mcap-tracker'
+import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats } from '@/utils/mcap-tracker'
 import { supabase } from '@/utils/supabase'
 import { getSolPriceUSD } from '@/utils/solana'
 
@@ -10,6 +10,25 @@ export async function GET(request: NextRequest) {
     const tokenAddress = searchParams.get('token')
     const tokenSymbol = searchParams.get('symbol')
     const mcap = searchParams.get('mcap')
+
+
+    // Add this new action in the GET handler 
+    if (action === 'health') {
+      const healthStats = await getTrackingHealthStats()
+
+      return NextResponse.json({
+        success: true,
+        health: healthStats,
+        recommendations: {
+          isHealthy: healthStats.healthPercentage >= 99,
+          issues: [
+            ...(healthStats.healthPercentage < 99 ? [`Health at ${healthStats.healthPercentage.toFixed(1)}% (target: 99%)`] : []),
+            ...(healthStats.zeroGrowthTokens > healthStats.totalTokens * 0.1 ? [`High zero-growth tokens: ${healthStats.zeroGrowthTokens}`] : []),
+            ...(healthStats.recentlyUpdated < healthStats.totalTokens * 0.8 ? [`Low recent updates: ${healthStats.recentlyUpdated}/${healthStats.totalTokens}`] : [])
+          ]
+        }
+      })
+    }
 
     // New action to fetch all MCap tracking data with enhanced statistics
     if (action === 'list') {

@@ -810,3 +810,54 @@ export async function bulkTrackTokenMcaps(
 
 // Export threshold constants for external use
 export { GROWTH_THRESHOLDS }
+
+// Add this new function for monitoring tracking health
+export async function getTrackingHealthStats(): Promise<{
+  totalTokens: number
+  stuckTokens: number
+  zeroGrowthTokens: number
+  healthPercentage: number
+  avgTrackingAge: number
+  recentlyUpdated: number
+}> {
+  try {
+    const { data, error } = await supabase
+      .from('token_mcap_tracking')
+      .select('mcap_growth_percent, first_seen_at, last_updated_at, is_tracking_stuck')
+
+    if (error) throw error
+
+    const now = Date.now()
+    const oneHourAgo = now - (60 * 60 * 1000)
+
+    const totalTokens = data.length
+    const stuckTokens = data.filter(t => t.is_tracking_stuck).length
+    const zeroGrowthTokens = data.filter(t => Math.abs(t.mcap_growth_percent || 0) < 0.01).length
+    const recentlyUpdated = data.filter(t => new Date(t.last_updated_at).getTime() > oneHourAgo).length
+
+    const avgTrackingAge = data.reduce((sum, t) => {
+      return sum + (now - new Date(t.first_seen_at).getTime())
+    }, 0) / (data.length || 1)
+
+    const healthPercentage = totalTokens > 0 ? ((totalTokens - stuckTokens) / totalTokens) * 100 : 100
+
+    return {
+      totalTokens,
+      stuckTokens,
+      zeroGrowthTokens,
+      healthPercentage,
+      avgTrackingAge: avgTrackingAge / (1000 * 60 * 60), // in hours
+      recentlyUpdated
+    }
+  } catch (error) {
+    log.error('price_tracking', 'Failed to get tracking health stats', error as Error)
+    return {
+      totalTokens: 0,
+      stuckTokens: 0,
+      zeroGrowthTokens: 0,
+      healthPercentage: 0,
+      avgTrackingAge: 0,
+      recentlyUpdated: 0
+    }
+  }
+}
