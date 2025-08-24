@@ -28,6 +28,22 @@ export interface McapTrackingResult {
 const mcapCache = new Map<string, McapSnapshot>()
 const CACHE_TTL_MS = 2 * 60 * 1000 // 2 minutes cache
 
+// Update stuck detection defaults to 6 hours (env override still applies)
+const STUCK_MIN_AGE_MS = parseInt(process.env.MCAP_STUCK_MIN_AGE_MS || '21600000') // 6 hours
+const STUCK_EPSILON_PERCENT = parseFloat(process.env.MCAP_STUCK_EPSILON_PERCENT || '0.01') // 0.01%
+
+export const STOP_LOSS_THRESHOLD = parseFloat(
+  process.env.MCAP_STOP_LOSS_THRESHOLD || process.env.NEXT_PUBLIC_MCAP_STOP_LOSS_THRESHOLD || '-50'
+) // -50%
+
+// One-time configuration log for ops visibility
+log.info('mcap_tracker', 'MCap tracker configuration', {
+  stuckMinAgeMs: STUCK_MIN_AGE_MS,
+  stuckEpsilonPercent: STUCK_EPSILON_PERCENT,
+  stopLossThreshold: STOP_LOSS_THRESHOLD,
+  cacheTtlMs: CACHE_TTL_MS
+})
+
 // Growth thresholds for notifications (in percentages)
 const GROWTH_THRESHOLDS = [80, 120, 200]
 
@@ -285,6 +301,13 @@ export async function trackTokenMcap(
     // Normalize MCap to integer
     const normalizedCurrentMcap = normalizeMarketCap(currentMcap)
 
+    // Invocation log (debug-level; high-rate path)
+    log.debug('price_tracking', 'Track invocation start', {
+      tokenAddress,
+      tokenSymbol,
+      currentMcap: normalizedCurrentMcap
+    })
+
     // Check cache first
     const cached = mcapCache.get(tokenAddress)
     const now = Date.now()
@@ -293,8 +316,7 @@ export async function trackTokenMcap(
     const HEARTBEAT_INTERVAL_MS = parseInt(process.env.MCAP_HEARTBEAT_MS || '600000') // 10 minutes
     const MIN_CHANGE_PERCENT = parseFloat(process.env.MCAP_MIN_CHANGE_PERCENT || '0.1') // 0.1%
     const DB_WRITE_PERCENT = parseFloat(process.env.MCAP_DB_WRITE_PERCENT || '1') // 1%
-    const STUCK_MIN_AGE_MS = parseInt(process.env.MCAP_STUCK_MIN_AGE_MS || '600000') // 10 minutes
-    const STUCK_EPSILON_PERCENT = parseFloat(process.env.MCAP_STUCK_EPSILON_PERCENT || '0.01') // 0.01%
+    // Removed STUCK_MIN_AGE_MS and STUCK_EPSILON_PERCENT here; use module-scope constants
 
     if (cached && (now - new Date(cached.last_updated_at).getTime()) < CACHE_TTL_MS) {
       // Use cached data but update current MCap if different
@@ -506,7 +528,7 @@ export async function trackTokenMcap(
       }
 
       // Add new environment variable for stop loss threshold
-      const STOP_LOSS_THRESHOLD = parseFloat(process.env.MCAP_STOP_LOSS_THRESHOLD || process.env.NEXT_PUBLIC_MCAP_STOP_LOSS_THRESHOLD || '-50') // -50%
+      // const STOP_LOSS_THRESHOLD = parseFloat(process.env.MCAP_STOP_LOSS_THRESHOLD || process.env.NEXT_PUBLIC_MCAP_STOP_LOSS_THRESHOLD || '-50') // -50%
 
       // In trackTokenMcap function, after calculating growthPercent:
       if (existingRecord) {
@@ -647,7 +669,11 @@ export async function trackTokenMcap(
       }
     }
   } catch (error) {
-    console.error('Error in trackTokenMcap:', error)
+    log.error('price_tracking', 'Error in trackTokenMcap', error as Error, {
+      tokenAddress,
+      tokenSymbol,
+      currentMcap: normalizeMarketCap(currentMcap)
+    })
     return { isFirstTime: true, currentMcap: normalizeMarketCap(currentMcap) }
   }
 }
@@ -672,10 +698,21 @@ async function insertMcapRecord(record: McapSnapshot): Promise<void> {
       })
 
     if (error) {
-      console.error('Error inserting MCap record:', error)
+      log.error('price_tracking', 'Error inserting MCap record', error as Error, {
+        tokenAddress: record.token_address,
+        tokenSymbol: record.token_symbol
+      })
+      return
     }
+    log.debug('price_tracking', 'Inserted MCap record', {
+      tokenAddress: record.token_address,
+      tokenSymbol: record.token_symbol
+    })
   } catch (error) {
-    console.error('Error in insertMcapRecord:', error)
+    log.error('price_tracking', 'Error in insertMcapRecord', error as Error, {
+      tokenAddress: record.token_address,
+      tokenSymbol: record.token_symbol
+    })
   }
 }
 
@@ -702,10 +739,25 @@ async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boo
       .eq('token_address', record.token_address)
 
     if (error) {
-      console.error('Error updating MCap record:', error)
+      log.error('price_tracking', 'Error updating MCap record', error as Error, {
+        tokenAddress: record.token_address,
+        tokenSymbol: record.token_symbol,
+        includeThresholds
+      })
+      return
     }
+
+    log.debug('price_tracking', 'Updated MCap record', {
+      tokenAddress: record.token_address,
+      tokenSymbol: record.token_symbol,
+      includeThresholds
+    })
   } catch (error) {
-    console.error('Error in updateMcapInDatabase:', error)
+    log.error('price_tracking', 'Error in updateMcapInDatabase', error as Error, {
+      tokenAddress: record.token_address,
+      tokenSymbol: record.token_symbol,
+      includeThresholds
+    })
   }
 }
 

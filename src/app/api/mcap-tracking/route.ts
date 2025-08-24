@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats } from '@/utils/mcap-tracker'
+import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats, STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker'
 import { supabase } from '@/utils/supabase'
 import { getSolPriceUSD } from '@/utils/solana'
+import { log } from '@/utils/unified-logger'
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,6 +12,12 @@ export async function GET(request: NextRequest) {
     const tokenSymbol = searchParams.get('symbol')
     const mcap = searchParams.get('mcap')
 
+    log.info('mcap_tracker', 'GET /api/mcap-tracking invoked', {
+      action,
+      tokenAddress,
+      tokenSymbol,
+      mcap
+    })
 
     // Add this new action in the GET handler 
     if (action === 'health') {
@@ -206,9 +213,6 @@ export async function GET(request: NextRequest) {
       const calculateRangeStats = (data: typeof validData, rangeName: string) => {
         console.log(`\nCalculating stats for ${rangeName}:`);
         console.log(`Total records: ${data.length}`);
-
-        // Local STOP_LOSS threshold aligned with tracker defaults
-        const STOP_LOSS_THRESHOLD = parseFloat(process.env.MCAP_STOP_LOSS_THRESHOLD || process.env.NEXT_PUBLIC_MCAP_STOP_LOSS_THRESHOLD || '-50')
 
         // Simple percentile with linear interpolation
         const percentile = (values: number[], p: number) => {

@@ -13,6 +13,7 @@ export type TradeOperationType =
     | 'api_request'
     | 'discord_notification'
     | 'error_handling'
+    | 'mcap_tracker'
 
 // Base log entry interface
 interface BaseLogEntry {
@@ -88,7 +89,8 @@ const operationEmojis = {
     deviation_alert: '⚠️',
     api_request: '🌐',
     discord_notification: '📢',
-    error_handling: '🚨'
+    error_handling: '🚨',
+    mcap_tracker: '📈'
 }
 
 // Generate unique request ID
