@@ -120,11 +120,36 @@ function PnlDistributionChart({
       ? negativeSplitIndex
       : Math.floor(hist.length / 2);
 
+  // Compute summary stats
+  const totalCount = hist.reduce((acc, h) => acc + (Number.isFinite(h.count) ? h.count : 0), 0);
+  const isNegativeIdx = (idx: number, range: string) =>
+    (range && range.includes("-")) || idx < split;
+
+  const lossCount = hist.reduce(
+    (acc, h, idx) => acc + (isNegativeIdx(idx, h.range) ? h.count : 0),
+    0
+  );
+  const winCount = Math.max(0, totalCount - lossCount);
+
+  const lossPct = totalCount > 0 ? Math.round((lossCount / totalCount) * 100) : 0;
+  const winPct = totalCount > 0 ? Math.round((winCount / totalCount) * 100) : 0;
+
   return (
     <div className="space-y-1">
+      {/* Summary: % Loss / % Win and total samples */}
+      <div className="flex items-center justify-between text-xs mb-1">
+        <div>
+          <span className="text-red-400">Loss: {lossPct}%</span>
+          <span className="mx-2 text-gray-400">|</span>
+          <span className="text-green-400">Win: {winPct}%</span>
+        </div>
+        <div className="text-gray-400">Total: {totalCount}</div>
+      </div>
+
       {hist.map((h, idx) => {
         const widthPct = maxCount > 0 ? Math.round((h.count / maxCount) * 100) : 0;
-        const isNegative = (h.range && h.range.includes("-")) || idx < split;
+        const isNegative = isNegativeIdx(idx, h.range);
+        const binPct = totalCount > 0 ? Math.round((h.count / totalCount) * 100) : 0;
 
         return (
           <div key={idx} className="flex items-center gap-2">
@@ -135,7 +160,9 @@ function PnlDistributionChart({
                 style={{ width: `${widthPct}%` }}
               />
             </div>
-            <div className="w-8 text-right text-gray-300 text-xs">{h.count}</div>
+            <div className="w-24 text-right text-gray-300 text-xs">
+              {h.count} ({binPct}%)
+            </div>
           </div>
         );
       })}
