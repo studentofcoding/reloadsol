@@ -408,6 +408,14 @@ export default function BulkTokenBuyer() {
         inputCurrency: selectedCurrency,
       }
 
+      // Debug logging for USDC mode
+      console.log('🔍 BulkTokenBuyer Debug:', {
+        selectedCurrency,
+        requestInputCurrency: request.inputCurrency,
+        solAmount: request.solAmount,
+        tokenMints: request.tokenMints.length
+      })
+
       const buyResult = await executeBulkBuy(
         request,
         publicKey.toString(),

@@ -1997,10 +1997,15 @@ export async function executeBulkBuy(
     // Track start time for performance measurement
     const start = Date.now()
 
-    // Calculate amount per token in lamports
-    const amountPerToken = Math.floor((request.solAmount * LAMPORTS_PER_SOL) / request.tokenMints.length)
+    // Calculate amount per token based on input currency
+    const inputCurrencyDecimals = request.inputCurrency === 'USDC' ? 6 : 9 // USDC has 6 decimals, SOL has 9
+    const inputCurrencyMultiplier = Math.pow(10, inputCurrencyDecimals)
+    const amountPerToken = Math.floor((request.solAmount * inputCurrencyMultiplier) / request.tokenMints.length)
 
-    console.log(`Executing bulk buy: ${request.tokenMints.length} tokens, ${amountPerToken} lamports per token`)
+    console.log(`🔍 Input currency: ${request.inputCurrency}, decimals: ${inputCurrencyDecimals}, multiplier: ${inputCurrencyMultiplier}`)
+    console.log(`💰 Amount per token: ${amountPerToken} (in ${request.inputCurrency} smallest units)`)
+
+    console.log(`Executing bulk buy: ${request.tokenMints.length} tokens, ${amountPerToken} ${request.inputCurrency} units per token`)
 
     // Get latest blockhash for all transactions
     const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
@@ -2032,18 +2037,41 @@ export async function executeBulkBuy(
             let tx: VersionedTransaction | null = null
             let apiUsed = 'solana-tracker'
 
+            // Determine input mint based on inputCurrency (moved outside try blocks for scope)
+            const inputMint = request.inputCurrency === 'USDC' ? TOKENS.USDC : NATIVE_MINT.toBase58()
+            const inputDecimals = request.inputCurrency === 'USDC' ? 6 : 9 // USDC has 6 decimals, SOL has 9
+            const divisor = Math.pow(10, inputDecimals)
+
+            // Debug logging for input currency handling
+            console.log('🔍 ExecuteBulkBuy Debug:', {
+              requestInputCurrency: request.inputCurrency,
+              inputMint,
+              inputDecimals,
+              divisor,
+              amountPerToken,
+              adjustedAmount: amountPerToken / divisor,
+              targetMint: mint
+            })
+
             try {
-              // Prepare swap API body for BUY (SOL -> Token)
+
+              // Prepare swap API body for BUY (inputCurrency -> Token)
               const swapApiBody = {
-                from: NATIVE_MINT.toBase58(), // SOL (Native mint for buy operations)
+                from: inputMint, // Input currency mint (SOL or USDC)
                 to: mint,                     // Target token
-                amount: amountPerToken / 1000000000,       // Amount in SOL
+                amount: amountPerToken / divisor,       // Amount in input currency units
                 slippage: request.slippage / 100,   // Slippage tolerance
                 payer: userPublicKey,         // User's wallet
                 priorityFee: request.priorityFee / 1000000000, // Priority fee in SOL
                 fee: `${FEE_CONFIG.DEV_WALLET}:0.5` // Dev wallet with 0.5% fee
               }
 
+              console.log(`🔍 Solana Tracker API Request for ${mint}:`, {
+                from: swapApiBody.from,
+                to: swapApiBody.to,
+                amount: swapApiBody.amount,
+                inputCurrency: request.inputCurrency
+              })
               console.log(`Trying Solana Tracker API for ${mint}`)
 
               // Call Solana Tracker swap API with timeout
@@ -2085,10 +2113,16 @@ export async function executeBulkBuy(
                 apiUsed = 'jupiter'
 
                 // Get quote from Jupiter
+                console.log(`🔍 Jupiter API Request for ${mint}:`, {
+                  inputMint,
+                  outputMint: mint,
+                  amount: amountPerToken,
+                  inputCurrency: request.inputCurrency
+                })
                 const quote = await getSwapQuote(
-                  NATIVE_MINT.toBase58(), // SOL
+                  inputMint, // Input currency mint (SOL or USDC)
                   mint,                   // Target token
-                  amountPerToken,         // Amount in lamports
+                  amountPerToken,         // Amount in smallest units
                   request.slippage        // Slippage in basis points
                 )
 
