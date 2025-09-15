@@ -14,6 +14,7 @@ export interface BulkBuyRequest {
   tokenMints: string[]
   slippage: number
   priorityFee: number
+  inputCurrency?: 'SOL' | 'USDC' // Optional field for backward compatibility
 }
 
 export interface BulkBuyResult {
