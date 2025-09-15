@@ -8,9 +8,9 @@ import TrendingTokens from './TrendingTokens'
 import TransactionResultModal from './TransactionResultModal'
 import TokenSkeleton from './TokenSkeleton'
 import RiskAnalysis from './RiskAnalysis'
-import { LAMPORTS_PER_SOL } from '@solana/web3.js'
+import { LAMPORTS_PER_SOL, PublicKey } from '@solana/web3.js'
 import { executeBulkBuy, parseMintAddresses, isValidMintAddress, getAllFeeRates, fetchUserTokensEfficient, setMetadataUpdateCallback, clearMetadataUpdateCallback, UserToken } from '@/utils/jupiter'
-import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS, getSolPriceUSD } from '@/utils/solana'
+import { SLIPPAGE_OPTIONS, PRIORITY_FEE_OPTIONS, getSolPriceUSD, TOKENS } from '@/utils/solana'
 import { BulkBuyRequest, BulkBuyResult } from '@/types'
 import { trackBuy } from '@/utils/operations-api'
 import { useTradingData } from './TradingDataProvider'
@@ -28,6 +28,7 @@ export default function BulkTokenBuyer() {
   const [tokenMints, setTokenMints] = useState<string>('')
   const [slippage, setSlippage] = useState<number>(200) // 1%
   const [priorityFee, setPriorityFee] = useState<number>(30000) // 0.0003 SOL
+  const [selectedCurrency, setSelectedCurrency] = useState<'SOL' | 'USDC'>('SOL')
   
   // URL parameter initialization state
   const [initialized, setInitialized] = useState<boolean>(false)
@@ -59,6 +60,7 @@ export default function BulkTokenBuyer() {
   const [balanceBefore, setBalanceBefore] = useState<number>(0)
   const [balanceAfter, setBalanceAfter] = useState<number>(0)
   const [walletBalance, setWalletBalance] = useState<number | null>(null)
+  const [usdcBalance, setUsdcBalance] = useState<number | null>(null)
 
   // User's current token holdings for search
   const [userTokens, setUserTokens] = useState<UserToken[]>([])
@@ -340,6 +342,11 @@ export default function BulkTokenBuyer() {
     handleSelectToken(mintAddress)
   }
 
+  // Handle currency toggle
+  const toggleCurrency = () => {
+    setSelectedCurrency(prev => prev === 'SOL' ? 'USDC' : 'SOL')
+  }
+
   // Handle form submission
   const handleBulkBuy = useCallback(async () => {
     if (!connected || !publicKey || !signAllTransactions) {
@@ -348,7 +355,7 @@ export default function BulkTokenBuyer() {
     }
 
     if (!solAmount || parseFloat(solAmount) <= 0) {
-      setError('Please enter a valid SOL amount')
+      setError(`Please enter a valid ${selectedCurrency} amount`)
       return
     }
 
@@ -373,10 +380,24 @@ export default function BulkTokenBuyer() {
       const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL
       setBalanceBefore(balanceBeforeSOL)
 
-      const requiredAmount = parseFloat(solAmount) + (priorityFee * validMints.length) / LAMPORTS_PER_SOL
-
-      if (balanceBeforeSOL < requiredAmount) {
-        throw new Error(`Insufficient balance. Required: ${requiredAmount.toFixed(4)} SOL, Available: ${balanceBeforeSOL.toFixed(4)} SOL`)
+      // Check balance based on selected currency
+      if (selectedCurrency === 'SOL') {
+        const requiredAmount = parseFloat(solAmount) + (priorityFee * validMints.length) / LAMPORTS_PER_SOL
+        if (balanceBeforeSOL < requiredAmount) {
+          throw new Error(`Insufficient SOL balance. Required: ${requiredAmount.toFixed(4)} SOL, Available: ${balanceBeforeSOL.toFixed(4)} SOL`)
+        }
+      } else {
+        // For USDC, we still need SOL for transaction fees
+        const requiredSOLForFees = (priorityFee * validMints.length) / LAMPORTS_PER_SOL
+        if (balanceBeforeSOL < requiredSOLForFees) {
+          throw new Error(`Insufficient SOL for transaction fees. Required: ${requiredSOLForFees.toFixed(4)} SOL, Available: ${balanceBeforeSOL.toFixed(4)} SOL`)
+        }
+        
+        // Check USDC balance
+        const requiredUSDC = parseFloat(solAmount)
+        if (!usdcBalance || usdcBalance < requiredUSDC) {
+          throw new Error(`Insufficient USDC balance. Required: ${requiredUSDC.toFixed(2)} USDC, Available: ${(usdcBalance || 0).toFixed(2)} USDC`)
+        }
       }
 
       const request: BulkBuyRequest = {
@@ -384,6 +405,7 @@ export default function BulkTokenBuyer() {
         tokenMints: validMints,
         slippage,
         priorityFee,
+        inputCurrency: selectedCurrency,
       }
 
       const buyResult = await executeBulkBuy(
@@ -505,10 +527,29 @@ export default function BulkTokenBuyer() {
   useEffect(() => {
     async function fetchBalance() {
       if (connected && publicKey && connection) {
+        // Fetch SOL balance
         const lamports = await connection.getBalance(publicKey)
         setWalletBalance(lamports / LAMPORTS_PER_SOL)
+        
+        // Fetch USDC balance
+        try {
+          const usdcMint = new PublicKey(TOKENS.USDC)
+          const { getAssociatedTokenAddress, getAccount } = await import('@solana/spl-token')
+          const usdcTokenAccount = await getAssociatedTokenAddress(usdcMint, publicKey)
+          
+          try {
+            const accountInfo = await getAccount(connection, usdcTokenAccount)
+            setUsdcBalance(Number(accountInfo.amount) / 1e6) // USDC has 6 decimals
+          } catch {
+            setUsdcBalance(0) // Account doesn't exist, balance is 0
+          }
+        } catch (error) {
+          console.error('Error fetching USDC balance:', error)
+          setUsdcBalance(0)
+        }
       } else {
         setWalletBalance(null)
+        setUsdcBalance(null)
       }
     }
     fetchBalance()
@@ -574,11 +615,12 @@ export default function BulkTokenBuyer() {
 
   // Slider value (percentage of wallet balance)
   const maxPercent = 96
-  const sliderValue = walletBalance && solAmount ? Math.round((parseFloat(solAmount) / walletBalance) * 100) : 0
+  const currentBalance = selectedCurrency === 'SOL' ? walletBalance : usdcBalance
+  const sliderValue = currentBalance && solAmount ? Math.round((parseFloat(solAmount) / currentBalance) * 100) : 0
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!walletBalance) return
+    if (!currentBalance) return
     const percent = parseInt(e.target.value, 10)
-    const newAmount = ((walletBalance * percent) / 100).toFixed(4)
+    const newAmount = ((currentBalance * percent) / 100).toFixed(selectedCurrency === 'SOL' ? 4 : 2)
     setSolAmount(newAmount)
   }
 
@@ -690,7 +732,7 @@ export default function BulkTokenBuyer() {
       
       {/* Main Form Column */}
       <div className="lg:col-span-2">
-        <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 space-y-8">
+        <div className="bg-gray-900/50 rounded-2xl shadow-lg border border-gray-700 p-8 space-y-8">
           {/* Header with Wallet Connection */}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <div>
@@ -781,7 +823,7 @@ export default function BulkTokenBuyer() {
                   </div>
                   <div className="bg-gray-800 border border-gray-600 rounded-xl p-0 overflow-hidden relative">
                     {isChartLoading && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-gray-900 bg-opacity-75 z-10">
+                      <div className="absolute inset-0 flex items-center justify-center bg-gray-900/50 bg-opacity-75 z-10">
                         <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
                       </div>
                     )}
@@ -802,7 +844,7 @@ export default function BulkTokenBuyer() {
               <div className="space-y-3">
                 <div className="flex items-center justify-between mb-1">
                   <label htmlFor="solAmount" className="block text-sm font-semibold text-gray-200 uppercase tracking-wide">
-                    SOL to spend
+                    {selectedCurrency} to spend
                   </label>
                   {walletBalance !== null && (
                   <div className="flex items-center space-x-3">
@@ -833,10 +875,32 @@ export default function BulkTokenBuyer() {
                     disabled={isLoading}
                   />
                   <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                    <span className="text-gray-400 font-mono text-sm">SOL</span>
+                    <button
+                      type="button"
+                      onClick={toggleCurrency}
+                      className="text-gray-400 hover:text-white font-mono text-sm px-2 py-1 rounded transition-colors duration-200 hover:bg-gray-700"
+                      disabled={isLoading}
+                    >
+                      {selectedCurrency}
+                    </button>
                   </div>
                 </div>
-                <p className="text-xs text-gray-400 flex items-center">
+                
+                {/* Balance Display */}
+                {connected && (walletBalance !== null || usdcBalance !== null) && (
+                  <div className="flex justify-between items-center text-xs text-gray-400 mt-2 px-1">
+                    <div className="flex space-x-4">
+                      <span className={selectedCurrency === 'SOL' ? 'text-white font-medium' : ''}>
+                        SOL: {walletBalance !== null ? walletBalance.toFixed(4) : '0.0000'}
+                      </span>
+                      <span className={selectedCurrency === 'USDC' ? 'text-white font-medium' : ''}>
+                        USDC: {usdcBalance !== null ? usdcBalance.toFixed(2) : '0.00'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                
+                <p className="text-xs text-gray-400 flex items-center mt-2">
                   <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
                   </svg>
@@ -885,7 +949,7 @@ export default function BulkTokenBuyer() {
                     </div>
                   </div>
                   {showResults && (searchResults.length > 0 || userTokens.length > 0) && (
-                    <div className="absolute z-20 mt-2 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-lg max-h-72 overflow-y-auto">
+                    <div className="absolute z-20 mt-2 w-full bg-gray-900/50 border border-gray-700 rounded-xl shadow-lg max-h-72 overflow-y-auto">
                       {/* Your Tokens Section */}
                       {userTokens.length > 0 && (
                         <>
@@ -962,7 +1026,7 @@ export default function BulkTokenBuyer() {
                     </div>
                   )}
                   {showResults && !isSearching && (searchResults.length === 0 && userTokens.length === 0) && (
-                    <div className="absolute z-20 mt-2 w-full bg-gray-900 border border-gray-700 rounded-xl shadow-lg p-4 text-gray-400 text-sm">
+                    <div className="absolute z-20 mt-2 w-full bg-gray-900/50 border border-gray-700 rounded-xl shadow-lg p-4 text-gray-400 text-sm">
                       No results found.
                     </div>
                   )}
