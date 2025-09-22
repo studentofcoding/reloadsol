@@ -21,9 +21,9 @@ export default function TradeLayout({
     <main className="min-h-screen bg-black py-8 pb-24 md:pb-8">
       <div className="container mx-auto px-4">
         {/* Header */}
-        <div className="text-center mb-8 sm:mb-12">
-          <h1 className="text-5xl font-bold text-white mb-4">
-            reloadSOL
+        {/* <div className="text-center mb-8 sm:mb-12">
+          <h1>
+            <a className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-white to-gray-300 hidden md:block" href="/">ReloadSOL</a>
           </h1>
           {!connected && (
           <h2 className="text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
@@ -39,7 +39,7 @@ export default function TradeLayout({
               <ConnectionStatus />
             </div>
           )}
-        </div>
+        </div> */}
         
         {/* Navigation Tabs */}
         <NavigationTabs 

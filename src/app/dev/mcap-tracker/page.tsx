@@ -20,6 +20,9 @@ interface McapTrackingData {
     current: number
     growth: number
   }
+  // Finished status fields (from API enhancedData)
+  is_finished?: boolean
+  finished_at?: string | null
 }
 
 interface FilterOptions {
@@ -475,6 +478,18 @@ export default function McapTrackerPage() {
   }
 
   const handleChartToggle = async (tokenAddress: string) => {
+    const tok = tokens.find(t => t.token_address === tokenAddress)
+    if (tok?.is_finished) {
+      // Toggle chart without refetch if finished
+      if (expandedChart === tokenAddress) {
+        setExpandedChart(null)
+      } else {
+        setExpandedChart(tokenAddress)
+      }
+      setIsChartLoading(false)
+      return
+    }
+
     if (expandedChart === tokenAddress) {
       setExpandedChart(null)
       setIsChartLoading(false)
@@ -482,12 +497,14 @@ export default function McapTrackerPage() {
       setExpandedChart(tokenAddress)
       setIsChartLoading(true)
       
-      // Refetch current MCap data when opening chart
+      // Refetch current MCap data when opening chart (only if not finished)
       await refetchTokenMcap(tokenAddress)
     }
   }
 
   const refetchTokenMcap = async (tokenAddress: string) => {
+    const tok = tokens.find(t => t.token_address === tokenAddress)
+    if (tok?.is_finished) return
     if (refetchingTokens.has(tokenAddress)) return
     
     setRefetchingTokens(prev => new Set(prev).add(tokenAddress))
@@ -504,14 +521,14 @@ export default function McapTrackerPage() {
               const solPriceUSD = stats?.solPriceUSD || 1
               return {
                 ...token,
-                first_mcap: data.firstMcap,
-                current_mcap: data.currentMcap,
-                mcap_growth_percent: data.tracking.growthPercent || token.mcap_growth_percent,
+                first_mcap: data.firstMcap ?? token.first_mcap,
+                current_mcap: data.currentMcap ?? token.current_mcap,
+                mcap_growth_percent: data.tracking?.growthPercent ?? token.mcap_growth_percent,
                 last_updated_at: new Date().toISOString(),
                 solPerToken: {
                   first: token.first_mcap / solPriceUSD,
-                  current: data.currentMcap / solPriceUSD,
-                  growth: ((data.currentMcap / solPriceUSD) - (token.first_mcap / solPriceUSD)) / (token.first_mcap / solPriceUSD) * 100
+                  current: (data.currentMcap ?? token.current_mcap) / solPriceUSD,
+                  growth: (((data.currentMcap ?? token.current_mcap) / solPriceUSD) - (token.first_mcap / solPriceUSD)) / (token.first_mcap / solPriceUSD) * 100
                 }
               }
             }
@@ -519,7 +536,7 @@ export default function McapTrackerPage() {
           })
         )
         
-        // Refresh the full data to update stats
+        // Refresh the full data to update stats (including finished status)
         await fetchTokens(pagination.page)
         
         console.log(`MCap refetched for ${tokenAddress}:`, data.display)
@@ -1624,15 +1641,17 @@ export default function McapTrackerPage() {
                       </span>
                       <button
                         onClick={() => handleChartToggle(token.token_address)}
-                        disabled={refetchingTokens.has(token.token_address)}
+                        disabled={refetchingTokens.has(token.token_address) || token.is_finished}
                         className={`px-2 py-1 text-white text-xs rounded transition-colors ${
-                          refetchingTokens.has(token.token_address)
-                            ? 'bg-yellow-600 hover:bg-yellow-700'
-                            : 'bg-green-600 hover:bg-green-700'
+                          token.is_finished
+                            ? 'bg-gray-600 cursor-not-allowed'
+                            : refetchingTokens.has(token.token_address)
+                              ? 'bg-yellow-600 hover:bg-yellow-700'
+                              : 'bg-green-600 hover:bg-green-700'
                         }`}
-                        title={refetchingTokens.has(token.token_address) ? 'Refetching MCap...' : 'Toggle Chart & Refetch MCap'}
+                        title={token.is_finished ? 'Tracking finished (4 days). Refetch disabled.' : (refetchingTokens.has(token.token_address) ? 'Refetching MCap...' : 'Toggle Chart & Refetch MCap')}
                       >
-                        {refetchingTokens.has(token.token_address) ? '🔄' : '📈'}
+                        {token.is_finished ? '✅' : (refetchingTokens.has(token.token_address) ? '🔄' : '📈')}
                       </button>
                     </div>
                     <p className="text-sm text-gray-400 font-mono truncate">{token.token_address}</p>
@@ -1711,6 +1730,31 @@ export default function McapTrackerPage() {
                       {formatDistanceToNow(new Date(token.first_seen_at), { addSuffix: true })}
                     </span>
                   </div>
+                  
+                  {/* Finished Status */}
+                  {typeof token.is_finished !== 'undefined' && (
+                    <div>
+                      <span className="text-gray-400">Status:</span>
+                      {token.is_finished ? (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-200 border border-gray-500">
+                          Finished
+                        </span>
+                      ) : (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-700 text-blue-100 border border-blue-500">
+                          Tracking
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  
+                  {token.is_finished && token.finished_at && (
+                    <div>
+                      <span className="text-gray-400">Finished At:</span>
+                      <span className="ml-2 text-gray-300">
+                        {formatDistanceToNow(new Date(token.finished_at), { addSuffix: true })}
+                      </span>
+                    </div>
+                  )}
                   
                   {token.when_reach_80mc && (
                     <div>

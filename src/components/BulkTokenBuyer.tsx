@@ -479,9 +479,18 @@ export default function BulkTokenBuyer() {
             getSolPriceUSD()
           ])
 
+          // Convert USDC amount to SOL equivalent for proper tracking
+          let solEquivalentAmount = parseFloat(solAmount)
+          if (selectedCurrency === 'USDC') {
+            // When buying with USDC, convert USDC amount to SOL equivalent
+            // USDC is approximately $1, so divide by SOL price to get SOL equivalent
+            solEquivalentAmount = parseFloat(solAmount) / currentSolPrice
+            console.log(`🔄 USDC to SOL conversion: ${solAmount} USDC → ${solEquivalentAmount.toFixed(6)} SOL (SOL price: $${currentSolPrice})`)
+          }
+
           // Calculate individual SOL amount per successful token purchase
           const successfulTokenCount = buyResult.successfulPurchases.length
-          const solAmountPerToken = successfulTokenCount > 0 ? parseFloat(solAmount) / successfulTokenCount : 0
+          const solAmountPerToken = successfulTokenCount > 0 ? solEquivalentAmount / successfulTokenCount : 0
 
           // Prepare enhanced token data with prices and individual SOL amounts
           const enhancedTokenData = tokenData
@@ -490,7 +499,7 @@ export default function BulkTokenBuyer() {
               ...token,
               priceUsd: tokenPrices[token.mintAddress] || 0,
               tokenAmount: 0, // We don't have exact token amounts from buy result
-              solAmount: solAmountPerToken // Individual SOL amount for this token
+              solAmount: solAmountPerToken // Individual SOL equivalent amount for this token
             }))
 
           // Track via centralized React Query system
@@ -504,10 +513,10 @@ export default function BulkTokenBuyer() {
             successCount: buyResult.successfulPurchases.length,
             failureCount: buyResult.failedPurchases.length,
             totalTokens: buyResult.successfulPurchases.length + buyResult.failedPurchases.length,
-            solAmount: parseFloat(solAmount), // Keep total for backward compatibility
+            solAmount: solEquivalentAmount, // Use SOL equivalent amount for proper tracking
             feesPaid: 0, // We don't track this locally yet
             solPriceUsd: currentSolPrice,
-            totalUsdValue: currentSolPrice ? parseFloat(solAmount) * currentSolPrice : undefined,
+            totalUsdValue: currentSolPrice ? solEquivalentAmount * currentSolPrice : undefined,
             signatures: buyResult.signatures,
             slippage: slippage / 100,
             priorityFee,

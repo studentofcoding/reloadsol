@@ -53,12 +53,10 @@ function HomeContent() {
 
   return (
     <>
-      <main className="min-h-screen bg-black py-8">
+      {/* Removed Header component */}
+      <div className="min-h-screen bg-black py-8">
         <div className="container mx-auto px-4">
           <div className="text-center mb-8">
-            <h1 className="text-5xl font-bold text-white mb-4">
-              reloadSOL
-            </h1>
             <h2 className="text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
               Reload your Solana from all worthless memecoins, and trade smartly with us!
               <br />
@@ -135,7 +133,7 @@ function HomeContent() {
           </div>
         </div>
         <Footer />
-      </main>
+      </div>
 
       {/* Welcome Modal */}
       {showWelcome && (
@@ -156,4 +154,4 @@ export default function HomePageClient() {
       </TradingDataProvider>
     </WalletProvider>
   )
-} 
+}

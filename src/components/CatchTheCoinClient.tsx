@@ -777,7 +777,7 @@ export default function CatchTheCoinClient() {
 
   if (!connected) {
     return (
-      <div className="max-w-6xl mx-auto px-4 py-8">
+      <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="text-center">
           <h1 className="text-3xl font-bold text-white mb-4">🎯 Catch the Coin</h1>
           <p className="text-gray-400 mb-8">Connect your wallet to start catching trending tokens!</p>
@@ -790,7 +790,7 @@ export default function CatchTheCoinClient() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8 flex flex-col md:flex-row-reverse gap-6">
+    <div className="max-w-4xl mx-auto px-4 py-8 flex flex-col md:flex-row-reverse gap-6">
       {/* Main content: Trending tokens grid */}
       <div className="flex-1">
         {/* Header */}

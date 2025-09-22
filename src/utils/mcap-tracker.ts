@@ -36,12 +36,16 @@ export const STOP_LOSS_THRESHOLD = parseFloat(
   process.env.MCAP_STOP_LOSS_THRESHOLD || process.env.NEXT_PUBLIC_MCAP_STOP_LOSS_THRESHOLD || '-50'
 ) // -50%
 
+// New: maximum tracking age (default 4 days)
+export const MAX_TRACKING_AGE_MS = parseInt(process.env.MCAP_MAX_TRACKING_AGE_MS || '345600000')
+
 // One-time configuration log for ops visibility
 log.info('mcap_tracker', 'MCap tracker configuration', {
   stuckMinAgeMs: STUCK_MIN_AGE_MS,
   stuckEpsilonPercent: STUCK_EPSILON_PERCENT,
   stopLossThreshold: STOP_LOSS_THRESHOLD,
-  cacheTtlMs: CACHE_TTL_MS
+  cacheTtlMs: CACHE_TTL_MS,
+  maxTrackingAgeMs: MAX_TRACKING_AGE_MS
 })
 
 // Growth thresholds for notifications (in percentages)
@@ -312,6 +316,28 @@ export async function trackTokenMcap(
     const cached = mcapCache.get(tokenAddress)
     const now = Date.now()
 
+    // If we have cached data, check max tracking age first
+    if (cached) {
+      const ageMs = now - new Date(cached.first_seen_at).getTime()
+      if (ageMs >= MAX_TRACKING_AGE_MS) {
+        log.info('price_tracking', 'Max tracking age reached - finishing (cached path)', {
+          tokenAddress,
+          tokenSymbol,
+          ageHours: Math.round(ageMs / (1000 * 60 * 60)),
+        })
+        // Stop tracking: remove from cache and return current snapshot without DB writes
+        mcapCache.delete(tokenAddress)
+        return {
+          isFirstTime: false,
+          firstMcap: cached.first_mcap,
+          currentMcap: cached.current_mcap,
+          growthPercent: cached.mcap_growth_percent,
+          formattedGrowth: formatGrowthPercent(cached.mcap_growth_percent),
+          firstSeenAt: cached.first_seen_at
+        }
+      }
+    }
+
     // Configurable thresholds (perf-sensible defaults)
     const HEARTBEAT_INTERVAL_MS = parseInt(process.env.MCAP_HEARTBEAT_MS || '600000') // 10 minutes
     const MIN_CHANGE_PERCENT = parseFloat(process.env.MCAP_MIN_CHANGE_PERCENT || '0.1') // 0.1%
@@ -464,6 +490,26 @@ export async function trackTokenMcap(
     if (existingRecord) {
       const timeSinceLastUpdate = new Date().getTime() - new Date(existingRecord.last_updated_at).getTime()
       const minUpdateInterval = 60000 // 1 minute minimum
+
+      // Check max tracking age on DB path before any updates
+      const ageMsDb = Date.now() - new Date(existingRecord.first_seen_at).getTime()
+      if (ageMsDb >= MAX_TRACKING_AGE_MS) {
+        log.info('price_tracking', 'Max tracking age reached - finishing (db path)', {
+          tokenAddress,
+          tokenSymbol,
+          ageHours: Math.round(ageMsDb / (1000 * 60 * 60)),
+        })
+        // Ensure no further tracking; clear any cache entry
+        mcapCache.delete(tokenAddress)
+        return {
+          isFirstTime: false,
+          firstMcap: existingRecord.first_mcap,
+          currentMcap: existingRecord.current_mcap,
+          growthPercent: existingRecord.mcap_growth_percent,
+          formattedGrowth: formatGrowthPercent(existingRecord.mcap_growth_percent),
+          firstSeenAt: existingRecord.first_seen_at
+        }
+      }
 
       if (timeSinceLastUpdate < minUpdateInterval) {
         log.info('price_tracking', 'Skip: min-interval gating', {

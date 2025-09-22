@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats, STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker'
+import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats, STOP_LOSS_THRESHOLD, MAX_TRACKING_AGE_MS } from '@/utils/mcap-tracker'
 import { supabase } from '@/utils/supabase'
 import { getSolPriceUSD } from '@/utils/solana'
 import { log } from '@/utils/unified-logger'
@@ -464,14 +464,23 @@ export async function GET(request: NextRequest) {
       }
 
       // Add SOL per token calculations to the data
-      const enhancedData = (data || []).map(token => ({
-        ...token,
-        solPerToken: {
-          first: token.first_mcap / solPriceUSD,
-          current: token.current_mcap / solPriceUSD,
-          growth: ((token.current_mcap / solPriceUSD) - (token.first_mcap / solPriceUSD)) / (token.first_mcap / solPriceUSD) * 100
+      const enhancedData = (data || []).map(token => {
+        const firstSeenMs = new Date(token.first_seen_at).getTime()
+        const nowMs = Date.now()
+        const ageMs = nowMs - firstSeenMs
+        const isFinished = ageMs >= MAX_TRACKING_AGE_MS
+        const finishedAt = isFinished ? new Date(firstSeenMs + MAX_TRACKING_AGE_MS).toISOString() : null
+        return {
+          ...token,
+          is_finished: isFinished,
+          finished_at: finishedAt,
+          solPerToken: {
+            first: token.first_mcap / solPriceUSD,
+            current: token.current_mcap / solPriceUSD,
+            growth: ((token.current_mcap / solPriceUSD) - (token.first_mcap / solPriceUSD)) / (token.first_mcap / solPriceUSD) * 100
+          }
         }
-      }))
+      })
 
       const stats = {
         total: count || 0,

@@ -1,6 +1,7 @@
 import './globals.css'
 import { WalletProvider } from '@/components/WalletProvider'
 import TradingDataProvider from '@/components/TradingDataProvider'
+import Header from '@/components/Header'
 // import { PasswordGate } from '@/components/PasswordGate'
 import { Metadata } from 'next';
 import { Analytics } from "@vercel/analytics/next"
@@ -60,7 +61,12 @@ export default function RootLayout({
       <body>
         <WalletProvider>
           <TradingDataProvider>
-            {children}
+            <div className="min-h-screen bg-black">
+              <Header />
+              <main className="flex-1">
+                {children}
+              </main>
+            </div>
           </TradingDataProvider>
         </WalletProvider>
         {isVercelDeployment && <Analytics />}
