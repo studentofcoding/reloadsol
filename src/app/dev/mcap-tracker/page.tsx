@@ -235,6 +235,11 @@ function DailyRankingVisualization({ tokens, stats }: { tokens: McapTrackingData
   const losersTokens = filteredTokens.filter(token => token.mcap_growth_percent < 0)
   const neutralTokens = filteredTokens.filter(token => Math.abs(token.mcap_growth_percent) < 0.01)
 
+  // Calculate actual average growth from filtered tokens
+  const actualAvgGrowth = filteredTokens.length > 0 
+    ? filteredTokens.reduce((sum, token) => sum + token.mcap_growth_percent, 0) / filteredTokens.length
+    : 0
+
   // Get top performers for different categories based on filtered tokens
   const topGainers = [...gainersTokens]
     .sort((a, b) => b.mcap_growth_percent - a.mcap_growth_percent)
@@ -416,7 +421,7 @@ function DailyRankingVisualization({ tokens, stats }: { tokens: McapTrackingData
 
       {/* Daily Summary Stats */}
       <div className="mt-6 pt-6 border-t border-gray-600">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
           <div>
             <button
               onClick={() => setExpandedSection(expandedSection === 'total' ? null : 'total')}
@@ -475,8 +480,27 @@ function DailyRankingVisualization({ tokens, stats }: { tokens: McapTrackingData
             )}
           </div>
           <div>
-            <div className={`text-2xl font-bold ${getGrowthColor(currentDayData.avgGrowth)}`}>
-              {formatPercentage(currentDayData.avgGrowth)}
+            <button
+              onClick={() => setExpandedSection(expandedSection === 'neutral' ? null : 'neutral')}
+              className="w-full hover:bg-gray-700 rounded-lg p-2 transition-colors"
+            >
+              <div className="text-2xl font-bold text-gray-400">{neutralTokens.length}</div>
+              <div className="text-sm text-gray-400">Neutral (0%)</div>
+              <div className="text-xs text-blue-400 mt-1">Click to view</div>
+            </button>
+            {expandedSection === 'neutral' && (
+              <div className="mt-2 bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
+                <div className="text-left space-y-1">
+                  {neutralTokens.map((token, index) => (
+                    <TokenItem key={token.token_address} token={token} index={index} category="neutral" />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+          <div>
+            <div className={`text-2xl font-bold ${getGrowthColor(actualAvgGrowth)}`}>
+              {formatPercentage(actualAvgGrowth)}
             </div>
             <div className="text-sm text-gray-400">Avg Growth</div>
           </div>
