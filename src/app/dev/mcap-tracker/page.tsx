@@ -34,6 +34,8 @@ interface FilterOptions {
   minMcap: string
   maxMcap: string
   excludeZeroPnl: boolean
+  timeFilter: '1h' | '4h' | '24h' | 'all'
+  performanceFilter: 'all' | 'gainers' | 'losers' | 'top_performers'
 }
 
 interface ApiResponse {
@@ -185,6 +187,235 @@ function PnlDistributionChart({
   );
 }
 
+// Daily Ranking Visualization Component
+function DailyRankingVisualization({ tokens, stats }: { tokens: McapTrackingData[], stats: any }) {
+  const [selectedDateIndex, setSelectedDateIndex] = useState(0)
+  
+  // Get daily breakdown data from stats
+  const dailyData = stats?.thirtyDaysSummary?.dailyBreakdown || []
+  const sortedDailyData = [...dailyData].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  
+  // Get current day's data
+  const currentDayData = sortedDailyData[selectedDateIndex] || {
+    date: new Date().toISOString().split('T')[0],
+    tokensAdded: stats?.total || 0,
+    gainers: stats?.gainers || 0,
+    losers: stats?.losers || 0,
+    avgGrowth: stats?.avgGrowth || 0,
+    totalMcap: stats?.totalMcap || 0
+  }
+
+  // Filter tokens based on selected date (for now, we'll use all tokens as we don't have date-specific filtering)
+  const filteredTokens = tokens
+
+  // Get top performers for different categories
+  const topGainers = [...filteredTokens]
+    .filter(token => token.mcap_growth_percent > 0)
+    .sort((a, b) => b.mcap_growth_percent - a.mcap_growth_percent)
+    .slice(0, 5)
+
+  const topVolume = [...filteredTokens]
+    .filter(token => token.current_mcap > 0)
+    .sort((a, b) => b.current_mcap - a.current_mcap)
+    .slice(0, 5)
+
+  const topMultipliers = [...filteredTokens]
+    .filter(token => token.mcap_growth_percent > 100)
+    .sort((a, b) => b.mcap_growth_percent - a.mcap_growth_percent)
+    .slice(0, 5)
+
+  const formatNumber = (num: number): string => {
+    if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`
+    if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`
+    if (num >= 1e3) return `$${(num / 1e3).toFixed(0)}K`
+    return `$${num.toFixed(0)}`
+  }
+
+  const formatPercentage = (percent: number): string => {
+    return `${percent >= 0 ? '+' : ''}${percent.toFixed(2)}%`
+  }
+
+  const getGrowthColor = (percent: number): string => {
+    if (Math.abs(percent) < 0.01) return 'text-gray-400'
+    return percent >= 0 ? 'text-green-400' : 'text-red-400'
+  }
+
+  const formatDate = (dateString: string): string => {
+    const date = new Date(dateString)
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    const dayName = days[date.getDay()]
+    const day = date.getDate().toString().padStart(2, '0')
+    const month = (date.getMonth() + 1).toString().padStart(2, '0')
+    const year = date.getFullYear().toString().slice(-2)
+    return `${dayName}, ${day}/${month}/${year}`
+  }
+
+  const getChartUrl = (tokenAddress: string): string => {
+    return `https://v2.reloadsol.xyz/chart/${tokenAddress}`
+  }
+
+  const TokenItem = ({ token, index, category }: { token: McapTrackingData, index: number, category: string }) => (
+    <div key={token.token_address} className="flex items-center justify-between">
+      <div className="flex items-center space-x-2">
+        <span className="text-yellow-400 font-bold">#{index + 1}</span>
+        <div>
+          <a 
+            href={getChartUrl(token.token_address)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-white font-medium hover:text-blue-400 transition-colors cursor-pointer"
+          >
+            {token.token_symbol}
+          </a>
+          <div className="text-xs text-gray-400">
+            {category === 'volume' ? `Started: ${formatNumber(token.first_mcap)}` : formatNumber(token.current_mcap)}
+          </div>
+        </div>
+      </div>
+      <div className="text-right">
+        {category === 'volume' ? (
+          <>
+            <div className="text-blue-400 font-bold">
+              {formatNumber(token.current_mcap)}
+            </div>
+            <div className={`text-xs ${getGrowthColor(token.mcap_growth_percent)}`}>
+              {formatPercentage(token.mcap_growth_percent)}
+            </div>
+          </>
+        ) : category === 'multipliers' ? (
+          <>
+            <div className="text-purple-400 font-bold">
+              {(token.mcap_growth_percent / 100 + 1).toFixed(2)}x
+            </div>
+            <div className={`text-xs ${getGrowthColor(token.mcap_growth_percent)}`}>
+              {formatPercentage(token.mcap_growth_percent)}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className={`font-bold ${getGrowthColor(token.mcap_growth_percent)}`}>
+              {formatPercentage(token.mcap_growth_percent)}
+            </div>
+            <div className="text-xs text-gray-400">
+              {(token.mcap_growth_percent / 100 + 1).toFixed(2)}x
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-6 mb-8">
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="text-xl font-bold text-white">🏆 Daily Performance Rankings</h3>
+        <div className="text-sm text-gray-400">
+          {formatDate(currentDayData.date)}
+        </div>
+      </div>
+
+      {/* Date Slider */}
+      {sortedDailyData.length > 1 && (
+        <div className="mb-6">
+          <div className="flex items-center space-x-4">
+            <span className="text-sm text-gray-400">Select Date:</span>
+            <div className="flex-1">
+              <input
+                type="range"
+                min="0"
+                max={sortedDailyData.length - 1}
+                value={selectedDateIndex}
+                onChange={(e) => setSelectedDateIndex(parseInt(e.target.value))}
+                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
+              />
+            </div>
+            <div className="text-sm text-white min-w-[120px]">
+              {selectedDateIndex === 0 ? 'Today' : 
+               selectedDateIndex === 1 ? 'Yesterday' : 
+               `${selectedDateIndex} days ago`}
+            </div>
+          </div>
+          <div className="flex justify-between text-xs text-gray-500 mt-1">
+            <span>Today</span>
+            <span>{sortedDailyData.length > 1 ? `${sortedDailyData.length - 1} days ago` : ''}</span>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Top Gainers */}
+        <div className="bg-gray-700 rounded-lg p-4">
+          <h4 className="text-lg font-semibold text-green-400 mb-4 flex items-center">
+            📈 Top Gainers
+          </h4>
+          <div className="space-y-3">
+            {topGainers.map((token, index) => (
+              <TokenItem key={token.token_address} token={token} index={index} category="gainers" />
+            ))}
+            {topGainers.length === 0 && (
+              <div className="text-gray-400 text-center py-4">No gainers today</div>
+            )}
+          </div>
+        </div>
+
+        {/* Top Volume */}
+        <div className="bg-gray-700 rounded-lg p-4">
+          <h4 className="text-lg font-semibold text-blue-400 mb-4 flex items-center">
+            💰 Highest Market Cap
+          </h4>
+          <div className="space-y-3">
+            {topVolume.map((token, index) => (
+              <TokenItem key={token.token_address} token={token} index={index} category="volume" />
+            ))}
+            {topVolume.length === 0 && (
+              <div className="text-gray-400 text-center py-4">No volume data</div>
+            )}
+          </div>
+        </div>
+
+        {/* Top Multipliers */}
+        <div className="bg-gray-700 rounded-lg p-4">
+          <h4 className="text-lg font-semibold text-purple-400 mb-4 flex items-center">
+            🚀 Top Multipliers (>100%)
+          </h4>
+          <div className="space-y-3">
+            {topMultipliers.map((token, index) => (
+              <TokenItem key={token.token_address} token={token} index={index} category="multipliers" />
+            ))}
+            {topMultipliers.length === 0 && (
+              <div className="text-gray-400 text-center py-4">No 100%+ performers today</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Daily Summary Stats */}
+      <div className="mt-6 pt-6 border-t border-gray-600">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+          <div>
+            <div className="text-2xl font-bold text-white">{currentDayData.tokensAdded}</div>
+            <div className="text-sm text-gray-400">Total Tokens</div>
+          </div>
+          <div>
+            <div className="text-2xl font-bold text-green-400">{currentDayData.gainers}</div>
+            <div className="text-sm text-gray-400">Gainers</div>
+          </div>
+          <div>
+            <div className="text-2xl font-bold text-red-400">{currentDayData.losers}</div>
+            <div className="text-sm text-gray-400">Losers</div>
+          </div>
+          <div>
+            <div className={`text-2xl font-bold ${getGrowthColor(currentDayData.avgGrowth)}`}>
+              {formatPercentage(currentDayData.avgGrowth)}
+            </div>
+            <div className="text-sm text-gray-400">Avg Growth</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function McapTrackerPage() {
   const [tokens, setTokens] = useState<McapTrackingData[]>([])
   const [loading, setLoading] = useState(true)
@@ -223,7 +454,9 @@ export default function McapTrackerPage() {
     maxGrowth: '',
     minMcap: '',
     maxMcap: '',
-    excludeZeroPnl: false
+    excludeZeroPnl: false,
+    timeFilter: 'all',
+    performanceFilter: 'all'
   })
 
   // Helpers for timezone shifting and peak recompute (ensure these exist once)
@@ -263,7 +496,9 @@ export default function McapTrackerPage() {
         limit: pagination.limit.toString(),
         sortBy: filters.sortBy,
         sortOrder: filters.sortOrder,
-        excludeZeroPnl: filters.excludeZeroPnl.toString()
+        excludeZeroPnl: filters.excludeZeroPnl.toString(),
+        timeFilter: filters.timeFilter,
+        performanceFilter: filters.performanceFilter
       })
       
       if (filters.search) params.append('search', filters.search)
@@ -685,6 +920,9 @@ export default function McapTrackerPage() {
                 </div>
               </div>
             </div>
+
+            {/* Daily Ranking Visualization */}
+            <DailyRankingVisualization tokens={tokens} stats={stats} />
 
             {/* Buy & Sell Time Windows (Combined) with inline timezone controls and legend */}
             {stats.pnlTimeWindows && stats.pnlBuyTimeWindows && (
@@ -1603,6 +1841,37 @@ export default function McapTrackerPage() {
                 onChange={(e) => setFilters(prev => ({ ...prev, maxMcap: e.target.value }))}
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
+            </div>
+          </div>
+
+          {/* Time-based and Performance Filters */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Time Period</label>
+              <select
+                value={filters.timeFilter}
+                onChange={(e) => setFilters(prev => ({ ...prev, timeFilter: e.target.value as '1h' | '4h' | '24h' | 'all' }))}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Time</option>
+                <option value="1h">Last 1 Hour</option>
+                <option value="4h">Last 4 Hours</option>
+                <option value="24h">Last 24 Hours</option>
+              </select>
+            </div>
+            
+            <div>
+              <label className="block text-sm font-medium mb-2">Performance Filter</label>
+              <select
+                value={filters.performanceFilter}
+                onChange={(e) => setFilters(prev => ({ ...prev, performanceFilter: e.target.value as 'all' | 'gainers' | 'losers' | 'top_performers' }))}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="all">All Tokens</option>
+                <option value="gainers">Gainers Only (+)</option>
+                <option value="losers">Losers Only (-)</option>
+                <option value="top_performers">Top Performers (>100%)</option>
+              </select>
             </div>
           </div>
         </div>

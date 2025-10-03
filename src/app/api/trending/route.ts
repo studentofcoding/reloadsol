@@ -360,29 +360,51 @@ async function sendDiscordNotification(
     // Filter out null categories and ensure we have content
     const validFields = categoryFields.filter(field => field !== null);
 
+    // Create daily ranking section
+    const dailyRankingField = createDailyRankingSection(tokenArray, mcapTrackingResults);
+
     console.log('📋 Discord message fields prepared', {
       totalCategories: categories.length,
       validFields: validFields.length,
-      hasContent: validFields.length > 0
+      hasContent: validFields.length > 0,
+      hasDailyRanking: !!dailyRankingField
     });
 
+    // Combine daily ranking with category fields
+    const allFields = [];
+    if (dailyRankingField) {
+      allFields.push(dailyRankingField);
+    }
+    allFields.push(...validFields);
+
     // If no tokens in any category, show a fallback field
-    const fields = validFields.length > 0 ? validFields : [{
+    const fields = allFields.length > 0 ? allFields : [{
       name: 'No New Tokens ≤ $3M MCap Added',
       value: 'No new tokens ≤ $3M market cap were added in this update.'
     }];
 
-    // Format the message
+    // Calculate daily statistics
+    const dailyStats = calculateDailyStats(tokenArray);
+    const volumeFormatted = dailyStats.totalVolume >= 1000000 
+      ? `$${(dailyStats.totalVolume / 1000000).toFixed(1)}M`
+      : dailyStats.totalVolume >= 1000 
+        ? `$${(dailyStats.totalVolume / 1000).toFixed(1)}k`
+        : `$${dailyStats.totalVolume.toFixed(0)}`;
+
+    // Create daily summary header
+    const dailySummaryHeader = createDailySummaryHeader(tokenArray, mcapTrackingResults);
+
+    // Format the message with enhanced description
     const message = {
       embeds: [
         {
           title: ` 🧪 Trending Token Update (${refreshType})`,
-          description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults?.size || 0} tokens tracked for growth`,
+          description: `${dailySummaryHeader}\n\n**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults?.size || 0} tokens tracked for growth`,
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
           fields,
           footer: {
-            text: 'Trending tokens (non filtered) | MCap growth tracked for 30k-2M range'
+            text: `Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${dailyStats.activeTokens} tokens`
           }
         }
       ]
@@ -1122,3 +1144,170 @@ async function fetchAndUpdateCache(
 
 // Export for use by filtered route
 export { tokenCache, fetchAndUpdateCache }
+
+
+// Function to get daily top performers for ranking
+function getDailyTopPerformers(tokens: TransformedToken[], limit: number = 5): {
+  topGainers: TransformedToken[],
+  topVolume: TransformedToken[],
+  topMcapGrowth: TransformedToken[]
+} {
+  // Filter tokens with valid data
+  const validTokens = tokens.filter(token => 
+    token.change_1h !== undefined && 
+    token.volume_1h !== undefined && 
+    token.mcap > 0
+  );
+
+  // Top gainers by 1h price change
+  const topGainers = [...validTokens]
+    .filter(token => token.change_1h > 0)
+    .sort((a, b) => (b.change_1h || 0) - (a.change_1h || 0))
+    .slice(0, limit);
+
+  // Top volume tokens
+  const topVolume = [...validTokens]
+    .sort((a, b) => (b.volume_1h || 0) - (a.volume_1h || 0))
+    .slice(0, limit);
+
+  // Top MCap growth (if tracking data available)
+  const topMcapGrowth = [...validTokens]
+    .filter(token => token.mcap >= 30_000 && token.mcap <= 2_000_000) // Only tracked range
+    .sort((a, b) => (b.change_1h || 0) - (a.change_1h || 0))
+    .slice(0, limit);
+
+  return { topGainers, topVolume, topMcapGrowth };
+}
+
+// Function to create daily ranking section for Discord
+function createDailyRankingSection(
+  tokens: TransformedToken[], 
+  mcapTrackingResults?: Map<string, any>
+): { name: string; value: string } | null {
+  const { topGainers, topVolume } = getDailyTopPerformers(tokens, 3);
+  
+  if (topGainers.length === 0 && topVolume.length === 0) {
+    return null;
+  }
+
+  let rankingText = '';
+
+  // Top Gainers Section
+  if (topGainers.length > 0) {
+    rankingText += '🏆 **Top Gainers (1h)**\n';
+    topGainers.forEach((token, index) => {
+      const changePercent = ((token.change_1h || 0) * 100).toFixed(1);
+      const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
+      rankingText += `${index + 1}. [${token.token_symbol}](${chartLink}) +${changePercent}% | $${token.mcap.toLocaleString()}\n`;
+    });
+    rankingText += '\n';
+  }
+
+  // Top Volume Section
+  if (topVolume.length > 0) {
+    rankingText += '📊 **Top Volume (1h)**\n';
+    topVolume.forEach((token, index) => {
+      const volumeFormatted = token.volume_1h >= 1000 
+        ? `$${(token.volume_1h / 1000).toFixed(1)}k`
+        : `$${token.volume_1h.toFixed(0)}`;
+      const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
+      rankingText += `${index + 1}. [${token.token_symbol}](${chartLink}) ${volumeFormatted} | $${token.mcap.toLocaleString()}\n`;
+    });
+    rankingText += '\n';
+  }
+
+  // MCap Growth Leaders (if tracking data available)
+  if (mcapTrackingResults && mcapTrackingResults.size > 0) {
+    const trackingEntries = Array.from(mcapTrackingResults.entries())
+      .filter(([_, tracking]) => tracking.growthPercent > 0)
+      .sort((a, b) => b[1].growthPercent - a[1].growthPercent)
+      .slice(0, 3);
+
+    if (trackingEntries.length > 0) {
+      rankingText += '🚀 **MCap Growth Leaders**\n';
+      trackingEntries.forEach(([tokenAddress, tracking], index) => {
+        const token = tokens.find(t => t.token_address === tokenAddress);
+        const symbol = token?.token_symbol || 'UNKNOWN';
+        const chartLink = `https://v2.reloadsol.xyz/chart/${tokenAddress}`;
+        rankingText += `${index + 1}. [${symbol}](${chartLink}) +${tracking.growthPercent.toFixed(1)}% | $${tracking.currentMcap.toLocaleString()}\n`;
+      });
+    }
+  }
+
+  return {
+    name: '🎯 Daily Token Rankings',
+    value: rankingText.trim() || 'No significant performers today'
+  };
+}
+
+// Function to calculate daily statistics
+function calculateDailyStats(tokens: TransformedToken[]): {
+  totalTokens: number,
+  avgGrowth: number,
+  topGainerPercent: number,
+  totalVolume: number,
+  activeTokens: number
+} {
+  const validTokens = tokens.filter(token => 
+    token.change_1h !== undefined && 
+    token.volume_1h !== undefined && 
+    token.mcap > 0
+  );
+
+  const totalTokens = validTokens.length;
+  const avgGrowth = totalTokens > 0 
+    ? validTokens.reduce((sum, token) => sum + (token.change_1h || 0), 0) / totalTokens * 100
+    : 0;
+  
+  const topGainerPercent = validTokens.length > 0 
+    ? Math.max(...validTokens.map(token => (token.change_1h || 0) * 100))
+    : 0;
+  
+  const totalVolume = validTokens.reduce((sum, token) => sum + (token.volume_1h || 0), 0);
+  const activeTokens = validTokens.filter(token => (token.volume_1h || 0) > 100).length;
+
+  return {
+    totalTokens,
+    avgGrowth,
+    topGainerPercent,
+    totalVolume,
+    activeTokens
+  };
+}
+
+// Function to create daily summary header
+function createDailySummaryHeader(tokens: TransformedToken[], mcapTrackingResults?: Map<string, any>): string {
+  const dailyStats = calculateDailyStats(tokens);
+  const topPerformers = getDailyTopPerformers(tokens, 3);
+  
+  const currentTime = new Date();
+  const timeStr = currentTime.toLocaleTimeString('en-US', { 
+    hour12: false, 
+    timeZone: 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+  
+  let summaryLines = [
+    `🏆 **Daily Market Summary** (${timeStr} GMT+7)`,
+    `📊 **Overview:** ${dailyStats.totalTokens} tokens tracked | ${dailyStats.activeTokens} active (>$100 vol)`,
+    `📈 **Performance:** Avg ${dailyStats.avgGrowth >= 0 ? '+' : ''}${dailyStats.avgGrowth.toFixed(1)}% | Best: +${dailyStats.topGainerPercent.toFixed(1)}%`
+  ];
+
+  // Add top performers if available
+  if (topPerformers.topGainers.length > 0) {
+    const topGainer = topPerformers.topGainers[0];
+    const gainPercent = ((topGainer.change_1h || 0) * 100).toFixed(1);
+    summaryLines.push(`🚀 **Top Gainer:** ${topGainer.token_symbol} (+${gainPercent}%)`);
+  }
+
+  if (topPerformers.topVolume.length > 0) {
+    const topVol = topPerformers.topVolume[0];
+    const volFormatted = (topVol.volume_1h || 0) >= 1000000 
+      ? `$${((topVol.volume_1h || 0) / 1000000).toFixed(1)}M`
+      : `$${((topVol.volume_1h || 0) / 1000).toFixed(0)}k`;
+    summaryLines.push(`💰 **Top Volume:** ${topVol.token_symbol} (${volFormatted})`);
+  }
+
+  return summaryLines.join('\n');
+}

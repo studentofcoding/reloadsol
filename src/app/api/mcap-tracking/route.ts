@@ -49,6 +49,8 @@ export async function GET(request: NextRequest) {
       const minMcap = searchParams.get('minMcap')
       const maxMcap = searchParams.get('maxMcap')
       const excludeZeroPnl = searchParams.get('excludeZeroPnl') === 'true'
+      const timeFilter = searchParams.get('timeFilter') || 'all'
+      const performanceFilter = searchParams.get('performanceFilter') || 'all'
 
       const offset = (page - 1) * limit
 
@@ -63,6 +65,45 @@ export async function GET(request: NextRequest) {
       // Apply search filter
       if (search) {
         query = query.or(`token_symbol.ilike.%${search}%,token_address.ilike.%${search}%`)
+      }
+
+      // Apply time-based filters
+      if (timeFilter !== 'all') {
+        const now = new Date()
+        let cutoffTime: Date
+        
+        switch (timeFilter) {
+          case '1h':
+            cutoffTime = new Date(now.getTime() - 60 * 60 * 1000)
+            break
+          case '4h':
+            cutoffTime = new Date(now.getTime() - 4 * 60 * 60 * 1000)
+            break
+          case '24h':
+            cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+            break
+          default:
+            cutoffTime = new Date(0) // No filter
+        }
+        
+        if (cutoffTime.getTime() > 0) {
+          query = query.gte('last_updated_at', cutoffTime.toISOString())
+        }
+      }
+
+      // Apply performance filters
+      if (performanceFilter !== 'all') {
+        switch (performanceFilter) {
+          case 'gainers':
+            query = query.gt('mcap_growth_percent', 0)
+            break
+          case 'losers':
+            query = query.lt('mcap_growth_percent', 0)
+            break
+          case 'top_performers':
+            query = query.gte('mcap_growth_percent', 100)
+            break
+        }
       }
 
       // Apply growth filters
