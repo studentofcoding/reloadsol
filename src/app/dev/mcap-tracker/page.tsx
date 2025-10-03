@@ -376,7 +376,7 @@ function DailyRankingVisualization({ tokens, stats }: { tokens: McapTrackingData
         {/* Top Multipliers */}
         <div className="bg-gray-700 rounded-lg p-4">
           <h4 className="text-lg font-semibold text-purple-400 mb-4 flex items-center">
-            🚀 Top Multipliers (>100%)
+            🚀 Top Multipliers ({'>'}100%)
           </h4>
           <div className="space-y-3">
             {topMultipliers.map((token, index) => (
@@ -1870,7 +1870,7 @@ export default function McapTrackerPage() {
                 <option value="all">All Tokens</option>
                 <option value="gainers">Gainers Only (+)</option>
                 <option value="losers">Losers Only (-)</option>
-                <option value="top_performers">Top Performers (>100%)</option>
+                <option value="top_performers">Top Performers ({'>'}100%)</option>
               </select>
             </div>
           </div>
