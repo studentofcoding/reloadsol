@@ -82,12 +82,21 @@ export async function GET(request: NextRequest) {
           case '24h':
             cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000)
             break
+          case '3d':
+            cutoffTime = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000)
+            break
+          case '7d':
+            cutoffTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+            break
+          case '1m':
+            cutoffTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+            break
           default:
             cutoffTime = new Date(0) // No filter
         }
 
         if (cutoffTime.getTime() > 0) {
-          query = query.gte('last_updated_at', cutoffTime.toISOString())
+          query = query.gte('first_seen_at', cutoffTime.toISOString())
         }
       }
 
@@ -132,7 +141,8 @@ export async function GET(request: NextRequest) {
       if (error) throw error
 
       // Get all data for comprehensive statistics with proper validation
-      const allDataQuery = await supabase
+      // Apply the same filters as the main query to ensure consistent statistics
+      let allDataQuery = supabase
         .from('token_mcap_tracking')
         .select('mcap_growth_percent, current_mcap, first_mcap, first_seen_at, last_updated_at, when_reach_80mc, when_reach_120mc, when_reach_200mc, is_tracking_stuck')
         .not('mcap_growth_percent', 'is', null)
@@ -141,7 +151,76 @@ export async function GET(request: NextRequest) {
         .gt('first_mcap', 0)
         .gt('current_mcap', 0)
 
-      const { data: allData } = allDataQuery
+      // Apply search filter to statistics query
+      if (search) {
+        allDataQuery = allDataQuery.or(`token_symbol.ilike.%${search}%,token_address.ilike.%${search}%`)
+      }
+
+      // Apply time-based filters to statistics query
+      if (timeFilter !== 'all') {
+        const now = new Date()
+        let cutoffTime: Date
+
+        switch (timeFilter) {
+          case '1h':
+            cutoffTime = new Date(now.getTime() - 60 * 60 * 1000)
+            break
+          case '4h':
+            cutoffTime = new Date(now.getTime() - 4 * 60 * 60 * 1000)
+            break
+          case '24h':
+            cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+            break
+          case '3d':
+            cutoffTime = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000)
+            break
+          case '7d':
+            cutoffTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+            break
+          case '1m':
+            cutoffTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+            break
+          default:
+            cutoffTime = new Date(0) // No filter
+        }
+
+        if (cutoffTime.getTime() > 0) {
+          allDataQuery = allDataQuery.gte('first_seen_at', cutoffTime.toISOString())
+        }
+      }
+
+      // Apply performance filters to statistics query
+      if (performanceFilter !== 'all') {
+        switch (performanceFilter) {
+          case 'gainers':
+            allDataQuery = allDataQuery.gt('mcap_growth_percent', 0)
+            break
+          case 'losers':
+            allDataQuery = allDataQuery.lt('mcap_growth_percent', 0)
+            break
+          case 'top_performers':
+            allDataQuery = allDataQuery.gte('mcap_growth_percent', 100)
+            break
+        }
+      }
+
+      // Apply growth filters to statistics query
+      if (minGrowth !== null) {
+        allDataQuery = allDataQuery.gte('mcap_growth_percent', parseFloat(minGrowth))
+      }
+      if (maxGrowth !== null) {
+        allDataQuery = allDataQuery.lte('mcap_growth_percent', parseFloat(maxGrowth))
+      }
+
+      // Apply MCap filters to statistics query
+      if (minMcap !== null) {
+        allDataQuery = allDataQuery.gte('first_mcap', parseFloat(minMcap))
+      }
+      if (maxMcap !== null) {
+        allDataQuery = allDataQuery.lte('first_mcap', parseFloat(maxMcap))
+      }
+
+      const { data: allData } = await allDataQuery
 
       if (!allData) {
         throw new Error('Failed to fetch statistics data')

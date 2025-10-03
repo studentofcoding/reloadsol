@@ -34,7 +34,7 @@ interface FilterOptions {
   minMcap: string
   maxMcap: string
   excludeZeroPnl: boolean
-  timeFilter: '1h' | '4h' | '24h' | 'all'
+  timeFilter: '1h' | '4h' | '24h' | '3d' | '7d' | '1m' | 'all'
   performanceFilter: 'all' | 'gainers' | 'losers' | 'top_performers'
 }
 
@@ -1944,13 +1944,16 @@ export default function McapTrackerPage() {
               <label className="block text-sm font-medium mb-2">Time Period</label>
               <select
                 value={filters.timeFilter}
-                onChange={(e) => setFilters(prev => ({ ...prev, timeFilter: e.target.value as '1h' | '4h' | '24h' | 'all' }))}
+                onChange={(e) => setFilters(prev => ({ ...prev, timeFilter: e.target.value as '1h' | '4h' | '24h' | '3d' | '7d' | '1m' | 'all' }))}
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="all">All Time</option>
                 <option value="1h">Last 1 Hour</option>
                 <option value="4h">Last 4 Hours</option>
                 <option value="24h">Last 24 Hours</option>
+                <option value="3d">Last 3 Days</option>
+                <option value="7d">Last 7 Days</option>
+                <option value="1m">Last 1 Month</option>
               </select>
             </div>
             
