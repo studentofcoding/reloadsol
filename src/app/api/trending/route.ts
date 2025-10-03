@@ -385,9 +385,9 @@ async function sendDiscordNotification(
 
     // Calculate daily statistics
     const dailyStats = calculateDailyStats(tokenArray);
-    const volumeFormatted = dailyStats.totalVolume >= 1000000 
+    const volumeFormatted = dailyStats.totalVolume >= 1000000
       ? `$${(dailyStats.totalVolume / 1000000).toFixed(1)}M`
-      : dailyStats.totalVolume >= 1000 
+      : dailyStats.totalVolume >= 1000
         ? `$${(dailyStats.totalVolume / 1000).toFixed(1)}k`
         : `$${dailyStats.totalVolume.toFixed(0)}`;
 
@@ -1153,9 +1153,9 @@ function getDailyTopPerformers(tokens: TransformedToken[], limit: number = 5): {
   topMcapGrowth: TransformedToken[]
 } {
   // Filter tokens with valid data
-  const validTokens = tokens.filter(token => 
-    token.change_1h !== undefined && 
-    token.volume_1h !== undefined && 
+  const validTokens = tokens.filter(token =>
+    token.change_1h !== undefined &&
+    token.volume_1h !== undefined &&
     token.mcap > 0
   );
 
@@ -1181,11 +1181,11 @@ function getDailyTopPerformers(tokens: TransformedToken[], limit: number = 5): {
 
 // Function to create daily ranking section for Discord
 function createDailyRankingSection(
-  tokens: TransformedToken[], 
+  tokens: TransformedToken[],
   mcapTrackingResults?: Map<string, any>
 ): { name: string; value: string } | null {
   const { topGainers, topVolume } = getDailyTopPerformers(tokens, 3);
-  
+
   if (topGainers.length === 0 && topVolume.length === 0) {
     return null;
   }
@@ -1207,7 +1207,7 @@ function createDailyRankingSection(
   if (topVolume.length > 0) {
     rankingText += '📊 **Top Volume (1h)**\n';
     topVolume.forEach((token, index) => {
-      const volumeFormatted = token.volume_1h >= 1000 
+      const volumeFormatted = token.volume_1h >= 1000
         ? `$${(token.volume_1h / 1000).toFixed(1)}k`
         : `$${token.volume_1h.toFixed(0)}`;
       const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
@@ -1248,21 +1248,21 @@ function calculateDailyStats(tokens: TransformedToken[]): {
   totalVolume: number,
   activeTokens: number
 } {
-  const validTokens = tokens.filter(token => 
-    token.change_1h !== undefined && 
-    token.volume_1h !== undefined && 
+  const validTokens = tokens.filter(token =>
+    token.change_1h !== undefined &&
+    token.volume_1h !== undefined &&
     token.mcap > 0
   );
 
   const totalTokens = validTokens.length;
-  const avgGrowth = totalTokens > 0 
+  const avgGrowth = totalTokens > 0
     ? validTokens.reduce((sum, token) => sum + (token.change_1h || 0), 0) / totalTokens * 100
     : 0;
-  
-  const topGainerPercent = validTokens.length > 0 
+
+  const topGainerPercent = validTokens.length > 0
     ? Math.max(...validTokens.map(token => (token.change_1h || 0) * 100))
     : 0;
-  
+
   const totalVolume = validTokens.reduce((sum, token) => sum + (token.volume_1h || 0), 0);
   const activeTokens = validTokens.filter(token => (token.volume_1h || 0) > 100).length;
 
@@ -1279,15 +1279,15 @@ function calculateDailyStats(tokens: TransformedToken[]): {
 function createDailySummaryHeader(tokens: TransformedToken[], mcapTrackingResults?: Map<string, any>): string {
   const dailyStats = calculateDailyStats(tokens);
   const topPerformers = getDailyTopPerformers(tokens, 3);
-  
+
   const currentTime = new Date();
-  const timeStr = currentTime.toLocaleTimeString('en-US', { 
-    hour12: false, 
+  const timeStr = currentTime.toLocaleTimeString('en-US', {
+    hour12: false,
     timeZone: 'Asia/Bangkok',
     hour: '2-digit',
     minute: '2-digit'
   });
-  
+
   let summaryLines = [
     `🏆 **Daily Market Summary** (${timeStr} GMT+7)`,
     `📊 **Overview:** ${dailyStats.totalTokens} tokens tracked | ${dailyStats.activeTokens} active (>$100 vol)`,
@@ -1303,7 +1303,7 @@ function createDailySummaryHeader(tokens: TransformedToken[], mcapTrackingResult
 
   if (topPerformers.topVolume.length > 0) {
     const topVol = topPerformers.topVolume[0];
-    const volFormatted = (topVol.volume_1h || 0) >= 1000000 
+    const volFormatted = (topVol.volume_1h || 0) >= 1000000
       ? `$${((topVol.volume_1h || 0) / 1000000).toFixed(1)}M`
       : `$${((topVol.volume_1h || 0) / 1000).toFixed(0)}k`;
     summaryLines.push(`💰 **Top Volume:** ${topVol.token_symbol} (${volFormatted})`);

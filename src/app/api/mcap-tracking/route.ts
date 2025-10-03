@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
       if (timeFilter !== 'all') {
         const now = new Date()
         let cutoffTime: Date
-        
+
         switch (timeFilter) {
           case '1h':
             cutoffTime = new Date(now.getTime() - 60 * 60 * 1000)
@@ -85,7 +85,7 @@ export async function GET(request: NextRequest) {
           default:
             cutoffTime = new Date(0) // No filter
         }
-        
+
         if (cutoffTime.getTime() > 0) {
           query = query.gte('last_updated_at', cutoffTime.toISOString())
         }

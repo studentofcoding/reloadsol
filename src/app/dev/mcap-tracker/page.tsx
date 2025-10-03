@@ -189,28 +189,54 @@ function PnlDistributionChart({
 
 // Daily Ranking Visualization Component
 function DailyRankingVisualization({ tokens, stats }: { tokens: McapTrackingData[], stats: any }) {
-  const [selectedDateIndex, setSelectedDateIndex] = useState(0)
+  const [selectedDate, setSelectedDate] = useState<string>('')
+  const [expandedSection, setExpandedSection] = useState<string | null>(null)
   
   // Get daily breakdown data from stats
   const dailyData = stats?.thirtyDaysSummary?.dailyBreakdown || []
   const sortedDailyData = [...dailyData].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
   
-  // Get current day's data
-  const currentDayData = sortedDailyData[selectedDateIndex] || {
-    date: new Date().toISOString().split('T')[0],
-    tokensAdded: stats?.total || 0,
-    gainers: stats?.gainers || 0,
-    losers: stats?.losers || 0,
-    avgGrowth: stats?.avgGrowth || 0,
-    totalMcap: stats?.totalMcap || 0
+  // Initialize selected date to today (most recent date)
+  React.useEffect(() => {
+    if (sortedDailyData.length > 0 && !selectedDate) {
+      setSelectedDate(sortedDailyData[0].date)
+    }
+  }, [sortedDailyData, selectedDate])
+
+  // Get current day's data based on selected date
+  const currentDayData = sortedDailyData.find(day => day.date === selectedDate) || {
+    date: selectedDate || new Date().toISOString().split('T')[0],
+    tokensAdded: 0,
+    gainers: 0,
+    losers: 0,
+    avgGrowth: 0,
+    totalMcap: 0
   }
 
-  // Filter tokens based on selected date (for now, we'll use all tokens as we don't have date-specific filtering)
-  const filteredTokens = tokens
+  // Filter tokens based on selected date
+  const filteredTokens = React.useMemo(() => {
+    if (!selectedDate) return tokens
+    
+    const selectedDateObj = new Date(selectedDate)
+    const nextDay = new Date(selectedDateObj)
+    nextDay.setDate(nextDay.getDate() + 1)
+    
+    return tokens.filter(token => {
+      const tokenDate = new Date(token.first_seen_at)
+      const tokenDateOnly = new Date(tokenDate.getFullYear(), tokenDate.getMonth(), tokenDate.getDate())
+      const selectedDateOnly = new Date(selectedDateObj.getFullYear(), selectedDateObj.getMonth(), selectedDateObj.getDate())
+      
+      return tokenDateOnly.getTime() === selectedDateOnly.getTime()
+    })
+  }, [tokens, selectedDate])
 
-  // Get top performers for different categories
-  const topGainers = [...filteredTokens]
-    .filter(token => token.mcap_growth_percent > 0)
+  // Separate tokens by performance
+  const gainersTokens = filteredTokens.filter(token => token.mcap_growth_percent > 0)
+  const losersTokens = filteredTokens.filter(token => token.mcap_growth_percent < 0)
+  const neutralTokens = filteredTokens.filter(token => Math.abs(token.mcap_growth_percent) < 0.01)
+
+  // Get top performers for different categories based on filtered tokens
+  const topGainers = [...gainersTokens]
     .sort((a, b) => b.mcap_growth_percent - a.mcap_growth_percent)
     .slice(0, 5)
 
@@ -320,24 +346,23 @@ function DailyRankingVisualization({ tokens, stats }: { tokens: McapTrackingData
           <div className="flex items-center space-x-4">
             <span className="text-sm text-gray-400">Select Date:</span>
             <div className="flex-1">
-              <input
-                type="range"
-                min="0"
-                max={sortedDailyData.length - 1}
-                value={selectedDateIndex}
-                onChange={(e) => setSelectedDateIndex(parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer slider"
-              />
+              <select
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-blue-500 focus:outline-none"
+              >
+                {sortedDailyData.map((day, index) => (
+                  <option key={day.date} value={day.date}>
+                    {index === 0 ? 'Today' : 
+                     index === 1 ? 'Yesterday' : 
+                     `${index} days ago`} - {formatDate(day.date)}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="text-sm text-white min-w-[120px]">
-              {selectedDateIndex === 0 ? 'Today' : 
-               selectedDateIndex === 1 ? 'Yesterday' : 
-               `${selectedDateIndex} days ago`}
+              {filteredTokens.length} tokens
             </div>
-          </div>
-          <div className="flex justify-between text-xs text-gray-500 mt-1">
-            <span>Today</span>
-            <span>{sortedDailyData.length > 1 ? `${sortedDailyData.length - 1} days ago` : ''}</span>
           </div>
         </div>
       )}
@@ -393,16 +418,61 @@ function DailyRankingVisualization({ tokens, stats }: { tokens: McapTrackingData
       <div className="mt-6 pt-6 border-t border-gray-600">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
           <div>
-            <div className="text-2xl font-bold text-white">{currentDayData.tokensAdded}</div>
-            <div className="text-sm text-gray-400">Total Tokens</div>
+            <button
+              onClick={() => setExpandedSection(expandedSection === 'total' ? null : 'total')}
+              className="w-full hover:bg-gray-700 rounded-lg p-2 transition-colors"
+            >
+              <div className="text-2xl font-bold text-white">{filteredTokens.length}</div>
+              <div className="text-sm text-gray-400">Total Tokens</div>
+              <div className="text-xs text-blue-400 mt-1">Click to view</div>
+            </button>
+            {expandedSection === 'total' && (
+              <div className="mt-2 bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
+                <div className="text-left space-y-1">
+                  {filteredTokens.map((token, index) => (
+                    <TokenItem key={token.token_address} token={token} index={index} category="total" />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div>
-            <div className="text-2xl font-bold text-green-400">{currentDayData.gainers}</div>
-            <div className="text-sm text-gray-400">Gainers</div>
+            <button
+              onClick={() => setExpandedSection(expandedSection === 'gainers' ? null : 'gainers')}
+              className="w-full hover:bg-gray-700 rounded-lg p-2 transition-colors"
+            >
+              <div className="text-2xl font-bold text-green-400">{gainersTokens.length}</div>
+              <div className="text-sm text-gray-400">Gainers</div>
+              <div className="text-xs text-blue-400 mt-1">Click to view</div>
+            </button>
+            {expandedSection === 'gainers' && (
+              <div className="mt-2 bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
+                <div className="text-left space-y-1">
+                  {gainersTokens.map((token, index) => (
+                    <TokenItem key={token.token_address} token={token} index={index} category="gainers" />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div>
-            <div className="text-2xl font-bold text-red-400">{currentDayData.losers}</div>
-            <div className="text-sm text-gray-400">Losers</div>
+            <button
+              onClick={() => setExpandedSection(expandedSection === 'losers' ? null : 'losers')}
+              className="w-full hover:bg-gray-700 rounded-lg p-2 transition-colors"
+            >
+              <div className="text-2xl font-bold text-red-400">{losersTokens.length}</div>
+              <div className="text-sm text-gray-400">Losers</div>
+              <div className="text-xs text-blue-400 mt-1">Click to view</div>
+            </button>
+            {expandedSection === 'losers' && (
+              <div className="mt-2 bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
+                <div className="text-left space-y-1">
+                  {losersTokens.map((token, index) => (
+                    <TokenItem key={token.token_address} token={token} index={index} category="losers" />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
           <div>
             <div className={`text-2xl font-bold ${getGrowthColor(currentDayData.avgGrowth)}`}>
