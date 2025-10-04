@@ -394,17 +394,31 @@ async function sendDiscordNotification(
     // Create daily summary header
     const dailySummaryHeader = createDailySummaryHeader(tokenArray, mcapTrackingResults);
 
+    // Validate embed data before sending
+    const validateEmbedValue = (value: any, fallback: any = ''): any => {
+      if (value === null || value === undefined) return fallback;
+      if (typeof value === 'number' && (!isFinite(value) || isNaN(value))) return fallback;
+      if (typeof value === 'string' && (value.includes('NaN') || value.includes('Infinity'))) return fallback;
+      return value;
+    };
+
+    // Validate and clean fields
+    const validatedFields = fields.map(field => ({
+      name: validateEmbedValue(field.name, 'Unknown Category'),
+      value: validateEmbedValue(field.value, 'No data available')
+    }));
+
     // Format the message with enhanced description
     const message = {
       embeds: [
         {
-          title: ` 🧪 Trending Token Update (${refreshType})`,
-          description: `${dailySummaryHeader}\n\n**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults?.size || 0} tokens tracked for growth`,
+          title: validateEmbedValue(` 🧪 Trending Token Update (${refreshType})`, ' 🧪 Trending Token Update'),
+          description: validateEmbedValue(`${dailySummaryHeader}\n\n**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults?.size || 0} tokens tracked for growth`, 'Token update summary'),
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
-          fields,
+          fields: validatedFields,
           footer: {
-            text: `Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${dailyStats.activeTokens} tokens`
+            text: validateEmbedValue(`Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${dailyStats.activeTokens} tokens`, 'Trending tokens update')
           }
         }
       ]
@@ -1251,27 +1265,55 @@ function calculateDailyStats(tokens: TransformedToken[]): {
   const validTokens = tokens.filter(token =>
     token.change_1h !== undefined &&
     token.volume_1h !== undefined &&
-    token.mcap > 0
+    token.mcap > 0 &&
+    !isNaN(token.change_1h) &&
+    !isNaN(token.volume_1h) &&
+    isFinite(token.change_1h) &&
+    isFinite(token.volume_1h)
   );
 
   const totalTokens = validTokens.length;
-  const avgGrowth = totalTokens > 0
-    ? validTokens.reduce((sum, token) => sum + (token.change_1h || 0), 0) / totalTokens * 100
-    : 0;
+  
+  // Safe calculation of average growth
+  let avgGrowth = 0;
+  if (totalTokens > 0) {
+    const growthSum = validTokens.reduce((sum, token) => {
+      const change = token.change_1h || 0;
+      return sum + (isFinite(change) ? change : 0);
+    }, 0);
+    avgGrowth = (growthSum / totalTokens) * 100;
+  }
 
-  const topGainerPercent = validTokens.length > 0
-    ? Math.max(...validTokens.map(token => (token.change_1h || 0) * 100))
-    : 0;
+  // Safe calculation of top gainer percent
+  let topGainerPercent = 0;
+  if (validTokens.length > 0) {
+    const changes = validTokens
+      .map(token => (token.change_1h || 0) * 100)
+      .filter(change => isFinite(change));
+    
+    if (changes.length > 0) {
+      topGainerPercent = Math.max(...changes);
+    }
+  }
 
-  const totalVolume = validTokens.reduce((sum, token) => sum + (token.volume_1h || 0), 0);
-  const activeTokens = validTokens.filter(token => (token.volume_1h || 0) > 100).length;
+  // Safe calculation of total volume
+  const totalVolume = validTokens.reduce((sum, token) => {
+    const volume = token.volume_1h || 0;
+    return sum + (isFinite(volume) ? volume : 0);
+  }, 0);
 
+  const activeTokens = validTokens.filter(token => {
+    const volume = token.volume_1h || 0;
+    return isFinite(volume) && volume > 100;
+  }).length;
+
+  // Ensure all returned values are finite
   return {
-    totalTokens,
-    avgGrowth,
-    topGainerPercent,
-    totalVolume,
-    activeTokens
+    totalTokens: isFinite(totalTokens) ? totalTokens : 0,
+    avgGrowth: isFinite(avgGrowth) ? avgGrowth : 0,
+    topGainerPercent: isFinite(topGainerPercent) ? topGainerPercent : 0,
+    totalVolume: isFinite(totalVolume) ? totalVolume : 0,
+    activeTokens: isFinite(activeTokens) ? activeTokens : 0
   };
 }
 
@@ -1288,24 +1330,38 @@ function createDailySummaryHeader(tokens: TransformedToken[], mcapTrackingResult
     minute: '2-digit'
   });
 
+  // Safe formatting with validation
+  const formatPercent = (value: number): string => {
+    if (!isFinite(value) || isNaN(value)) return '0.0';
+    return value.toFixed(1);
+  };
+
+  const formatNumber = (value: number): number => {
+    if (!isFinite(value) || isNaN(value)) return 0;
+    return value;
+  };
+
   let summaryLines = [
     `🏆 **Daily Market Summary** (${timeStr} GMT+7)`,
-    `📊 **Overview:** ${dailyStats.totalTokens} tokens tracked | ${dailyStats.activeTokens} active (>$100 vol)`,
-    `📈 **Performance:** Avg ${dailyStats.avgGrowth >= 0 ? '+' : ''}${dailyStats.avgGrowth.toFixed(1)}% | Best: +${dailyStats.topGainerPercent.toFixed(1)}%`
+    `📊 **Overview:** ${formatNumber(dailyStats.totalTokens)} tokens tracked | ${formatNumber(dailyStats.activeTokens)} active (>$100 vol)`,
+    `📈 **Performance:** Avg ${dailyStats.avgGrowth >= 0 ? '+' : ''}${formatPercent(dailyStats.avgGrowth)}% | Best: +${formatPercent(dailyStats.topGainerPercent)}%`
   ];
 
   // Add top performers if available
   if (topPerformers.topGainers.length > 0) {
     const topGainer = topPerformers.topGainers[0];
-    const gainPercent = ((topGainer.change_1h || 0) * 100).toFixed(1);
+    const gainPercent = formatPercent((topGainer.change_1h || 0) * 100);
     summaryLines.push(`🚀 **Top Gainer:** ${topGainer.token_symbol} (+${gainPercent}%)`);
   }
 
   if (topPerformers.topVolume.length > 0) {
     const topVol = topPerformers.topVolume[0];
-    const volFormatted = (topVol.volume_1h || 0) >= 1000000
-      ? `$${((topVol.volume_1h || 0) / 1000000).toFixed(1)}M`
-      : `$${((topVol.volume_1h || 0) / 1000).toFixed(0)}k`;
+    const volume = topVol.volume_1h || 0;
+    const volFormatted = isFinite(volume) && volume >= 1000000
+      ? `$${(volume / 1000000).toFixed(1)}M`
+      : isFinite(volume) && volume >= 1000
+        ? `$${(volume / 1000).toFixed(0)}k`
+        : `$${formatNumber(volume)}`;
     summaryLines.push(`💰 **Top Volume:** ${topVol.token_symbol} (${volFormatted})`);
   }
 
