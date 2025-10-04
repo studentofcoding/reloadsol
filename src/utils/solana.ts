@@ -41,27 +41,38 @@ export const PRIORITY_FEE_OPTIONS = [
 // Utility function to get SOL price with caching and fallback
 export async function getSolPriceUSD(): Promise<number> {
   try {
-    // Use absolute URL for server-side compatibility
-    const baseUrl = 'https://v2.reloadsol.xyz'
-    const response = await fetch(`${baseUrl}/api/solprice`, {
-      headers: {
-        'Cache-Control': 'max-age=30' // Use 30-second cache
+    // Check if we're on the client side
+    const isClientSide = typeof window !== 'undefined'
+    
+    if (isClientSide) {
+      // Client-side: use the API endpoint
+      const response = await fetch('/api/solprice', {
+        headers: {
+          'Cache-Control': 'max-age=30' // Use 30-second cache
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`SOL price API error: ${response.status}`);
       }
-    });
 
-    if (!response.ok) {
-      throw new Error(`SOL price API error: ${response.status}`);
+      const data = await response.json();
+      const price = data.price;
+
+      if (typeof price === 'number' && price > 0) {
+        console.log(`SOL price fetched: $${price} (source: ${data.source})`);
+        return price;
+      }
+
+      throw new Error('Invalid SOL price data received');
+    } else {
+      // Server-side: use the core price fetching logic directly
+      const { getSolPriceUSDCore } = await import('./sol-price-core');
+      const result = await getSolPriceUSDCore();
+      
+      console.log(`SOL price fetched: $${result.price} (source: ${result.source})`);
+      return result.price;
     }
-
-    const data = await response.json();
-    const price = data.price;
-
-    if (typeof price === 'number' && price > 0) {
-      console.log(`SOL price fetched: $${price} (source: ${data.source})`);
-      return price;
-    }
-
-    throw new Error('Invalid SOL price data received');
   } catch (error) {
     console.error('Error fetching SOL price:', error);
     // Return a reasonable fallback price if the API fails
