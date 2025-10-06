@@ -1315,48 +1315,58 @@ function createDailyRankingSection(
   tokens: TransformedToken[],
   mcapTrackingResults?: Map<string, any>
 ): { name: string; value: string } | null {
-  const { topGainers, topVolume } = getDailyTopPerformers(tokens, 3);
-
-  if (topGainers.length === 0 && topVolume.length === 0) {
-    return null;
+  // Helper: format time in GMT+7 with date (DD/MM/YYYY)
+  const formatGmt7WithDate = (iso?: string): string => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    const gmt7 = new Date(d.getTime() + 7 * 60 * 60 * 1000)
+    const hh = String(gmt7.getUTCHours()).padStart(2, '0')
+    const mm = String(gmt7.getUTCMinutes()).padStart(2, '0')
+    const dd = String(gmt7.getUTCDate()).padStart(2, '0')
+    const mo = String(gmt7.getUTCMonth() + 1).padStart(2, '0')
+    const yyyy = gmt7.getUTCFullYear()
+    return `${hh}:${mm} GMT+7 ${dd}/${mo}/${yyyy}`
   }
 
-  let rankingText = '';
+  let rankingText = ''
 
-  // Top Gainers Section
-  if (topGainers.length > 0) {
-    rankingText += '🏆 **Top Gainers (1h)**\n';
-    topGainers.forEach((token, index) => {
-      const changePercent = isFinite(token.change_1h) ? ((token.change_1h || 0) * 100).toFixed(1) : '0.0';
-      const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
-      rankingText += `${index + 1}. [${token.token_symbol}](${chartLink}) +${changePercent}% | $${isFinite(token.mcap) ? token.mcap.toLocaleString() : '0'}\n`;
-    });
-    rankingText += '\n';
+  // Tracker-based Top Gainers only (by mcap_growth_percent). No price-change fallback.
+  const trackerTop = mcapTrackingResults && mcapTrackingResults.size > 0
+    ? Array.from(mcapTrackingResults.entries())
+        .filter(([_, tracking]) => isFinite(tracking.growthPercent) && tracking.growthPercent > 0)
+        .sort((a, b) => (b[1].growthPercent || 0) - (a[1].growthPercent || 0))
+        .slice(0, 10)
+    : []
+
+  if (trackerTop.length === 0) {
+    return null
   }
 
+  rankingText += '🏆 **Top Gainers (MCap Tracker)**\n'
+  trackerTop.forEach(([tokenAddress, tracking], index) => {
+    const token = tokens.find(t => t.token_address === tokenAddress)
+    const symbol = token?.token_symbol || 'UNKNOWN'
+    const chartLink = `https://v2.reloadsol.xyz/chart/${tokenAddress}`
+    const growthStr = `${tracking.growthPercent >= 0 ? '+' : ''}${(tracking.growthPercent || 0).toFixed(1)}%`
+    const currentStr = isFinite(tracking.currentMcap)
+      ? Number(tracking.currentMcap).toLocaleString('en-US', { maximumFractionDigits: 3 })
+      : '0'
+    const firstStr = isFinite(tracking.firstMcap)
+      ? Number(tracking.firstMcap).toLocaleString('en-US', { maximumFractionDigits: 3 })
+      : '0'
+    const timeStr = formatGmt7WithDate(tracking.firstSeenAt)
+    rankingText += `${index + 1}. [${symbol}](${chartLink}) ${growthStr} | $${currentStr} | from $${firstStr}${timeStr ? ` | ${timeStr}` : ''}\n`
+  })
 
-  // MCap Growth Leaders (if tracking data available)
-  if (mcapTrackingResults && mcapTrackingResults.size > 0) {
-    const trackingEntries = Array.from(mcapTrackingResults.entries())
-      .filter(([_, tracking]) => tracking.growthPercent > 0)
-      .sort((a, b) => b[1].growthPercent - a[1].growthPercent)
-      .slice(0, 3);
+  // Note: Remove "🚀 MCap Growth Leaders" since it is similar to tracker-based Top Gainers
 
-    if (trackingEntries.length > 0) {
-      rankingText += '🚀 **MCap Growth Leaders**\n';
-      trackingEntries.forEach(([tokenAddress, tracking], index) => {
-        const token = tokens.find(t => t.token_address === tokenAddress);
-        const symbol = token?.token_symbol || 'UNKNOWN';
-        const chartLink = `https://v2.reloadsol.xyz/chart/${tokenAddress}`;
-        rankingText += `${index + 1}. [${symbol}](${chartLink}) +${isFinite(tracking.growthPercent) ? tracking.growthPercent.toFixed(1) : '0.0'}% | $${isFinite(tracking.currentMcap) ? tracking.currentMcap.toLocaleString() : '0'}\n`;
-      });
-    }
-  }
+  // Truncate to stay within Discord field limits
+  const truncated = truncateFieldValue(rankingText)
 
   return {
     name: '🎯 Daily Token Rankings',
-    value: rankingText.trim() || 'No significant performers today'
-  };
+    value: truncated.trim() || 'No significant performers today'
+  }
 }
 
 // Function to calculate daily statistics
@@ -1425,7 +1435,6 @@ function calculateDailyStats(tokens: TransformedToken[]): {
 // Function to create daily summary header
 function createDailySummaryHeader(tokens: TransformedToken[], mcapTrackingResults?: Map<string, any>): string {
   const dailyStats = calculateDailyStats(tokens);
-  const topPerformers = getDailyTopPerformers(tokens, 3);
 
   const currentTime = new Date();
   const timeStr = currentTime.toLocaleTimeString('en-US', {
@@ -1452,11 +1461,34 @@ function createDailySummaryHeader(tokens: TransformedToken[], mcapTrackingResult
     `📈 **Performance:** Avg ${dailyStats.avgGrowth >= 0 ? '+' : ''}${formatPercent(dailyStats.avgGrowth)}% | Best: +${formatPercent(dailyStats.topGainerPercent)}%`
   ];
 
-  // Add top performers if available
-  if (topPerformers.topGainers.length > 0) {
-    const topGainer = topPerformers.topGainers[0];
-    const gainPercent = formatPercent((topGainer.change_1h || 0) * 100);
-    summaryLines.push(`🚀 **Top Gainer:** ${topGainer.token_symbol} (+${gainPercent}%)`);
+  // Add tracker-based top gainer if available; no price-change fallback
+  if (mcapTrackingResults && mcapTrackingResults.size > 0) {
+    const trackerTop = Array.from(mcapTrackingResults.entries())
+      .filter(([_, tracking]) => isFinite(tracking.growthPercent) && tracking.growthPercent > 0)
+      .sort((a, b) => (b[1].growthPercent || 0) - (a[1].growthPercent || 0))
+      .slice(0, 1)
+
+    if (trackerTop.length > 0) {
+      const [tokenAddress, tracking] = trackerTop[0]
+      const token = tokens.find(t => t.token_address === tokenAddress)
+      const symbol = token?.token_symbol || 'UNKNOWN'
+      const growthStr = `${tracking.growthPercent >= 0 ? '+' : ''}${formatPercent(tracking.growthPercent || 0)}`
+      const currentStr = isFinite(tracking.currentMcap) ? Number(tracking.currentMcap).toLocaleString('en-US', { maximumFractionDigits: 3 }) : '0'
+      const firstStr = isFinite(tracking.firstMcap) ? Number(tracking.firstMcap).toLocaleString('en-US', { maximumFractionDigits: 3 }) : '0'
+      // Append GMT+7 time with date
+      const d = tracking.firstSeenAt ? new Date(tracking.firstSeenAt) : null
+      let dtStr = ''
+      if (d) {
+        const gmt7 = new Date(d.getTime() + 7 * 60 * 60 * 1000)
+        const hh = String(gmt7.getUTCHours()).padStart(2, '0')
+        const mm = String(gmt7.getUTCMinutes()).padStart(2, '0')
+        const dd = String(gmt7.getUTCDate()).padStart(2, '0')
+        const mo = String(gmt7.getUTCMonth() + 1).padStart(2, '0')
+        const yyyy = gmt7.getUTCFullYear()
+        dtStr = `${hh}:${mm} GMT+7 ${dd}/${mo}/${yyyy}`
+      }
+      summaryLines.push(`🚀 **Top Gainer:** ${symbol} (${growthStr}) | $${currentStr} | from $${firstStr}${dtStr ? ` | ${dtStr}` : ''}`)
+    }
   }
 
   return summaryLines.join('\n');
