@@ -6,7 +6,8 @@ import { useWallet, useConnection } from './WalletProvider'
 import { useTradingData } from './TradingDataProvider'
 import TokenSkeleton from './TokenSkeleton'
 import { getSolPriceUSD } from '@/utils/solana'
-import { fetchUserTokens, executeBulkSell, BulkSellRequest, UserToken, TokenToSell } from '@/utils/jupiter'
+import { fetchUserTokens, executeBulkSell, executeBulkSellAlt, BulkSellRequest, UserToken, TokenToSell } from '@/utils/jupiter'
+import { LAMPORTS_PER_SOL } from '@solana/web3.js'
 import { SwapQuote } from '@/types'
 import { trackSell } from '@/utils/operations-api'
 import { usePnLShare } from '@/hooks/usePnLShare'
@@ -716,6 +717,10 @@ export default function PnLTracker() {
     setBulkSellError('')
 
     try {
+      // Get balance before operation for better tracking
+      const balanceBeforeOp = await connection.getBalance(publicKey)
+      const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL
+
       // Get selected positions
       const positionsToSell = openPositions.filter(pos => selectedTokens.has(pos.id))
       
@@ -745,20 +750,26 @@ export default function PnLTracker() {
 
       console.log(`💰 Bulk selling ${tokensToSell.length} tokens...`)
 
-      // Prepare bulk sell request
+      // Prepare bulk sell request with optimized settings
       const sellRequest: BulkSellRequest = {
         tokens: tokensToSell,
         slippage: 300, // 3% slippage
         priorityFee: 30000, // 0.0003 SOL priority fee
       }
 
-      // Execute bulk sell
-      const sellResult = await executeBulkSell(
+      // Execute bulk sell using the more efficient executeBulkSellAlt
+      const sellResult = await executeBulkSellAlt(
         sellRequest,
         publicKey.toString(),
         connection,
         signAllTransactions
       )
+
+      // Get balance after operation for better tracking
+      const balanceAfterOp = await connection.getBalance(publicKey)
+      const balanceAfterSOL = balanceAfterOp / LAMPORTS_PER_SOL
+      
+      console.log(`💰 Bulk sell balance change: ${(balanceAfterSOL - balanceBeforeSOL).toFixed(6)} SOL`)
 
       if (sellResult.success && sellResult.successfulSwaps.length > 0) {
         // Clear notification flags for sold tokens
@@ -1251,6 +1262,10 @@ export default function PnLTracker() {
     setSellError('')
 
     try {
+      // Get balance before operation for better tracking
+      const balanceBeforeOp = await connection.getBalance(publicKey)
+      const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL
+
       // Use the pre-verified wallet token data from the position
       let tokenToSell = position.walletTokenData
       
@@ -1265,7 +1280,7 @@ export default function PnLTracker() {
         throw new Error(`Token not found in wallet or has zero balance. Expected: ${position.actualWalletBalance?.toFixed(4) || 'unknown'} tokens`)
       }
 
-      console.log(`💰 Selling ${tokenToSell.symbol}: ${tokenToSell.uiAmount} tokens (balance verified: ${position.actualWalletBalance?.toFixed(4) || 'unknown'})`)
+      console.log(`💰 Fast selling ${tokenToSell.symbol}: ${tokenToSell.uiAmount} tokens (balance verified: ${position.actualWalletBalance?.toFixed(4) || 'unknown'})`)
       
       // Check if we have a cached quote for faster execution
       const cachedQuote = sellQuotes.get(position.id)
@@ -1282,20 +1297,26 @@ export default function PnLTracker() {
         sellPercentage: 100
       }
 
-      // Prepare bulk sell request
+      // Prepare bulk sell request with optimized settings
       const sellRequest: BulkSellRequest = {
         tokens: [tokenForSale],
         slippage: 300, // 3% slippage (default)
         priorityFee: 30000, // 0.0003 SOL priority fee (default),
       }
 
-      // Execute the sell
-      const sellResult = await executeBulkSell(
+      // Execute the sell using the more efficient executeBulkSellAlt
+      const sellResult = await executeBulkSellAlt(
         sellRequest,
         publicKey.toString(),
         connection,
         signAllTransactions
       )
+
+      // Get balance after operation for better tracking
+      const balanceAfterOp = await connection.getBalance(publicKey)
+      const balanceAfterSOL = balanceAfterOp / LAMPORTS_PER_SOL
+      
+      console.log(`💰 Balance change: ${(balanceAfterSOL - balanceBeforeSOL).toFixed(6)} SOL`)
 
       if (sellResult.success && sellResult.successfulSwaps.length > 0) {
         // ✅ NEW: Clear notification flag when position is sold

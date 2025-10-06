@@ -197,6 +197,59 @@ function truncateFieldValue(value: string, maxLength: number = 1024): string {
   return lastNewline > 0 ? truncated.substring(0, lastNewline) + '\n\n*...truncated*' : truncated + '\n\n*...truncated*';
 }
 
+// Lightweight Discord embed validator (mirrors filtered route approach)
+const DISCORD_FIELD_MAX_LENGTH = 1024;
+const DISCORD_DESCRIPTION_MAX_LENGTH = 4096;
+
+function validateDiscordMessage(message: any): { valid: boolean; issues: string[]; sizes: any } {
+  const issues: string[] = [];
+  const sizes: any = {
+    totalFields: 0,
+    fieldSizes: [] as number[],
+    descriptionSize: 0,
+    totalEmbedSize: 0
+  };
+
+  if (message?.embeds && message.embeds.length > 0) {
+    const embed = message.embeds[0];
+
+    if (embed.description) {
+      sizes.descriptionSize = embed.description.length;
+      if (embed.description.length > DISCORD_DESCRIPTION_MAX_LENGTH) {
+        issues.push(`Description too long: ${embed.description.length}/${DISCORD_DESCRIPTION_MAX_LENGTH}`);
+      }
+    }
+
+    if (embed.fields) {
+      sizes.totalFields = embed.fields.length;
+      if (embed.fields.length > 25) {
+        issues.push(`Too many fields: ${embed.fields.length}/25`);
+      }
+
+      embed.fields.forEach((field: any, index: number) => {
+        const fieldSize = (field.name?.length || 0) + (field.value?.length || 0);
+        sizes.fieldSizes.push(fieldSize);
+        if (typeof field.value !== 'string') {
+          issues.push(`Field ${index} value is not a string`);
+        } else if (field.value.length > DISCORD_FIELD_MAX_LENGTH) {
+          issues.push(`Field ${index} value too long: ${field.value.length}/${DISCORD_FIELD_MAX_LENGTH}`);
+        }
+      });
+    }
+
+    // Rough total size estimate
+    try {
+      const embedJson = JSON.stringify(embed);
+      sizes.totalEmbedSize = embedJson.length;
+      if (sizes.totalEmbedSize > 5500) {
+        issues.push(`Embed JSON size is large: ${sizes.totalEmbedSize} (limit ~6000)`);
+      }
+    } catch {}
+  }
+
+  return { valid: issues.length === 0, issues, sizes };
+}
+
 // Function to send updates to Discord
 async function sendDiscordNotification(
   tokenArray: TransformedToken[],
@@ -210,7 +263,8 @@ async function sendDiscordNotification(
   },
   refreshType: 'full' | 'incremental',
   forceSend: boolean = false,
-  newlyAddedTokens: TransformedToken[] = []
+  newlyAddedTokens: TransformedToken[] = [],
+  mcapTrackingResults?: Map<string, any>
 ) {
   console.log('🔔 Discord notification check started', {
     enabled: ENABLE_DISCORD_NOTIFICATIONS,
@@ -297,21 +351,6 @@ async function sendDiscordNotification(
 
     console.log(`📊 Processing ${sortedTokens.length} tokens for Discord notification`);
 
-    // Track MCap for tokens in the tracking range (30k-2M)
-    const tokensInTrackingRange = sortedTokens.filter(token => isInTrackingRange(token.mcap));
-    let mcapTrackingResults = new Map();
-
-    if (tokensInTrackingRange.length > 0) {
-      console.log(`Tracking MCap for ${tokensInTrackingRange.length} tokens in range 30k-2M`);
-      mcapTrackingResults = await bulkTrackTokenMcaps(
-        tokensInTrackingRange.map(token => ({
-          address: token.token_address,
-          symbol: token.token_symbol,
-          mcap: token.mcap
-        }))
-      );
-    }
-
     // Create category fields for embed format with size validation
     const categoryFields = await Promise.all(categories.map(async cat => {
       const tokens = sortedTokens.filter(token => token.mcap >= cat.min && token.mcap <= cat.max).slice(0, 10);
@@ -324,7 +363,7 @@ async function sendDiscordNotification(
           ? (token.change_1h > 0 ? '🟢' : '🔴')
           : '⚪';
 
-        const hourChangePercent = token.change_1h ? (token.change_1h * 100).toFixed(2) : '0.00';
+        const hourChangePercent = token.change_1h && isFinite(token.change_1h) ? (token.change_1h * 100).toFixed(2) : '0.00';
 
         // Use centralized risk assessment
         const riskResult = await assessTokenRisk({
@@ -345,16 +384,17 @@ async function sendDiscordNotification(
         const riskDisplay = formatDetailedRiskForDiscord(token, riskResult);
 
         // Get MCap tracking info
-        const mcapTracking = mcapTrackingResults.get(token.token_address);
+        const trackingResults = mcapTrackingResults || new Map();
+        const mcapTracking = trackingResults.get(token.token_address);
         const mcapDisplay = mcapTracking
           ? getMcapDisplayString(mcapTracking)
-          : `MCap: $${token.mcap.toLocaleString()}`;
+          : `MCap: $${isFinite(token.mcap) ? token.mcap.toLocaleString() : '0'}`;
 
         // Construct chart link
         const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
 
         return `**[${token.token_symbol}](${chartLink})** ${riskEmoji}\n` +
-          `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +
+          `Price: $${isFinite(token.price) ? token.price.toFixed(6) : '0.000000'} ${hourChangeEmoji} ${hourChangePercent}%\n` +
           `${mcapDisplay}\n` +
           `${riskDisplay}\n`;
       }));
@@ -373,37 +413,113 @@ async function sendDiscordNotification(
     // Filter out null categories and ensure we have content
     const validFields = categoryFields.filter(field => field !== null);
 
+    // Create daily ranking section
+    const dailyRankingField = createDailyRankingSection(tokenArray, mcapTrackingResults);
+
     console.log('📋 Discord message fields prepared', {
       totalCategories: categories.length,
       validFields: validFields.length,
-      hasContent: validFields.length > 0
+      hasContent: validFields.length > 0,
+      hasDailyRanking: !!dailyRankingField
     });
 
+    // Combine daily ranking with category fields
+    const allFields = [];
+    if (dailyRankingField) {
+      allFields.push(dailyRankingField);
+    }
+    allFields.push(...validFields);
+
     // If no tokens in any category, show a fallback field
-    const fields = validFields.length > 0 ? validFields : [{
+    const fields = allFields.length > 0 ? allFields : [{
       name: 'No New Tokens ≤ $3M MCap Added',
       value: 'No new tokens ≤ $3M market cap were added in this update.'
     }];
 
-    // Format the message
+    // Calculate daily statistics
+    const dailyStats = calculateDailyStats(tokenArray);
+    const volumeFormatted = isFinite(dailyStats.totalVolume) && dailyStats.totalVolume >= 1000000
+      ? `$${(dailyStats.totalVolume / 1000000).toFixed(1)}M`
+      : isFinite(dailyStats.totalVolume) && dailyStats.totalVolume >= 1000
+        ? `$${(dailyStats.totalVolume / 1000).toFixed(1)}k`
+        : `$${isFinite(dailyStats.totalVolume) ? dailyStats.totalVolume.toFixed(0) : '0'}`;
+
+    // Create daily summary header
+    const dailySummaryHeader = createDailySummaryHeader(tokenArray, mcapTrackingResults);
+
+    // Build description and ensure it stays within safe Discord limits
+    const fullDescription = `${dailySummaryHeader}\n\n**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults?.size || 0} tokens tracked for growth`;
+    const safeDescription = truncateFieldValue(fullDescription, 1500);
+
+    // Create embed message with simple approach (no complex validation)
     const message = {
       embeds: [
         {
           title: ` 🧪 Trending Token Update (${refreshType})`,
-          description: `**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults.size} tokens tracked for growth`,
+          description: safeDescription,
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
-          fields,
+          // Ensure we do not exceed Discord's 25 fields limit
+          fields: fields.length > 25 ? [
+            ...fields.slice(0, 24),
+            { name: 'More', value: `... (${fields.length - 24} additional sections truncated)` }
+          ] : fields,
           footer: {
-            text: 'Trending tokens (non filtered) | MCap growth tracked for 30k-2M range'
+            text: `Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${dailyStats.activeTokens} tokens`
           }
         }
       ]
     };
 
+    // Log the final message structure for debugging
+    console.log('📤 Final Discord message structure:', {
+      embedsCount: message.embeds?.length || 0,
+      fieldsCount: message.embeds?.[0]?.fields?.length || 0,
+      titleLength: message.embeds?.[0]?.title?.length || 0,
+      descriptionLength: message.embeds?.[0]?.description?.length || 0,
+      footerTextLength: message.embeds?.[0]?.footer?.text?.length || 0
+    });
+
+    // Validate message size before sending; if invalid, simplify
+    const validation = validateDiscordMessage(message);
+    if (!validation.valid) {
+      console.warn('⚠️ Discord message validation failed, simplifying:', validation.issues);
+      const simplified = {
+        embeds: [
+          {
+            title: ` 🧪 Trending Token Update (${refreshType}) — Simplified`,
+            description: truncateFieldValue(
+              `Summary only due to size: ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed. Active tokens: ${dailyStats.activeTokens}.`,
+              1000
+            ),
+            color: 3447003,
+            timestamp: new Date().toISOString(),
+            fields: [],
+            footer: {
+              text: 'Message simplified to meet Discord embed limits.'
+            }
+          }
+        ]
+      };
+      message.embeds = simplified.embeds;
+    }
+
+    // Additional safety check: ensure embeds array contains valid objects
+    if (!Array.isArray(message.embeds) || message.embeds.length === 0) {
+      console.error('🚨 Invalid embeds array detected, using fallback');
+      message.embeds = [{
+        title: 'Trending Token Update',
+        description: 'Embed validation failed - using fallback',
+        color: 3447003,
+        timestamp: new Date().toISOString(),
+        fields: [{ name: 'Status', value: 'System error - please check logs' }],
+        footer: { text: 'Trending tokens update' }
+      }];
+    }
+
     console.log('📤 Sending Discord message...', {
       embedsCount: message.embeds.length,
-      fieldsCount: fields.length,
+      fieldsCount: message.embeds[0]?.fields?.length || 0,
       webhookUrl: DISCORD_WEBHOOK_URL.substring(0, 50) + '...'
     });
 
@@ -429,9 +545,33 @@ async function sendDiscordNotification(
       }
 
       console.log('✅ Discord notification sent successfully');
-    } catch (error) {
+    } catch (error: any) {
       clearTimeout(timeoutId);
+      
+      // Enhanced error logging to identify the exact cause
       console.error('❌ Error sending Discord message:', error);
+      console.error('🔍 Discord Error Debug Info:', {
+        errorMessage: error?.message || 'Unknown error',
+        embedsLength: message.embeds?.length,
+        embedsStructure: message.embeds?.map((embed: any, index: number) => ({
+          embedIndex: index,
+          title: embed.title,
+          description: embed.description?.substring(0, 100) + '...',
+          fieldsCount: embed.fields?.length,
+          fieldsPreview: embed.fields?.slice(0, 3).map((field: any) => ({
+            name: field.name?.substring(0, 50),
+            value: field.value?.substring(0, 100),
+            valueType: typeof field.value,
+            hasInvalidChars: field.value?.includes('NaN') || field.value?.includes('Infinity')
+          }))
+        })),
+        messageSize: JSON.stringify(message).length,
+        hasAxiomErrors: error?.message?.includes('Axiom') || false
+      });
+      
+      // Log the raw message structure for debugging
+      console.error('🔍 Raw Discord Message Structure:', JSON.stringify(message, null, 2).substring(0, 2000) + '...');
+      
       throw error;
     }
   } catch (error) {
@@ -1078,6 +1218,29 @@ async function fetchAndUpdateCache(
       return Math.abs(b.change_1h || 0) - Math.abs(a.change_1h || 0);
     });
 
+    // Track MCap for tokens in the tracking range (30k-2M)
+    const tokensInTrackingRange = tokenArray.filter(token => isInTrackingRange(token.mcap));
+    let mcapTrackingResults: Map<string, any> = new Map(); // Initialize at function scope
+
+    if (tokensInTrackingRange.length > 0) {
+      console.log(`🎯 Tracking MCap for ${tokensInTrackingRange.length} tokens in range 30k-2M`);
+      try {
+        mcapTrackingResults = await bulkTrackTokenMcaps(
+          tokensInTrackingRange.map(token => ({
+            address: token.token_address,
+            symbol: token.token_symbol,
+            mcap: token.mcap
+          }))
+        );
+        console.log(`✅ MCap tracking completed for ${mcapTrackingResults.size} tokens`);
+      } catch (error) {
+        console.error('❌ Error in MCap tracking:', error);
+        // Continue execution even if MCap tracking fails
+      }
+    } else {
+      console.log('ℹ️ No tokens in MCap tracking range (30k-2M)');
+    }
+
     // Only send notification if this is a scheduled run or forced notification
     // Regular frontend API calls will no longer trigger notifications
     const shouldSendNotification =
@@ -1092,7 +1255,8 @@ async function fetchAndUpdateCache(
         stats,
         needsFullRefresh ? 'full' : 'incremental',
         forceSendNotification,
-        newlyAddedTokens
+        newlyAddedTokens,
+        mcapTrackingResults
       );
     } else {
       console.log('Skipping Discord notification - not on schedule');
@@ -1111,3 +1275,221 @@ async function fetchAndUpdateCache(
 
 // Export for use by filtered route
 export { tokenCache, fetchAndUpdateCache }
+
+
+// Function to get daily top performers for ranking
+function getDailyTopPerformers(tokens: TransformedToken[], limit: number = 5): {
+  topGainers: TransformedToken[],
+  topVolume: TransformedToken[],
+  topMcapGrowth: TransformedToken[]
+} {
+  // Filter tokens with valid data
+  const validTokens = tokens.filter(token =>
+    token.change_1h !== undefined &&
+    token.volume_1h !== undefined &&
+    token.mcap > 0
+  );
+
+  // Top gainers by 1h price change
+  const topGainers = [...validTokens]
+    .filter(token => token.change_1h > 0)
+    .sort((a, b) => (b.change_1h || 0) - (a.change_1h || 0))
+    .slice(0, limit);
+
+  // Top volume tokens
+  const topVolume = [...validTokens]
+    .sort((a, b) => (b.volume_1h || 0) - (a.volume_1h || 0))
+    .slice(0, limit);
+
+  // Top MCap growth (if tracking data available)
+  const topMcapGrowth = [...validTokens]
+    .filter(token => token.mcap >= 30_000 && token.mcap <= 2_000_000) // Only tracked range
+    .sort((a, b) => (b.change_1h || 0) - (a.change_1h || 0))
+    .slice(0, limit);
+
+  return { topGainers, topVolume, topMcapGrowth };
+}
+
+// Function to create daily ranking section for Discord
+function createDailyRankingSection(
+  tokens: TransformedToken[],
+  mcapTrackingResults?: Map<string, any>
+): { name: string; value: string } | null {
+  // Helper: format time in GMT+7 with date (DD/MM/YYYY)
+  const formatGmt7WithDate = (iso?: string): string => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    const gmt7 = new Date(d.getTime() + 7 * 60 * 60 * 1000)
+    const hh = String(gmt7.getUTCHours()).padStart(2, '0')
+    const mm = String(gmt7.getUTCMinutes()).padStart(2, '0')
+    const dd = String(gmt7.getUTCDate()).padStart(2, '0')
+    const mo = String(gmt7.getUTCMonth() + 1).padStart(2, '0')
+    const yyyy = gmt7.getUTCFullYear()
+    return `${hh}:${mm} GMT+7 ${dd}/${mo}/${yyyy}`
+  }
+
+  let rankingText = ''
+
+  // Tracker-based Top Gainers only (by mcap_growth_percent). No price-change fallback.
+  const trackerTop = mcapTrackingResults && mcapTrackingResults.size > 0
+    ? Array.from(mcapTrackingResults.entries())
+        .filter(([_, tracking]) => isFinite(tracking.growthPercent) && tracking.growthPercent > 0)
+        .sort((a, b) => (b[1].growthPercent || 0) - (a[1].growthPercent || 0))
+        .slice(0, 10)
+    : []
+
+  if (trackerTop.length === 0) {
+    return null
+  }
+
+  rankingText += '🏆 **Top Gainers (MCap Tracker)**\n'
+  trackerTop.forEach(([tokenAddress, tracking], index) => {
+    const token = tokens.find(t => t.token_address === tokenAddress)
+    const symbol = token?.token_symbol || 'UNKNOWN'
+    const chartLink = `https://v2.reloadsol.xyz/chart/${tokenAddress}`
+    const growthStr = `${tracking.growthPercent >= 0 ? '+' : ''}${(tracking.growthPercent || 0).toFixed(1)}%`
+    const currentStr = isFinite(tracking.currentMcap)
+      ? Number(tracking.currentMcap).toLocaleString('en-US', { maximumFractionDigits: 3 })
+      : '0'
+    const firstStr = isFinite(tracking.firstMcap)
+      ? Number(tracking.firstMcap).toLocaleString('en-US', { maximumFractionDigits: 3 })
+      : '0'
+    const timeStr = formatGmt7WithDate(tracking.firstSeenAt)
+    rankingText += `${index + 1}. [${symbol}](${chartLink}) ${growthStr} | $${currentStr} | from $${firstStr}${timeStr ? ` | ${timeStr}` : ''}\n`
+  })
+
+  // Note: Remove "🚀 MCap Growth Leaders" since it is similar to tracker-based Top Gainers
+
+  // Truncate to stay within Discord field limits
+  const truncated = truncateFieldValue(rankingText)
+
+  return {
+    name: '🎯 Daily Token Rankings',
+    value: truncated.trim() || 'No significant performers today'
+  }
+}
+
+// Function to calculate daily statistics
+function calculateDailyStats(tokens: TransformedToken[]): {
+  totalTokens: number,
+  avgGrowth: number,
+  topGainerPercent: number,
+  totalVolume: number,
+  activeTokens: number
+} {
+  const validTokens = tokens.filter(token =>
+    token.change_1h !== undefined &&
+    token.volume_1h !== undefined &&
+    token.mcap > 0 &&
+    !isNaN(token.change_1h) &&
+    !isNaN(token.volume_1h) &&
+    isFinite(token.change_1h) &&
+    isFinite(token.volume_1h)
+  );
+
+  const totalTokens = validTokens.length;
+  
+  // Safe calculation of average growth
+  let avgGrowth = 0;
+  if (totalTokens > 0) {
+    const growthSum = validTokens.reduce((sum, token) => {
+      const change = token.change_1h || 0;
+      return sum + (isFinite(change) ? change : 0);
+    }, 0);
+    avgGrowth = (growthSum / totalTokens) * 100;
+  }
+
+  // Safe calculation of top gainer percent
+  let topGainerPercent = 0;
+  if (validTokens.length > 0) {
+    const changes = validTokens
+      .map(token => (token.change_1h || 0) * 100)
+      .filter(change => isFinite(change));
+    
+    if (changes.length > 0) {
+      topGainerPercent = Math.max(...changes);
+    }
+  }
+
+  // Safe calculation of total volume
+  const totalVolume = validTokens.reduce((sum, token) => {
+    const volume = token.volume_1h || 0;
+    return sum + (isFinite(volume) ? volume : 0);
+  }, 0);
+
+  const activeTokens = validTokens.filter(token => {
+    const volume = token.volume_1h || 0;
+    return isFinite(volume) && volume > 100;
+  }).length;
+
+  // Ensure all returned values are finite
+  return {
+    totalTokens: isFinite(totalTokens) ? totalTokens : 0,
+    avgGrowth: isFinite(avgGrowth) ? avgGrowth : 0,
+    topGainerPercent: isFinite(topGainerPercent) ? topGainerPercent : 0,
+    totalVolume: isFinite(totalVolume) ? totalVolume : 0,
+    activeTokens: isFinite(activeTokens) ? activeTokens : 0
+  };
+}
+
+// Function to create daily summary header
+function createDailySummaryHeader(tokens: TransformedToken[], mcapTrackingResults?: Map<string, any>): string {
+  const dailyStats = calculateDailyStats(tokens);
+
+  const currentTime = new Date();
+  const timeStr = currentTime.toLocaleTimeString('en-US', {
+    hour12: false,
+    timeZone: 'Asia/Bangkok',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+
+  // Safe formatting with validation
+  const formatPercent = (value: number): string => {
+    if (!isFinite(value) || isNaN(value)) return '0.0';
+    return value.toFixed(1);
+  };
+
+  const formatNumber = (value: number): number => {
+    if (!isFinite(value) || isNaN(value)) return 0;
+    return value;
+  };
+
+  let summaryLines = [
+    `🏆 **Daily Market Summary** (${timeStr} GMT+7)`,
+    `📊 **Overview:** ${formatNumber(dailyStats.totalTokens)} tokens tracked | ${formatNumber(dailyStats.activeTokens)} active (>$100 vol)`,
+    `📈 **Performance:** Avg ${dailyStats.avgGrowth >= 0 ? '+' : ''}${formatPercent(dailyStats.avgGrowth)}% | Best: +${formatPercent(dailyStats.topGainerPercent)}%`
+  ];
+
+  // Add tracker-based top gainer if available; no price-change fallback
+  if (mcapTrackingResults && mcapTrackingResults.size > 0) {
+    const trackerTop = Array.from(mcapTrackingResults.entries())
+      .filter(([_, tracking]) => isFinite(tracking.growthPercent) && tracking.growthPercent > 0)
+      .sort((a, b) => (b[1].growthPercent || 0) - (a[1].growthPercent || 0))
+      .slice(0, 1)
+
+    if (trackerTop.length > 0) {
+      const [tokenAddress, tracking] = trackerTop[0]
+      const token = tokens.find(t => t.token_address === tokenAddress)
+      const symbol = token?.token_symbol || 'UNKNOWN'
+      const growthStr = `${tracking.growthPercent >= 0 ? '+' : ''}${formatPercent(tracking.growthPercent || 0)}`
+      const currentStr = isFinite(tracking.currentMcap) ? Number(tracking.currentMcap).toLocaleString('en-US', { maximumFractionDigits: 3 }) : '0'
+      const firstStr = isFinite(tracking.firstMcap) ? Number(tracking.firstMcap).toLocaleString('en-US', { maximumFractionDigits: 3 }) : '0'
+      // Append GMT+7 time with date
+      const d = tracking.firstSeenAt ? new Date(tracking.firstSeenAt) : null
+      let dtStr = ''
+      if (d) {
+        const gmt7 = new Date(d.getTime() + 7 * 60 * 60 * 1000)
+        const hh = String(gmt7.getUTCHours()).padStart(2, '0')
+        const mm = String(gmt7.getUTCMinutes()).padStart(2, '0')
+        const dd = String(gmt7.getUTCDate()).padStart(2, '0')
+        const mo = String(gmt7.getUTCMonth() + 1).padStart(2, '0')
+        const yyyy = gmt7.getUTCFullYear()
+        dtStr = `${hh}:${mm} GMT+7 ${dd}/${mo}/${yyyy}`
+      }
+      summaryLines.push(`🚀 **Top Gainer:** ${symbol} (${growthStr}) | $${currentStr} | from $${firstStr}${dtStr ? ` | ${dtStr}` : ''}`)
+    }
+  }
+
+  return summaryLines.join('\n');
+}

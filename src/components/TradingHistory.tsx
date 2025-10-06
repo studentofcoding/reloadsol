@@ -5,6 +5,7 @@ import { TrackingRecord, TrackingStats } from '@/utils/trading-tracker'
 import { useWallet } from './WalletProvider'
 import { useTradingData } from './TradingDataProvider'
 import TokenSkeleton from './TokenSkeleton'
+import { getSolPriceUSD } from '@/utils/solana'
 
 export default function TradingHistory() {
   const { publicKey, connected } = useWallet()
@@ -14,6 +15,7 @@ export default function TradingHistory() {
   const [timeFilter, setTimeFilter] = useState<'all' | '24h' | '7d' | '30d'>('7d')
   const [error, setError] = useState<string>('')
   const [isLocalStorageAvailable, setIsLocalStorageAvailable] = useState<boolean>(true)
+  const [solPriceUsd, setSolPriceUsd] = useState<number>(145) // Default fallback
 
   // Check if localStorage is available
   useEffect(() => {
@@ -45,11 +47,34 @@ export default function TradingHistory() {
       // Get recent successful records only
       const successfulRecords = rawRecords.filter(record => record.successCount > 0)
 
+      // Process records to handle USDC conversion
+      const processedForConversion = successfulRecords.map(record => {
+        // For buy operations, check if this might be a USDC purchase
+        // USDC purchases typically have solAmount values that represent USDC amounts (not SOL)
+        // We can identify them by checking if the solAmount seems too high for SOL (> 10 SOL is likely USDC)
+        if (record.operationType === 'buy' && record.solAmount && solPriceUsd > 0) {
+          // Heuristic: if solAmount > 10, it's likely USDC amount, not SOL
+          // This is because most users don't spend more than 10 SOL per transaction
+          const isLikelyUsdcPurchase = record.solAmount > 10
+          
+          if (isLikelyUsdcPurchase) {
+            const solEquivalentAmount = record.solAmount / solPriceUsd
+            console.log(`🔄 TradingHistory USDC conversion: ${record.solAmount} USDC → ${solEquivalentAmount.toFixed(6)} SOL (SOL price: $${solPriceUsd})`)
+            
+            return {
+              ...record,
+              solAmount: solEquivalentAmount
+            }
+          }
+        }
+        return record
+      })
+
       // Combine sell and close operations that happen within 30 seconds of each other
       const combinedRecords: TrackingRecord[] = []
       const processedRecordIds = new Set<string>()
 
-      successfulRecords.forEach((record: TrackingRecord) => {
+      processedForConversion.forEach((record: TrackingRecord) => {
         if (processedRecordIds.has(record.id)) return
 
         if (record.operationType === 'sell') {
@@ -138,7 +163,27 @@ export default function TradingHistory() {
       setProcessedRecords([])
       setStats(null)
     }
-  }, [connected, publicKey, rawRecords])
+  }, [connected, publicKey, rawRecords, solPriceUsd])
+
+  // Fetch SOL price for USDC conversion
+  const fetchSolPrice = React.useCallback(async () => {
+    try {
+      const price = await getSolPriceUSD()
+      setSolPriceUsd(price)
+    } catch (error) {
+      console.error('Failed to fetch SOL price:', error)
+    }
+  }, [])
+
+  // Fetch SOL price on component mount and periodically
+  useEffect(() => {
+    if (connected && publicKey) {
+      fetchSolPrice()
+      // Update price every 5 minutes
+      const interval = setInterval(fetchSolPrice, 300000)
+      return () => clearInterval(interval)
+    }
+  }, [connected, publicKey, fetchSolPrice])
 
   // Process records when data changes
   useEffect(() => {

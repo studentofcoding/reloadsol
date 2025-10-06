@@ -18,7 +18,7 @@ export default function ChartOverview({ tokenAddress, isOpen, onClose }: ChartOv
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75">
-      <div className="relative w-11/12 h-5/6 max-w-6xl bg-gray-900 rounded-xl overflow-hidden shadow-xl">
+      <div className="relative w-11/12 h-5/6 max-w-4xl bg-gray-900 rounded-xl overflow-hidden shadow-xl">
         {/* Close button */}
         <div className="absolute top-2 right-2 z-10">
           <button 
