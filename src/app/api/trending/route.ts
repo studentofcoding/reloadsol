@@ -1334,18 +1334,6 @@ function createDailyRankingSection(
     rankingText += '\n';
   }
 
-  // Top Volume Section
-  if (topVolume.length > 0) {
-    rankingText += '📊 **Top Volume (1h)**\n';
-    topVolume.forEach((token, index) => {
-      const volumeFormatted = isFinite(token.volume_1h) && token.volume_1h >= 1000
-        ? `$${(token.volume_1h / 1000).toFixed(1)}k`
-        : `$${isFinite(token.volume_1h) ? token.volume_1h.toFixed(0) : '0'}`;
-      const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
-      rankingText += `${index + 1}. [${token.token_symbol}](${chartLink}) ${volumeFormatted} | $${isFinite(token.mcap) ? token.mcap.toLocaleString() : '0'}\n`;
-    });
-    rankingText += '\n';
-  }
 
   // MCap Growth Leaders (if tracking data available)
   if (mcapTrackingResults && mcapTrackingResults.size > 0) {
@@ -1469,17 +1457,6 @@ function createDailySummaryHeader(tokens: TransformedToken[], mcapTrackingResult
     const topGainer = topPerformers.topGainers[0];
     const gainPercent = formatPercent((topGainer.change_1h || 0) * 100);
     summaryLines.push(`🚀 **Top Gainer:** ${topGainer.token_symbol} (+${gainPercent}%)`);
-  }
-
-  if (topPerformers.topVolume.length > 0) {
-    const topVol = topPerformers.topVolume[0];
-    const volume = topVol.volume_1h || 0;
-    const volFormatted = isFinite(volume) && volume >= 1000000
-      ? `$${(volume / 1000000).toFixed(1)}M`
-      : isFinite(volume) && volume >= 1000
-        ? `$${(volume / 1000).toFixed(0)}k`
-        : `$${formatNumber(volume)}`;
-    summaryLines.push(`💰 **Top Volume:** ${topVol.token_symbol} (${volFormatted})`);
   }
 
   return summaryLines.join('\n');
