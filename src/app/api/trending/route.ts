@@ -497,17 +497,17 @@ async function sendDiscordNotification(
       mcapTrackingSize: validateEmbedValue(mcapTrackingResults?.size || 0, 0, 'mcapTrackingResults.size')
     };
 
-    // Format the message with enhanced description and validation
+    // Format the message with enhanced description - removed validateEmbedValue to prevent corruption
     const message = {
       embeds: [
         {
-          title: validateEmbedValue(` 🧪 Trending Token Update (${refreshType})`, ' 🧪 Trending Token Update', 'embed.title'),
-          description: validateEmbedValue(`${validatedDailySummaryHeader}\n\n**Summary:** ${validatedDailyStats.added} added, ${validatedDailyStats.updated} updated, ${validatedDailyStats.removed} removed\n**Price movements:** ${validatedDailyStats.price_increased} increased, ${validatedDailyStats.price_decreased} decreased\n**MCap Tracking:** ${validatedDailyStats.mcapTrackingSize} tokens tracked for growth`, 'Token update summary', 'embed.description'),
+          title: ` 🧪 Trending Token Update (${refreshType})`,
+          description: `${validatedDailySummaryHeader}\n\n**Summary:** ${validatedDailyStats.added} added, ${validatedDailyStats.updated} updated, ${validatedDailyStats.removed} removed\n**Price movements:** ${validatedDailyStats.price_increased} increased, ${validatedDailyStats.price_decreased} decreased\n**MCap Tracking:** ${validatedDailyStats.mcapTrackingSize} tokens tracked for growth`,
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
           fields: validatedFields,
           footer: {
-            text: validateEmbedValue(`Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${validatedDailyStats.activeTokens} tokens`, 'Trending tokens update', 'embed.footer.text')
+            text: `Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${validatedDailyStats.activeTokens} tokens`
           }
         }
       ]
