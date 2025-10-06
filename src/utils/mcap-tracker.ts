@@ -729,7 +729,7 @@ async function insertMcapRecord(record: McapSnapshot): Promise<void> {
   try {
     const { error } = await supabase
       .from('token_mcap_tracking')
-      .insert({
+      .upsert({
         token_address: record.token_address,
         token_symbol: record.token_symbol,
         first_mcap: record.first_mcap,
@@ -741,7 +741,7 @@ async function insertMcapRecord(record: McapSnapshot): Promise<void> {
         when_reach_120mc: record.when_reach_120mc,
         when_reach_200mc: record.when_reach_200mc,
         is_tracking_stuck: record.is_tracking_stuck === true
-      })
+      }, { onConflict: 'token_address' })
 
     if (error) {
       log.error('price_tracking', 'Error inserting MCap record', error as Error, {

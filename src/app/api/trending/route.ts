@@ -197,6 +197,59 @@ function truncateFieldValue(value: string, maxLength: number = 1024): string {
   return lastNewline > 0 ? truncated.substring(0, lastNewline) + '\n\n*...truncated*' : truncated + '\n\n*...truncated*';
 }
 
+// Lightweight Discord embed validator (mirrors filtered route approach)
+const DISCORD_FIELD_MAX_LENGTH = 1024;
+const DISCORD_DESCRIPTION_MAX_LENGTH = 4096;
+
+function validateDiscordMessage(message: any): { valid: boolean; issues: string[]; sizes: any } {
+  const issues: string[] = [];
+  const sizes: any = {
+    totalFields: 0,
+    fieldSizes: [] as number[],
+    descriptionSize: 0,
+    totalEmbedSize: 0
+  };
+
+  if (message?.embeds && message.embeds.length > 0) {
+    const embed = message.embeds[0];
+
+    if (embed.description) {
+      sizes.descriptionSize = embed.description.length;
+      if (embed.description.length > DISCORD_DESCRIPTION_MAX_LENGTH) {
+        issues.push(`Description too long: ${embed.description.length}/${DISCORD_DESCRIPTION_MAX_LENGTH}`);
+      }
+    }
+
+    if (embed.fields) {
+      sizes.totalFields = embed.fields.length;
+      if (embed.fields.length > 25) {
+        issues.push(`Too many fields: ${embed.fields.length}/25`);
+      }
+
+      embed.fields.forEach((field: any, index: number) => {
+        const fieldSize = (field.name?.length || 0) + (field.value?.length || 0);
+        sizes.fieldSizes.push(fieldSize);
+        if (typeof field.value !== 'string') {
+          issues.push(`Field ${index} value is not a string`);
+        } else if (field.value.length > DISCORD_FIELD_MAX_LENGTH) {
+          issues.push(`Field ${index} value too long: ${field.value.length}/${DISCORD_FIELD_MAX_LENGTH}`);
+        }
+      });
+    }
+
+    // Rough total size estimate
+    try {
+      const embedJson = JSON.stringify(embed);
+      sizes.totalEmbedSize = embedJson.length;
+      if (sizes.totalEmbedSize > 5500) {
+        issues.push(`Embed JSON size is large: ${sizes.totalEmbedSize} (limit ~6000)`);
+      }
+    } catch {}
+  }
+
+  return { valid: issues.length === 0, issues, sizes };
+}
+
 // Function to send updates to Discord
 async function sendDiscordNotification(
   tokenArray: TransformedToken[],
@@ -394,15 +447,23 @@ async function sendDiscordNotification(
     // Create daily summary header
     const dailySummaryHeader = createDailySummaryHeader(tokenArray, mcapTrackingResults);
 
+    // Build description and ensure it stays within safe Discord limits
+    const fullDescription = `${dailySummaryHeader}\n\n**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults?.size || 0} tokens tracked for growth`;
+    const safeDescription = truncateFieldValue(fullDescription, 1500);
+
     // Create embed message with simple approach (no complex validation)
     const message = {
       embeds: [
         {
           title: ` 🧪 Trending Token Update (${refreshType})`,
-          description: `${dailySummaryHeader}\n\n**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults?.size || 0} tokens tracked for growth`,
+          description: safeDescription,
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
-          fields,
+          // Ensure we do not exceed Discord's 25 fields limit
+          fields: fields.length > 25 ? [
+            ...fields.slice(0, 24),
+            { name: 'More', value: `... (${fields.length - 24} additional sections truncated)` }
+          ] : fields,
           footer: {
             text: `Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${dailyStats.activeTokens} tokens`
           }
@@ -418,6 +479,30 @@ async function sendDiscordNotification(
       descriptionLength: message.embeds?.[0]?.description?.length || 0,
       footerTextLength: message.embeds?.[0]?.footer?.text?.length || 0
     });
+
+    // Validate message size before sending; if invalid, simplify
+    const validation = validateDiscordMessage(message);
+    if (!validation.valid) {
+      console.warn('⚠️ Discord message validation failed, simplifying:', validation.issues);
+      const simplified = {
+        embeds: [
+          {
+            title: ` 🧪 Trending Token Update (${refreshType}) — Simplified`,
+            description: truncateFieldValue(
+              `Summary only due to size: ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed. Active tokens: ${dailyStats.activeTokens}.`,
+              1000
+            ),
+            color: 3447003,
+            timestamp: new Date().toISOString(),
+            fields: [],
+            footer: {
+              text: 'Message simplified to meet Discord embed limits.'
+            }
+          }
+        ]
+      };
+      message.embeds = simplified.embeds;
+    }
 
     // Additional safety check: ensure embeds array contains valid objects
     if (!Array.isArray(message.embeds) || message.embeds.length === 0) {
