@@ -394,120 +394,17 @@ async function sendDiscordNotification(
     // Create daily summary header
     const dailySummaryHeader = createDailySummaryHeader(tokenArray, mcapTrackingResults);
 
-    // Enhanced validation function to handle all edge cases
-    const validateEmbedValue = (value: any, fallback: any = '', fieldName: string = 'unknown'): any => {
-      try {
-        // Handle null/undefined
-        if (value === null || value === undefined) {
-          console.log(`🔧 Validation: ${fieldName} is null/undefined, using fallback`);
-          return fallback;
-        }
-        
-        // Handle numbers
-        if (typeof value === 'number') {
-          if (!isFinite(value) || isNaN(value)) {
-            console.log(`🔧 Validation: ${fieldName} has invalid number (${value}), using fallback`);
-            return fallback;
-          }
-          return value;
-        }
-        
-        // Handle strings
-        if (typeof value === 'string') {
-          if (value.includes('NaN') || value.includes('Infinity') || value.includes('-Infinity')) {
-            console.log(`🔧 Validation: ${fieldName} contains invalid string (${value.substring(0, 100)}...), using fallback`);
-            return fallback;
-          }
-          // Check for numeric strings that might be NaN/Infinity
-          const numericMatch = value.match(/[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?/g);
-          if (numericMatch) {
-            for (const match of numericMatch) {
-              const num = parseFloat(match);
-              if (!isFinite(num) || isNaN(num)) {
-                console.log(`🔧 Validation: ${fieldName} contains invalid numeric string (${match}), using fallback`);
-                return fallback;
-              }
-            }
-          }
-          return value;
-        }
-        
-        // Handle objects recursively
-        if (typeof value === 'object' && value !== null) {
-          if (Array.isArray(value)) {
-            return value.map((item, index) => validateEmbedValue(item, '', `${fieldName}[${index}]`));
-          } else {
-            const cleanedObject: any = {};
-            for (const [key, val] of Object.entries(value)) {
-              // Use appropriate fallbacks for different object properties
-              let propertyFallback: any = '';
-              if (key === 'name' || key === 'title') propertyFallback = 'Unknown';
-              else if (key === 'value' || key === 'description') propertyFallback = 'No data available';
-              else if (key === 'text') propertyFallback = 'N/A';
-              else if (typeof val === 'number') propertyFallback = 0;
-              
-              cleanedObject[key] = validateEmbedValue(val, propertyFallback, `${fieldName}.${key}`);
-            }
-            return cleanedObject;
-          }
-        }
-        
-        return value;
-      } catch (error) {
-        console.error(`🔧 Validation error for ${fieldName}:`, error);
-        return fallback;
-      }
-    };
-
-    // Validate and clean fields with detailed logging
-    console.log('🔧 Validating Discord embed fields...');
-    const validatedFields = fields.map((field, index) => {
-      const validatedField = {
-        name: validateEmbedValue(field.name, 'Unknown Category', `field[${index}].name`),
-        value: validateEmbedValue(field.value, 'No data available', `field[${index}].value`)
-      };
-      
-      // Log field validation results
-      if (field.name !== validatedField.name || field.value !== validatedField.value) {
-        console.log(`🔧 Field ${index} was sanitized:`, {
-          originalName: field.name?.substring(0, 50),
-          validatedName: validatedField.name?.substring(0, 50),
-          originalValueLength: field.value?.length,
-          validatedValueLength: validatedField.value?.length
-        });
-      }
-      
-      return validatedField;
-    });
-
-    // Validate daily summary header
-    const validatedDailySummaryHeader = validateEmbedValue(dailySummaryHeader, 'Daily market summary unavailable', 'dailySummaryHeader');
-    if (dailySummaryHeader !== validatedDailySummaryHeader) {
-      console.log('🔧 Daily summary header was sanitized');
-    }
-
-    // Validate daily stats
-    const validatedDailyStats = {
-      activeTokens: validateEmbedValue(dailyStats.activeTokens, 0, 'dailyStats.activeTokens'),
-      added: validateEmbedValue(stats.added, 0, 'stats.added'),
-      updated: validateEmbedValue(stats.updated, 0, 'stats.updated'),
-      removed: validateEmbedValue(stats.removed, 0, 'stats.removed'),
-      price_increased: validateEmbedValue(stats.price_increased, 0, 'stats.price_increased'),
-      price_decreased: validateEmbedValue(stats.price_decreased, 0, 'stats.price_decreased'),
-      mcapTrackingSize: validateEmbedValue(mcapTrackingResults?.size || 0, 0, 'mcapTrackingResults.size')
-    };
-
-    // Format the message with enhanced description - removed validateEmbedValue to prevent corruption
+    // Create embed message with simple approach (no complex validation)
     const message = {
       embeds: [
         {
           title: ` 🧪 Trending Token Update (${refreshType})`,
-          description: `${validatedDailySummaryHeader}\n\n**Summary:** ${validatedDailyStats.added} added, ${validatedDailyStats.updated} updated, ${validatedDailyStats.removed} removed\n**Price movements:** ${validatedDailyStats.price_increased} increased, ${validatedDailyStats.price_decreased} decreased\n**MCap Tracking:** ${validatedDailyStats.mcapTrackingSize} tokens tracked for growth`,
+          description: `${dailySummaryHeader}\n\n**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults?.size || 0} tokens tracked for growth`,
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
-          fields: validatedFields,
+          fields,
           footer: {
-            text: `Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${validatedDailyStats.activeTokens} tokens`
+            text: `Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${dailyStats.activeTokens} tokens`
           }
         }
       ]
