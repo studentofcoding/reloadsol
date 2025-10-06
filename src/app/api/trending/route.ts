@@ -394,39 +394,162 @@ async function sendDiscordNotification(
     // Create daily summary header
     const dailySummaryHeader = createDailySummaryHeader(tokenArray, mcapTrackingResults);
 
-    // Validate embed data before sending
-    const validateEmbedValue = (value: any, fallback: any = ''): any => {
-      if (value === null || value === undefined) return fallback;
-      if (typeof value === 'number' && (!isFinite(value) || isNaN(value))) return fallback;
-      if (typeof value === 'string' && (value.includes('NaN') || value.includes('Infinity'))) return fallback;
-      return value;
+    // Enhanced validation function to handle all edge cases
+    const validateEmbedValue = (value: any, fallback: any = '', fieldName: string = 'unknown'): any => {
+      try {
+        // Handle null/undefined
+        if (value === null || value === undefined) {
+          console.log(`🔧 Validation: ${fieldName} is null/undefined, using fallback`);
+          return fallback;
+        }
+        
+        // Handle numbers
+        if (typeof value === 'number') {
+          if (!isFinite(value) || isNaN(value)) {
+            console.log(`🔧 Validation: ${fieldName} has invalid number (${value}), using fallback`);
+            return fallback;
+          }
+          return value;
+        }
+        
+        // Handle strings
+        if (typeof value === 'string') {
+          if (value.includes('NaN') || value.includes('Infinity') || value.includes('-Infinity')) {
+            console.log(`🔧 Validation: ${fieldName} contains invalid string (${value.substring(0, 100)}...), using fallback`);
+            return fallback;
+          }
+          // Check for numeric strings that might be NaN/Infinity
+          const numericMatch = value.match(/[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?/g);
+          if (numericMatch) {
+            for (const match of numericMatch) {
+              const num = parseFloat(match);
+              if (!isFinite(num) || isNaN(num)) {
+                console.log(`🔧 Validation: ${fieldName} contains invalid numeric string (${match}), using fallback`);
+                return fallback;
+              }
+            }
+          }
+          return value;
+        }
+        
+        // Handle objects recursively
+        if (typeof value === 'object' && value !== null) {
+          if (Array.isArray(value)) {
+            return value.map((item, index) => validateEmbedValue(item, '', `${fieldName}[${index}]`));
+          } else {
+            const cleanedObject: any = {};
+            for (const [key, val] of Object.entries(value)) {
+              // Use appropriate fallbacks for different object properties
+              let propertyFallback: any = '';
+              if (key === 'name' || key === 'title') propertyFallback = 'Unknown';
+              else if (key === 'value' || key === 'description') propertyFallback = 'No data available';
+              else if (key === 'text') propertyFallback = 'N/A';
+              else if (typeof val === 'number') propertyFallback = 0;
+              
+              cleanedObject[key] = validateEmbedValue(val, propertyFallback, `${fieldName}.${key}`);
+            }
+            return cleanedObject;
+          }
+        }
+        
+        return value;
+      } catch (error) {
+        console.error(`🔧 Validation error for ${fieldName}:`, error);
+        return fallback;
+      }
     };
 
-    // Validate and clean fields
-    const validatedFields = fields.map(field => ({
-      name: validateEmbedValue(field.name, 'Unknown Category'),
-      value: validateEmbedValue(field.value, 'No data available')
-    }));
+    // Validate and clean fields with detailed logging
+    console.log('🔧 Validating Discord embed fields...');
+    const validatedFields = fields.map((field, index) => {
+      const validatedField = {
+        name: validateEmbedValue(field.name, 'Unknown Category', `field[${index}].name`),
+        value: validateEmbedValue(field.value, 'No data available', `field[${index}].value`)
+      };
+      
+      // Log field validation results
+      if (field.name !== validatedField.name || field.value !== validatedField.value) {
+        console.log(`🔧 Field ${index} was sanitized:`, {
+          originalName: field.name?.substring(0, 50),
+          validatedName: validatedField.name?.substring(0, 50),
+          originalValueLength: field.value?.length,
+          validatedValueLength: validatedField.value?.length
+        });
+      }
+      
+      return validatedField;
+    });
 
-    // Format the message with enhanced description
+    // Validate daily summary header
+    const validatedDailySummaryHeader = validateEmbedValue(dailySummaryHeader, 'Daily market summary unavailable', 'dailySummaryHeader');
+    if (dailySummaryHeader !== validatedDailySummaryHeader) {
+      console.log('🔧 Daily summary header was sanitized');
+    }
+
+    // Validate daily stats
+    const validatedDailyStats = {
+      activeTokens: validateEmbedValue(dailyStats.activeTokens, 0, 'dailyStats.activeTokens'),
+      added: validateEmbedValue(stats.added, 0, 'stats.added'),
+      updated: validateEmbedValue(stats.updated, 0, 'stats.updated'),
+      removed: validateEmbedValue(stats.removed, 0, 'stats.removed'),
+      price_increased: validateEmbedValue(stats.price_increased, 0, 'stats.price_increased'),
+      price_decreased: validateEmbedValue(stats.price_decreased, 0, 'stats.price_decreased'),
+      mcapTrackingSize: validateEmbedValue(mcapTrackingResults?.size || 0, 0, 'mcapTrackingResults.size')
+    };
+
+    // Format the message with enhanced description and validation
     const message = {
       embeds: [
         {
-          title: validateEmbedValue(` 🧪 Trending Token Update (${refreshType})`, ' 🧪 Trending Token Update'),
-          description: validateEmbedValue(`${dailySummaryHeader}\n\n**Summary:** ${stats.added} added, ${stats.updated} updated, ${stats.removed} removed\n**Price movements:** ${stats.price_increased} increased, ${stats.price_decreased} decreased\n**MCap Tracking:** ${mcapTrackingResults?.size || 0} tokens tracked for growth`, 'Token update summary'),
+          title: validateEmbedValue(` 🧪 Trending Token Update (${refreshType})`, ' 🧪 Trending Token Update', 'embed.title'),
+          description: validateEmbedValue(`${validatedDailySummaryHeader}\n\n**Summary:** ${validatedDailyStats.added} added, ${validatedDailyStats.updated} updated, ${validatedDailyStats.removed} removed\n**Price movements:** ${validatedDailyStats.price_increased} increased, ${validatedDailyStats.price_decreased} decreased\n**MCap Tracking:** ${validatedDailyStats.mcapTrackingSize} tokens tracked for growth`, 'Token update summary', 'embed.description'),
           color: 3447003, // Blue color
           timestamp: new Date().toISOString(),
           fields: validatedFields,
           footer: {
-            text: validateEmbedValue(`Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${dailyStats.activeTokens} tokens`, 'Trending tokens update')
+            text: validateEmbedValue(`Trending tokens (non filtered) | MCap growth tracked for 30k-2M range | Active: ${validatedDailyStats.activeTokens} tokens`, 'Trending tokens update', 'embed.footer.text')
           }
         }
       ]
     };
 
+    // Final validation: ensure the entire message structure is valid
+    const finalValidatedMessage = validateEmbedValue(message, {
+      embeds: [{
+        title: 'Trending Token Update',
+        description: 'Token update summary unavailable',
+        color: 3447003,
+        timestamp: new Date().toISOString(),
+        fields: [{ name: 'Status', value: 'Data validation failed' }],
+        footer: { text: 'Trending tokens update' }
+      }]
+    }, 'message');
+
+    // Log the final message structure for debugging
+    console.log('📤 Final Discord message structure:', {
+      embedsCount: finalValidatedMessage.embeds?.length || 0,
+      fieldsCount: finalValidatedMessage.embeds?.[0]?.fields?.length || 0,
+      titleLength: finalValidatedMessage.embeds?.[0]?.title?.length || 0,
+      descriptionLength: finalValidatedMessage.embeds?.[0]?.description?.length || 0,
+      footerTextLength: finalValidatedMessage.embeds?.[0]?.footer?.text?.length || 0
+    });
+
+    // Additional safety check: ensure embeds array contains valid objects
+    if (!Array.isArray(finalValidatedMessage.embeds) || finalValidatedMessage.embeds.length === 0) {
+      console.error('🚨 Invalid embeds array detected, using fallback');
+      finalValidatedMessage.embeds = [{
+        title: 'Trending Token Update',
+        description: 'Embed validation failed - using fallback',
+        color: 3447003,
+        timestamp: new Date().toISOString(),
+        fields: [{ name: 'Status', value: 'System error - please check logs' }],
+        footer: { text: 'Trending tokens update' }
+      }];
+    }
+
     console.log('📤 Sending Discord message...', {
-      embedsCount: message.embeds.length,
-      fieldsCount: fields.length,
+      embedsCount: finalValidatedMessage.embeds.length,
+      fieldsCount: finalValidatedMessage.embeds[0]?.fields?.length || 0,
       webhookUrl: DISCORD_WEBHOOK_URL.substring(0, 50) + '...'
     });
 
@@ -440,7 +563,7 @@ async function sendDiscordNotification(
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(message),
+        body: JSON.stringify(finalValidatedMessage),
         signal: controller.signal
       });
 
