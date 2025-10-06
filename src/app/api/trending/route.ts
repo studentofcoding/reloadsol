@@ -310,7 +310,7 @@ async function sendDiscordNotification(
           ? (token.change_1h > 0 ? '🟢' : '🔴')
           : '⚪';
 
-        const hourChangePercent = token.change_1h ? (token.change_1h * 100).toFixed(2) : '0.00';
+        const hourChangePercent = token.change_1h && isFinite(token.change_1h) ? (token.change_1h * 100).toFixed(2) : '0.00';
 
         // Use centralized risk assessment
         const riskResult = await assessTokenRisk({
@@ -335,13 +335,13 @@ async function sendDiscordNotification(
         const mcapTracking = trackingResults.get(token.token_address);
         const mcapDisplay = mcapTracking
           ? getMcapDisplayString(mcapTracking)
-          : `MCap: $${token.mcap.toLocaleString()}`;
+          : `MCap: $${isFinite(token.mcap) ? token.mcap.toLocaleString() : '0'}`;
 
         // Construct chart link
         const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
 
         return `**[${token.token_symbol}](${chartLink})** ${riskEmoji}\n` +
-          `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +
+          `Price: $${isFinite(token.price) ? token.price.toFixed(6) : '0.000000'} ${hourChangeEmoji} ${hourChangePercent}%\n` +
           `${mcapDisplay}\n` +
           `${riskDisplay}\n`;
       }));
@@ -385,11 +385,11 @@ async function sendDiscordNotification(
 
     // Calculate daily statistics
     const dailyStats = calculateDailyStats(tokenArray);
-    const volumeFormatted = dailyStats.totalVolume >= 1000000
+    const volumeFormatted = isFinite(dailyStats.totalVolume) && dailyStats.totalVolume >= 1000000
       ? `$${(dailyStats.totalVolume / 1000000).toFixed(1)}M`
-      : dailyStats.totalVolume >= 1000
+      : isFinite(dailyStats.totalVolume) && dailyStats.totalVolume >= 1000
         ? `$${(dailyStats.totalVolume / 1000).toFixed(1)}k`
-        : `$${dailyStats.totalVolume.toFixed(0)}`;
+        : `$${isFinite(dailyStats.totalVolume) ? dailyStats.totalVolume.toFixed(0) : '0'}`;
 
     // Create daily summary header
     const dailySummaryHeader = createDailySummaryHeader(tokenArray, mcapTrackingResults);
@@ -513,31 +513,19 @@ async function sendDiscordNotification(
       ]
     };
 
-    // Final validation: ensure the entire message structure is valid
-    const finalValidatedMessage = validateEmbedValue(message, {
-      embeds: [{
-        title: 'Trending Token Update',
-        description: 'Token update summary unavailable',
-        color: 3447003,
-        timestamp: new Date().toISOString(),
-        fields: [{ name: 'Status', value: 'Data validation failed' }],
-        footer: { text: 'Trending tokens update' }
-      }]
-    }, 'message');
-
     // Log the final message structure for debugging
     console.log('📤 Final Discord message structure:', {
-      embedsCount: finalValidatedMessage.embeds?.length || 0,
-      fieldsCount: finalValidatedMessage.embeds?.[0]?.fields?.length || 0,
-      titleLength: finalValidatedMessage.embeds?.[0]?.title?.length || 0,
-      descriptionLength: finalValidatedMessage.embeds?.[0]?.description?.length || 0,
-      footerTextLength: finalValidatedMessage.embeds?.[0]?.footer?.text?.length || 0
+      embedsCount: message.embeds?.length || 0,
+      fieldsCount: message.embeds?.[0]?.fields?.length || 0,
+      titleLength: message.embeds?.[0]?.title?.length || 0,
+      descriptionLength: message.embeds?.[0]?.description?.length || 0,
+      footerTextLength: message.embeds?.[0]?.footer?.text?.length || 0
     });
 
     // Additional safety check: ensure embeds array contains valid objects
-    if (!Array.isArray(finalValidatedMessage.embeds) || finalValidatedMessage.embeds.length === 0) {
+    if (!Array.isArray(message.embeds) || message.embeds.length === 0) {
       console.error('🚨 Invalid embeds array detected, using fallback');
-      finalValidatedMessage.embeds = [{
+      message.embeds = [{
         title: 'Trending Token Update',
         description: 'Embed validation failed - using fallback',
         color: 3447003,
@@ -548,8 +536,8 @@ async function sendDiscordNotification(
     }
 
     console.log('📤 Sending Discord message...', {
-      embedsCount: finalValidatedMessage.embeds.length,
-      fieldsCount: finalValidatedMessage.embeds[0]?.fields?.length || 0,
+      embedsCount: message.embeds.length,
+      fieldsCount: message.embeds[0]?.fields?.length || 0,
       webhookUrl: DISCORD_WEBHOOK_URL.substring(0, 50) + '...'
     });
 
@@ -563,7 +551,7 @@ async function sendDiscordNotification(
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(finalValidatedMessage),
+        body: JSON.stringify(message),
         signal: controller.signal
       });
 
@@ -582,8 +570,8 @@ async function sendDiscordNotification(
       console.error('❌ Error sending Discord message:', error);
       console.error('🔍 Discord Error Debug Info:', {
         errorMessage: error?.message || 'Unknown error',
-        embedsLength: finalValidatedMessage.embeds?.length,
-        embedsStructure: finalValidatedMessage.embeds?.map((embed: any, index: number) => ({
+        embedsLength: message.embeds?.length,
+        embedsStructure: message.embeds?.map((embed: any, index: number) => ({
           embedIndex: index,
           title: embed.title,
           description: embed.description?.substring(0, 100) + '...',
@@ -595,12 +583,12 @@ async function sendDiscordNotification(
             hasInvalidChars: field.value?.includes('NaN') || field.value?.includes('Infinity')
           }))
         })),
-        messageSize: JSON.stringify(finalValidatedMessage).length,
+        messageSize: JSON.stringify(message).length,
         hasAxiomErrors: error?.message?.includes('Axiom') || false
       });
       
       // Log the raw message structure for debugging
-      console.error('🔍 Raw Discord Message Structure:', JSON.stringify(finalValidatedMessage, null, 2).substring(0, 2000) + '...');
+      console.error('🔍 Raw Discord Message Structure:', JSON.stringify(message, null, 2).substring(0, 2000) + '...');
       
       throw error;
     }
@@ -1357,9 +1345,9 @@ function createDailyRankingSection(
   if (topGainers.length > 0) {
     rankingText += '🏆 **Top Gainers (1h)**\n';
     topGainers.forEach((token, index) => {
-      const changePercent = ((token.change_1h || 0) * 100).toFixed(1);
+      const changePercent = isFinite(token.change_1h) ? ((token.change_1h || 0) * 100).toFixed(1) : '0.0';
       const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
-      rankingText += `${index + 1}. [${token.token_symbol}](${chartLink}) +${changePercent}% | $${token.mcap.toLocaleString()}\n`;
+      rankingText += `${index + 1}. [${token.token_symbol}](${chartLink}) +${changePercent}% | $${isFinite(token.mcap) ? token.mcap.toLocaleString() : '0'}\n`;
     });
     rankingText += '\n';
   }
@@ -1368,11 +1356,11 @@ function createDailyRankingSection(
   if (topVolume.length > 0) {
     rankingText += '📊 **Top Volume (1h)**\n';
     topVolume.forEach((token, index) => {
-      const volumeFormatted = token.volume_1h >= 1000
+      const volumeFormatted = isFinite(token.volume_1h) && token.volume_1h >= 1000
         ? `$${(token.volume_1h / 1000).toFixed(1)}k`
-        : `$${token.volume_1h.toFixed(0)}`;
+        : `$${isFinite(token.volume_1h) ? token.volume_1h.toFixed(0) : '0'}`;
       const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
-      rankingText += `${index + 1}. [${token.token_symbol}](${chartLink}) ${volumeFormatted} | $${token.mcap.toLocaleString()}\n`;
+      rankingText += `${index + 1}. [${token.token_symbol}](${chartLink}) ${volumeFormatted} | $${isFinite(token.mcap) ? token.mcap.toLocaleString() : '0'}\n`;
     });
     rankingText += '\n';
   }
@@ -1390,7 +1378,7 @@ function createDailyRankingSection(
         const token = tokens.find(t => t.token_address === tokenAddress);
         const symbol = token?.token_symbol || 'UNKNOWN';
         const chartLink = `https://v2.reloadsol.xyz/chart/${tokenAddress}`;
-        rankingText += `${index + 1}. [${symbol}](${chartLink}) +${tracking.growthPercent.toFixed(1)}% | $${tracking.currentMcap.toLocaleString()}\n`;
+        rankingText += `${index + 1}. [${symbol}](${chartLink}) +${isFinite(tracking.growthPercent) ? tracking.growthPercent.toFixed(1) : '0.0'}% | $${isFinite(tracking.currentMcap) ? tracking.currentMcap.toLocaleString() : '0'}\n`;
       });
     }
   }
