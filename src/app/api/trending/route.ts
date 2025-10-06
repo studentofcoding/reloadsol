@@ -575,9 +575,33 @@ async function sendDiscordNotification(
       }
 
       console.log('✅ Discord notification sent successfully');
-    } catch (error) {
+    } catch (error: any) {
       clearTimeout(timeoutId);
+      
+      // Enhanced error logging to identify the exact cause
       console.error('❌ Error sending Discord message:', error);
+      console.error('🔍 Discord Error Debug Info:', {
+        errorMessage: error?.message || 'Unknown error',
+        embedsLength: finalValidatedMessage.embeds?.length,
+        embedsStructure: finalValidatedMessage.embeds?.map((embed: any, index: number) => ({
+          embedIndex: index,
+          title: embed.title,
+          description: embed.description?.substring(0, 100) + '...',
+          fieldsCount: embed.fields?.length,
+          fieldsPreview: embed.fields?.slice(0, 3).map((field: any) => ({
+            name: field.name?.substring(0, 50),
+            value: field.value?.substring(0, 100),
+            valueType: typeof field.value,
+            hasInvalidChars: field.value?.includes('NaN') || field.value?.includes('Infinity')
+          }))
+        })),
+        messageSize: JSON.stringify(finalValidatedMessage).length,
+        hasAxiomErrors: error?.message?.includes('Axiom') || false
+      });
+      
+      // Log the raw message structure for debugging
+      console.error('🔍 Raw Discord Message Structure:', JSON.stringify(finalValidatedMessage, null, 2).substring(0, 2000) + '...');
+      
       throw error;
     }
   } catch (error) {
