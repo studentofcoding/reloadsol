@@ -479,7 +479,14 @@ export default function BulkTokenSeller() {
 
   // Refresh all token prices efficiently
   const refreshAllPrices = useCallback(async () => {
-    if (!publicKey || userTokens.length === 0) return
+    // Use functional update to get current tokens
+    let currentTokens: UserToken[] = []
+    setUserTokens(prev => {
+      currentTokens = prev
+      return prev
+    })
+    
+    if (!publicKey || currentTokens.length === 0) return
     
     // Set loading state for all tokens
     setUserTokens(prev => prev.map(token => ({ ...token, isLoadingPrice: true })))
@@ -488,13 +495,13 @@ export default function BulkTokenSeller() {
       console.log('Starting efficient batch price refresh...')
       
       // Use efficient batch price refresh
-      const updatedTokens = await refreshTokenPricesBatch(userTokens)
+      const updatedTokens = await refreshTokenPricesBatch(currentTokens)
         
-        // Update tokens state
+      // Update tokens state
       setUserTokens(updatedTokens)
         
       // Update selected tokens with new prices
-        setSelectedTokens(prev => prev.map(selectedToken => {
+      setSelectedTokens(prev => prev.map(selectedToken => {
         const updatedToken = updatedTokens.find(t => t.mintAddress === selectedToken.mintAddress)
         if (updatedToken) {
           return {
@@ -514,7 +521,7 @@ export default function BulkTokenSeller() {
       // Clear loading states
       setUserTokens(prev => prev.map(token => ({ ...token, isLoadingPrice: false })))
     }
-  }, [publicKey, userTokens])
+  }, [publicKey]) // Remove userTokens from dependency array
 
   // Refresh individual token price efficiently
   const refreshTokenPrice = useCallback(async (token: UserToken) => {
