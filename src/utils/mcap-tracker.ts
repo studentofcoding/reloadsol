@@ -115,10 +115,18 @@ function wasThresholdNotified(record: McapSnapshot, threshold: number): boolean 
   return hoursSinceNotification < 24
 }
 
-// Helper function to mark threshold as notified
-function markThresholdNotified(record: McapSnapshot, threshold: number): void {
-  const columnName = getThresholdColumnName(threshold)
-  record[columnName] = new Date().toISOString()
+// Helper: update threshold timestamp fields when growth crosses thresholds
+function updateThresholdTimestamps(record: McapSnapshot, growthPercent: number, nowIso: string): boolean {
+  let changed = false
+  for (const threshold of GROWTH_THRESHOLDS) {
+    const columnName = getThresholdColumnName(threshold)
+    const alreadySet = !!record[columnName]
+    if (growthPercent >= threshold && !alreadySet) {
+      record[columnName] = nowIso
+      changed = true
+    }
+  }
+  return changed
 }
 
 // Function to send Discord notification for growth threshold
@@ -261,28 +269,71 @@ async function checkAndSendThresholdNotifications(
 
   // Check each threshold
   for (const threshold of GROWTH_THRESHOLDS) {
-    if (growthPercent >= threshold && !wasThresholdNotified(record, threshold)) {
-      log.info('discord_notification', 'Growth threshold reached', {
-        tokenSymbol,
-        tokenAddress: record.token_address,
-        threshold,
-        growthPercent
-      })
+    if (growthPercent >= threshold) {
+      // Check recent notification from dedicated table
+      let recentlyNotified = false
+      try {
+        const { data, error } = await supabase
+          .from('mcap_threshold_notifications')
+          .select('notified_at')
+          .eq('token_address', record.token_address)
+          .eq('threshold', threshold)
+          .order('notified_at', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        if (error) throw error
+        if (data?.notified_at) {
+          const notifiedAt = new Date(data.notified_at).getTime()
+          const hoursSince = (Date.now() - notifiedAt) / (1000 * 60 * 60)
+          recentlyNotified = hoursSince < 24
+        }
+      } catch (e) {
+        log.error('discord_notification', 'Failed checking notification history', e as Error, {
+          tokenAddress: record.token_address,
+          threshold
+        })
+      }
 
-      // Send notification
-      await sendGrowthThresholdNotification({
-        tokenAddress: record.token_address,
-        tokenSymbol,
-        threshold,
-        currentMcap,
-        firstMcap,
-        growthPercent,
-        firstSeenAt
-      })
+      if (!recentlyNotified) {
+        log.info('discord_notification', 'Growth threshold reached', {
+          tokenSymbol,
+          tokenAddress: record.token_address,
+          threshold,
+          growthPercent
+        })
 
-      // Mark threshold as notified
-      markThresholdNotified(record, threshold)
-      notificationSent = true
+        // Send notification
+        await sendGrowthThresholdNotification({
+          tokenAddress: record.token_address,
+          tokenSymbol,
+          threshold,
+          currentMcap,
+          firstMcap,
+          growthPercent,
+          firstSeenAt
+        })
+
+        // Record notification
+        try {
+          const { error } = await supabase
+            .from('mcap_threshold_notifications')
+            .insert({
+              token_address: record.token_address,
+              token_symbol: tokenSymbol,
+              threshold,
+              growth_percent: growthPercent,
+              notified_at: new Date().toISOString()
+            })
+          if (error) throw error
+        } catch (e) {
+          log.error('discord_notification', 'Failed recording threshold notification', e as Error, {
+            tokenAddress: record.token_address,
+            threshold
+          })
+        }
+
+        notificationSent = true
+      }
     }
   }
 
@@ -356,6 +407,9 @@ export async function trackTokenMcap(
         cached.last_updated_at = new Date().toISOString()
         cached.mcap_growth_percent = ((normalizedCurrentMcap - cached.first_mcap) / cached.first_mcap) * 100
 
+        // Update threshold timestamps independent of notifications
+        const thresholdsUpdated = updateThresholdTimestamps(cached, cached.mcap_growth_percent, cached.last_updated_at)
+
         // Compute stuck flag
         const ageMs = now - new Date(cached.first_seen_at).getTime()
         const isZero = Math.abs(cached.mcap_growth_percent) <= STUCK_EPSILON_PERCENT
@@ -382,18 +436,17 @@ export async function trackTokenMcap(
           cached.first_seen_at
         )
 
-        // Update database asynchronously (include threshold columns if notifications were sent)
-        if (notificationSent) {
-          updateMcapInDatabase(cached).catch(console.error)
-        } else {
-          updateMcapInDatabase(cached, false).catch(console.error)
-        }
+        // Update database asynchronously (include threshold columns if thresholdsUpdated or notifications were sent)
+        updateMcapInDatabase(cached, thresholdsUpdated || notificationSent).catch(console.error)
       } else if (timeSinceLastDbUpdate >= HEARTBEAT_INTERVAL_MS) {
         // Heartbeat: update without threshold columns, and record latest currentMcap and growth
         const prev = { current: cached.current_mcap, growth: cached.mcap_growth_percent }
         cached.current_mcap = normalizedCurrentMcap
         cached.mcap_growth_percent = ((normalizedCurrentMcap - cached.first_mcap) / cached.first_mcap) * 100
         cached.last_updated_at = new Date().toISOString()
+
+        // Update threshold timestamps on heartbeat as well
+        const thresholdsUpdatedHb = updateThresholdTimestamps(cached, cached.mcap_growth_percent, cached.last_updated_at)
 
         // Compute stuck flag on heartbeat
         const ageMs = now - new Date(cached.first_seen_at).getTime()
@@ -411,7 +464,7 @@ export async function trackTokenMcap(
           })
         }
 
-        updateMcapInDatabase(cached, false).catch(console.error)
+        updateMcapInDatabase(cached, thresholdsUpdatedHb).catch(console.error)
         log.info('price_tracking', 'Heartbeat DB write executed', {
           tokenAddress,
           tokenSymbol,
@@ -638,6 +691,9 @@ export async function trackTokenMcap(
         })
       }
 
+      // Update threshold timestamps independent of notifications
+      const thresholdsUpdatedDb = updateThresholdTimestamps(updatedRecord, growthPercent, currentTime)
+
       // Update cache
       mcapCache.set(tokenAddress, updatedRecord)
 
@@ -657,9 +713,9 @@ export async function trackTokenMcap(
       const timeSinceLastDbUpdate = new Date().getTime() - new Date(existingRecord.last_updated_at).getTime()
 
       if (absDelta > dbWriteThreshold) {
-        updateMcapInDatabase(updatedRecord, notificationSent).catch(console.error)
+        updateMcapInDatabase(updatedRecord, thresholdsUpdatedDb || notificationSent).catch(console.error)
       } else if (timeSinceLastDbUpdate >= HEARTBEAT_INTERVAL_MS) {
-        updateMcapInDatabase(updatedRecord, false).catch(console.error)
+        updateMcapInDatabase(updatedRecord, thresholdsUpdatedDb).catch(console.error)
         log.info('price_tracking', 'Heartbeat DB write executed (db path)', {
           tokenAddress,
           tokenSymbol,
