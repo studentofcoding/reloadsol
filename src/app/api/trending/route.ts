@@ -1331,9 +1331,16 @@ function createDailyRankingSection(
   let rankingText = ''
 
   // Tracker-based Top Gainers only (by mcap_growth_percent). No price-change fallback.
+  const nowMs = Date.now()
+  const MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
   const trackerTop = mcapTrackingResults && mcapTrackingResults.size > 0
     ? Array.from(mcapTrackingResults.entries())
-        .filter(([_, tracking]) => isFinite(tracking.growthPercent) && tracking.growthPercent > 0)
+        .filter(([_, tracking]) => {
+          const hasGrowth = isFinite(tracking.growthPercent) && tracking.growthPercent > 0
+          const firstSeenMs = tracking.firstSeenAt ? new Date(tracking.firstSeenAt).getTime() : 0
+          const within24h = firstSeenMs > 0 && (nowMs - firstSeenMs) <= MAX_AGE_MS
+          return hasGrowth && within24h
+        })
         .sort((a, b) => (b[1].growthPercent || 0) - (a[1].growthPercent || 0))
         .slice(0, 10)
     : []
@@ -1461,10 +1468,17 @@ function createDailySummaryHeader(tokens: TransformedToken[], mcapTrackingResult
     `📈 **Performance:** Avg ${dailyStats.avgGrowth >= 0 ? '+' : ''}${formatPercent(dailyStats.avgGrowth)}% | Best: +${formatPercent(dailyStats.topGainerPercent)}%`
   ];
 
-  // Add tracker-based top gainer if available; no price-change fallback
+  // Add tracker-based top gainer if available; restricted to firstSeenAt within 24h; no price-change fallback
   if (mcapTrackingResults && mcapTrackingResults.size > 0) {
+    const nowMs = Date.now()
+    const MAX_AGE_MS = 24 * 60 * 60 * 1000
     const trackerTop = Array.from(mcapTrackingResults.entries())
-      .filter(([_, tracking]) => isFinite(tracking.growthPercent) && tracking.growthPercent > 0)
+      .filter(([_, tracking]) => {
+        const hasGrowth = isFinite(tracking.growthPercent) && tracking.growthPercent > 0
+        const firstSeenMs = tracking.firstSeenAt ? new Date(tracking.firstSeenAt).getTime() : 0
+        const within24h = firstSeenMs > 0 && (nowMs - firstSeenMs) <= MAX_AGE_MS
+        return hasGrowth && within24h
+      })
       .sort((a, b) => (b[1].growthPercent || 0) - (a[1].growthPercent || 0))
       .slice(0, 1)
 
