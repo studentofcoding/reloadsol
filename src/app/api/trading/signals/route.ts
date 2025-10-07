@@ -3,6 +3,107 @@ import { supabase } from '@/utils/supabase'
 import { isInTrackingRange, STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
 
+// Rug pull protection: Check for sudden market cap drops
+async function validateTokensAgainstRugPulls(signals: SignalItem[]): Promise<SignalItem[]> {
+  if (signals.length === 0) return signals
+
+  const RUG_PULL_THRESHOLD = 0.6 // 60% decrease threshold
+  const validatedSignals: SignalItem[] = []
+  const ruggedTokens: string[] = []
+
+  try {
+    // Extract token addresses for batch validation
+    const tokenAddresses = signals.map(s => s.token_address)
+
+    // Batch fetch current market caps from trending API
+    const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+
+    // Process in batches to avoid overwhelming the trending API
+    const BATCH_SIZE = 10
+    const currentMcaps: Record<string, number> = {}
+
+    for (let i = 0; i < tokenAddresses.length; i += BATCH_SIZE) {
+      const batch = tokenAddresses.slice(i, i + BATCH_SIZE)
+
+      await Promise.all(batch.map(async (tokenAddress) => {
+        try {
+          const response = await fetch(`${baseUrl}/api/trending/search?query=${tokenAddress}`, {
+            headers: { 'User-Agent': 'TradingSignals/1.0' }
+          })
+
+          if (response.ok) {
+            const data = await response.json()
+            const tokenData = Array.isArray(data) ? data.find(t => t.id === tokenAddress) : null
+
+            if (tokenData && tokenData.mcap && tokenData.mcap > 0) {
+              currentMcaps[tokenAddress] = tokenData.mcap
+            }
+          }
+        } catch (error) {
+          // Log but don't fail the entire batch
+          log.warn('api_request', 'Failed to fetch current mcap for token', {
+            tokenAddress,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          })
+        }
+      }))
+
+      // Small delay between batches to be respectful to the API
+      if (i + BATCH_SIZE < tokenAddresses.length) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+    }
+
+    // Validate each signal against rug pull threshold
+    for (const signal of signals) {
+      const currentMcap = currentMcaps[signal.token_address]
+
+      // If we couldn't get current mcap, include the token (fail-safe approach)
+      if (!currentMcap) {
+        validatedSignals.push(signal)
+        continue
+      }
+
+      // Calculate the percentage decrease from database mcap to current mcap
+      const mcapDecrease = (signal.current_mcap - currentMcap) / signal.current_mcap
+
+      // If the decrease is greater than 60%, consider it a rug pull
+      if (mcapDecrease > RUG_PULL_THRESHOLD) {
+        ruggedTokens.push(signal.token_address)
+        log.warn('mcap_tracker', 'Token filtered due to sudden mcap drop', {
+          tokenAddress: signal.token_address,
+          tokenSymbol: signal.token_symbol,
+          databaseMcap: signal.current_mcap,
+          currentMcap: currentMcap,
+          decreasePercent: Math.round(mcapDecrease * 100)
+        })
+      } else {
+        // Update the signal with current mcap for more accurate data
+        validatedSignals.push({
+          ...signal,
+          current_mcap: currentMcap,
+          mcap_growth_percent: ((currentMcap - signal.first_mcap) / signal.first_mcap) * 100
+        })
+      }
+    }
+
+    if (ruggedTokens.length > 0) {
+      log.info('mcap_tracker', 'Filtered out rugged tokens', {
+        filteredCount: ruggedTokens.length,
+        totalSignals: signals.length,
+        ruggedTokens: ruggedTokens
+      })
+    }
+
+    return validatedSignals
+
+  } catch (error) {
+    // If validation fails entirely, return original signals to avoid breaking the API
+    log.error('error_handling', 'Rug pull validation failed, returning original signals', error as Error)
+    return signals
+  }
+}
+
 type SignalItem = {
   token_address: string
   token_symbol: string
@@ -32,9 +133,11 @@ function minutesBetween(aIso?: string | null, bIso?: string | null): number | nu
   return Math.round(Math.abs(b - a) / (60 * 1000))
 }
 
+type StrategyTemplate = 'default' | 'sell_over_100'
+
 function computeScoreAndDecision(
   item: Omit<SignalItem, 'score' | 'decision' | 'rationale'>,
-  params: { minGrowth: number; recencyMinutes: number }
+  params: { minGrowth: number; recencyMinutes: number; strategy?: StrategyTemplate }
 ) {
   const growth = item.mcap_growth_percent || 0
   const isStuck = item.is_tracking_stuck === true
@@ -68,6 +171,12 @@ function computeScoreAndDecision(
   if (isStuck) score -= 50
   if (growth <= STOP_LOSS_THRESHOLD) score -= 100
 
+  // Strategy-specific penalties
+  const strategy = params.strategy || 'default'
+  if (strategy === 'sell_over_100' && growth >= 100) {
+    score -= 40 // Late-stage surge: prefer taking profit above 100% growth
+  }
+
   // Decision logic
   let decision: SignalItem['decision'] = 'skip'
   let rationale: string[] = []
@@ -75,11 +184,17 @@ function computeScoreAndDecision(
   if (growth <= STOP_LOSS_THRESHOLD || isStuck) {
     decision = 'exit'
     rationale.push('Stop-loss or stuck triggered')
+  } else if (strategy === 'sell_over_100' && growth >= 100) {
+    decision = 'exit'
+    rationale.push('Growth >100%: late-stage — sell/take profit')
   } else if (growth >= params.minGrowth && score >= 50) {
     decision = 'enter'
     rationale.push('Strong momentum and recency')
     if (item.when_reach_80mc) rationale.push('Reached +80% threshold')
     if (typeof timeTo80 === 'number') rationale.push(`Reached +80% in ${timeTo80}m`)
+  } else if (strategy === 'sell_over_100' && growth >= 80) {
+    decision = 'hold'
+    rationale.push('Strong momentum; monitor for exit or take profit')
   } else if (growth >= params.minGrowth * 0.5) {
     decision = 'hold'
     rationale.push('Moderate momentum, watching for continuation')
@@ -91,6 +206,8 @@ function computeScoreAndDecision(
   return { score, decision, rationale: rationale.join('; ') }
 }
 
+
+
 export async function GET(request: NextRequest) {
   const startedAt = Date.now()
   try {
@@ -100,6 +217,7 @@ export async function GET(request: NextRequest) {
     const minGrowth = parseFloat(searchParams.get('minGrowth') || '25')
     const includeStuck = searchParams.get('includeStuck') === 'true'
     const maxAgeMinutes = Math.max(parseInt(searchParams.get('maxAgeMinutes') || '60'), 1)
+    const strategy = (searchParams.get('strategy') || 'default') as StrategyTemplate
 
     // Build base query
     let query = supabase
@@ -169,7 +287,11 @@ export async function GET(request: NextRequest) {
         time_to_80_minutes: typeof timeTo80Minutes === 'number' ? timeTo80Minutes : null,
       }
 
-      const { score, decision, rationale } = computeScoreAndDecision(base, { minGrowth, recencyMinutes })
+      const { score, decision, rationale } = computeScoreAndDecision(base, {
+        minGrowth,
+        recencyMinutes,
+        strategy
+      })
 
       return {
         ...base,
@@ -179,23 +301,26 @@ export async function GET(request: NextRequest) {
       }
     })
 
+    // Apply rug pull protection before final sorting
+    const validatedSignals = await validateTokensAgainstRugPulls(signals)
+
     // Final sort by score descending, then growth
-    signals.sort((a, b) => {
+    validatedSignals.sort((a: SignalItem, b: SignalItem) => {
       if (b.score !== a.score) return b.score - a.score
       return (b.mcap_growth_percent || 0) - (a.mcap_growth_percent || 0)
     })
 
-    const limited = signals.slice(0, limit)
+    const limited = validatedSignals.slice(0, limit)
 
-  log.info('mcap_tracker', 'Generated trading signals', {
+    log.info('mcap_tracker', 'Generated trading signals', {
       count: limited.length,
       fetched: items.length,
-      params: { limit, recencyMinutes, minGrowth, includeStuck, maxAgeMinutes },
+      params: { limit, recencyMinutes, minGrowth, includeStuck, maxAgeMinutes, strategy },
     })
 
     return NextResponse.json({
       success: true,
-      params: { limit, recencyMinutes, minGrowth, includeStuck, maxAgeMinutes },
+      params: { limit, recencyMinutes, minGrowth, includeStuck, maxAgeMinutes, strategy },
       stats: {
         totalCandidates: items.length,
         returnedSignals: limited.length,
@@ -213,6 +338,6 @@ export async function GET(request: NextRequest) {
     )
   } finally {
     const duration = Date.now() - startedAt
-  log.info('api_request', 'Signals request completed', { durationMs: duration })
+    log.info('api_request', 'Signals request completed', { durationMs: duration })
   }
 }
