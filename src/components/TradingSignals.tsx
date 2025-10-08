@@ -1,5 +1,6 @@
 "use client"
 import React, { useEffect, useMemo, useState } from "react"
+import Draggable from 'react-draggable'
 
 type SignalItem = {
   token_address: string
@@ -23,6 +24,18 @@ type SignalsResponse = {
   params?: Record<string, any>
   stats?: Record<string, any>
   signals?: SignalItem[]
+}
+
+type FloatingChart = {
+  id: string
+  tokenAddress: string
+  tokenSymbol?: string
+  position: { x: number; y: number }
+  zIndex: number
+  isLoading: boolean
+  isInGrid: boolean
+  isDraggable: boolean
+  gridOrder: number
 }
 
 const numberFmt = (n?: number) => {
@@ -60,9 +73,9 @@ export default function TradingSignals() {
   const [signals, setSignals] = useState<SignalItem[]>([])
   const [stats, setStats] = useState<Record<string, any>>({})
 
-  // Chart popup state
-  const [selectedChart, setSelectedChart] = useState<string | null>(null)
-  const [isChartLoading, setIsChartLoading] = useState(false)
+  // Multiple floating charts state
+  const [floatingCharts, setFloatingCharts] = useState<FloatingChart[]>([])
+  const [nextZIndex, setNextZIndex] = useState(200)
 
   // Buy configuration state
   const [buyConfig, setBuyConfig] = useState({
@@ -126,14 +139,131 @@ export default function TradingSignals() {
   }
 
   // Chart popup handlers
-  const handleOpenChart = (tokenAddress: string) => {
-    setSelectedChart(tokenAddress)
-    setIsChartLoading(true)
+  const handleOpenChart = (tokenAddress: string, tokenSymbol?: string) => {
+    // Check if chart is already open
+    const existingChart = floatingCharts.find(chart => chart.tokenAddress === tokenAddress)
+    if (existingChart) {
+      // Bring to front by updating z-index
+      setFloatingCharts(prev => prev.map(chart => 
+        chart.id === existingChart.id 
+          ? { ...chart, zIndex: nextZIndex }
+          : chart
+      ))
+      setNextZIndex(prev => prev + 1)
+      return
+    }
+
+    // Calculate position for new chart in grid area
+    const gridCharts = floatingCharts.filter(chart => chart.isInGrid)
+    const gridPosition = {
+      x: 10, // Fixed left position in grid area
+      y: 30 + (gridCharts.length * 280) // Stack vertically with reduced spacing
+    }
+
+    // Create new floating chart
+    const newChart: FloatingChart = {
+      id: `chart-${tokenAddress}-${Date.now()}`,
+      tokenAddress,
+      tokenSymbol,
+      position: gridPosition,
+      zIndex: nextZIndex,
+      isLoading: true,
+      isInGrid: true,
+      isDraggable: false,
+      gridOrder: gridCharts.length
+    }
+
+    setFloatingCharts(prev => [...prev, newChart])
+    setNextZIndex(prev => prev + 1)
   }
 
-  const handleCloseChart = () => {
-    setSelectedChart(null)
-    setIsChartLoading(false)
+  const handleCloseChart = (chartId: string) => {
+    setFloatingCharts(prev => prev.filter(chart => chart.id !== chartId))
+  }
+
+  const handleChartLoad = (chartId: string) => {
+    setFloatingCharts(prev => prev.map(chart => 
+      chart.id === chartId 
+        ? { ...chart, isLoading: false }
+        : chart
+    ))
+  }
+
+  const handleChartError = (chartId: string) => {
+    console.error('Chart failed to load for chart:', chartId)
+    setFloatingCharts(prev => prev.map(chart => 
+      chart.id === chartId 
+        ? { ...chart, isLoading: false }
+        : chart
+    ))
+  }
+
+  const handleReorderCharts = (draggedChartId: string, targetChartId: string) => {
+    setFloatingCharts(prev => {
+      const draggedChart = prev.find(chart => chart.id === draggedChartId)
+      const targetChart = prev.find(chart => chart.id === targetChartId)
+      
+      if (!draggedChart || !targetChart) return prev
+      
+      const draggedOrder = draggedChart.gridOrder
+      const targetOrder = targetChart.gridOrder
+      
+      return prev.map(chart => {
+        if (chart.id === draggedChartId) {
+          return { ...chart, gridOrder: targetOrder }
+        } else if (chart.id === targetChartId) {
+          return { ...chart, gridOrder: draggedOrder }
+        }
+        return chart
+      })
+    })
+  }
+
+  const handleDragStart = (chartId: string) => {
+    // Enable dragging when user starts to drag
+    setFloatingCharts(prev => prev.map(chart => 
+      chart.id === chartId 
+        ? { ...chart, isDraggable: true }
+        : chart
+    ))
+  }
+
+  const handleDragStop = (chartId: string, data: any) => {
+    // Define grid area boundaries (left 1/5 of the container)
+    const containerWidth = window.innerWidth
+    const GRID_WIDTH = containerWidth * 0.2 // 20% of container width
+    const GRID_HEIGHT = window.innerHeight - 100 // Full height minus some padding
+    
+    const isInGridArea = data.x >= 0 && data.x <= GRID_WIDTH && data.y >= 0 && data.y <= GRID_HEIGHT
+    
+    setFloatingCharts(prev => prev.map(chart => {
+      if (chart.id === chartId) {
+        let newPosition = { x: data.x, y: data.y }
+        let newIsInGrid = isInGridArea
+        
+        // If moved into grid area, snap to grid position
+        if (isInGridArea && !chart.isInGrid) {
+          const gridCharts = prev.filter(c => c.isInGrid && c.id !== chartId)
+          newPosition = {
+            x: 10,
+            y: 30 + (gridCharts.length * 280) // Reduced spacing for smaller area
+          }
+          newIsInGrid = true
+        }
+        // If moved out of grid area, ensure it's marked as not in grid
+        else if (!isInGridArea && chart.isInGrid) {
+          newIsInGrid = false
+        }
+        
+        return { 
+          ...chart, 
+          position: newPosition,
+          isInGrid: newIsInGrid,
+          isDraggable: true
+        }
+      }
+      return chart
+    }))
   }
 
   // Buy functionality
@@ -276,12 +406,106 @@ export default function TradingSignals() {
         </div>
       )}
 
-      <div className="overflow-x-auto z-[100] relative">
-        <table className="min-w-full border-collapse">
-          <thead>
-            <tr className="text-left text-sm">
-              <th className="border-b p-2">Token</th>
-              <th className="border-b p-2">Address</th>
+      <div className="flex gap-4">
+        {/* Chart Grid Area - 1/5 of the width */}
+        <div 
+          className="flex-shrink-0 bg-black rounded-lg relative overflow-y-auto"
+          style={{ width: '20%', minHeight: '600px' }}
+        >
+          <div className="absolute top-2 left-2 text-xs text-gray-500 font-medium z-10">
+            Chart Area
+          </div>
+          
+          {/* Non-draggable charts inside grid */}
+          <div className="pt-8 space-y-4 p-2">
+            {floatingCharts
+              .filter(chart => chart.isInGrid && !chart.isDraggable)
+              .sort((a, b) => a.gridOrder - b.gridOrder)
+              .map((chart) => (
+                <div 
+                  key={chart.id}
+                  className="bg-white border-2 border-gray-300 rounded-lg shadow-2xl"
+                  style={{ 
+                    width: '100%', 
+                    height: '260px'
+                  }}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('text/plain', chart.id)
+                    e.dataTransfer.effectAllowed = 'move'
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    e.dataTransfer.dropEffect = 'move'
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    const draggedChartId = e.dataTransfer.getData('text/plain')
+                    if (draggedChartId !== chart.id) {
+                      handleReorderCharts(draggedChartId, chart.id)
+                    }
+                  }}
+                >
+                  {/* Header with close button and buy controls */}
+                  <div className="flex justify-between items-center p-3 border-b border-gray-200 bg-gray-50 rounded-t-lg drag-handle cursor-move">
+                    <div className="flex items-center gap-3">
+                      <span className="font-semibold text-gray-800">{chart.tokenSymbol || "UNKNOWN"}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-600">{buyConfig.solAmount} SOL</span>
+                        <button
+                          onClick={() => handleBuyToken(chart.tokenAddress, chart.tokenSymbol)}
+                          disabled={buyingTokens.has(chart.tokenAddress)}
+                          className={`px-3 py-1 rounded text-sm font-medium ${
+                            buyingTokens.has(chart.tokenAddress)
+                              ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                              : 'bg-green-500 hover:bg-green-600 text-white cursor-pointer'
+                          }`}
+                        >
+                          {buyingTokens.has(chart.tokenAddress) ? 'Buying...' : 'Buy'}
+                        </button>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleCloseChart(chart.id)}
+                      className="text-gray-500 hover:text-gray-700 text-xl font-bold"
+                    >
+                      ×
+                    </button>
+                  </div>
+
+                  {/* Chart iframe */}
+                  <iframe
+                    src={`https://www.gmgn.cc/kline/sol/${chart.tokenAddress}?interval=5`}
+                    className="w-full h-full rounded-b-lg"
+                    style={{ 
+                      height: 'calc(100% - 60px)',
+                      display: chart.isLoading ? 'none' : 'block' 
+                    }}
+                    title={`GMGN Chart - ${chart.tokenAddress}`}
+                    onLoad={() => handleChartLoad(chart.id)}
+                    onError={() => handleChartError(chart.id)}
+                    allowFullScreen
+                    frameBorder="0"
+                  />
+                </div>
+              ))
+            }
+            
+            {floatingCharts.filter(chart => chart.isInGrid).length === 0 && (
+              <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+                Charts will appear here when opened
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Table Area - 4/5 of the width */}
+        <div className="flex-1 overflow-x-auto z-[100] relative">
+          <table className="min-w-full border-collapse">
+            <thead>
+              <tr className="text-left text-sm">
+                <th className="border-b p-2">Token</th>
+                <th className="border-b p-2">Address</th>
               <th className="border-b p-2">Growth %</th>
               <th className="border-b p-2">Score</th>
               <th className="border-b p-2">Decision</th>
@@ -307,7 +531,7 @@ export default function TradingSignals() {
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{s.token_symbol || "UNKNOWN"}</span>
                       <button
-                        onClick={() => handleOpenChart(s.token_address)}
+                        onClick={() => handleOpenChart(s.token_address, s.token_symbol)}
                         className="text-blue-600 hover:text-blue-800 p-1"
                         title="View Chart"
                       >
@@ -316,72 +540,7 @@ export default function TradingSignals() {
                         </svg>
                       </button>
                     </div>
-                    
-                    {/* Chart overlay positioned above the token name */}
-                    {selectedChart === s.token_address && (
-                      <div className="absolute top-0 left-0 z-[200] bg-white border-2 border-gray-300 rounded-lg shadow-2xl" 
-                           style={{ width: '480px', height: '320px', transform: 'translateY(-330px)' }}>
-                        {/* Header with close button and buy controls */}
-                        <div className="flex justify-between items-center p-3 border-b border-gray-200 bg-gray-50 rounded-t-lg">
-                          <div className="flex items-center gap-3">
-                            <span className="font-semibold text-gray-800">{s.token_symbol || "UNKNOWN"}</span>
-                            <div className="flex items-center gap-2">
-                              <span className="text-sm text-gray-600">{buyConfig.solAmount} SOL</span>
-                              <button
-                                onClick={() => handleBuyToken(s.token_address, s.token_symbol)}
-                                disabled={buyingTokens.has(s.token_address)}
-                                className={`px-3 py-1 rounded text-sm font-medium ${
-                                  buyingTokens.has(s.token_address)
-                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                                    : 'bg-green-600 text-white hover:bg-green-700'
-                                }`}
-                                title={`Buy with ${buyConfig.solAmount} SOL (Fee: ${buyConfig.fees} SOL)`}
-                              >
-                                {buyingTokens.has(s.token_address) ? 'Buying...' : 'Buy Now'}
-                              </button>
-                            </div>
-                          </div>
-                          <button 
-                            onClick={handleCloseChart}
-                            className="bg-gray-800 text-gray-300 hover:text-white p-1 rounded-full shadow-lg"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                            </svg>
-                          </button>
-                        </div>
-                        
-                        {/* Chart container */}
-                        <div className="relative" style={{ height: '270px' }}>
-                          {/* Loading indicator */}
-                          {isChartLoading && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-white">
-                              <div className="w-8 h-8 border-4 border-gray-400 border-t-blue-600 rounded-full animate-spin"></div>
-                            </div>
-                          )}
-                          
-                          {/* GMGN Chart iframe */}
-                          <iframe
-                            src={`https://www.gmgn.cc/kline/sol/${selectedChart}?interval=5&theme=dark`}
-                            width="476"
-                            height="270"
-                            className="rounded-b-lg"
-                            style={{ 
-                              border: 'none', 
-                              display: isChartLoading ? 'none' : 'block' 
-                            }}
-                            title={`GMGN Chart - ${selectedChart}`}
-                            onLoad={() => setIsChartLoading(false)}
-                            onError={() => {
-                              console.error('Chart failed to load for token:', selectedChart)
-                              setIsChartLoading(false)
-                            }}
-                            allowFullScreen
-                            frameBorder="0"
-                          />
-                        </div>
-                      </div>
-                    )}
+
                   </td>
                   <td className="border-b p-2">
                     <code className="text-xs">{s.token_address}</code>
@@ -417,16 +576,75 @@ export default function TradingSignals() {
             )}
           </tbody>
         </table>
-      </div>
-
-      {stats && Object.keys(stats).length > 0 && (
-        <div className="rounded border bg-gray-50 p-3 text-sm">
-          <div className="font-medium mb-2">Stats</div>
-          <pre className="overflow-x-auto text-xs">{JSON.stringify(stats, null, 2)}</pre>
         </div>
-      )}
+      </div>
         </>
       )}
+
+      {/* Floating Charts - Only draggable charts that are outside grid */}
+      {floatingCharts
+        .filter(chart => chart.isDraggable && !chart.isInGrid)
+        .map((chart) => (
+          <Draggable
+            key={chart.id}
+            defaultPosition={chart.position}
+            onStart={() => handleDragStart(chart.id)}
+            onStop={(e, data) => handleDragStop(chart.id, data)}
+            handle=".drag-handle"
+          >
+            <div 
+              className="fixed bg-white border-2 border-gray-300 rounded-lg shadow-2xl"
+              style={{ 
+                width: '480px', 
+                height: '320px',
+                zIndex: chart.zIndex
+              }}
+            >
+              {/* Header with close button and buy controls */}
+              <div className="flex justify-between items-center p-3 border-b border-gray-200 bg-gray-50 rounded-t-lg drag-handle cursor-move">
+                <div className="flex items-center gap-3">
+                  <span className="font-semibold text-gray-800">{chart.tokenSymbol || "UNKNOWN"}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-600">{buyConfig.solAmount} SOL</span>
+                    <button
+                      onClick={() => handleBuyToken(chart.tokenAddress, chart.tokenSymbol)}
+                      disabled={buyingTokens.has(chart.tokenAddress)}
+                      className={`px-3 py-1 rounded text-sm font-medium ${
+                        buyingTokens.has(chart.tokenAddress)
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-green-500 hover:bg-green-600 text-white cursor-pointer'
+                      }`}
+                    >
+                      {buyingTokens.has(chart.tokenAddress) ? 'Buying...' : 'Buy'}
+                    </button>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleCloseChart(chart.id)}
+                  className="text-gray-500 hover:text-gray-700 text-xl font-bold"
+                >
+                  ×
+                </button>
+              </div>
+
+              {/* Chart iframe */}
+              <iframe
+                src={`https://gmgn.ai/sol/token/${chart.tokenAddress}`}
+                className="w-full h-full rounded-b-lg"
+                style={{ 
+                  height: 'calc(100% - 60px)',
+                  display: chart.isLoading ? 'none' : 'block' 
+                }}
+                title={`GMGN Chart - ${chart.tokenAddress}`}
+                onLoad={() => handleChartLoad(chart.id)}
+                onError={() => handleChartError(chart.id)}
+                allowFullScreen
+                frameBorder="0"
+              />
+            </div>
+          </Draggable>
+        ))
+      }
     </div>
   )
 }
