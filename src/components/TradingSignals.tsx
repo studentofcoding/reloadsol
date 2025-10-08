@@ -1,5 +1,7 @@
 "use client"
 import React, { useEffect, useMemo, useState } from "react"
+import { useWallet, useConnection } from '@/components/WalletProvider'
+import { VersionedTransaction, LAMPORTS_PER_SOL } from '@solana/web3.js'
 import Draggable from 'react-draggable'
 
 type SignalItem = {
@@ -60,6 +62,8 @@ const dateFmt = (iso?: string | null) => {
 }
 
 export default function TradingSignals() {
+  const { connected, publicKey, signTransaction } = useWallet()
+  const { connection } = useConnection()
   const [isClient, setIsClient] = useState(false)
   const [limit, setLimit] = useState(50)
   const [recencyMinutes, setRecencyMinutes] = useState(240)
@@ -79,14 +83,95 @@ export default function TradingSignals() {
 
   // Buy configuration state
   const [buyConfig, setBuyConfig] = useState({
-    solAmount: 0.1,
-    fees: 0.005
+    solAmount: 0,
+    fees: 0.001
   })
   const [buyingTokens, setBuyingTokens] = useState<Set<string>>(new Set())
+  const [walletBalanceSol, setWalletBalanceSol] = useState<number>(0)
+  const [hasAutoSetSolAmount, setHasAutoSetSolAmount] = useState<boolean>(false)
+
+  // localStorage helpers for chart persistence
+  const saveChartsToStorage = (charts: FloatingChart[]) => {
+    try {
+      const chartsToSave = charts.map(chart => ({
+        id: chart.id,
+        tokenAddress: chart.tokenAddress,
+        tokenSymbol: chart.tokenSymbol,
+        position: chart.position,
+        zIndex: chart.zIndex,
+        isInGrid: chart.isInGrid,
+        isDraggable: chart.isDraggable,
+        gridOrder: chart.gridOrder
+      }))
+      localStorage.setItem('tradingSignals_floatingCharts', JSON.stringify(chartsToSave))
+    } catch (error) {
+      console.warn('Failed to save charts to localStorage:', error)
+    }
+  }
+
+  const loadChartsFromStorage = (): FloatingChart[] => {
+    try {
+      const saved = localStorage.getItem('tradingSignals_floatingCharts')
+      if (!saved) return []
+      
+      const parsedCharts = JSON.parse(saved)
+      return parsedCharts.map((chart: any) => ({
+        ...chart,
+        isLoading: true // Reset loading state on restore
+      }))
+    } catch (error) {
+      console.warn('Failed to load charts from localStorage:', error)
+      return []
+    }
+  }
 
   useEffect(() => {
     setIsClient(true)
   }, [])
+
+  // Restore charts from localStorage on mount
+  useEffect(() => {
+    if (isClient) {
+      const savedCharts = loadChartsFromStorage()
+      if (savedCharts.length > 0) {
+        setFloatingCharts(savedCharts)
+        // Update nextZIndex to be higher than any restored chart
+        const maxZIndex = Math.max(...savedCharts.map(chart => chart.zIndex), 199)
+        setNextZIndex(maxZIndex + 1)
+      }
+    }
+  }, [isClient])
+
+  // Persist charts to localStorage whenever floatingCharts changes
+  useEffect(() => {
+    if (isClient && floatingCharts.length >= 0) {
+      saveChartsToStorage(floatingCharts)
+    }
+  }, [floatingCharts, isClient])
+
+  // Track wallet SOL balance for template buy amounts
+  useEffect(() => {
+    const fetchBalance = async () => {
+      try {
+        if (connected && publicKey && connection) {
+          const lamports = await connection.getBalance(publicKey)
+          setWalletBalanceSol(lamports / LAMPORTS_PER_SOL)
+        }
+      } catch (err) {
+        console.warn('Failed to fetch wallet balance:', err)
+      }
+    }
+    fetchBalance()
+  }, [connected, publicKey, connection])
+
+  // Default Buy Amount: set to 3% of SOL balance once after fetching
+  useEffect(() => {
+    if (connected && walletBalanceSol > 0 && !hasAutoSetSolAmount) {
+      const threePercent = Number((walletBalanceSol * 0.03).toFixed(4))
+      setBuyConfig(prev => ({ ...prev, solAmount: threePercent }))
+      setHasAutoSetSolAmount(true)
+    }
+  }, [connected, walletBalanceSol, hasAutoSetSolAmount])
 
   const query = useMemo(() => {
     if (!isClient) return ""
@@ -266,25 +351,46 @@ export default function TradingSignals() {
     }))
   }
 
-  // Buy functionality
+  // Buy functionality (client-side signing & sending)
   const handleBuyToken = async (tokenAddress: string, tokenSymbol?: string) => {
     if (buyingTokens.has(tokenAddress)) return
 
     setBuyingTokens(prev => new Set(prev).add(tokenAddress))
     
     try {
-      // TODO: Implement actual buy logic here
-      console.log(`Buying ${tokenSymbol || tokenAddress} with ${buyConfig.solAmount} SOL`)
-      
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000))
-      
-      // Show success message or handle result
-      alert(`Successfully bought ${tokenSymbol || tokenAddress}!`)
-      
-    } catch (error) {
+      if (!connected || !publicKey || !signTransaction) {
+        throw new Error('Please connect your wallet first')
+      }
+
+      const solLamports = Math.floor(buyConfig.solAmount * 1e9) // Convert SOL to lamports
+      const slippageBps = 50
+      const priorityFeeLamports = Math.floor((buyConfig.fees || 0) * 1e9)
+
+      // Prepare unsigned transaction on server for this wallet
+      const resp = await fetch('/api/buy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokenAddress, solLamports, slippageBps, priorityFeeLamports, userPublicKey: publicKey.toString() })
+      })
+
+      const json = await resp.json()
+      if (!resp.ok || !json.success || !json.swapTransactionBase64) {
+        throw new Error(json.error || 'Failed to prepare swap transaction')
+      }
+
+      // Deserialize, sign, and send
+      const transaction = VersionedTransaction.deserialize(Buffer.from(json.swapTransactionBase64, 'base64'))
+      const signedTx = await signTransaction(transaction)
+      const signature = await connection.sendRawTransaction(signedTx.serialize(), {
+        skipPreflight: false,
+        preflightCommitment: 'confirmed'
+      })
+      await connection.confirmTransaction(signature, 'confirmed')
+
+      alert(`Buy submitted! Signature: ${signature}`)
+    } catch (error: any) {
       console.error('Buy error:', error)
-      alert(`Failed to buy ${tokenSymbol || tokenAddress}`)
+      alert(`Failed to buy ${tokenSymbol || tokenAddress}: ${error?.message || 'Unknown error'}`)
     } finally {
       setBuyingTokens(prev => {
         const newSet = new Set(prev)
@@ -328,6 +434,27 @@ export default function TradingSignals() {
                 onChange={e => setBuyConfig(prev => ({ ...prev, solAmount: Number(e.target.value) }))}
                 className="mt-1 w-32 rounded border px-2 py-1 bg-black text-white"
               />
+              {/* Templates based on wallet SOL amount */}
+              <div className="mt-1 flex gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setBuyConfig(prev => ({ ...prev, solAmount: Number((walletBalanceSol * 0.05).toFixed(4)) }))}
+                  className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
+                >5%</button>
+                <button
+                  type="button"
+                  onClick={() => setBuyConfig(prev => ({ ...prev, solAmount: Number((walletBalanceSol * 0.25).toFixed(4)) }))}
+                  className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
+                >25%</button>
+                <button
+                  type="button"
+                  onClick={() => setBuyConfig(prev => ({ ...prev, solAmount: Number((walletBalanceSol * 0.90).toFixed(4)) }))}
+                  className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
+                >90%</button>
+              </div>
+              {connected && (
+                <div className="mt-1 text-xs text-gray-400">Wallet: {walletBalanceSol.toFixed(4)} SOL</div>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium">Fees (SOL)</label>

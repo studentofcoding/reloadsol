@@ -483,19 +483,12 @@ export async function getSwapQuote(
       throw new Error('Slippage must be between 0 and 10000 bps')
     }
 
-    const params = new URLSearchParams({
-      inputMint,
-      outputMint,
-      amount: amount.toString(),
-      slippageBps: slippageBps.toString(),
-      onlyDirectRoutes: 'false',
-      asLegacyTransaction: 'false',
-    })
-
-    const response = await fetch(`${JUPITER_API.quote}?${params}`)
+    // Use Jupiter lite quote endpoint
+    console.log('Request Jupiter quote')
+    const url = `${JUPITER_API.quote}?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}`
+    const response = await fetch(url)
 
     if (!response.ok) {
-      // Get more detailed error information
       let errorMessage = `Quote API error: ${response.status}`
       try {
         const errorData = await response.json()
@@ -503,7 +496,6 @@ export async function getSwapQuote(
           errorMessage += ` - ${errorData.error}`
         }
       } catch {
-        // If we can't parse the error response, use the status text
         errorMessage += ` - ${response.statusText}`
       }
       throw new Error(errorMessage)
@@ -550,18 +542,23 @@ export async function getSwapTransaction(
   additionalInstructions: any[] = []
 ): Promise<SwapTransaction | null> {
   try {
+    // Use Jupiter lite swap endpoint, keep client-side wallet signing
+    console.log('Request Jupiter swap')
     const requestBody: any = {
       quoteResponse: quote,
       userPublicKey,
       wrapAndUnwrapSol: true,
-      priorityLevelWithMaxLamports: {
-        priorityLevel: 'medium',
-        maxLamports: priorityFeeLamports,
+      dynamicComputeUnitLimit: true,
+      prioritizationFeeLamports: {
+        priorityLevelWithMaxLamports: {
+          maxLamports: priorityFeeLamports,
+          priorityLevel: 'veryHigh',
+        },
       },
     }
 
-    // Add additional instructions if provided (like fee transfers)
-    if (additionalInstructions.length > 0) {
+    // Preserve additional fee instructions if provided
+    if (additionalInstructions && additionalInstructions.length > 0) {
       requestBody.additionalInstructions = additionalInstructions
     }
 

@@ -9,8 +9,8 @@ export const connection = defaultConnection
 
 // Jupiter API endpoints
 export const JUPITER_API = {
-  quote: 'https://quote-api.jup.ag/v6/quote',
-  swap: 'https://quote-api.jup.ag/v6/swap',
+  quote: 'https://lite-api.jup.ag/swap/v1/quote',
+  swap: 'https://lite-api.jup.ag/swap/v1/swap',
   tokens: 'https://token.jup.ag/strict',
 }
 
@@ -43,7 +43,7 @@ export async function getSolPriceUSD(): Promise<number> {
   try {
     // Check if we're on the client side
     const isClientSide = typeof window !== 'undefined'
-    
+
     if (isClientSide) {
       // Client-side: use the API endpoint
       const response = await fetch('/api/solprice', {
@@ -69,7 +69,7 @@ export async function getSolPriceUSD(): Promise<number> {
       // Server-side: use the core price fetching logic directly
       const { getSolPriceUSDCore } = await import('./sol-price-core');
       const result = await getSolPriceUSDCore();
-      
+
       console.log(`SOL price fetched: $${result.price} (source: ${result.source})`);
       return result.price;
     }
