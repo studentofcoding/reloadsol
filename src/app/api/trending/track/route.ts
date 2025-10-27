@@ -2698,6 +2698,13 @@ async function trackBotOperation(
     const currentSolPrice = await getSolPriceUSD()
     const walletAddress = tradingKeypair?.publicKey.toString() || 'simulation'
 
+    // Calculate SOL amount based on operation type
+    // For buys: use actual input lamports → SOL; fallback to strategy buy amount
+    // For sells: use output lamports → SOL
+    const solAmount = operationType === 'buy'
+      ? (bestResult.inputAmount ? parseFloat(bestResult.inputAmount) / 1e9 : getBuyAmountForStrategy(strategy))
+      : parseFloat(bestResult.outputAmount) / 1e9 // Convert lamports to SOL for sells
+
     const tokenData = {
       mintAddress: token.token_address,
       symbol: token.token_symbol,
@@ -2705,14 +2712,10 @@ async function trackBotOperation(
       logoURI: token.logo_url,
       priceUsd: token.current_price || token.last_price_usd,
       tokenAmount: parseFloat(bestResult.outputAmount) || 0,
+      solAmount,
       solPrice: currentSolPrice,
       // Remove bot fields from token data - they belong on the main record
     }
-
-    // Calculate SOL amount based on operation type
-    const solAmount = operationType === 'buy'
-      ? 0.015 // Fixed buy amount
-      : parseFloat(bestResult.outputAmount) / 1e9 // Convert lamports to SOL for sells
 
     await tradingTracker.trackOperation({
       walletAddress,
