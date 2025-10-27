@@ -7,9 +7,9 @@ const isServer = typeof window === 'undefined'
 const getServerRpcUrls = (): string[] => {
   const rpcUrl = process.env.RPC_URL
   if (!rpcUrl) {
-    return ['https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn']
+    return ['https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d']
   }
-  
+
   return rpcUrl
     .split(',')
     .map(url => url.trim())
@@ -20,7 +20,7 @@ const getServerRpcUrls = (): string[] => {
 const getClientRpcUrls = (): string[] => {
   // Client should use API proxy for all RPC requests
   // Placeholder URL for WebSocket connections (they'll mostly fail gracefully)
-  return ['https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn']
+  return ['https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d']
 }
 
 // Get RPC URLs based on environment
@@ -39,7 +39,7 @@ export const makeRpcRequest = async (body: any): Promise<any> => {
   if (isServer) {
     throw new Error('makeRpcRequest should only be used on client side. Use direct connection on server.')
   }
-  
+
   const response = await fetch('/api/rpc', {
     method: 'POST',
     headers: {
@@ -47,11 +47,11 @@ export const makeRpcRequest = async (body: any): Promise<any> => {
     },
     body: JSON.stringify(body),
   })
-  
+
   if (!response.ok) {
     throw new Error(`RPC proxy request failed: ${response.statusText}`)
   }
-  
+
   return response.json()
 }
 

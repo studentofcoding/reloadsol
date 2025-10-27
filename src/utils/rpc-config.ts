@@ -9,9 +9,9 @@ const isServer = typeof window === 'undefined'
  */
 export const parseRpcUrls = (envValue?: string): string[] => {
   if (!envValue) {
-    return ['https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn']
+    return ['https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d']
   }
-  
+
   return envValue
     .split(',')
     .map(url => url.trim())
@@ -26,7 +26,7 @@ export const makeClientRpcRequest = async (body: any): Promise<any> => {
   if (isServer) {
     throw new Error('makeClientRpcRequest should only be used on client side. Use direct connection on server.')
   }
-  
+
   const response = await fetch('/api/rpc', {
     method: 'POST',
     headers: {
@@ -34,11 +34,11 @@ export const makeClientRpcRequest = async (body: any): Promise<any> => {
     },
     body: JSON.stringify(body),
   })
-  
+
   if (!response.ok) {
     throw new Error(`RPC proxy request failed: ${response.statusText}`)
   }
-  
+
   return response.json()
 }
 
@@ -49,12 +49,12 @@ export const getRpcHealth = async (): Promise<any> => {
   if (isServer) {
     throw new Error('getRpcHealth should only be used on client side.')
   }
-  
+
   const response = await fetch('/api/rpc/health')
   if (!response.ok) {
     throw new Error(`Health check failed: ${response.statusText}`)
   }
-  
+
   return response.json()
 }
 
@@ -67,13 +67,13 @@ export const RPC_EXAMPLES = {
     'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
     'https://solana-api.projectserum.com',
   ],
-  
+
   // Pump.fun specialized endpoint
   pumpFun: [
     'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
     'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b', // fallback
   ],
-  
+
   // Premium providers (replace with your API keys)
   premium: [
     'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
@@ -81,7 +81,7 @@ export const RPC_EXAMPLES = {
     'https://solana-mainnet.rpc.extrnode.com/YOUR_API_KEY',
     'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b', // fallback
   ],
-  
+
   // High-performance setup
   highPerformance: [
     'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
@@ -107,7 +107,7 @@ export const validateRpcUrl = (url: string): boolean => {
 /**
  * Get configuration recommendations based on use case
  */
-export const getConfigRecommendations = (useCase: 'development' | 'production' | 'high-throughput' ): {
+export const getConfigRecommendations = (useCase: 'development' | 'production' | 'high-throughput'): {
   description: string
   example: string
   endpoints: string[]
@@ -119,28 +119,28 @@ export const getConfigRecommendations = (useCase: 'development' | 'production' |
         example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
         endpoints: RPC_EXAMPLES.public
       }
-      
+
     // case 'pump-fun':
     //   return {
     //     description: 'Optimized for Pump.fun trading with Helius RPC',
     //     example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
     //     endpoints: RPC_EXAMPLES.pumpFun
     //   }
-      
+
     case 'production':
       return {
         description: 'Reliable setup with premium endpoints and fallbacks',
         example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=YOUR_KEY,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
         endpoints: RPC_EXAMPLES.premium
       }
-      
+
     case 'high-throughput':
       return {
         description: 'Maximum reliability with multiple premium endpoints',
         example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
         endpoints: RPC_EXAMPLES.highPerformance
       }
-      
+
     default:
       return getConfigRecommendations('development')
   }

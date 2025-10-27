@@ -1,6 +1,8 @@
 import { supabase } from '@/utils/supabase'
 import { log } from '@/utils/unified-logger'
 
+export type TokenLabel = 'valid' | 'traded_live' | 'potential' | 'rugged'
+
 export interface McapSnapshot {
   token_address: string
   token_symbol: string
@@ -13,6 +15,7 @@ export interface McapSnapshot {
   when_reach_120mc?: string | null
   when_reach_200mc?: string | null
   is_tracking_stuck?: boolean
+  label?: TokenLabel | null
 }
 
 export interface McapTrackingResult {

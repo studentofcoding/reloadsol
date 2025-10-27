@@ -4,9 +4,9 @@ import { NextRequest, NextResponse } from 'next/server'
 const getRpcUrls = (): string[] => {
   const rpcUrl = process.env.RPC_URL
   if (!rpcUrl) {
-    return ['https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn']
+    return ['https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d']
   }
-  
+
   // Split by comma and trim whitespace
   return rpcUrl.split(',').map(url => url.trim()).filter(url => url.length > 0)
 }
@@ -33,11 +33,11 @@ const CACHE_TTL = 60 * 1000 // 1 minute cache
 // Test a single RPC endpoint quickly
 const quickHealthCheck = async (url: string, timeout = 3000): Promise<{ url: string; healthy: boolean; responseTime: number }> => {
   const startTime = Date.now()
-  
+
   try {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeout)
-    
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -52,22 +52,22 @@ const quickHealthCheck = async (url: string, timeout = 3000): Promise<{ url: str
       }),
       signal: controller.signal
     })
-    
+
     clearTimeout(timeoutId)
     const responseTime = Date.now() - startTime
-    
+
     if (!response.ok) {
       return { url, healthy: false, responseTime }
     }
-    
+
     const data = await response.json()
-    
+
     if (data.error || typeof data.result !== 'number') {
       return { url, healthy: false, responseTime }
     }
-    
+
     return { url, healthy: true, responseTime }
-    
+
   } catch (error) {
     return { url, healthy: false, responseTime: Date.now() - startTime }
   }
@@ -76,21 +76,21 @@ const quickHealthCheck = async (url: string, timeout = 3000): Promise<{ url: str
 // Enhanced health check with better error handling and circuit breaker
 const getHealthyEndpoints = async (): Promise<string[]> => {
   const now = Date.now()
-  
+
   // Check if cache is still valid
-  if (healthyEndpointsCache.length > 0 && 
-      healthyEndpointsCache.every(ep => now - ep.lastChecked < CACHE_TTL)) {
+  if (healthyEndpointsCache.length > 0 &&
+    healthyEndpointsCache.every(ep => now - ep.lastChecked < CACHE_TTL)) {
     return healthyEndpointsCache.map(ep => ep.url)
   }
-  
+
   // Use cached RPC URLs
   const rpcUrls = getCachedRpcUrls()
-  
+
   // Parallel health checks with timeout
   const healthResults = await Promise.allSettled(
     rpcUrls.map(url => quickHealthCheck(url, 2000)) // Reduced timeout for faster response
   )
-  
+
   // Update cache with healthy endpoints
   healthyEndpointsCache.length = 0 // Clear cache
   healthResults
@@ -103,9 +103,9 @@ const getHealthyEndpoints = async (): Promise<string[]> => {
       }
       return false
     })
-    .map((result, index) => ({ 
-      ...(result as PromiseFulfilledResult<any>).value, 
-      originalIndex: index 
+    .map((result, index) => ({
+      ...(result as PromiseFulfilledResult<any>).value,
+      originalIndex: index
     }))
     .sort((a, b) => a.responseTime - b.responseTime) // Sort by response time
     .forEach(result => {
@@ -115,7 +115,7 @@ const getHealthyEndpoints = async (): Promise<string[]> => {
         responseTime: result.responseTime
       })
     })
-  
+
   return healthyEndpointsCache.map(ep => ep.url)
 }
 
@@ -123,12 +123,12 @@ const getHealthyEndpoints = async (): Promise<string[]> => {
 const makeRpcRequest = async (body: any, healthyUrls: string[]): Promise<any> => {
   let lastError: Error | null = null
   const timeout = 8000 // 8 second timeout
-  
+
   for (const url of healthyUrls) {
     try {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), timeout)
-      
+
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -147,25 +147,25 @@ const makeRpcRequest = async (body: any, healthyUrls: string[]): Promise<any> =>
           console.warn(`Rate limited by ${url}, trying next endpoint`)
           continue
         }
-        
+
         const errorText = await response.text().catch(() => 'Unknown error')
         throw new Error(`HTTP ${response.status}: ${errorText}`)
       }
 
       const data = await response.json()
-      
+
       // Validate response structure
       if (data.error) {
         throw new Error(`RPC Error: ${data.error.message || JSON.stringify(data.error)}`)
       }
-      
+
       return data
-      
+
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error)
       console.warn(`RPC request failed for ${url}:`, errorMessage)
       lastError = error instanceof Error ? error : new Error(errorMessage)
-      
+
       // Remove failed endpoint from cache only on non-timeout errors
       if (!errorMessage.includes('aborted') && !errorMessage.includes('timeout')) {
         const index = healthyEndpointsCache.findIndex(ep => ep.url === url)
@@ -173,11 +173,11 @@ const makeRpcRequest = async (body: any, healthyUrls: string[]): Promise<any> =>
           healthyEndpointsCache.splice(index, 1)
         }
       }
-      
+
       continue
     }
   }
-  
+
   throw lastError || new Error('All RPC endpoints failed')
 }
 
@@ -185,24 +185,24 @@ export async function POST(request: NextRequest) {
   try {
     // Get the request body
     const body = await request.json()
-    
+
     // Get healthy endpoints with fallback
     let healthyUrls = await getHealthyEndpoints()
-    
+
     // Fallback to all URLs if no healthy endpoints found
     if (healthyUrls.length === 0) {
       console.warn('No healthy endpoints found, using all configured endpoints')
       healthyUrls = getCachedRpcUrls()
     }
-    
+
     if (healthyUrls.length === 0) {
       console.error('No healthy RPC endpoints available')
       return NextResponse.json(
-        { 
+        {
           error: 'No healthy RPC endpoints available',
           details: 'All configured RPC endpoints are currently unhealthy'
         },
-        { 
+        {
           status: 503,
           headers: {
             'Access-Control-Allow-Origin': '*',
@@ -212,10 +212,10 @@ export async function POST(request: NextRequest) {
         }
       )
     }
-    
+
     // Make request with failover
     const data = await makeRpcRequest(body, healthyUrls)
-    
+
     // Return successful response
     return NextResponse.json(data, {
       status: 200,
@@ -226,15 +226,15 @@ export async function POST(request: NextRequest) {
         'X-RPC-Endpoint': healthyUrls[0], // Indicate which endpoint was used
       },
     })
-    
+
   } catch (error) {
     console.error('RPC proxy error:', error)
     return NextResponse.json(
-      { 
+      {
         error: 'RPC request failed',
         details: error instanceof Error ? error.message : 'Unknown error'
       },
-      { 
+      {
         status: 500,
         headers: {
           'Access-Control-Allow-Origin': '*',

@@ -1,9 +1,9 @@
-import { 
-  TradeProvider, 
-  TradeQuoteRequest, 
-  ProviderQuote, 
-  TradeComparison, 
-  ProviderConfig 
+import {
+  TradeProvider,
+  TradeQuoteRequest,
+  ProviderQuote,
+  TradeComparison,
+  ProviderConfig
 } from '@/types'
 import { getSwapQuote } from './jupiter'
 
@@ -150,7 +150,7 @@ async function getDflowQuote(request: TradeQuoteRequest): Promise<ProviderQuote>
 
       const swapData = await swapResponse.json()
 
-    return {
+      return {
         quote: quoteData,
         swap: swapData
       }
@@ -206,11 +206,11 @@ async function getSolanaTrackerQuote(request: TradeQuoteRequest): Promise<Provid
       const queryParams = new URLSearchParams()
       queryParams.append('from', request.inputMint)
       queryParams.append('to', request.outputMint)
-      
+
       // Convert amount from lamports to proper decimal format
       const amountInSol = parseFloat(request.amount) / 1_000_000_000 // Convert lamports to SOL
       queryParams.append('fromAmount', amountInSol.toString())
-      
+
       // Convert slippageBps to percentage (1000 bps = 10%)
       const slippagePercentage = request.slippageBps / 100
       queryParams.append('slippage', slippagePercentage.toString())
@@ -232,7 +232,7 @@ async function getSolanaTrackerQuote(request: TradeQuoteRequest): Promise<Provid
       }
 
       const data = await response.json()
-      
+
       // Validate response structure
       if (!data.rate || typeof data.rate.amountOut !== 'number') {
         throw new Error('Invalid Solana Tracker response format')
@@ -294,7 +294,7 @@ async function getGmgnQuote(request: TradeQuoteRequest): Promise<ProviderQuote> 
     const { result: quote, time } = await measureTime(async () => {
       // Convert amount from string to proper format for GMGN API
       const amountValue = parseFloat(request.amount)
-      
+
       // Build the GMGN API URL
       const queryParams = new URLSearchParams()
       queryParams.append('token_in_address', request.inputMint)
@@ -320,7 +320,7 @@ async function getGmgnQuote(request: TradeQuoteRequest): Promise<ProviderQuote> 
       }
 
       const data = await response.json()
-      
+
       // Validate response structure (adapt based on actual GMGN response format)
       if (!data || typeof data !== 'object') {
         throw new Error('Invalid GMGN response format')
@@ -383,7 +383,7 @@ async function getGmgnQuote(request: TradeQuoteRequest): Promise<ProviderQuote> 
 //     const { result: quote, time } = await measureTime(async () => {
 //       // Convert amount to SOL for pump.fun calculation
 //       const amountInSol = parseFloat(request.amount) / 1e9
-      
+
 //       // Get quote using PumpPortal local trade API
 //       const response = await fetch(`${PROVIDER_CONFIG['pump-fun'].apiUrl}/trade-local`, {
 //         method: 'POST',
@@ -411,13 +411,13 @@ async function getGmgnQuote(request: TradeQuoteRequest): Promise<ProviderQuote> 
 //       // For quotes, we'll simulate the transaction data
 //       // In a real implementation, you'd parse the transaction to get expected output
 //       // For now, we'll use market data estimation
-      
+
 //       // Fallback to market estimation since PumpPortal returns transaction data
 //       // This is a simplified calculation - in production you'd parse the transaction
 //       const estimatedPrice = 0.00001 // Placeholder price for pump.fun tokens
 //       const estimatedOutput = Math.floor(amountInSol / estimatedPrice)
 //       const priceImpact = Math.min((amountInSol / 1000) * 100, 15) // Estimate based on trade size
-      
+
 //       return {
 //         success: true,
 //         estimatedOutput: estimatedOutput.toString(),
@@ -488,7 +488,7 @@ export async function compareTradeQuotes(request: TradeQuoteRequest): Promise<Tr
   })
 
   // Fetch quotes from all providers in parallel
-  const [jupiterQuote, dflowQuote, solanaTrackerQuote, gmgnQuote ] = await Promise.all([
+  const [jupiterQuote, dflowQuote, solanaTrackerQuote, gmgnQuote] = await Promise.all([
     getJupiterQuote(request),
     getDflowQuote(request),
     getSolanaTrackerQuote(request),
@@ -496,13 +496,13 @@ export async function compareTradeQuotes(request: TradeQuoteRequest): Promise<Tr
     // getPumpFunQuote(request)
   ])
 
-  const quotes = [jupiterQuote, dflowQuote, solanaTrackerQuote, gmgnQuote ]
+  const quotes = [jupiterQuote, dflowQuote, solanaTrackerQuote, gmgnQuote]
   const successfulQuotes = quotes.filter(q => q.success)
 
   // Find best quote by output amount
   let bestQuote: ProviderQuote | null = null
   if (successfulQuotes.length > 0) {
-    bestQuote = successfulQuotes.reduce((best, current) => 
+    bestQuote = successfulQuotes.reduce((best, current) =>
       parseFloat(current.outAmount) > parseFloat(best.outAmount) ? current : best
     )
   }
@@ -562,7 +562,7 @@ function calculateComparison(quotes: ProviderQuote[]) {
   const nextBestAmount = successfulQuotes
     .filter(q => q.provider !== bestQuote.provider)
     .reduce((max, current) => Math.max(max, parseFloat(current.outAmount)), 0)
-  
+
   const advantage = nextBestAmount > 0
     ? ((bestAmount - nextBestAmount) / nextBestAmount * 100).toFixed(2)
     : '0'
@@ -621,8 +621,8 @@ function calculateComparison(quotes: ProviderQuote[]) {
 function calculateSummary(quotes: ProviderQuote[], bestQuote: ProviderQuote | null) {
   const successfulQuotes = quotes.filter(q => q.success)
   const failedQuotes = quotes.filter(q => !q.success)
-  const averageResponseTime = quotes.length > 0 
-    ? quotes.reduce((sum, q) => sum + q.responseTime, 0) / quotes.length 
+  const averageResponseTime = quotes.length > 0
+    ? quotes.reduce((sum, q) => sum + q.responseTime, 0) / quotes.length
     : 0
 
   // Determine recommendation based on multiple factors
@@ -635,9 +635,9 @@ function calculateSummary(quotes: ProviderQuote[], bestQuote: ProviderQuote | nu
       const priceScore = parseFloat(quote.outAmount)
       const speedScore = 10000 / Math.max(quote.responseTime, 1) // Inverse of response time
       const reliabilityScore = quote.success ? 100 : 0
-      
+
       const totalScore = (priceScore * 0.5) + (speedScore * 0.3) + (reliabilityScore * 0.2)
-      
+
       return { provider: quote.provider, score: totalScore, quote }
     })
 
@@ -803,7 +803,7 @@ interface EnhancedComparisonResult {
 // RPC endpoints for testing redundancy
 const RPC_ENDPOINTS = [
   { name: 'Helius', url: 'https://mainnet.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b' },
-  { name: 'Shyft', url: 'https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn' },
+  { name: 'Shyft', url: 'https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d' },
   { name: 'SolanaTracker', url: 'https://rpc-mainnet.solanatracker.io/?api_key=3efd278f-9f1d-4888-ac0e-8d24014714d5' },
   { name: 'FluxBeam', url: 'https://eu.rpc.fluxbeam.xyz?key=94a42d66-8cc7-454a-9d33-513cff867307' }
 ]
@@ -836,20 +836,20 @@ async function retryWithBackoff<T>(
   baseDelay: number = 100
 ): Promise<T> {
   let lastError: Error | null = null
-  
+
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return await fn()
     } catch (error) {
       lastError = error instanceof Error ? error : new Error('Unknown error')
-      
+
       if (attempt < maxRetries - 1) {
         const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 100
         await new Promise(resolve => setTimeout(resolve, delay))
       }
     }
   }
-  
+
   throw lastError
 }
 
@@ -860,19 +860,19 @@ async function getEnhancedQuote(
   rpcEndpoint?: string
 ): Promise<ProviderQuote & { rpc_used?: string }> {
   const cacheKey = `${provider}-${request.inputMint}-${request.outputMint}-${request.amount}-${request.slippageBps}-${rpcEndpoint || 'default'}`
-  
+
   // Check cache first
   const cached = getCachedQuote(cacheKey)
   if (cached) {
     return { ...cached, rpc_used: rpcEndpoint }
   }
-  
+
   let result: ProviderQuote & { rpc_used?: string }
-  
+
   try {
     result = await retryWithBackoff(async () => {
       const startTime = Date.now()
-      
+
       // Use the appropriate provider function based on type
       let quote: ProviderQuote
       switch (provider) {
@@ -894,22 +894,22 @@ async function getEnhancedQuote(
         default:
           throw new Error(`Unknown provider: ${provider}`)
       }
-      
+
       const totalTime = Date.now() - startTime
       const enhancedQuote = {
         ...quote,
         responseTime: Math.max(quote.responseTime, totalTime),
         rpc_used: rpcEndpoint
       }
-      
+
       // Cache successful quotes
       if (quote.success) {
         setCachedQuote(cacheKey, enhancedQuote)
       }
-      
+
       return enhancedQuote
     }, 2, 200) // 2 retries with 200ms base delay
-    
+
   } catch (error) {
     result = {
       provider,
@@ -926,7 +926,7 @@ async function getEnhancedQuote(
       rpc_used: rpcEndpoint
     }
   }
-  
+
   return result
 }
 
@@ -937,18 +937,18 @@ export async function performEnhancedTradeComparison(
   buyAmountSol: number = 0.1
 ): Promise<EnhancedComparisonResult> {
   console.log(`🚀 Starting enhanced trade comparison for ${tokenSymbol} (${tokenAddress})`)
-  
+
   const SOL_MINT = 'So11111111111111111111111111111111111111112'
   const buyAmountLamports = Math.floor(buyAmountSol * 1e9)
-  
+
   // Test configurations
   const slippageConfigs = [1, 2, 5] // 1%, 2%, 5%
   const providers: TradeProvider[] = ['jupiter', 'dflow', 'solana-tracker', 'gmgn']
   const rpcs = RPC_ENDPOINTS
-  
+
   // Build all test combinations
   const testConfigurations: EnhancedTradeConfig[] = []
-  
+
   for (const slippage of slippageConfigs) {
     for (const provider of providers) {
       for (const rpc of rpcs) {
@@ -960,19 +960,19 @@ export async function performEnhancedTradeComparison(
       }
     }
   }
-  
+
   console.log(`📊 Testing ${testConfigurations.length} configurations (${slippageConfigs.length} slippages × ${providers.length} providers × ${rpcs.length} RPCs)`)
-  
+
   // Execute all tests in parallel with controlled concurrency
   const batchSize = 12 // Process 12 requests at a time to avoid overwhelming APIs
   const results: Array<{
     config: EnhancedTradeConfig
     quote: ProviderQuote & { rpc_used?: string }
   }> = []
-  
+
   for (let i = 0; i < testConfigurations.length; i += batchSize) {
     const batch = testConfigurations.slice(i, i + batchSize)
-    
+
     const batchPromises = batch.map(async (config) => {
       const request: TradeQuoteRequest = {
         inputMint: SOL_MINT,
@@ -981,7 +981,7 @@ export async function performEnhancedTradeComparison(
         slippageBps: config.slippage * 100, // Convert percentage to basis points
         userPublicKey: '11111111111111111111111111111111' // Dummy key for comparison
       }
-      
+
       const quote = await getEnhancedQuote(request, config.provider, config.rpc)
       // Detailed logging for each attempt
       if (quote.success) {
@@ -995,9 +995,9 @@ export async function performEnhancedTradeComparison(
       }
       return { config, quote }
     })
-    
+
     const batchResults = await Promise.allSettled(batchPromises)
-    
+
     batchResults.forEach((result) => {
       if (result.status === 'fulfilled') {
         results.push(result.value)
@@ -1012,14 +1012,14 @@ export async function performEnhancedTradeComparison(
       await new Promise(resolve => setTimeout(resolve, 100))
     }
   }
-  
+
   console.log(`✅ Completed ${results.length}/${testConfigurations.length} test configurations`)
-  
+
   // Aggregate results by slippage configuration
   const configurations: EnhancedComparisonResult['configurations'] = {}
   const providerPerformance: EnhancedComparisonResult['provider_performance'] = {}
   const rpcPerformance: EnhancedComparisonResult['rpc_performance'] = {}
-  
+
   // Initialize performance tracking
   providers.forEach(provider => {
     providerPerformance[provider] = {
@@ -1029,7 +1029,7 @@ export async function performEnhancedTradeComparison(
       total_attempts: 0
     }
   })
-  
+
   rpcs.forEach(rpc => {
     rpcPerformance[rpc.name] = {
       success_rate: 0,
@@ -1037,12 +1037,12 @@ export async function performEnhancedTradeComparison(
       total_attempts: 0
     }
   })
-  
+
   // Process results by slippage
   for (const slippage of slippageConfigs) {
     const slippageResults = results.filter(r => r.config.slippage === slippage)
     const successfulResults = slippageResults.filter(r => r.quote.success)
-    
+
     let bestResult = null
     if (successfulResults.length > 0) {
       bestResult = successfulResults.reduce((best, current) => {
@@ -1051,9 +1051,9 @@ export async function performEnhancedTradeComparison(
         return currentAmount > bestAmount ? current : best
       })
     }
-    
+
     const configKey = `slippage_${slippage}`
-    
+
     if (bestResult) {
       const fees = bestResult.quote.fees?.totalFeeLamports || 0
       configurations[configKey] = {
@@ -1076,18 +1076,18 @@ export async function performEnhancedTradeComparison(
         error: slippageResults.length > 0 ? 'All providers failed' : 'No results'
       }
     }
-    
+
     // Update provider performance for this slippage
     slippageResults.forEach(result => {
       const provider = result.config.provider
       const rpc = result.config.rpc!
-      
+
       // Provider performance
       providerPerformance[provider].total_attempts++
       if (result.quote.success) {
         providerPerformance[provider].success_rate++
         providerPerformance[provider].avg_response_time += result.quote.responseTime
-        
+
         // Track best slippage for this provider
         const currentAmount = parseFloat(result.quote.outAmount)
         const existingBest = providerPerformance[provider].best_slippage
@@ -1095,7 +1095,7 @@ export async function performEnhancedTradeComparison(
           providerPerformance[provider].best_slippage = slippage
         }
       }
-      
+
       // RPC performance
       rpcPerformance[rpc].total_attempts++
       if (result.quote.success) {
@@ -1104,7 +1104,7 @@ export async function performEnhancedTradeComparison(
       }
     })
   }
-  
+
   // Calculate final performance metrics
   Object.keys(providerPerformance).forEach(provider => {
     const perf = providerPerformance[provider]
@@ -1113,7 +1113,7 @@ export async function performEnhancedTradeComparison(
       perf.avg_response_time = perf.success_rate > 0 ? perf.avg_response_time / (perf.total_attempts * perf.success_rate / 100) : 0
     }
   })
-  
+
   Object.keys(rpcPerformance).forEach(rpc => {
     const perf = rpcPerformance[rpc]
     if (perf.total_attempts > 0) {
@@ -1121,18 +1121,18 @@ export async function performEnhancedTradeComparison(
       perf.avg_response_time = perf.success_rate > 0 ? perf.avg_response_time / (perf.total_attempts * perf.success_rate / 100) : 0
     }
   })
-  
+
   // Determine overall best configuration
   const allSuccessful = results.filter(r => r.quote.success)
   let bestConfig = null
-  
+
   if (allSuccessful.length > 0) {
     const overallBest = allSuccessful.reduce((best, current) => {
       const bestAmount = parseFloat(best.quote.outAmount)
       const currentAmount = parseFloat(current.quote.outAmount)
       return currentAmount > bestAmount ? current : best
     })
-    
+
     const fees = overallBest.quote.fees?.totalFeeLamports || 0
     bestConfig = {
       slippage: overallBest.config.slippage,
@@ -1143,7 +1143,7 @@ export async function performEnhancedTradeComparison(
       rpc_used: overallBest.quote.rpc_used
     }
   }
-  
+
   const result: EnhancedComparisonResult = {
     token_address: tokenAddress,
     token_symbol: tokenSymbol,
@@ -1154,7 +1154,7 @@ export async function performEnhancedTradeComparison(
     provider_performance: providerPerformance,
     rpc_performance: rpcPerformance
   }
-  
+
   console.log(`🎯 Enhanced comparison completed for ${tokenSymbol}:`, {
     successful_configs: Object.values(configurations).filter(c => c.success).length,
     best_provider: bestConfig?.provider,
@@ -1163,7 +1163,7 @@ export async function performEnhancedTradeComparison(
       .map(([p, perf]) => `${p}: ${perf.success_rate.toFixed(1)}%`)
       .join(', ')
   })
-  
+
   return result
 }
 

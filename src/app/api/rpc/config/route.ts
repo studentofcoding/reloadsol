@@ -4,9 +4,9 @@ import { NextRequest, NextResponse } from 'next/server'
 const getRpcUrls = (): string[] => {
   const rpcUrl = process.env.RPC_URL
   if (!rpcUrl) {
-    return ['https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn']
+    return ['https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d']
   }
-  
+
   return rpcUrl
     .split(',')
     .map(url => url.trim())
@@ -21,7 +21,7 @@ const sanitizeUrl = (url: string): string => {
     urlObj.searchParams.delete('api-key')
     urlObj.searchParams.delete('api_key')
     urlObj.searchParams.delete('token')
-    
+
     // Show just the base URL
     return `${urlObj.protocol}//${urlObj.hostname}${urlObj.pathname !== '/' ? urlObj.pathname : ''}${urlObj.search ? '?***' : ''}`
   } catch {
@@ -32,7 +32,7 @@ const sanitizeUrl = (url: string): string => {
 export async function GET() {
   try {
     const rpcUrls = getRpcUrls()
-    
+
     return NextResponse.json({
       status: 'success',
       timestamp: new Date().toISOString(),
@@ -41,9 +41,9 @@ export async function GET() {
         endpoints: rpcUrls.map((url, index) => ({
           index: index + 1,
           url: sanitizeUrl(url),
-          type: url.includes('helius') ? 'Helius' : 
-                url.includes('shyft') ? 'Shyft' : 
-                url.includes('extrnode') ? 'Extrnode' :
+          type: url.includes('helius') ? 'Helius' :
+            url.includes('shyft') ? 'Shyft' :
+              url.includes('extrnode') ? 'Extrnode' :
                 url.includes('projectserum') ? 'Project Serum' : 'Custom'
         })),
         proxy_available: true,
@@ -55,11 +55,11 @@ export async function GET() {
         health_monitoring: 'Available at /api/rpc/health'
       }
     })
-    
+
   } catch (error) {
     console.error('RPC config error:', error)
     return NextResponse.json(
-      { 
+      {
         status: 'error',
         timestamp: new Date().toISOString(),
         error: error instanceof Error ? error.message : 'Unknown error'

@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react"
 import { useWallet, useConnection } from '@/components/WalletProvider'
 import { VersionedTransaction, LAMPORTS_PER_SOL } from '@solana/web3.js'
 import Draggable from 'react-draggable'
+import { TokenLabel } from '@/utils/mcap-tracker'
 
 type SignalItem = {
   token_address: string
@@ -38,6 +39,7 @@ type FloatingChart = {
   isInGrid: boolean
   isDraggable: boolean
   gridOrder: number
+  label?: TokenLabel | null
 }
 
 const numberFmt = (n?: number) => {
@@ -101,7 +103,8 @@ export default function TradingSignals() {
         zIndex: chart.zIndex,
         isInGrid: chart.isInGrid,
         isDraggable: chart.isDraggable,
-        gridOrder: chart.gridOrder
+        gridOrder: chart.gridOrder,
+        label: chart.label
       }))
       localStorage.setItem('tradingSignals_floatingCharts', JSON.stringify(chartsToSave))
     } catch (error) {
@@ -255,11 +258,64 @@ export default function TradingSignals() {
       isLoading: true,
       isInGrid: true,
       isDraggable: false,
-      gridOrder: gridCharts.length
+      gridOrder: gridCharts.length,
+      label: null
     }
 
     setFloatingCharts(prev => [...prev, newChart])
     setNextZIndex(prev => prev + 1)
+  }
+
+  // Label management
+  const handleUpdateLabel = async (chartId: string, tokenAddress: string, label: TokenLabel | null) => {
+    try {
+      const response = await fetch('/api/mcap-tracking/label', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          tokenAddress,
+          label
+        })
+      })
+
+      const result = await response.json()
+      
+      if (result.success) {
+        // Update the chart's label in state
+        setFloatingCharts(prev => prev.map(chart => 
+          chart.id === chartId 
+            ? { ...chart, label }
+            : chart
+        ))
+      } else {
+        console.error('Failed to update label:', result.error)
+        alert(`Failed to update label: ${result.error}`)
+      }
+    } catch (error) {
+      console.error('Error updating label:', error)
+      alert('Error updating label. Please try again.')
+    }
+  }
+
+  const getLabelColor = (label?: TokenLabel | null) => {
+    switch (label) {
+      case 'valid':
+        return 'bg-green-100 text-green-800 border-green-300'
+      case 'traded_live':
+        return 'bg-blue-100 text-blue-800 border-blue-300'
+      case 'potential':
+        return 'bg-yellow-100 text-yellow-800 border-yellow-300'
+      case 'rugged':
+        return 'bg-red-100 text-red-800 border-red-300'
+      default:
+        return 'bg-gray-100 text-gray-600 border-gray-300'
+    }
+  }
+
+  const getLabelDisplayText = (label?: TokenLabel | null) => {
+    return label || 'No Label'
   }
 
   const handleCloseChart = (chartId: string) => {
@@ -731,6 +787,27 @@ export default function TradingSignals() {
               <div className="flex justify-between items-center p-3 border-b border-gray-200 bg-gray-50 rounded-t-lg drag-handle cursor-move">
                 <div className="flex items-center gap-3">
                   <span className="font-semibold text-gray-800">{chart.tokenSymbol || "UNKNOWN"}</span>
+                  
+                  {/* Label Dropdown */}
+                   <div className="flex items-center gap-2">
+                      <select
+                        value={chart.label || ''}
+                        onChange={(e) => {
+                          const value = e.target.value
+                          const label: TokenLabel | null = value === '' ? null : value as TokenLabel
+                          handleUpdateLabel(chart.id, chart.tokenAddress, label)
+                        }}
+                        className={`px-2 py-1 text-xs rounded border ${getLabelColor(chart.label)} cursor-pointer`}
+                        onClick={(e) => e.stopPropagation()} // Prevent drag when clicking dropdown
+                      >
+                        <option value="">No Label</option>
+                        <option value="valid">Valid</option>
+                        <option value="traded_live">Traded Live</option>
+                        <option value="potential">Potential</option>
+                        <option value="rugged">Rugged</option>
+                      </select>
+                    </div>
+                  
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-gray-600">{buyConfig.solAmount} SOL</span>
                     <button

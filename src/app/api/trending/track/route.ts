@@ -6031,7 +6031,7 @@ let tradingSigner: ((transactions: VersionedTransaction[]) => Promise<VersionedT
 function initializeTradingConnection(): Connection {
   if (!tradingConnection) {
     // Always use Shyft RPC for real trading as requested
-    const shyftRpcUrl = 'https://rpc.shyft.to?api_key=dt_BAV8lwogCz_vn'
+    const shyftRpcUrl = 'https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d'
     tradingConnection = new Connection(shyftRpcUrl, 'confirmed')
     console.log('🌐 Real trading connection initialized with Shyft RPC')
   }
