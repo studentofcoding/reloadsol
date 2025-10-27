@@ -190,13 +190,34 @@ export async function GET(request: NextRequest) {
   })
 
   console.log(`📡 [${requestId}] SSE stream created successfully`)
+  // Resolve allowed origin (echo allowed reloadsol.xyz subdomain)
+  const origin = request.headers.get('origin')
+  let allowedOrigin: string | null = null
+  if (origin) {
+    try {
+      const url = new URL(origin)
+      const hostname = url.hostname
+      const protocol = url.protocol
+      if (process.env.NODE_ENV !== 'production' || protocol === 'https:') {
+        if (hostname === 'reloadsol.xyz' || hostname.endsWith('.reloadsol.xyz')) {
+          allowedOrigin = origin
+        }
+      }
+      if (!allowedOrigin && process.env.NODE_ENV !== 'production') {
+        if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+          allowedOrigin = origin
+        }
+      }
+    } catch {}
+  }
+
   return new Response(stream, {
     headers: {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Connection': 'keep-alive',
       'Transfer-Encoding': 'chunked',
-      'Access-Control-Allow-Origin': process.env.NODE_ENV === 'development' ? '*' : 'https://v2.reloadsol.xyz',
+      ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin } : {}),
       'Access-Control-Allow-Headers': 'Cache-Control',
       'X-Accel-Buffering': 'no',
       // Additional headers for better streaming support
@@ -248,12 +269,42 @@ export async function POST(request: NextRequest) {
 
     console.log(`📡 Notified ${notifiedCount} connections for wallet ${walletAddress.slice(0, 8)}... (${failedConnections.length} failed)`)
 
-    return NextResponse.json({
-      success: true,
-      notified: notifiedCount,
-      failed: failedConnections.length,
-      activeConnections: activeConnections.size
-    })
+    // Resolve allowed origin for CORS
+    const origin = request.headers.get('origin')
+    let allowedOrigin: string | null = null
+    if (origin) {
+      try {
+        const url = new URL(origin)
+        const hostname = url.hostname
+        const protocol = url.protocol
+        if (process.env.NODE_ENV !== 'production' || protocol === 'https:') {
+          if (hostname === 'reloadsol.xyz' || hostname.endsWith('.reloadsol.xyz')) {
+            allowedOrigin = origin
+          }
+        }
+        if (!allowedOrigin && process.env.NODE_ENV !== 'production') {
+          if (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+            allowedOrigin = origin
+          }
+        }
+      } catch {}
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        notified: notifiedCount,
+        failed: failedConnections.length,
+        activeConnections: activeConnections.size
+      },
+      {
+        headers: {
+          ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin } : {}),
+          'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Origin',
+        },
+      }
+    )
   } catch (error) {
     console.error('Error notifying subscribers:', error)
     return NextResponse.json(

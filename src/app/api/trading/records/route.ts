@@ -160,6 +160,31 @@ async function fetchTradingRecordsFromDB(walletAddress: string, limit: number): 
   return (data || []).map((item: DatabaseRecord) => item.data)
 }
 
+// Determine allowed origin for CORS (any https subdomain of reloadsol.xyz)
+function resolveAllowedOrigin(request: NextRequest): string | null {
+  const origin = request.headers.get('origin')
+  if (!origin) return null
+  try {
+    const url = new URL(origin)
+    const hostname = url.hostname
+    const protocol = url.protocol
+
+    if (process.env.NODE_ENV === 'production' && protocol !== 'https:') return null
+    if (hostname === 'reloadsol.xyz' || hostname.endsWith('.reloadsol.xyz')) return origin
+
+    // Allow localhost in non-production for testing
+    if (
+      process.env.NODE_ENV !== 'production' &&
+      (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'))
+    ) {
+      return origin
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
 // GET /api/trading/records?wallet=<address>&limit=<number>
 export async function GET(request: NextRequest) {
   try {
@@ -182,6 +207,8 @@ export async function GET(request: NextRequest) {
 
     const records = await fetchTradingRecordsWithCache(walletAddress, limit)
 
+    const allowedOrigin = resolveAllowedOrigin(request)
+
     return NextResponse.json({
       success: true,
       records,
@@ -189,7 +216,10 @@ export async function GET(request: NextRequest) {
     }, {
       headers: {
         'Cache-Control': 'public, max-age=120, stale-while-revalidate=60',
-        'X-Cache-Status': getCachedRecords(walletAddress, limit) ? 'HIT' : 'MISS'
+        'X-Cache-Status': getCachedRecords(walletAddress, limit) ? 'HIT' : 'MISS',
+        ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin } : {}),
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Origin',
       }
     })
   } catch (error) {
@@ -255,7 +285,18 @@ export async function POST(request: NextRequest) {
     
     console.log(`🗑️ Invalidated ${keysToDelete.length} cache entries for wallet ${record.walletAddress.substring(0, 8)}...`)
 
-    return NextResponse.json({ success: true })
+    const allowedOrigin = resolveAllowedOrigin(request)
+
+    return NextResponse.json(
+      { success: true },
+      {
+        headers: {
+          ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin } : {}),
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Origin',
+        },
+      }
+    )
   } catch (error) {
     console.error('Error saving trading record:', error)
     return NextResponse.json(
@@ -269,13 +310,15 @@ export async function POST(request: NextRequest) {
 }
 
 // OPTIONS /api/trading/records - Handle CORS preflight
-export async function OPTIONS() {
+export async function OPTIONS(request: NextRequest) {
+  const allowedOrigin = resolveAllowedOrigin(request)
   return new NextResponse(null, {
     status: 200,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin } : { 'Access-Control-Allow-Origin': '*' }),
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Origin',
+      'Access-Control-Max-Age': '86400',
     },
   })
 }
