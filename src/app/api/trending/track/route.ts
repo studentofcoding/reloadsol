@@ -203,7 +203,7 @@ const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
       tp3_percentage: 30,
       tp3_enabled: false
     },
-    buy_amount_sol: 0.015,
+    buy_amount_sol: 0.035,
     priority_fee_lamports: 1000000,
     stop_loss_percentage: -35,
     max_hold_hours: 24,
