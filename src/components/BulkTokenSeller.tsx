@@ -1346,7 +1346,15 @@ export default function BulkTokenSeller() {
         </div>
 
         {/* Token List */}
-        {isLoadingTokens ? (
+        {isInitialLoad && connected ? (
+          <div className="text-center py-12">
+            <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
+              <div className="w-6 h-6 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-300 mb-2">Checking all tokens on your wallet...</h3>
+            <TokenSkeleton count={3} variant="progressive" />
+          </div>
+        ) : isLoadingTokens ? (
           <>
             <TokenSkeleton count={3} variant="progressive" />
           </>
