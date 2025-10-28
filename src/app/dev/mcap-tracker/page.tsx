@@ -562,9 +562,30 @@ export default function McapTrackerPage() {
   const toastTimers = useRef<Record<number, number>>({})
   // Track last toast growthPercent per token to compute n-1 delta
   const prevToastGrowth = useRef<Record<string, number>>({})
+  // Dedup toast pushes within a rolling window
+  const recentToastKeys = useRef<Record<string, number>>({})
+  const TOAST_DEDUP_WINDOW_MS = 30000
+
+  const computeToastKey = (
+    t: ToastMessage,
+    enrichedItems?: Array<{ symbol: string; address: string; growthPercent: number; deltaPercent?: number; currentMcap?: number }>
+  ) => {
+    const items = enrichedItems ?? t.items ?? []
+    const itemKey = items
+      .map((i) => `${i.address}:${(i.deltaPercent ?? i.growthPercent).toFixed(2)}`)
+      .sort()
+      .join('|')
+    return `${t.title}|${t.type}|${t.message}|${itemKey}`
+  }
 
   const pushToasts = useCallback((toasts?: ToastMessage[]) => {
     if (!toasts || toasts.length === 0) return
+    // Prune old dedup keys
+    const now = Date.now()
+    Object.entries(recentToastKeys.current).forEach(([k, ts]) => {
+      if (now - ts > TOAST_DEDUP_WINDOW_MS) delete recentToastKeys.current[k]
+    })
+
     toasts.forEach((t) => {
       const id = Date.now() + Math.floor(Math.random() * 100000)
       // Enrich items with deltaPercent (current - previous) and currentMcap
@@ -585,6 +606,14 @@ export default function McapTrackerPage() {
           currentMcap: token?.current_mcap,
         }
       }) ?? t.items
+
+      // Dedup: skip pushing identical toast within the window
+      const key = computeToastKey(t, enrichedItems)
+      const last = recentToastKeys.current[key]
+      if (last && now - last < TOAST_DEDUP_WINDOW_MS) {
+        return
+      }
+      recentToastKeys.current[key] = now
 
       const normalizedType = t.type && t.type.trim()
         ? t.type
@@ -657,7 +686,12 @@ export default function McapTrackerPage() {
 
     const gmtOptions = Array.from({ length: 27 }, (_, idx) => idx - 12)
 
+  // Prevent overlapping fetches that can emit duplicate toasts
+  const isFetchingRef = useRef<boolean>(false)
+
   const fetchTokens = useCallback(async (page = 1) => {
+    if (isFetchingRef.current) return
+    isFetchingRef.current = true
     setLoading(true)
     setError('')
     
@@ -718,17 +752,14 @@ export default function McapTrackerPage() {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setLoading(false)
+      isFetchingRef.current = false
     }
   }, [filters, pagination.limit, activeMcapFilter, pnlToastThreshold])
 
+  // Single effect to fetch on dependency changes
   useEffect(() => {
     fetchTokens(1)
-  }, [filters, activeMcapFilter])
-
-  // Re-fetch when toast threshold changes
-  useEffect(() => {
-    fetchTokens(1)
-  }, [pnlToastThreshold])
+  }, [filters, activeMcapFilter, pnlToastThreshold])
 
   useEffect(() => {
     const interval = setInterval(() => {

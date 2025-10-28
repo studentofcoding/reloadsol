@@ -4,6 +4,46 @@ import { supabase } from '@/utils/supabase'
 import { getSolPriceUSD } from '@/utils/solana'
 import { log } from '@/utils/unified-logger'
 
+// Server-side toast deduplication to reduce duplicate notifications across quick successive calls.
+// Note: This is a best-effort in-memory window and may not cover multi-instance deployments.
+const TOAST_DEDUP_WINDOW_MS: number = Number(
+  process.env.MCAP_TOAST_DEDUP_WINDOW_MS || process.env.NEXT_PUBLIC_MCAP_TOAST_DEDUP_WINDOW_MS || 30000
+)
+const recentToastKeys: Map<string, number> = new Map()
+
+function pruneRecentToastKeys(now: number) {
+  const keysToDelete: string[] = []
+  recentToastKeys.forEach((ts, key) => {
+    if (now - ts > TOAST_DEDUP_WINDOW_MS) {
+      keysToDelete.push(key)
+    }
+  })
+  keysToDelete.forEach((key) => {
+    recentToastKeys.delete(key)
+  })
+}
+
+function computeToastKey(
+  prefix: string,
+  items: Array<{ address: string; growthPercent?: number }>,
+  extra?: Record<string, any>
+): string {
+  const parts = [prefix]
+  if (extra) {
+    // Include relevant numeric params with safe rounding for stability
+    if (typeof extra.threshold === 'number') parts.push(`thr:${Math.round(extra.threshold * 10) / 10}`)
+    if (typeof extra.cap === 'number') parts.push(`cap:${Math.round(extra.cap * 10) / 10}`)
+    if (typeof extra.page === 'number') parts.push(`pg:${extra.page}`)
+    if (typeof extra.limit === 'number') parts.push(`lm:${extra.limit}`)
+  }
+  const itemSig = items
+    .map(i => `${i.address}:${typeof i.growthPercent === 'number' ? Math.round(i.growthPercent * 10) / 10 : 'NA'}`)
+    .sort()
+    .join('|')
+  parts.push(itemSig)
+  return parts.join('|')
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -675,7 +715,7 @@ export async function GET(request: NextRequest) {
         ? parseFloat(pnlThresholdParam)
         : parseFloat(process.env.NEXT_PUBLIC_MCAP_PNL_TOAST_THRESHOLD || process.env.MCAP_PNL_TOAST_THRESHOLD || '20')
 
-      const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }> = []
+      const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }>; key?: string }> = []
       // Apply upper cap of 30% for High Performers bucket
       const upperCap = 30
       const tokensAboveThreshold = (enhancedData || []).filter(token =>
@@ -684,19 +724,44 @@ export async function GET(request: NextRequest) {
         token.mcap_growth_percent <= upperCap
       )
 
-      if (tokensAboveThreshold.length > 0) {
-        const topNames = tokensAboveThreshold.slice(0, 3).map(t => t.token_symbol || 'UNKNOWN').filter(Boolean)
-        const items = tokensAboveThreshold.map(t => ({
+      // Ensure unique tokens by address to avoid duplicates within a single response
+      const seenAddr = new Set<string>()
+      const uniqueAboveThreshold = tokensAboveThreshold.filter(t => {
+        const addr = t.token_address
+        if (!addr) return false
+        if (seenAddr.has(addr)) return false
+        seenAddr.add(addr)
+        return true
+      })
+
+      if (uniqueAboveThreshold.length > 0) {
+        const topNames = uniqueAboveThreshold.slice(0, 3).map(t => t.token_symbol || 'UNKNOWN').filter(Boolean)
+        const items = uniqueAboveThreshold.map(t => ({
           symbol: t.token_symbol || 'UNKNOWN',
           address: t.token_address,
           growthPercent: typeof t.mcap_growth_percent === 'number' ? t.mcap_growth_percent : 0
         }))
-        toasts.push({
-          type: 'info',
-          title: 'High Performers',
-          message: `${tokensAboveThreshold.length} tokens ≥ ${pnlThreshold}% ≤ ${upperCap}% ${topNames.length ? `(${topNames.join(', ')}...)` : ''}`,
-          items
+
+        // Server-side dedup within a short window for identical toast content
+        const now = Date.now()
+        pruneRecentToastKeys(now)
+        const key = computeToastKey('list', items.map(i => ({ address: i.address, growthPercent: i.growthPercent })), {
+          threshold: pnlThreshold,
+          cap: upperCap,
+          page,
+          limit
         })
+        const last = recentToastKeys.get(key)
+        if (!last || now - last > TOAST_DEDUP_WINDOW_MS) {
+          recentToastKeys.set(key, now)
+          toasts.push({
+            type: 'info',
+            title: 'High Performers',
+            message: `${uniqueAboveThreshold.length} tokens ≥ ${pnlThreshold}% ≤ ${upperCap}% ${topNames.length ? `(${topNames.join(', ')}...)` : ''}`,
+            items,
+            key
+          })
+        }
       }
 
       return NextResponse.json({
@@ -723,27 +788,43 @@ export async function GET(request: NextRequest) {
       const result = await trackTokenMcap(tokenAddress, tokenSymbol, mcapValue)
       const displayString = getMcapDisplayString(result)
 
-      const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }> = []
+      const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }>; key?: string }> = []
       const symbolForMsg = tokenSymbol || 'UNKNOWN'
 
       // Toast: new token tracked
       if (result.isFirstTime) {
-        toasts.push({
-          type: 'success',
-          title: 'New Token Tracked',
-          message: `${symbolForMsg} now tracked at $${mcapValue.toLocaleString()}`,
-          items: [{ symbol: symbolForMsg || 'UNKNOWN', address: tokenAddress, growthPercent: typeof result.growthPercent === 'number' ? result.growthPercent : 0 }]
-        })
+        const now = Date.now()
+        pruneRecentToastKeys(now)
+        const key = computeToastKey('tracked', [{ address: tokenAddress }])
+        const last = recentToastKeys.get(key)
+        if (!last || now - last > TOAST_DEDUP_WINDOW_MS) {
+          recentToastKeys.set(key, now)
+          toasts.push({
+            type: 'success',
+            title: 'New Token Tracked',
+            message: `${symbolForMsg} now tracked at $${mcapValue.toLocaleString()}`,
+            items: [{ symbol: symbolForMsg || 'UNKNOWN', address: tokenAddress, growthPercent: typeof result.growthPercent === 'number' ? result.growthPercent : 0 }],
+            key
+          })
+        }
       }
 
       // Toast: growth exceeds configured PnL threshold
       if (typeof result.growthPercent === 'number' && result.growthPercent >= pnlThreshold) {
-        toasts.push({
-          type: 'info',
-          title: 'PnL Threshold Reached',
-          message: `${symbolForMsg} growth ${result.growthPercent.toFixed(1)}% ≥ ${pnlThreshold}%`,
-          items: [{ symbol: symbolForMsg || 'UNKNOWN', address: tokenAddress, growthPercent: result.growthPercent }]
-        })
+        const now = Date.now()
+        pruneRecentToastKeys(now)
+        const key = computeToastKey('threshold', [{ address: tokenAddress, growthPercent: result.growthPercent }], { threshold: pnlThreshold })
+        const last = recentToastKeys.get(key)
+        if (!last || now - last > TOAST_DEDUP_WINDOW_MS) {
+          recentToastKeys.set(key, now)
+          toasts.push({
+            type: 'info',
+            title: 'PnL Threshold Reached',
+            message: `${symbolForMsg} growth ${result.growthPercent.toFixed(1)}% ≥ ${pnlThreshold}%`,
+            items: [{ symbol: symbolForMsg || 'UNKNOWN', address: tokenAddress, growthPercent: result.growthPercent }],
+            key
+          })
+        }
       }
 
       return NextResponse.json({
@@ -811,24 +892,40 @@ export async function GET(request: NextRequest) {
         const pnlThreshold = pnlThresholdParam
           ? parseFloat(pnlThresholdParam)
           : parseFloat(process.env.NEXT_PUBLIC_MCAP_PNL_TOAST_THRESHOLD || process.env.MCAP_PNL_TOAST_THRESHOLD || '50')
-        const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }> = []
+        const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }>; key?: string }> = []
 
         if (result.isFirstTime) {
-          toasts.push({
-            type: 'success',
-            title: 'New Token Tracked',
-            message: `${symbol || 'UNKNOWN'} now tracked at $${Number(liveTok.mcap).toLocaleString()}`,
-            items: [{ symbol: symbol || 'UNKNOWN', address: tokenAddress, growthPercent: typeof result.growthPercent === 'number' ? result.growthPercent : 0 }]
-          })
+          const now = Date.now()
+          pruneRecentToastKeys(now)
+          const key = computeToastKey('tracked', [{ address: tokenAddress }])
+          const last = recentToastKeys.get(key)
+          if (!last || now - last > TOAST_DEDUP_WINDOW_MS) {
+            recentToastKeys.set(key, now)
+            toasts.push({
+              type: 'success',
+              title: 'New Token Tracked',
+              message: `${symbol || 'UNKNOWN'} now tracked at $${Number(liveTok.mcap).toLocaleString()}`,
+              items: [{ symbol: symbol || 'UNKNOWN', address: tokenAddress, growthPercent: typeof result.growthPercent === 'number' ? result.growthPercent : 0 }],
+              key
+            })
+          }
         }
 
         if (typeof result.growthPercent === 'number' && result.growthPercent >= pnlThreshold) {
-          toasts.push({
-            type: 'info',
-            title: 'PnL Threshold Reached',
-            message: `${symbol || 'UNKNOWN'} growth ${result.growthPercent.toFixed(1)}% ≥ ${pnlThreshold}%`,
-            items: [{ symbol: symbol || 'UNKNOWN', address: tokenAddress, growthPercent: result.growthPercent }]
-          })
+          const now = Date.now()
+          pruneRecentToastKeys(now)
+          const key = computeToastKey('threshold', [{ address: tokenAddress, growthPercent: result.growthPercent }], { threshold: pnlThreshold })
+          const last = recentToastKeys.get(key)
+          if (!last || now - last > TOAST_DEDUP_WINDOW_MS) {
+            recentToastKeys.set(key, now)
+            toasts.push({
+              type: 'info',
+              title: 'PnL Threshold Reached',
+              message: `${symbol || 'UNKNOWN'} growth ${result.growthPercent.toFixed(1)}% ≥ ${pnlThreshold}%`,
+              items: [{ symbol: symbol || 'UNKNOWN', address: tokenAddress, growthPercent: result.growthPercent }],
+              key
+            })
+          }
         }
 
         return NextResponse.json({
@@ -888,7 +985,7 @@ export async function POST(request: NextRequest) {
       : parseFloat(process.env.NEXT_PUBLIC_MCAP_PNL_TOAST_THRESHOLD || process.env.MCAP_PNL_TOAST_THRESHOLD || '50')
 
     const results = new Map()
-    const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }> = []
+    const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }>; key?: string }> = []
 
     for (const token of tokens) {
       if (!token.address || !token.symbol || typeof token.mcap !== 'number') {
@@ -903,21 +1000,37 @@ export async function POST(request: NextRequest) {
       })
 
       if (result.isFirstTime) {
-        toasts.push({
-          type: 'success',
-          title: 'New Token Tracked',
-          message: `${token.symbol} now tracked at $${token.mcap.toLocaleString()}`,
-          items: [{ symbol: token.symbol, address: token.address, growthPercent: typeof result.growthPercent === 'number' ? result.growthPercent : 0 }]
-        })
+        const now = Date.now()
+        pruneRecentToastKeys(now)
+        const key = computeToastKey('tracked', [{ address: token.address }])
+        const last = recentToastKeys.get(key)
+        if (!last || now - last > TOAST_DEDUP_WINDOW_MS) {
+          recentToastKeys.set(key, now)
+          toasts.push({
+            type: 'success',
+            title: 'New Token Tracked',
+            message: `${token.symbol} now tracked at $${token.mcap.toLocaleString()}`,
+            items: [{ symbol: token.symbol, address: token.address, growthPercent: typeof result.growthPercent === 'number' ? result.growthPercent : 0 }],
+            key
+          })
+        }
       }
 
       if (typeof result.growthPercent === 'number' && result.growthPercent >= pnlThreshold) {
-        toasts.push({
-          type: 'info',
-          title: 'PnL Threshold Reached',
-          message: `${token.symbol} growth ${result.growthPercent.toFixed(1)}% ≥ ${pnlThreshold}%`,
-          items: [{ symbol: token.symbol, address: token.address, growthPercent: result.growthPercent }]
-        })
+        const now = Date.now()
+        pruneRecentToastKeys(now)
+        const key = computeToastKey('threshold', [{ address: token.address, growthPercent: result.growthPercent }], { threshold: pnlThreshold })
+        const last = recentToastKeys.get(key)
+        if (!last || now - last > TOAST_DEDUP_WINDOW_MS) {
+          recentToastKeys.set(key, now)
+          toasts.push({
+            type: 'info',
+            title: 'PnL Threshold Reached',
+            message: `${token.symbol} growth ${result.growthPercent.toFixed(1)}% ≥ ${pnlThreshold}%`,
+            items: [{ symbol: token.symbol, address: token.address, growthPercent: result.growthPercent }],
+            key
+          })
+        }
       }
     }
 
