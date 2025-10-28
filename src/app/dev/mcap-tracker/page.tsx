@@ -555,26 +555,50 @@ export default function McapTrackerPage() {
   })
 
   // Toast handling
-  type ToastMessage = { type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }
+  type ToastMessage = { type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number; deltaPercent?: number; currentMcap?: number }> }
   type ToastWithId = ToastMessage & { id: number }
   const DEFAULT_PNL_TOAST_THRESHOLD = Number(process.env.NEXT_PUBLIC_MCAP_PNL_TOAST_THRESHOLD || 20)
   const [activeToasts, setActiveToasts] = useState<ToastWithId[]>([])
   const toastTimers = useRef<Record<number, number>>({})
+  // Track last toast growthPercent per token to compute n-1 delta
+  const prevToastGrowth = useRef<Record<string, number>>({})
+
   const pushToasts = useCallback((toasts?: ToastMessage[]) => {
     if (!toasts || toasts.length === 0) return
     toasts.forEach((t) => {
       const id = Date.now() + Math.floor(Math.random() * 100000)
+      // Enrich items with deltaPercent (current - previous) and currentMcap
+      const enrichedItems = t.items?.map((item) => {
+        const prev = prevToastGrowth.current[item.address]
+        const token = tokens.find(tok => tok.token_address === item.address)
+        const baselinePrev = typeof prev === 'number'
+          ? prev
+          : (typeof token?.mcap_growth_percent === 'number' ? token!.mcap_growth_percent : undefined)
+        const delta = typeof baselinePrev === 'number'
+          ? (item.growthPercent - baselinePrev)
+          : item.growthPercent
+        // Update prev map to this latest growth for next comparison
+        prevToastGrowth.current[item.address] = item.growthPercent
+        return {
+          ...item,
+          deltaPercent: delta,
+          currentMcap: token?.current_mcap,
+        }
+      }) ?? t.items
+
       const normalizedType = t.type && t.type.trim()
         ? t.type
         : (t.title === 'New Token Tracked' ? 'success' : 'info')
-      setActiveToasts((prev) => [...prev, { ...t, type: normalizedType, id }])
+
+      setActiveToasts((prev) => [...prev, { ...t, items: enrichedItems, type: normalizedType, id }])
+
       const timeoutId = window.setTimeout(() => {
         setActiveToasts((prev) => prev.filter((x) => x.id !== id))
         delete toastTimers.current[id]
       }, 6000)
       toastTimers.current[id] = timeoutId
     })
-  }, [])
+  }, [tokens])
 
   // Map toast type to Tailwind styles
   const getToastStyles = (type: string) => {
@@ -590,6 +614,15 @@ export default function McapTrackerPage() {
       default:
         return 'bg-gray-700 border-gray-500'
     }
+  }
+
+  // Compact currency formatter for MCap in toasts
+  const formatMcapCompact = (num?: number): string => {
+    if (typeof num !== 'number' || !isFinite(num)) return 'N/A'
+    if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`
+    if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`
+    if (num >= 1e3) return `$${(num / 1e3).toFixed(0)}K`
+    return `$${num.toFixed(0)}`
   }
 
   // PnL toast threshold (user-configurable, clamped to 30%)
@@ -1002,20 +1035,33 @@ export default function McapTrackerPage() {
                     <div className="font-semibold">{t.title}</div>
                     <div className="text-sm opacity-90">{t.message}</div>
                     {t.items && t.items.length > 0 && (
-                      <div className="mt-2 max-h-64 overflow-auto pr-1 space-y-1">
-                        {t.items.map((item) => (
-                          <div key={item.address} className="flex justify-between text-sm">
-                            <a
-                              href={`/chart/${item.address}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="underline hover:text-white"
-                            >
-                              {item.symbol}
-                            </a>
-                            <span className="ml-2">{item.growthPercent.toFixed(1)}%</span>
-                          </div>
-                        ))}
+                      <div className="mt-2 max-h-64 overflow-auto pr-1 space-y-2">
+                        {t.items.map((item) => {
+                          const token = tokens.find(tok => tok.token_address === item.address)
+                          const mcap = item.currentMcap ?? token?.current_mcap
+                          const delta = typeof item.deltaPercent === 'number'
+                            ? item.deltaPercent
+                            : (typeof item.growthPercent === 'number' ? item.growthPercent : 0)
+                          const up = delta >= 0
+                          return (
+                            <div key={item.address} className="flex justify-between items-center text-sm">
+                              <div className="flex flex-col">
+                                <a
+                                  href={`/chart/${item.address}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="underline hover:text-white"
+                                >
+                                  {item.symbol}
+                                </a>
+                                <div className="text-xs text-gray-300">MCap: {formatMcapCompact(mcap)}</div>
+                              </div>
+                              <div className={`ml-2 font-medium ${up ? 'text-green-300' : 'text-red-300'}`}>
+                                {up ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}%
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                   </div>
@@ -1073,20 +1119,33 @@ export default function McapTrackerPage() {
                   <div className="font-semibold">{t.title}</div>
                   <div className="text-sm opacity-90">{t.message}</div>
                   {t.items && t.items.length > 0 && (
-                    <div className="mt-2 max-h-64 overflow-auto pr-1 space-y-1">
-                      {t.items.map((item) => (
-                        <div key={item.address} className="flex justify-between text-sm">
-                          <a
-                            href={`/chart/${item.address}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="underline hover:text-white"
-                          >
-                            {item.symbol}
-                          </a>
-                          <span className="ml-2">{item.growthPercent.toFixed(1)}%</span>
-                        </div>
-                      ))}
+                    <div className="mt-2 max-h-64 overflow-auto pr-1 space-y-2">
+                      {t.items.map((item) => {
+                        const token = tokens.find(tok => tok.token_address === item.address)
+                        const mcap = item.currentMcap ?? token?.current_mcap
+                        const delta = typeof item.deltaPercent === 'number'
+                          ? item.deltaPercent
+                          : (typeof item.growthPercent === 'number' ? item.growthPercent : 0)
+                        const up = delta >= 0
+                        return (
+                          <div key={item.address} className="flex justify-between items-center text-sm">
+                            <div className="flex flex-col">
+                              <a
+                                href={`/chart/${item.address}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="underline hover:text-white"
+                              >
+                                {item.symbol}
+                              </a>
+                              <div className="text-xs text-gray-300">MCap: {formatMcapCompact(mcap)}</div>
+                            </div>
+                            <div className={`ml-2 font-medium ${up ? 'text-green-300' : 'text-red-300'}`}>
+                              {up ? '↑' : '↓'} {Math.abs(delta).toFixed(1)}%
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
