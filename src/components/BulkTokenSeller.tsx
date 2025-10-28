@@ -431,7 +431,8 @@ export default function BulkTokenSeller() {
         const maxUnits = token.balance
         const requestedUnits = Math.floor(Math.max(0, tokenAmountUI) * Math.pow(10, decimals))
         const clampedUnits = Math.min(Math.max(requestedUnits, 1), maxUnits)
-        const percentage = Math.max(1, Math.min(100, Math.round((clampedUnits / maxUnits) * 100)))
+        // Use floor to avoid rounding up to 100% unless it’s truly full amount
+        const percentage = Math.max(1, Math.min(100, Math.floor((clampedUnits / maxUnits) * 100)))
         return {
           ...token,
           sellAmount: clampedUnits,
@@ -738,10 +739,10 @@ export default function BulkTokenSeller() {
         })
 
         // === Auto-close tokens after GMGN swap (like Jupiter) ===
-        // Find tokens with 100% sell
+        // Only close tokens when the full balance was sold
         const tokensToClose = gmgnTransactions
           .map(t => t.token)
-          .filter(t => t.sellPercentage >= 100)
+          .filter(t => t.sellAmount >= t.balance)
 
         if (tokensToClose.length > 0) {
           try {
@@ -1745,13 +1746,29 @@ export default function BulkTokenSeller() {
                             }
                             return total
                           }, 0)
-                          
+
+                          // Determine if any closure will occur (full sells or zero-balance closes)
+                          const willCloseAny = selectedTokens.some(t => t.sellAmount >= t.balance) || selectedZeroBalanceTokens.length > 0
+
                           const tokenText = selectedTokens.length === 1 ? 'token' : `${selectedTokens.length} tokens`
-                          
-                          return totalSolOutput > 0 
-                            ? `Sell & close ${tokenText} for ${totalSolOutput.toFixed(4)} SOL`
-                            : `Sell & close ${tokenText}`
-                        })()} 
+
+                          if (willCloseAny) {
+                            return totalSolOutput > 0
+                              ? `Sell & close ${tokenText} for ${totalSolOutput.toFixed(4)} Sol`
+                              : `Sell & close ${tokenText}`
+                          } else {
+                            if (selectedTokens.length === 1) {
+                              const symbol = selectedTokens[0].symbol || 'token'
+                              return totalSolOutput > 0
+                                ? `Sell ${symbol} for ${totalSolOutput.toFixed(4)} Sol`
+                                : `Sell ${symbol}`
+                            } else {
+                              return totalSolOutput > 0
+                                ? `Sell ${tokenText} for ${totalSolOutput.toFixed(4)} Sol`
+                                : `Sell ${tokenText}`
+                            }
+                          }
+                        })()}
                       </span>
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v2a2 2 0 002 2z" />
