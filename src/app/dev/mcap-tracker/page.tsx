@@ -656,9 +656,37 @@ export default function McapTrackerPage() {
 
   // PnL toast threshold (user-configurable, clamped to 30%)
   const clampThreshold = useCallback((n: number) => Math.max(0, Math.min(30, Math.round(n))), [])
-  const [pnlToastThreshold, setPnlToastThreshold] = useState<number>(
-    clampThreshold(DEFAULT_PNL_TOAST_THRESHOLD)
-  )
+  const LOCAL_STORAGE_KEY_PNL_TOAST = 'mcap_pnl_toast_threshold'
+  const [pnlToastThreshold, setPnlToastThreshold] = useState<number>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(LOCAL_STORAGE_KEY_PNL_TOAST) : null
+      const saved = raw != null ? Number(raw) : NaN
+      return clampThreshold(Number.isFinite(saved) ? saved : DEFAULT_PNL_TOAST_THRESHOLD)
+    } catch (e) {
+      return clampThreshold(DEFAULT_PNL_TOAST_THRESHOLD)
+    }
+  })
+
+  const handleSavePnlToastThreshold = useCallback(() => {
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY_PNL_TOAST, String(pnlToastThreshold))
+      pushToasts([
+        {
+          type: 'success',
+          title: 'Threshold Saved',
+          message: `Toasts will use ${pnlToastThreshold}% until changed.`
+        }
+      ])
+    } catch (e) {
+      pushToasts([
+        {
+          type: 'error',
+          title: 'Save Failed',
+          message: 'Could not save threshold to local storage'
+        }
+      ])
+    }
+  }, [pnlToastThreshold])
 
   // Helpers for timezone shifting and peak recompute (ensure these exist once)
     const padHourStr = (h: number | string) => {
@@ -1095,6 +1123,24 @@ export default function McapTrackerPage() {
                         })}
                       </div>
                     )}
+                    {t.items && t.items.length > 0 && (
+                      <div className="mt-3">
+                        {(() => {
+                          const uniq = Array.from(new Set(t.items!.map(i => i.address)))
+                          const url = `/charts?addresses=${encodeURIComponent(uniq.join(','))}`
+                          return (
+                            <a
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white"
+                            >
+                              Open Charts ({uniq.length})
+                            </a>
+                          )
+                        })()}
+                      </div>
+                    )}
                   </div>
                   <button
                     onClick={() => setActiveToasts((prev) => prev.filter((x) => x.id !== t.id))}
@@ -1179,6 +1225,24 @@ export default function McapTrackerPage() {
                       })}
                     </div>
                   )}
+                  {t.items && t.items.length > 0 && (
+                    <div className="mt-3">
+                      {(() => {
+                        const uniq = Array.from(new Set(t.items!.map(i => i.address)))
+                        const url = `/charts?addresses=${encodeURIComponent(uniq.join(','))}`
+                        return (
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white"
+                          >
+                            Open Charts ({uniq.length})
+                          </a>
+                        )
+                      })()}
+                    </div>
+                  )}
                 </div>
                 <button
                   onClick={() => setActiveToasts((prev) => prev.filter((x) => x.id !== t.id))}
@@ -1227,6 +1291,13 @@ export default function McapTrackerPage() {
               className="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1"
             />
             <span className="text-xs text-gray-500">(max 30%)</span>
+            <button
+              onClick={handleSavePnlToastThreshold}
+              className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md"
+              title="Save threshold as default for next reloads"
+            >
+              Save
+            </button>
           </div>
         </div>
 
