@@ -33,12 +33,12 @@ export default function MultiChartsPage() {
           <div
             className="grid"
             style={{
-              gridTemplateColumns: 'repeat(auto-fill, 500px)',
-              gap: '12px'
+              gridTemplateColumns: 'repeat(auto-fill, 400px)',
+              gap: '10px'
             }}
           >
             {charts.map(addr => (
-              <div key={addr} className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700" style={{ width: 500, height: 200 }}>
+              <div key={addr} className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700" style={{ width: 400, height: 300 }}>
                 <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
                   <div className="text-sm font-medium">{addr}</div>
                   <a
@@ -55,7 +55,7 @@ export default function MultiChartsPage() {
                   title={`Chart ${addr}`}
                   frameBorder={0}
                   className="w-full"
-                  style={{ height: 160 }}
+                  style={{ height: 250 }}
                   allowFullScreen
                 />
               </div>
