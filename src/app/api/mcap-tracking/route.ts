@@ -779,6 +779,28 @@ export async function GET(request: NextRequest) {
     }
 
     if (action === 'track' && tokenAddress && tokenSymbol && mcap) {
+      // Respect stop_reason: if 'rug', skip tracking
+      try {
+        const { data: stopRecord } = await supabase
+          .from('token_mcap_tracking')
+          .select('stop_reason')
+          .eq('token_address', tokenAddress)
+          .single()
+
+        const stopReason = (stopRecord?.stop_reason || '').toString().toLowerCase()
+        if (stopReason === 'rug') {
+          return NextResponse.json({
+            success: true,
+            skipped: true,
+            reason: 'rug',
+            message: 'Tracking stopped due to stop_reason=rug',
+            toasts: []
+          })
+        }
+      } catch (e) {
+        // If lookup fails, proceed; no hard stop
+      }
+
       const mcapValue = parseInt(mcap)
       const pnlThresholdParam = searchParams.get('pnlThreshold')
       const pnlThreshold = pnlThresholdParam
@@ -849,6 +871,26 @@ export async function GET(request: NextRequest) {
     // New refetch action to get current MCap and update tracking
     if (action === 'refetch' && tokenAddress) {
       try {
+        // Respect stop_reason: if 'rug', skip refetch tracking
+        try {
+          const { data: stopRecord } = await supabase
+            .from('token_mcap_tracking')
+            .select('stop_reason')
+            .eq('token_address', tokenAddress)
+            .single()
+
+          const stopReason = (stopRecord?.stop_reason || '').toString().toLowerCase()
+          if (stopReason === 'rug') {
+            return NextResponse.json({
+              success: true,
+              skipped: true,
+              reason: 'rug',
+              message: 'Refetch skipped due to stop_reason=rug',
+              toasts: []
+            })
+          }
+        } catch {}
+
         // Fetch current price and market cap from trending API (live, no cache)
         const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
         const trendingResponse = await fetch(`${baseUrl}/api/trending?cache=off&nocache=true`, {
@@ -969,6 +1011,40 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const searchParams = new URL(request.url).searchParams
+    const action = searchParams.get('action')
+
+    // Bulk update stop_reason labels
+    if (action === 'stop') {
+      const { addresses, reason } = await request.json()
+
+      if (!Array.isArray(addresses) || addresses.length === 0) {
+        return NextResponse.json({ success: false, error: 'addresses must be a non-empty array' }, { status: 400 })
+      }
+      if (reason !== null && typeof reason !== 'string') {
+        return NextResponse.json({ success: false, error: 'reason must be a string or null' }, { status: 400 })
+      }
+
+      // Normalize reason; treat 'continue' as null
+      const normalizedReason = (reason || '').toString().toLowerCase() === 'continue' ? null : (reason || null)
+
+      const cap = Math.min(addresses.length, 200)
+      const target = addresses.slice(0, cap)
+
+      const { error: updErr } = await supabase
+        .from('token_mcap_tracking')
+        .update({ stop_reason: normalizedReason })
+        .in('token_address', target)
+
+      if (updErr) {
+        return NextResponse.json({ success: false, error: updErr.message || 'Failed to update stop_reason' }, { status: 500 })
+      }
+
+      log.info('mcap_tracker', 'Updated stop_reason for tokens', { count: target.length, reason: normalizedReason || 'null' })
+
+      return NextResponse.json({ success: true, updated: target.length, reason: normalizedReason || null })
+    }
+
     const { tokens } = await request.json()
 
     if (!Array.isArray(tokens)) {
@@ -978,7 +1054,6 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
-    const searchParams = new URL(request.url).searchParams
     const pnlThresholdParam = searchParams.get('pnlThreshold')
     const pnlThreshold = pnlThresholdParam
       ? parseFloat(pnlThresholdParam)
@@ -991,6 +1066,23 @@ export async function POST(request: NextRequest) {
       if (!token.address || !token.symbol || typeof token.mcap !== 'number') {
         continue
       }
+
+      // Respect stop_reason: if 'rug', skip bulk tracking
+      try {
+        const { data: stopRecord } = await supabase
+          .from('token_mcap_tracking')
+          .select('stop_reason')
+          .eq('token_address', token.address)
+          .single()
+        const stopReason = (stopRecord?.stop_reason || '').toString().toLowerCase()
+        if (stopReason === 'rug') {
+          results.set(token.address, {
+            skipped: true,
+            reason: 'rug'
+          })
+          continue
+        }
+      } catch {}
 
       const result = await trackTokenMcap(token.address, token.symbol, token.mcap)
       results.set(token.address, {
