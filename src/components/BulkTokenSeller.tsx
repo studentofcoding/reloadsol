@@ -423,6 +423,25 @@ export default function BulkTokenSeller() {
     }))
   }
 
+  // Handle sell amount change by direct token units input
+  const updateTokenSellAmount = (mintAddress: string, tokenAmountUI: number) => {
+    setSelectedTokens(prev => prev.map(token => {
+      if (token.mintAddress === mintAddress) {
+        const decimals = token.decimals || 0
+        const maxUnits = token.balance
+        const requestedUnits = Math.floor(Math.max(0, tokenAmountUI) * Math.pow(10, decimals))
+        const clampedUnits = Math.min(Math.max(requestedUnits, 1), maxUnits)
+        const percentage = Math.max(1, Math.min(100, Math.round((clampedUnits / maxUnits) * 100)))
+        return {
+          ...token,
+          sellAmount: clampedUnits,
+          sellPercentage: percentage
+        }
+      }
+      return token
+    }))
+  }
+
   // Handle zero-balance token selection
   const toggleZeroBalanceTokenSelection = (token: UserToken) => {
     setSelectedZeroBalanceTokens(prev => {
@@ -1406,6 +1425,7 @@ export default function BulkTokenSeller() {
                   onRefreshPrice={refreshTokenPrice}
                   selectedToken={selectedToken}
                   onUpdateSellPercentage={updateTokenSellPercentage}
+                  onUpdateSellAmount={updateTokenSellAmount}
                 />
               )
             })}

@@ -10,6 +10,7 @@ interface ProgressiveTokenItemProps {
   onRefreshPrice?: (token: UserToken) => void
   selectedToken?: any
   onUpdateSellPercentage?: (mintAddress: string, percentage: number) => void
+  onUpdateSellAmount?: (mintAddress: string, tokenAmount: number) => void
 }
 
 const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
@@ -20,7 +21,8 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
   onSelectToken,
   onRefreshPrice,
   selectedToken,
-  onUpdateSellPercentage
+  onUpdateSellPercentage,
+  onUpdateSellAmount
 }) => {
   const hasBasicData = token.symbol !== 'Unknown' || token.name !== 'Unknown Token'
   const hasLogo = token.logoURI && token.logoURI !== ''
@@ -182,6 +184,26 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
               onClick={(e) => e.stopPropagation()}
             />
             <span className="text-sm text-gray-400">%</span>
+            {onUpdateSellAmount && (
+              <>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={selectedToken.sellAmount / Math.pow(10, token.decimals)}
+                  onChange={(e) => {
+                    e.stopPropagation()
+                    const value = parseFloat(e.target.value)
+                    if (!isNaN(value)) {
+                      onUpdateSellAmount(token.mintAddress, value)
+                    }
+                  }}
+                  className="w-28 px-2 py-1 bg-gray-600 text-white text-sm rounded border border-gray-500 focus:border-gray-400"
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <span className="text-sm text-gray-400">tokens</span>
+              </>
+            )}
           </div>
           <div className="mt-2 flex items-center justify-between text-xs text-gray-400">
             <span>≈ ${(token.usdValue * selectedToken.sellPercentage / 100).toFixed(2)}</span>
@@ -199,4 +221,4 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
   )
 }
 
-export default ProgressiveTokenItem 
+export default ProgressiveTokenItem
