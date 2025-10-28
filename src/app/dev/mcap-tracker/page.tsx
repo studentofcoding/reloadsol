@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { getTokenWithAnalytics, EnrichedTokenData } from '@/utils/data-aggregation'
 
@@ -38,16 +38,16 @@ interface FilterOptions {
   performanceFilter: 'all' | 'gainers' | 'losers' | 'top_performers'
 }
 
-interface ApiResponse {
-  success: boolean
-  data: McapTrackingData[]
-  pagination: {
-    page: number
-    limit: number
-    total: number
-    totalPages: number
-  }
-  stats: {
+  interface ApiResponse {
+    success: boolean
+    data: McapTrackingData[]
+    pagination: {
+      page: number
+      limit: number
+      total: number
+      totalPages: number
+    }
+    stats: {
     total: number
     gainers: number
     losers: number
@@ -96,9 +96,10 @@ interface ApiResponse {
         losers: number
       }>
     }
+    }
+    toasts?: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }>
+    error: string
   }
-  error: string
-}
 
 const LoadingSkeleton = () => (
   <div className="animate-pulse space-y-4">
@@ -553,6 +554,50 @@ export default function McapTrackerPage() {
     performanceFilter: 'all'
   })
 
+  // Toast handling
+  type ToastMessage = { type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }
+  type ToastWithId = ToastMessage & { id: number }
+  const DEFAULT_PNL_TOAST_THRESHOLD = Number(process.env.NEXT_PUBLIC_MCAP_PNL_TOAST_THRESHOLD || 20)
+  const [activeToasts, setActiveToasts] = useState<ToastWithId[]>([])
+  const toastTimers = useRef<Record<number, number>>({})
+  const pushToasts = useCallback((toasts?: ToastMessage[]) => {
+    if (!toasts || toasts.length === 0) return
+    toasts.forEach((t) => {
+      const id = Date.now() + Math.floor(Math.random() * 100000)
+      const normalizedType = t.type && t.type.trim()
+        ? t.type
+        : (t.title === 'New Token Tracked' ? 'success' : 'info')
+      setActiveToasts((prev) => [...prev, { ...t, type: normalizedType, id }])
+      const timeoutId = window.setTimeout(() => {
+        setActiveToasts((prev) => prev.filter((x) => x.id !== id))
+        delete toastTimers.current[id]
+      }, 6000)
+      toastTimers.current[id] = timeoutId
+    })
+  }, [])
+
+  // Map toast type to Tailwind styles
+  const getToastStyles = (type: string) => {
+    switch (type) {
+      case 'success':
+        return 'bg-green-600 border-green-400'
+      case 'info':
+        return 'bg-blue-600 border-blue-400'
+      case 'warning':
+        return 'bg-yellow-600 border-yellow-400 text-black'
+      case 'error':
+        return 'bg-red-600 border-red-400'
+      default:
+        return 'bg-gray-700 border-gray-500'
+    }
+  }
+
+  // PnL toast threshold (user-configurable, clamped to 30%)
+  const clampThreshold = useCallback((n: number) => Math.max(0, Math.min(30, Math.round(n))), [])
+  const [pnlToastThreshold, setPnlToastThreshold] = useState<number>(
+    clampThreshold(DEFAULT_PNL_TOAST_THRESHOLD)
+  )
+
   // Helpers for timezone shifting and peak recompute (ensure these exist once)
     const padHourStr = (h: number | string) => {
       const n = typeof h === 'string' ? parseInt(h, 10) : h
@@ -592,7 +637,8 @@ export default function McapTrackerPage() {
         sortOrder: filters.sortOrder,
         excludeZeroPnl: filters.excludeZeroPnl.toString(),
         timeFilter: filters.timeFilter,
-        performanceFilter: filters.performanceFilter
+        performanceFilter: filters.performanceFilter,
+        pnlThreshold: pnlToastThreshold.toString()
       })
       
       if (filters.search) params.append('search', filters.search)
@@ -630,6 +676,8 @@ export default function McapTrackerPage() {
         setTokens(data.data)
         setPagination(data.pagination)
         setStats(data.stats)
+        // Show any server-suggested toasts
+        pushToasts(data.toasts)
       } else {
         setError(data.error || 'Failed to fetch data')
       }
@@ -638,11 +686,16 @@ export default function McapTrackerPage() {
     } finally {
       setLoading(false)
     }
-  }, [filters, pagination.limit, activeMcapFilter])
+  }, [filters, pagination.limit, activeMcapFilter, pnlToastThreshold])
 
   useEffect(() => {
     fetchTokens(1)
   }, [filters, activeMcapFilter])
+
+  // Re-fetch when toast threshold changes
+  useEffect(() => {
+    fetchTokens(1)
+  }, [pnlToastThreshold])
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -839,10 +892,12 @@ export default function McapTrackerPage() {
     setRefetchingTokens(prev => new Set(prev).add(tokenAddress))
     
     try {
-      const response = await fetch(`/api/mcap-tracking?action=refetch&token=${tokenAddress}`)
+      const response = await fetch(`/api/mcap-tracking?action=refetch&token=${tokenAddress}&pnlThreshold=${pnlToastThreshold}`)
       const data = await response.json()
       
       if (data.success) {
+        // Show server-suggested toasts
+        pushToasts(data.toasts)
         // Update the token in the current list with new data
         setTokens(prevTokens => 
           prevTokens.map(token => {
@@ -918,6 +973,64 @@ export default function McapTrackerPage() {
   if (loading && tokens.length === 0) {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-6">
+        {/* Toasts (fixed, viewport-level) */}
+        {activeToasts.length > 0 && (
+          <div className="fixed top-4 right-4 z-50 space-y-2">
+            {activeToasts.map((t) => (
+              <div
+                key={t.id}
+                className={`w-80 rounded-md border shadow-lg p-3 text-white ${getToastStyles(t.type)}`}
+                onMouseEnter={() => {
+                  const tid = toastTimers.current[t.id]
+                  if (tid) {
+                    clearTimeout(tid)
+                    delete toastTimers.current[t.id]
+                  }
+                }}
+                onMouseLeave={() => {
+                  if (!toastTimers.current[t.id]) {
+                    const timeoutId = window.setTimeout(() => {
+                      setActiveToasts((prev) => prev.filter((x) => x.id !== t.id))
+                      delete toastTimers.current[t.id]
+                    }, 6000)
+                    toastTimers.current[t.id] = timeoutId
+                  }
+                }}
+              >
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="font-semibold">{t.title}</div>
+                    <div className="text-sm opacity-90">{t.message}</div>
+                    {t.items && t.items.length > 0 && (
+                      <div className="mt-2 max-h-64 overflow-auto pr-1 space-y-1">
+                        {t.items.map((item) => (
+                          <div key={item.address} className="flex justify-between text-sm">
+                            <a
+                              href={`/chart/${item.address}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline hover:text-white"
+                            >
+                              {item.symbol}
+                            </a>
+                            <span className="ml-2">{item.growthPercent.toFixed(1)}%</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setActiveToasts((prev) => prev.filter((x) => x.id !== t.id))}
+                    className="ml-3 text-white/80 hover:text-white"
+                    aria-label="Dismiss toast"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="max-w-7xl mx-auto">
           <div className="mb-8">
             <h1 className="text-3xl font-bold mb-2">MCap Tracker</h1>
@@ -931,6 +1044,64 @@ export default function McapTrackerPage() {
   
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
+      {/* Toasts (fixed, viewport-level) */}
+      {activeToasts.length > 0 && (
+        <div className="fixed top-4 right-4 z-50 space-y-2">
+          {activeToasts.map((t) => (
+            <div
+              key={t.id}
+              className={`w-80 rounded-md border shadow-lg p-3 text-white ${getToastStyles(t.type)}`}
+              onMouseEnter={() => {
+                const tid = toastTimers.current[t.id]
+                if (tid) {
+                  clearTimeout(tid)
+                  delete toastTimers.current[t.id]
+                }
+              }}
+              onMouseLeave={() => {
+                if (!toastTimers.current[t.id]) {
+                  const timeoutId = window.setTimeout(() => {
+                    setActiveToasts((prev) => prev.filter((x) => x.id !== t.id))
+                    delete toastTimers.current[t.id]
+                  }, 6000)
+                  toastTimers.current[t.id] = timeoutId
+                }
+              }}
+            >
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="font-semibold">{t.title}</div>
+                  <div className="text-sm opacity-90">{t.message}</div>
+                  {t.items && t.items.length > 0 && (
+                    <div className="mt-2 max-h-64 overflow-auto pr-1 space-y-1">
+                      {t.items.map((item) => (
+                        <div key={item.address} className="flex justify-between text-sm">
+                          <a
+                            href={`/chart/${item.address}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="underline hover:text-white"
+                          >
+                            {item.symbol}
+                          </a>
+                          <span className="ml-2">{item.growthPercent.toFixed(1)}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setActiveToasts((prev) => prev.filter((x) => x.id !== t.id))}
+                  className="ml-3 text-white/80 hover:text-white"
+                  aria-label="Dismiss toast"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
@@ -943,6 +1114,30 @@ export default function McapTrackerPage() {
               SOL Price: ${stats.solPriceUSD.toFixed(2)}
             </p>
           )}
+
+          {/* PnL Toast Threshold Control (max 30%) */}
+          <div className="mt-4 flex items-center gap-3">
+            <span className="text-sm text-gray-300">PnL Toast Threshold (%)</span>
+            <input
+              type="range"
+              min={0}
+              max={30}
+              step={1}
+              value={pnlToastThreshold}
+              onChange={(e) => setPnlToastThreshold(clampThreshold(Number(e.target.value)))}
+              className="w-40"
+            />
+            <input
+              type="number"
+              min={0}
+              max={30}
+              step={1}
+              value={pnlToastThreshold}
+              onChange={(e) => setPnlToastThreshold(clampThreshold(Number(e.target.value)))}
+              className="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1"
+            />
+            <span className="text-xs text-gray-500">(max 30%)</span>
+          </div>
         </div>
 
         {/* Enhanced Statistics Overview */}

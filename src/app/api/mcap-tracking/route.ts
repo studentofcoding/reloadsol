@@ -583,8 +583,41 @@ export async function GET(request: NextRequest) {
         dailyBreakdown.push(dayStats)
       }
 
-      // Add SOL per token calculations to the data
+      // Optionally fetch live trending data to refresh current mcap/price for dynamic PnL
+      let liveTrendingMap = new Map<string, { mcap: number; price: number }>()
+      try {
+        const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+        const trendingResp = await fetch(`${baseUrl}/api/trending?cache=off&nocache=true`, {
+          headers: { 'x-no-cache': '1' },
+          next: { revalidate: 0 }
+        })
+        if (trendingResp.ok) {
+          const trendingJson = await trendingResp.json()
+          const tokensArr = Array.isArray(trendingJson.tokens) ? trendingJson.tokens : []
+          for (const t of tokensArr) {
+            if (t && typeof t.token_address === 'string') {
+              // Ensure numeric values
+              const mcap = typeof t.mcap === 'number' ? t.mcap : 0
+              const price = typeof t.price === 'number' ? t.price : 0
+              liveTrendingMap.set(t.token_address, { mcap, price })
+            }
+          }
+        } else {
+          console.warn('Trending API returned non-OK for live refresh:', trendingResp.status)
+        }
+      } catch (e) {
+        console.warn('Failed to fetch live trending data for PnL refresh:', e)
+      }
+
+      // Add SOL per token calculations to the data (prefer live mcap if available)
       const enhancedData = (data || []).map(token => {
+        const live = liveTrendingMap.get(token.token_address)
+        const currentMcap = typeof live?.mcap === 'number' && live.mcap > 0 ? live.mcap : token.current_mcap
+        const firstMcap = token.first_mcap
+        const refreshedGrowth = (firstMcap && firstMcap > 0 && typeof currentMcap === 'number')
+          ? ((currentMcap - firstMcap) / firstMcap) * 100
+          : token.mcap_growth_percent
+        const currentPrice = typeof live?.price === 'number' && live.price > 0 ? live.price : undefined
         const firstSeenMs = new Date(token.first_seen_at).getTime()
         const nowMs = Date.now()
         const ageMs = nowMs - firstSeenMs
@@ -592,13 +625,19 @@ export async function GET(request: NextRequest) {
         const finishedAt = isFinished ? new Date(firstSeenMs + MAX_TRACKING_AGE_MS).toISOString() : null
         return {
           ...token,
+          // Prefer refreshed values when available
+          current_mcap: currentMcap,
+          mcap_growth_percent: refreshedGrowth,
           is_finished: isFinished,
           finished_at: finishedAt,
           solPerToken: {
             first: token.first_mcap / solPriceUSD,
-            current: token.current_mcap / solPriceUSD,
-            growth: ((token.current_mcap / solPriceUSD) - (token.first_mcap / solPriceUSD)) / (token.first_mcap / solPriceUSD) * 100
-          }
+            current: currentMcap / solPriceUSD,
+            growth: ((currentMcap / solPriceUSD) - (token.first_mcap / solPriceUSD)) / (token.first_mcap / solPriceUSD) * 100
+          },
+          // Inform consumers that this snapshot may include live refresh
+          _live_refresh: Boolean(live),
+          _live_price_usd: currentPrice
         }
       })
 
@@ -630,6 +669,36 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // Toasts: tokens exceeding configured PnL threshold
+      const pnlThresholdParam = searchParams.get('pnlThreshold')
+      const pnlThreshold = pnlThresholdParam
+        ? parseFloat(pnlThresholdParam)
+        : parseFloat(process.env.NEXT_PUBLIC_MCAP_PNL_TOAST_THRESHOLD || process.env.MCAP_PNL_TOAST_THRESHOLD || '20')
+
+      const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }> = []
+      // Apply upper cap of 30% for High Performers bucket
+      const upperCap = 30
+      const tokensAboveThreshold = (enhancedData || []).filter(token =>
+        typeof token.mcap_growth_percent === 'number' &&
+        token.mcap_growth_percent >= pnlThreshold &&
+        token.mcap_growth_percent <= upperCap
+      )
+
+      if (tokensAboveThreshold.length > 0) {
+        const topNames = tokensAboveThreshold.slice(0, 3).map(t => t.token_symbol || 'UNKNOWN').filter(Boolean)
+        const items = tokensAboveThreshold.map(t => ({
+          symbol: t.token_symbol || 'UNKNOWN',
+          address: t.token_address,
+          growthPercent: typeof t.mcap_growth_percent === 'number' ? t.mcap_growth_percent : 0
+        }))
+        toasts.push({
+          type: 'info',
+          title: 'High Performers',
+          message: `${tokensAboveThreshold.length} tokens ≥ ${pnlThreshold}% ≤ ${upperCap}% ${topNames.length ? `(${topNames.join(', ')}...)` : ''}`,
+          items
+        })
+      }
+
       return NextResponse.json({
         success: true,
         data: enhancedData,
@@ -639,20 +708,50 @@ export async function GET(request: NextRequest) {
           total: count || 0,
           totalPages: Math.ceil((count || 0) / limit)
         },
-        stats
+        stats,
+        toasts
       })
     }
 
     if (action === 'track' && tokenAddress && tokenSymbol && mcap) {
       const mcapValue = parseInt(mcap)
+      const pnlThresholdParam = searchParams.get('pnlThreshold')
+      const pnlThreshold = pnlThresholdParam
+        ? parseFloat(pnlThresholdParam)
+        : parseFloat(process.env.NEXT_PUBLIC_MCAP_PNL_TOAST_THRESHOLD || process.env.MCAP_PNL_TOAST_THRESHOLD || '50')
+
       const result = await trackTokenMcap(tokenAddress, tokenSymbol, mcapValue)
       const displayString = getMcapDisplayString(result)
+
+      const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }> = []
+      const symbolForMsg = tokenSymbol || 'UNKNOWN'
+
+      // Toast: new token tracked
+      if (result.isFirstTime) {
+        toasts.push({
+          type: 'success',
+          title: 'New Token Tracked',
+          message: `${symbolForMsg} now tracked at $${mcapValue.toLocaleString()}`,
+          items: [{ symbol: symbolForMsg || 'UNKNOWN', address: tokenAddress, growthPercent: typeof result.growthPercent === 'number' ? result.growthPercent : 0 }]
+        })
+      }
+
+      // Toast: growth exceeds configured PnL threshold
+      if (typeof result.growthPercent === 'number' && result.growthPercent >= pnlThreshold) {
+        toasts.push({
+          type: 'info',
+          title: 'PnL Threshold Reached',
+          message: `${symbolForMsg} growth ${result.growthPercent.toFixed(1)}% ≥ ${pnlThreshold}%`,
+          items: [{ symbol: symbolForMsg || 'UNKNOWN', address: tokenAddress, growthPercent: result.growthPercent }]
+        })
+      }
 
       return NextResponse.json({
         success: true,
         tracking: result,
         display: displayString,
-        inRange: isInTrackingRange(mcapValue)
+        inRange: isInTrackingRange(mcapValue),
+        toasts
       })
     }
 
@@ -669,20 +768,25 @@ export async function GET(request: NextRequest) {
     // New refetch action to get current MCap and update tracking
     if (action === 'refetch' && tokenAddress) {
       try {
-        // Fetch current price and market cap from trending API
-        const trendingResponse = await fetch(`${process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/trending/search?query=${tokenAddress}`)
+        // Fetch current price and market cap from trending API (live, no cache)
+        const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+        const trendingResponse = await fetch(`${baseUrl}/api/trending?cache=off&nocache=true`, {
+          headers: { 'x-no-cache': '1' },
+          next: { revalidate: 0 }
+        })
 
         if (!trendingResponse.ok) {
-          throw new Error('Failed to fetch current token data')
+          throw new Error('Failed to fetch current token data from trending')
         }
 
-        const trendingData = await trendingResponse.json()
-        const tokenData = Array.isArray(trendingData) ? trendingData.find(t => t.id === tokenAddress) : null
+        const trendingJson = await trendingResponse.json()
+        const tokensArr = Array.isArray(trendingJson.tokens) ? trendingJson.tokens : []
+        const liveTok = tokensArr.find((t: any) => t?.token_address === tokenAddress)
 
-        if (!tokenData || !tokenData.mcap) {
+        if (!liveTok || typeof liveTok.mcap !== 'number' || liveTok.mcap <= 0) {
           return NextResponse.json({
             success: false,
-            error: 'Token not found or no market cap data available'
+            error: 'Token not found in trending or no market cap data available'
           }, { status: 404 })
         }
 
@@ -695,27 +799,53 @@ export async function GET(request: NextRequest) {
             .eq('token_address', tokenAddress)
             .single()
 
-          symbol = existingRecord?.token_symbol || tokenData.symbol || 'UNKNOWN'
+          symbol = existingRecord?.token_symbol || liveTok?.token_symbol || 'UNKNOWN'
         }
 
         // Track the updated MCap
-        const result = await trackTokenMcap(tokenAddress, symbol, tokenData.mcap)
+        const result = await trackTokenMcap(tokenAddress, symbol, liveTok.mcap)
         const displayString = getMcapDisplayString(result)
+
+        // Toasts for refetch action
+        const pnlThresholdParam = searchParams.get('pnlThreshold')
+        const pnlThreshold = pnlThresholdParam
+          ? parseFloat(pnlThresholdParam)
+          : parseFloat(process.env.NEXT_PUBLIC_MCAP_PNL_TOAST_THRESHOLD || process.env.MCAP_PNL_TOAST_THRESHOLD || '50')
+        const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }> = []
+
+        if (result.isFirstTime) {
+          toasts.push({
+            type: 'success',
+            title: 'New Token Tracked',
+            message: `${symbol || 'UNKNOWN'} now tracked at $${Number(liveTok.mcap).toLocaleString()}`,
+            items: [{ symbol: symbol || 'UNKNOWN', address: tokenAddress, growthPercent: typeof result.growthPercent === 'number' ? result.growthPercent : 0 }]
+          })
+        }
+
+        if (typeof result.growthPercent === 'number' && result.growthPercent >= pnlThreshold) {
+          toasts.push({
+            type: 'info',
+            title: 'PnL Threshold Reached',
+            message: `${symbol || 'UNKNOWN'} growth ${result.growthPercent.toFixed(1)}% ≥ ${pnlThreshold}%`,
+            items: [{ symbol: symbol || 'UNKNOWN', address: tokenAddress, growthPercent: result.growthPercent }]
+          })
+        }
 
         return NextResponse.json({
           success: true,
           tracking: result,
           display: displayString,
-          inRange: isInTrackingRange(tokenData.mcap),
-          currentMcap: tokenData.mcap,
-          currentPrice: tokenData.price || 0,
+          inRange: isInTrackingRange(liveTok.mcap),
+          currentMcap: liveTok.mcap,
+          currentPrice: typeof liveTok.price === 'number' ? liveTok.price : 0,
           tokenData: {
-            symbol: tokenData.symbol,
-            name: tokenData.name,
-            price: tokenData.price,
-            mcap: tokenData.mcap,
-            volume24h: tokenData.volume24h
-          }
+            symbol: liveTok.token_symbol,
+            name: liveTok.token_symbol,
+            price: typeof liveTok.price === 'number' ? liveTok.price : 0,
+            mcap: liveTok.mcap,
+            volume24h: typeof liveTok.volume_1h === 'number' ? liveTok.volume_1h : undefined
+          },
+          toasts
         })
       } catch (error) {
         console.error('Error refetching MCap data:', error)
@@ -751,7 +881,14 @@ export async function POST(request: NextRequest) {
       }, { status: 400 })
     }
 
+    const searchParams = new URL(request.url).searchParams
+    const pnlThresholdParam = searchParams.get('pnlThreshold')
+    const pnlThreshold = pnlThresholdParam
+      ? parseFloat(pnlThresholdParam)
+      : parseFloat(process.env.NEXT_PUBLIC_MCAP_PNL_TOAST_THRESHOLD || process.env.MCAP_PNL_TOAST_THRESHOLD || '50')
+
     const results = new Map()
+    const toasts: Array<{ type: string; title: string; message: string; items?: Array<{ symbol: string; address: string; growthPercent: number }> }> = []
 
     for (const token of tokens) {
       if (!token.address || !token.symbol || typeof token.mcap !== 'number') {
@@ -764,12 +901,31 @@ export async function POST(request: NextRequest) {
         display: getMcapDisplayString(result),
         inRange: isInTrackingRange(token.mcap)
       })
+
+      if (result.isFirstTime) {
+        toasts.push({
+          type: 'success',
+          title: 'New Token Tracked',
+          message: `${token.symbol} now tracked at $${token.mcap.toLocaleString()}`,
+          items: [{ symbol: token.symbol, address: token.address, growthPercent: typeof result.growthPercent === 'number' ? result.growthPercent : 0 }]
+        })
+      }
+
+      if (typeof result.growthPercent === 'number' && result.growthPercent >= pnlThreshold) {
+        toasts.push({
+          type: 'info',
+          title: 'PnL Threshold Reached',
+          message: `${token.symbol} growth ${result.growthPercent.toFixed(1)}% ≥ ${pnlThreshold}%`,
+          items: [{ symbol: token.symbol, address: token.address, growthPercent: result.growthPercent }]
+        })
+      }
     }
 
     return NextResponse.json({
       success: true,
       results: Object.fromEntries(results),
-      totalTracked: results.size
+      totalTracked: results.size,
+      toasts
     })
 
   } catch (error) {
