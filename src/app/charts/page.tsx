@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useMemo, useState, useEffect } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, usePathname, useRouter } from 'next/navigation'
 
 function parseAddresses(param: string | null): string[] {
   if (!param) return []
@@ -14,6 +14,8 @@ function parseAddresses(param: string | null): string[] {
 
 export default function MultiChartsPage() {
   const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
   const addresses = parseAddresses(searchParams.get('addresses'))
   const interval = searchParams.get('interval') || '5'
 
@@ -45,6 +47,114 @@ export default function MultiChartsPage() {
   const [reason, setReason] = useState<string>('continue')
   const [status, setStatus] = useState<string>('')
   const [symbols, setSymbols] = useState<Record<string, string>>({})
+  const [newAddrs, setNewAddrs] = useState<string>('')
+
+  function updateBrowserAddresses(nextList: string[]) {
+    try {
+      const params = new URLSearchParams(searchParams.toString())
+      if (nextList.length > 0) {
+        params.set('addresses', nextList.join(','))
+      } else {
+        params.delete('addresses')
+      }
+      // Keep existing params (like interval) while updating addresses
+      const query = params.toString()
+      const nextUrl = query ? `${pathname}?${query}` : `${pathname}`
+      router.replace(nextUrl)
+      console.debug('[Charts] URL updated with addresses', { nextList, nextUrl })
+    } catch (e) {
+      console.warn('[Charts] Failed to update URL addresses', e)
+    }
+  }
+
+  function handleSaveMint(addr: string) {
+    try {
+      const saved = getSavedCharts()
+      const union = Array.from(new Set([...saved, addr]))
+      saveChartList(union)
+      setStatus(`Saved ${addr} to chart list`)
+      console.debug('[Charts] Saved single mint', { addr })
+    } catch (e: any) {
+      setStatus(`Save failed: ${e?.message || 'unknown'}`)
+    }
+  }
+
+  function handleRemoveMint(addr: string) {
+    try {
+      setCharts((prev: string[]) => {
+        const next = prev.filter((a: string) => a !== addr)
+        updateBrowserAddresses(next)
+        console.debug('[Charts] Removed single mint from charts', { addr, next })
+        return next
+      })
+      setSelected((prev: Set<string>) => {
+        const next = new Set(prev)
+        next.delete(addr)
+        return next
+      })
+      // Also remove from saved list to prevent reintroduction on refresh
+      const saved = getSavedCharts()
+      const filtered = saved.filter((a: string) => a !== addr)
+      if (filtered.length !== saved.length) {
+        saveChartList(filtered)
+        console.debug('[Charts] Removed single mint from saved list', { addr })
+      }
+      setStatus(`Removed ${addr} from charts${filtered.length !== saved.length ? ' and saved list' : ''}`)
+    } catch (e: any) {
+      setStatus(`Remove failed: ${e?.message || 'unknown'}`)
+    }
+  }
+
+  function handleAddAddresses() {
+    try {
+      const parsed: string[] = parseAddresses(newAddrs)
+      if (parsed.length === 0) {
+        setStatus('Nothing to add')
+        return
+      }
+      setCharts((prev: string[]) => {
+        const union = Array.from(new Set([...prev, ...parsed]))
+        const list = union.slice(0, 50)
+        updateBrowserAddresses(list)
+        console.debug('[Charts] Added addresses', { added: parsed, next: list })
+        return list
+      })
+      setSelected((prev: Set<string>) => {
+        const next = new Set(prev)
+        parsed.forEach((a: string) => next.add(a))
+        return next
+      })
+      setNewAddrs('')
+      setStatus(`Added ${parsed.length} address${parsed.length !== 1 ? 'es' : ''}`)
+    } catch (e: any) {
+      setStatus(`Add failed: ${e?.message || 'unknown'}`)
+    }
+  }
+
+  function handleRestoreSaved() {
+    try {
+      const saved = getSavedCharts()
+      if (saved.length === 0) {
+        setStatus('No saved charts found')
+        return
+      }
+      setCharts((prev: string[]) => {
+        const union = Array.from(new Set([...prev, ...saved]))
+        const list = union.slice(0, 50)
+        updateBrowserAddresses(list)
+        console.debug('[Charts] Restored saved addresses', { savedCount: saved.length, next: list })
+        return list
+      })
+      setSelected((prev: Set<string>) => {
+        const next = new Set(prev)
+        saved.forEach((a: string) => next.add(a))
+        return next
+      })
+      setStatus(`Restored ${saved.length} saved address${saved.length !== 1 ? 'es' : ''}`)
+    } catch (e: any) {
+      setStatus(`Restore failed: ${e?.message || 'unknown'}`)
+    }
+  }
 
   const selectedCount = useMemo(() => selected.size, [selected])
 
@@ -64,10 +174,16 @@ export default function MultiChartsPage() {
         // If we stopped tokens, remove them from the current list
         if (reason === 'rug') {
           const removeSet = new Set(targets)
-          setCharts(prev => prev.filter(a => !removeSet.has(a)))
-          setSelected(prev => {
+          setCharts((prev: string[]) => {
+            const next = prev.filter((a: string) => !removeSet.has(a))
+            // Update browser path to exclude removed mints
+            updateBrowserAddresses(next)
+            console.debug('[Charts] Removed tokens due to rug', { removed: targets, next })
+            return next
+          })
+          setSelected((prev: Set<string>) => {
             const next = new Set(prev)
-            targets.forEach(a => next.delete(a))
+            targets.forEach((a: string) => next.delete(a))
             return next
           })
         }
@@ -138,7 +254,27 @@ export default function MultiChartsPage() {
 
         {charts.length === 0 ? (
           <div className="bg-gray-800 rounded-lg p-4">
-            <p className="text-gray-300 text-sm">Pass addresses in the query, e.g. <code className="text-xs">/charts?addresses=addr1,addr2</code></p>
+            <p className="text-gray-300 text-sm mb-3">No charts added — add more.</p>
+            <div className="flex items-center gap-2">
+              <input
+                className="flex-1 text-sm bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white"
+                value={newAddrs}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewAddrs(e.target.value)}
+                placeholder="Paste mint addresses (comma or pipe separated)"
+              />
+              <button
+                className="px-3 py-1.5 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white"
+                onClick={handleAddAddresses}
+              >
+                Add
+              </button>
+              <button
+                className="px-3 py-1.5 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white"
+                onClick={handleRestoreSaved}
+              >
+                Restore saved
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -162,7 +298,7 @@ export default function MultiChartsPage() {
               <label className="text-xs text-gray-300">Action</label>
               <select
                 value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setReason(e.target.value)}
                 className="text-sm bg-gray-800 border border-gray-700 rounded px-2 py-1"
               >
                 <option value="continue">Continue</option>
@@ -187,6 +323,18 @@ export default function MultiChartsPage() {
               >
                 Save list
               </button>
+              <input
+                className="ml-2 w-64 text-sm bg-gray-900 border border-gray-700 rounded px-2 py-1 text-white"
+                value={newAddrs}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewAddrs(e.target.value)}
+                placeholder="Add more mints (comma or pipe)"
+              />
+              <button
+                className="px-3 py-1.5 text-xs rounded bg-blue-600 hover:bg-blue-500 text-white"
+                onClick={handleAddAddresses}
+              >
+                Add
+              </button>
             </div>
           </div>
           {status && <div className="mb-3 text-xs text-gray-300">{status}</div>}
@@ -194,12 +342,12 @@ export default function MultiChartsPage() {
           <div
             className="grid"
             style={{
-              gridTemplateColumns: 'repeat(auto-fill, 500px)',
+              gridTemplateColumns: 'repeat(auto-fill, 400px)',
               gap: '12px'
             }}
           >
-            {charts.map(addr => (
-              <div key={addr} className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700" style={{ width: 500, height: 200 }}>
+            {charts.map((addr: string) => (
+              <div key={addr} className="bg-gray-800 rounded-lg overflow-hidden border border-gray-700" style={{ width: 400, height: 200 }}>
                 <div className="flex items-center justify-between px-3 py-2 border-b border-gray-700">
                   <div className="text-sm font-medium">{symbols[addr] || addr}</div>
                   <div className="flex items-center gap-3">
@@ -207,7 +355,7 @@ export default function MultiChartsPage() {
                       <input
                         type="checkbox"
                         checked={selected.has(addr)}
-                        onChange={(e) => {
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                           const next = new Set(selected)
                           if (e.target.checked) next.add(addr)
                           else next.delete(addr)
@@ -216,6 +364,18 @@ export default function MultiChartsPage() {
                       />
                       Select
                     </label>
+                    <button
+                      className="px-2 py-1 text-xs rounded bg-gray-700 hover:bg-gray-600 text-white"
+                      onClick={() => handleSaveMint(addr)}
+                    >
+                      Save
+                    </button>
+                    <button
+                      className="px-2 py-1 text-xs rounded bg-red-600 hover:bg-red-500 text-white"
+                      onClick={() => handleRemoveMint(addr)}
+                    >
+                      Remove
+                    </button>
                     <a
                       href={`/chart/${addr}`}
                       className="text-xs text-blue-400 hover:text-blue-300 underline"
