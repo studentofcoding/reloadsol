@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { updateOHLCBars, type OHLCInterval } from '@/utils/ohlc'
 import { supabase } from '@/utils/supabase'
+import { fetchTokenPricesBatch } from '@/utils/jupiter-api'
 
 const VALID: OHLCInterval[] = ['1m', '5m', '15m', '1h']
 
@@ -32,9 +33,48 @@ export async function GET(request: NextRequest) {
             query = query.gte('timestamp', from)
         }
 
-        const { data, error } = await query
+        let { data, error } = await query
         if (error) {
             return NextResponse.json({ success: false, error: error.message }, { status: 500 })
+        }
+
+        if (!data || data.length === 0) {
+            const { count } = await supabase
+                .from('token_ohlc_bars')
+                .select('token_address', { count: 'exact', head: true })
+
+            if ((count || 0) === 0) {
+                await updateOHLCBars({ interval: intervalParam, store: true })
+                const seeded = await query
+                data = seeded.data || []
+            }
+
+            if (!data || data.length === 0) {
+                const now = new Date()
+                now.setSeconds(0, 0)
+                const m = now.getMinutes()
+                if (intervalParam === '5m') now.setMinutes(m - (m % 5))
+                else if (intervalParam === '15m') now.setMinutes(m - (m % 15))
+                else if (intervalParam === '1h') now.setMinutes(0)
+                const tsIso = now.toISOString()
+
+                const priceData = await fetchTokenPricesBatch([mint], { batchSize: 1, retries: 1, timeout: 10000 }).catch(() => ({} as any))
+                const price = priceData?.[mint]?.price ?? 0
+                if (price > 0) {
+                    const { data: exists } = await supabase
+                        .from('token_ohlc_bars')
+                        .select('token_address')
+                        .eq('token_address', mint)
+                        .eq('interval', intervalParam)
+                        .eq('timestamp', tsIso)
+                        .limit(1)
+                    if (!exists || exists.length === 0) {
+                        await supabase.from('token_ohlc_bars').insert([{ token_address: mint, interval: intervalParam, open: price, high: price, low: price, close: price, timestamp: tsIso }])
+                    }
+                    const refreshed = await query
+                    data = refreshed.data || []
+                }
+            }
         }
 
         return NextResponse.json({
