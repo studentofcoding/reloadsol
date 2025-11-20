@@ -74,6 +74,21 @@ export default function ChartPage() {
   const [balanceAfter, setBalanceAfter] = useState<number>(0)
   const [walletBalance, setWalletBalance] = useState<number | null>(null)
 
+  // OHLC chart state
+  interface OHLCBar {
+    token_address: string
+    interval: '1m' | '5m' | '15m' | '1h'
+    open: number
+    high: number
+    low: number
+    close: number
+    timestamp: string
+  }
+  const [chartMode, setChartMode] = useState<'gmgn' | 'ohlc'>('gmgn')
+  const [ohlcBars, setOhlcBars] = useState<OHLCBar[]>([])
+  const [isOhlcLoading, setIsOhlcLoading] = useState(false)
+  const [ohlcError, setOhlcError] = useState('')
+
   // Create the GMGN chart URL with correct format
   const gmgnChartUrl = `https://www.gmgn.cc/kline/sol/${tokenAddress}?interval=1H`
 
@@ -314,6 +329,37 @@ export default function ChartPage() {
     fetchTokenData()
   }, [tokenAddress])
 
+  useEffect(() => {
+    if (!tokenAddress || !isValidMintAddress(tokenAddress)) return
+    setIsOhlcLoading(true)
+    setOhlcError('')
+    fetch(`/api/ohlc?mint=${tokenAddress}&interval=5m&limit=288`)
+      .then(res => res.json())
+      .then(data => {
+        if (!data.success) {
+          setOhlcError(data.error || 'Failed to load OHLC data')
+          setOhlcBars([])
+          return
+        }
+        const bars = (data.bars || []).map((b: any) => ({
+          token_address: b.token_address,
+          interval: b.interval,
+          open: typeof b.open === 'string' ? parseFloat(b.open) : b.open,
+          high: typeof b.high === 'string' ? parseFloat(b.high) : b.high,
+          low: typeof b.low === 'string' ? parseFloat(b.low) : b.low,
+          close: typeof b.close === 'string' ? parseFloat(b.close) : b.close,
+          timestamp: b.timestamp
+        }))
+        setOhlcBars(bars)
+        if (bars.length > 0) setChartMode('ohlc')
+      })
+      .catch(err => {
+        setOhlcError(err instanceof Error ? err.message : 'Failed to load OHLC data')
+        setOhlcBars([])
+      })
+      .finally(() => setIsOhlcLoading(false))
+  }, [tokenAddress])
+
   const handleBuy = useCallback(async () => {
     if (!connected || !publicKey || !signAllTransactions) {
       setError('Please connect your wallet first')
@@ -477,6 +523,43 @@ export default function ChartPage() {
       const newAmount = (walletBalance * value / 100).toFixed(4)
       setBuyAmount(newAmount)
     }
+  }
+
+  const OHLCChart = ({ bars, height = 600 }: { bars: OHLCBar[]; height?: number }) => {
+    const width = typeof window !== 'undefined' ? Math.min(1200, window.innerWidth - 64) : 800
+    const padding = 40
+    const w = width - padding * 2
+    const h = height - padding * 2
+    if (!bars || bars.length === 0) return <div className="flex items-center justify-center h-[600px] text-gray-400">No OHLC data</div>
+    const highs = bars.map(b => b.high)
+    const lows = bars.map(b => b.low)
+    const maxY = Math.max(...highs)
+    const minY = Math.min(...lows)
+    const scaleY = (v: number) => h - ((v - minY) / (maxY - minY)) * h
+    const candleWidth = Math.max(2, Math.floor(w / bars.length) - 4)
+    return (
+      <svg width={width} height={height} className="bg-gray-900">
+        <g transform={`translate(${padding},${padding})`}>
+          {bars.map((b, i) => {
+            const x = (i / bars.length) * w
+            const yH = scaleY(b.high)
+            const yL = scaleY(b.low)
+            const yO = scaleY(b.open)
+            const yC = scaleY(b.close)
+            const up = b.close >= b.open
+            const color = up ? '#22c55e' : '#ef4444'
+            const top = Math.min(yO, yC)
+            const bodyH = Math.max(2, Math.abs(yC - yO))
+            return (
+              <g key={i} transform={`translate(${x},0)`}>
+                <line x1={Math.floor(candleWidth/2)} y1={yH} x2={Math.floor(candleWidth/2)} y2={yL} stroke={color} strokeWidth={1}/>
+                <rect x={0} y={top} width={candleWidth} height={bodyH} fill={color}/>
+              </g>
+            )
+          })}
+        </g>
+      </svg>
+    )
   }
 
   if (error && !tokenInfo) {
@@ -766,26 +849,61 @@ export default function ChartPage() {
 
       {/* Chart Container */}
       <div className="relative max-w-7xl mx-auto" style={{ height: '70vh' }}>
-        {/* Loading indicator */}
-        {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-            <div className="w-12 h-12 border-4 border-gray-400 border-t-white rounded-full animate-spin"></div>
+        <div className="flex items-center justify-between px-2 py-2">
+          <div className="text-sm text-gray-400">Chart Mode</div>
+          <div className="space-x-2">
+            <button
+              className={`px-3 py-1 rounded ${chartMode==='ohlc' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+              onClick={() => setChartMode('ohlc')}
+            >
+              OHLC (local)
+            </button>
+            <button
+              className={`px-3 py-1 rounded ${chartMode==='gmgn' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+              onClick={() => setChartMode('gmgn')}
+            >
+              GMGN
+            </button>
           </div>
+        </div>
+
+        {chartMode === 'ohlc' ? (
+          <>
+            {isOhlcLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+                <div className="w-12 h-12 border-4 border-gray-400 border-t-white rounded-full animate-spin"></div>
+              </div>
+            )}
+            {ohlcError && (
+              <div className="p-3 text-red-400 text-sm">{ohlcError}</div>
+            )}
+            {!isOhlcLoading && !ohlcError && (
+              <div className="w-full h-full overflow-x-auto">
+                <OHLCChart bars={ohlcBars} height={600} />
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {isLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+                <div className="w-12 h-12 border-4 border-gray-400 border-t-white rounded-full animate-spin"></div>
+              </div>
+            )}
+            <iframe 
+              src={gmgnChartUrl}
+              className="w-full h-full"
+              style={{ 
+                border: 'none',
+                minHeight: '600px'
+              }}
+              title={`GMGN Chart - ${tokenInfo?.symbol || tokenAddress}`}
+              onLoad={() => setIsLoading(false)}
+              allowFullScreen
+              frameBorder="0"
+            />
+          </>
         )}
-        
-        {/* GMGN Chart iframe */}
-        <iframe 
-          src={gmgnChartUrl}
-          className="w-full h-full"
-          style={{ 
-            border: 'none',
-            minHeight: '600px'
-          }}
-          title={`GMGN Chart - ${tokenInfo?.symbol || tokenAddress}`}
-          onLoad={() => setIsLoading(false)}
-          allowFullScreen
-          frameBorder="0"
-        />
       </div>
 
       {/* Footer */}

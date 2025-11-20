@@ -59,8 +59,25 @@ export async function updateOHLCBars(options: { interval: OHLCInterval; store?: 
 
     let stored = 0
     if (store && bars.length > 0) {
-        const { error: insertErr } = await supabase.from('token_ohlc_bars').insert(bars)
-        if (!insertErr) stored = bars.length
+        const { data: existing, error: selectErr } = await supabase
+            .from('token_ohlc_bars')
+            .select('token_address')
+            .in('token_address', addresses)
+            .eq('interval', interval)
+            .eq('timestamp', tsIso)
+
+        if (!selectErr) {
+            const existingSet = new Set((existing || []).map(r => r.token_address))
+            const toInsert = bars.filter(b => !existingSet.has(b.token_address))
+            if (toInsert.length > 0) {
+                const { error: insertErr } = await supabase.from('token_ohlc_bars').insert(toInsert)
+                if (!insertErr) stored = toInsert.length
+            }
+            console.debug('ohlc_insert', { interval, timestamp: tsIso, total: bars.length, inserted: stored, skipped: bars.length - stored })
+        } else {
+            const { error: insertErr } = await supabase.from('token_ohlc_bars').insert(bars)
+            if (!insertErr) stored = bars.length
+        }
     }
 
     return { bars, stored }
