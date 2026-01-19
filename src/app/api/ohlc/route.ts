@@ -42,13 +42,20 @@ export async function GET(request: NextRequest) {
             const { count } = await supabase
                 .from('token_ohlc_bars')
                 .select('token_address', { count: 'exact', head: true })
+                .eq('token_address', mint) // Fix: Filter count by mint to check if THIS token has data
 
+            // If no data exists for this token, try to seed it
             if ((count || 0) === 0) {
+                // First try to update bars (might not work if token is not in tracking list)
                 await updateOHLCBars({ interval: intervalParam, store: true })
+                
+                // Then try to fetch again
                 const seeded = await query
                 data = seeded.data || []
             }
 
+            // If still no data (e.g., token is not being tracked or updateOHLCBars skipped it)
+            // we manually fetch the current price and create a single bar so the chart isn't empty
             if (!data || data.length === 0) {
                 const now = new Date()
                 now.setSeconds(0, 0)
