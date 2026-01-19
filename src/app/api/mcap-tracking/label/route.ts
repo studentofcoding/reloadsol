@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+
+export const dynamic = 'force-dynamic'
 import { supabase } from '@/utils/supabase'
 import { TokenLabel } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
