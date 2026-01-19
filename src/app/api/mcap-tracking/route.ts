@@ -260,6 +260,10 @@ export async function GET(request: NextRequest) {
         allDataQuery = allDataQuery.lte('first_mcap', parseFloat(maxMcap))
       }
 
+      // Explicitly set a high limit to ensure we get all records for statistics
+      // Supabase default is often 1000, which causes the discrepancy (70k total vs 1k stats)
+      allDataQuery = allDataQuery.limit(100000)
+
       const { data: allData } = await allDataQuery
 
       if (!allData) {
@@ -593,7 +597,17 @@ export async function GET(request: NextRequest) {
       const thirtyDaysAgo = new Date()
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
 
-      const recentTokens = allData.filter(item =>
+      // Use a separate query for 30-day stats to ensure we have the full history
+      // regardless of the current list filters (which might limit to 24h, etc.)
+      const { data: thirtyDayData } = await supabase
+        .from('token_mcap_tracking')
+        .select('first_seen_at, mcap_growth_percent, current_mcap')
+        .gte('first_seen_at', thirtyDaysAgo.toISOString())
+        .limit(100000) // Ensure we get enough records
+
+      const summaryData = thirtyDayData || []
+
+      const recentTokens = summaryData.filter(item =>
         new Date(item.first_seen_at) >= thirtyDaysAgo
       )
 
@@ -605,7 +619,7 @@ export async function GET(request: NextRequest) {
         const dayStart = new Date(date.setHours(0, 0, 0, 0))
         const dayEnd = new Date(date.setHours(23, 59, 59, 999))
 
-        const dayTokens = allData.filter(item => {
+        const dayTokens = summaryData.filter(item => {
           const tokenDate = new Date(item.first_seen_at)
           return tokenDate >= dayStart && tokenDate <= dayEnd
         })
@@ -889,7 +903,7 @@ export async function GET(request: NextRequest) {
               toasts: []
             })
           }
-        } catch {}
+        } catch { }
 
         // Fetch current price and market cap from trending API (live, no cache)
         const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
@@ -1082,7 +1096,7 @@ export async function POST(request: NextRequest) {
           })
           continue
         }
-      } catch {}
+      } catch { }
 
       const result = await trackTokenMcap(token.address, token.symbol, token.mcap)
       results.set(token.address, {
