@@ -852,7 +852,7 @@ export default function TrackingHistoryPage() {
                                   borderWidth: 1,
                                   callbacks: {
                                     label: function(context) {
-                                      return `Price: $${formatPrice(context.parsed.y)}`
+                                      return `Price: $${formatPrice(context.parsed.y ?? 0)}`
                                     }
                                   }
                                 }
