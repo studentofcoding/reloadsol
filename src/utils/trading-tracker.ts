@@ -196,6 +196,75 @@ class TradingTracker {
     }
   }
 
+  // Delete a trading record
+  async deleteRecord(id: string, walletAddress: string): Promise<void> {
+    try {
+      if (this.isOnline) {
+        // Try to delete via API first
+        await this.deleteViaAPI(id, walletAddress)
+      } else {
+        // Delete from offline cache
+        this.deleteFromOfflineCache(id, walletAddress)
+      }
+
+      // Update local cache
+      const cached = this.cache.get(walletAddress) || []
+      const updated = cached.filter(r => r.id !== id)
+      this.cache.set(walletAddress, updated)
+
+      // Notify subscribers
+      this.notifySubscribers(walletAddress)
+
+      console.log(`🗑️ Deleted record: ${id}`)
+    } catch (error) {
+      console.error('Failed to delete record:', error)
+      // Fallback to offline cache on error
+      this.deleteFromOfflineCache(id, walletAddress)
+      
+      // Update local cache even on error to reflect UI change immediately
+      const cached = this.cache.get(walletAddress) || []
+      const updated = cached.filter(r => r.id !== id)
+      this.cache.set(walletAddress, updated)
+      this.notifySubscribers(walletAddress)
+    }
+  }
+
+  // Delete record via API
+  private async deleteViaAPI(id: string, walletAddress: string): Promise<void> {
+    // Use absolute URL for server-side compatibility
+    const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+    const response = await fetch(`${baseUrl}/api/trading/records?id=${id}&wallet=${walletAddress}`, {
+      method: 'DELETE',
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(`API delete failed: ${error.error || 'Unknown error'}`);
+    }
+  }
+
+  // Delete from offline cache (localStorage)
+  private deleteFromOfflineCache(id: string, walletAddress: string): void {
+    // Only run in browser environment
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+      return
+    }
+
+    try {
+      const key = `offline_trading_${walletAddress}`
+      const cached = localStorage.getItem(key)
+      if (!cached) return
+
+      const records: TrackingRecord[] = JSON.parse(cached)
+      const updated = records.filter(r => r.id !== id)
+
+      localStorage.setItem(key, JSON.stringify(updated))
+      console.log('💾 Removed from offline cache:', id)
+    } catch (error) {
+      console.error('Failed to remove from offline cache:', error)
+    }
+  }
+
   // Save record via API
   private async saveViaAPI(record: TrackingRecord): Promise<void> {
     // Use absolute URL for server-side compatibility

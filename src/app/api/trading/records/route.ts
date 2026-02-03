@@ -37,21 +37,21 @@ const REQUEST_TIMEOUT = 10000 // 10 second timeout
 // Clean up expired cache entries
 function cleanupRecordsCache() {
   const now = Date.now()
-  
+
   // Clean expired cache entries
   for (const [key, cache] of Array.from(tradingRecordsCache.entries())) {
     if (now > cache.expiresAt) {
       tradingRecordsCache.delete(key)
     }
   }
-  
+
   // Clean expired ongoing requests
   for (const [key, request] of Array.from(ongoingRecordsRequests.entries())) {
     if (now - request.timestamp > REQUEST_TIMEOUT) {
       ongoingRecordsRequests.delete(key)
     }
   }
-  
+
   // Limit cache size
   if (tradingRecordsCache.size > MAX_CACHE_ENTRIES) {
     const entries = Array.from(tradingRecordsCache.entries())
@@ -71,12 +71,12 @@ function getCachedRecords(walletAddress: string, limit: number): any[] | null {
   const cacheKey = generateRecordsCacheKey(walletAddress, limit)
   const cached = tradingRecordsCache.get(cacheKey)
   if (!cached) return null
-  
+
   const now = Date.now()
   if (now <= cached.expiresAt) {
     return cached.data
   }
-  
+
   tradingRecordsCache.delete(cacheKey)
   return null
 }
@@ -85,7 +85,7 @@ function getCachedRecords(walletAddress: string, limit: number): any[] | null {
 function setCachedRecords(walletAddress: string, limit: number, data: any[]) {
   const now = Date.now()
   const cacheKey = generateRecordsCacheKey(walletAddress, limit)
-  
+
   tradingRecordsCache.set(cacheKey, {
     data,
     walletAddress,
@@ -93,7 +93,7 @@ function setCachedRecords(walletAddress: string, limit: number, data: any[]) {
     timestamp: now,
     expiresAt: now + CACHE_TTL_MS
   })
-  
+
   cleanupRecordsCache()
 }
 
@@ -105,9 +105,9 @@ async function fetchTradingRecordsWithCache(walletAddress: string, limit: number
     console.log(`🎯 Cache hit for trading records: ${walletAddress.substring(0, 8)}... (${limit} records)`)
     return cached
   }
-  
+
   const cacheKey = generateRecordsCacheKey(walletAddress, limit)
-  
+
   // Check if there's an ongoing request
   const ongoing = ongoingRecordsRequests.get(cacheKey)
   if (ongoing) {
@@ -119,7 +119,7 @@ async function fetchTradingRecordsWithCache(walletAddress: string, limit: number
       throw error
     }
   }
-  
+
   // Create new request
   const requestPromise = fetchTradingRecordsFromDB(walletAddress, limit)
   ongoingRecordsRequests.set(cacheKey, {
@@ -128,15 +128,15 @@ async function fetchTradingRecordsWithCache(walletAddress: string, limit: number
     limit,
     timestamp: Date.now()
   })
-  
+
   try {
     const result = await requestPromise
     ongoingRecordsRequests.delete(cacheKey)
-    
+
     if (result && result.length >= 0) {
       setCachedRecords(walletAddress, limit, result)
     }
-    
+
     return result
   } catch (error) {
     ongoingRecordsRequests.delete(cacheKey)
@@ -225,7 +225,7 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error fetching trading records:', error)
     return NextResponse.json(
-      { 
+      {
         error: 'Failed to fetch trading records',
         details: error instanceof Error ? error.message : 'Unknown error'
       },
@@ -248,10 +248,10 @@ export async function POST(request: NextRequest) {
 
     // Skip records with errors
     if (
-      (record.errors && record.errors.length > 0) || 
+      (record.errors && record.errors.length > 0) ||
       (record.failureCount > 0 && record.successCount === 0)
     ) {
-      return NextResponse.json({ 
+      return NextResponse.json({
         success: true,
         skipped: true,
         reason: 'Record contains errors or represents failed operation'
@@ -282,7 +282,7 @@ export async function POST(request: NextRequest) {
       }
     }
     keysToDelete.forEach(key => tradingRecordsCache.delete(key))
-    
+
     console.log(`🗑️ Invalidated ${keysToDelete.length} cache entries for wallet ${record.walletAddress.substring(0, 8)}...`)
 
     const allowedOrigin = resolveAllowedOrigin(request)
@@ -300,8 +300,66 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Error saving trading record:', error)
     return NextResponse.json(
-      { 
+      {
         error: 'Failed to save trading record',
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
+      { status: 500 }
+    )
+  }
+}
+
+// DELETE /api/trading/records?id=<id>&wallet=<address> - Delete a trading record
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+    const walletAddress = searchParams.get('wallet')
+
+    if (!id || !walletAddress) {
+      return NextResponse.json(
+        { error: 'Missing required parameters: id, wallet' },
+        { status: 400 }
+      )
+    }
+
+    const { error } = await supabase
+      .from('trading_records')
+      .delete()
+      .match({ id, wallet_address: walletAddress })
+
+    if (error) {
+      throw error
+    }
+
+    // Invalidate cache for this wallet address
+    const keysToDelete: string[] = []
+    for (const [key, cache] of Array.from(tradingRecordsCache.entries())) {
+      if (cache.walletAddress === walletAddress) {
+        keysToDelete.push(key)
+      }
+    }
+    keysToDelete.forEach(key => tradingRecordsCache.delete(key))
+
+    console.log(`🗑️ Deleted record ${id} and invalidated cache for wallet ${walletAddress.substring(0, 8)}...`)
+
+    const allowedOrigin = resolveAllowedOrigin(request)
+
+    return NextResponse.json(
+      { success: true },
+      {
+        headers: {
+          ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin } : {}),
+          'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Origin',
+        },
+      }
+    )
+  } catch (error) {
+    console.error('Error deleting trading record:', error)
+    return NextResponse.json(
+      {
+        error: 'Failed to delete trading record',
         details: error instanceof Error ? error.message : 'Unknown error'
       },
       { status: 500 }
@@ -316,7 +374,7 @@ export async function OPTIONS(request: NextRequest) {
     status: 200,
     headers: {
       ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin } : { 'Access-Control-Allow-Origin': '*' }),
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Origin',
       'Access-Control-Max-Age': '86400',
     },

@@ -218,7 +218,11 @@ export default function WalletBalance({ onBalanceChange }: WalletBalanceProps) {
   // }, [balance, solPrice, connected, publicKey])
 
   if (!connected) {
-    return null
+    return (
+      <div className="flex items-center space-x-2 text-sm">
+        <span className="text-gray-400">Not connected</span>
+      </div>
+    )
   }
 
   const renderBalance = () => {

@@ -6,6 +6,9 @@ import {
   getTokenWithAnalytics,
   EnrichedTokenData,
 } from "@/utils/data-aggregation";
+import ChartBuyModal from "@/components/ChartBuyModal";
+import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
+import NavigationTabs from "@/components/NavigationTabs";
 
 interface McapTrackingData {
   token_address: string;
@@ -824,6 +827,12 @@ export default function McapTrackerPage() {
   const [expandedBuckets, setExpandedBuckets] = useState<
     Record<string, boolean>
   >({});
+
+  // Modal state
+  const [modalTokenAddress, setModalTokenAddress] = useState<string | null>(
+    null,
+  );
+
   const toggleBucketDetails = (key: string) => {
     setExpandedBuckets((prev) => ({ ...prev, [key]: !prev[key] }));
   };
@@ -1603,14 +1612,14 @@ export default function McapTrackerPage() {
                             className="flex justify-between items-center text-sm"
                           >
                             <div className="flex flex-col">
-                              <a
-                                href={`/chart/${item.address}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="underline hover:text-white"
+                              <button
+                                onClick={() =>
+                                  setModalTokenAddress(item.address)
+                                }
+                                className="underline hover:text-white text-left"
                               >
                                 {item.symbol}
-                              </a>
+                              </button>
                               <div className="text-xs text-gray-300">
                                 MCap: {formatMcapCompact(mcap)}
                               </div>
@@ -1660,2139 +1669,2131 @@ export default function McapTrackerPage() {
           ))}
         </div>
       )}
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">MCap Tracker</h1>
-          <p className="text-gray-400">
-            Monitor token market cap changes and growth patterns over time
+
+      {/* Chart Buy Modal */}
+      {modalTokenAddress && (
+        <ChartBuyModal
+          tokenAddress={modalTokenAddress}
+          onClose={() => setModalTokenAddress(null)}
+        />
+      )}
+
+      {/* Unified Tracker Module */}
+      <NavigationTabs />
+      <div className="mt-8">
+        <UnifiedTrackerModule />
+      </div>
+
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold mb-2">MCap Tracker</h1>
+        <p className="text-gray-400">
+          Monitor token market cap changes and growth patterns over time
+        </p>
+        {stats && (
+          <p className="text-sm text-blue-400 mt-2">
+            SOL Price: ${stats.solPriceUSD.toFixed(2)}
           </p>
-          {stats && (
-            <p className="text-sm text-blue-400 mt-2">
-              SOL Price: ${stats.solPriceUSD.toFixed(2)}
-            </p>
+        )}
+
+        {/* PnL Toast Threshold Control (max 30%) */}
+        <div className="mt-4 flex items-center gap-3">
+          <span className="text-sm text-gray-300">PnL Toast Threshold (%)</span>
+          <input
+            type="range"
+            min={0}
+            max={30}
+            step={1}
+            value={pnlToastThreshold}
+            onChange={(e) =>
+              setPnlToastThreshold(clampThreshold(Number(e.target.value)))
+            }
+            className="w-40"
+          />
+          <input
+            type="number"
+            min={0}
+            max={30}
+            step={1}
+            value={pnlToastThreshold}
+            onChange={(e) =>
+              setPnlToastThreshold(clampThreshold(Number(e.target.value)))
+            }
+            className="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1"
+          />
+          <span className="text-xs text-gray-500">(max 30%)</span>
+          <button
+            onClick={handleSavePnlToastThreshold}
+            className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md"
+            title="Save threshold as default for next reloads"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+
+      {/* Enhanced Statistics Overview */}
+      {stats && (
+        <>
+          {/* Main Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-8">
+            <div className="bg-gray-800 rounded-lg p-4">
+              <div className="text-2xl font-bold text-blue-400">
+                {stats.total.toLocaleString()}
+              </div>
+              <div className="text-sm text-gray-400">Total Tokens</div>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-4">
+              <div className="text-2xl font-bold text-green-400">
+                {stats.gainers.toLocaleString()}
+              </div>
+              <div className="text-sm text-gray-400">Gainers</div>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-4">
+              <div className="text-2xl font-bold text-red-400">
+                {stats.losers.toLocaleString()}
+              </div>
+              <div className="text-sm text-gray-400">Losers</div>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-4">
+              <div className="text-2xl font-bold text-gray-400">
+                {stats.zeroPercent.toLocaleString()}
+              </div>
+              <div className="text-sm text-gray-400">
+                0% PnL ({stats.zeroPercentage.toFixed(1)}%)
+              </div>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-4">
+              <div
+                className={`text-2xl font-bold ${getGrowthColor(stats.avgGrowth)}`}
+              >
+                {formatPercentage(stats.avgGrowth)}
+              </div>
+              <div className="text-sm text-gray-400">Avg Growth</div>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-4">
+              <div className="text-2xl font-bold text-purple-400">
+                {formatNumber(stats.totalMcap)}
+              </div>
+              <div className="text-sm text-gray-400">Total MCap</div>
+            </div>
+          </div>
+
+          {/* 30-Day Summary */}
+          <div className="bg-gray-800 rounded-lg p-6 mb-8">
+            <h3 className="text-xl font-bold mb-4">30-Day PnL Summary</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">
+                      Tokens Added (30 days):
+                    </span>
+                    <span className="text-white">
+                      {stats.thirtyDaysSummary.totalTokensAdded}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Daily Growth:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.thirtyDaysSummary.avgDailyGrowth,
+                      )}
+                    >
+                      {formatPercentage(stats.thirtyDaysSummary.avgDailyGrowth)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <h4 className="text-sm font-semibold text-gray-300 mb-2">
+                  Recent Daily Breakdown (Last 7 days)
+                </h4>
+                <div className="space-y-1 text-xs">
+                  {stats.thirtyDaysSummary.dailyBreakdown
+                    .slice(-7)
+                    .map((day, index) => (
+                      <div
+                        key={index}
+                        className="flex justify-between items-center"
+                      >
+                        <span className="text-gray-400">{day.date}:</span>
+                        <div className="flex items-center space-x-2">
+                          <span className="text-white">
+                            {day.tokensAdded} tokens
+                          </span>
+                          <span className={getGrowthColor(day.avgGrowth)}>
+                            {formatPercentage(day.avgGrowth)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Daily Ranking Visualization */}
+          <DailyRankingVisualization tokens={tokens} stats={stats} />
+
+          {/* Buy & Sell Time Windows (Combined) with inline timezone controls and legend */}
+          {stats.pnlTimeWindows && stats.pnlBuyTimeWindows && (
+            <div className="bg-gray-800 rounded-lg p-6 mb-8">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-2">
+                <h3 className="text-xl font-bold">
+                  Buy & Sell Time Windows (Combined)
+                </h3>
+                <div className="flex items-center gap-4">
+                  <label className="text-sm text-gray-300 flex items-center gap-2">
+                    Display in:
+                    <select
+                      className="bg-gray-700 rounded px-2 py-1 text-sm"
+                      value={displayGmtOffset}
+                      onChange={(e) =>
+                        setDisplayGmtOffset(parseInt(e.target.value, 10))
+                      }
+                    >
+                      {gmtOptions.map((off) => (
+                        <option key={off} value={off}>
+                          {off >= 0 ? `GMT+${off}` : `GMT${off}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-sm text-gray-300 flex items-center gap-2">
+                    Server base offset (Sell):
+                    <select
+                      className="bg-gray-700 rounded px-2 py-1 text-sm"
+                      value={sellServerBaseOffset}
+                      onChange={(e) =>
+                        setSellServerBaseOffset(parseInt(e.target.value, 10))
+                      }
+                    >
+                      {gmtOptions.map((off) => (
+                        <option key={off} value={off}>
+                          {off >= 0 ? `GMT+${off}` : `GMT${off}`}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              {/* Legend */}
+              <div className="flex items-center gap-6 text-xs text-gray-300 mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded bg-emerald-400"></span>
+                  <span>Buy (neon)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded bg-black border border-gray-600"></span>
+                  <span>Sell (black)</span>
+                </div>
+              </div>
+
+              {/* Basis/Source summary */}
+              <div className="text-xs text-gray-400 mb-4">
+                Buy basis:{" "}
+                {stats.timeWindowMeta?.buyPeakHourBasis ?? "first_seen_at"} |
+                Source TZ: {stats.timeWindowMeta?.buyPeakHourTimezone ?? "UTC"}{" "}
+                | Display TZ:{" "}
+                {displayGmtOffset >= 0
+                  ? `GMT+${displayGmtOffset}`
+                  : `GMT${displayGmtOffset}`}{" "}
+                <br />
+                Sell basis:{" "}
+                {stats.timeWindowMeta?.sellPeakHourBasis ?? "last_updated_at"} |
+                Source TZ:{" "}
+                {stats.timeWindowMeta?.sellPeakHourTimezone ?? "server_local"} |
+                Display TZ:{" "}
+                {displayGmtOffset >= 0
+                  ? `GMT+${displayGmtOffset}`
+                  : `GMT${displayGmtOffset}`}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {Array.from(
+                  new Set([
+                    ...Object.keys(stats.pnlTimeWindows || {}),
+                    ...Object.keys(stats.pnlBuyTimeWindows || {}),
+                  ]),
+                )
+                  .sort(
+                    (a, b) =>
+                      parseFloat(a.replace("%", "")) -
+                      parseFloat(b.replace("%", "")),
+                  )
+                  .map((threshold) => {
+                    const sell = stats.pnlTimeWindows[threshold];
+                    const buy = stats.pnlBuyTimeWindows
+                      ? stats.pnlBuyTimeWindows[threshold]
+                      : undefined;
+
+                    // Shift distributions to display TZ
+                    const sellShift = displayGmtOffset - sellServerBaseOffset;
+                    const adjustedSellDist = sell
+                      ? shiftDistribution(sell.timeDistribution, sellShift)
+                      : {};
+                    const adjustedBuyDist = buy
+                      ? shiftDistribution(
+                          buy.timeDistribution,
+                          displayGmtOffset,
+                        )
+                      : {};
+
+                    // Recompute peak hours in display TZ
+                    const sellPeak = sell
+                      ? recomputePeakHoursFromDistribution(adjustedSellDist)
+                      : [];
+                    const buyPeak = buy
+                      ? recomputePeakHoursFromDistribution(adjustedBuyDist)
+                      : [];
+
+                    // Separate maxima for better per-series contrast
+                    const sellMax =
+                      adjustedSellDist &&
+                      Object.values(adjustedSellDist).length > 0
+                        ? Math.max(...Object.values(adjustedSellDist))
+                        : 0;
+                    const buyMax =
+                      adjustedBuyDist &&
+                      Object.values(adjustedBuyDist).length > 0
+                        ? Math.max(...Object.values(adjustedBuyDist))
+                        : 0;
+
+                    const formatTimeToReach = (hours: number) => {
+                      if (!hours || hours <= 0) return "N/A";
+                      if (hours < 1) return `${Math.round(hours * 60)}m`;
+                      if (hours < 24) return `${hours.toFixed(1)}h`;
+                      const days = Math.floor(hours / 24);
+                      const remainingHours = Math.round(hours % 24);
+                      return remainingHours > 0
+                        ? `${days}d ${remainingHours}h`
+                        : `${days}d`;
+                    };
+
+                    // Threshold color for heading only
+                    const thresholdNum = parseFloat(threshold.replace("%", ""));
+                    const headingColor = (() => {
+                      if (thresholdNum >= 1000) return "text-purple-400";
+                      if (thresholdNum >= 500) return "text-pink-400";
+                      if (thresholdNum >= 200) return "text-yellow-400";
+                      if (thresholdNum >= 100) return "text-green-400";
+                      return "text-blue-400";
+                    })();
+
+                    return (
+                      <div
+                        key={threshold}
+                        className="bg-gray-700 rounded-lg p-4"
+                      >
+                        <h4
+                          className={`text-lg font-semibold mb-3 ${headingColor}`}
+                        >
+                          {threshold} Threshold
+                        </h4>
+
+                        <div className="space-y-2 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">
+                              Tokens Reached (Buy):
+                            </span>
+                            <span className="text-white font-medium">
+                              {buy?.count ?? 0}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">
+                              Tokens Reached (Sell):
+                            </span>
+                            <span className="text-white font-medium">
+                              {sell?.count ?? 0}
+                            </span>
+                          </div>
+
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">
+                              Avg Time (Buy):
+                            </span>
+                            <span className="text-white">
+                              {formatTimeToReach(buy?.avgTimeToReach ?? 0)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">
+                              Avg Time (Sell):
+                            </span>
+                            <span className="text-white">
+                              {formatTimeToReach(sell?.avgTimeToReach ?? 0)}
+                            </span>
+                          </div>
+
+                          {buyPeak.length > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">
+                                Peak Hours for Buy:
+                              </span>
+                              <span className="text-emerald-300 text-xs">
+                                {buyPeak.slice(0, 3).join(", ")}
+                                {buyPeak.length > 3 && "..."}
+                              </span>
+                            </div>
+                          )}
+                          {sellPeak.length > 0 && (
+                            <div className="flex justify-between">
+                              <span className="text-gray-400">
+                                Peak Hours for Sell:
+                              </span>
+                              <span className="text-gray-200 text-xs">
+                                {sellPeak.slice(0, 3).join(", ")}
+                                {sellPeak.length > 3 && "..."}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Overlayed hourly distribution (Buy top stripe, Sell bottom stripe) */}
+                          <div className="mt-3">
+                            <span className="text-gray-400 text-xs mb-2 block">
+                              Hourly Distribution (display TZ):
+                            </span>
+                            <div className="grid grid-cols-6 gap-1">
+                              {Array.from({ length: 24 }, (_, hour) => {
+                                const key = hour.toString().padStart(2, "0");
+                                const buyCount =
+                                  (adjustedBuyDist as any)[key] || 0;
+                                const sellCount =
+                                  (adjustedSellDist as any)[key] || 0;
+                                const buyOpacity =
+                                  buyMax > 0
+                                    ? Math.max(0.12, buyCount / buyMax)
+                                    : 0.12;
+                                const sellOpacity =
+                                  sellMax > 0
+                                    ? Math.max(0.12, sellCount / sellMax)
+                                    : 0.12;
+                                return (
+                                  <div
+                                    key={key}
+                                    className="h-3 rounded-sm border border-gray-600/40 px-[1px] py-[1px]"
+                                    title={`${key}:00 — Buy ${buyCount}, Sell ${sellCount}`}
+                                  >
+                                    <div className="flex flex-col h-full gap-[1px]">
+                                      {/* Buy stripe (top) */}
+                                      <div
+                                        className="h-1 bg-emerald-400 rounded-sm"
+                                        style={{ opacity: buyOpacity }}
+                                      />
+                                      {/* Sell stripe (bottom) */}
+                                      <div
+                                        className="h-1 bg-black rounded-sm border border-gray-700"
+                                        style={{ opacity: sellOpacity }}
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            <div className="flex justify-between text-xs text-gray-500 mt-1">
+                              <span>00h</span>
+                              <span>12h</span>
+                              <span>24h</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
           )}
 
-          {/* PnL Toast Threshold Control (max 30%) */}
-          <div className="mt-4 flex items-center gap-3">
-            <span className="text-sm text-gray-300">
-              PnL Toast Threshold (%)
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={30}
-              step={1}
-              value={pnlToastThreshold}
-              onChange={(e) =>
-                setPnlToastThreshold(clampThreshold(Number(e.target.value)))
-              }
-              className="w-40"
-            />
-            <input
-              type="number"
-              min={0}
-              max={30}
-              step={1}
-              value={pnlToastThreshold}
-              onChange={(e) =>
-                setPnlToastThreshold(clampThreshold(Number(e.target.value)))
-              }
-              className="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1"
-            />
-            <span className="text-xs text-gray-500">(max 30%)</span>
+          {/* MCap Range Analysis */}
+          <div className="bg-gray-800 rounded-lg p-6 mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold">MCap Range Analysis</h3>
+              {activeMcapFilter && (
+                <button
+                  onClick={() => setActiveMcapFilter(null)}
+                  className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded-md text-sm transition-colors"
+                >
+                  Clear Filter
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <button
+                onClick={() => handleMcapRangeFilter("under50k")}
+                className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                  activeMcapFilter === "under50k"
+                    ? "ring-2 ring-blue-400 bg-gray-600"
+                    : ""
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <h4 className="text-lg font-semibold text-blue-400 mb-2">
+                    &lt;50K MCap
+                  </h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMcapRangeFilter("under50k");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-blue-500 hover:bg-blue-600"
+                    >
+                      Filter
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBucketDetails("under50k");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
+                    >
+                      {expandedBuckets["under50k"] ? "Hide" : "Details"}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Count:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.under50k.count}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Multiplier:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.under50k.avgMultiplier.toFixed(
+                        2,
+                      )}
+                      x
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Max Drawdown:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.under50k.maxDrawdown,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.under50k.maxDrawdown,
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Growth:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.under50k.avgGrowth,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.under50k.avgGrowth,
+                      )}
+                    </span>
+                  </div>
+
+                  {expandedBuckets["under50k"] && (
+                    <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
+                      {/* Extra metrics in details */}
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Median Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.under50k.medianGrowth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.under50k.medianGrowth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.under50k.p75Growth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.under50k.p75Growth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">
+                          Median Multiplier:
+                        </span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.under50k.medianMultiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Multiplier:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.under50k.p75Multiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stop Loss Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.under50k.stopLossRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stuck Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.under50k.stuckRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Hit Rate ≥120%:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.under50k.hitRate120.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+
+                      {/* PnL Distribution Chart */}
+                      <div className="mt-3">
+                        <div className="text-gray-300 text-xs mb-1">
+                          PnL distribution
+                        </div>
+                        <PnlDistributionChart
+                          counts={
+                            stats.mcapRangeAnalysis.under50k.growthHistogram ||
+                            []
+                          }
+                          // Optionally pass labels if/when you have them:
+                          // labels={DEFAULT_PNL_LABELS}
+                          // Optionally control the red/green split if labels aren't provided:
+                          // negativeSplitIndex={4}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleMcapRangeFilter("from51to100k")}
+                className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                  activeMcapFilter === "from51to100k"
+                    ? "ring-2 ring-green-400 bg-gray-600"
+                    : ""
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <h4 className="text-lg font-semibold text-green-400 mb-2">
+                    50K-100K MCap
+                  </h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMcapRangeFilter("from51to100k");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-green-500 hover:bg-green-600"
+                    >
+                      Filter
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBucketDetails("from51to100k");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
+                    >
+                      {expandedBuckets["from51to100k"] ? "Hide" : "Details"}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Count:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.from51to100k.count}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Multiplier:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.from51to100k.avgMultiplier.toFixed(
+                        2,
+                      )}
+                      x
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Max Drawdown:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.from51to100k.maxDrawdown,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.from51to100k.maxDrawdown,
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Growth:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.from51to100k.avgGrowth,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.from51to100k.avgGrowth,
+                      )}
+                    </span>
+                  </div>
+
+                  {expandedBuckets["from51to100k"] && (
+                    <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Median Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.from51to100k.medianGrowth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.from51to100k.medianGrowth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.from51to100k.p75Growth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.from51to100k.p75Growth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">
+                          Median Multiplier:
+                        </span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from51to100k.medianMultiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Multiplier:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from51to100k.p75Multiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stop Loss Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from51to100k.stopLossRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stuck Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from51to100k.stuckRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Hit Rate ≥120%:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from51to100k.hitRate120.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+
+                      <div className="mt-3">
+                        <div className="text-gray-300 text-xs mb-1">
+                          PnL distribution
+                        </div>
+                        <PnlDistributionChart
+                          counts={
+                            stats.mcapRangeAnalysis.from51to100k
+                              .growthHistogram || []
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleMcapRangeFilter("from101to200k")}
+                className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                  activeMcapFilter === "from101to200k"
+                    ? "ring-2 ring-purple-400 bg-gray-600"
+                    : ""
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <h4 className="text-lg font-semibold text-purple-400 mb-2">
+                    101K-200K MCap
+                  </h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMcapRangeFilter("from101to200k");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-purple-500 hover:bg-purple-600"
+                    >
+                      Filter
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBucketDetails("from101to200k");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
+                    >
+                      {expandedBuckets["from101to200k"] ? "Hide" : "Details"}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Count:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.from101to200k.count}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Multiplier:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.from101to200k.avgMultiplier.toFixed(
+                        2,
+                      )}
+                      x
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Max Drawdown:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.from101to200k.maxDrawdown,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.from101to200k.maxDrawdown,
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Growth:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.from101to200k.avgGrowth,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.from101to200k.avgGrowth,
+                      )}
+                    </span>
+                  </div>
+
+                  {expandedBuckets["from101to200k"] && (
+                    <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Median Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.from101to200k.medianGrowth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.from101to200k.medianGrowth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.from101to200k.p75Growth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.from101to200k.p75Growth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">
+                          Median Multiplier:
+                        </span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from101to200k.medianMultiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Multiplier:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from101to200k.p75Multiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stop Loss Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from101to200k.stopLossRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stuck Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from101to200k.stuckRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Hit Rate ≥120%:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from101to200k.hitRate120.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+
+                      <div className="mt-3">
+                        <div className="text-gray-300 text-xs mb-1">
+                          PnL distribution
+                        </div>
+                        <PnlDistributionChart
+                          counts={
+                            stats.mcapRangeAnalysis.from101to200k
+                              .growthHistogram || []
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleMcapRangeFilter("from201to500k")}
+                className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                  activeMcapFilter === "from201to500k"
+                    ? "ring-2 ring-yellow-400 bg-gray-600"
+                    : ""
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <h4 className="text-lg font-semibold text-yellow-400 mb-2">
+                    201K-500K MCap
+                  </h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMcapRangeFilter("from201to500k");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-yellow-500 hover:bg-yellow-600"
+                    >
+                      Filter
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBucketDetails("from201to500k");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
+                    >
+                      {expandedBuckets["from201to500k"] ? "Hide" : "Details"}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Count:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.from201to500k.count}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Multiplier:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.from201to500k.avgMultiplier.toFixed(
+                        2,
+                      )}
+                      x
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Max Drawdown:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.from201to500k.maxDrawdown,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.from201to500k.maxDrawdown,
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Growth:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.from201to500k.avgGrowth,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.from201to500k.avgGrowth,
+                      )}
+                    </span>
+                  </div>
+
+                  {expandedBuckets["from201to500k"] && (
+                    <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Median Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.from201to500k.medianGrowth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.from201to500k.medianGrowth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.from201to500k.p75Growth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.from201to500k.p75Growth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">
+                          Median Multiplier:
+                        </span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from201to500k.medianMultiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Multiplier:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from201to500k.p75Multiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stop Loss Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from201to500k.stopLossRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stuck Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from201to500k.stuckRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Hit Rate ≥120%:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from201to500k.hitRate120.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+
+                      <div className="mt-3">
+                        <div className="text-gray-300 text-xs mb-1">
+                          PnL distribution
+                        </div>
+                        <PnlDistributionChart
+                          counts={
+                            stats.mcapRangeAnalysis.from201to500k
+                              .growthHistogram || []
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleMcapRangeFilter("from501kto1M")}
+                className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                  activeMcapFilter === "from501kto1M"
+                    ? "ring-2 ring-orange-400 bg-gray-600"
+                    : ""
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <h4 className="text-lg font-semibold text-orange-400 mb-2">
+                    501K-1M MCap
+                  </h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMcapRangeFilter("from501kto1M");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-orange-500 hover:bg-orange-600"
+                    >
+                      Filter
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBucketDetails("from501kto1M");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
+                    >
+                      {expandedBuckets["from501kto1M"] ? "Hide" : "Details"}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Count:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.from501kto1M.count}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Multiplier:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.from501kto1M.avgMultiplier.toFixed(
+                        2,
+                      )}
+                      x
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Max Drawdown:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.from501kto1M.maxDrawdown,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.from501kto1M.maxDrawdown,
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Growth:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.from501kto1M.avgGrowth,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.from501kto1M.avgGrowth,
+                      )}
+                    </span>
+                  </div>
+
+                  {expandedBuckets["from501kto1M"] && (
+                    <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Median Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.from501kto1M.medianGrowth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.from501kto1M.medianGrowth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.from501kto1M.p75Growth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.from501kto1M.p75Growth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">
+                          Median Multiplier:
+                        </span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from501kto1M.medianMultiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Multiplier:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from501kto1M.p75Multiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stop Loss Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from501kto1M.stopLossRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stuck Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from501kto1M.stuckRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Hit Rate ≥120%:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.from501kto1M.hitRate120.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+
+                      <div className="mt-3">
+                        <div className="text-gray-300 text-xs mb-1">
+                          PnL distribution
+                        </div>
+                        <PnlDistributionChart
+                          counts={
+                            stats.mcapRangeAnalysis.from501kto1M
+                              .growthHistogram || []
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </button>
+
+              <button
+                onClick={() => handleMcapRangeFilter("over1M")}
+                className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
+                  activeMcapFilter === "over1M"
+                    ? "ring-2 ring-pink-400 bg-gray-600"
+                    : ""
+                }`}
+              >
+                <div className="flex items-start justify-between">
+                  <h4 className="text-lg font-semibold text-pink-400 mb-2">
+                    &gt;1M MCap
+                  </h4>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleMcapRangeFilter("over1M");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-pink-500 hover:bg-pink-600"
+                    >
+                      Filter
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleBucketDetails("over1M");
+                      }}
+                      className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
+                    >
+                      {expandedBuckets["over1M"] ? "Hide" : "Details"}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Count:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.over1M.count}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Multiplier:</span>
+                    <span className="text-white">
+                      {stats.mcapRangeAnalysis.over1M.avgMultiplier.toFixed(2)}x
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Max Drawdown:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.over1M.maxDrawdown,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.over1M.maxDrawdown,
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Avg Growth:</span>
+                    <span
+                      className={getGrowthColor(
+                        stats.mcapRangeAnalysis.over1M.avgGrowth,
+                      )}
+                    >
+                      {formatPercentage(
+                        stats.mcapRangeAnalysis.over1M.avgGrowth,
+                      )}
+                    </span>
+                  </div>
+
+                  {expandedBuckets["over1M"] && (
+                    <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Median Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.over1M.medianGrowth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.over1M.medianGrowth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Growth:</span>
+                        <span
+                          className={getGrowthColor(
+                            stats.mcapRangeAnalysis.over1M.p75Growth,
+                          )}
+                        >
+                          {formatPercentage(
+                            stats.mcapRangeAnalysis.over1M.p75Growth,
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">
+                          Median Multiplier:
+                        </span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.over1M.medianMultiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">P75 Multiplier:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.over1M.p75Multiplier.toFixed(
+                            2,
+                          )}
+                          x
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stop Loss Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.over1M.stopLossRate.toFixed(
+                            1,
+                          )}
+                          %
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Stuck Rate:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.over1M.stuckRate.toFixed(1)}%
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Hit Rate ≥120%:</span>
+                        <span className="text-white">
+                          {stats.mcapRangeAnalysis.over1M.hitRate120.toFixed(1)}
+                          %
+                        </span>
+                      </div>
+
+                      <div className="mt-3">
+                        <div className="text-gray-300 text-xs mb-1">
+                          PnL distribution
+                        </div>
+                        <PnlDistributionChart
+                          counts={
+                            stats.mcapRangeAnalysis.over1M.growthHistogram || []
+                          }
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Filters and Controls */}
+      <div className="bg-gray-800 rounded-lg p-6 mb-8">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
+          <h2 className="text-xl font-semibold">Filters & Search</h2>
+          <div className="flex items-center space-x-2">
+            <label className="flex items-center space-x-2 text-sm">
+              <input
+                type="checkbox"
+                checked={filters.excludeZeroPnl}
+                onChange={(e) =>
+                  setFilters((prev) => ({
+                    ...prev,
+                    excludeZeroPnl: e.target.checked,
+                  }))
+                }
+                className="rounded"
+              />
+              <span>Exclude 0% PnL from avg</span>
+            </label>
             <button
-              onClick={handleSavePnlToastThreshold}
-              className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md"
-              title="Save threshold as default for next reloads"
+              onClick={exportToCSV}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors"
             >
-              Save
+              Export CSV
             </button>
           </div>
         </div>
 
-        {/* Enhanced Statistics Overview */}
-        {stats && (
-          <>
-            {/* Main Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-8">
-              <div className="bg-gray-800 rounded-lg p-4">
-                <div className="text-2xl font-bold text-blue-400">
-                  {stats.total.toLocaleString()}
+        {/* ... existing filter controls ... */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">Search</label>
+            <input
+              type="text"
+              placeholder="Symbol or address..."
+              value={filters.search}
+              onChange={(e) =>
+                setFilters((prev) => ({ ...prev, search: e.target.value }))
+              }
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Sort By</label>
+            <select
+              value={filters.sortBy}
+              onChange={(e) =>
+                setFilters((prev) => ({ ...prev, sortBy: e.target.value }))
+              }
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="last_updated_at">Last Updated</option>
+              <option value="first_seen_at">First Seen</option>
+              <option value="mcap_growth_percent">Growth %</option>
+              <option value="current_mcap">Current MCap</option>
+              <option value="first_mcap">First MCap</option>
+              <option value="token_symbol">Symbol</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Order</label>
+            <select
+              value={filters.sortOrder}
+              onChange={(e) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  sortOrder: e.target.value as "asc" | "desc",
+                }))
+              }
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="desc">Descending</option>
+              <option value="asc">Ascending</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              Min Growth %
+            </label>
+            <input
+              type="number"
+              placeholder="e.g., -50"
+              value={filters.minGrowth}
+              onChange={(e) =>
+                setFilters((prev) => ({ ...prev, minGrowth: e.target.value }))
+              }
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              Max Growth %
+            </label>
+            <input
+              type="number"
+              placeholder="e.g., 1000"
+              value={filters.maxGrowth}
+              onChange={(e) =>
+                setFilters((prev) => ({ ...prev, maxGrowth: e.target.value }))
+              }
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Min MCap</label>
+            <input
+              type="number"
+              placeholder="e.g., 50000"
+              value={filters.minMcap}
+              onChange={(e) =>
+                setFilters((prev) => ({ ...prev, minMcap: e.target.value }))
+              }
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">Max MCap</label>
+            <input
+              type="number"
+              placeholder="e.g., 2000000"
+              value={filters.maxMcap}
+              onChange={(e) =>
+                setFilters((prev) => ({ ...prev, maxMcap: e.target.value }))
+              }
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        {/* Time-based and Performance Filters */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              Time Period
+            </label>
+            <select
+              value={filters.timeFilter}
+              onChange={(e) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  timeFilter: e.target.value as
+                    | "1h"
+                    | "4h"
+                    | "24h"
+                    | "3d"
+                    | "7d"
+                    | "1m"
+                    | "all",
+                }))
+              }
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Time</option>
+              <option value="1h">Last 1 Hour</option>
+              <option value="4h">Last 4 Hours</option>
+              <option value="24h">Last 24 Hours</option>
+              <option value="3d">Last 3 Days</option>
+              <option value="7d">Last 7 Days</option>
+              <option value="1m">Last 1 Month</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              Performance Filter
+            </label>
+            <select
+              value={filters.performanceFilter}
+              onChange={(e) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  performanceFilter: e.target.value as
+                    | "all"
+                    | "gainers"
+                    | "losers"
+                    | "top_performers",
+                }))
+              }
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Tokens</option>
+              <option value="gainers">Gainers Only (+)</option>
+              <option value="losers">Losers Only (-)</option>
+              <option value="top_performers">Top Performers ({">"}100%)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-900 border border-red-700 rounded-lg p-4 mb-8">
+          <div className="text-red-200">Error: {error}</div>
+        </div>
+      )}
+
+      {/* Token List */}
+      <div className="space-y-4 mb-8">
+        {loading && tokens.length > 0 && (
+          <div className="text-center py-4">
+            <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+            <span className="ml-2">Updating...</span>
+          </div>
+        )}
+
+        {tokens.map((token) => (
+          <div
+            key={token.token_address}
+            className="bg-gray-800 rounded-lg p-6 hover:bg-gray-750 transition-colors"
+          >
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
+              {/* Token Header */}
+              <div className="flex items-center space-x-4 mb-4 lg:mb-0">
+                <div className="flex-shrink-0">
+                  <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
+                    {token.token_symbol.charAt(0)}
+                  </div>
                 </div>
-                <div className="text-sm text-gray-400">Total Tokens</div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center space-x-2">
+                    <h3 className="text-lg font-semibold text-white truncate">
+                      {token.token_symbol}
+                    </h3>
+                    <span
+                      className={`text-2xl ${getGrowthColor(token.mcap_growth_percent)}`}
+                    >
+                      {getGrowthIcon(token.mcap_growth_percent)}
+                    </span>
+                    <button
+                      onClick={() => handleChartToggle(token.token_address)}
+                      disabled={
+                        refetchingTokens.has(token.token_address) ||
+                        token.is_finished
+                      }
+                      className={`px-2 py-1 text-white text-xs rounded transition-colors ${
+                        token.is_finished
+                          ? "bg-gray-600 cursor-not-allowed"
+                          : refetchingTokens.has(token.token_address)
+                            ? "bg-yellow-600 hover:bg-yellow-700"
+                            : "bg-green-600 hover:bg-green-700"
+                      }`}
+                      title={
+                        token.is_finished
+                          ? "Tracking finished (4 days). Refetch disabled."
+                          : refetchingTokens.has(token.token_address)
+                            ? "Refetching MCap..."
+                            : "Toggle Chart & Refetch MCap"
+                      }
+                    >
+                      {token.is_finished
+                        ? "✅"
+                        : refetchingTokens.has(token.token_address)
+                          ? "🔄"
+                          : "📈"}
+                    </button>
+                    <button
+                      onClick={() => setModalTokenAddress(token.token_address)}
+                      className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
+                      title="Open Chart & Buy"
+                    >
+                      Buy
+                    </button>
+                  </div>
+                  <p className="text-sm text-gray-400 font-mono truncate">
+                    {token.token_address}
+                  </p>
+                </div>
               </div>
-              <div className="bg-gray-800 rounded-lg p-4">
-                <div className="text-2xl font-bold text-green-400">
-                  {stats.gainers.toLocaleString()}
+
+              {/* Performance Metrics */}
+              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 lg:gap-6">
+                <div className="text-center lg:text-left">
+                  <div className="text-sm text-gray-400">First MCap</div>
+                  <div className="text-lg font-semibold text-white">
+                    {formatNumber(token.first_mcap)}
+                  </div>
+                  <div className="text-xs text-blue-400">
+                    {formatSolAmount(token.solPerToken.first)}
+                  </div>
                 </div>
-                <div className="text-sm text-gray-400">Gainers</div>
-              </div>
-              <div className="bg-gray-800 rounded-lg p-4">
-                <div className="text-2xl font-bold text-red-400">
-                  {stats.losers.toLocaleString()}
+
+                <div className="text-center lg:text-left">
+                  <div className="text-sm text-gray-400">Current MCap</div>
+                  <div className="text-lg font-semibold text-white">
+                    {formatNumber(token.current_mcap)}
+                  </div>
+                  <div className="text-xs text-blue-400">
+                    {formatSolAmount(token.solPerToken.current)}
+                  </div>
                 </div>
-                <div className="text-sm text-gray-400">Losers</div>
-              </div>
-              <div className="bg-gray-800 rounded-lg p-4">
-                <div className="text-2xl font-bold text-gray-400">
-                  {stats.zeroPercent.toLocaleString()}
+
+                <div className="text-center lg:text-left">
+                  <div className="text-sm text-gray-400">USD Growth</div>
+                  <div
+                    className={`text-lg font-semibold ${getGrowthColor(token.mcap_growth_percent)}`}
+                  >
+                    {formatPercentage(token.mcap_growth_percent)}
+                  </div>
                 </div>
-                <div className="text-sm text-gray-400">
-                  0% PnL ({stats.zeroPercentage.toFixed(1)}%)
+
+                <div className="text-center lg:text-left">
+                  <div className="text-sm text-gray-400">SOL Growth</div>
+                  <div
+                    className={`text-lg font-semibold ${getGrowthColor(token.solPerToken.growth)}`}
+                  >
+                    {formatPercentage(token.solPerToken.growth)}
+                  </div>
                 </div>
-              </div>
-              <div className="bg-gray-800 rounded-lg p-4">
-                <div
-                  className={`text-2xl font-bold ${getGrowthColor(stats.avgGrowth)}`}
-                >
-                  {formatPercentage(stats.avgGrowth)}
-                </div>
-                <div className="text-sm text-gray-400">Avg Growth</div>
-              </div>
-              <div className="bg-gray-800 rounded-lg p-4">
-                <div className="text-2xl font-bold text-purple-400">
-                  {formatNumber(stats.totalMcap)}
-                </div>
-                <div className="text-sm text-gray-400">Total MCap</div>
               </div>
             </div>
 
-            {/* 30-Day Summary */}
-            <div className="bg-gray-800 rounded-lg p-6 mb-8">
-              <h3 className="text-xl font-bold mb-4">30-Day PnL Summary</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">
-                        Tokens Added (30 days):
-                      </span>
-                      <span className="text-white">
-                        {stats.thirtyDaysSummary.totalTokensAdded}
-                      </span>
+            {/* Inline Chart */}
+            {expandedChart === token.token_address && (
+              <div className="mt-4 pt-4 border-t border-gray-700">
+                <div className="relative" style={{ height: "400px" }}>
+                  {isChartLoading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-gray-800 rounded-lg">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                        <span className="text-gray-400">Loading chart...</span>
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Daily Growth:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.thirtyDaysSummary.avgDailyGrowth,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.thirtyDaysSummary.avgDailyGrowth,
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <h4 className="text-sm font-semibold text-gray-300 mb-2">
-                    Recent Daily Breakdown (Last 7 days)
-                  </h4>
-                  <div className="space-y-1 text-xs">
-                    {stats.thirtyDaysSummary.dailyBreakdown
-                      .slice(-7)
-                      .map((day, index) => (
-                        <div
-                          key={index}
-                          className="flex justify-between items-center"
-                        >
-                          <span className="text-gray-400">{day.date}:</span>
-                          <div className="flex items-center space-x-2">
-                            <span className="text-white">
-                              {day.tokensAdded} tokens
-                            </span>
-                            <span className={getGrowthColor(day.avgGrowth)}>
-                              {formatPercentage(day.avgGrowth)}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Daily Ranking Visualization */}
-            <DailyRankingVisualization tokens={tokens} stats={stats} />
-
-            {/* Buy & Sell Time Windows (Combined) with inline timezone controls and legend */}
-            {stats.pnlTimeWindows && stats.pnlBuyTimeWindows && (
-              <div className="bg-gray-800 rounded-lg p-6 mb-8">
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-2">
-                  <h3 className="text-xl font-bold">
-                    Buy & Sell Time Windows (Combined)
-                  </h3>
-                  <div className="flex items-center gap-4">
-                    <label className="text-sm text-gray-300 flex items-center gap-2">
-                      Display in:
-                      <select
-                        className="bg-gray-700 rounded px-2 py-1 text-sm"
-                        value={displayGmtOffset}
-                        onChange={(e) =>
-                          setDisplayGmtOffset(parseInt(e.target.value, 10))
-                        }
-                      >
-                        {gmtOptions.map((off) => (
-                          <option key={off} value={off}>
-                            {off >= 0 ? `GMT+${off}` : `GMT${off}`}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="text-sm text-gray-300 flex items-center gap-2">
-                      Server base offset (Sell):
-                      <select
-                        className="bg-gray-700 rounded px-2 py-1 text-sm"
-                        value={sellServerBaseOffset}
-                        onChange={(e) =>
-                          setSellServerBaseOffset(parseInt(e.target.value, 10))
-                        }
-                      >
-                        {gmtOptions.map((off) => (
-                          <option key={off} value={off}>
-                            {off >= 0 ? `GMT+${off}` : `GMT${off}`}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Legend */}
-                <div className="flex items-center gap-6 text-xs text-gray-300 mb-3">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block w-3 h-3 rounded bg-emerald-400"></span>
-                    <span>Buy (neon)</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="inline-block w-3 h-3 rounded bg-black border border-gray-600"></span>
-                    <span>Sell (black)</span>
-                  </div>
-                </div>
-
-                {/* Basis/Source summary */}
-                <div className="text-xs text-gray-400 mb-4">
-                  Buy basis:{" "}
-                  {stats.timeWindowMeta?.buyPeakHourBasis ?? "first_seen_at"} |
-                  Source TZ:{" "}
-                  {stats.timeWindowMeta?.buyPeakHourTimezone ?? "UTC"} | Display
-                  TZ:{" "}
-                  {displayGmtOffset >= 0
-                    ? `GMT+${displayGmtOffset}`
-                    : `GMT${displayGmtOffset}`}{" "}
-                  <br />
-                  Sell basis:{" "}
-                  {stats.timeWindowMeta?.sellPeakHourBasis ??
-                    "last_updated_at"}{" "}
-                  | Source TZ:{" "}
-                  {stats.timeWindowMeta?.sellPeakHourTimezone ?? "server_local"}{" "}
-                  | Display TZ:{" "}
-                  {displayGmtOffset >= 0
-                    ? `GMT+${displayGmtOffset}`
-                    : `GMT${displayGmtOffset}`}
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                  {Array.from(
-                    new Set([
-                      ...Object.keys(stats.pnlTimeWindows || {}),
-                      ...Object.keys(stats.pnlBuyTimeWindows || {}),
-                    ]),
-                  )
-                    .sort(
-                      (a, b) =>
-                        parseFloat(a.replace("%", "")) -
-                        parseFloat(b.replace("%", "")),
-                    )
-                    .map((threshold) => {
-                      const sell = stats.pnlTimeWindows[threshold];
-                      const buy = stats.pnlBuyTimeWindows
-                        ? stats.pnlBuyTimeWindows[threshold]
-                        : undefined;
-
-                      // Shift distributions to display TZ
-                      const sellShift = displayGmtOffset - sellServerBaseOffset;
-                      const adjustedSellDist = sell
-                        ? shiftDistribution(sell.timeDistribution, sellShift)
-                        : {};
-                      const adjustedBuyDist = buy
-                        ? shiftDistribution(
-                            buy.timeDistribution,
-                            displayGmtOffset,
-                          )
-                        : {};
-
-                      // Recompute peak hours in display TZ
-                      const sellPeak = sell
-                        ? recomputePeakHoursFromDistribution(adjustedSellDist)
-                        : [];
-                      const buyPeak = buy
-                        ? recomputePeakHoursFromDistribution(adjustedBuyDist)
-                        : [];
-
-                      // Separate maxima for better per-series contrast
-                      const sellMax =
-                        adjustedSellDist &&
-                        Object.values(adjustedSellDist).length > 0
-                          ? Math.max(...Object.values(adjustedSellDist))
-                          : 0;
-                      const buyMax =
-                        adjustedBuyDist &&
-                        Object.values(adjustedBuyDist).length > 0
-                          ? Math.max(...Object.values(adjustedBuyDist))
-                          : 0;
-
-                      const formatTimeToReach = (hours: number) => {
-                        if (!hours || hours <= 0) return "N/A";
-                        if (hours < 1) return `${Math.round(hours * 60)}m`;
-                        if (hours < 24) return `${hours.toFixed(1)}h`;
-                        const days = Math.floor(hours / 24);
-                        const remainingHours = Math.round(hours % 24);
-                        return remainingHours > 0
-                          ? `${days}d ${remainingHours}h`
-                          : `${days}d`;
-                      };
-
-                      // Threshold color for heading only
-                      const thresholdNum = parseFloat(
-                        threshold.replace("%", ""),
+                  )}
+                  <iframe
+                    src={`https://www.gmgn.cc/kline/sol/${token.token_address}?interval=1D&theme=dark`}
+                    className="w-full h-full rounded-lg"
+                    style={{
+                      border: "none",
+                      display: isChartLoading ? "none" : "block",
+                    }}
+                    title={`GMGN Chart - ${token.token_symbol}`}
+                    onLoad={() => setIsChartLoading(false)}
+                    onError={() => {
+                      console.error(
+                        "Chart failed to load for token:",
+                        token.token_address,
                       );
-                      const headingColor = (() => {
-                        if (thresholdNum >= 1000) return "text-purple-400";
-                        if (thresholdNum >= 500) return "text-pink-400";
-                        if (thresholdNum >= 200) return "text-yellow-400";
-                        if (thresholdNum >= 100) return "text-green-400";
-                        return "text-blue-400";
-                      })();
-
-                      return (
-                        <div
-                          key={threshold}
-                          className="bg-gray-700 rounded-lg p-4"
-                        >
-                          <h4
-                            className={`text-lg font-semibold mb-3 ${headingColor}`}
-                          >
-                            {threshold} Threshold
-                          </h4>
-
-                          <div className="space-y-2 text-sm">
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">
-                                Tokens Reached (Buy):
-                              </span>
-                              <span className="text-white font-medium">
-                                {buy?.count ?? 0}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">
-                                Tokens Reached (Sell):
-                              </span>
-                              <span className="text-white font-medium">
-                                {sell?.count ?? 0}
-                              </span>
-                            </div>
-
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">
-                                Avg Time (Buy):
-                              </span>
-                              <span className="text-white">
-                                {formatTimeToReach(buy?.avgTimeToReach ?? 0)}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">
-                                Avg Time (Sell):
-                              </span>
-                              <span className="text-white">
-                                {formatTimeToReach(sell?.avgTimeToReach ?? 0)}
-                              </span>
-                            </div>
-
-                            {buyPeak.length > 0 && (
-                              <div className="flex justify-between">
-                                <span className="text-gray-400">
-                                  Peak Hours for Buy:
-                                </span>
-                                <span className="text-emerald-300 text-xs">
-                                  {buyPeak.slice(0, 3).join(", ")}
-                                  {buyPeak.length > 3 && "..."}
-                                </span>
-                              </div>
-                            )}
-                            {sellPeak.length > 0 && (
-                              <div className="flex justify-between">
-                                <span className="text-gray-400">
-                                  Peak Hours for Sell:
-                                </span>
-                                <span className="text-gray-200 text-xs">
-                                  {sellPeak.slice(0, 3).join(", ")}
-                                  {sellPeak.length > 3 && "..."}
-                                </span>
-                              </div>
-                            )}
-
-                            {/* Overlayed hourly distribution (Buy top stripe, Sell bottom stripe) */}
-                            <div className="mt-3">
-                              <span className="text-gray-400 text-xs mb-2 block">
-                                Hourly Distribution (display TZ):
-                              </span>
-                              <div className="grid grid-cols-6 gap-1">
-                                {Array.from({ length: 24 }, (_, hour) => {
-                                  const key = hour.toString().padStart(2, "0");
-                                  const buyCount =
-                                    (adjustedBuyDist as any)[key] || 0;
-                                  const sellCount =
-                                    (adjustedSellDist as any)[key] || 0;
-                                  const buyOpacity =
-                                    buyMax > 0
-                                      ? Math.max(0.12, buyCount / buyMax)
-                                      : 0.12;
-                                  const sellOpacity =
-                                    sellMax > 0
-                                      ? Math.max(0.12, sellCount / sellMax)
-                                      : 0.12;
-                                  return (
-                                    <div
-                                      key={key}
-                                      className="h-3 rounded-sm border border-gray-600/40 px-[1px] py-[1px]"
-                                      title={`${key}:00 — Buy ${buyCount}, Sell ${sellCount}`}
-                                    >
-                                      <div className="flex flex-col h-full gap-[1px]">
-                                        {/* Buy stripe (top) */}
-                                        <div
-                                          className="h-1 bg-emerald-400 rounded-sm"
-                                          style={{ opacity: buyOpacity }}
-                                        />
-                                        {/* Sell stripe (bottom) */}
-                                        <div
-                                          className="h-1 bg-black rounded-sm border border-gray-700"
-                                          style={{ opacity: sellOpacity }}
-                                        />
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                              <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                <span>00h</span>
-                                <span>12h</span>
-                                <span>24h</span>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                      setIsChartLoading(false);
+                    }}
+                    allowFullScreen
+                    frameBorder="0"
+                    sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+                  />
                 </div>
               </div>
             )}
 
-            {/* MCap Range Analysis */}
-            <div className="bg-gray-800 rounded-lg p-6 mb-8">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xl font-bold">MCap Range Analysis</h3>
-                {activeMcapFilter && (
-                  <button
-                    onClick={() => setActiveMcapFilter(null)}
-                    className="px-3 py-1 bg-red-600 hover:bg-red-700 rounded-md text-sm transition-colors"
-                  >
-                    Clear Filter
-                  </button>
-                )}
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <button
-                  onClick={() => handleMcapRangeFilter("under50k")}
-                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
-                    activeMcapFilter === "under50k"
-                      ? "ring-2 ring-blue-400 bg-gray-600"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <h4 className="text-lg font-semibold text-blue-400 mb-2">
-                      &lt;50K MCap
-                    </h4>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMcapRangeFilter("under50k");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-blue-500 hover:bg-blue-600"
-                      >
-                        Filter
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleBucketDetails("under50k");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
-                      >
-                        {expandedBuckets["under50k"] ? "Hide" : "Details"}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Count:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.under50k.count}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Multiplier:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.under50k.avgMultiplier.toFixed(
-                          2,
-                        )}
-                        x
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Max Drawdown:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.under50k.maxDrawdown,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.under50k.maxDrawdown,
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Growth:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.under50k.avgGrowth,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.under50k.avgGrowth,
-                        )}
-                      </span>
-                    </div>
-
-                    {expandedBuckets["under50k"] && (
-                      <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
-                        {/* Extra metrics in details */}
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Median Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.under50k.medianGrowth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.under50k.medianGrowth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.under50k.p75Growth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.under50k.p75Growth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">
-                            Median Multiplier:
-                          </span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.under50k.medianMultiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Multiplier:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.under50k.p75Multiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stop Loss Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.under50k.stopLossRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stuck Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.under50k.stuckRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Hit Rate ≥120%:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.under50k.hitRate120.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-
-                        {/* PnL Distribution Chart */}
-                        <div className="mt-3">
-                          <div className="text-gray-300 text-xs mb-1">
-                            PnL distribution
-                          </div>
-                          <PnlDistributionChart
-                            counts={
-                              stats.mcapRangeAnalysis.under50k
-                                .growthHistogram || []
-                            }
-                            // Optionally pass labels if/when you have them:
-                            // labels={DEFAULT_PNL_LABELS}
-                            // Optionally control the red/green split if labels aren't provided:
-                            // negativeSplitIndex={4}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => handleMcapRangeFilter("from51to100k")}
-                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
-                    activeMcapFilter === "from51to100k"
-                      ? "ring-2 ring-green-400 bg-gray-600"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <h4 className="text-lg font-semibold text-green-400 mb-2">
-                      50K-100K MCap
-                    </h4>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMcapRangeFilter("from51to100k");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-green-500 hover:bg-green-600"
-                      >
-                        Filter
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleBucketDetails("from51to100k");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
-                      >
-                        {expandedBuckets["from51to100k"] ? "Hide" : "Details"}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Count:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.from51to100k.count}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Multiplier:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.from51to100k.avgMultiplier.toFixed(
-                          2,
-                        )}
-                        x
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Max Drawdown:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.from51to100k.maxDrawdown,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.from51to100k.maxDrawdown,
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Growth:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.from51to100k.avgGrowth,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.from51to100k.avgGrowth,
-                        )}
-                      </span>
-                    </div>
-
-                    {expandedBuckets["from51to100k"] && (
-                      <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Median Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.from51to100k.medianGrowth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.from51to100k.medianGrowth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.from51to100k.p75Growth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.from51to100k.p75Growth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">
-                            Median Multiplier:
-                          </span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from51to100k.medianMultiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Multiplier:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from51to100k.p75Multiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stop Loss Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from51to100k.stopLossRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stuck Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from51to100k.stuckRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Hit Rate ≥120%:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from51to100k.hitRate120.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-
-                        <div className="mt-3">
-                          <div className="text-gray-300 text-xs mb-1">
-                            PnL distribution
-                          </div>
-                          <PnlDistributionChart
-                            counts={
-                              stats.mcapRangeAnalysis.from51to100k
-                                .growthHistogram || []
-                            }
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => handleMcapRangeFilter("from101to200k")}
-                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
-                    activeMcapFilter === "from101to200k"
-                      ? "ring-2 ring-purple-400 bg-gray-600"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <h4 className="text-lg font-semibold text-purple-400 mb-2">
-                      101K-200K MCap
-                    </h4>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMcapRangeFilter("from101to200k");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-purple-500 hover:bg-purple-600"
-                      >
-                        Filter
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleBucketDetails("from101to200k");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
-                      >
-                        {expandedBuckets["from101to200k"] ? "Hide" : "Details"}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Count:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.from101to200k.count}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Multiplier:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.from101to200k.avgMultiplier.toFixed(
-                          2,
-                        )}
-                        x
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Max Drawdown:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.from101to200k.maxDrawdown,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.from101to200k.maxDrawdown,
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Growth:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.from101to200k.avgGrowth,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.from101to200k.avgGrowth,
-                        )}
-                      </span>
-                    </div>
-
-                    {expandedBuckets["from101to200k"] && (
-                      <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Median Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.from101to200k
-                                .medianGrowth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.from101to200k
-                                .medianGrowth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.from101to200k.p75Growth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.from101to200k.p75Growth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">
-                            Median Multiplier:
-                          </span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from101to200k.medianMultiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Multiplier:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from101to200k.p75Multiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stop Loss Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from101to200k.stopLossRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stuck Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from101to200k.stuckRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Hit Rate ≥120%:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from101to200k.hitRate120.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-
-                        <div className="mt-3">
-                          <div className="text-gray-300 text-xs mb-1">
-                            PnL distribution
-                          </div>
-                          <PnlDistributionChart
-                            counts={
-                              stats.mcapRangeAnalysis.from101to200k
-                                .growthHistogram || []
-                            }
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => handleMcapRangeFilter("from201to500k")}
-                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
-                    activeMcapFilter === "from201to500k"
-                      ? "ring-2 ring-yellow-400 bg-gray-600"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <h4 className="text-lg font-semibold text-yellow-400 mb-2">
-                      201K-500K MCap
-                    </h4>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMcapRangeFilter("from201to500k");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-yellow-500 hover:bg-yellow-600"
-                      >
-                        Filter
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleBucketDetails("from201to500k");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
-                      >
-                        {expandedBuckets["from201to500k"] ? "Hide" : "Details"}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Count:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.from201to500k.count}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Multiplier:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.from201to500k.avgMultiplier.toFixed(
-                          2,
-                        )}
-                        x
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Max Drawdown:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.from201to500k.maxDrawdown,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.from201to500k.maxDrawdown,
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Growth:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.from201to500k.avgGrowth,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.from201to500k.avgGrowth,
-                        )}
-                      </span>
-                    </div>
-
-                    {expandedBuckets["from201to500k"] && (
-                      <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Median Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.from201to500k
-                                .medianGrowth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.from201to500k
-                                .medianGrowth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.from201to500k.p75Growth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.from201to500k.p75Growth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">
-                            Median Multiplier:
-                          </span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from201to500k.medianMultiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Multiplier:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from201to500k.p75Multiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stop Loss Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from201to500k.stopLossRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stuck Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from201to500k.stuckRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Hit Rate ≥120%:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from201to500k.hitRate120.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-
-                        <div className="mt-3">
-                          <div className="text-gray-300 text-xs mb-1">
-                            PnL distribution
-                          </div>
-                          <PnlDistributionChart
-                            counts={
-                              stats.mcapRangeAnalysis.from201to500k
-                                .growthHistogram || []
-                            }
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => handleMcapRangeFilter("from501kto1M")}
-                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
-                    activeMcapFilter === "from501kto1M"
-                      ? "ring-2 ring-orange-400 bg-gray-600"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <h4 className="text-lg font-semibold text-orange-400 mb-2">
-                      501K-1M MCap
-                    </h4>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMcapRangeFilter("from501kto1M");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-orange-500 hover:bg-orange-600"
-                      >
-                        Filter
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleBucketDetails("from501kto1M");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
-                      >
-                        {expandedBuckets["from501kto1M"] ? "Hide" : "Details"}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Count:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.from501kto1M.count}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Multiplier:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.from501kto1M.avgMultiplier.toFixed(
-                          2,
-                        )}
-                        x
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Max Drawdown:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.from501kto1M.maxDrawdown,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.from501kto1M.maxDrawdown,
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Growth:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.from501kto1M.avgGrowth,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.from501kto1M.avgGrowth,
-                        )}
-                      </span>
-                    </div>
-
-                    {expandedBuckets["from501kto1M"] && (
-                      <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Median Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.from501kto1M.medianGrowth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.from501kto1M.medianGrowth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.from501kto1M.p75Growth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.from501kto1M.p75Growth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">
-                            Median Multiplier:
-                          </span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from501kto1M.medianMultiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Multiplier:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from501kto1M.p75Multiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stop Loss Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from501kto1M.stopLossRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stuck Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from501kto1M.stuckRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Hit Rate ≥120%:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.from501kto1M.hitRate120.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-
-                        <div className="mt-3">
-                          <div className="text-gray-300 text-xs mb-1">
-                            PnL distribution
-                          </div>
-                          <PnlDistributionChart
-                            counts={
-                              stats.mcapRangeAnalysis.from501kto1M
-                                .growthHistogram || []
-                            }
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => handleMcapRangeFilter("over1M")}
-                  className={`bg-gray-700 rounded-lg p-4 text-left transition-all duration-200 hover:bg-gray-600 ${
-                    activeMcapFilter === "over1M"
-                      ? "ring-2 ring-pink-400 bg-gray-600"
-                      : ""
-                  }`}
-                >
-                  <div className="flex items-start justify-between">
-                    <h4 className="text-lg font-semibold text-pink-400 mb-2">
-                      &gt;1M MCap
-                    </h4>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleMcapRangeFilter("over1M");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-pink-500 hover:bg-pink-600"
-                      >
-                        Filter
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleBucketDetails("over1M");
-                        }}
-                        className="px-2 py-1 text-xs rounded bg-gray-600 hover:bg-gray-500"
-                      >
-                        {expandedBuckets["over1M"] ? "Hide" : "Details"}
-                      </button>
-                    </div>
-                  </div>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Count:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.over1M.count}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Multiplier:</span>
-                      <span className="text-white">
-                        {stats.mcapRangeAnalysis.over1M.avgMultiplier.toFixed(
-                          2,
-                        )}
-                        x
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Max Drawdown:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.over1M.maxDrawdown,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.over1M.maxDrawdown,
-                        )}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Avg Growth:</span>
-                      <span
-                        className={getGrowthColor(
-                          stats.mcapRangeAnalysis.over1M.avgGrowth,
-                        )}
-                      >
-                        {formatPercentage(
-                          stats.mcapRangeAnalysis.over1M.avgGrowth,
-                        )}
-                      </span>
-                    </div>
-
-                    {expandedBuckets["over1M"] && (
-                      <div className="pt-3 mt-3 border-t border-gray-600 space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Median Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.over1M.medianGrowth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.over1M.medianGrowth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Growth:</span>
-                          <span
-                            className={getGrowthColor(
-                              stats.mcapRangeAnalysis.over1M.p75Growth,
-                            )}
-                          >
-                            {formatPercentage(
-                              stats.mcapRangeAnalysis.over1M.p75Growth,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">
-                            Median Multiplier:
-                          </span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.over1M.medianMultiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">P75 Multiplier:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.over1M.p75Multiplier.toFixed(
-                              2,
-                            )}
-                            x
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stop Loss Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.over1M.stopLossRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Stuck Rate:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.over1M.stuckRate.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Hit Rate ≥120%:</span>
-                          <span className="text-white">
-                            {stats.mcapRangeAnalysis.over1M.hitRate120.toFixed(
-                              1,
-                            )}
-                            %
-                          </span>
-                        </div>
-
-                        <div className="mt-3">
-                          <div className="text-gray-300 text-xs mb-1">
-                            PnL distribution
-                          </div>
-                          <PnlDistributionChart
-                            counts={
-                              stats.mcapRangeAnalysis.over1M.growthHistogram ||
-                              []
-                            }
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </button>
-              </div>
-            </div>
-          </>
-        )}
-
-        {/* Filters and Controls */}
-        <div className="bg-gray-800 rounded-lg p-6 mb-8">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-4">
-            <h2 className="text-xl font-semibold">Filters & Search</h2>
-            <div className="flex items-center space-x-2">
-              <label className="flex items-center space-x-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={filters.excludeZeroPnl}
-                  onChange={(e) =>
-                    setFilters((prev) => ({
-                      ...prev,
-                      excludeZeroPnl: e.target.checked,
-                    }))
-                  }
-                  className="rounded"
-                />
-                <span>Exclude 0% PnL from avg</span>
-              </label>
-              <button
-                onClick={exportToCSV}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors"
-              >
-                Export CSV
-              </button>
-            </div>
-          </div>
-
-          {/* ... existing filter controls ... */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">Search</label>
-              <input
-                type="text"
-                placeholder="Symbol or address..."
-                value={filters.search}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, search: e.target.value }))
-                }
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">Sort By</label>
-              <select
-                value={filters.sortBy}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, sortBy: e.target.value }))
-                }
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="last_updated_at">Last Updated</option>
-                <option value="first_seen_at">First Seen</option>
-                <option value="mcap_growth_percent">Growth %</option>
-                <option value="current_mcap">Current MCap</option>
-                <option value="first_mcap">First MCap</option>
-                <option value="token_symbol">Symbol</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">Order</label>
-              <select
-                value={filters.sortOrder}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    sortOrder: e.target.value as "asc" | "desc",
-                  }))
-                }
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="desc">Descending</option>
-                <option value="asc">Ascending</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Min Growth %
-              </label>
-              <input
-                type="number"
-                placeholder="e.g., -50"
-                value={filters.minGrowth}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, minGrowth: e.target.value }))
-                }
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Max Growth %
-              </label>
-              <input
-                type="number"
-                placeholder="e.g., 1000"
-                value={filters.maxGrowth}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, maxGrowth: e.target.value }))
-                }
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">Min MCap</label>
-              <input
-                type="number"
-                placeholder="e.g., 50000"
-                value={filters.minMcap}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, minMcap: e.target.value }))
-                }
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">Max MCap</label>
-              <input
-                type="number"
-                placeholder="e.g., 2000000"
-                value={filters.maxMcap}
-                onChange={(e) =>
-                  setFilters((prev) => ({ ...prev, maxMcap: e.target.value }))
-                }
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-          </div>
-
-          {/* Time-based and Performance Filters */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Time Period
-              </label>
-              <select
-                value={filters.timeFilter}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    timeFilter: e.target.value as
-                      | "1h"
-                      | "4h"
-                      | "24h"
-                      | "3d"
-                      | "7d"
-                      | "1m"
-                      | "all",
-                  }))
-                }
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">All Time</option>
-                <option value="1h">Last 1 Hour</option>
-                <option value="4h">Last 4 Hours</option>
-                <option value="24h">Last 24 Hours</option>
-                <option value="3d">Last 3 Days</option>
-                <option value="7d">Last 7 Days</option>
-                <option value="1m">Last 1 Month</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Performance Filter
-              </label>
-              <select
-                value={filters.performanceFilter}
-                onChange={(e) =>
-                  setFilters((prev) => ({
-                    ...prev,
-                    performanceFilter: e.target.value as
-                      | "all"
-                      | "gainers"
-                      | "losers"
-                      | "top_performers",
-                  }))
-                }
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="all">All Tokens</option>
-                <option value="gainers">Gainers Only (+)</option>
-                <option value="losers">Losers Only (-)</option>
-                <option value="top_performers">
-                  Top Performers ({">"}100%)
-                </option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Error Display */}
-        {error && (
-          <div className="bg-red-900 border border-red-700 rounded-lg p-4 mb-8">
-            <div className="text-red-200">Error: {error}</div>
-          </div>
-        )}
-
-        {/* Token List */}
-        <div className="space-y-4 mb-8">
-          {loading && tokens.length > 0 && (
-            <div className="text-center py-4">
-              <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-              <span className="ml-2">Updating...</span>
-            </div>
-          )}
-
-          {tokens.map((token) => (
-            <div
-              key={token.token_address}
-              className="bg-gray-800 rounded-lg p-6 hover:bg-gray-750 transition-colors"
-            >
-              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between">
-                {/* Token Header */}
-                <div className="flex items-center space-x-4 mb-4 lg:mb-0">
-                  <div className="flex-shrink-0">
-                    <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg">
-                      {token.token_symbol.charAt(0)}
-                    </div>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center space-x-2">
-                      <h3 className="text-lg font-semibold text-white truncate">
-                        {token.token_symbol}
-                      </h3>
-                      <span
-                        className={`text-2xl ${getGrowthColor(token.mcap_growth_percent)}`}
-                      >
-                        {getGrowthIcon(token.mcap_growth_percent)}
-                      </span>
-                      <button
-                        onClick={() => handleChartToggle(token.token_address)}
-                        disabled={
-                          refetchingTokens.has(token.token_address) ||
-                          token.is_finished
-                        }
-                        className={`px-2 py-1 text-white text-xs rounded transition-colors ${
-                          token.is_finished
-                            ? "bg-gray-600 cursor-not-allowed"
-                            : refetchingTokens.has(token.token_address)
-                              ? "bg-yellow-600 hover:bg-yellow-700"
-                              : "bg-green-600 hover:bg-green-700"
-                        }`}
-                        title={
-                          token.is_finished
-                            ? "Tracking finished (4 days). Refetch disabled."
-                            : refetchingTokens.has(token.token_address)
-                              ? "Refetching MCap..."
-                              : "Toggle Chart & Refetch MCap"
-                        }
-                      >
-                        {token.is_finished
-                          ? "✅"
-                          : refetchingTokens.has(token.token_address)
-                            ? "🔄"
-                            : "📈"}
-                      </button>
-                    </div>
-                    <p className="text-sm text-gray-400 font-mono truncate">
-                      {token.token_address}
-                    </p>
-                  </div>
+            {/* Additional Information */}
+            <div className="mt-4 pt-4 border-t border-gray-700">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div>
+                  <span className="text-gray-400">First Seen:</span>
+                  <span className="ml-2 text-white">
+                    {formatDistanceToNow(new Date(token.first_seen_at), {
+                      addSuffix: true,
+                    })}
+                  </span>
                 </div>
 
-                {/* Performance Metrics */}
-                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 lg:gap-6">
-                  <div className="text-center lg:text-left">
-                    <div className="text-sm text-gray-400">First MCap</div>
-                    <div className="text-lg font-semibold text-white">
-                      {formatNumber(token.first_mcap)}
-                    </div>
-                    <div className="text-xs text-blue-400">
-                      {formatSolAmount(token.solPerToken.first)}
-                    </div>
-                  </div>
-
-                  <div className="text-center lg:text-left">
-                    <div className="text-sm text-gray-400">Current MCap</div>
-                    <div className="text-lg font-semibold text-white">
-                      {formatNumber(token.current_mcap)}
-                    </div>
-                    <div className="text-xs text-blue-400">
-                      {formatSolAmount(token.solPerToken.current)}
-                    </div>
-                  </div>
-
-                  <div className="text-center lg:text-left">
-                    <div className="text-sm text-gray-400">USD Growth</div>
-                    <div
-                      className={`text-lg font-semibold ${getGrowthColor(token.mcap_growth_percent)}`}
-                    >
-                      {formatPercentage(token.mcap_growth_percent)}
-                    </div>
-                  </div>
-
-                  <div className="text-center lg:text-left">
-                    <div className="text-sm text-gray-400">SOL Growth</div>
-                    <div
-                      className={`text-lg font-semibold ${getGrowthColor(token.solPerToken.growth)}`}
-                    >
-                      {formatPercentage(token.solPerToken.growth)}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Inline Chart */}
-              {expandedChart === token.token_address && (
-                <div className="mt-4 pt-4 border-t border-gray-700">
-                  <div className="relative" style={{ height: "400px" }}>
-                    {isChartLoading && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-gray-800 rounded-lg">
-                        <div className="flex items-center space-x-2">
-                          <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                          <span className="text-gray-400">
-                            Loading chart...
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                    <iframe
-                      src={`https://www.gmgn.cc/kline/sol/${token.token_address}?interval=1D&theme=dark`}
-                      className="w-full h-full rounded-lg"
-                      style={{
-                        border: "none",
-                        display: isChartLoading ? "none" : "block",
-                      }}
-                      title={`GMGN Chart - ${token.token_symbol}`}
-                      onLoad={() => setIsChartLoading(false)}
-                      onError={() => {
-                        console.error(
-                          "Chart failed to load for token:",
-                          token.token_address,
-                        );
-                        setIsChartLoading(false);
-                      }}
-                      allowFullScreen
-                      frameBorder="0"
-                      sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Additional Information */}
-              <div className="mt-4 pt-4 border-t border-gray-700">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                {/* Finished Status */}
+                {typeof token.is_finished !== "undefined" && (
                   <div>
-                    <span className="text-gray-400">First Seen:</span>
-                    <span className="ml-2 text-white">
-                      {formatDistanceToNow(new Date(token.first_seen_at), {
-                        addSuffix: true,
-                      })}
-                    </span>
-                  </div>
-
-                  {/* Finished Status */}
-                  {typeof token.is_finished !== "undefined" && (
-                    <div>
-                      <span className="text-gray-400">Status:</span>
-                      {token.is_finished ? (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-200 border border-gray-500">
-                          Finished
-                        </span>
-                      ) : (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-700 text-blue-100 border border-blue-500">
-                          Tracking
-                        </span>
-                      )}
-                    </div>
-                  )}
-
-                  {token.is_finished && token.finished_at && (
-                    <div>
-                      <span className="text-gray-400">Finished At:</span>
-                      <span className="ml-2 text-gray-300">
-                        {formatDistanceToNow(new Date(token.finished_at), {
-                          addSuffix: true,
-                        })}
+                    <span className="text-gray-400">Status:</span>
+                    {token.is_finished ? (
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-200 border border-gray-500">
+                        Finished
                       </span>
-                    </div>
-                  )}
-
-                  {token.when_reach_80mc && (
-                    <div>
-                      <span className="text-gray-400">Reached 80M:</span>
-                      <span className="ml-2 text-green-400">
-                        {formatDistanceToNow(new Date(token.when_reach_80mc), {
-                          addSuffix: true,
-                        })}
+                    ) : (
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-700 text-blue-100 border border-blue-500">
+                        Tracking
                       </span>
-                    </div>
-                  )}
-
-                  {token.when_reach_120mc && (
-                    <div>
-                      <span className="text-gray-400">Reached 120M:</span>
-                      <span className="ml-2 text-green-400">
-                        {formatDistanceToNow(new Date(token.when_reach_120mc), {
-                          addSuffix: true,
-                        })}
-                      </span>
-                    </div>
-                  )}
-
-                  {token.when_reach_200mc && (
-                    <div>
-                      <span className="text-gray-400">Reached 200M:</span>
-                      <span className="ml-2 text-green-400">
-                        {formatDistanceToNow(new Date(token.when_reach_200mc), {
-                          addSuffix: true,
-                        })}
-                      </span>
-                    </div>
-                  )}
-
-                  <div className="flex justify-end">
-                    <span className="text-gray-400">Last Updated:</span>
-                    <span className="ml-2 text-white">
-                      {formatDistanceToNow(new Date(token.last_updated_at), {
-                        addSuffix: true,
-                      })}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Analytics Section - Add this after the existing token information */}
-              <div className="mt-4 pt-4 border-t border-gray-700">
-                <button
-                  onClick={() => toggleAnalytics(token.token_address)}
-                  className="flex items-center justify-between w-full text-left hover:text-blue-400 transition-colors"
-                >
-                  <div className="flex items-center space-x-2">
-                    <span className="text-sm font-medium text-gray-300">
-                      Analytics & Risk Assessment
-                    </span>
-                    {analyticsLoading && (
-                      <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
                     )}
                   </div>
-                  <svg
-                    className={`w-4 h-4 transition-transform ${expandedAnalytics[token.token_address] ? "rotate-180" : ""}`}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 9l-7 7-7-7"
-                    />
-                  </svg>
-                </button>
+                )}
 
-                {expandedAnalytics[token.token_address] && (
-                  <div className="mt-4 space-y-4 bg-gray-750 rounded-lg p-4">
-                    {analyticsData[token.token_address] ? (
-                      <>
-                        {/* Z-Score Anomaly Detection */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                          <div className="bg-gray-800 rounded-lg p-3">
-                            <div className="text-xs text-gray-400 mb-1">
-                              Z-Score
-                            </div>
-                            <div
-                              className={`text-lg font-semibold ${
-                                analyticsData[token.token_address]?.z_score !==
-                                undefined
-                                  ? Math.abs(
-                                      analyticsData[token.token_address]
-                                        .z_score!,
-                                    ) > 2
-                                    ? "text-red-400"
-                                    : Math.abs(
-                                          analyticsData[token.token_address]
-                                            .z_score!,
-                                        ) > 1
-                                      ? "text-yellow-400"
-                                      : "text-green-400"
-                                  : "text-gray-400"
-                              }`}
+                {token.is_finished && token.finished_at && (
+                  <div>
+                    <span className="text-gray-400">Finished At:</span>
+                    <span className="ml-2 text-gray-300">
+                      {formatDistanceToNow(new Date(token.finished_at), {
+                        addSuffix: true,
+                      })}
+                    </span>
+                  </div>
+                )}
+
+                {token.when_reach_80mc && (
+                  <div>
+                    <span className="text-gray-400">Reached 80M:</span>
+                    <span className="ml-2 text-green-400">
+                      {formatDistanceToNow(new Date(token.when_reach_80mc), {
+                        addSuffix: true,
+                      })}
+                    </span>
+                  </div>
+                )}
+
+                {token.when_reach_120mc && (
+                  <div>
+                    <span className="text-gray-400">Reached 120M:</span>
+                    <span className="ml-2 text-green-400">
+                      {formatDistanceToNow(new Date(token.when_reach_120mc), {
+                        addSuffix: true,
+                      })}
+                    </span>
+                  </div>
+                )}
+
+                {token.when_reach_200mc && (
+                  <div>
+                    <span className="text-gray-400">Reached 200M:</span>
+                    <span className="ml-2 text-green-400">
+                      {formatDistanceToNow(new Date(token.when_reach_200mc), {
+                        addSuffix: true,
+                      })}
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex justify-end">
+                  <span className="text-gray-400">Last Updated:</span>
+                  <span className="ml-2 text-white">
+                    {formatDistanceToNow(new Date(token.last_updated_at), {
+                      addSuffix: true,
+                    })}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Analytics Section - Add this after the existing token information */}
+            <div className="mt-4 pt-4 border-t border-gray-700">
+              <button
+                onClick={() => toggleAnalytics(token.token_address)}
+                className="flex items-center justify-between w-full text-left hover:text-blue-400 transition-colors"
+              >
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-300">
+                    Analytics & Risk Assessment
+                  </span>
+                  {analyticsLoading && (
+                    <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                  )}
+                </div>
+                <svg
+                  className={`w-4 h-4 transition-transform ${expandedAnalytics[token.token_address] ? "rotate-180" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M19 9l-7 7-7-7"
+                  />
+                </svg>
+              </button>
+
+              {expandedAnalytics[token.token_address] && (
+                <div className="mt-4 space-y-4 bg-gray-750 rounded-lg p-4">
+                  {analyticsData[token.token_address] ? (
+                    <>
+                      {/* Z-Score Anomaly Detection */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div className="bg-gray-800 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-1">
+                            Z-Score
+                          </div>
+                          <div
+                            className={`text-lg font-semibold ${
+                              analyticsData[token.token_address]?.z_score !==
+                              undefined
+                                ? Math.abs(
+                                    analyticsData[token.token_address].z_score!,
+                                  ) > 2
+                                  ? "text-red-400"
+                                  : Math.abs(
+                                        analyticsData[token.token_address]
+                                          .z_score!,
+                                      ) > 1
+                                    ? "text-yellow-400"
+                                    : "text-green-400"
+                                : "text-gray-400"
+                            }`}
+                          >
+                            {analyticsData[
+                              token.token_address
+                            ]?.z_score?.toFixed(2) ?? "N/A"}
+                          </div>
+                        </div>
+
+                        <div className="bg-gray-800 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-1">
+                            Anomaly Type
+                          </div>
+                          <div
+                            className={`text-sm font-medium capitalize ${getAnomalyColor(analyticsData[token.token_address]?.anomaly_type)}`}
+                          >
+                            {analyticsData[token.token_address]?.anomaly_type ||
+                              "neutral"}
+                          </div>
+                        </div>
+
+                        <div className="bg-gray-800 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-1">
+                            Momentum
+                          </div>
+                          <div
+                            className={`text-sm font-medium capitalize ${getMomentumCategoryColor(analyticsData[token.token_address]?.momentum_category)}`}
+                          >
+                            {analyticsData[token.token_address]
+                              ?.momentum_category || "N/A"}
+                          </div>
+                        </div>
+
+                        <div className="bg-gray-800 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-1">
+                            Risk Score
+                          </div>
+                          <div
+                            className={`text-lg font-semibold ${getRiskColor(analyticsData[token.token_address]?.risk_score)}`}
+                          >
+                            {analyticsData[token.token_address]?.risk_score
+                              ? `${(analyticsData[token.token_address].risk_score! * 100).toFixed(0)}%`
+                              : "N/A"}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Momentum Signal Details */}
+                      {analyticsData[token.token_address]?.momentum_signal && (
+                        <div className="bg-gray-800 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-1">
+                            Signal
+                          </div>
+                          <div className="text-sm">
+                            <span
+                              className={`capitalize ${getMomentumSignalColor(analyticsData[token.token_address]?.momentum_signal?.type)}`}
                             >
                               {analyticsData[
                                 token.token_address
-                              ]?.z_score?.toFixed(2) ?? "N/A"}
-                            </div>
-                          </div>
-
-                          <div className="bg-gray-800 rounded-lg p-3">
-                            <div className="text-xs text-gray-400 mb-1">
-                              Anomaly Type
-                            </div>
-                            <div
-                              className={`text-sm font-medium capitalize ${getAnomalyColor(analyticsData[token.token_address]?.anomaly_type)}`}
-                            >
-                              {analyticsData[token.token_address]
-                                ?.anomaly_type || "neutral"}
-                            </div>
-                          </div>
-
-                          <div className="bg-gray-800 rounded-lg p-3">
-                            <div className="text-xs text-gray-400 mb-1">
-                              Momentum
-                            </div>
-                            <div
-                              className={`text-sm font-medium capitalize ${getMomentumCategoryColor(analyticsData[token.token_address]?.momentum_category)}`}
-                            >
-                              {analyticsData[token.token_address]
-                                ?.momentum_category || "N/A"}
-                            </div>
-                          </div>
-
-                          <div className="bg-gray-800 rounded-lg p-3">
-                            <div className="text-xs text-gray-400 mb-1">
-                              Risk Score
-                            </div>
-                            <div
-                              className={`text-lg font-semibold ${getRiskColor(analyticsData[token.token_address]?.risk_score)}`}
-                            >
-                              {analyticsData[token.token_address]?.risk_score
-                                ? `${(analyticsData[token.token_address].risk_score! * 100).toFixed(0)}%`
-                                : "N/A"}
+                              ]?.momentum_signal?.type?.replace("_", " ")}
+                            </span>
+                            <div className="text-xs text-gray-400 mt-1">
+                              Strength:{" "}
+                              {(
+                                analyticsData[token.token_address]
+                                  ?.momentum_signal?.strength ?? 0 * 100
+                              ).toFixed(0)}
+                              %
                             </div>
                           </div>
                         </div>
+                      )}
 
-                        {/* Momentum Signal Details */}
+                      {/* Additional Metrics */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         {analyticsData[token.token_address]
-                          ?.momentum_signal && (
+                          ?.current_price_usd && (
                           <div className="bg-gray-800 rounded-lg p-3">
                             <div className="text-xs text-gray-400 mb-1">
-                              Signal
+                              Current Price
                             </div>
-                            <div className="text-sm">
-                              <span
-                                className={`capitalize ${getMomentumSignalColor(analyticsData[token.token_address]?.momentum_signal?.type)}`}
-                              >
-                                {analyticsData[
-                                  token.token_address
-                                ]?.momentum_signal?.type?.replace("_", " ")}
-                              </span>
-                              <div className="text-xs text-gray-400 mt-1">
-                                Strength:{" "}
-                                {(
-                                  analyticsData[token.token_address]
-                                    ?.momentum_signal?.strength ?? 0 * 100
-                                ).toFixed(0)}
-                                %
-                              </div>
+                            <div className="text-sm text-white">
+                              $
+                              {analyticsData[
+                                token.token_address
+                              ].current_price_usd!.toFixed(6)}
                             </div>
                           </div>
                         )}
 
-                        {/* Additional Metrics */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          {analyticsData[token.token_address]
-                            ?.current_price_usd && (
-                            <div className="bg-gray-800 rounded-lg p-3">
-                              <div className="text-xs text-gray-400 mb-1">
-                                Current Price
-                              </div>
-                              <div className="text-sm text-white">
-                                $
-                                {analyticsData[
-                                  token.token_address
-                                ].current_price_usd!.toFixed(6)}
-                              </div>
+                        {analyticsData[token.token_address]?.liquidity_score !==
+                          undefined && (
+                          <div className="bg-gray-800 rounded-lg p-3">
+                            <div className="text-xs text-gray-400 mb-1">
+                              Liquidity Score
                             </div>
-                          )}
-
-                          {analyticsData[token.token_address]
-                            ?.liquidity_score !== undefined && (
-                            <div className="bg-gray-800 rounded-lg p-3">
-                              <div className="text-xs text-gray-400 mb-1">
-                                Liquidity Score
-                              </div>
-                              <div className="text-sm text-white">
-                                {(
-                                  analyticsData[token.token_address]!
-                                    .liquidity_score! * 100
-                                ).toFixed(0)}
-                                %
-                              </div>
+                            <div className="text-sm text-white">
+                              {(
+                                analyticsData[token.token_address]!
+                                  .liquidity_score! * 100
+                              ).toFixed(0)}
+                              %
                             </div>
-                          )}
+                          </div>
+                        )}
 
-                          {analyticsData[token.token_address]?.volume_24h !==
-                            undefined && (
-                            <div className="bg-gray-800 rounded-lg p-3">
-                              <div className="text-xs text-gray-400 mb-1">
-                                24h Volume
-                              </div>
-                              <div className="text-sm text-white">
-                                $
-                                {analyticsData[
-                                  token.token_address
-                                ]!.volume_24h!.toLocaleString()}
-                              </div>
+                        {analyticsData[token.token_address]?.volume_24h !==
+                          undefined && (
+                          <div className="bg-gray-800 rounded-lg p-3">
+                            <div className="text-xs text-gray-400 mb-1">
+                              24h Volume
                             </div>
-                          )}
-                        </div>
-
-                        <div className="text-xs text-gray-500 mt-2">
-                          Analytics updated:{" "}
-                          {formatDistanceToNow(
-                            new Date(
-                              analyticsData[token.token_address]
-                                .last_updated_at,
-                            ),
-                            { addSuffix: true },
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="text-center py-4">
-                        <div className="text-gray-400">
-                          Analytics data not available
-                        </div>
-                        <button
-                          onClick={() =>
-                            fetchAnalyticsForTokens([token.token_address])
-                          }
-                          className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors"
-                        >
-                          Retry Analytics
-                        </button>
+                            <div className="text-sm text-white">
+                              $
+                              {analyticsData[
+                                token.token_address
+                              ]!.volume_24h!.toLocaleString()}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
+
+                      <div className="text-xs text-gray-500 mt-2">
+                        Analytics updated:{" "}
+                        {formatDistanceToNow(
+                          new Date(
+                            analyticsData[token.token_address].last_updated_at,
+                          ),
+                          { addSuffix: true },
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center py-4">
+                      <div className="text-gray-400">
+                        Analytics data not available
+                      </div>
+                      <button
+                        onClick={() =>
+                          fetchAnalyticsForTokens([token.token_address])
+                        }
+                        className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors"
+                      >
+                        Retry Analytics
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          ))}
+          </div>
+        ))}
 
-          {tokens.length === 0 && !loading && (
-            <div className="text-center py-12">
-              <div className="text-gray-400 text-lg">
-                No tokens found matching your criteria
-              </div>
-              <p className="text-gray-500 mt-2">
-                Try adjusting your filters or search terms
-              </p>
+        {tokens.length === 0 && !loading && (
+          <div className="text-center py-12">
+            <div className="text-gray-400 text-lg">
+              No tokens found matching your criteria
             </div>
-          )}
-        </div>
-
-        {/* Pagination */}
-        {pagination.totalPages > 1 && (
-          <div className="flex items-center justify-between bg-gray-800 rounded-lg p-4">
-            <div className="text-sm text-gray-400">
-              Showing {(pagination.page - 1) * pagination.limit + 1} to{" "}
-              {Math.min(pagination.page * pagination.limit, pagination.total)}{" "}
-              of {pagination.total} tokens
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <button
-                onClick={() => fetchTokens(pagination.page - 1)}
-                disabled={pagination.page <= 1 || loading}
-                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded text-sm transition-colors"
-              >
-                Previous
-              </button>
-
-              <span className="px-3 py-1 bg-blue-600 rounded text-sm">
-                {pagination.page} of {pagination.totalPages}
-              </span>
-
-              <button
-                onClick={() => fetchTokens(pagination.page + 1)}
-                disabled={pagination.page >= pagination.totalPages || loading}
-                className="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded text-sm transition-colors"
-              >
-                Next
-              </button>
-            </div>
+            <p className="text-gray-500 mt-2">
+              Try adjusting your filters or search terms
+            </p>
           </div>
         )}
       </div>
+
+      {/* Pagination */}
+      {pagination.totalPages > 1 && (
+        <div className="flex items-center justify-between bg-gray-800 rounded-lg p-4">
+          <div className="text-sm text-gray-400">
+            Showing {(pagination.page - 1) * pagination.limit + 1} to{" "}
+            {Math.min(pagination.page * pagination.limit, pagination.total)} of{" "}
+            {pagination.total} tokens
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => fetchTokens(pagination.page - 1)}
+              disabled={pagination.page <= 1 || loading}
+              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded text-sm transition-colors"
+            >
+              Previous
+            </button>
+
+            <span className="px-3 py-1 bg-blue-600 rounded text-sm">
+              {pagination.page} of {pagination.totalPages}
+            </span>
+
+            <button
+              onClick={() => fetchTokens(pagination.page + 1)}
+              disabled={pagination.page >= pagination.totalPages || loading}
+              className="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded text-sm transition-colors"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

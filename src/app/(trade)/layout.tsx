@@ -1,21 +1,17 @@
-'use client'
+"use client";
 
-import React from 'react'
-import ConnectionStatus from '@/components/ConnectionStatus'
-import TradingHistory from '@/components/TradingHistory'
-import PnLTracker from '@/components/PnLTracker'
-import Footer from '@/components/Footer'
-import NavigationTabs from '@/components/NavigationTabs'
-import { useWallet } from '@/components/WalletProvider'
-import { useState } from 'react'
+import React from "react";
+import ConnectionStatus from "@/components/ConnectionStatus";
+import Footer from "@/components/Footer";
+import NavigationTabs from "@/components/NavigationTabs";
+import { useWallet } from "@/components/WalletProvider";
 
 export default function TradeLayout({
   children,
 }: {
-  children: React.ReactNode
+  children: React.ReactNode;
 }) {
-  const { connected, publicKey } = useWallet()
-  const [activeInfoTab, setActiveInfoTab] = useState<'history' | 'pnl' | null>('history')
+  const { connected, publicKey } = useWallet();
 
   return (
     <main className="min-h-screen bg-black py-8 pb-24 md:pb-8">
@@ -40,36 +36,14 @@ export default function TradeLayout({
             </div>
           )}
         </div> */}
-        
-        {/* Navigation Tabs */}
-        <NavigationTabs 
-          activeInfoTab={activeInfoTab} 
-          setActiveInfoTab={setActiveInfoTab} 
-        />
 
-        {/* Info Tabs Content */}
-        {connected && activeInfoTab && (
-          <div className="max-w-4xl mx-auto mt-4">
-            {activeInfoTab === 'history' && (
-              <div>
-                <TradingHistory />
-              </div>
-            )}
-            
-            {activeInfoTab === 'pnl' && (
-              <div className="text-left mb-3">
-                <PnLTracker />
-              </div>
-            )}
-          </div>
-        )}
-        
-        <div className="max-w-4xl mx-auto min-h-[300px] mt-4">
-        {children}
-        </div>
+        {/* Navigation Tabs */}
+        <NavigationTabs />
+
+        <div className="max-w-4xl mx-auto min-h-[300px] mt-4">{children}</div>
       </div>
-      
+
       <Footer />
     </main>
-  )
+  );
 }
