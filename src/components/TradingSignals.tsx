@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { useWallet, useConnection } from "@/components/WalletProvider";
-import { VersionedTransaction, LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import Draggable from "react-draggable";
 import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
@@ -91,7 +91,6 @@ export default function TradingSignals() {
     solAmount: 0,
     fees: 0.001,
   });
-  const [buyingTokens, setBuyingTokens] = useState<Set<string>>(new Set());
   const [walletBalanceSol, setWalletBalanceSol] = useState<number>(0);
   const [hasAutoSetSolAmount, setHasAutoSetSolAmount] =
     useState<boolean>(false);
@@ -278,8 +277,8 @@ export default function TradingSignals() {
     // Calculate position for new chart in grid area
     const gridCharts = floatingCharts.filter((chart) => chart.isInGrid);
     const gridPosition = {
-      x: 10, // Fixed left position in grid area
-      y: 30 + gridCharts.length * 280, // Stack vertically with reduced spacing
+      x: 10 + gridCharts.length * 410, // Horizontal stacking
+      y: 40,
     };
 
     // Create new floating chart
@@ -411,16 +410,11 @@ export default function TradingSignals() {
   };
 
   const handleDragStop = (chartId: string, data: any) => {
-    // Define grid area boundaries (left 1/5 of the container)
-    const containerWidth = window.innerWidth;
-    const GRID_WIDTH = containerWidth * 0.2; // 20% of container width
-    const GRID_HEIGHT = window.innerHeight - 100; // Full height minus some padding
+    // Define grid area boundaries (Top horizontal area)
+    // Height is min 320px + padding. Let's say top 360px is the grid area.
+    const GRID_HEIGHT = 360;
 
-    const isInGridArea =
-      data.x >= 0 &&
-      data.x <= GRID_WIDTH &&
-      data.y >= 0 &&
-      data.y <= GRID_HEIGHT;
+    const isInGridArea = data.y >= 0 && data.y <= GRID_HEIGHT;
 
     setFloatingCharts((prev) =>
       prev.map((chart) => {
@@ -434,8 +428,8 @@ export default function TradingSignals() {
               (c) => c.isInGrid && c.id !== chartId,
             );
             newPosition = {
-              x: 10,
-              y: 30 + gridCharts.length * 280, // Reduced spacing for smaller area
+              x: 10 + gridCharts.length * 410, // Horizontal stacking
+              y: 40, // Fixed top margin inside grid
             };
             newIsInGrid = true;
           }
@@ -456,67 +450,7 @@ export default function TradingSignals() {
     );
   };
 
-  // Buy functionality (client-side signing & sending)
-  const handleBuyToken = async (tokenAddress: string, tokenSymbol?: string) => {
-    if (buyingTokens.has(tokenAddress)) return;
-
-    setBuyingTokens((prev) => new Set(prev).add(tokenAddress));
-
-    try {
-      if (!connected || !publicKey || !signTransaction) {
-        throw new Error("Please connect your wallet first");
-      }
-
-      const solLamports = Math.floor(buyConfig.solAmount * 1e9); // Convert SOL to lamports
-      const slippageBps = 50;
-      const priorityFeeLamports = Math.floor((buyConfig.fees || 0) * 1e9);
-
-      // Prepare unsigned transaction on server for this wallet
-      const resp = await fetch("/api/buy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tokenAddress,
-          solLamports,
-          slippageBps,
-          priorityFeeLamports,
-          userPublicKey: publicKey.toString(),
-        }),
-      });
-
-      const json = await resp.json();
-      if (!resp.ok || !json.success || !json.swapTransactionBase64) {
-        throw new Error(json.error || "Failed to prepare swap transaction");
-      }
-
-      // Deserialize, sign, and send
-      const transaction = VersionedTransaction.deserialize(
-        Buffer.from(json.swapTransactionBase64, "base64"),
-      );
-      const signedTx = await signTransaction(transaction);
-      const signature = await connection.sendRawTransaction(
-        signedTx.serialize(),
-        {
-          skipPreflight: false,
-          preflightCommitment: "confirmed",
-        },
-      );
-      await connection.confirmTransaction(signature, "confirmed");
-
-      alert(`Buy submitted! Signature: ${signature}`);
-    } catch (error: any) {
-      console.error("Buy error:", error);
-      alert(
-        `Failed to buy ${tokenSymbol || tokenAddress}: ${error?.message || "Unknown error"}`,
-      );
-    } finally {
-      setBuyingTokens((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(tokenAddress);
-        return newSet;
-      });
-    }
-  };
+  // Buy functionality removed (moved to ChartBuyModal)
 
   return (
     <div className="space-y-4">
@@ -692,27 +626,27 @@ export default function TradingSignals() {
             </div>
           )}
 
-          <div className="flex gap-4">
-            {/* Chart Grid Area - 1/5 of the width */}
+          <div className="flex flex-col gap-4">
+            {/* Chart Grid Area - Top horizontal scroll */}
             <div
-              className="flex-shrink-0 bg-black rounded-lg relative overflow-y-auto"
-              style={{ width: "20%", minHeight: "600px" }}
+              className="w-full bg-black rounded-lg relative overflow-x-auto"
+              style={{ minHeight: "320px" }}
             >
               <div className="absolute top-2 left-2 text-xs text-gray-500 font-medium z-10">
                 Chart Area
               </div>
 
               {/* Non-draggable charts inside grid */}
-              <div className="pt-8 space-y-4 p-2">
+              <div className="pt-8 flex flex-row space-x-4 p-2">
                 {floatingCharts
                   .filter((chart) => chart.isInGrid && !chart.isDraggable)
                   .sort((a, b) => a.gridOrder - b.gridOrder)
                   .map((chart) => (
                     <div
                       key={chart.id}
-                      className="bg-white border-2 border-gray-300 rounded-lg shadow-2xl"
+                      className="flex-shrink-0 bg-white border-2 border-gray-300 rounded-lg shadow-2xl"
                       style={{
-                        width: "100%",
+                        width: "400px",
                         height: "260px",
                       }}
                       draggable
@@ -745,21 +679,11 @@ export default function TradingSignals() {
                             </span>
                             <button
                               onClick={() =>
-                                handleBuyToken(
-                                  chart.tokenAddress,
-                                  chart.tokenSymbol,
-                                )
+                                setChartModalTokenAddress(chart.tokenAddress)
                               }
-                              disabled={buyingTokens.has(chart.tokenAddress)}
-                              className={`px-3 py-1 rounded text-sm font-medium ${
-                                buyingTokens.has(chart.tokenAddress)
-                                  ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                                  : "bg-green-500 hover:bg-green-600 text-white cursor-pointer"
-                              }`}
+                              className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 text-white cursor-pointer"
                             >
-                              {buyingTokens.has(chart.tokenAddress)
-                                ? "Buying..."
-                                : "Buy"}
+                              Buy
                             </button>
                           </div>
                         </div>
@@ -790,15 +714,15 @@ export default function TradingSignals() {
 
                 {floatingCharts.filter((chart) => chart.isInGrid).length ===
                   0 && (
-                  <div className="flex items-center justify-center h-full text-gray-400 text-sm">
+                  <div className="flex items-center justify-center w-full h-64 text-gray-400 text-sm">
                     Charts will appear here when opened
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Table Area - 4/5 of the width */}
-            <div className="flex-1 overflow-x-auto z-[100] relative">
+            {/* Table Area - Full width */}
+            <div className="w-full overflow-x-auto z-[100] relative">
               <table className="min-w-full border-collapse">
                 <thead>
                   <tr className="text-left text-sm">
@@ -903,19 +827,12 @@ export default function TradingSignals() {
                           </button>
                           <button
                             onClick={() =>
-                              handleBuyToken(s.token_address, s.token_symbol)
+                              setChartModalTokenAddress(s.token_address)
                             }
-                            disabled={buyingTokens.has(s.token_address)}
-                            className={`px-3 py-1 rounded text-xs font-medium ${
-                              buyingTokens.has(s.token_address)
-                                ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                                : "bg-green-600 text-white hover:bg-green-700"
-                            }`}
-                            title={`Buy with ${buyConfig.solAmount} SOL`}
+                            className="px-3 py-1 rounded text-xs font-medium bg-green-600 text-white hover:bg-green-700"
+                            title="Open Chart & Buy"
                           >
-                            {buyingTokens.has(s.token_address)
-                              ? "Buying..."
-                              : "Buy"}
+                            Buy
                           </button>
                         </td>
                       </tr>
@@ -980,18 +897,11 @@ export default function TradingSignals() {
                     </span>
                     <button
                       onClick={() =>
-                        handleBuyToken(chart.tokenAddress, chart.tokenSymbol)
+                        setChartModalTokenAddress(chart.tokenAddress)
                       }
-                      disabled={buyingTokens.has(chart.tokenAddress)}
-                      className={`px-3 py-1 rounded text-sm font-medium ${
-                        buyingTokens.has(chart.tokenAddress)
-                          ? "bg-gray-300 text-gray-500 cursor-not-allowed"
-                          : "bg-green-500 hover:bg-green-600 text-white cursor-pointer"
-                      }`}
+                      className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 text-white cursor-pointer"
                     >
-                      {buyingTokens.has(chart.tokenAddress)
-                        ? "Buying..."
-                        : "Buy"}
+                      Buy
                     </button>
                   </div>
                 </div>
