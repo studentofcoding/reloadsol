@@ -1,8 +1,21 @@
 "use client";
 
-import React, { useMemo, useState, useEffect, Suspense } from "react";
+import React, {
+  useMemo,
+  useState,
+  useEffect,
+  Suspense,
+  useCallback,
+} from "react";
 import { useSearchParams, usePathname, useRouter } from "next/navigation";
 import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
+import { useWallet, useConnection } from "@/components/WalletProvider";
+import { executeBulkBuy, isValidMintAddress } from "@/utils/jupiter";
+import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { trackBuy } from "@/utils/operations-api";
+import { useTradingData } from "@/components/TradingDataProvider";
+import { getSolPriceUSD } from "@/utils/solana";
+import { BulkBuyRequest } from "@/types";
 
 function parseAddresses(param: string | null): string[] {
   if (!param) return [];
@@ -54,6 +67,162 @@ function ChartsContent() {
   const [status, setStatus] = useState<string>("");
   const [symbols, setSymbols] = useState<Record<string, string>>({});
   const [newAddrs, setNewAddrs] = useState<string>("");
+
+  // Instant Buy State
+  const { publicKey, signAllTransactions, connected } = useWallet();
+  const { connection } = useConnection();
+  const { trackOperation } = useTradingData();
+  const [buyAmount, setBuyAmount] = useState("0.1");
+  const [buyStates, setBuyStates] = useState<
+    Record<string, { loading: boolean; status?: string; error?: string }>
+  >({});
+
+  const handleInstantBuy = useCallback(
+    async (tokenAddress: string) => {
+      if (!connected || !publicKey || !signAllTransactions) {
+        setBuyStates((prev) => ({
+          ...prev,
+          [tokenAddress]: { loading: false, error: "Wallet not connected" },
+        }));
+        return;
+      }
+
+      if (!buyAmount || parseFloat(buyAmount) <= 0) {
+        setBuyStates((prev) => ({
+          ...prev,
+          [tokenAddress]: { loading: false, error: "Invalid amount" },
+        }));
+        return;
+      }
+
+      setBuyStates((prev) => ({
+        ...prev,
+        [tokenAddress]: { loading: true, status: "Preparing..." },
+      }));
+
+      try {
+        // Get balance before operation
+        const balanceBeforeOp = await connection.getBalance(publicKey);
+        const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL;
+        const priorityFee = 30000; // Default priority fee
+        const requiredAmount =
+          parseFloat(buyAmount) + priorityFee / LAMPORTS_PER_SOL;
+
+        if (balanceBeforeSOL < requiredAmount) {
+          throw new Error(
+            `Insufficient balance. Need ${requiredAmount.toFixed(4)} SOL`,
+          );
+        }
+
+        const request: BulkBuyRequest = {
+          solAmount: parseFloat(buyAmount),
+          tokenMints: [tokenAddress],
+          slippage: 200, // 2% default slippage
+          priorityFee,
+        };
+
+        const buyResult = await executeBulkBuy(
+          request,
+          publicKey.toString(),
+          connection,
+          signAllTransactions,
+        );
+
+        if (buyResult.success) {
+          setBuyStates((prev) => ({
+            ...prev,
+            [tokenAddress]: { loading: false, status: "Success!" },
+          }));
+
+          // Clear success message after 3 seconds
+          setTimeout(() => {
+            setBuyStates((prev) => {
+              const next = { ...prev };
+              delete next[tokenAddress];
+              return next;
+            });
+          }, 3000);
+
+          // Track the buy operation
+          try {
+            trackBuy(
+              publicKey.toString(),
+              buyResult.successfulPurchases.length,
+              {
+                failureCount: buyResult.failedPurchases.length,
+                solAmount: parseFloat(buyAmount),
+                tokenMints: [tokenAddress],
+                signatures: buyResult.signatures,
+              },
+            ).catch(console.error);
+
+            // Track via centralized React Query system
+            const { fetchTokenPricesForTracking } =
+              await import("@/utils/trading-tracker");
+            const [tokenPrices, currentSolPrice] = await Promise.all([
+              fetchTokenPricesForTracking([tokenAddress]),
+              getSolPriceUSD(),
+            ]);
+
+            await trackOperation({
+              walletAddress: publicKey.toString(),
+              operationType: "buy",
+              tokens: [
+                {
+                  mintAddress: tokenAddress,
+                  symbol: symbols[tokenAddress] || "UNKNOWN",
+                  name: symbols[tokenAddress] || "Unknown Token",
+                  priceUsd: tokenPrices[tokenAddress] || 0,
+                  tokenAmount: 0,
+                  solAmount: parseFloat(buyAmount),
+                  solPrice: currentSolPrice,
+                },
+              ],
+              successCount: buyResult.successfulPurchases.length,
+              failureCount: buyResult.failedPurchases.length,
+              totalTokens: 1,
+              solAmount: parseFloat(buyAmount),
+              feesPaid: 0,
+              solPriceUsd: currentSolPrice,
+              totalUsdValue: currentSolPrice
+                ? parseFloat(buyAmount) * currentSolPrice
+                : undefined,
+              signatures: buyResult.signatures,
+              slippage: 0.02,
+              priorityFee,
+              errors:
+                buyResult.failedPurchases.length > 0
+                  ? buyResult.failedPurchases.map((f) => f.error)
+                  : undefined,
+            });
+          } catch (e) {
+            console.error("Tracking error:", e);
+          }
+        } else {
+          throw new Error(
+            buyResult.failedPurchases[0]?.error || "Transaction failed",
+          );
+        }
+      } catch (err) {
+        setBuyStates((prev) => ({
+          ...prev,
+          [tokenAddress]: {
+            loading: false,
+            error: err instanceof Error ? err.message : "Failed",
+          },
+        }));
+      }
+    },
+    [
+      connected,
+      publicKey,
+      signAllTransactions,
+      connection,
+      buyAmount,
+      trackOperation,
+      symbols,
+    ],
+  );
 
   function updateBrowserAddresses(nextList: string[]) {
     try {
@@ -281,11 +450,27 @@ function ChartsContent() {
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-7xl mx-auto">
         <UnifiedTrackerModule />
-        <h1 className="text-2xl font-bold mb-2">Charts</h1>
-        <p className="text-gray-400 mb-4">
-          Showing {charts.length} chart{charts.length !== 1 ? "s" : ""} •
-          interval {interval}
-        </p>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h1 className="text-2xl font-bold mb-2">Charts</h1>
+            <p className="text-gray-400">
+              Showing {charts.length} chart{charts.length !== 1 ? "s" : ""} •
+              interval {interval}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 bg-gray-800 p-2 rounded-lg border border-gray-700">
+            <span className="text-sm text-gray-400">Instant Buy Amount:</span>
+            <input
+              type="number"
+              step="0.1"
+              min="0.01"
+              className="bg-gray-900 border border-gray-600 rounded px-2 py-1 w-20 text-white text-sm"
+              value={buyAmount}
+              onChange={(e) => setBuyAmount(e.target.value)}
+            />
+            <span className="text-sm text-gray-400">SOL</span>
+          </div>
+        </div>
 
         {charts.length === 0 ? (
           <div className="bg-gray-800 rounded-lg p-4">
@@ -404,6 +589,25 @@ function ChartsContent() {
                       {symbols[addr] || addr}
                     </div>
                     <div className="flex items-center gap-3">
+                      <button
+                        className={`px-2 py-1 text-xs rounded text-white font-medium ${
+                          buyStates[addr]?.loading
+                            ? "bg-yellow-600 cursor-wait"
+                            : buyStates[addr]?.status === "Success!"
+                              ? "bg-green-600"
+                              : buyStates[addr]?.error
+                                ? "bg-red-600"
+                                : "bg-blue-600 hover:bg-blue-500"
+                        }`}
+                        onClick={() => handleInstantBuy(addr)}
+                        disabled={buyStates[addr]?.loading}
+                        title={buyStates[addr]?.error || "Instant Buy"}
+                      >
+                        {buyStates[addr]?.loading
+                          ? "Buying..."
+                          : buyStates[addr]?.status ||
+                            (buyStates[addr]?.error ? "Failed" : "Buy")}
+                      </button>
                       <label className="flex items-center gap-1 text-xs text-gray-300">
                         <input
                           type="checkbox"

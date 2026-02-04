@@ -7,7 +7,13 @@ import WalletBalance from "@/components/WalletBalance";
 import { useWallet } from "@/components/WalletProvider";
 import { isDevWallet } from "@/utils/dev-wallet";
 
-export default function NavigationTabs() {
+export default function NavigationTabs({
+  activeOverlayTab,
+  onTabSelect,
+}: {
+  activeOverlayTab?: string | null;
+  onTabSelect?: (tab: string | null) => void;
+}) {
   const pathname = usePathname();
   const { connected, publicKey } = useWallet();
   const [mounted, setMounted] = useState(false);
@@ -16,7 +22,14 @@ export default function NavigationTabs() {
     setMounted(true);
   }, []);
 
-  const isActive = (path: string) => (pathname || "") === path;
+  const isActive = (path: string) => {
+    if (activeOverlayTab) {
+      if (path === "/history") return activeOverlayTab === "history";
+      if (path === "/pnl") return activeOverlayTab === "pnl";
+      return false;
+    }
+    return (pathname || "") === path;
+  };
   const showMainTabs = [
     "/buy",
     "/sell",
@@ -40,6 +53,12 @@ export default function NavigationTabs() {
       });
     }
   }, [pathname, mounted]);
+
+  const handleTabClick = (tab: string) => {
+    if (onTabSelect) {
+      onTabSelect(activeOverlayTab === tab ? null : tab);
+    }
+  };
 
   return (
     <div className="w-full relative z-50">
@@ -134,8 +153,9 @@ export default function NavigationTabs() {
 
             {/* Info Tabs */}
             <div className="border-l border-gray-600 pl-2 ml-2 flex items-center">
-              <Link
-                href="/history"
+              <button
+                type="button"
+                onClick={() => handleTabClick("history")}
                 className={`px-4 py-3 rounded-lg font-medium transition-all duration-200 ${
                   isActive("/history")
                     ? "bg-gray-700 text-white"
@@ -156,10 +176,11 @@ export default function NavigationTabs() {
                     d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
-              </Link>
+              </button>
               {mounted && isDevWallet(publicKey) && (
-                <Link
-                  href="/pnl"
+                <button
+                  type="button"
+                  onClick={() => handleTabClick("pnl")}
                   className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
                     isActive("/pnl")
                       ? "bg-gray-700 text-white"
@@ -180,7 +201,7 @@ export default function NavigationTabs() {
                       d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
                     />
                   </svg>
-                </Link>
+                </button>
               )}
               {mounted && isDevWallet(publicKey) && (
                 <>
@@ -301,8 +322,9 @@ export default function NavigationTabs() {
 
           {/* History & P&L on Right */}
           <div className="flex items-center space-x-2">
-            <Link
-              href="/history"
+            <button
+              type="button"
+              onClick={() => handleTabClick("history")}
               className={`p-2 rounded-lg transition-all duration-200 ${
                 isActive("/history")
                   ? "bg-gray-700 text-white"
@@ -323,10 +345,11 @@ export default function NavigationTabs() {
                   d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
                 />
               </svg>
-            </Link>
+            </button>
             {mounted && isDevWallet(publicKey) && (
-              <Link
-                href="/pnl"
+              <button
+                type="button"
+                onClick={() => handleTabClick("pnl")}
                 className={`p-2 rounded-lg transition-all duration-200 ${
                   isActive("/pnl")
                     ? "bg-gray-700 text-white"
@@ -347,7 +370,7 @@ export default function NavigationTabs() {
                     d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
                   />
                 </svg>
-              </Link>
+              </button>
             )}
           </div>
         </div>
