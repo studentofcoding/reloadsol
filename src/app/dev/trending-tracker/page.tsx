@@ -4,7 +4,6 @@ import React, { useState, useEffect } from "react";
 import UnifiedTokenModal from "@/components/UnifiedTokenModal";
 import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
 import ChartBuyModal from "@/components/ChartBuyModal";
-import NavigationTabs from "@/components/NavigationTabs";
 
 // Use alternate tables in local development to avoid prod collisions
 const TRACKER_TABLE =
@@ -115,6 +114,8 @@ interface TradingConfig {
   notifyOnTrigger: boolean;
 }
 
+export const dynamic = "force-dynamic";
+
 export default function TrendingTrackerPage() {
   const [stats, setStats] = useState<TrendingStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -165,6 +166,16 @@ export default function TrendingTrackerPage() {
   const [chartModalTokenAddress, setChartModalTokenAddress] = useState<
     string | null
   >(null);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("TrendingTrackerPage state", {
+        loading,
+        error,
+        hasStats: Boolean(stats),
+      });
+    }
+  }, [loading, error, stats]);
 
   // Helper functions for search and pagination
   const filterTokens = (
@@ -898,7 +909,6 @@ export default function TrendingTrackerPage() {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-6">
         <div className="max-w-7xl mx-auto">
-          <NavigationTabs />
           <h1 className="text-3xl font-bold mb-8">reloadSOL Algo tester</h1>
           <div className="flex items-center justify-center h-64">
             <div className="w-8 h-8 border-2 border-blue-400 border-t-blue-200 rounded-full animate-spin"></div>
@@ -913,7 +923,6 @@ export default function TrendingTrackerPage() {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-6">
         <div className="max-w-7xl mx-auto">
-          <NavigationTabs />
           <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-6 text-center">
             <p className="text-red-400 text-lg mb-4">Error loading data</p>
             <p className="text-red-300 text-sm mb-4">{error}</p>
@@ -933,7 +942,6 @@ export default function TrendingTrackerPage() {
     return (
       <div className="min-h-screen bg-gray-900 text-white p-6">
         <div className="max-w-7xl mx-auto">
-          <NavigationTabs />
           <p className="text-gray-400">No data available</p>
         </div>
       </div>
@@ -943,7 +951,7 @@ export default function TrendingTrackerPage() {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
-        <NavigationTabs />
+        <UnifiedTrackerModule />
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-bold">reloadSOL Algo tester</h1>
           <button
@@ -1024,7 +1032,7 @@ export default function TrendingTrackerPage() {
             </p>
           </div>
           <div className="flex items-center space-x-3">
-            <span className="text-gray-400 text-sm">
+            <span className="text-gray-400 text-sm" suppressHydrationWarning>
               Last updated: {formatRelativeTime(lastRefresh.toISOString())}
             </span>
             {isRefreshingPrices && (
@@ -2123,10 +2131,7 @@ export default function TrendingTrackerPage() {
         />
       )}
 
-      {/* Unified Tracker Module */}
-      <div className="mt-8">
-        <UnifiedTrackerModule />
-      </div>
+      {/* Unified Tracker Module removed to avoid duplication */}
     </div>
   );
 }

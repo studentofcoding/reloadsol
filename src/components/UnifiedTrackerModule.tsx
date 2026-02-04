@@ -16,9 +16,7 @@ export default function UnifiedTrackerModule({
   const [activeTab, setActiveTab] = useState<"pnl" | "history">(defaultTab);
 
   return (
-    <div
-      className={`bg-gray-900 rounded-xl border border-gray-700 overflow-hidden ${className}`}
-    >
+    <div className={`bg-gray-900 overflow-hidden ${className}`}>
       {/* Tab Header */}
       <div className="flex border-b border-gray-700">
         <button
@@ -50,7 +48,7 @@ export default function UnifiedTrackerModule({
       </div>
 
       {/* Content Area */}
-      <div className="p-4 min-h-[400px]">
+      <div className="p-4">
         <div className={activeTab === "pnl" ? "block" : "hidden"}>
           <PnLTracker />
         </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import WalletBalance from "@/components/WalletBalance";
@@ -10,16 +10,41 @@ import { isDevWallet } from "@/utils/dev-wallet";
 export default function NavigationTabs() {
   const pathname = usePathname();
   const { connected, publicKey } = useWallet();
+  const [mounted, setMounted] = useState(false);
 
-  const isActive = (path: string) => pathname === path;
-  const showMainTabs = ["/buy", "/sell", "/swap", "/history", "/pnl"].includes(
-    pathname,
-  );
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const isActive = (path: string) => (pathname || "") === path;
+  const showMainTabs = [
+    "/buy",
+    "/sell",
+    "/swap",
+    "/history",
+    "/pnl",
+    "/dev/signals",
+    "/dev/trending-tracker",
+    "/dev/tracking-history",
+    "/dev/mcap-tracker",
+    "/dev/pools",
+    "/dev/pools-test",
+  ].includes(pathname || "");
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("NavigationTabs render", {
+        pathname,
+        viewportWidth: window.innerWidth,
+        mounted,
+      });
+    }
+  }, [pathname, mounted]);
 
   return (
-    <>
+    <div className="w-full relative z-50">
       {/* Desktop Navigation */}
-      <div className="hidden md:block max-w-4xl mx-auto mb-2 z-50">
+      <div className="hidden md:block max-w-4xl mx-auto mb-2">
         <div className="flex items-center justify-between h-full mb-4">
           <div className="flex items-center space-x-2">
             {/* Main Trading Tabs */}
@@ -77,7 +102,7 @@ export default function NavigationTabs() {
                   </div>
                 </Link>
 
-                {isDevWallet(publicKey) && (
+                {mounted && isDevWallet(publicKey) && (
                   <Link
                     href="/swap"
                     className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
@@ -132,7 +157,7 @@ export default function NavigationTabs() {
                   />
                 </svg>
               </Link>
-              {isDevWallet(publicKey) && (
+              {mounted && isDevWallet(publicKey) && (
                 <Link
                   href="/pnl"
                   className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
@@ -157,7 +182,7 @@ export default function NavigationTabs() {
                   </svg>
                 </Link>
               )}
-              {isDevWallet(publicKey) && (
+              {mounted && isDevWallet(publicKey) && (
                 <>
                   <Link
                     href="/dev/signals"
@@ -264,9 +289,7 @@ export default function NavigationTabs() {
           </div>
 
           {/* Wallet Balance Display */}
-          <div className="h-full">
-            <WalletBalance />
-          </div>
+          <div className="h-full">{mounted && <WalletBalance />}</div>
         </div>
       </div>
 
@@ -274,9 +297,7 @@ export default function NavigationTabs() {
       <div className="md:hidden max-w-4xl mx-auto mb-2 z-50 pt-2">
         <div className="flex items-center justify-between px-4 py-3 rounded-lg mb-4">
           {/* SOL Balance on Left */}
-          <div className="flex-1">
-            <WalletBalance />
-          </div>
+          <div className="flex-1">{mounted && <WalletBalance />}</div>
 
           {/* History & P&L on Right */}
           <div className="flex items-center space-x-2">
@@ -303,7 +324,7 @@ export default function NavigationTabs() {
                 />
               </svg>
             </Link>
-            {isDevWallet(publicKey) && (
+            {mounted && isDevWallet(publicKey) && (
               <Link
                 href="/pnl"
                 className={`p-2 rounded-lg transition-all duration-200 ${
@@ -381,7 +402,7 @@ export default function NavigationTabs() {
               <span className="text-xs font-medium">Buy</span>
             </Link>
 
-            {isDevWallet(publicKey) && (
+            {mounted && isDevWallet(publicKey) && (
               <Link
                 href="/swap"
                 className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
@@ -407,6 +428,6 @@ export default function NavigationTabs() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 }

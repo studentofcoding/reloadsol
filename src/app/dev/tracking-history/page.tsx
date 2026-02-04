@@ -16,10 +16,6 @@ import { Line } from "react-chartjs-2";
 import "chartjs-adapter-date-fns";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
-import NavigationTabs from "@/components/NavigationTabs";
-
-// Remove the direct supabase import
-// import { supabase } from '@/utils/supabase'
 
 // Register Chart.js components
 ChartJS.register(
@@ -126,6 +122,8 @@ const LoadingSkeleton = () => (
   </div>
 );
 
+export const dynamic = "force-dynamic";
+
 export default function TrackingHistoryPage() {
   const [tokens, setTokens] = useState<TrackedTokenHistory[]>([]);
   // Remove filteredTokens since filtering is done server-side
@@ -144,6 +142,16 @@ export default function TrackingHistoryPage() {
     ApiResponse["pagination"] | null
   >(null);
   const [stats, setStats] = useState<ApiResponse["stats"] | null>(null);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("TrackingHistoryPage state", {
+        loading,
+        error,
+        hasStats: Boolean(stats),
+      });
+    }
+  }, [loading, error, stats]);
 
   const [filters, setFilters] = useState<FilterOptions>({
     status: "all",
@@ -355,7 +363,9 @@ export default function TrackingHistoryPage() {
       <main className="min-h-screen bg-black py-8">
         <div className="container mx-auto px-4">
           <div className="max-w-7xl mx-auto space-y-6">
-            <NavigationTabs />
+            <div className="relative z-50">
+              <UnifiedTrackerModule />
+            </div>
             <div className="text-center mb-8">
               <h1 className="text-5xl font-bold text-white mb-4">
                 📈 Token Tracking History
@@ -375,7 +385,9 @@ export default function TrackingHistoryPage() {
     <main className="min-h-screen bg-black py-8">
       <div className="container mx-auto px-4">
         <div className="max-w-7xl mx-auto space-y-6">
-          <NavigationTabs />
+          <div className="relative z-50">
+            <UnifiedTrackerModule />
+          </div>
           {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-5xl font-bold text-white mb-4">
@@ -1199,10 +1211,7 @@ export default function TrackingHistoryPage() {
             />
           )}
 
-          {/* Unified Tracker Module */}
-          <div className="mt-8">
-            <UnifiedTrackerModule />
-          </div>
+          {/* Unified Tracker Module removed to avoid duplication */}
         </div>
       </div>
     </main>

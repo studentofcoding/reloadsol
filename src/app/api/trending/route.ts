@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
-import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
+import { JupiterBaseAsset, JupiterPool, JupiterResponse, TokenCache, TransformedToken } from '@/types'
 import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from '@/utils/axiom'
 import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, bulkTrackTokenMcaps } from '@/utils/mcap-tracker'
@@ -17,6 +17,14 @@ const AUTO_NOTIFICATION_INTERVAL_MS = parseInt(process.env.AUTO_NOTIFICATION_INT
 
 // Track last auto notification time
 let lastAutoNotificationTime = 0;
+
+// Initialize token cache
+let tokenCache: TokenCache = {
+  tokens: new Map<string, TransformedToken>(),
+  timestamp: 0,
+  expiresAt: 0,
+  lastFullRefresh: 0
+};
 
 // Global cleanup tracking
 let globalTimers: {
@@ -120,41 +128,9 @@ if (typeof process !== 'undefined') {
   process.on('exit', cleanupGlobalTimers);
 }
 
-export interface TransformedToken {
-  token_symbol: string
-  token_address: string
-  price: number
-  change_1h: number
-  change_5m: number
-  volume_1h: number
-  volume_5m: number
-  buy_volume_1h: number
-  buy_volume_5m: number
-  sell_volume_1h: number
-  sell_volume_5m: number
-  mcap: number
-  logo_url?: string
-  organic_score: number
-  last_updated?: number
-  price_change?: number
-  created_at?: number
-}
-
-// Cache structure to store tokens with a timestamp
-interface TokenCache {
-  tokens: Map<string, TransformedToken>; // Using Map for O(1) lookups by token_address
-  timestamp: number;
-  expiresAt: number;
-  lastFullRefresh: number;
-}
-
 // In-memory cache with 5-minute expiry
-let tokenCache: TokenCache = {
-  tokens: new Map<string, TransformedToken>(),
-  timestamp: 0,
-  expiresAt: 0,
-  lastFullRefresh: 0
-};
+// Use a specific type annotation to avoid conflicts with generated types
+// (tokenCache is initialized at the top of the file)
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes in milliseconds
 const FULL_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes in milliseconds
@@ -244,7 +220,7 @@ function validateDiscordMessage(message: any): { valid: boolean; issues: string[
       if (sizes.totalEmbedSize > 5500) {
         issues.push(`Embed JSON size is large: ${sizes.totalEmbedSize} (limit ~6000)`);
       }
-    } catch {}
+    } catch { }
   }
 
   return { valid: issues.length === 0, issues, sizes };
@@ -547,7 +523,7 @@ async function sendDiscordNotification(
       console.log('✅ Discord notification sent successfully');
     } catch (error: any) {
       clearTimeout(timeoutId);
-      
+
       // Enhanced error logging to identify the exact cause
       console.error('❌ Error sending Discord message:', error);
       console.error('🔍 Discord Error Debug Info:', {
@@ -568,10 +544,10 @@ async function sendDiscordNotification(
         messageSize: JSON.stringify(message).length,
         hasAxiomErrors: error?.message?.includes('Axiom') || false
       });
-      
+
       // Log the raw message structure for debugging
       console.error('🔍 Raw Discord Message Structure:', JSON.stringify(message, null, 2).substring(0, 2000) + '...');
-      
+
       throw error;
     }
   } catch (error) {
@@ -917,7 +893,7 @@ async function fetchAndUpdateCache(
             'user-agent': 'reloadsol-bot/1.0 (+https://reloadsol.xyz)'
           },
           signal: controller.signal,
-          next: { revalidate: 0 }
+          cache: 'no-store'
         });
 
         clearTimeout(timeoutId);
@@ -1335,14 +1311,14 @@ function createDailyRankingSection(
   const MAX_AGE_MS = 24 * 60 * 60 * 1000 // 24 hours
   const trackerTop = mcapTrackingResults && mcapTrackingResults.size > 0
     ? Array.from(mcapTrackingResults.entries())
-        .filter(([_, tracking]) => {
-          const hasGrowth = isFinite(tracking.growthPercent) && tracking.growthPercent > 0
-          const firstSeenMs = tracking.firstSeenAt ? new Date(tracking.firstSeenAt).getTime() : 0
-          const within24h = firstSeenMs > 0 && (nowMs - firstSeenMs) <= MAX_AGE_MS
-          return hasGrowth && within24h
-        })
-        .sort((a, b) => (b[1].growthPercent || 0) - (a[1].growthPercent || 0))
-        .slice(0, 10)
+      .filter(([_, tracking]) => {
+        const hasGrowth = isFinite(tracking.growthPercent) && tracking.growthPercent > 0
+        const firstSeenMs = tracking.firstSeenAt ? new Date(tracking.firstSeenAt).getTime() : 0
+        const within24h = firstSeenMs > 0 && (nowMs - firstSeenMs) <= MAX_AGE_MS
+        return hasGrowth && within24h
+      })
+      .sort((a, b) => (b[1].growthPercent || 0) - (a[1].growthPercent || 0))
+      .slice(0, 10)
     : []
 
   if (trackerTop.length === 0) {
@@ -1395,7 +1371,7 @@ function calculateDailyStats(tokens: TransformedToken[]): {
   );
 
   const totalTokens = validTokens.length;
-  
+
   // Safe calculation of average growth
   let avgGrowth = 0;
   if (totalTokens > 0) {
@@ -1412,7 +1388,7 @@ function calculateDailyStats(tokens: TransformedToken[]): {
     const changes = validTokens
       .map(token => (token.change_1h || 0) * 100)
       .filter(change => isFinite(change));
-    
+
     if (changes.length > 0) {
       topGainerPercent = Math.max(...changes);
     }

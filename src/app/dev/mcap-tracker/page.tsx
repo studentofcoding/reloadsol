@@ -1001,19 +1001,20 @@ export default function McapTrackerPage() {
   );
   const LOCAL_STORAGE_KEY_PNL_TOAST = "mcap_pnl_toast_threshold";
   const [pnlToastThreshold, setPnlToastThreshold] = useState<number>(() => {
-    try {
-      const raw =
-        typeof window !== "undefined"
-          ? localStorage.getItem(LOCAL_STORAGE_KEY_PNL_TOAST)
-          : null;
-      const saved = raw != null ? Number(raw) : NaN;
-      return clampThreshold(
-        Number.isFinite(saved) ? saved : DEFAULT_PNL_TOAST_THRESHOLD,
-      );
-    } catch (e) {
-      return clampThreshold(DEFAULT_PNL_TOAST_THRESHOLD);
-    }
+    return clampThreshold(DEFAULT_PNL_TOAST_THRESHOLD);
   });
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LOCAL_STORAGE_KEY_PNL_TOAST);
+      const saved = raw != null ? Number(raw) : NaN;
+      if (Number.isFinite(saved)) {
+        setPnlToastThreshold(clampThreshold(saved));
+      }
+    } catch (e) {
+      // Ignore local storage errors
+    }
+  }, [clampThreshold]);
 
   const handleSavePnlToastThreshold = useCallback(() => {
     try {
@@ -1561,7 +1562,7 @@ export default function McapTrackerPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
+    <div className="min-h-screen max-w-7xl mx-auto bg-gray-900 text-white p-6">
       {/* Toasts (fixed, viewport-level) */}
       {activeToasts.length > 0 && (
         <div className="fixed top-4 right-4 z-50 space-y-2">
@@ -1678,15 +1679,12 @@ export default function McapTrackerPage() {
         />
       )}
 
-      {/* Unified Tracker Module */}
-      <NavigationTabs />
-      <div className="mt-8">
-        <UnifiedTrackerModule />
-      </div>
-
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">MCap Tracker</h1>
+      <div className="mb-8 mx-auto">
+        <div className="mt-8">
+          <UnifiedTrackerModule />
+        </div>
+        <h1 className="text-3xl font-bold my-2">MCap Tracker</h1>
         <p className="text-gray-400">
           Monitor token market cap changes and growth patterns over time
         </p>
@@ -3492,7 +3490,10 @@ export default function McapTrackerPage() {
                 {token.is_finished && token.finished_at && (
                   <div>
                     <span className="text-gray-400">Finished At:</span>
-                    <span className="ml-2 text-gray-300">
+                    <span
+                      className="ml-2 text-gray-300"
+                      suppressHydrationWarning
+                    >
                       {formatDistanceToNow(new Date(token.finished_at), {
                         addSuffix: true,
                       })}
@@ -3503,7 +3504,10 @@ export default function McapTrackerPage() {
                 {token.when_reach_80mc && (
                   <div>
                     <span className="text-gray-400">Reached 80M:</span>
-                    <span className="ml-2 text-green-400">
+                    <span
+                      className="ml-2 text-green-400"
+                      suppressHydrationWarning
+                    >
                       {formatDistanceToNow(new Date(token.when_reach_80mc), {
                         addSuffix: true,
                       })}
@@ -3514,7 +3518,10 @@ export default function McapTrackerPage() {
                 {token.when_reach_120mc && (
                   <div>
                     <span className="text-gray-400">Reached 120M:</span>
-                    <span className="ml-2 text-green-400">
+                    <span
+                      className="ml-2 text-green-400"
+                      suppressHydrationWarning
+                    >
                       {formatDistanceToNow(new Date(token.when_reach_120mc), {
                         addSuffix: true,
                       })}
@@ -3525,7 +3532,10 @@ export default function McapTrackerPage() {
                 {token.when_reach_200mc && (
                   <div>
                     <span className="text-gray-400">Reached 200M:</span>
-                    <span className="ml-2 text-green-400">
+                    <span
+                      className="ml-2 text-green-400"
+                      suppressHydrationWarning
+                    >
                       {formatDistanceToNow(new Date(token.when_reach_200mc), {
                         addSuffix: true,
                       })}
@@ -3719,7 +3729,10 @@ export default function McapTrackerPage() {
                         )}
                       </div>
 
-                      <div className="text-xs text-gray-500 mt-2">
+                      <div
+                        className="text-xs text-gray-500 mt-2"
+                        suppressHydrationWarning
+                      >
                         Analytics updated:{" "}
                         {formatDistanceToNow(
                           new Date(

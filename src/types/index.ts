@@ -227,6 +227,33 @@ export interface TradeExecutionResult {
 }
 
 // Jupiter API interfaces - consolidated from multiple API routes
+export interface TransformedToken {
+  token_symbol: string
+  token_address: string
+  price: number
+  change_1h: number
+  change_5m: number
+  volume_1h: number
+  volume_5m: number
+  buy_volume_1h: number
+  buy_volume_5m: number
+  sell_volume_1h: number
+  sell_volume_5m: number
+  mcap: number
+  logo_url?: string
+  organic_score: number
+  last_updated?: number
+  price_change?: number
+  created_at?: number
+}
+
+export interface TokenCache {
+  tokens: Map<string, TransformedToken>; // Using Map for O(1) lookups by token_address
+  timestamp: number;
+  expiresAt: number;
+  lastFullRefresh: number;
+}
+
 export interface JupiterBaseAsset {
   id: string
   name: string

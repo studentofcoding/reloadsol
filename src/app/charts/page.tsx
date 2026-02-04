@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState, useEffect, Suspense } from "react";
 import { useSearchParams, usePathname, useRouter } from "next/navigation";
+import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
 
 function parseAddresses(param: string | null): string[] {
   if (!param) return [];
@@ -279,6 +280,7 @@ function ChartsContent() {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-7xl mx-auto">
+        <UnifiedTrackerModule />
         <h1 className="text-2xl font-bold mb-2">Charts</h1>
         <p className="text-gray-400 mb-4">
           Showing {charts.length} chart{charts.length !== 1 ? "s" : ""} •

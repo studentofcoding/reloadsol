@@ -7,7 +7,8 @@ import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, bulkTrackToken
 export const dynamic = 'force-dynamic'
 
 // Import the interfaces and cache from the main trending route
-import type { TransformedToken } from '../route'
+// import type { TransformedToken } from '../route'
+import { TransformedToken } from '@/types'
 import { tokenCache, fetchAndUpdateCache } from '../route'
 
 // Environment variable for Discord webhook URL
