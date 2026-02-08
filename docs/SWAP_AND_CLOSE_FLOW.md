@@ -1,6 +1,6 @@
 # Swap and Close Operations
 
-This document summarizes how bulk swaps and token account closures work across the project, including provider integrations, token categorization, and fees. It consolidates behavior implemented in `src/utils/jupiter.ts` and the UI flows in `src/components/BulkTokenSeller.tsx` and `src/components/CatchTheCoinClient.tsx`.
+This document summarizes how bulk swaps and token account closures work across the project, including provider integrations, token categorization, fees, and metadata enrichment. It consolidates behavior implemented in `src/utils/jupiter.ts` and the UI flows in `src/components/BulkTokenSeller.tsx` and `src/components/CatchTheCoinClient.tsx`.
 
 ## Providers and Flow
 
@@ -30,6 +30,17 @@ Defined in `categorizeUserTokens` (`src/utils/jupiter.ts`):
 - `frozen`: Tokens flagged as frozen are excluded from both swaps and closes.
 - `nfts`: Tokens identified as NFTs.
 
+## Metadata Enrichment
+
+Implemented in `enrichTokenMetadataAsync` (`src/utils/jupiter.ts`), the system enriches token metadata (symbol, name, logo) without blocking the main UI or swap flows.
+
+- **Behavior:**
+  - Asynchronous and non-blocking: The UI loads tokens immediately with "Unknown" placeholders, and metadata populates as it becomes available.
+  - **Batching:** Processes tokens in batches of **10** to respect API rate limits.
+  - **Throttling:** Adds a **500ms** delay between batches.
+  - **Caching:** Enriched metadata is cached in `tokenCache` to prevent redundant fetches.
+  - **Triggers:** Automatically triggered after `fetchUserTokens` completes its initial pass.
+
 ## Close-Only Operations
 
 - Entry points: `handleCloseOnly` in `BulkTokenSeller.tsx` and `closeZeroBalanceTokens` in `src/utils/jupiter.ts`.
@@ -46,8 +57,12 @@ Defined in `categorizeUserTokens` (`src/utils/jupiter.ts`):
 
 ## Fees
 
-- **Sell Fees**: Percentage-based fee applied during swap, transferred to configured recipients.
-- **Close Fees**: Fixed per-close fee from `getFeeForOperation('CLOSE')`; included alongside burn/close instructions when possible.
+The system implements a centralized fee configuration in `src/utils/jupiter.ts`:
+
+- **Sell Fees:** **0.5%** of the SOL received from the swap.
+- **Buy Fees:** **0.5%** of the SOL budget used for the buy.
+- **Close Fees:** **0.001 SOL** (fixed) per successful close operation.
+- **Distribution:** All fees are currently routed to the **Dev Wallet**. The referral split is set to 0%.
 
 ## Edge Cases and Safeguards
 
@@ -64,9 +79,10 @@ Defined in `categorizeUserTokens` (`src/utils/jupiter.ts`):
 
 ## References
 
-- Core logic: `src/utils/jupiter.ts` (`executeBulkSell`, `executeBulkSellAlt`, `closeTokenAccounts`, `closeZeroBalanceTokens`, `categorizeUserTokens`).
+- Core logic: `src/utils/jupiter.ts` (`executeBulkSell`, `executeBulkSellAlt`, `closeTokenAccounts`, `closeZeroBalanceTokens`, `categorizeUserTokens`, `enrichTokenMetadataAsync`).
 - UI integration: `src/components/BulkTokenSeller.tsx` (`handleBulkSell`, `handleCloseOnly`, GMGN batch handling and auto-close). 
 - Single token UI: `src/components/CatchTheCoinClient.tsx` (sell-only path using Jupiter).
+- Swap Tracking: `src/utils/trading-tracker.ts`.
 
 ## Code References by Step
 
@@ -109,10 +125,3 @@ Defined in `categorizeUserTokens` (`src/utils/jupiter.ts`):
 - Safeguards & Edge Handling
   - `src/utils/jupiter.ts` — `categorizeUserTokens` for classification; `closeTokenAccounts` for freeze checks, account validation, and Pump.fun handling.
   - `src/utils/jupiter.ts` — Batch construction, timeouts, and retry logic inside bulk flows.
-
-## Quick Links
-
-- `src/utils/jupiter.ts`: core swap/close logic and fee utilities.
-- `src/components/BulkTokenSeller.tsx`: provider toggling, bulk flows, auto-close, and close-only UI.
-- `src/components/CatchTheCoinClient.tsx`: single-token swap UI using Jupiter.
-- `src/utils/trading-tracker.ts`: swap tracking and analytics.

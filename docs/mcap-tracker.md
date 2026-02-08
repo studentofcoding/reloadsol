@@ -14,28 +14,38 @@
 
 ## Client Page Flow (`page.tsx`)
 
-- Initial and periodic fetch:
+- **Initial and periodic fetch:**
   - Calls `GET /api/mcap-tracking?action=list` with filters, pagination, and a PnL range (`minPnl`, `maxPnl`).
   - Refreshes every ~30s to keep stats and tokens current.
   - Displays any server-provided toasts via `pushToasts`.
 
-- PnL Toast Range:
+- **UI Components:**
+  - **DailyRankingVisualization:** Displays daily performance rankings including "Top Gainers", "Highest Market Cap", and "Top Multipliers (>100%)". It supports filtering by date (Today, Yesterday, etc.) and provides a breakdown of gainers vs losers.
+  - **PnlDistributionChart:** Visualizes the distribution of PnL across tracked tokens, showing Win/Loss percentages and detailed range buckets (e.g., "-50% to 0%", "100% to 200%").
+
+- **PnL Toast Range:**
   - Dual controls for `Min` and `Max` (default 20–30%).
   - Sends as `minPnl` and `maxPnl` in requests; the server only emits “High Performers”/“PnL Threshold Reached” toasts for tokens in this range.
 
-- Per-token refetch:
+- **Per-token refetch:**
   - Opening a token’s chart triggers `GET /api/mcap-tracking?action=refetch&token=...&pnlThreshold=min&maxPnl=max`.
   - On success, displays any toasts, merges fresh `current_mcap` and `mcap_growth_percent` into the local token, and re-fetches the list to refresh stats and finished status.
   - Refetch is disabled for tokens marked `is_finished`.
 
-- Toasts rendering:
+- **Toasts rendering:**
   - Renders clickable token items linking to `/chart/${address}`.
   - Auto-dismisses after a delay; hover pauses the timer.
+  - **Deduplication:** Toasts are deduplicated client-side and server-side within a 30s window to prevent spam.
 
 ## API Behavior (`route.ts`)
 
 - `GET?action=list`
   - Reads from Supabase (`token_mcap_tracking`) with filters: `search`, `sortBy`, `sortOrder`, `minGrowth`, `maxGrowth`, `minMcap`, `maxMcap`, `excludeZeroPnl`, `timeFilter`, `performanceFilter`.
+  - **Limit:** Explicitly sets a high limit of **100,000** records for statistics queries to ensure comprehensive analysis.
+  - **Stats:** Calculates enhanced statistics including:
+    - PnL Time Windows (Peak buy/sell hours).
+    - MCap Range Analysis (Risk/Reward metrics per bucket).
+    - 30-Day PnL Summary.
   - Optionally fetches live trending data to prefer current `mcap` and compute refreshed `mcap_growth_percent` for the response snapshot (no DB write).
   - Emits a “High Performers” toast listing all tokens whose refreshed growth is within `[minPnl, maxPnl]`.
   - Returns: `data` (enhanced tokens), `pagination`, `stats`, and `toasts`.
@@ -50,13 +60,20 @@
   - Fetches current token info from trending (`mcap`, `price`), then persists via `trackTokenMcap(...)`.
   - Emits “New Token Tracked” and/or “PnL Threshold Reached” based on growth within `[minPnl, maxPnl]`.
 
+- `GET?action=health`
+  - Returns tracking health statistics, including:
+    - Health percentage (target 99%).
+    - Count of zero-growth tokens.
+    - Count of recently updated tokens.
+  - Provides recommendations if health is low.
+
+- `GET?action=cleanup`
+  - Inputs: `days` (default 30).
+  - Deletes records older than `N` days to maintain database performance.
+
 - `POST` (bulk tracking)
   - Body: `{ tokens: Array<{ address, symbol, mcap }> }` plus optional query `pnlThreshold` (min) and `maxPnl`.
   - Loops over tokens and calls `trackTokenMcap(...)` for each (DB writes), returns per-token results and toasts.
-
-- Other actions
-  - `GET?action=health`: returns tracking health stats.
-  - `GET?action=cleanup&days=N`: deletes old records older than `N` days.
 
 ## Data Model (Supabase — `token_mcap_tracking`)
 
@@ -81,6 +98,7 @@
 - `NEXT_PUBLIC_MCAP_PNL_TOAST_MAX` — default `maxPnl`.
 - `API_HOST` or `NEXT_PUBLIC_BASE_URL` — base URL for calling internal APIs, including trending.
 - `MCAP_PNL_TOAST_THRESHOLD` — server-side fallback for `minPnl`.
+- `MCAP_TOAST_DEDUP_WINDOW_MS` — Deduplication window for toasts (default 30000ms).
 
 ## Example Requests
 
@@ -93,11 +111,14 @@
 - Track (single write):
   - `GET /api/mcap-tracking?action=track&token=So11111111111111111111111111111111111111112&symbol=SOL&mcap=150000&pnlThreshold=20&maxPnl=30`
 
-- Bulk (multiple writes):
-  - `POST /api/mcap-tracking?pnlThreshold=20&maxPnl=30`
-  - Body: `{"tokens":[{"address":"...","symbol":"...","mcap":123456}]}`
+- Health Check:
+  - `GET /api/mcap-tracking?action=health`
+
+- Cleanup:
+  - `GET /api/mcap-tracking?action=cleanup&days=60`
 
 ## Key Takeaways
 
 - The list endpoint reads tracked data and enriches it with live `mcap`/`price` for display, but it does not write to the database.
 - Actual tracking updates (DB writes) occur via `track`, `refetch`, and bulk `POST`, using the latest `mcap` as the primary driver of growth and notifications.
+- The system supports high-volume analysis with a 100k record limit for statistics and optimized batching for updates.
