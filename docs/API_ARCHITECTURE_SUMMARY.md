@@ -53,7 +53,22 @@ Provides deep insights into token performance and anomalies.
 *   **`analytics/token/route.ts`**:
     *   **Function**: Deep dive enrichment for specific tokens (price, liquidity, risk scores).
 
-## 5. Infrastructure & Monitoring
+## 5. Market Cap Tracking (`/api/mcap-tracking/*`)
+Dedicated system for long-term tracking of token market cap performance and risk analysis.
+
+*   **`mcap-tracking/route.ts`**:
+    *   **Function**: Manages the persistent tracking of token market caps over time.
+    *   **Actions**:
+        *   `list`: Returns tracked tokens with enhanced statistics (Risk/Reward, PnL windows). Supports high-volume analysis (100k limit).
+        *   `track` / `refetch`: Updates token MCap data and emits alerts if thresholds are met.
+        *   `health`: Monitors system health (zero-growth tokens, update recency).
+        *   `cleanup`: Maintenance of old records.
+    *   **Key Features**:
+        *   **Risk/Reward Analysis**: Computes cross-sectional metrics (Median Multiplier, Volatility, StopLoss Rates) per MCap bucket.
+        *   **Live Enrichment**: Merges database history with real-time market data from the Trending API.
+        *   **Smart Notifications**: Server-side deduplicated toasts for high performers.
+
+## 6. Infrastructure & Monitoring
 Ensures the system remains healthy and performant.
 
 *   **`rpc/health/route.ts`**:
