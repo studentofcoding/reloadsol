@@ -220,7 +220,7 @@ class TradingTracker {
       console.error('Failed to delete record:', error)
       // Fallback to offline cache on error
       this.deleteFromOfflineCache(id, walletAddress)
-      
+
       // Update local cache even on error to reflect UI change immediately
       const cached = this.cache.get(walletAddress) || []
       const updated = cached.filter(r => r.id !== id)
@@ -596,7 +596,7 @@ class TradingTracker {
 
       this.sseConnection.onmessage = (event) => {
         this.lastMessageTime = Date.now() // Track message timing
-        
+
         try {
           const data = JSON.parse(event.data)
 
@@ -662,16 +662,9 @@ class TradingTracker {
             this.cleanupSSEConnection()
             this.handleSSEReconnect(walletAddress)
           } else if (readyState === EventSource.OPEN) {
-            // ✅ NEW: Handle "phantom connection" - appears open but has server-side issues
-            console.warn(`❌ [${connectionAttemptId}] SSE error on OPEN connection (phantom connection detected)`)
-            console.log(`🔄 [${connectionAttemptId}] Cleaning up phantom connection and reconnecting...`)
-            this.connectionState = 'disconnected'
-            this.cleanupSSEConnection()
-            
-            // Add small delay before reconnection to let server-side cleanup complete
-            setTimeout(() => {
-              this.handleSSEReconnect(walletAddress)
-            }, 2000) // 2-second delay for server cleanup
+            // ✅ UPDATED: If OPEN, it's likely a transient error or noise. 
+            // Don't disconnect immediately - rely on health check to kill it if data stops flowing.
+            console.warn(`⚠️ [${connectionAttemptId}] SSE error received but connection is OPEN. Monitoring health...`)
           }
         }
       }
@@ -742,18 +735,16 @@ class TradingTracker {
         // Check if we've received any messages recently
         const now = Date.now()
         const timeSinceLastMessage = now - (this.lastMessageTime || now)
-        
+
         // If no messages for 60 seconds, consider connection stale
         if (timeSinceLastMessage > 60000) {
-          console.warn(`⚠️ [${connectionAttemptId}] No SSE messages for ${Math.round(timeSinceLastMessage/1000)}s, checking connection health`)
-          
-          // Test connection by checking readyState
-          if (this.sseConnection.readyState !== EventSource.OPEN) {
-            console.warn(`⚠️ [${connectionAttemptId}] Connection health check failed, reconnecting...`)
-            this.connectionState = 'disconnected'
-            this.cleanupSSEConnection()
-            this.handleSSEReconnect(walletAddress)
-          }
+          console.warn(`⚠️ [${connectionAttemptId}] No SSE messages for ${Math.round(timeSinceLastMessage / 1000)}s, checking connection health`)
+
+          // Force reconnect if timeout reached, regardless of readyState (unless intentionally disconnected)
+          console.warn(`⚠️ [${connectionAttemptId}] Connection health check failed (timeout), reconnecting...`)
+          this.connectionState = 'disconnected'
+          this.cleanupSSEConnection()
+          this.handleSSEReconnect(walletAddress)
         }
       }
     }, 30000) // Check every 30 seconds

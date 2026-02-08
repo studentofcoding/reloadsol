@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import UnifiedTokenModal from "@/components/UnifiedTokenModal";
 import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
 import ChartBuyModal from "@/components/ChartBuyModal";
+import { useTrendingStats } from "@/hooks/useTrendingStats";
 
 // Use alternate tables in local development to avoid prod collisions
 const TRACKER_TABLE =
@@ -119,9 +120,14 @@ export const dynamic = "force-dynamic";
 
 export default function TrendingTrackerPage() {
   const router = useRouter();
-  const [stats, setStats] = useState<TrendingStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>("");
+  const {
+    data: stats,
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useTrendingStats();
+  const error = queryError ? queryError.message : "";
+
   const [activeTab, setActiveTab] = useState<
     "overview" | "tracking" | "winners" | "losers"
   >("overview");
@@ -301,229 +307,11 @@ export default function TrendingTrackerPage() {
     setCurrentPage(1);
   };
 
-  // Update prices for currently tracked tokens
-  const updateTokenPrices = async (
-    tokens: TrackedToken[],
-  ): Promise<boolean> => {
-    if (tokens.length === 0) return false;
-
-    try {
-      console.log("💰 Updating prices for tracked tokens...");
-      setIsRefreshingPrices(true);
-
-      // Fetch fresh trending data (same source as Discord notifications)
-      const trendingResponse = await fetch(
-        `/api/trending?nocache=true&t=${Date.now()}`,
-        {
-          cache: "no-store",
-        },
-      );
-
-      if (!trendingResponse.ok) {
-        console.warn("⚠️ Trending API failed, skipping price updates");
-        return false;
-      }
-
-      const trendingData = await trendingResponse.json();
-
-      if (!trendingData.tokens || trendingData.tokens.length === 0) {
-        console.warn("⚠️ No trending tokens returned, skipping price updates");
-        return false;
-      }
-
-      // Create a map for quick lookup
-      const priceMap: Record<string, { price: number }> = {};
-      trendingData.tokens.forEach((t: any) => {
-        priceMap[t.token_address] = { price: t.price };
-      });
-
-      // Update each token's price if we got fresh data
-      const updatePromises = tokens.map(async (token) => {
-        const match = priceMap[token.token_address];
-        if (match && match.price > 0 && match.price !== token.last_price_usd) {
-          const newPrice = match.price;
-          // Calculate new gain percentages
-          const currentGain =
-            ((newPrice - token.initial_price_usd) / token.initial_price_usd) *
-            100;
-          const newPeakPrice = Math.max(token.peak_price_usd, newPrice);
-          const peakGain =
-            ((newPeakPrice - token.initial_price_usd) /
-              token.initial_price_usd) *
-            100;
-
-          console.log(
-            `📈 Updating ${token.token_symbol}: $${token.last_price_usd.toFixed(6)} → $${newPrice.toFixed(6)} (${currentGain.toFixed(2)}%)`,
-          );
-
-          // Update token in database (import supabase client)
-          const { supabase } = await import("@/utils/supabase");
-          const { error } = await supabase
-            .from(TRACKER_TABLE)
-            .update({
-              last_price_usd: newPrice,
-              peak_price_usd: newPeakPrice,
-              current_gain_percentage: currentGain,
-              peak_gain_percentage: peakGain,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", token.id);
-
-          if (error) {
-            console.error(`❌ Failed to update ${token.token_symbol}:`, error);
-          }
-        }
-      });
-
-      await Promise.allSettled(updatePromises);
-      console.log("✅ Price updates completed");
-      return true;
-    } catch (error) {
-      console.error("❌ Error updating token prices:", error);
-      return false;
-    } finally {
-      setIsRefreshingPrices(false);
-    }
-  };
-
-  // Fetch stats from API
-  const fetchStats = async (
-    updatePrices: boolean = false,
-    forceRefresh: boolean = false,
-  ) => {
-    try {
-      setError("");
-      console.log("🔄 Fetching trending stats from /api/trending/stats...");
-
-      // Add cache-busting parameters when force refreshing
-      const url = forceRefresh
-        ? `/api/trending/stats?refresh=true&nocache=true&t=${Date.now()}`
-        : "/api/trending/stats";
-
-      console.log("📡 API URL:", url);
-
-      const response = await fetch(url, {
-        cache: forceRefresh ? "no-store" : "default",
-      });
-      console.log("📡 API Response status:", response.status);
-      console.log(
-        "📡 API Response headers:",
-        Object.fromEntries(response.headers),
-      );
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("❌ API Error Response:", errorText);
-        throw new Error(
-          `API responded with status: ${response.status} - ${errorText}`,
-        );
-      }
-
-      const data = await response.json();
-      console.log("✅ Trending stats received:", {
-        success: data.success,
-        timestamp: data.timestamp,
-        latest_summary: data.latest_summary
-          ? {
-              id: data.latest_summary.id,
-              win_rate: data.latest_summary.win_rate,
-              total_tokens_tracked: data.latest_summary.total_tokens_tracked,
-              created_at: data.latest_summary.created_at,
-            }
-          : null,
-        current_tracking: {
-          tokens_count: data.current_tracking?.tokens?.length || 0,
-          statistics: data.current_tracking?.statistics,
-        },
-        recent_completed: {
-          winners_count: data.recent_completed?.winners?.length || 0,
-          losers_count: data.recent_completed?.losers?.length || 0,
-        },
-        data_freshness: data.data_freshness,
-        cached: data.cached || false,
-        cache_age: data.cache_age,
-        expires_in: data.expires_in,
-      });
-
-      // Log detailed tracking tokens info
-      if (data.current_tracking?.tokens?.length > 0) {
-        console.log(
-          "🎯 Currently tracking tokens:",
-          data.current_tracking.tokens.map((token: TrackedToken) => ({
-            symbol: token.token_symbol,
-            address: token.token_address.slice(0, 8) + "...",
-            current_gain: token.current_gain_percentage,
-            peak_gain: token.peak_gain_percentage,
-            status: token.status,
-            tracking_started: token.tracking_started_at,
-          })),
-        );
-      } else {
-        console.warn("⚠️ No tokens currently being tracked");
-      }
-
-      // Log recent winners/losers
-      if (data.recent_completed?.winners?.length > 0) {
-        console.log(
-          "🏆 Recent winners:",
-          data.recent_completed.winners.map((w: TrackedToken) => ({
-            symbol: w.token_symbol,
-            peak_gain: w.peak_gain_percentage,
-            status_changed: w.status_changed_at,
-          })),
-        );
-      }
-
-      if (data.recent_completed?.losers?.length > 0) {
-        console.log(
-          "💔 Recent losers:",
-          data.recent_completed.losers.map((l: TrackedToken) => ({
-            symbol: l.token_symbol,
-            current_gain: l.current_gain_percentage,
-            status_changed: l.status_changed_at,
-          })),
-        );
-      }
-
-      setStats(data);
-
-      // If updatePrices is true and we have tracking tokens, update their prices
-      if (updatePrices && data.current_tracking?.tokens?.length > 0) {
-        console.log("🔄 Refresh Stats with price updates requested...");
-        const pricesUpdated = await updateTokenPrices(
-          data.current_tracking.tokens,
-        );
-
-        if (pricesUpdated) {
-          // Fetch stats again to get the updated data
-          console.log("🔄 Refetching stats after price updates...");
-          const updatedResponse = await fetch("/api/trending/stats");
-          if (updatedResponse.ok) {
-            const updatedData = await updatedResponse.json();
-            setStats(updatedData);
-            console.log("✅ Stats refreshed with updated prices");
-          }
-        }
-      }
-
-      setLastRefresh(new Date());
-    } catch (err) {
-      console.error("❌ Error fetching trending stats:", err);
-      console.error("❌ Error details:", {
-        message: err instanceof Error ? err.message : "Unknown error",
-        stack: err instanceof Error ? err.stack : undefined,
-        timestamp: new Date().toISOString(),
-      });
-      setError(err instanceof Error ? err.message : "Failed to fetch data");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Enhanced refresh function for manual button clicks
   const handleRefreshStats = async () => {
-    setLoading(true);
-    await fetchStats(true, true);
+    // React Query refetch
+    await refetch();
+    setLastRefresh(new Date());
   };
 
   // Debug function to manually test tracking API (development mode only)
@@ -546,7 +334,7 @@ export default function TrendingTrackerPage() {
 
       // Refresh stats after manual tracking test
       setTimeout(() => {
-        fetchStats(false, true); // Force refresh after manual tracking
+        refetch(); // Force refresh after manual tracking
       }, 2000);
     } catch (err) {
       console.error("❌ Error testing tracking API:", err);
@@ -637,24 +425,8 @@ export default function TrendingTrackerPage() {
     handleOpenTradingModal(summaryToken);
   };
 
-  // Auto-refresh every 30 seconds (without price updates to avoid rate limiting)
-  useEffect(() => {
-    fetchStats(false); // Initial load without price updates
-
-    let refreshCount = 0;
-    const interval = setInterval(() => {
-      refreshCount++;
-      // Force refresh every 5th auto-refresh (every 2.5 minutes)
-      const shouldForceRefresh = refreshCount % 5 === 0;
-      fetchStats(false, shouldForceRefresh);
-
-      if (shouldForceRefresh) {
-        console.log("🔄 Periodic refresh to match Discord data timing");
-      }
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, []);
+  // Auto-refresh handled by React Query
+  // Price updates are separate
 
   // Function to save trading config to localStorage
   const saveTradingConfig = (config: TradingConfig) => {
@@ -982,7 +754,7 @@ export default function TrendingTrackerPage() {
             <p className="text-red-400 text-lg mb-4">Error loading data</p>
             <p className="text-red-300 text-sm mb-4">{error}</p>
             <button
-              onClick={() => fetchStats(false)}
+              onClick={() => refetch()}
               className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
             >
               Retry
@@ -1413,16 +1185,16 @@ export default function TrendingTrackerPage() {
                         >
                           {showAllSummaryTokens
                             ? "Show Top 5"
-                            : `Show All (${stats.latest_summary.top_winners.length})`}
+                            : `Show All (${stats?.latest_summary?.top_winners?.length || 0})`}
                         </button>
                       </div>
                       <div className="space-y-2">
                         {(showAllSummaryTokens
-                          ? stats.latest_summary.top_winners
-                          : stats.latest_summary.top_winners
-                              .filter((w) => w.peak_gain_percentage > 0)
+                          ? stats?.latest_summary?.top_winners || []
+                          : (stats?.latest_summary?.top_winners || [])
+                              .filter((w: any) => w.peak_gain_percentage > 0)
                               .slice(0, 5)
-                        ).map((token, index) => {
+                        ).map((token: any, index: number) => {
                           const isWinner = token.peak_gain_percentage > 0;
                           const currentGain =
                             token.current_gain_percentage ??

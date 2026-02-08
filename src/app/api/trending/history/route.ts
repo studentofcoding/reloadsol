@@ -117,52 +117,43 @@ export async function GET(request: NextRequest) {
             return query
         }
 
-        // Build the count query with the same filters
+        // Prepare queries
         let countQuery = supabase
             .from(TRACKER_TABLE)
             .select('*', { count: 'exact', head: true })
-
         countQuery = applyFilters(countQuery)
 
-        // Get total count for pagination (with filters applied)
-        const { count, error: countError } = await countQuery
-
-        if (countError) {
-            console.error('Error getting filtered count:', countError)
-        }
-
-        console.log(`📊 Filtered count: ${count} tokens (unfiltered: ${totalUnfilteredCount})`)
-
-        // Calculate pagination info
-        // const totalPages = Math.ceil((count || 0) / limit)
-        // const offset = (page - 1) * limit
-
-        // Build the main data query
-        let query = supabase
+        let dataQuery = supabase
             .from(TRACKER_TABLE)
             .select('*')
-
-        query = applyFilters(query)
-
-        // Apply sorting
+        dataQuery = applyFilters(dataQuery)
+        
+        // Apply sorting and pagination to data query
         const ascending = sortOrder === 'asc'
-        query = query.order(sortBy, { ascending })
-
-        // Apply pagination
+        dataQuery = dataQuery.order(sortBy, { ascending })
         const offset = (page - 1) * limit
-        query = query.range(offset, offset + limit - 1)
+        dataQuery = dataQuery.range(offset, offset + limit - 1)
 
-        // Execute the query
-        const { data, error } = await query
-
-        if (error) {
-            throw new Error(`Database error: ${error.message}`)
-        }
-
-        // Calculate statistics (use unfiltered data for overall stats)
-        const { data: allTokens, error: statsError } = await supabase
+        // Stats query (global stats)
+        const statsQuery = supabase
             .from(TRACKER_TABLE)
             .select('status, peak_gain_percentage')
+
+        // Execute all queries in parallel
+        const [countResult, dataResult, statsResult] = await Promise.all([
+            countQuery,
+            dataQuery,
+            statsQuery
+        ])
+
+        const { count, error: countError } = countResult
+        const { data, error } = dataResult
+        const { data: allTokens, error: statsError } = statsResult
+
+        if (countError) console.error('Error getting filtered count:', countError)
+        if (error) throw new Error(`Database error: ${error.message}`)
+
+        console.log(`📊 Filtered count: ${count} tokens (unfiltered: ${totalUnfilteredCount})`)
 
         let stats = {
             total: 0,

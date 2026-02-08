@@ -16,6 +16,11 @@ import { Line } from "react-chartjs-2";
 import "chartjs-adapter-date-fns";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
+import {
+  useTrackingHistory,
+  type FilterOptions,
+  type TrackedTokenHistory,
+} from "@/hooks/useTrackingHistory";
 
 // Register Chart.js components
 ChartJS.register(
@@ -28,75 +33,6 @@ ChartJS.register(
   Legend,
   TimeScale,
 );
-
-interface TrackedTokenHistory {
-  id: string;
-  token_address: string;
-  token_symbol: string | null;
-  token_name: string | null;
-  logo_url: string | null;
-  initial_price_usd: number;
-  last_price_usd: number;
-  peak_price_usd: number;
-  current_gain_percentage: number;
-  peak_gain_percentage: number;
-  status: "waiting" | "tracking" | "won" | "lost" | "skipped";
-  organic_score: number | null;
-  market_cap: number | null;
-  volume_1h: number | null;
-  volume_5m: number | null;
-  tracking_started_at: string;
-  status_changed_at: string | null;
-  created_at: string;
-  updated_at: string;
-  trade_comparison_data?: any | null;
-  trading_simulation?: any | null;
-  price_history?: any[] | null;
-  waiting_started_at?: string | null;
-  waiting_initial_price?: number | null;
-}
-
-interface FilterOptions {
-  status: "all" | "waiting" | "tracking" | "won" | "lost" | "skipped";
-  dateRange: "all" | "24h" | "7d" | "30d" | "90d";
-  minGain: string;
-  maxGain: string;
-  minDuration: string;
-  maxDuration: string;
-  sortBy:
-    | "created_at"
-    | "peak_gain_percentage"
-    | "current_gain_percentage"
-    | "tracking_duration"
-    | "status_changed_at";
-  sortOrder: "asc" | "desc";
-}
-
-interface ApiResponse {
-  success: boolean;
-  data: TrackedTokenHistory[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-    hasNext: boolean;
-    hasPrev: boolean;
-  };
-  stats: {
-    total: number;
-    won: number;
-    lost: number;
-    tracking: number;
-    waiting: number;
-    skipped: number;
-    winRate: number;
-    avgPeakGain: number;
-  };
-  filters: any;
-  timestamp: string;
-  error?: string;
-}
 
 const LoadingSkeleton = () => (
   <div className="space-y-4 animate-pulse">
@@ -125,10 +61,6 @@ const LoadingSkeleton = () => (
 export const dynamic = "force-dynamic";
 
 export default function TrackingHistoryPage() {
-  const [tokens, setTokens] = useState<TrackedTokenHistory[]>([]);
-  // Remove filteredTokens since filtering is done server-side
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);
@@ -138,20 +70,6 @@ export default function TrackingHistoryPage() {
   const [chartModalTokenAddress, setChartModalTokenAddress] = useState<
     string | null
   >(null);
-  const [pagination, setPagination] = useState<
-    ApiResponse["pagination"] | null
-  >(null);
-  const [stats, setStats] = useState<ApiResponse["stats"] | null>(null);
-
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "production") {
-      console.log("TrackingHistoryPage state", {
-        loading,
-        error,
-        hasStats: Boolean(stats),
-      });
-    }
-  }, [loading, error, stats]);
 
   const [filters, setFilters] = useState<FilterOptions>({
     status: "all",
@@ -164,79 +82,41 @@ export default function TrackingHistoryPage() {
     sortOrder: "desc",
   });
 
-  // Fetch token history from API
-  const fetchTokenHistory = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError("");
+  const {
+    data: apiResponse,
+    isLoading: loading,
+    error: queryError,
+    refetch: fetchTokenHistory,
+  } = useTrackingHistory({
+    filters,
+    page: currentPage,
+    limit: itemsPerPage,
+    searchQuery,
+  });
 
-      console.log("📊 Fetching token tracking history from API...");
+  const error = queryError ? (queryError as Error).message : "";
+  const tokens = apiResponse?.data || [];
+  const pagination = apiResponse?.pagination || null;
+  const stats = apiResponse?.stats || null;
 
-      // Build query parameters
-      const params = new URLSearchParams({
-        status: filters.status,
-        dateRange: filters.dateRange,
-        sortBy: filters.sortBy,
-        sortOrder: filters.sortOrder,
-        page: currentPage.toString(),
-        limit: itemsPerPage.toString(),
-      });
+  // Handlers
+  const handlePageChange = (newPage: number) => {
+    setCurrentPage(newPage);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
-      if (filters.minGain) params.append("minGain", filters.minGain);
-      if (filters.maxGain) params.append("maxGain", filters.maxGain);
-      if (filters.minDuration)
-        params.append("minDuration", filters.minDuration);
-      if (filters.maxDuration)
-        params.append("maxDuration", filters.maxDuration);
-      if (searchQuery.trim()) params.append("search", searchQuery.trim());
+  const handleFilterChange = (
+    key: keyof FilterOptions,
+    value: string | number,
+  ) => {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+    setCurrentPage(1); // Reset to first page when filters change
+  };
 
-      const response = await fetch(
-        `/api/trending/history?${params.toString()}`,
-      );
-
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
-      }
-
-      const result: ApiResponse = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || "Failed to fetch tracking history");
-      }
-
-      console.log(`✅ Fetched ${result.data.length} tokens from API`);
-      setTokens(result.data);
-      setPagination(result.pagination);
-      setStats(result.stats);
-    } catch (err) {
-      console.error("❌ Error fetching token history:", err);
-      setError(
-        err instanceof Error ? err.message : "Failed to fetch token history",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [filters, searchQuery, currentPage, itemsPerPage]);
-
-  // Remove the applyFiltersAndSearch function since filtering is now done server-side
-
-  // Update effects
-  useEffect(() => {
-    fetchTokenHistory();
-  }, [fetchTokenHistory]);
-
-  // Reset to page 1 when filters change
-  useEffect(() => {
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
     setCurrentPage(1);
-  }, [filters, searchQuery, itemsPerPage]);
-
-  // Pagination
-  // Remove these conflicting pagination calculations:
-  // const paginatedTokens = filteredTokens.slice(
-  //   (currentPage - 1) * itemsPerPage,
-  //   currentPage * itemsPerPage
-  // )
-  // const totalPages = Math.ceil(filteredTokens.length / itemsPerPage)
+  };
 
   // Helper functions
   const formatNumber = (num: number): string => {
@@ -458,7 +338,7 @@ export default function TrackingHistoryPage() {
                   📊 Export CSV
                 </button>
                 <button
-                  onClick={fetchTokenHistory}
+                  onClick={() => fetchTokenHistory()}
                   className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors"
                 >
                   🔄 Refresh

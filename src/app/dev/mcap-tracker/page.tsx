@@ -8,217 +8,13 @@ import {
 } from "@/utils/data-aggregation";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
-import NavigationTabs from "@/components/NavigationTabs";
+import {
+  useMCapTracker,
+  FilterOptions,
+  McapTrackingData,
+} from "@/hooks/useMCapTracker";
 
-interface McapTrackingData {
-  token_address: string;
-  token_symbol: string;
-  first_mcap: number;
-  current_mcap: number;
-  first_seen_at: string;
-  last_updated_at: string;
-  mcap_growth_percent: number;
-  when_reach_80mc: string | null;
-  when_reach_120mc: string | null;
-  when_reach_200mc: string | null;
-  solPerToken: {
-    first: number;
-    current: number;
-    growth: number;
-  };
-  // Finished status fields (from API enhancedData)
-  is_finished?: boolean;
-  finished_at?: string | null;
-}
-
-interface FilterOptions {
-  search: string;
-  sortBy: string;
-  sortOrder: "asc" | "desc";
-  minGrowth: string;
-  maxGrowth: string;
-  minMcap: string;
-  maxMcap: string;
-  excludeZeroPnl: boolean;
-  timeFilter: "1h" | "4h" | "24h" | "3d" | "7d" | "1m" | "all";
-  performanceFilter: "all" | "gainers" | "losers" | "top_performers";
-}
-
-interface ApiResponse {
-  success: boolean;
-  data: McapTrackingData[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
-  stats: {
-    total: number;
-    gainers: number;
-    losers: number;
-    zeroPercent: number;
-    zeroPercentage: number;
-    avgGrowth: number;
-    avgGrowthAll: number;
-    avgGrowthExcludingZero: number;
-    totalMcap: number;
-    solPriceUSD: number;
-    pnlTimeWindows: Record<
-      string,
-      {
-        count: number;
-        timeDistribution: Record<string, number>;
-        peakHours: string[];
-        avgTimeToReach: number;
-      }
-    >;
-    pnlBuyTimeWindows?: Record<
-      string,
-      {
-        count: number;
-        timeDistribution: Record<string, number>; // keys "00".."23" (UTC-based before conversion)
-        peakHours: string[];
-        avgTimeToReach: number;
-      }
-    >;
-    timeWindowMeta?: {
-      sellPeakHourBasis: string;
-      sellPeakHourTimezone: string;
-      buyPeakHourBasis: string;
-      buyPeakHourTimezone: string;
-    };
-    mcapRangeAnalysis: {
-      under50k: {
-        count: number;
-        avgMultiplier: number;
-        maxDrawdown: number;
-        avgGrowth: number;
-        medianMultiplier: number;
-        medianGrowth: number;
-        p75Growth: number;
-        p90Growth: number;
-        p25Growth: number;
-        worstGrowth: number;
-        stopLossRate: number;
-        stuckRate: number;
-        hitRate120: number;
-        bucketVolatility: number;
-        p75Multiplier: number;
-        growthHistogram: number[];
-      };
-      from51to100k: {
-        count: number;
-        avgMultiplier: number;
-        maxDrawdown: number;
-        avgGrowth: number;
-        medianMultiplier: number;
-        medianGrowth: number;
-        p75Growth: number;
-        p90Growth: number;
-        p25Growth: number;
-        worstGrowth: number;
-        stopLossRate: number;
-        stuckRate: number;
-        hitRate120: number;
-        bucketVolatility: number;
-        p75Multiplier: number;
-        growthHistogram: number[];
-      };
-      from101to200k: {
-        count: number;
-        avgMultiplier: number;
-        maxDrawdown: number;
-        avgGrowth: number;
-        medianMultiplier: number;
-        medianGrowth: number;
-        p75Growth: number;
-        p90Growth: number;
-        p25Growth: number;
-        worstGrowth: number;
-        stopLossRate: number;
-        stuckRate: number;
-        hitRate120: number;
-        bucketVolatility: number;
-        p75Multiplier: number;
-        growthHistogram: number[];
-      };
-      from201to500k: {
-        count: number;
-        avgMultiplier: number;
-        maxDrawdown: number;
-        avgGrowth: number;
-        medianMultiplier: number;
-        medianGrowth: number;
-        p75Growth: number;
-        p90Growth: number;
-        p25Growth: number;
-        worstGrowth: number;
-        stopLossRate: number;
-        stuckRate: number;
-        hitRate120: number;
-        bucketVolatility: number;
-        p75Multiplier: number;
-        growthHistogram: number[];
-      };
-      from501kto1M: {
-        count: number;
-        avgMultiplier: number;
-        maxDrawdown: number;
-        avgGrowth: number;
-        medianMultiplier: number;
-        medianGrowth: number;
-        p75Growth: number;
-        p90Growth: number;
-        p25Growth: number;
-        worstGrowth: number;
-        stopLossRate: number;
-        stuckRate: number;
-        hitRate120: number;
-        bucketVolatility: number;
-        p75Multiplier: number;
-        growthHistogram: number[];
-      };
-      over1M: {
-        count: number;
-        avgMultiplier: number;
-        maxDrawdown: number;
-        avgGrowth: number;
-        medianMultiplier: number;
-        medianGrowth: number;
-        p75Growth: number;
-        p90Growth: number;
-        p25Growth: number;
-        worstGrowth: number;
-        stopLossRate: number;
-        stuckRate: number;
-        hitRate120: number;
-        bucketVolatility: number;
-        p75Multiplier: number;
-        growthHistogram: number[];
-      };
-    };
-    thirtyDaysSummary: {
-      totalTokensAdded: number;
-      avgDailyGrowth: number;
-      dailyBreakdown: Array<{
-        date: string;
-        tokensAdded: number;
-        avgGrowth: number;
-        totalMcap: number;
-        gainers: number;
-        losers: number;
-      }>;
-    };
-  };
-  toasts?: Array<{
-    type: string;
-    title: string;
-    message: string;
-    items?: Array<{ symbol: string; address: string; growthPercent: number }>;
-  }>;
-  error: string;
-}
+// Interfaces imported from hook
 
 const LoadingSkeleton = () => (
   <div className="animate-pulse space-y-4">
@@ -801,10 +597,8 @@ function DailyRankingVisualization({
 }
 
 export default function McapTrackerPage() {
-  const [tokens, setTokens] = useState<McapTrackingData[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [stats, setStats] = useState<ApiResponse["stats"] | null>(null);
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(100);
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
   const [isChartLoading, setIsChartLoading] = useState(false);
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(
@@ -838,13 +632,6 @@ export default function McapTrackerPage() {
     setExpandedBuckets((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 100,
-    total: 0,
-    totalPages: 0,
-  });
-
   const [filters, setFilters] = useState<FilterOptions>({
     search: "",
     sortBy: "last_updated_at",
@@ -857,6 +644,50 @@ export default function McapTrackerPage() {
     timeFilter: "all",
     performanceFilter: "all",
   });
+
+  // Compute effective mcap filters
+  const effectiveMcapFilters = React.useMemo(() => {
+    if (activeMcapFilter) {
+      const mcapRanges = {
+        under50k: { min: 0, max: 49999 },
+        from51to100k: { min: 50000, max: 100000 },
+        from101to200k: { min: 100001, max: 200000 },
+        from201to500k: { min: 200001, max: 500000 },
+        from501kto1M: { min: 500001, max: 1000000 },
+        over1M: { min: 1000001, max: Number.MAX_SAFE_INTEGER },
+      };
+      const range = mcapRanges[activeMcapFilter as keyof typeof mcapRanges];
+      if (range) {
+        return {
+          minMcap: range.min.toString(),
+          maxMcap:
+            range.max === Number.MAX_SAFE_INTEGER ? "" : range.max.toString(),
+        };
+      }
+    }
+    return { minMcap: filters.minMcap, maxMcap: filters.maxMcap };
+  }, [activeMcapFilter, filters.minMcap, filters.maxMcap]);
+
+  const {
+    data: apiResponse,
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useMCapTracker({
+    filters: { ...filters, ...effectiveMcapFilters },
+    page,
+    limit,
+  });
+
+  const error = queryError ? queryError.message : "";
+  const tokens = apiResponse?.data || [];
+  const stats = apiResponse?.stats || null;
+  const pagination = apiResponse?.pagination || {
+    page: 1,
+    limit: 100,
+    total: 0,
+    totalPages: 0,
+  };
 
   // Toast handling
   type ToastMessage = {
@@ -1070,91 +901,12 @@ export default function McapTrackerPage() {
 
   const gmtOptions = Array.from({ length: 27 }, (_, idx) => idx - 12);
 
-  // Prevent overlapping fetches that can emit duplicate toasts
-  const isFetchingRef = useRef<boolean>(false);
-
-  const fetchTokens = useCallback(
-    async (page = 1) => {
-      if (isFetchingRef.current) return;
-      isFetchingRef.current = true;
-      setLoading(true);
-      setError("");
-
-      try {
-        const params = new URLSearchParams({
-          action: "list",
-          page: page.toString(),
-          limit: pagination.limit.toString(),
-          sortBy: filters.sortBy,
-          sortOrder: filters.sortOrder,
-          excludeZeroPnl: filters.excludeZeroPnl.toString(),
-          timeFilter: filters.timeFilter,
-          performanceFilter: filters.performanceFilter,
-          pnlThreshold: pnlToastThreshold.toString(),
-        });
-
-        if (filters.search) params.append("search", filters.search);
-        if (filters.minGrowth) params.append("minGrowth", filters.minGrowth);
-        if (filters.maxGrowth) params.append("maxGrowth", filters.maxGrowth);
-
-        // MCap range filtering takes precedence over manual MCap filters
-        if (activeMcapFilter) {
-          const mcapRanges = {
-            under50k: { min: 0, max: 49999 },
-            from51to100k: { min: 50000, max: 100000 },
-            from101to200k: { min: 100001, max: 200000 },
-            from201to500k: { min: 200001, max: 500000 },
-            from501kto1M: { min: 500001, max: 1000000 },
-            over1M: { min: 1000001, max: Number.MAX_SAFE_INTEGER },
-          };
-
-          const range = mcapRanges[activeMcapFilter as keyof typeof mcapRanges];
-          if (range) {
-            params.append("minMcap", range.min.toString());
-            if (range.max !== Number.MAX_SAFE_INTEGER) {
-              params.append("maxMcap", range.max.toString());
-            }
-          }
-        } else {
-          // Only use manual MCap filters if no range filter is active
-          if (filters.minMcap) params.append("minMcap", filters.minMcap);
-          if (filters.maxMcap) params.append("maxMcap", filters.maxMcap);
-        }
-
-        const response = await fetch(`/api/mcap-tracking?${params}`);
-        const data: ApiResponse = await response.json();
-
-        if (data.success) {
-          setTokens(data.data);
-          setPagination(data.pagination);
-          setStats(data.stats);
-          // Show any server-suggested toasts
-          pushToasts(data.toasts);
-        } else {
-          setError(data.error || "Failed to fetch data");
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Unknown error");
-      } finally {
-        setLoading(false);
-        isFetchingRef.current = false;
-      }
-    },
-    [filters, pagination.limit, activeMcapFilter, pnlToastThreshold],
-  );
-
-  // Single effect to fetch on dependency changes
+  // Show any server-suggested toasts
   useEffect(() => {
-    fetchTokens(1);
-  }, [filters, activeMcapFilter, pnlToastThreshold]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchTokens(pagination.page);
-    }, 30000); // Refresh every 30 seconds
-
-    return () => clearInterval(interval);
-  }, [fetchTokens, pagination.page]);
+    if (apiResponse?.toasts) {
+      pushToasts(apiResponse.toasts);
+    }
+  }, [apiResponse, pushToasts]);
 
   // Move analytics hooks BEFORE any early returns
   const fetchAnalyticsForTokens = useCallback(
@@ -1260,16 +1012,8 @@ export default function McapTrackerPage() {
       }));
     }
     // Reset to first page when filtering
-    setPagination((prev) => ({ ...prev, page: 1 }));
+    setPage(1);
   };
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchTokens(pagination.page);
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [fetchTokens, pagination.page]);
 
   // Analytics useEffect - also moved before early return
   useEffect(() => {
@@ -1353,36 +1097,9 @@ export default function McapTrackerPage() {
       if (data.success) {
         // Show server-suggested toasts
         pushToasts(data.toasts);
-        // Update the token in the current list with new data
-        setTokens((prevTokens) =>
-          prevTokens.map((token) => {
-            if (token.token_address === tokenAddress) {
-              const solPriceUSD = stats?.solPriceUSD || 1;
-              return {
-                ...token,
-                first_mcap: data.firstMcap ?? token.first_mcap,
-                current_mcap: data.currentMcap ?? token.current_mcap,
-                mcap_growth_percent:
-                  data.tracking?.growthPercent ?? token.mcap_growth_percent,
-                last_updated_at: new Date().toISOString(),
-                solPerToken: {
-                  first: token.first_mcap / solPriceUSD,
-                  current:
-                    (data.currentMcap ?? token.current_mcap) / solPriceUSD,
-                  growth:
-                    (((data.currentMcap ?? token.current_mcap) / solPriceUSD -
-                      token.first_mcap / solPriceUSD) /
-                      (token.first_mcap / solPriceUSD)) *
-                    100,
-                },
-              };
-            }
-            return token;
-          }),
-        );
 
         // Refresh the full data to update stats (including finished status)
-        await fetchTokens(pagination.page);
+        await refetch();
 
         console.log(`MCap refetched for ${tokenAddress}:`, data.display);
       } else {
@@ -1441,17 +1158,7 @@ export default function McapTrackerPage() {
         console.error("Failed to mark token as loss:", labelResult.error);
       }
 
-      setTokens((prevTokens) =>
-        prevTokens.map((t) =>
-          t.token_address === tokenAddress
-            ? {
-                ...t,
-                is_finished: true,
-                finished_at: new Date().toISOString(),
-              }
-            : t,
-        ),
-      );
+      await refetch();
     } catch (error) {
       console.error("Error stopping tracking:", error);
     } finally {
@@ -1873,9 +1580,9 @@ export default function McapTrackerPage() {
                   Recent Daily Breakdown (Last 7 days)
                 </h4>
                 <div className="space-y-1 text-xs">
-                  {stats.thirtyDaysSummary.dailyBreakdown
-                    .slice(-7)
-                    .map((day, index) => (
+                  {stats?.thirtyDaysSummary?.dailyBreakdown
+                    ?.slice(-7)
+                    .map((day: any, index: number) => (
                       <div
                         key={index}
                         className="flex justify-between items-center"
@@ -3879,7 +3586,7 @@ export default function McapTrackerPage() {
 
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => fetchTokens(pagination.page - 1)}
+              onClick={() => setPage(pagination.page - 1)}
               disabled={pagination.page <= 1 || loading}
               className="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded text-sm transition-colors"
             >
@@ -3891,7 +3598,7 @@ export default function McapTrackerPage() {
             </span>
 
             <button
-              onClick={() => fetchTokens(pagination.page + 1)}
+              onClick={() => setPage(pagination.page + 1)}
               disabled={pagination.page >= pagination.totalPages || loading}
               className="px-3 py-1 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:cursor-not-allowed rounded text-sm transition-colors"
             >

@@ -3,173 +3,16 @@
 import React, { useState, useCallback } from "react";
 import TokenSearchInterface from "@/components/TokenSearchInterface";
 import NavigationTabs from "@/components/NavigationTabs";
-
-interface PoolTestResult {
-  poolId: string;
-  symbol: string;
-  tokenAge: {
-    ageInDays: number;
-    ageCategory: "NEW" | "RECENT" | "ESTABLISHED" | "OLD";
-    ageDisplay: string;
-    createdAt: string;
-  };
-  marketCap: number | null;
-  buyTest: {
-    success: boolean;
-    bestProvider?: string;
-    outputAmount?: string;
-    responseTime?: number;
-    priceComparison?: {
-      providers: Record<
-        string,
-        {
-          success: boolean;
-          outputAmount: string;
-          priceImpact: string;
-          fee?: {
-            totalFeeLamports: number;
-            feePercentage: number;
-          };
-          responseTime: number;
-          error?: string;
-        }
-      >;
-      bestPrice: {
-        provider: string;
-        outputAmount: string;
-        advantage: string;
-      };
-      worstPrice: {
-        provider: string;
-        outputAmount: string;
-        disadvantage: string;
-      };
-      avgPriceImpact: string;
-      priceSpread: string;
-    };
-    providers: Record<string, { success: boolean; error?: string }>;
-  };
-  sellTest: {
-    success: boolean;
-    bestProvider?: string;
-    outputAmount?: string;
-    responseTime?: number;
-    priceComparison?: {
-      providers: Record<
-        string,
-        {
-          success: boolean;
-          outputAmount: string;
-          priceImpact: string;
-          fee?: {
-            totalFeeLamports: number;
-            feePercentage: number;
-          };
-          responseTime: number;
-          error?: string;
-        }
-      >;
-      bestPrice: {
-        provider: string;
-        outputAmount: string;
-        advantage: string;
-      };
-      worstPrice: {
-        provider: string;
-        outputAmount: string;
-        disadvantage: string;
-      };
-      avgPriceImpact: string;
-      priceSpread: string;
-    };
-    providers: Record<string, { success: boolean; error?: string }>;
-  };
-  liquidity: number | null;
-  errors: string[];
-}
-
-interface ComprehensiveTestResults {
-  testType?: "comprehensive";
-  summary: {
-    totalPools: number;
-    successfulBuyTests: number;
-    successfulSellTests: number;
-    averageResponseTime: number;
-    providerPerformance: Record<
-      string,
-      { successes: number; failures: number; avgResponseTime: number }
-    >;
-    priceAnalysis: {
-      avgBuyPriceSpread: string;
-      avgSellPriceSpread: string;
-      avgBuyPriceImpact: string;
-      avgSellPriceImpact: string;
-      bestBuyProvider: string;
-      bestSellProvider: string;
-    };
-  };
-  results: PoolTestResult[];
-  providerHealth: Record<string, boolean>;
-}
-
-interface StressTestResults {
-  testType: "stress";
-  summary: {
-    totalPools: number;
-    totalRequests: number;
-    successfulRequests: number;
-    averageResponseTime: number;
-    concurrentRequests: number;
-  };
-  results: Array<{
-    poolId: string;
-    symbol: string;
-    requests: Array<{
-      success: boolean;
-      responseTime: number;
-      error?: string;
-    }>;
-    successRate: number;
-    averageResponseTime: number;
-  }>;
-}
-
-interface BenchmarkTestResults {
-  testType: "benchmark";
-  summary: {
-    totalIterations: number;
-    testPool: string;
-    averageResponseTime: number;
-    fastestProvider: string;
-    slowestProvider: string;
-  };
-  results: {
-    providerPerformance: Record<
-      string,
-      {
-        averageResponseTime: number;
-        successRate: number;
-        iterations: number;
-      }
-    >;
-    iterations: Array<{
-      iteration: number;
-      providers: Record<
-        string,
-        {
-          success: boolean;
-          responseTime: number;
-          error?: string;
-        }
-      >;
-    }>;
-  };
-}
-
-type TestResults =
-  | ComprehensiveTestResults
-  | StressTestResults
-  | BenchmarkTestResults;
+import {
+  usePoolsTest,
+  type PoolTestResult,
+  type ComprehensiveTestResults,
+  type StressTestResults,
+  type BenchmarkTestResults,
+  type TestResults,
+  type TestType,
+} from "@/hooks/usePoolsTest";
+import { useQueryClient } from "@tanstack/react-query";
 
 // Skeleton loader component
 const TestSkeleton = () => (
@@ -216,50 +59,42 @@ const TestSkeleton = () => (
 export default function PoolsTestPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [password, setPassword] = useState("");
-  const [testResults, setTestResults] = useState<TestResults | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [testType, setTestType] = useState<
-    "comprehensive" | "stress" | "benchmark"
-  >("comprehensive");
-  const [error, setError] = useState<string | null>(null);
+  const [testType, setTestType] = useState<TestType>("comprehensive");
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  const queryClient = useQueryClient();
+
+  const {
+    data: testResults,
+    isFetching: loading,
+    error: queryError,
+    refetch,
+  } = usePoolsTest({ testType });
+
+  const error =
+    (queryError instanceof Error ? queryError.message : null) || authError;
 
   const handleAuth = useCallback(() => {
     // Simple password check - in production, use proper authentication
     if (password === "reloadsol" || password === "jupiter-test") {
       setIsAuthenticated(true);
       setPassword("");
+      setAuthError(null);
     } else {
-      setError("Invalid password. Hint: dev2025 or jupiter-test");
+      setAuthError("Invalid password. Hint: dev2025 or jupiter-test");
     }
   }, [password]);
 
-  const runPoolsTest = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const runPoolsTest = useCallback(() => {
+    console.log(`🚀 Starting ${testType} test...`);
+    setAuthError(null);
+    refetch();
+  }, [refetch, testType]);
 
-    try {
-      console.log(`🚀 Starting ${testType} test...`);
-
-      const response = await fetch(`/api/trade/pools-test?type=${testType}`, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setTestResults(data.result);
-    } catch (err) {
-      console.error("Test error:", err);
-      setError(err instanceof Error ? err.message : "Test failed");
-    } finally {
-      setLoading(false);
-    }
-  }, [testType]);
+  const handleClear = useCallback(() => {
+    queryClient.resetQueries({ queryKey: ["pools-test"] });
+    setAuthError(null);
+  }, [queryClient]);
 
   const getProviderIcon = (provider: string): string => {
     switch (provider) {
@@ -443,10 +278,7 @@ export default function PoolsTestPage() {
 
               <div className="flex items-end">
                 <button
-                  onClick={() => {
-                    setTestResults(null);
-                    setError(null);
-                  }}
+                  onClick={handleClear}
                   className="w-full bg-gray-600 text-white py-3 px-6 rounded-md hover:bg-gray-700 transition-colors"
                 >
                   🗑️ Clear Results

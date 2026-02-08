@@ -2,35 +2,11 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import NavigationTabs from "@/components/NavigationTabs";
-
-interface TrendingToken {
-  token_symbol: string;
-  token_address: string;
-  price: number;
-  change_1h: number;
-  change_5m: number;
-  buy_volume_1h: number;
-  sell_volume_1h: number;
-  buy_volume_5m: number;
-  sell_volume_5m: number;
-  volume_1h: number;
-  volume_5m: number;
-  mcap: number;
-  logo_url?: string;
-  organic_score: number;
-  last_updated?: number;
-  price_change?: number;
-  created_at?: number;
-}
-
-interface TrendingResponse {
-  tokens: TrendingToken[];
-  cached: boolean;
-  cache_age: number;
-  expires_in: number;
-  refresh_type?: string;
-  last_updated?: number;
-}
+import {
+  useTrendingPools,
+  type TrendingToken,
+  type TrendingResponse,
+} from "@/hooks/useTrendingPools";
 
 interface MarketCapCategory {
   name: string;
@@ -87,11 +63,14 @@ const LoadingSkeleton = () => (
 );
 
 export default function TrendingPoolsPage() {
-  const [trendingData, setTrendingData] = useState<TrendingResponse | null>(
-    null,
-  );
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const {
+    data: trendingData,
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useTrendingPools();
+  const error = queryError instanceof Error ? queryError.message : null;
+
   const [volumeFilter, setVolumeFilter] = useState<number>(0);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [sortBy, setSortBy] = useState<"mcap" | "volume" | "score" | "change">(
@@ -108,40 +87,9 @@ export default function TrendingPoolsPage() {
     y: number;
   } | null>(null);
 
-  const fetchTrendingData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      console.log("🚀 Fetching trending pools data...");
-
-      const response = await fetch("/api/trending", {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      setTrendingData(data);
-    } catch (err) {
-      console.error("Fetch error:", err);
-      setError(
-        err instanceof Error ? err.message : "Failed to fetch trending data",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // Auto-fetch data on mount
-  useEffect(() => {
-    fetchTrendingData();
-  }, [fetchTrendingData]);
+  const handleRefresh = useCallback(() => {
+    refetch();
+  }, [refetch]);
 
   // Handle chart tooltip toggle
   const handleChartClick = useCallback(
@@ -307,7 +255,7 @@ export default function TrendingPoolsPage() {
             </h2>
             <div className="mt-6 flex justify-center gap-4">
               <button
-                onClick={fetchTrendingData}
+                onClick={handleRefresh}
                 disabled={loading}
                 className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-600 transition-colors font-semibold"
               >
@@ -326,7 +274,7 @@ export default function TrendingPoolsPage() {
               <h3 className="font-bold mb-2">❌ Error Loading Data</h3>
               <p>{error}</p>
               <button
-                onClick={fetchTrendingData}
+                onClick={handleRefresh}
                 className="mt-4 bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition-colors"
               >
                 🔄 Retry

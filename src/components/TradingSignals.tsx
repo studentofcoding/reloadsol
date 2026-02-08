@@ -5,30 +5,9 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import Draggable from "react-draggable";
 import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
+import { useTradingSignals, SignalItem } from "@/hooks/useTradingSignals";
 
-type SignalItem = {
-  token_address: string;
-  token_symbol?: string;
-  current_mcap?: number;
-  first_mcap?: number;
-  mcap_growth_percent?: number;
-  score?: number;
-  decision?: "enter" | "hold" | "exit" | "skip";
-  rationale?: string;
-  first_seen_at?: string;
-  last_updated_at?: string;
-  when_reach_80mc?: string | null;
-  when_reach_120mc?: string | null;
-  when_reach_200mc?: string | null;
-  is_tracking_stuck?: boolean;
-};
-
-type SignalsResponse = {
-  success: boolean;
-  params?: Record<string, any>;
-  stats?: Record<string, any>;
-  signals?: SignalItem[];
-};
+// Removed local types SignalItem and SignalsResponse as they are now imported
 
 type FloatingChart = {
   id: string;
@@ -77,10 +56,23 @@ export default function TradingSignals() {
     "sell_over_100",
   );
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string>("");
-  const [signals, setSignals] = useState<SignalItem[]>([]);
-  const [stats, setStats] = useState<Record<string, any>>({});
+  const {
+    data: apiResponse,
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useTradingSignals({
+    limit,
+    recencyMinutes,
+    minGrowth,
+    includeStuck,
+    maxAgeMinutes,
+    strategy,
+  });
+
+  const error = queryError ? queryError.message : "";
+  const signals = apiResponse?.signals || [];
+  const stats = apiResponse?.stats || {};
 
   // Multiple floating charts state
   const [floatingCharts, setFloatingCharts] = useState<FloatingChart[]>([]);
@@ -188,50 +180,7 @@ export default function TradingSignals() {
     }
   }, [connected, walletBalanceSol, hasAutoSetSolAmount]);
 
-  const query = useMemo(() => {
-    if (!isClient) return "";
-    const params = new URLSearchParams();
-    params.set("limit", String(limit));
-    params.set("recencyMinutes", String(recencyMinutes));
-    params.set("minGrowth", String(minGrowth));
-    params.set("includeStuck", String(includeStuck));
-    params.set("maxAgeMinutes", String(maxAgeMinutes));
-    params.set("strategy", strategy);
-    return params.toString();
-  }, [
-    isClient,
-    limit,
-    recencyMinutes,
-    minGrowth,
-    includeStuck,
-    maxAgeMinutes,
-    strategy,
-  ]);
-
-  const fetchSignals = async () => {
-    try {
-      setLoading(true);
-      setError("");
-      const res = await fetch(`/api/trading/signals?${query}`, {
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error(`Failed to fetch signals (${res.status})`);
-      const data: SignalsResponse = await res.json();
-      if (!data.success)
-        throw new Error("Signals API returned unsuccessful response");
-      setSignals(data.signals || []);
-      setStats(data.stats || {});
-    } catch (e: any) {
-      setError(e?.message || "Unknown error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchSignals();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  // Fetch signals handled by React Query hook
 
   const decisionBadge = (d?: SignalItem["decision"]) => {
     const base = "px-2 py-0.5 rounded text-xs font-medium";
@@ -612,7 +561,7 @@ export default function TradingSignals() {
               />
             </div>
             <button
-              onClick={fetchSignals}
+              onClick={() => refetch()}
               className="ml-auto rounded bg-blue-600 px-3 py-1.5 text-white hover:bg-blue-700"
               disabled={loading}
             >
