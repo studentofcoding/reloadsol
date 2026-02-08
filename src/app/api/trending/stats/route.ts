@@ -17,18 +17,59 @@ export async function GET(request: NextRequest) {
 
     console.log(`📊 Fetching trending token statistics... ${refresh ? '(forced refresh)' : ''}${nocache ? '(no cache)' : ''}`)
 
-    // Get the most recent summary
-    const { data: summaries, error: summaryError } = await supabase
-      .from(SUMMARY_TABLE)
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(1)
+    // Parallelize independent queries
+    const last7Days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
 
-    if (summaryError) {
-      throw new Error(`Failed to fetch summaries: ${summaryError.message}`)
-    }
+    const [
+      summaryResult,
+      trackingResult,
+      completedResult,
+      historicalResult
+    ] = await Promise.all([
+      // 1. Get the most recent summary
+      supabase
+        .from(SUMMARY_TABLE)
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1),
 
-    // If we have a recent summary, get ALL tokens from that period (not just top 5)
+      // 2. Get currently tracked tokens
+      supabase
+        .from(TRACKER_TABLE)
+        .select('*')
+        .eq('status', 'tracking')
+        .order('peak_gain_percentage', { ascending: false }),
+
+      // 3. Get recent winners and losers
+      supabase
+        .from(TRACKER_TABLE)
+        .select('*')
+        .in('status', ['won', 'lost'])
+        .gte('status_changed_at', last7Days)
+        .order('status_changed_at', { ascending: false })
+        .limit(20),
+
+      // 4. Get historical summaries
+      supabase
+        .from(SUMMARY_TABLE)
+        .select('*')
+        .gte('created_at', last7Days)
+        .order('created_at', { ascending: false })
+        .limit(7)
+    ])
+
+    // Check for errors
+    if (summaryResult.error) throw new Error(`Failed to fetch summaries: ${summaryResult.error.message}`)
+    if (trackingResult.error) throw new Error(`Failed to fetch tracking tokens: ${trackingResult.error.message}`)
+    if (completedResult.error) throw new Error(`Failed to fetch completed tokens: ${completedResult.error.message}`)
+    if (historicalResult.error) throw new Error(`Failed to fetch historical summaries: ${historicalResult.error.message}`)
+
+    const summaries = summaryResult.data
+    const trackingTokens = trackingResult.data
+    const recentCompleted = completedResult.data
+    const historicalSummaries = historicalResult.data
+
+    // If we have a recent summary, get ALL tokens from that period (dependent query)
     let allSummaryTokens = null
     if (summaries && summaries.length > 0) {
       const latestSummary = summaries[0]
@@ -65,42 +106,6 @@ export async function GET(request: NextRequest) {
 
         console.log(`📊 Fetched ${allSummaryTokens.length} tokens from summary period (${latestSummary.period_start} to ${latestSummary.period_end})`)
       }
-    }
-
-    // Get currently tracked tokens (active tracking status)
-    const { data: trackingTokens, error: trackingError } = await supabase
-      .from(TRACKER_TABLE)
-      .select('*')
-      .eq('status', 'tracking')
-      .order('peak_gain_percentage', { ascending: false })
-
-    if (trackingError) {
-      throw new Error(`Failed to fetch tracking tokens: ${trackingError.message}`)
-    }
-
-    // Get recent winners and losers for additional context
-    const { data: recentCompleted, error: completedError } = await supabase
-      .from(TRACKER_TABLE)
-      .select('*')
-      .in('status', ['won', 'lost'])
-      .gte('status_changed_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()) // Last 7 days
-      .order('status_changed_at', { ascending: false })
-      .limit(20)
-
-    if (completedError) {
-      throw new Error(`Failed to fetch completed tokens: ${completedError.message}`)
-    }
-
-    // Get historical summaries for trends (last 7 days)
-    const { data: historicalSummaries, error: historicalError } = await supabase
-      .from(SUMMARY_TABLE)
-      .select('*')
-      .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
-      .order('created_at', { ascending: false })
-      .limit(7)
-
-    if (historicalError) {
-      console.error('Failed to fetch historical summaries:', historicalError)
     }
 
     // Calculate current tracking statistics

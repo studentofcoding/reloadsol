@@ -367,6 +367,7 @@ export default function ChartBuyModal({
     fetchTokenData();
   }, [tokenAddress]);
 
+  /* OHLC Data Fetching - Excluded for now
   useEffect(() => {
     if (!tokenAddress || !isValidMintAddress(tokenAddress)) return;
     setIsOhlcLoading(true);
@@ -398,6 +399,7 @@ export default function ChartBuyModal({
       })
       .finally(() => setIsOhlcLoading(false));
   }, [tokenAddress]);
+  */
 
   const handleBuy = useCallback(async () => {
     if (!connected || !publicKey || !signAllTransactions || !tokenAddress) {
@@ -738,7 +740,10 @@ export default function ChartBuyModal({
           <div className="lg:col-span-2 space-y-4">
             <div className="bg-gray-800 rounded-lg p-1 min-h-[500px] flex flex-col">
               <div className="flex justify-between px-2 py-1 bg-gray-700/50 rounded-t-lg">
-                <span className="text-xs text-gray-400">Price Chart</span>
+                <span className="text-xs text-gray-400">
+                  Price Chart (GMGN)
+                </span>
+                {/* OHLC Toggle Excluded
                 <div className="space-x-2">
                   <button
                     className={`px-2 py-0.5 text-xs rounded ${chartMode === "ohlc" ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300"}`}
@@ -753,6 +758,7 @@ export default function ChartBuyModal({
                     GMGN
                   </button>
                 </div>
+                */}
               </div>
               <div className="flex-1 relative">
                 {chartMode === "ohlc" ? (
