@@ -631,27 +631,30 @@ class TradingTracker {
       }
 
       this.sseConnection.onerror = (error) => {
-        console.error(`❌ [${connectionAttemptId}] SSE connection error:`, error)
-        console.log(`❌ [${connectionAttemptId}] Error details:`, {
-          readyState: this.sseConnection?.readyState,
-          connectionState: this.connectionState,
-          reconnectAttempts: this.reconnectAttempts,
-          timestamp: new Date().toISOString(),
-          userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A',
-          url: sseUrl
-        })
         clearTimeout(connectionTimeout)
 
-        // Enhanced error handling based on connection state
+        // Prevent aggressive error logging if connection is actually open (transient network issues)
         if (this.sseConnection) {
           const readyState = this.sseConnection.readyState
-          console.log(`❌ [${connectionAttemptId}] SSE ReadyState:`, readyState, {
-            0: 'CONNECTING',
-            1: 'OPEN',
-            2: 'CLOSED'
-          }[readyState])
 
-          // ✅ FIXED: Handle all readyState scenarios
+          if (readyState === EventSource.OPEN) {
+            // Just warn for OPEN state errors, don't spam console.error
+            console.warn(`⚠️ [${connectionAttemptId}] SSE transient error (readyState=OPEN). Connection kept alive, monitoring health...`);
+            return;
+          }
+
+          // For real errors (Closed/Connecting), log fully
+          console.error(`❌ [${connectionAttemptId}] SSE connection error:`, error)
+          console.log(`❌ [${connectionAttemptId}] Error details:`, {
+            readyState,
+            readyStateText: { 0: 'CONNECTING', 1: 'OPEN', 2: 'CLOSED' }[readyState],
+            connectionState: this.connectionState,
+            reconnectAttempts: this.reconnectAttempts,
+            timestamp: new Date().toISOString(),
+            url: sseUrl
+          })
+
+          // Handle reconnection logic
           if (readyState === EventSource.CLOSED) {
             console.warn(`❌ [${connectionAttemptId}] SSE connection was closed, attempting reconnection`)
             this.connectionState = 'disconnected'
@@ -661,11 +664,12 @@ class TradingTracker {
             this.connectionState = 'disconnected'
             this.cleanupSSEConnection()
             this.handleSSEReconnect(walletAddress)
-          } else if (readyState === EventSource.OPEN) {
-            // ✅ UPDATED: If OPEN, it's likely a transient error or noise. 
-            // Don't disconnect immediately - rely on health check to kill it if data stops flowing.
-            console.warn(`⚠️ [${connectionAttemptId}] SSE error received but connection is OPEN. Monitoring health...`)
           }
+        } else {
+          // Fallback if sseConnection is somehow null but onerror fired
+          console.error(`❌ [${connectionAttemptId}] SSE connection error (instance null):`, error)
+          this.connectionState = 'disconnected'
+          this.handleSSEReconnect(walletAddress)
         }
       }
 

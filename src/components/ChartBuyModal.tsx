@@ -142,6 +142,16 @@ export default function ChartBuyModal({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!onNavigate) return;
 
+      // Ignore if typing in an input field
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
       if (e.key === "ArrowUp") {
         e.preventDefault();
         onNavigate("prev");

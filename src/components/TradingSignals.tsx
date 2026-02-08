@@ -884,6 +884,30 @@ export default function TradingSignals() {
         <ChartBuyModal
           tokenAddress={chartModalTokenAddress}
           onClose={() => setChartModalTokenAddress(null)}
+          onNavigate={(direction) => {
+            if (!signals.length) return;
+            const currentIndex = signals.findIndex(
+              (s) => s.token_address === chartModalTokenAddress,
+            );
+            if (currentIndex === -1) return;
+
+            const nextIndex =
+              direction === "next" ? currentIndex + 1 : currentIndex - 1;
+            if (nextIndex >= 0 && nextIndex < signals.length) {
+              setChartModalTokenAddress(signals[nextIndex].token_address);
+            }
+          }}
+          hasPrev={
+            signals.findIndex(
+              (s) => s.token_address === chartModalTokenAddress,
+            ) > 0
+          }
+          hasNext={
+            signals.findIndex(
+              (s) => s.token_address === chartModalTokenAddress,
+            ) <
+            signals.length - 1
+          }
         />
       )}
     </div>

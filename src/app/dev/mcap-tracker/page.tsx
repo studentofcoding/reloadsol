@@ -1448,6 +1448,26 @@ export default function McapTrackerPage() {
         <ChartBuyModal
           tokenAddress={modalTokenAddress}
           onClose={() => setModalTokenAddress(null)}
+          onNavigate={(direction) => {
+            if (!tokens.length) return;
+            const currentIndex = tokens.findIndex(
+              (t) => t.token_address === modalTokenAddress,
+            );
+            if (currentIndex === -1) return;
+
+            const nextIndex =
+              direction === "next" ? currentIndex + 1 : currentIndex - 1;
+            if (nextIndex >= 0 && nextIndex < tokens.length) {
+              setModalTokenAddress(tokens[nextIndex].token_address);
+            }
+          }}
+          hasPrev={
+            tokens.findIndex((t) => t.token_address === modalTokenAddress) > 0
+          }
+          hasNext={
+            tokens.findIndex((t) => t.token_address === modalTokenAddress) <
+            tokens.length - 1
+          }
         />
       )}
 
