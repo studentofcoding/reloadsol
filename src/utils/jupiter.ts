@@ -4,6 +4,7 @@ import { createUmi } from "@metaplex-foundation/umi-bundle-defaults"
 import { publicKey } from "@metaplex-foundation/umi"
 import { fetchAllDigitalAssetWithTokenByOwner } from "@metaplex-foundation/mpl-token-metadata"
 import { JUPITER_API, TOKENS } from './solana'
+import jupiterApiUtils from './jupiter-api'
 import { SwapQuote, SwapTransaction, BulkBuyRequest, BulkBuyResult, TokenPurchase } from '@/types'
 
 // Add BigInt JSON serialization support
@@ -70,7 +71,7 @@ async function batchFetchPrices(mints: string[]): Promise<Record<string, number>
 
   try {
     // Use the new Jupiter API manager for better caching and rate limiting
-    const priceData = await jupiterAPI.fetchTokenPrices(mints, {
+    const priceData = await jupiterApiUtils.fetchTokenPrices(mints, {
       timeout: 10000,
       retries: 0 // We handle retries at the manager level
     })
@@ -112,7 +113,7 @@ async function getCachedPrice(mint: string): Promise<number> {
 
   // Use Jupiter API manager for better rate limiting
   try {
-    const priceData = await jupiterAPI.fetchTokenPrices([mint])
+    const priceData = await jupiterApiUtils.fetchTokenPrices([mint])
     const price = priceData[mint]?.price || 0
 
     // Cache the price
@@ -670,7 +671,7 @@ const dynamicProblematicMints = new Set<string>()
 const ALL_EXCLUDED_MINTS = [...EXCLUDED_MINTS, ...PROBLEMATIC_MINTS]
 
 // Add loading state to prevent duplicate fetches
-let isTokenLoading = false
+let tokenFetchPromise: Promise<UserToken[]> | null = null
 
 // Metadata enrichment cache to track which tokens are being enriched
 const metadataEnrichmentInProgress = new Set<string>()
@@ -705,15 +706,56 @@ async function enrichTokenMetadataAsync(tokens: UserToken[]): Promise<void> {
   tokensNeedingMetadata.forEach(token => metadataEnrichmentInProgress.add(token.mintAddress))
 
   // Use the new batch API for much faster metadata fetching
-  try {
-    const mints = tokensNeedingMetadata.map(token => token.mintAddress)
-    const batchMetadata = await jupiterAPI.fetchTokenInfoBatch(mints)
+  // try {
+  //   const mints = tokensNeedingMetadata.map(token => token.mintAddress)
+  //   const batchMetadata = await jupiterAPI.fetchTokenInfoBatch(mints)
+  //
+  //   const enrichedTokens: UserToken[] = []
+  //
+  //   tokensNeedingMetadata.forEach(token => {
+  //     try {
+  //       const metadata = batchMetadata[token.mintAddress]
+  //       if (metadata) {
+  //         // Update the token object directly (this will reflect in the UI if tokens are reactive)
+  //         token.symbol = metadata.symbol
+  //         token.name = metadata.name
+  //         token.logoURI = metadata.logoURI
+  //
+  //         // Update cache with enriched metadata
+  //         const cached = tokenCache.get(token.mintAddress)
+  //         if (cached) {
+  //           cached.data = { ...cached.data, ...metadata }
+  //           tokenCache.set(token.mintAddress, cached)
+  //         }
+  //
+  //         console.log(`Enriched metadata for ${metadata.symbol} (${token.mintAddress})`)
+  //         enrichedTokens.push(token)
+  //       }
+  //     } catch (error) {
+  //       console.warn(`Failed to process metadata for ${token.mintAddress}:`, error)
+  //     } finally {
+  //       // Remove from processing set
+  //       metadataEnrichmentInProgress.delete(token.mintAddress)
+  //     }
+  //   })
+  //
+  //   // Trigger UI update callback if any tokens were enriched
+  //   if (enrichedTokens.length > 0 && metadataUpdateCallback) {
+  //     metadataUpdateCallback(enrichedTokens)
+  //   }
+  // } catch (error) {
+  //   console.error('Batch metadata enrichment failed:', error)
 
-    const enrichedTokens: UserToken[] = []
+  // Fallback to individual requests if batch fails
+  const METADATA_BATCH_SIZE = 10 // Process 10 tokens at a time to avoid overwhelming the API
 
-    tokensNeedingMetadata.forEach(token => {
+  for (let i = 0; i < tokensNeedingMetadata.length; i += METADATA_BATCH_SIZE) {
+    const batch = tokensNeedingMetadata.slice(i, i + METADATA_BATCH_SIZE)
+
+    // Process batch in parallel
+    const metadataPromises = batch.map(async (token) => {
       try {
-        const metadata = batchMetadata[token.mintAddress]
+        const metadata = await getTokenInfo(token.mintAddress)
         if (metadata) {
           // Update the token object directly (this will reflect in the UI if tokens are reactive)
           token.symbol = metadata.symbol
@@ -728,70 +770,28 @@ async function enrichTokenMetadataAsync(tokens: UserToken[]): Promise<void> {
           }
 
           console.log(`Enriched metadata for ${metadata.symbol} (${token.mintAddress})`)
-          enrichedTokens.push(token)
+          return token
         }
       } catch (error) {
-        console.warn(`Failed to process metadata for ${token.mintAddress}:`, error)
+        console.warn(`Failed to enrich metadata for ${token.mintAddress}:`, error)
       } finally {
         // Remove from processing set
         metadataEnrichmentInProgress.delete(token.mintAddress)
       }
+      return null
     })
+
+    // Wait for current batch to complete before processing next batch
+    const enrichedTokens = (await Promise.all(metadataPromises)).filter(Boolean) as UserToken[]
 
     // Trigger UI update callback if any tokens were enriched
     if (enrichedTokens.length > 0 && metadataUpdateCallback) {
       metadataUpdateCallback(enrichedTokens)
     }
-  } catch (error) {
-    console.error('Batch metadata enrichment failed:', error)
 
-    // Fallback to individual requests if batch fails
-    const METADATA_BATCH_SIZE = 10 // Process 10 tokens at a time to avoid overwhelming the API
-
-    for (let i = 0; i < tokensNeedingMetadata.length; i += METADATA_BATCH_SIZE) {
-      const batch = tokensNeedingMetadata.slice(i, i + METADATA_BATCH_SIZE)
-
-      // Process batch in parallel
-      const metadataPromises = batch.map(async (token) => {
-        try {
-          const metadata = await getTokenInfo(token.mintAddress)
-          if (metadata) {
-            // Update the token object directly (this will reflect in the UI if tokens are reactive)
-            token.symbol = metadata.symbol
-            token.name = metadata.name
-            token.logoURI = metadata.logoURI
-
-            // Update cache with enriched metadata
-            const cached = tokenCache.get(token.mintAddress)
-            if (cached) {
-              cached.data = { ...cached.data, ...metadata }
-              tokenCache.set(token.mintAddress, cached)
-            }
-
-            console.log(`Enriched metadata for ${metadata.symbol} (${token.mintAddress})`)
-            return token
-          }
-        } catch (error) {
-          console.warn(`Failed to enrich metadata for ${token.mintAddress}:`, error)
-        } finally {
-          // Remove from processing set
-          metadataEnrichmentInProgress.delete(token.mintAddress)
-        }
-        return null
-      })
-
-      // Wait for current batch to complete before processing next batch
-      const enrichedTokens = (await Promise.all(metadataPromises)).filter(Boolean) as UserToken[]
-
-      // Trigger UI update callback if any tokens were enriched
-      if (enrichedTokens.length > 0 && metadataUpdateCallback) {
-        metadataUpdateCallback(enrichedTokens)
-      }
-
-      // Small delay between batches to be respectful to the API
-      if (i + METADATA_BATCH_SIZE < tokensNeedingMetadata.length) {
-        await sleep(500) // 500ms delay between batches
-      }
+    // Small delay between batches to be respectful to the API
+    if (i + METADATA_BATCH_SIZE < tokensNeedingMetadata.length) {
+      await sleep(500) // 500ms delay between batches
     }
   }
 
@@ -897,12 +897,13 @@ async function processBatch(
     }
 
     const data = tokenData?.find(d => d.mint === mint)
-    if (!data) {
-      return null
-    }
+
+    // Use decimals from token account if mint data is missing
+    const decimals = data?.decimals ?? account.account.data.parsed.info.tokenAmount.decimals
 
     // Check if it's likely an NFT (supply = 1, decimals = 0)
-    const isNFT = data.decimals === 0 && data.supply <= 1
+    // If we don't have mint data, assume it's not an NFT unless we verify otherwise later
+    const isNFT = data ? (data.decimals === 0 && data.supply <= 1) : false
 
     // Calculate USD value properly: price * token amount
     const price = prices[mint] || 0
@@ -911,7 +912,7 @@ async function processBatch(
     const userToken: UserToken = {
       mintAddress: mint,
       balance: balance,
-      decimals: data.decimals,
+      decimals: decimals,
       symbol: 'Unknown', // Will be enriched asynchronously
       name: 'Unknown Token', // Will be enriched asynchronously
       logoURI: undefined, // Will be enriched asynchronously
@@ -941,71 +942,91 @@ export async function fetchUserTokens(
   includeZeroBalance: boolean = false,
   includeNFTs: boolean = false
 ): Promise<UserToken[]> {
-  if (isTokenLoading) {
-    console.log('Token fetch already in progress, skipping...')
-    return []
+  // If a fetch is already in progress, return the existing promise
+  if (tokenFetchPromise) {
+    console.log('Token fetch already in progress, joining existing request...')
+    try {
+      const results = await tokenFetchPromise
+      // We need to re-filter the results based on the current request parameters
+      // because the in-flight request might have different flags
+      const filteredResults = results.filter(token => {
+        // Filter zero balance if needed
+        if (!includeZeroBalance && token.uiAmount <= 0) return false
+        // Filter NFTs if needed
+        if (!includeNFTs && token.isNFT) return false
+        return true
+      })
+      return filteredResults
+    } catch (error) {
+      console.error('Error in joined token fetch:', error)
+      // If the shared promise failed, we'll try a new fetch below
+    }
   }
 
-  isTokenLoading = true
+  // Create a new fetch promise
+  tokenFetchPromise = (async () => {
+    try {
+      startTimer('total-token-fetch')
 
-  try {
-    startTimer('total-token-fetch')
-
-    // Single RPC call to get all token accounts
-    const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-      userPublicKey,
-      { programId: TOKEN_PROGRAM_ID }
-    )
-
-    // Split accounts by balance if needed
-    const relevantAccounts = includeZeroBalance
-      ? tokenAccounts.value
-      : tokenAccounts.value.filter(acc =>
-        acc.account.data.parsed.info.tokenAmount.uiAmount > 0
+      // Single RPC call to get all token accounts
+      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+        userPublicKey,
+        { programId: TOKEN_PROGRAM_ID }
       )
 
-    if (relevantAccounts.length === 0) {
-      return []
+      // Get all accounts initially (we'll filter later)
+      const relevantAccounts = tokenAccounts.value
+
+      if (relevantAccounts.length === 0) {
+        return []
+      }
+
+      // Get all unique mints
+      const allMints = Array.from(new Set(
+        relevantAccounts.map(acc => acc.account.data.parsed.info.mint)
+      ))
+
+      // Single price fetch for all tokens
+      const prices = await batchFetchPrices(allMints)
+
+      // Process tokens efficiently
+      const processedTokens = await processBatch(connection, relevantAccounts, prices)
+
+      // Asynchronously enrich token metadata (non-blocking)
+      enrichTokenMetadataAsync(processedTokens)
+
+      stopTimer('total-token-fetch')
+      console.log(`Processed ${processedTokens.length} tokens efficiently`)
+
+      return processedTokens.sort((a, b) => {
+        const aIsSellable = (a.usdValue >= 0.001 || isPumpFunToken(a.mintAddress)) && !a.frozen
+        const bIsSellable = (b.usdValue >= 0.001 || isPumpFunToken(b.mintAddress)) && !b.frozen
+
+        if (aIsSellable && !bIsSellable) return -1
+        if (!aIsSellable && bIsSellable) return 1
+        if (aIsSellable && bIsSellable) return b.usdValue - a.usdValue
+
+        return (a.symbol || '').localeCompare(b.symbol || '')
+      })
+    } finally {
+      tokenFetchPromise = null
     }
+  })()
 
-    // Get all unique mints
-    const allMints = Array.from(new Set(
-      relevantAccounts.map(acc => acc.account.data.parsed.info.mint)
-    ))
+  try {
+    const allTokens = await tokenFetchPromise
 
-    // Single price fetch for all tokens
-    const prices = await batchFetchPrices(allMints)
-
-    // Process tokens efficiently
-    const processedTokens = await processBatch(connection, relevantAccounts, prices)
-
-    // Filter NFTs if not requested
-    const filteredTokens = includeNFTs
-      ? processedTokens
-      : processedTokens.filter(token => !token.isNFT)
-
-    // Asynchronously enrich token metadata (non-blocking)
-    enrichTokenMetadataAsync(filteredTokens)
-
-    stopTimer('total-token-fetch')
-    console.log(`Processed ${filteredTokens.length} tokens efficiently`)
-
-    return filteredTokens.sort((a, b) => {
-      const aIsSellable = (a.usdValue >= 0.001 || isPumpFunToken(a.mintAddress)) && !a.frozen
-      const bIsSellable = (b.usdValue >= 0.001 || isPumpFunToken(b.mintAddress)) && !b.frozen
-
-      if (aIsSellable && !bIsSellable) return -1
-      if (!aIsSellable && bIsSellable) return 1
-      if (aIsSellable && bIsSellable) return b.usdValue - a.usdValue
-
-      return (a.symbol || '').localeCompare(b.symbol || '')
+    // Apply filters for this specific request
+    return allTokens.filter(token => {
+      // Filter zero balance if needed
+      if (!includeZeroBalance && token.uiAmount <= 0) return false
+      // Filter NFTs if needed
+      if (!includeNFTs && token.isNFT) return false
+      return true
     })
-
   } catch (error) {
     console.error('Error fetching user tokens:', error)
     return []
-  } finally {
-    isTokenLoading = false
   }
 }
 
@@ -1219,11 +1240,10 @@ export async function fetchZeroBalanceTokens(
 async function getTokenInfo(mintAddress: string): Promise<{ decimals: number; symbol: string; name: string; logoURI?: string } | null> {
   try {
     // Try Jupiter's Token API first with rate limiting
-    const jupiterResult = await jupiterAPI.fetchTokenInfo(mintAddress)
-
-    if (jupiterResult) {
-      return jupiterResult
-    }
+    // const jupiterResult = await jupiterAPI.fetchTokenInfo(mintAddress)
+    // if (jupiterResult) {
+    //   return jupiterResult
+    // }
 
     // Fallback to common tokens
     const commonTokens: Record<string, any> = {

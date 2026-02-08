@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import UnifiedTokenModal from "@/components/UnifiedTokenModal";
 import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
 import ChartBuyModal from "@/components/ChartBuyModal";
@@ -117,6 +118,7 @@ interface TradingConfig {
 export const dynamic = "force-dynamic";
 
 export default function TrendingTrackerPage() {
+  const router = useRouter();
   const [stats, setStats] = useState<TrendingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>("");
@@ -131,6 +133,9 @@ export default function TrendingTrackerPage() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [itemsPerPage, setItemsPerPage] = useState<number>(12);
+
+  // Selection state
+  const [selectedTokens, setSelectedTokens] = useState<Set<string>>(new Set());
 
   // New: tracking mode filter ('all' | 'real' | 'sim')
   const [trackingModeFilter, setTrackingModeFilter] = useState<
@@ -148,8 +153,17 @@ export default function TrendingTrackerPage() {
   const [unifiedModalState, setUnifiedModalState] = useState<{
     isOpen: boolean;
     modalType: "transaction" | "trading";
-    tokenData?: any;
-    transactionData?: any;
+    tokenData?: {
+      mint: string;
+      symbol?: string | null;
+      name?: string | null;
+      logoUrl?: string | null;
+    };
+    transactionData?: {
+      result: any;
+      operation: "buy" | "sell" | "close";
+    };
+    allTokens?: any[]; // For navigation
   }>({ isOpen: false, modalType: "trading" });
 
   // Latest 24h Summary state
@@ -176,6 +190,30 @@ export default function TrendingTrackerPage() {
       });
     }
   }, [loading, error, stats]);
+
+  // Handler for selecting/deselecting tokens
+  const handleToggleSelection = (
+    tokenAddress: string,
+    event?: React.MouseEvent,
+  ) => {
+    if (event) {
+      event.stopPropagation();
+    }
+    const newSelected = new Set(selectedTokens);
+    if (newSelected.has(tokenAddress)) {
+      newSelected.delete(tokenAddress);
+    } else {
+      newSelected.add(tokenAddress);
+    }
+    setSelectedTokens(newSelected);
+  };
+
+  // Handler to open charts for selected tokens
+  const handleOpenSelectedCharts = () => {
+    if (selectedTokens.size === 0) return;
+    const addresses = Array.from(selectedTokens).join(",");
+    router.push(`/charts?addresses=${addresses}`);
+  };
 
   // Helper functions for search and pagination
   const filterTokens = (
@@ -546,6 +584,18 @@ export default function TrendingTrackerPage() {
 
   // Handler to open trading modal
   const handleOpenTradingModal = (token: any) => {
+    // Determine context: current tracking or recent completed
+    let allTokens: any[] = [];
+    if (stats?.current_tracking?.tokens) {
+      allTokens = [...allTokens, ...stats.current_tracking.tokens];
+    }
+    if (stats?.recent_completed?.winners) {
+      allTokens = [...allTokens, ...stats.recent_completed.winners];
+    }
+    if (stats?.recent_completed?.losers) {
+      allTokens = [...allTokens, ...stats.recent_completed.losers];
+    }
+
     setUnifiedModalState({
       isOpen: true,
       modalType: "trading",
@@ -555,11 +605,16 @@ export default function TrendingTrackerPage() {
         name: token.token_name,
         logoUrl: token.logo_url,
       },
+      // Pass list for navigation
+      allTokens,
     });
   };
 
   // Handler to open transaction modal
-  const handleOpenTransactionModal = (result: any, operation: string) => {
+  const handleOpenTransactionModal = (
+    result: any,
+    operation: "buy" | "sell" | "close",
+  ) => {
     setUnifiedModalState({
       isOpen: true,
       modalType: "transaction",
@@ -1695,31 +1750,63 @@ export default function TrendingTrackerPage() {
 
               return (
                 <>
-                  {/* Mode Filter Tabs */}
-                  <div className="flex space-x-1 mb-4">
-                    {[
-                      {
-                        key: "all",
-                        label: `All (${stats.current_tracking.statistics.total_tracking})`,
-                      },
-                      { key: "real", label: `Real (${realCount})` },
-                      { key: "sim", label: `Simulation (${simCount})` },
-                    ].map((tab) => (
-                      <button
-                        key={tab.key}
-                        onClick={() => {
-                          setTrackingModeFilter(tab.key as any);
-                          setCurrentPage(1);
-                        }}
-                        className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all min-w-max ${
-                          trackingModeFilter === tab.key
-                            ? "bg-blue-600 text-white"
-                            : "text-gray-400 hover:text-white hover:bg-gray-700/50"
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
+                  {/* Mode Filter Tabs and Actions */}
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
+                    <div className="flex space-x-1">
+                      {[
+                        {
+                          key: "all",
+                          label: `All (${stats.current_tracking.statistics.total_tracking})`,
+                        },
+                        { key: "real", label: `Real (${realCount})` },
+                        { key: "sim", label: `Simulation (${simCount})` },
+                      ].map((tab) => (
+                        <button
+                          key={tab.key}
+                          onClick={() => {
+                            setTrackingModeFilter(tab.key as any);
+                            setCurrentPage(1);
+                          }}
+                          className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all min-w-max ${
+                            trackingModeFilter === tab.key
+                              ? "bg-blue-600 text-white"
+                              : "text-gray-400 hover:text-white hover:bg-gray-700/50"
+                          }`}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {selectedTokens.size > 0 && (
+                      <div className="flex items-center space-x-2">
+                        <button
+                          onClick={() => setSelectedTokens(new Set())}
+                          className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-300 font-medium transition-colors text-sm"
+                        >
+                          Clear ({selectedTokens.size})
+                        </button>
+                        <button
+                          onClick={handleOpenSelectedCharts}
+                          className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg text-white font-medium flex items-center space-x-2 transition-colors shadow-lg animate-pulse"
+                        >
+                          <svg
+                            className="w-5 h-5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                            />
+                          </svg>
+                          <span>Open Charts</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {/* Results summary */}
                   <div className="flex justify-between items-center mb-4 text-sm text-gray-400">
@@ -1740,11 +1827,43 @@ export default function TrendingTrackerPage() {
                     {paginatedTokens.map((token) => (
                       <div
                         key={token.id}
-                        className="p-4 bg-gray-800 rounded-xl border border-gray-700 hover:border-gray-500 transition-all duration-200 cursor-pointer"
+                        className={`p-4 bg-gray-800 rounded-xl border transition-all duration-200 cursor-pointer ${
+                          selectedTokens.has(token.token_address)
+                            ? "border-purple-500 ring-1 ring-purple-500"
+                            : "border-gray-700 hover:border-gray-500"
+                        }`}
                         onClick={() => handleTokenClick(token)}
                       >
                         <div className="flex items-center justify-between mb-2">
                           <div className="flex items-center space-x-3">
+                            {/* Selection Checkbox */}
+                            <div
+                              onClick={(e) =>
+                                handleToggleSelection(token.token_address, e)
+                              }
+                              className={`w-5 h-5 rounded border flex items-center justify-center transition-colors flex-shrink-0 ${
+                                selectedTokens.has(token.token_address)
+                                  ? "bg-purple-600 border-purple-600"
+                                  : "border-gray-500 hover:border-gray-300"
+                              }`}
+                            >
+                              {selectedTokens.has(token.token_address) && (
+                                <svg
+                                  className="w-3.5 h-3.5 text-white"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={3}
+                                    d="M5 13l4 4L19 7"
+                                  />
+                                </svg>
+                              )}
+                            </div>
+
                             <TokenIcon token={token} />
                             <div>
                               <div className="font-semibold text-white">
@@ -2103,33 +2222,81 @@ export default function TrendingTrackerPage() {
       <ConfigModal />
 
       {/* Unified Token Modal */}
-      {unifiedModalState.isOpen && (
-        <UnifiedTokenModal
-          isOpen={unifiedModalState.isOpen}
-          onClose={handleCloseModal}
-          modalType={unifiedModalState.modalType}
-          // Trading simulation props
-          tokenAddress={unifiedModalState.tokenData?.mint}
-          tokenSymbol={unifiedModalState.tokenData?.symbol}
-          tokenName={unifiedModalState.tokenData?.name}
-          logoUrl={unifiedModalState.tokenData?.logoUrl}
-          isSimulated={tradingConfig.isSimulated}
-          keypairPath={tradingConfig.keypairPath}
-          onTradeTriggered={handleTradeTriggered}
-          // Transaction result props
-          operation={unifiedModalState.transactionData?.operation}
-          result={unifiedModalState.transactionData?.result}
-          solToUsd={(sol) => sol * 145}
-        />
-      )}
+      {unifiedModalState.isOpen &&
+        unifiedModalState.modalType !== "trading" && (
+          <UnifiedTokenModal
+            isOpen={unifiedModalState.isOpen}
+            onClose={handleCloseModal}
+            modalType={unifiedModalState.modalType}
+            // Trading simulation props
+            tokenAddress={unifiedModalState.tokenData?.mint}
+            tokenSymbol={unifiedModalState.tokenData?.symbol}
+            tokenName={unifiedModalState.tokenData?.name}
+            logoUrl={unifiedModalState.tokenData?.logoUrl}
+            isSimulated={tradingConfig.isSimulated}
+            keypairPath={tradingConfig.keypairPath}
+            onTradeTriggered={handleTradeTriggered}
+            // Transaction result props
+            operation={unifiedModalState.transactionData?.operation}
+            result={unifiedModalState.transactionData?.result}
+            solToUsd={(sol) => sol * 145}
+          />
+        )}
 
-      {/* Chart Buy Modal */}
-      {chartModalTokenAddress && (
-        <ChartBuyModal
-          tokenAddress={chartModalTokenAddress}
-          onClose={() => setChartModalTokenAddress(null)}
-        />
-      )}
+      {/* Chart Buy Modal with Navigation */}
+      {unifiedModalState.isOpen &&
+        unifiedModalState.modalType === "trading" && (
+          <ChartBuyModal
+            tokenAddress={unifiedModalState.tokenData?.mint || null}
+            onClose={handleCloseModal}
+            initialBuyAmount="0.01"
+            // Navigation logic
+            onNavigate={(direction) => {
+              const allTokens = unifiedModalState.allTokens || [];
+              if (!allTokens.length) return;
+
+              const currentMint = unifiedModalState.tokenData?.mint;
+              const currentIndex = allTokens.findIndex(
+                (t: any) => t.token_address === currentMint,
+              );
+
+              if (currentIndex === -1) return;
+
+              let nextIndex = currentIndex;
+              if (direction === "next") {
+                nextIndex = currentIndex + 1;
+              } else {
+                nextIndex = currentIndex - 1;
+              }
+
+              if (nextIndex >= 0 && nextIndex < allTokens.length) {
+                const nextToken = allTokens[nextIndex];
+                setUnifiedModalState({
+                  ...unifiedModalState,
+                  tokenData: {
+                    mint: nextToken.token_address,
+                    symbol: nextToken.token_symbol,
+                    name: nextToken.token_name,
+                    logoUrl: nextToken.logo_url,
+                  },
+                });
+              }
+            }}
+            hasPrev={
+              (unifiedModalState.allTokens?.findIndex(
+                (t: any) =>
+                  t.token_address === unifiedModalState.tokenData?.mint,
+              ) ?? -1) > 0
+            }
+            hasNext={
+              (unifiedModalState.allTokens?.findIndex(
+                (t: any) =>
+                  t.token_address === unifiedModalState.tokenData?.mint,
+              ) ?? -1) <
+              (unifiedModalState.allTokens?.length ?? 0) - 1
+            }
+          />
+        )}
 
       {/* Unified Tracker Module removed to avoid duplication */}
     </div>

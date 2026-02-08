@@ -810,6 +810,7 @@ export default function McapTrackerPage() {
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(
     new Set(),
   );
+  const [stoppingTokens, setStoppingTokens] = useState<Set<string>>(new Set());
   // const [isPnlTimeWindowsExpanded, setIsPnlTimeWindowsExpanded] = useState(true)
   const [activeMcapFilter, setActiveMcapFilter] = useState<string | null>(null);
   // Desired display GMT offset (GMT+X), integer hours from -12 to +14
@@ -1394,6 +1395,70 @@ export default function McapTrackerPage() {
         const newSet = new Set(prev);
         newSet.delete(tokenAddress);
         return newSet;
+      });
+    }
+  };
+
+  const stopTrackingToken = async (
+    tokenAddress: string,
+    tokenSymbol: string,
+  ) => {
+    if (stoppingTokens.has(tokenAddress)) return;
+
+    const token = tokens.find((t) => t.token_address === tokenAddress);
+    console.log("[mcap-tracker] stop tracking request", {
+      tokenAddress,
+      tokenSymbol,
+      currentMcap: token?.current_mcap,
+      growthPercent: token?.mcap_growth_percent,
+    });
+
+    setStoppingTokens((prev) => new Set(prev).add(tokenAddress));
+
+    try {
+      const stopResponse = await fetch(`/api/mcap-tracking?action=stop`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ addresses: [tokenAddress], reason: "rug" }),
+      });
+
+      const stopResult = await stopResponse.json();
+
+      if (!stopResponse.ok || stopResult.success === false) {
+        console.error("Failed to stop tracking:", stopResult.error);
+        return;
+      }
+
+      const labelResponse = await fetch("/api/mcap-tracking/label", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tokenAddress, label: "rugged" }),
+      });
+
+      const labelResult = await labelResponse.json();
+
+      if (!labelResponse.ok || labelResult.success === false) {
+        console.error("Failed to mark token as loss:", labelResult.error);
+      }
+
+      setTokens((prevTokens) =>
+        prevTokens.map((t) =>
+          t.token_address === tokenAddress
+            ? {
+                ...t,
+                is_finished: true,
+                finished_at: new Date().toISOString(),
+              }
+            : t,
+        ),
+      );
+    } catch (error) {
+      console.error("Error stopping tracking:", error);
+    } finally {
+      setStoppingTokens((prev) => {
+        const next = new Set(prev);
+        next.delete(tokenAddress);
+        return next;
       });
     }
   };
@@ -3373,6 +3438,34 @@ export default function McapTrackerPage() {
                       title="Open Chart & Buy"
                     >
                       Buy
+                    </button>
+                    <button
+                      onClick={() =>
+                        stopTrackingToken(
+                          token.token_address,
+                          token.token_symbol,
+                        )
+                      }
+                      disabled={
+                        stoppingTokens.has(token.token_address) ||
+                        token.is_finished
+                      }
+                      className={`px-2 py-1 text-white text-xs rounded transition-colors ${
+                        token.is_finished
+                          ? "bg-gray-600 cursor-not-allowed"
+                          : stoppingTokens.has(token.token_address)
+                            ? "bg-yellow-600 hover:bg-yellow-700"
+                            : "bg-red-600 hover:bg-red-700"
+                      }`}
+                      title={
+                        token.is_finished
+                          ? "Tracking finished"
+                          : stoppingTokens.has(token.token_address)
+                            ? "Stopping tracking..."
+                            : "Stop tracking and mark loss"
+                      }
+                    >
+                      {stoppingTokens.has(token.token_address) ? "⏳" : "⛔"}
                     </button>
                   </div>
                   <p className="text-sm text-gray-400 font-mono truncate">
