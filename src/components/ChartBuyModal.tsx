@@ -389,7 +389,6 @@ export default function ChartBuyModal({
           timestamp: b.timestamp,
         }));
         setOhlcBars(bars);
-        if (bars.length > 0) setChartMode("ohlc");
       })
       .catch((err) => {
         setOhlcError(
