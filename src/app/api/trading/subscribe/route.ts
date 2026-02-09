@@ -18,8 +18,9 @@ setInterval(() => {
   const toDelete: string[] = []
 
   for (const [id, conn] of Array.from(activeConnections.entries())) {
-    // ✅ NEW: More aggressive cleanup - 2 minutes instead of 5
-    if (now - conn.createdAt > 2 * 60 * 1000 || !conn.isActive) {
+    // ✅ NEW: More aggressive cleanup - 24 hours instead of 2 minutes
+    // SSE connections should be long-lived
+    if (now - conn.createdAt > 24 * 60 * 60 * 1000 || !conn.isActive) {
       console.log(`🧹 Cleaning up connection: ${id} (age: ${Math.round((now - conn.createdAt) / 1000)}s, active: ${conn.isActive})`)
       cleanupConnection(id)
       toDelete.push(id)
@@ -153,7 +154,17 @@ export async function GET(request: NextRequest) {
         walletAddress,
         createdAt: Date.now(),
         connectionId,
-        isActive: true
+        isActive: true,
+        // Add keep-alive interval
+        keepAliveInterval: setInterval(() => {
+          const keepAliveMsg = `: keepalive\n\n`; // Comment to keep connection open
+          // Also send an explicit event for client-side monitoring
+          const eventMsg = `event: keepalive\ndata: {"timestamp": "${new Date().toISOString()}"}\n\n`;
+
+          if (!safeEnqueue(connectionId, new TextEncoder().encode(keepAliveMsg + eventMsg))) {
+            console.log(`❌ Failed to send keepalive to ${connectionId}`);
+          }
+        }, 15000) // Send every 15 seconds
       }
 
       // Store connection
@@ -208,7 +219,7 @@ export async function GET(request: NextRequest) {
           allowedOrigin = origin
         }
       }
-    } catch {}
+    } catch { }
   }
 
   return new Response(stream, {
@@ -287,7 +298,7 @@ export async function POST(request: NextRequest) {
             allowedOrigin = origin
           }
         }
-      } catch {}
+      } catch { }
     }
 
     return NextResponse.json(

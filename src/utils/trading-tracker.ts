@@ -80,7 +80,7 @@ class TradingTracker {
   private sseConnection: EventSource | null = null
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
-  private readonly API_HOST = process.env.API_HOST;
+  private readonly API_HOST = typeof process !== 'undefined' ? process.env.API_HOST : undefined;
 
   // ✅ NEW: Connection state management
   private connectionState: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = 'disconnected'
@@ -231,8 +231,11 @@ class TradingTracker {
 
   // Delete record via API
   private async deleteViaAPI(id: string, walletAddress: string): Promise<void> {
-    // Use absolute URL for server-side compatibility
-    const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+    // Use relative URL for client-side, absolute for server-side
+    const baseUrl = typeof window !== 'undefined'
+      ? ''
+      : ((typeof process !== 'undefined' ? (process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST) : undefined) || 'http://localhost:3000');
+
     const response = await fetch(`${baseUrl}/api/trading/records?id=${id}&wallet=${walletAddress}`, {
       method: 'DELETE',
     });
@@ -267,8 +270,11 @@ class TradingTracker {
 
   // Save record via API
   private async saveViaAPI(record: TrackingRecord): Promise<void> {
-    // Use absolute URL for server-side compatibility
-    const baseUrl = 'https://v2.reloadsol.xyz'
+    // Use relative URL for client-side, absolute for server-side
+    const baseUrl = typeof window !== 'undefined'
+      ? ''
+      : ((typeof process !== 'undefined' ? (process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST) : undefined) || 'http://localhost:3000');
+
     const response = await fetch(`${baseUrl}/api/trading/records`, {
       method: 'POST',
       headers: {
@@ -404,7 +410,12 @@ class TradingTracker {
 
       // Fetch from API (client-side only)
       console.log('🌐 Making client-side fetch for wallet records');
-      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+
+      // Use relative URL for client-side, absolute for server-side
+      const baseUrl = typeof window !== 'undefined'
+        ? ''
+        : ((typeof process !== 'undefined' ? (process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST) : undefined) || 'http://localhost:3000');
+
       const apiUrl = `${baseUrl}/api/trading/records?wallet=${encodeURIComponent(walletAddress)}&limit=500`
       const response = await fetch(apiUrl)
 
@@ -465,7 +476,11 @@ class TradingTracker {
         return []
       }
 
-      const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+      // Use relative URL for client-side, absolute for server-side
+      const baseUrl = typeof window !== 'undefined'
+        ? ''
+        : ((typeof process !== 'undefined' ? (process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST) : undefined) || 'http://localhost:3000');
+
       const apiUrl = `${baseUrl}/api/trading/records/all?limit=1000`
 
       const response = await fetch(apiUrl)
@@ -503,7 +518,11 @@ class TradingTracker {
    */
   private async checkNetworkConnectivity(): Promise<boolean> {
     try {
-      const response = await fetch(`${this.API_HOST || ''}/api/health`, {
+      const baseUrl = typeof window !== 'undefined'
+        ? ''
+        : (this.API_HOST || '');
+
+      const response = await fetch(`${baseUrl}/api/health`, {
         method: 'HEAD',
         cache: 'no-cache'
       })
@@ -565,12 +584,9 @@ class TradingTracker {
       this.connectionState = 'connecting'
       this.currentWallet = walletAddress
 
-      // Use window.location.origin for client-side connections to ensure we connect to the same domain
-      const baseUrl = typeof window !== 'undefined'
-        ? window.location.origin
-        : (process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000')
-
-      const sseUrl = `${baseUrl}/api/trading/subscribe?wallet=${walletAddress}`
+      // Use relative URL for client-side connections to ensure we connect to the same domain
+      // and avoid CORS issues
+      const sseUrl = `/api/trading/subscribe?wallet=${walletAddress}`
 
       console.log(`🔄 [${connectionAttemptId}] Connecting to: ${sseUrl}`)
 

@@ -1295,8 +1295,33 @@ export default function TrendingTrackerPage() {
                                   tracked
                                 </p>
                                 <p className="text-xs text-blue-400">
-                                  Click to view trades
-                                </p>
+                                Click to view trades
+                              </p>
+                              <div className="text-[10px] text-gray-500 mt-1">
+                                <div>
+                                  Bought:{" "}
+                                  {formatRelativeTime(token.tracking_started_at)}
+                                </div>
+                                {token.status !== "tracking" &&
+                                  token.status_changed_at && (
+                                    <div>
+                                      Sold:{" "}
+                                      {formatRelativeTime(
+                                        token.status_changed_at,
+                                      )}
+                                    </div>
+                                  )}
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setChartModalTokenAddress(token.token_address);
+                                }}
+                                className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded transition-colors flex items-center justify-center gap-1 ml-auto"
+                                title="Open Chart & Buy"
+                              >
+                                <span>🛒</span> Buy
+                              </button>
                               </div>
                             </div>
                           );
