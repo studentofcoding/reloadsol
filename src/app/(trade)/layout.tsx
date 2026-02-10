@@ -46,15 +46,7 @@ export default function TradeLayout({
           onTabSelect={setActiveOverlayTab}
         />
 
-        <div className="max-w-4xl mx-auto min-h-[300px] mt-4">
-          {activeOverlayTab === "history" ? (
-            <TradingHistory />
-          ) : activeOverlayTab === "pnl" ? (
-            <PnLTracker />
-          ) : (
-            children
-          )}
-        </div>
+        <div className="max-w-8xl mx-auto min-h-[300px] mt-4">{children}</div>
       </div>
 
       <Footer />

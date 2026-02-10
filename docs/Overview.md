@@ -21,7 +21,7 @@
 ### Swap Interface (`/swap`)
 
 - **Functionality**: A dedicated interface for single-token swaps.
-- **Key Component**: [SwapPageClient.tsx](<src/app/(trade)/swap/SwapPageClient.tsx>)
+- **Key Component**: [SwapPageClient.tsx](src/app/(trade)/swap/SwapPageClient.tsx)
 
 ## 2. Tracking & Analytics
 
@@ -36,14 +36,14 @@
 
 - **Functionality**: Monitors token growth milestones (e.g., reaching 80%, 120%, 200% of initial MCap).
 - **Analytics**: Includes anomaly detection and momentum scoring.
-- **Key Component**: [page.tsx](src/app/dev/mcap-tracker/page.tsx)
+- **Key Component**: [page.tsx](src/app/(trade)/dev/mcap-tracker/page.tsx)
 
 ### Trending Tracker (`/dev/trending-tracker`)
 
 - **Functionality**: Tracks "trending" tokens and classifies them as **Won** (hit targets), **Lost**, or **Tracking**.
 - **Metrics**: Calculates win rates and performance statistics.
 - **User Experience**: Integrated [ChartBuyModal.tsx](src/components/ChartBuyModal.tsx) with keyboard navigation (Up/Down arrows) for rapid token switching.
-- **Key Component**: [page.tsx](src/app/dev/trending-tracker/page.tsx)
+- **Key Component**: [page.tsx](src/app/(trade)/dev/trending-tracker/page.tsx)
 
 ### Trading Signals (`/dev/signals`)
 
@@ -72,4 +72,4 @@
   - Intelligent error handling for transient states (preventing "clashing" connections).
   - Exponential backoff for reliability.
 - **Data Providers**: Uses **Jupiter API** for swaps/pricing and **Supabase** (via API routes) for storing tracking data.
-- **Dev Tools**: A suite of developer tools under `src/app/dev/` for internal monitoring and testing.
+- **Dev Tools**: A suite of developer tools under `src/app/(trade)/dev/` for internal monitoring and testing.
