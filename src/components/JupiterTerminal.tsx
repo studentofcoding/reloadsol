@@ -180,29 +180,53 @@ export default function JupiterTerminal({
 
   // Initialize Jupiter Terminal
   useEffect(() => {
-    if (typeof window !== "undefined" && window.Jupiter && window.Jupiter.init) {
-      console.log('Initializing Jupiter Terminal with swap tracking:', {
-        initialInputMint,
-        initialOutputMint,
-        displayMode: "integrated"
-      })
-      
-      window.Jupiter.init({
-        displayMode: "integrated",
-        integratedTargetId: "jupiter-terminal-swap",
-        containerClassName: "rounded-2xl p-6 w-full max-w-2xl mx-auto",
-        containerStyles: {
-          height: "500px",
-          paddingTop: "50px"
-        },
-        enableWalletPassthrough: true,
-        initialInputMint,
-        initialOutputMint,
-        // Add swap tracking callbacks
-        onSuccess: handleSwapSuccess,
-        onSwapError: handleSwapError,
-      })
+    let intervalId: NodeJS.Timeout;
+    
+    const initJupiter = () => {
+      if (typeof window !== "undefined" && window.Jupiter && window.Jupiter.init) {
+        console.log('Initializing Jupiter Terminal with swap tracking:', {
+          initialInputMint,
+          initialOutputMint,
+          displayMode: "integrated"
+        })
+        
+        try {
+          window.Jupiter.init({
+            displayMode: "integrated",
+            integratedTargetId: "jupiter-terminal-swap",
+            containerClassName: "rounded-2xl p-6 w-full max-w-2xl mx-auto",
+            containerStyles: {
+              height: "500px",
+              paddingTop: "50px"
+            },
+            enableWalletPassthrough: true,
+            initialInputMint,
+            initialOutputMint,
+            // Add swap tracking callbacks
+            onSuccess: handleSwapSuccess,
+            onSwapError: handleSwapError,
+          })
+          return true;
+        } catch (error) {
+          console.error("Failed to initialize Jupiter Terminal:", error);
+          return false;
+        }
+      }
+      return false;
+    };
+
+    if (!initJupiter()) {
+      // Poll for Jupiter script to load
+      intervalId = setInterval(() => {
+        if (initJupiter()) {
+          clearInterval(intervalId);
+        }
+      }, 500);
     }
+
+    return () => {
+      if (intervalId) clearInterval(intervalId);
+    };
   }, [initialInputMint, initialOutputMint, handleSwapSuccess, handleSwapError])
 
   // Sync wallet state with Jupiter Terminal

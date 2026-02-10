@@ -42,6 +42,9 @@ interface TradingDataContextType {
 
   // Real-time subscription status
   isSubscribed: boolean;
+
+  // Market Data
+  solPrice: number;
 }
 
 const TradingDataContext = createContext<TradingDataContextType | null>(null);
@@ -59,7 +62,33 @@ export function useTradingData() {
 const QUERY_KEYS = {
   tradingRecords: (walletAddress: string) => ["trading-records", walletAddress],
   walletTokens: (walletAddress: string) => ["wallet-tokens", walletAddress],
+  solPrice: ["sol-price"],
 } as const;
+
+// SOL Price hook
+export function useSolPrice() {
+  return useQuery({
+    queryKey: QUERY_KEYS.solPrice,
+    queryFn: async () => {
+      try {
+        // Try to fetch from API
+        if (typeof window !== "undefined") {
+          const response = await fetch("/api/sol-price");
+          if (response.ok) {
+            const data = await response.json();
+            return data.price || 0;
+          }
+        }
+        return 0;
+      } catch (error) {
+        console.warn("Failed to fetch SOL price:", error);
+        return 0;
+      }
+    },
+    staleTime: 1000 * 60, // 1 minute
+    refetchInterval: 1000 * 60 * 5, // 5 minutes
+  });
+}
 
 // Trading records hook
 export function useTradingRecords(walletAddress?: string) {
@@ -154,6 +183,9 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
   // Track operation mutation
   const trackOperationMutation = useTrackOperation();
 
+  // SOL Price
+  const { data: solPrice } = useSolPrice();
+
   // Track operation wrapper
   const trackOperation = useCallback(
     async (operation: Omit<TrackingRecord, "id" | "timestamp">) => {
@@ -214,6 +246,7 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
     trackOperation,
     deleteRecord,
     isSubscribed,
+    solPrice: solPrice || 0,
   };
 
   return (
