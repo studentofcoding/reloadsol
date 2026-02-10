@@ -1,7 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import { TrackingRecord } from "@/utils/trading-tracker";
+import {
+  TrackingRecord,
+  fetchTokenPricesForTracking,
+} from "@/utils/trading-tracker";
 import { useWallet, useConnection } from "./WalletProvider";
 import { useTradingData } from "./TradingDataProvider";
 import TokenSkeleton from "./TokenSkeleton";
@@ -972,8 +975,6 @@ export default function PnLTracker() {
 
         // Track operations for PnL and history
         try {
-          const { fetchTokenPricesForTracking } =
-            await import("@/utils/trading-tracker");
           const tokenMints = positionsToSell.map((pos) => pos.mintAddress);
           const tokenPrices = await fetchTokenPricesForTracking(tokenMints);
           const currentSolPrice = await getSolPriceUSD();

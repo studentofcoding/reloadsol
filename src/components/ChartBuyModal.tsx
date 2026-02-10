@@ -19,6 +19,7 @@ import {
 } from "@/utils/solana";
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
+import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { useTradingData } from "@/components/TradingDataProvider";
 import { Line } from "react-chartjs-2";
 import {

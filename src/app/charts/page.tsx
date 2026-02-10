@@ -15,6 +15,7 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { trackBuy } from "@/utils/operations-api";
 import { useTradingData } from "@/components/TradingDataProvider";
 import { getSolPriceUSD } from "@/utils/solana";
+import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { BulkBuyRequest } from "@/types";
 
 function parseAddresses(param: string | null): string[] {
@@ -157,8 +158,6 @@ function ChartsContent() {
             ).catch(console.error);
 
             // Track via centralized React Query system
-            const { fetchTokenPricesForTracking } =
-              await import("@/utils/trading-tracker");
             const [tokenPrices, currentSolPrice] = await Promise.all([
               fetchTokenPricesForTracking([tokenAddress]),
               getSolPriceUSD(),

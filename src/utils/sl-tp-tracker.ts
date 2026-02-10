@@ -1,10 +1,11 @@
 import { supabase } from '@/utils/supabase'
 import { log } from '@/utils/unified-logger'
-import { Connection, PublicKey, Keypair } from '@solana/web3.js'
+import { Connection, PublicKey, Keypair, VersionedTransaction } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 import { notifySlTpTrigger } from './trading-notifications'
 import { connection } from '@/utils/solana'
 import { fetchUserTokens } from '@/utils/jupiter'
+import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 
 export interface SLTPPosition {
     id: string
@@ -480,7 +481,6 @@ export async function addSLTPPosition(params: {
 // Function to get current token prices
 async function getCurrentTokenPrices(tokenAddresses: string[]): Promise<Map<string, number>> {
     try {
-        const { fetchTokenPricesForTracking } = await import('@/utils/trading-tracker')
         const prices = await fetchTokenPricesForTracking(tokenAddresses)
 
         const priceMap = new Map<string, number>()
@@ -745,8 +745,33 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
             1000000 // 0.001 SOL priority fee
         )
 
-        if (!swapResult) {
+        if (!swapResult || !swapResult.swapTransaction) {
             throw new Error('Swap failed: No swap result returned')
+        }
+
+        // Deserialize and sign the transaction
+        const swapTransactionBuf = Buffer.from(swapResult.swapTransaction, 'base64')
+        const transaction = VersionedTransaction.deserialize(swapTransactionBuf)
+
+        // Sign the transaction
+        transaction.sign([tradingKeypair])
+
+        // Send the transaction
+        const rawTransaction = transaction.serialize()
+        const signature = await tradingConnection.sendRawTransaction(rawTransaction, {
+            skipPreflight: true,
+            maxRetries: 2
+        })
+
+        // Wait for confirmation
+        const confirmation = await tradingConnection.confirmTransaction({
+            signature,
+            blockhash: transaction.message.recentBlockhash,
+            lastValidBlockHeight: await tradingConnection.getBlockHeight()
+        })
+
+        if (confirmation.value.err) {
+            throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`)
         }
 
         // Update position in database
@@ -790,7 +815,7 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
                 triggerResult.trigger_type,
                 triggerResult.gain_percentage,
                 triggerResult.sell_percentage,
-                (swapResult as any).signature || 'unknown'
+                signature
             )
         } catch (notifyError) {
             log.error('discord_notification', 'Failed to send notification', notifyError as Error)
@@ -799,7 +824,7 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
         log.info('sell_execution', 'Sell order executed successfully', {
             positionId: position.id,
             tokenSymbol: position.token_symbol,
-            signature: (swapResult as any).signature || 'unknown',
+            signature: signature,
             triggerType: triggerResult.trigger_type
         })
 
