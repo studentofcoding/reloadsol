@@ -35,11 +35,11 @@ export interface FilterOptions {
   minDuration: string;
   maxDuration: string;
   sortBy:
-    | "created_at"
-    | "peak_gain_percentage"
-    | "current_gain_percentage"
-    | "tracking_duration"
-    | "status_changed_at";
+  | "created_at"
+  | "peak_gain_percentage"
+  | "current_gain_percentage"
+  | "tracking_duration"
+  | "status_changed_at";
   sortOrder: "asc" | "desc";
 }
 

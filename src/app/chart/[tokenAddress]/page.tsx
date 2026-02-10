@@ -14,6 +14,10 @@ import {
   UserToken,
 } from "@/utils/jupiter";
 import {
+  tradingTracker,
+  fetchTokenPricesForTracking,
+} from "@/utils/trading-tracker";
+import {
   SLIPPAGE_OPTIONS,
   PRIORITY_FEE_OPTIONS,
   getSolPriceUSD,
@@ -155,42 +159,24 @@ export default function ChartPage() {
   // Setup SSE connection for real-time updates
   useEffect(() => {
     if (!connected || !publicKey) {
-      // Cleanup SSE connection when wallet disconnects
-      if (sseConnectionRef.current) {
-        sseConnectionRef.current.close();
-        sseConnectionRef.current = null;
-      }
       return;
     }
 
-    const setupSSEConnection = async () => {
-      try {
-        // Import trading tracker singleton instance
-        const { tradingTracker } = await import("@/utils/trading-tracker");
+    console.log("📡 Setting up SSE connection in ChartPage");
 
-        // Subscribe to wallet updates using the singleton instance
-        await tradingTracker.subscribeToWallet(
-          publicKey.toString(),
-          (records) => {
-            console.log("📡 Received SSE update for wallet positions");
-            // Refresh positions when we get trading updates
-            loadUserTokens(false);
-          },
-        );
-
-        console.log("📡 SSE connection established for position updates");
-      } catch (error) {
-        console.error("Failed to setup SSE connection:", error);
-      }
-    };
-
-    setupSSEConnection();
+    // Subscribe to wallet updates using the singleton instance
+    const unsubscribe = tradingTracker.subscribeToWallet(
+      publicKey.toString(),
+      (records) => {
+        console.log("📡 Received SSE update for wallet positions");
+        // Refresh positions when we get trading updates
+        loadUserTokens(false);
+      },
+    );
 
     return () => {
-      if (sseConnectionRef.current) {
-        sseConnectionRef.current.close();
-        sseConnectionRef.current = null;
-      }
+      console.log("🧹 Cleaning up SSE connection in ChartPage");
+      unsubscribe();
     };
   }, [connected, publicKey, loadUserTokens]);
 

@@ -16,10 +16,18 @@ const getServerRpcUrls = (): string[] => {
     .filter(url => url.length > 0)
 }
 
-// Client-side RPC configuration (placeholder - forces API proxy usage)
+// Client-side RPC configuration
 const getClientRpcUrls = (): string[] => {
-  // Client should use API proxy for all RPC requests
-  // Placeholder URL for WebSocket connections (they'll mostly fail gracefully)
+  // Try to get from env var first
+  const envRpcUrl = process.env.NEXT_PUBLIC_RPC_URL
+  if (envRpcUrl) {
+    return envRpcUrl
+      .split(',')
+      .map(url => url.trim())
+      .filter(url => url.length > 0)
+  }
+
+  // Fallback to hardcoded URL if env var is missing
   return ['https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d']
 }
 

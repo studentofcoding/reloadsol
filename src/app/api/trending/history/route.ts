@@ -127,7 +127,7 @@ export async function GET(request: NextRequest) {
             .from(TRACKER_TABLE)
             .select('*')
         dataQuery = applyFilters(dataQuery)
-        
+
         // Apply sorting and pagination to data query
         const ascending = sortOrder === 'asc'
         dataQuery = dataQuery.order(sortBy, { ascending })
