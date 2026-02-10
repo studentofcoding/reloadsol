@@ -1,6 +1,6 @@
 import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 
-interface AxiomTokenInfo {
+export interface AxiomTokenInfo {
   numHolders: number
   numBotUsers: number
   top10HoldersPercent: number
@@ -10,6 +10,15 @@ interface AxiomTokenInfo {
   snipersHoldPercent: number
   dexPaid: boolean
   totalPairFeesPaid: number
+}
+
+export interface RiskIndicators {
+  insiderRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  bundlerRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  sniperRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  concentrationRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  feeRisk: 'LOW' | 'MEDIUM' | 'HIGH'
+  overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
 }
 
 interface AxiomResponse {
@@ -202,14 +211,7 @@ export function calculateFeeToMarketCapRatio(feesPaid: number, marketCap: number
 }
 
 // Helper function to get risk indicators based on Axiom data
-export function getRiskIndicators(data: AxiomTokenInfo, marketCap?: number): {
-  insiderRisk: 'LOW' | 'MEDIUM' | 'HIGH'
-  bundlerRisk: 'LOW' | 'MEDIUM' | 'HIGH'
-  sniperRisk: 'LOW' | 'MEDIUM' | 'HIGH'
-  concentrationRisk: 'LOW' | 'MEDIUM' | 'HIGH'
-  feeRisk: 'LOW' | 'MEDIUM' | 'HIGH'
-  overallRisk: 'LOW' | 'MEDIUM' | 'HIGH'
-} {
+export function getRiskIndicators(data: AxiomTokenInfo, marketCap?: number): RiskIndicators {
   const indicators = {
     insiderRisk: (data.insidersHoldPercent > 10 ? 'HIGH' : data.insidersHoldPercent > 5 ? 'MEDIUM' : 'LOW') as 'LOW' | 'MEDIUM' | 'HIGH',
     bundlerRisk: (data.bundlersHoldPercent > 5 ? 'HIGH' : data.bundlersHoldPercent > 2 ? 'MEDIUM' : 'LOW') as 'LOW' | 'MEDIUM' | 'HIGH',

@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useTradingData } from "@/components/TradingDataProvider";
+import { tradingTracker } from "@/utils/trading-tracker";
 import { PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { formatNumber, formatCurrency } from "@/utils/formatters";
 import {
@@ -19,6 +20,8 @@ import {
   getRiskIndicators,
   formatRiskDisplay,
   calculateFeeToMarketCapRatio,
+  AxiomTokenInfo,
+  RiskIndicators,
 } from "@/utils/axiom";
 import { notifyTradingUpdate } from "@/utils/trading-notifications";
 
@@ -57,27 +60,6 @@ interface JupiterQuote {
   routePlan: any[];
 }
 
-interface AxiomTokenInfo {
-  numHolders: number;
-  numBotUsers: number;
-  top10HoldersPercent: number;
-  devHoldsPercent: number;
-  insidersHoldPercent: number;
-  bundlersHoldPercent: number;
-  snipersHoldPercent: number;
-  dexPaid: boolean;
-  totalPairFeesPaid: number;
-}
-
-interface RiskIndicators {
-  insiderRisk: "LOW" | "MEDIUM" | "HIGH";
-  bundlerRisk: "LOW" | "MEDIUM" | "HIGH";
-  sniperRisk: "LOW" | "MEDIUM" | "HIGH";
-  concentrationRisk: "LOW" | "MEDIUM" | "HIGH";
-  feeRisk: "LOW" | "MEDIUM" | "HIGH";
-  overallRisk: "LOW" | "MEDIUM" | "HIGH";
-}
-
 interface OwnedTokenInfo {
   balance: number;
   usdValue: number;
@@ -108,7 +90,7 @@ export default function CatchTheCoinClient() {
   const { connected, publicKey, signTransaction, signAllTransactions } =
     useWallet();
   const { connection } = useConnection();
-  const { records } = useTradingData();
+  const { records, solPrice: currentSolPrice } = useTradingData();
   const [tokens, setTokens] = useState<TrendingToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -563,6 +545,73 @@ export default function CatchTheCoinClient() {
         newSet.delete(token.token_address);
         return newSet;
       });
+    }
+  };
+
+  const handleSimulateBuyToken = async (token: TrendingToken) => {
+    if (!connected || !publicKey) {
+      alert("Please connect your wallet first");
+      return;
+    }
+
+    const quote = quotes.get(token.token_address);
+    if (!quote) {
+      alert("No quote available for this token");
+      return;
+    }
+
+    try {
+      // Calculate amounts
+      const solAmount = buyAmount;
+      // Use raw output amount from quote and normalize it (assuming decimals from quote or default 6 for SOL/SPL)
+      // Note: Jupiter quote outAmount is raw integer.
+      // We don't have decimals in token info here easily without checking cache or extra call.
+      // But for simulation record, we can store approximate or wait for better data.
+      // Ideally we should know the decimals. TrendingToken doesn't have it?
+      // TOKENS list might have it if it's a known token.
+
+      const estimatedTokenAmount = parseInt(quote.outAmount) / Math.pow(10, 6); // Approximation if unknown
+
+      await tradingTracker.trackOperation({
+        walletAddress: publicKey.toString(),
+        operationType: "buy",
+        is_simulation: true,
+        simulation_type: "manual",
+        tokens: [
+          {
+            mintAddress: token.token_address,
+            symbol: token.token_symbol,
+            name: token.token_symbol,
+            logoURI: token.logo_url,
+            tokenAmount: estimatedTokenAmount,
+            solAmount: solAmount,
+            solPrice: currentSolPrice,
+            priceUsd: currentSolPrice
+              ? (solAmount * currentSolPrice) / estimatedTokenAmount
+              : 0,
+          },
+        ],
+        successCount: 1,
+        failureCount: 0,
+        totalTokens: 1,
+        solAmount: solAmount,
+        feesPaid: 0,
+        solPriceUsd: currentSolPrice,
+        totalUsdValue: currentSolPrice ? solAmount * currentSolPrice : 0,
+        signatures: [
+          "simulation-" +
+            Date.now() +
+            "-" +
+            Math.random().toString(36).substring(7),
+        ],
+        slippage: 0,
+        priorityFee: 0,
+      });
+
+      alert(`Simulation saved! Checked ${token.token_symbol}`);
+    } catch (err) {
+      console.error("Error simulating buy:", err);
+      alert("Failed to save simulation");
     }
   };
 
@@ -1330,25 +1379,35 @@ export default function CatchTheCoinClient() {
                   {/* Action Buttons */}
                   <div className="space-y-2">
                     {/* Chart Hover Button */}
-                    <div 
+                    <div
                       className="relative w-full z-20"
-                      onMouseEnter={() => setHoveredChartToken(token.token_address)}
+                      onMouseEnter={() =>
+                        setHoveredChartToken(token.token_address)
+                      }
                       onMouseLeave={() => setHoveredChartToken(null)}
                     >
-                      <button
-                        className="w-full py-2 px-4 rounded-lg font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600 transition-all duration-200 flex items-center justify-center gap-2 border border-gray-600"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                      <button className="w-full py-2 px-4 rounded-lg font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600 transition-all duration-200 flex items-center justify-center gap-2 border border-gray-600">
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
+                          />
                         </svg>
                         <span>Hover for Chart</span>
                       </button>
 
                       {/* Floating Chart Popup */}
                       {hoveredChartToken === token.token_address && (
-                        <div 
-                          className="absolute bottom-full left-0 right-0 mb-2 bg-gray-900 rounded-lg shadow-2xl border border-gray-600 overflow-hidden z-50" 
-                          style={{ height: '250px' }}
+                        <div
+                          className="absolute bottom-full left-0 right-0 mb-2 bg-gray-900 rounded-lg shadow-2xl border border-gray-600 overflow-hidden z-50"
+                          style={{ height: "250px" }}
                         >
                           <div className="absolute inset-0 bg-gray-800 flex items-center justify-center -z-10">
                             <div className="w-6 h-6 border-2 border-gray-500 border-t-white rounded-full animate-spin"></div>
@@ -1365,50 +1424,81 @@ export default function CatchTheCoinClient() {
 
                     {/* Buy Button */}
                     {!isOwned && (
-                      <button
-                        onClick={() => handleBuyToken(token)}
-                        disabled={
-                          isBuying ||
-                          !quotes.has(token.token_address) ||
-                          loadingQuotes.has(token.token_address) ||
-                          hoveredToken !== token.token_address
-                        }
-                        className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
-                          isBuying
-                            ? "bg-gray-600 text-gray-400 cursor-not-allowed"
-                            : quotes.has(token.token_address) &&
-                                hoveredToken === token.token_address
-                              ? isNewToken
-                                ? "bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-700 hover:to-blue-700 hover:scale-105"
-                                : "bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 hover:scale-105"
-                              : loadingQuotes.has(token.token_address) &&
+                      <>
+                        <button
+                          onClick={() => handleBuyToken(token)}
+                          disabled={
+                            isBuying ||
+                            !quotes.has(token.token_address) ||
+                            loadingQuotes.has(token.token_address) ||
+                            hoveredToken !== token.token_address
+                          }
+                          className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
+                            isBuying
+                              ? "bg-gray-600 text-gray-400 cursor-not-allowed"
+                              : quotes.has(token.token_address) &&
                                   hoveredToken === token.token_address
-                                ? "bg-gray-700 text-gray-300 cursor-wait"
-                                : "bg-gray-600 text-gray-400 cursor-not-allowed"
-                        }`}
-                      >
-                        {isBuying ? (
-                          <div className="flex items-center justify-center space-x-2">
-                            <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                            <span>Buying...</span>
-                          </div>
-                        ) : loadingQuotes.has(token.token_address) &&
-                          hoveredToken === token.token_address ? (
-                          <div className="flex items-center justify-center space-x-2">
-                            <div className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin"></div>
-                            <span>Getting Quote...</span>
-                          </div>
-                        ) : quotes.has(token.token_address) &&
-                          hoveredToken === token.token_address ? (
-                          isNewToken ? (
-                            `🚀 Catch NEW ${token.token_symbol} (${buyAmount} SOL)`
+                                ? isNewToken
+                                  ? "bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-700 hover:to-blue-700 hover:scale-105"
+                                  : "bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 hover:scale-105"
+                                : loadingQuotes.has(token.token_address) &&
+                                    hoveredToken === token.token_address
+                                  ? "bg-gray-700 text-gray-300 cursor-wait"
+                                  : "bg-gray-600 text-gray-400 cursor-not-allowed"
+                          }`}
+                        >
+                          {isBuying ? (
+                            <div className="flex items-center justify-center space-x-2">
+                              <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                              <span>Buying...</span>
+                            </div>
+                          ) : loadingQuotes.has(token.token_address) &&
+                            hoveredToken === token.token_address ? (
+                            <div className="flex items-center justify-center space-x-2">
+                              <div className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin"></div>
+                              <span>Getting Quote...</span>
+                            </div>
+                          ) : quotes.has(token.token_address) &&
+                            hoveredToken === token.token_address ? (
+                            isNewToken ? (
+                              `🚀 Catch NEW ${token.token_symbol} (${buyAmount} SOL)`
+                            ) : (
+                              `🎯 Catch ${token.token_symbol} (${buyAmount} SOL)`
+                            )
                           ) : (
-                            `🎯 Catch ${token.token_symbol} (${buyAmount} SOL)`
-                          )
-                        ) : (
-                          "Hover to Quote"
-                        )}
-                      </button>
+                            "Hover to Quote"
+                          )}
+                        </button>
+
+                        {/* Simulate Button */}
+                        <button
+                          onClick={() => handleSimulateBuyToken(token)}
+                          disabled={
+                            !quotes.has(token.token_address) ||
+                            loadingQuotes.has(token.token_address)
+                          }
+                          className={`w-full py-2 px-4 rounded-lg font-semibold text-sm border border-gray-600 hover:bg-gray-700 text-gray-300 transition-all duration-200 flex items-center justify-center gap-2 ${
+                            !quotes.has(token.token_address)
+                              ? "opacity-50 cursor-not-allowed"
+                              : ""
+                          }`}
+                        >
+                          <svg
+                            className="w-4 h-4"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                            />
+                          </svg>
+                          <span>Simulate Buy</span>
+                        </button>
+                      </>
                     )}
 
                     {/* Sell Button */}

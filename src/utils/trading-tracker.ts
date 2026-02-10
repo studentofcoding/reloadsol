@@ -46,6 +46,8 @@ export interface TrackingRecord {
   status?: 'waiting' | 'tracking' | 'won' | 'lost' | 'skipped'
   is_bot_operation?: boolean // Whether this was a bot operation
   bot_strategy?: string // Bot strategy used
+  is_simulation?: boolean // Whether this is a simulation
+  simulation_type?: 'manual' | 'strategy' // Type of simulation
   trade_comparison_data?: any // Trade comparison result
   trading_simulation?: any // Trading simulation data
   price_history?: Array<{ timestamp: string; price_usd: number; volume?: number }>

@@ -299,6 +299,22 @@ export default function TradingHistory() {
     );
   };
 
+  // Simulation indicator
+  const SimulationIndicator = ({ record }: { record: TrackingRecord }) => {
+    if (!record.is_simulation) return null;
+
+    return (
+      <div className="flex items-center space-x-1">
+        <span
+          className="text-xs bg-blue-600/20 text-blue-400 px-1.5 py-0.5 rounded-full font-medium border border-blue-500/30"
+          title={`Simulation Type: ${record.simulation_type || "manual"}`}
+        >
+          SIM
+        </span>
+      </div>
+    );
+  };
+
   // Enhanced status indicator
   const StatusIndicator = ({ record }: { record: TrackingRecord }) => {
     if (!record.status || record.status === "tracking") return null;
@@ -408,26 +424,40 @@ export default function TradingHistory() {
             <div
               key={record.id}
               className={`relative flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[100px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${
-                record.is_bot_operation 
-                  ? 'border-purple-500/30 bg-purple-900/10' 
-                  : 'border-gray-600/30'
+                record.is_bot_operation
+                  ? "border-purple-500/30 bg-purple-900/10"
+                  : "border-gray-600/30"
               }`}
               onClick={() => openTransactionOnSolscan(record.signatures)}
               title="Click to view transaction on Solscan"
-            > 
+            >
               {/* Delete Button */}
               <button
                 onClick={(e) => {
-                  e.stopPropagation()
-                  if (window.confirm('Are you sure you want to remove this record?')) {
-                    deleteRecord(record.id)
+                  e.stopPropagation();
+                  if (
+                    window.confirm(
+                      "Are you sure you want to remove this record?",
+                    )
+                  ) {
+                    deleteRecord(record.id);
                   }
                 }}
                 className="absolute -top-2 -right-2 opacity-0 group-hover:opacity-100 p-1 bg-gray-800 text-gray-500 hover:text-red-400 border border-gray-600 hover:border-red-400/50 transition-all rounded-full shadow-lg z-10"
                 title="Remove record"
               >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  className="w-3 h-3"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
               </button>
 
@@ -436,6 +466,7 @@ export default function TradingHistory() {
                 <div className="flex items-center space-x-2">
                   {getOperationTypeDisplay(record)}
                   <BotOperationIndicator record={record} />
+                  <SimulationIndicator record={record} />
                   <StatusIndicator record={record} />
                 </div>
 
