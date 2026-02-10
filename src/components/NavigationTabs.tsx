@@ -17,9 +17,14 @@ export default function NavigationTabs({
   const pathname = usePathname();
   const { connected, publicKey } = useWallet();
   const [mounted, setMounted] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
     setMounted(true);
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
   const isActive = (path: string) => {
@@ -310,7 +315,9 @@ export default function NavigationTabs({
           </div>
 
           {/* Wallet Balance Display */}
-          <div className="h-full">{mounted && <WalletBalance />}</div>
+          <div className="h-full">
+            {mounted && !isMobile && <WalletBalance />}
+          </div>
         </div>
       </div>
 
@@ -318,7 +325,9 @@ export default function NavigationTabs({
       <div className="md:hidden max-w-4xl mx-auto mb-2 z-50 pt-2">
         <div className="flex items-center justify-between px-4 py-3 rounded-lg mb-4">
           {/* SOL Balance on Left */}
-          <div className="flex-1">{mounted && <WalletBalance />}</div>
+          <div className="flex-1">
+            {mounted && isMobile && <WalletBalance />}
+          </div>
 
           {/* History & P&L on Right */}
           <div className="flex items-center space-x-2">
