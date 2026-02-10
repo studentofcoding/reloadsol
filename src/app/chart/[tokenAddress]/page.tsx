@@ -25,7 +25,6 @@ import {
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
 import { useTradingData } from "@/components/TradingDataProvider";
-import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
 
 interface TokenInfo {
   symbol: string;
@@ -672,7 +671,6 @@ export default function ChartPage() {
       {/* Header */}
       <div className="bg-gray-800 border-b border-gray-700 p-4">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
-          <UnifiedTrackerModule />
           <div className="flex items-center space-x-4">
             <button
               onClick={handleBackToHome}

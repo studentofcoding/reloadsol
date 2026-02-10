@@ -877,7 +877,7 @@ export default function BulkTokenBuyer() {
 
   return (
     <div
-      className={`grid grid-cols-1 ${connected ? "lg:grid-cols-3" : "lg:grid-cols-1"} gap-8 max-w-4xl mx-auto`}
+      className={`grid grid-cols-1 ${connected ? "lg:grid-cols-3" : "lg:grid-cols-1"} gap-8 max-w-6xl mx-auto`}
     >
       {/* Trending Tokens Column */}
       {connected && (

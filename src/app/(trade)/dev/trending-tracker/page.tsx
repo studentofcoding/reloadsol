@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import UnifiedTokenModal from "@/components/UnifiedTokenModal";
-import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import { useTrendingStats } from "@/hooks/useTrendingStats";
 
@@ -776,9 +775,8 @@ export default function TrendingTrackerPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4 md:p-6">
+    <div className="min-h-screen text-white p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
-        <UnifiedTrackerModule />
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-bold">reloadSOL Algo tester</h1>
           <button

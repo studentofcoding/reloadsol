@@ -8,7 +8,6 @@ import React, {
   useCallback,
 } from "react";
 import { useSearchParams, usePathname, useRouter } from "next/navigation";
-import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { executeBulkBuy, isValidMintAddress } from "@/utils/jupiter";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -448,7 +447,6 @@ function ChartsContent() {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-7xl mx-auto">
-        <UnifiedTrackerModule />
         <div className="flex items-center justify-between mb-4">
           <div>
             <h1 className="text-2xl font-bold mb-2">Charts</h1>

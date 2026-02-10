@@ -1540,7 +1540,7 @@ export default function BulkTokenSeller() {
   };
 
   return (
-    <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 space-y-8">
+    <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 space-y-8 max-w-6xl mx-auto">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex justify-between items-center w-full">

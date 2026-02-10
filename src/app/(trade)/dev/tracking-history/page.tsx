@@ -15,7 +15,6 @@ import {
 import { Line } from "react-chartjs-2";
 import "chartjs-adapter-date-fns";
 import ChartBuyModal from "@/components/ChartBuyModal";
-import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
 import {
   useTrackingHistory,
   type FilterOptions,
@@ -243,9 +242,6 @@ export default function TrackingHistoryPage() {
       <main className="min-h-screen bg-black py-8">
         <div className="container mx-auto px-4">
           <div className="max-w-7xl mx-auto space-y-6">
-            <div className="relative z-50">
-              <UnifiedTrackerModule />
-            </div>
             <div className="text-center mb-8">
               <h1 className="text-5xl font-bold text-white mb-4">
                 📈 Token Tracking History
@@ -265,9 +261,6 @@ export default function TrackingHistoryPage() {
     <main className="min-h-screen bg-black py-8">
       <div className="container mx-auto px-4">
         <div className="max-w-7xl mx-auto space-y-6">
-          <div className="relative z-50">
-            <UnifiedTrackerModule />
-          </div>
           {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-5xl font-bold text-white mb-4">

@@ -28,26 +28,25 @@ export default function NavigationTabs({
   }, []);
 
   const isActive = (path: string) => {
-    if (activeOverlayTab) {
-      if (path === "/history") return activeOverlayTab === "history";
-      if (path === "/pnl") return activeOverlayTab === "pnl";
-      return false;
+    // Check if it's an overlay tab (no leading slash)
+    if (!path.startsWith("/")) {
+      return activeOverlayTab === path;
     }
-    return (pathname || "") === path;
+    // Check if it's a route tab
+    return (pathname || "").startsWith(path);
   };
   const showMainTabs = [
     "/buy",
     "/sell",
     "/swap",
-    "/history",
-    "/pnl",
+    "/cath-the-coin",
     "/dev/signals",
     "/dev/trending-tracker",
     "/dev/tracking-history",
     "/dev/mcap-tracker",
     "/dev/pools",
     "/dev/pools-test",
-  ].includes(pathname || "");
+  ].some((path) => (pathname || "").startsWith(path));
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") {
@@ -68,7 +67,9 @@ export default function NavigationTabs({
   return (
     <div className="w-full relative z-50">
       {/* Desktop Navigation */}
-      <div className="hidden md:block max-w-4xl mx-auto mb-2">
+      <div
+        className={`hidden md:block ${mounted && isDevWallet(publicKey) ? "max-w-8xl" : "max-w-4xl"} mx-auto mb-2`}
+      >
         <div className="flex items-center justify-between h-full mb-4">
           <div className="flex items-center space-x-2">
             {/* Main Trading Tabs */}
@@ -127,15 +128,41 @@ export default function NavigationTabs({
                 </Link>
 
                 {mounted && isDevWallet(publicKey) && (
-                  <Link
-                    href="/swap"
-                    className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
-                      isActive("/swap")
-                        ? "bg-white text-black"
-                        : "text-gray-400 hover:text-white hover:bg-gray-700"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-2">
+                  <>
+                    <Link
+                      href="/swap"
+                      className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
+                        isActive("/swap")
+                          ? "bg-white text-black"
+                          : "text-gray-400 hover:text-white hover:bg-gray-700"
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+                          />
+                        </svg>
+                        <span>Swap</span>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/dev/signals"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                        isActive("/dev/signals")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                      }`}
+                      title="Trading Signals"
+                    >
                       <svg
                         className="w-5 h-5"
                         fill="none"
@@ -146,12 +173,87 @@ export default function NavigationTabs({
                           strokeLinecap="round"
                           strokeLinejoin="round"
                           strokeWidth={2}
-                          d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
+                          d="M13 10V3L4 14h7v7l9-11h-7z"
                         />
                       </svg>
-                      <span>Swap</span>
-                    </div>
-                  </Link>
+                    </Link>
+                    <Link
+                      href="/dev/trending-tracker"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                        isActive("/dev/trending-tracker")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                      }`}
+                      title="Trending Tracker (Dev)"
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+                        />
+                      </svg>
+                    </Link>
+                    <Link
+                      href="/dev/tracking-history"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                        isActive("/dev/tracking-history")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                      }`}
+                      title="Tracking History (Dev)"
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
+                        />
+                      </svg>
+                    </Link>
+                    <Link
+                      href="/dev/mcap-tracker"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                        isActive("/dev/mcap-tracker")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                      }`}
+                      title="MCap Tracker (Dev)"
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+                        />
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M12 2v6m0 0v6m0-6h6m-6 0H6"
+                          opacity="0.5"
+                        />
+                      </svg>
+                    </Link>
+                  </>
                 )}
               </>
             )}
@@ -162,7 +264,7 @@ export default function NavigationTabs({
                 type="button"
                 onClick={() => handleTabClick("history")}
                 className={`px-4 py-3 rounded-lg font-medium transition-all duration-200 ${
-                  isActive("/history")
+                  isActive("history")
                     ? "bg-gray-700 text-white"
                     : "text-gray-400 hover:text-white hover:bg-gray-800"
                 }`}
@@ -187,7 +289,7 @@ export default function NavigationTabs({
                   type="button"
                   onClick={() => handleTabClick("pnl")}
                   className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                    isActive("/pnl")
+                    isActive("pnl")
                       ? "bg-gray-700 text-white"
                       : "text-gray-400 hover:text-white hover:bg-gray-800"
                   }`}
@@ -207,109 +309,6 @@ export default function NavigationTabs({
                     />
                   </svg>
                 </button>
-              )}
-              {mounted && isDevWallet(publicKey) && (
-                <>
-                  <Link
-                    href="/dev/signals"
-                    className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                      isActive("/dev/signals")
-                        ? "bg-gray-700 text-white"
-                        : "text-gray-400 hover:text-white hover:bg-gray-800"
-                    }`}
-                    title="Trading Signals"
-                  >
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M13 10V3L4 14h7v7l9-11h-7z"
-                      />
-                    </svg>
-                  </Link>
-                  <Link
-                    href="/dev/trending-tracker"
-                    className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                      isActive("/dev/trending-tracker")
-                        ? "bg-gray-700 text-white"
-                        : "text-gray-400 hover:text-white hover:bg-gray-800"
-                    }`}
-                    title="Trending Tracker (Dev)"
-                  >
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-                      />
-                    </svg>
-                  </Link>
-                  <Link
-                    href="/dev/tracking-history"
-                    className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                      isActive("/dev/tracking-history")
-                        ? "bg-gray-700 text-white"
-                        : "text-gray-400 hover:text-white hover:bg-gray-800"
-                    }`}
-                    title="Tracking History (Dev)"
-                  >
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
-                      />
-                    </svg>
-                  </Link>
-                  <Link
-                    href="/dev/mcap-tracker"
-                    className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                      isActive("/dev/mcap-tracker")
-                        ? "bg-gray-700 text-white"
-                        : "text-gray-400 hover:text-white hover:bg-gray-800"
-                    }`}
-                    title="MCap Tracker (Dev)"
-                  >
-                    <svg
-                      className="w-5 h-5"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M12 2v6m0 0v6m0-6h6m-6 0H6"
-                        opacity="0.5"
-                      />
-                    </svg>
-                  </Link>
-                </>
               )}
             </div>
           </div>
@@ -335,7 +334,7 @@ export default function NavigationTabs({
               type="button"
               onClick={() => handleTabClick("history")}
               className={`p-2 rounded-lg transition-all duration-200 ${
-                isActive("/history")
+                isActive("history")
                   ? "bg-gray-700 text-white"
                   : "text-gray-400 hover:text-white hover:bg-gray-800"
               }`}
@@ -360,7 +359,7 @@ export default function NavigationTabs({
                 type="button"
                 onClick={() => handleTabClick("pnl")}
                 className={`p-2 rounded-lg transition-all duration-200 ${
-                  isActive("/pnl")
+                  isActive("pnl")
                     ? "bg-gray-700 text-white"
                     : "text-gray-400 hover:text-white hover:bg-gray-800"
                 }`}

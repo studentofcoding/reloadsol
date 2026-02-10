@@ -7,7 +7,6 @@ import {
   EnrichedTokenData,
 } from "@/utils/data-aggregation";
 import ChartBuyModal from "@/components/ChartBuyModal";
-import UnifiedTrackerModule from "@/components/UnifiedTrackerModule";
 import {
   useMCapTracker,
   FilterOptions,
@@ -1334,7 +1333,7 @@ export default function McapTrackerPage() {
   }
 
   return (
-    <div className="min-h-screen max-w-7xl mx-auto bg-gray-900 text-white p-6">
+    <div className="min-h-screen max-w-7xl mx-auto text-white p-6">
       {/* Toasts (fixed, viewport-level) */}
       {activeToasts.length > 0 && (
         <div className="fixed top-4 right-4 z-50 space-y-2">
@@ -1473,9 +1472,6 @@ export default function McapTrackerPage() {
 
       {/* Header */}
       <div className="mb-8 mx-auto">
-        <div className="mt-8">
-          <UnifiedTrackerModule />
-        </div>
         <h1 className="text-3xl font-bold my-2">MCap Tracker</h1>
         <p className="text-gray-400">
           Monitor token market cap changes and growth patterns over time
