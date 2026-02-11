@@ -202,6 +202,7 @@ export default function TrendingTrackerPage() {
   const [selectedTokenForDetails, setSelectedTokenForDetails] = useState<
     any | null
   >(null);
+  const [detailsSourceList, setDetailsSourceList] = useState<any[]>([]);
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") {
@@ -432,13 +433,18 @@ export default function TrendingTrackerPage() {
   };
 
   // Handler for token clicks
-  const handleTokenClick = (token: TrackedToken) => {
+  const handleTokenClick = (token: TrackedToken, sourceList?: any[]) => {
     setSelectedTokenForDetails(token);
+    if (sourceList) setDetailsSourceList(sourceList);
   };
 
   // Handler for summary token clicks
-  const handleSummaryTokenClick = (summaryToken: TopWinner) => {
+  const handleSummaryTokenClick = (
+    summaryToken: TopWinner,
+    sourceList?: any[],
+  ) => {
     setSelectedTokenForDetails(summaryToken);
+    if (sourceList) setDetailsSourceList(sourceList);
   };
 
   // Auto-refresh handled by React Query
@@ -1230,7 +1236,9 @@ export default function TrendingTrackerPage() {
                         <div
                           key={token.id}
                           className="bg-gray-700 rounded-lg p-4 hover:bg-gray-600 transition-colors cursor-pointer"
-                          onClick={() => handleTokenClick(token)}
+                          onClick={() =>
+                            handleTokenClick(token, historyData.tokens)
+                          }
                         >
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex items-center space-x-3">
@@ -1431,7 +1439,7 @@ export default function TrendingTrackerPage() {
                           : (stats?.latest_summary?.top_winners || [])
                               .filter((w: any) => w.peak_gain_percentage > 0)
                               .slice(0, 5)
-                        ).map((token: any, index: number) => {
+                        ).map((token: any, index: number, arr: any[]) => {
                           const isWinner = token.peak_gain_percentage > 0;
                           const currentGain =
                             token.current_gain_percentage ??
@@ -1456,7 +1464,9 @@ export default function TrendingTrackerPage() {
                                       ? "bg-gray-700 border border-orange-600/20"
                                       : "bg-gray-700"
                               }`}
-                              onClick={() => handleSummaryTokenClick(token)}
+                              onClick={() =>
+                                handleSummaryTokenClick(token, arr)
+                              }
                             >
                               <div className="flex items-center space-x-3">
                                 <span className="text-yellow-400 font-bold">
@@ -2076,7 +2086,9 @@ export default function TrendingTrackerPage() {
                   <div
                     key={token.id}
                     className="p-4 bg-gray-800 rounded-xl border border-green-600/30 hover:border-green-500/50 transition-all duration-200 cursor-pointer"
-                    onClick={() => handleTokenClick(token)}
+                    onClick={() =>
+                      handleTokenClick(token, stats.recent_completed.winners)
+                    }
                   >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center space-x-3">
@@ -2173,7 +2185,9 @@ export default function TrendingTrackerPage() {
                   <div
                     key={token.id}
                     className="p-4 bg-gray-800 rounded-xl border border-red-600/30 hover:border-red-500/50 transition-all duration-200 cursor-pointer"
-                    onClick={() => handleTokenClick(token)}
+                    onClick={() =>
+                      handleTokenClick(token, stats.recent_completed.losers)
+                    }
                   >
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center space-x-3">
@@ -2344,6 +2358,51 @@ export default function TrendingTrackerPage() {
             handleOpenTradingModal(selectedTokenForDetails);
             setSelectedTokenForDetails(null);
           }}
+          onNavigate={(direction) => {
+            if (!detailsSourceList || detailsSourceList.length === 0) return;
+            const currentIndex = detailsSourceList.findIndex(
+              (t: any) =>
+                (t.id && t.id === selectedTokenForDetails.id) ||
+                (t.token_address &&
+                  t.token_address === selectedTokenForDetails.token_address),
+            );
+            if (currentIndex === -1) return;
+
+            let nextIndex = currentIndex;
+            if (direction === "up") {
+              nextIndex = currentIndex - 1;
+            } else {
+              nextIndex = currentIndex + 1;
+            }
+
+            if (nextIndex >= 0 && nextIndex < detailsSourceList.length) {
+              setSelectedTokenForDetails(detailsSourceList[nextIndex]);
+            }
+          }}
+          hasUp={(() => {
+            if (!detailsSourceList || detailsSourceList.length === 0)
+              return false;
+            const currentIndex = detailsSourceList.findIndex(
+              (t: any) =>
+                (t.id && t.id === selectedTokenForDetails.id) ||
+                (t.token_address &&
+                  t.token_address === selectedTokenForDetails.token_address),
+            );
+            return currentIndex > 0;
+          })()}
+          hasDown={(() => {
+            if (!detailsSourceList || detailsSourceList.length === 0)
+              return false;
+            const currentIndex = detailsSourceList.findIndex(
+              (t: any) =>
+                (t.id && t.id === selectedTokenForDetails.id) ||
+                (t.token_address &&
+                  t.token_address === selectedTokenForDetails.token_address),
+            );
+            return (
+              currentIndex !== -1 && currentIndex < detailsSourceList.length - 1
+            );
+          })()}
         />
       )}
     </div>

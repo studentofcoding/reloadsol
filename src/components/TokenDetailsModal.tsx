@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useEffect, useRef } from "react";
 import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -32,13 +32,46 @@ interface TokenDetailsModalProps {
   token: any;
   onClose: () => void;
   onBuy: () => void;
+  onNavigate?: (direction: "up" | "down") => void;
+  hasUp?: boolean;
+  hasDown?: boolean;
 }
 
 export default function TokenDetailsModal({
   token,
   onClose,
   onBuy,
+  onNavigate,
+  hasUp = false,
+  hasDown = false,
 }: TokenDetailsModalProps) {
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Reset scroll when token changes
+  useEffect(() => {
+    if (modalRef.current) {
+      modalRef.current.scrollTop = 0;
+    }
+  }, [token]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!onNavigate) return;
+
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (hasUp) onNavigate("up");
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (hasDown) onNavigate("down");
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onNavigate, hasUp, hasDown]);
+
   const chartData = useMemo(() => {
     let historyData = token.price_history;
 
@@ -189,7 +222,10 @@ export default function TokenDetailsModal({
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
-      <div className="bg-gray-900 rounded-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto border border-gray-700 shadow-2xl flex flex-col">
+      <div
+        ref={modalRef}
+        className="bg-gray-900 rounded-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto border border-gray-700 shadow-2xl flex flex-col"
+      >
         {/* Header */}
         <div className="bg-gray-800 p-4 sticky top-0 z-10 flex justify-between items-center border-b border-gray-700">
           <div className="flex items-center space-x-3">
@@ -213,12 +249,58 @@ export default function TokenDetailsModal({
               </div>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-white text-2xl px-2"
-          >
-            ×
-          </button>
+          <div className="flex items-center">
+            {onNavigate && (
+              <div className="flex items-center bg-gray-700 rounded-lg mr-4">
+                <button
+                  onClick={() => onNavigate("up")}
+                  disabled={!hasUp}
+                  className="p-2 hover:bg-gray-600 rounded-l-lg disabled:opacity-50 disabled:cursor-not-allowed border-r border-gray-600 transition-colors"
+                  title="Previous Token"
+                >
+                  <svg
+                    className="w-5 h-5 text-gray-300"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M5 15l7-7 7 7"
+                    />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => onNavigate("down")}
+                  disabled={!hasDown}
+                  className="p-2 hover:bg-gray-600 rounded-r-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  title="Next Token"
+                >
+                  <svg
+                    className="w-5 h-5 text-gray-300"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M19 9l-7 7-7-7"
+                    />
+                  </svg>
+                </button>
+              </div>
+            )}
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-white text-2xl px-2"
+            >
+              ×
+            </button>
+          </div>
         </div>
 
         <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
