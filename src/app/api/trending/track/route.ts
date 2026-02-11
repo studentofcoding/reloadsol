@@ -4747,7 +4747,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
          organic_score, market_cap, volume_1h,
          tracking_started_at, updated_at,
          trading_simulation, price_history,
-         waiting_started_at, waiting_initial_price`
+         waiting_started_at, waiting_initial_price, volume_5m, status_changed_at, created_at`
       )
       .in('status', ['tracking', 'waiting'])
 
@@ -5691,7 +5691,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
         }
 
         // Update price history (keep last 24 hours, max 288 records for 5-minute intervals)
-        const existingPriceHistory = existingToken.price_history || []
+        const existingPriceHistory: PriceRecord[] = existingToken.price_history || []
         const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000) // 24 hours ago
 
         // Filter old records and add new one
@@ -5756,6 +5756,210 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           if (shouldSell && sellOperation) {
             console.log(`🎯 Token sold via simulation (${currentGain.toFixed(2)}%): ${token.token_symbol}`)
           }
+        }
+      }
+    }
+
+    // ====================================================================================================
+    // PROCESS ORPHANED TOKENS (Tracked but not in current Jupiter trending list)
+    // ====================================================================================================
+
+    // Identify tokens that are being tracked but weren't in the Jupiter response
+    const processedTokenAddresses = new Set(filteredTokens.map(t => t.token_address))
+    const orphanedTokens = trackedTokens?.filter(t =>
+      t.status === 'tracking' && !processedTokenAddresses.has(t.token_address)
+    ) || []
+
+    if (orphanedTokens.length > 0) {
+      console.log(`🔍 Processing ${orphanedTokens.length} orphaned tracked tokens (not in current trending list)...`)
+
+      // Fetch current prices for these tokens
+      const tokenAddresses = orphanedTokens.map(t => t.token_address)
+
+      // Batch fetch prices to avoid URL length limits
+      const prices: Record<string, number> = {}
+      const BATCH_SIZE = 50
+
+      for (let i = 0; i < tokenAddresses.length; i += BATCH_SIZE) {
+        const batch = tokenAddresses.slice(i, i + BATCH_SIZE)
+        try {
+          const batchPrices = await fetchTokenPricesForTracking(batch)
+          Object.assign(prices, batchPrices)
+        } catch (err) {
+          console.error(`Error fetching prices for batch ${i}-${i + BATCH_SIZE}:`, err)
+        }
+      }
+
+      // Process each orphaned token
+      for (const existingToken of orphanedTokens) {
+        const currentPrice = prices[existingToken.token_address]
+
+        if (!currentPrice) {
+          // If price is missing, we can't update. Log warning and skip.
+          // console.warn(`⚠️ Could not fetch price for orphaned token: ${existingToken.token_symbol}`)
+          continue
+        }
+
+        // Reconstruct a token object similar to what we get from Jupiter, but using existing metadata
+        const token = {
+          token_address: existingToken.token_address,
+          token_symbol: existingToken.token_symbol || 'UNKNOWN',
+          token_name: existingToken.token_name || 'Unknown Token',
+          current_price: currentPrice,
+          volume_1h: existingToken.volume_1h || 0, // Fallback to existing volume or 0
+          market_cap: existingToken.market_cap || 0,
+          organic_score: existingToken.organic_score || 0,
+          volume_5m: existingToken.volume_5m || 0,
+          status_changed_at: existingToken.status_changed_at || existingToken.created_at,
+          created_at: existingToken.created_at
+        }
+
+        // Calculate gains
+        const currentGain = calculateGainPercentage(currentPrice, existingToken.initial_price_usd)
+        const newPeakPrice = Math.max(existingToken.peak_price_usd, currentPrice)
+        const peakGain = newPeakPrice > existingToken.peak_price_usd ?
+          calculateGainPercentage(newPeakPrice, existingToken.initial_price_usd) :
+          existingToken.peak_gain_percentage
+
+        // Check loss condition (same as main loop)
+        const isLost = currentGain <= -50
+
+        // Check if trading simulation should sell
+        let shouldSell = false
+        let sellOperation = null
+
+        if (existingToken.trading_simulation && existingToken.trading_simulation.current_status === 'holding') {
+          const sellDecision = shouldSellToken(existingToken, existingToken.trading_simulation)
+
+          if (sellDecision.shouldSell) {
+            console.log(`🚨 ORPHAN SELL DECISION: ${sellDecision.reason} for ${token.token_symbol}`)
+
+            // Perform sell simulation
+            const sellOp = await performSellOperation(
+              { ...token, current_price: currentPrice },
+              existingToken.trading_simulation,
+              sellDecision.sellPercentage
+            )
+
+            if (sellOp) {
+              sellOperation = sellOp
+              shouldSell = true
+
+              // Calculate final gain
+              const finalGain = calculateGainPercentage(currentPrice, existingToken.initial_price_usd)
+              const simulationStart = new Date(existingToken.trading_simulation.simulation_started_at)
+              const now = new Date()
+              const holdDurationHours = (now.getTime() - simulationStart.getTime()) / (1000 * 60 * 60)
+
+              sellOperation.final_gain_percentage = finalGain
+              sellOperation.hold_duration_hours = holdDurationHours
+
+              existingToken.trading_simulation.sell_operations.push(sellOperation)
+
+              const remainingTokens = parseFloat(existingToken.trading_simulation.remaining_token_amount || '0')
+              const isPositionClosed = sellDecision.sellPercentage === 100 || remainingTokens < 1000
+
+              if (isPositionClosed) {
+                existingToken.trading_simulation.current_status = 'completed'
+                existingToken.trading_simulation.remaining_token_amount = '0'
+
+                // Calculate final result
+                const buyOperation = existingToken.trading_simulation.buy_operation
+                if (buyOperation) {
+                  const totalSolReceived = existingToken.trading_simulation.sell_operations.reduce(
+                    (total: number, op: any) => total + (parseFloat(op.sol_received) / 1e9), 0
+                  )
+                  const totalSolGain = totalSolReceived - buyOperation.buy_amount_sol
+
+                  existingToken.trading_simulation.final_result = {
+                    success: finalGain > 0,
+                    total_gain_percentage: finalGain,
+                    total_gain_sol: totalSolGain,
+                    buy_price_usd: buyOperation.buy_price_usd,
+                    sell_price_usd: currentPrice,
+                    hold_duration_hours: holdDurationHours,
+                    best_buy_config: buyOperation.best_buy_config,
+                    best_sell_configs: existingToken.trading_simulation.sell_operations.map((op: any) => op.best_sell_config)
+                  }
+                }
+              }
+
+              // Log trade operation
+              logTradeOperation('Sell Operation (Orphaned)', {
+                requestId,
+                tokenSymbol: token.token_symbol,
+                finalGain,
+                sellPercentage: sellDecision.sellPercentage,
+                isPositionClosed,
+                operationType: existingToken.trading_simulation.current_status
+              })
+
+              // Send Discord notification if enabled
+              if (shouldEnableNotifications()) {
+                const bestCfg = sellOperation.best_sell_config
+                const notificationStatus = getNotificationStatus(existingToken.trading_simulation.current_status)
+
+                await sendTradeAlertDiscord({
+                  tokenSymbol: token.token_symbol,
+                  status: notificationStatus,
+                  isSimulated: existingToken.trading_simulation.is_simulated,
+                  currentGain: finalGain,
+                  peakGain: existingToken.peak_gain_percentage,
+                  priceUsd: token.current_price,
+                  provider: bestCfg.provider,
+                  rpcUsed: bestCfg.rpc_used,
+                  responseTime: bestCfg.response_time
+                }).catch(error => {
+                  console.error('Failed to send Discord alert for orphaned sell:', error)
+                })
+              }
+            }
+          }
+        }
+
+        // Update price history
+        const newPriceRecord: PriceRecord = {
+          timestamp: new Date().toISOString(),
+          price_usd: currentPrice,
+          volume: token.volume_1h
+        }
+
+        const existingPriceHistory: PriceRecord[] = existingToken.price_history || []
+        const cutoffTime = new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+        const updatedPriceHistory = [
+          ...existingPriceHistory.filter((record: PriceRecord) => new Date(record.timestamp) > cutoffTime),
+          newPriceRecord
+        ].slice(-288)
+
+        // Add update promise
+        if (isLost && existingToken.status === 'tracking') {
+          updatesPromises.push((async () => {
+            await supabase.from(TRACKER_TABLE).update({
+              last_price_usd: currentPrice,
+              peak_price_usd: newPeakPrice,
+              current_gain_percentage: currentGain,
+              peak_gain_percentage: peakGain,
+              status: 'lost',
+              status_changed_at: new Date().toISOString(),
+              trading_simulation: existingToken.trading_simulation,
+              price_history: updatedPriceHistory
+            }).eq('id', existingToken.id)
+          })())
+          tokensLost++
+          console.log(`❌ Orphaned Token lost (${currentGain.toFixed(2)}%): ${token.token_symbol}`)
+        } else {
+          updatesPromises.push((async () => {
+            await supabase.from(TRACKER_TABLE).update({
+              last_price_usd: currentPrice,
+              peak_price_usd: newPeakPrice,
+              current_gain_percentage: currentGain,
+              peak_gain_percentage: peakGain,
+              trading_simulation: existingToken.trading_simulation,
+              price_history: updatedPriceHistory
+            }).eq('id', existingToken.id)
+          })())
+          tokensUpdated++
         }
       }
     }
