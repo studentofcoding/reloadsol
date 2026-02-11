@@ -70,8 +70,11 @@ export default function TokenDetailsModal({
           borderColor: "#3b82f6", // blue-500
           backgroundColor: "rgba(59, 130, 246, 0.1)",
           borderWidth: 2,
-          pointRadius: 0,
-          pointHoverRadius: 4,
+          pointRadius: 3, // Increased from 0 to 3
+          pointBackgroundColor: "#ffffff", // White dots
+          pointBorderColor: "#3b82f6", // Blue border
+          pointHoverRadius: 5,
+          pointHoverBackgroundColor: "#ffffff",
           fill: true,
           tension: 0.4,
         },
@@ -141,10 +144,38 @@ export default function TokenDetailsModal({
   };
 
   // Calculations
-  const rnr =
-    token.peak_price_usd && token.initial_price_usd
-      ? (token.peak_price_usd / token.initial_price_usd).toFixed(2)
-      : "N/A";
+  const rnr = useMemo(() => {
+    if (
+      !token.peak_price_usd ||
+      !token.initial_price_usd ||
+      !token.price_history
+    )
+      return "N/A";
+
+    let historyData = token.price_history;
+    if (typeof historyData === "string") {
+      try {
+        historyData = JSON.parse(historyData);
+      } catch (e) {
+        historyData = [];
+      }
+    }
+
+    if (!Array.isArray(historyData) || historyData.length === 0) return "N/A";
+
+    // Find the lowest price (max drawdown)
+    const minPrice = Math.min(...historyData.map((h: any) => h.price_usd));
+
+    // Calculate potential upside (Peak - Initial)
+    const potentialUpside = token.peak_price_usd - token.initial_price_usd;
+
+    // Calculate potential downside (Initial - Min)
+    const potentialDownside = token.initial_price_usd - minPrice;
+
+    if (potentialDownside <= 0) return "∞"; // No downside risk observed
+
+    return (potentialUpside / potentialDownside).toFixed(2);
+  }, [token]);
 
   const formatTime = (dateStr: string) => {
     if (!dateStr) return "N/A";
@@ -284,7 +315,7 @@ export default function TokenDetailsModal({
                   </div>
                   <div className="text-2xl font-bold text-blue-400">{rnr}x</div>
                   <div className="text-xs text-gray-500 mt-1">
-                    Peak / Initial Price
+                    Upside / Max Drawdown
                   </div>
                 </div>
               </div>

@@ -96,11 +96,13 @@ export async function GET(request: NextRequest) {
             logo_url: token.logo_url,
             initial_price_usd: token.initial_price_usd,
             peak_price_usd: token.peak_price_usd,
+            last_price_usd: token.last_price_usd, // Ensure last_price_usd is included
             peak_gain_percentage: token.peak_gain_percentage,
             tracking_duration_hours: Math.round(trackingDuration * 100) / 100,
             status_changed_at: token.status_changed_at || latestSummary.period_end,
             status: token.status,
-            current_gain_percentage: token.current_gain_percentage
+            current_gain_percentage: token.current_gain_percentage,
+            price_history: token.price_history // Pass price_history for charts
           }
         })
 

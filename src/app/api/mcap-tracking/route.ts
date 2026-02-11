@@ -907,10 +907,21 @@ export async function GET(request: NextRequest) {
 
         // Fetch current price and market cap from trending API (live, no cache)
         const baseUrl = process.env.API_HOST || process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
-        const trendingResponse = await fetch(`${baseUrl}/api/trending?cache=off&nocache=true`, {
-          headers: { 'x-no-cache': '1' },
-          next: { revalidate: 0 }
-        })
+        
+        let trendingResponse;
+        try {
+          trendingResponse = await fetch(`${baseUrl}/api/trending?cache=off&nocache=true`, {
+            headers: { 'x-no-cache': '1' },
+            next: { revalidate: 0 }
+          });
+        } catch (fetchError) {
+          console.error('Fetch failed for trending API:', fetchError);
+          return NextResponse.json({
+            success: false,
+            error: 'Failed to fetch current token data from trending API',
+            details: fetchError instanceof Error ? fetchError.message : 'Unknown error'
+          }, { status: 502 }); // Bad Gateway
+        }
 
         if (!trendingResponse.ok) {
           throw new Error('Failed to fetch current token data from trending')
