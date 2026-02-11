@@ -40,10 +40,23 @@ export default function TokenDetailsModal({
   onBuy,
 }: TokenDetailsModalProps) {
   const chartData = useMemo(() => {
-    if (!token.price_history || token.price_history.length === 0) return null;
+    let historyData = token.price_history;
+
+    // Parse JSONB if it comes as a string (Supabase sometimes returns JSONB as string)
+    if (typeof historyData === "string") {
+      try {
+        historyData = JSON.parse(historyData);
+      } catch (e) {
+        console.error("Failed to parse price_history:", e);
+        historyData = [];
+      }
+    }
+
+    if (!historyData || !Array.isArray(historyData) || historyData.length === 0)
+      return null;
 
     // Sort by timestamp just in case
-    const sortedHistory = [...token.price_history].sort(
+    const sortedHistory = [...historyData].sort(
       (a, b) =>
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     );

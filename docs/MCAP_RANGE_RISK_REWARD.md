@@ -55,6 +55,7 @@ Buckets are based on `first_mcap` (entry conditions):
 ## Data Requirements
 
 The metrics rely on the following fields from `token_mcap_tracking`:
+
 - `first_mcap`, `current_mcap`, `mcap_growth_percent`
 - `is_tracking_stuck`
 

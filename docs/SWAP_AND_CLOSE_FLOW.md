@@ -80,7 +80,7 @@ The system implements a centralized fee configuration in `src/utils/jupiter.ts`:
 ## References
 
 - Core logic: `src/utils/jupiter.ts` (`executeBulkSell`, `executeBulkSellAlt`, `closeTokenAccounts`, `closeZeroBalanceTokens`, `categorizeUserTokens`, `enrichTokenMetadataAsync`).
-- UI integration: `src/components/BulkTokenSeller.tsx` (`handleBulkSell`, `handleCloseOnly`, GMGN batch handling and auto-close). 
+- UI integration: `src/components/BulkTokenSeller.tsx` (`handleBulkSell`, `handleCloseOnly`, GMGN batch handling and auto-close).
 - Single token UI: `src/components/CatchTheCoinClient.tsx` (sell-only path using Jupiter).
 - Swap Tracking: `src/utils/trading-tracker.ts`.
 
