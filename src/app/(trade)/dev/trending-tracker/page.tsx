@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import UnifiedTokenModal from "@/components/UnifiedTokenModal";
 import ChartBuyModal from "@/components/ChartBuyModal";
+import TokenDetailsModal from "@/components/TokenDetailsModal";
 import { useTrendingStats } from "@/hooks/useTrendingStats";
 
 // Use alternate tables in local development to avoid prod collisions
@@ -184,6 +185,9 @@ export default function TrendingTrackerPage() {
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [chartModalTokenAddress, setChartModalTokenAddress] = useState<
     string | null
+  >(null);
+  const [selectedTokenForDetails, setSelectedTokenForDetails] = useState<
+    any | null
   >(null);
 
   useEffect(() => {
@@ -416,12 +420,12 @@ export default function TrendingTrackerPage() {
 
   // Handler for token clicks
   const handleTokenClick = (token: TrackedToken) => {
-    handleOpenTradingModal(token);
+    setSelectedTokenForDetails(token);
   };
 
   // Handler for summary token clicks
   const handleSummaryTokenClick = (summaryToken: TopWinner) => {
-    handleOpenTradingModal(summaryToken);
+    setSelectedTokenForDetails(summaryToken);
   };
 
   // Auto-refresh handled by React Query
@@ -1315,9 +1319,7 @@ export default function TrendingTrackerPage() {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setChartModalTokenAddress(
-                                      token.token_address,
-                                    );
+                                    handleOpenTradingModal(token);
                                   }}
                                   className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded transition-colors flex items-center justify-center gap-1 ml-auto"
                                   title="Open Chart & Buy"
@@ -1727,7 +1729,7 @@ export default function TrendingTrackerPage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
-                            setChartModalTokenAddress(token.token_address);
+                            handleOpenTradingModal(token);
                           }}
                           className="mt-3 w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded transition-colors flex items-center justify-center gap-1"
                         >
@@ -1910,7 +1912,7 @@ export default function TrendingTrackerPage() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setChartModalTokenAddress(token.token_address);
+                        handleOpenTradingModal(token);
                       }}
                       className="mt-3 w-full py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded transition-colors flex items-center justify-center gap-1"
                     >
@@ -2098,6 +2100,17 @@ export default function TrendingTrackerPage() {
         )}
 
       {/* Unified Tracker Module removed to avoid duplication */}
+
+      {selectedTokenForDetails && (
+        <TokenDetailsModal
+          token={selectedTokenForDetails}
+          onClose={() => setSelectedTokenForDetails(null)}
+          onBuy={() => {
+            handleOpenTradingModal(selectedTokenForDetails);
+            setSelectedTokenForDetails(null);
+          }}
+        />
+      )}
     </div>
   );
 }

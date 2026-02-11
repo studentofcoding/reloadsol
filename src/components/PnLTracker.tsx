@@ -56,6 +56,8 @@ interface PnLRecord {
   isBotOperation?: boolean; // Whether this was a bot operation
   botStrategy?: string; // Bot strategy used
   jupiter_swap?: boolean;
+  isSimulation?: boolean; // Whether this is a simulation
+  simulationType?: string; // Type of simulation
 }
 
 interface OpenPosition {
@@ -91,6 +93,8 @@ interface OpenPosition {
   isBotOperation?: boolean; // Whether this was a bot operation
   botStrategy?: string; // Bot strategy used
   jupiter_swap?: boolean;
+  isSimulation?: boolean; // Whether this is a simulation
+  simulationType?: string; // Type of simulation
 }
 
 export default function PnLTracker() {
@@ -518,6 +522,9 @@ export default function PnLTracker() {
             is_bot_operation:
               sellRecord.is_bot_operation || closeRecord.is_bot_operation,
             bot_strategy: sellRecord.bot_strategy || closeRecord.bot_strategy,
+            // ✅ NEW: Preserve simulation flags
+            is_simulation: sellRecord.is_simulation,
+            simulation_type: sellRecord.simulation_type,
           };
 
           processedSellRecords.push(combinedRecord);
@@ -557,6 +564,8 @@ export default function PnLTracker() {
           // ✅ NEW: Track bot operation info
           isBotOperation: boolean;
           botStrategy?: string;
+          isSimulation: boolean;
+          simulationType?: string;
         };
 
         const allOpsUnsorted = [...buyRecords, ...processedSellRecords];
@@ -582,8 +591,11 @@ export default function PnLTracker() {
             const mint = tkn.mintAddress;
             if (!mint) continue;
 
+            const isSim = !!op.is_simulation;
+            const cycleKey = `${mint}-${isSim ? "sim" : "real"}`;
+
             if (isBuy) {
-              let cycle = openCycles.get(mint);
+              let cycle = openCycles.get(cycleKey);
               if (!cycle) {
                 cycle = {
                   mintAddress: mint,
@@ -604,8 +616,11 @@ export default function PnLTracker() {
                   // ✅ NEW: Initialize bot operation tracking
                   isBotOperation: !!op.is_bot_operation,
                   botStrategy: op.bot_strategy,
+                  // ✅ NEW: Initialize simulation tracking
+                  isSimulation: isSim,
+                  simulationType: op.simulation_type,
                 };
-                openCycles.set(mint, cycle);
+                openCycles.set(cycleKey, cycle);
               }
 
               const tokenAmt = tkn.tokenAmount || 0;
@@ -628,7 +643,7 @@ export default function PnLTracker() {
               }
             } else {
               // SELL branch
-              const cycle = openCycles.get(mint);
+              let cycle = openCycles.get(cycleKey);
               if (!cycle) {
                 // sell without open cycle (shouldn't happen) – skip
                 continue;
@@ -686,11 +701,14 @@ export default function PnLTracker() {
                   // ✅ NEW: Include bot operation info in PnL records
                   isBotOperation: cycle.isBotOperation,
                   botStrategy: cycle.botStrategy,
+                  // ✅ NEW: Include simulation info
+                  isSimulation: cycle.isSimulation,
+                  simulationType: cycle.simulationType,
                 };
 
                 closedCycles.push(pnlRecord);
 
-                openCycles.delete(mint);
+                openCycles.delete(cycleKey);
               }
             }
           }
@@ -700,7 +718,7 @@ export default function PnLTracker() {
         let openPositionsResult: OpenPosition[] = Array.from(
           openCycles.values(),
         ).map((cycle) => ({
-          id: `open-${cycle.mintAddress}`,
+          id: `open-${cycle.mintAddress}-${cycle.isSimulation ? "sim" : "real"}`,
           mintAddress: cycle.mintAddress,
           symbol: cycle.symbol,
           name: cycle.name,
@@ -715,6 +733,9 @@ export default function PnLTracker() {
           // ✅ NEW: Include bot operation info in open positions
           isBotOperation: cycle.isBotOperation,
           botStrategy: cycle.botStrategy,
+          // ✅ NEW: Include simulation info
+          isSimulation: cycle.isSimulation,
+          simulationType: cycle.simulationType,
         }));
 
         if (openCycles.size > 0) {
@@ -729,6 +750,11 @@ export default function PnLTracker() {
 
             // Filter and update based on wallet state
             openPositionsResult = openPositionsResult.filter((pos) => {
+              // Skip wallet verification for simulations - they exist only locally
+              if (pos.isSimulation) {
+                return true;
+              }
+
               const walletTok = walletTokens.find(
                 (wt) => wt.mintAddress === pos.mintAddress,
               );
@@ -1185,6 +1211,29 @@ export default function PnLTracker() {
         <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
           ⚡ Jupiter
         </span>
+      </div>
+    );
+  };
+
+  const SimulationIndicator = ({
+    isSimulation,
+    simulationType,
+  }: {
+    isSimulation?: boolean;
+    simulationType?: string;
+  }) => {
+    if (!isSimulation) return null;
+
+    return (
+      <div className="flex items-center gap-1 text-xs">
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-cyan-100 text-cyan-800 dark:bg-cyan-900 dark:text-cyan-200">
+          🎮 SIM
+        </span>
+        {simulationType && (
+          <span className="text-gray-500 dark:text-gray-400">
+            {simulationType}
+          </span>
+        )}
       </div>
     );
   };
@@ -2201,6 +2250,10 @@ export default function PnLTracker() {
                               <JupiterSwapIndicator
                                 isJupiterSwap={record.jupiter_swap}
                               />
+                              <SimulationIndicator
+                                isSimulation={record.isSimulation}
+                                simulationType={record.simulationType}
+                              />
                             </div>
 
                             <div className="flex items-center space-x-1">
@@ -2514,6 +2567,10 @@ export default function PnLTracker() {
                                   />
                                   <JupiterSwapIndicator
                                     isJupiterSwap={position.jupiter_swap}
+                                  />
+                                  <SimulationIndicator
+                                    isSimulation={position.isSimulation}
+                                    simulationType={position.simulationType}
                                   />
                                 </div>
 

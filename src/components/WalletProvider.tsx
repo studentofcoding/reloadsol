@@ -31,6 +31,10 @@ interface WalletContextType {
   connect: () => Promise<void>
   disconnect: () => Promise<void>
   sendTransaction?: (transaction: Transaction | VersionedTransaction, connection: SolanaConnection, options?: any) => Promise<string>
+  // Standard Wallet Adapter properties for Jupiter compatibility
+  autoConnect: boolean
+  wallets: any[]
+  select: (walletName: any) => void
 }
 
 declare global {
@@ -292,6 +296,10 @@ export function WalletProvider({ children }: WalletProviderProps) {
     sendTransaction,
     connect,
     disconnect,
+    // Mock standard wallet adapter properties
+    autoConnect: true,
+    wallets: [],
+    select: () => {},
   }
 
   return (
