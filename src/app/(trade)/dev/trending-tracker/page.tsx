@@ -6,6 +6,7 @@ import UnifiedTokenModal from "@/components/UnifiedTokenModal";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import TokenDetailsModal from "@/components/TokenDetailsModal";
 import { useTrendingStats } from "@/hooks/useTrendingStats";
+import { useTokenHistory } from "@/hooks/useTokenHistory";
 
 // Use alternate tables in local development to avoid prod collisions
 const TRACKER_TABLE =
@@ -131,6 +132,18 @@ export default function TrendingTrackerPage() {
   const [activeTab, setActiveTab] = useState<
     "overview" | "tracking" | "winners" | "losers"
   >("overview");
+
+  // History state
+  const [historyDate, setHistoryDate] = useState<string>(
+    new Date().toISOString().split("T")[0],
+  );
+  const [historyPage, setHistoryPage] = useState<number>(1);
+  const { data: historyData, isLoading: historyLoading } = useTokenHistory({
+    page: historyPage,
+    limit: 12,
+    date: historyDate,
+  });
+
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [debugMode, setDebugMode] = useState(false);
   const [isRefreshingPrices, setIsRefreshingPrices] = useState(false);
@@ -1363,6 +1376,228 @@ export default function TrendingTrackerPage() {
                   </p>
                 </div>
               </div>
+            </div>
+
+            {/* Daily History */}
+            <div className="bg-gray-800 rounded-xl p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-semibold">Daily Token History</h3>
+                <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => {
+                        const date = new Date(historyDate);
+                        date.setDate(date.getDate() - 1);
+                        setHistoryDate(date.toISOString().split("T")[0]);
+                        setHistoryPage(1);
+                      }}
+                      className="p-1 hover:bg-gray-700 rounded transition-colors"
+                      title="Previous Day"
+                    >
+                      <svg
+                        className="w-5 h-5 text-gray-400"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M15 19l-7-7 7-7"
+                        />
+                      </svg>
+                    </button>
+                    <input
+                      type="date"
+                      value={historyDate}
+                      onChange={(e) => {
+                        setHistoryDate(e.target.value);
+                        setHistoryPage(1);
+                      }}
+                      className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <button
+                      onClick={() => {
+                        const date = new Date(historyDate);
+                        date.setDate(date.getDate() + 1);
+                        const today = new Date().toISOString().split("T")[0];
+                        const newDate = date.toISOString().split("T")[0];
+                        if (newDate <= today) {
+                          setHistoryDate(newDate);
+                          setHistoryPage(1);
+                        }
+                      }}
+                      disabled={
+                        historyDate >= new Date().toISOString().split("T")[0]
+                      }
+                      className="p-1 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Next Day"
+                    >
+                      <svg
+                        className="w-5 h-5 text-gray-400"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M9 5l7 7-7 7"
+                        />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {historyLoading ? (
+                <div className="flex justify-center py-8">
+                  <div className="w-8 h-8 border-2 border-blue-400 border-t-blue-200 rounded-full animate-spin"></div>
+                </div>
+              ) : !historyData?.tokens || historyData.tokens.length === 0 ? (
+                <div className="text-center py-8 text-gray-400">
+                  No tokens found for {historyDate}
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                    {historyData.tokens.map((token: any) => {
+                      const isWinner = token.peak_gain_percentage > 0;
+                      const currentGain =
+                        token.current_gain_percentage ??
+                        token.peak_gain_percentage;
+                      const isLoser =
+                        currentGain < -50 ||
+                        (token.status && token.status === "lost");
+
+                      return (
+                        <div
+                          key={token.id}
+                          className="bg-gray-700 rounded-lg p-4 hover:bg-gray-600 transition-colors cursor-pointer"
+                          onClick={() => handleTokenClick(token)}
+                        >
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center space-x-3">
+                              <TokenIcon token={token} />
+                              <div>
+                                <h4 className="font-semibold">
+                                  {token.token_symbol}
+                                </h4>
+                                <p className="text-xs text-gray-400">
+                                  {token.token_name}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p
+                                className={`font-bold ${
+                                  currentGain > 0
+                                    ? "text-green-400"
+                                    : currentGain < 0
+                                      ? "text-red-400"
+                                      : "text-gray-400"
+                                }`}
+                              >
+                                {currentGain > 0 ? "+" : ""}
+                                {currentGain.toFixed(2)}%
+                              </p>
+                              <p className="text-xs text-gray-400">
+                                {formatTime(token.created_at).split(",")[1]}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-gray-400 border-t border-gray-600 pt-3">
+                            <div>
+                              <span className="block mb-0.5">Peak Gain</span>
+                              <span className="text-white font-medium">
+                                {token.peak_gain_percentage.toFixed(2)}%
+                              </span>
+                            </div>
+                            <div className="text-right">
+                              <span className="block mb-0.5">Status</span>
+                              <span
+                                className={`font-medium ${
+                                  token.status === "won"
+                                    ? "text-green-400"
+                                    : token.status === "lost"
+                                      ? "text-red-400"
+                                      : token.status === "manual_sell"
+                                        ? "text-orange-400"
+                                        : "text-blue-400"
+                                }`}
+                              >
+                                {token.status.charAt(0).toUpperCase() +
+                                  token.status.slice(1)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* History Pagination */}
+                  {historyData.pagination.totalPages > 1 && (
+                    <div className="flex justify-center items-center space-x-2">
+                      <button
+                        onClick={() =>
+                          setHistoryPage(Math.max(1, historyPage - 1))
+                        }
+                        disabled={historyPage === 1}
+                        className="p-2 rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M15 19l-7-7 7-7"
+                          />
+                        </svg>
+                      </button>
+                      <span className="text-sm text-gray-400">
+                        Page {historyPage} of{" "}
+                        {historyData.pagination.totalPages}
+                      </span>
+                      <button
+                        onClick={() =>
+                          setHistoryPage(
+                            Math.min(
+                              historyData.pagination.totalPages,
+                              historyPage + 1,
+                            ),
+                          )
+                        }
+                        disabled={
+                          historyPage === historyData.pagination.totalPages
+                        }
+                        className="p-2 rounded hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <svg
+                          className="w-5 h-5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M9 5l7 7-7 7"
+                          />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         )}
