@@ -150,6 +150,15 @@ export default function CatchTheCoinClient() {
   >(new Map());
   const [loadingAxiom, setLoadingAxiom] = useState<Set<string>>(new Set());
 
+  // State for kept and ignored tokens
+  const [keptTokenIds, setKeptTokenIds] = useState<Set<string>>(new Set());
+  const [ignoredTokenIds, setIgnoredTokenIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [keptTokensData, setKeptTokensData] = useState<
+    Map<string, TrendingToken>
+  >(new Map());
+
   // Fetch user's wallet tokens
   const fetchWalletTokens = async () => {
     if (!connected || !publicKey) return;
@@ -225,70 +234,193 @@ export default function CatchTheCoinClient() {
       const data = await response.json();
       console.log("Raw trending tokens:", data.tokens?.length || 0);
 
+      let fetchedTokens: TrendingToken[] = [];
+
       if (data.tokens && data.tokens.length > 0) {
-        // Filter tokens with market cap <= 300k and sort by market cap (small to large)
-        const filteredAndSorted = data.tokens
-          .filter((token: TrendingToken) => {
-            const mcap = token.mcap || 0;
-            return mcap > 0 && mcap <= 300000; // Max 300k market cap
-          })
-          .sort((a: TrendingToken, b: TrendingToken) => {
-            return (a.mcap || 0) - (b.mcap || 0); // Sort from smallest to largest
-          });
-
-        console.log(
-          `Filtered tokens: ${filteredAndSorted.length} (mcap <= 300k)`,
-        );
-        console.log("Market cap range:", {
-          smallest: filteredAndSorted[0]?.mcap || 0,
-          largest: filteredAndSorted[filteredAndSorted.length - 1]?.mcap || 0,
+        // Filter tokens with market cap <= 300k
+        fetchedTokens = data.tokens.filter((token: TrendingToken) => {
+          const mcap = token.mcap || 0;
+          return mcap > 0 && mcap <= 300000; // Max 300k market cap
         });
+      }
 
-        // Detect new tokens for animation - Fix the forEach error
-        const currentTokenAddresses = new Set(
-          filteredAndSorted.map((t: TrendingToken) => t.token_address),
-        );
-        const newTokenAddresses = new Set<string>();
+      // Filter out ignored tokens
+      fetchedTokens = fetchedTokens.filter(
+        (t) => !ignoredTokenIds.has(t.token_address),
+      );
 
-        // Fix: Ensure previousTokensRef.current is initialized as a Set
-        if (!previousTokensRef.current) {
-          previousTokensRef.current = new Set<string>();
-        }
+      // Handle Kept Tokens
+      const currentKeptTokensMap = new Map(keptTokensData);
+      const keptIds = Array.from(keptTokenIds);
+      const missingKeptIds: string[] = [];
 
-        // Safe iteration over the Set
-        for (const address of Array.from(currentTokenAddresses) as string[]) {
-          if (!previousTokensRef.current.has(address as string)) {
-            newTokenAddresses.add(address as string);
+      // Update kept tokens with fresh data if available in fetch
+      keptIds.forEach((id) => {
+        const found = fetchedTokens.find((t) => t.token_address === id);
+        if (found) {
+          currentKeptTokensMap.set(id, found);
+        } else {
+          // If not found in fetch but we have it in memory, check if we need to fetch price
+          const existing = currentKeptTokensMap.get(id);
+          if (existing) {
+            missingKeptIds.push(id);
           }
         }
+      });
 
-        // Update previous tokens reference
-        previousTokensRef.current = new Set<string>(
-          Array.from(currentTokenAddresses) as string[],
-        );
+      // Fetch prices for missing kept tokens to ensure 5s update
+      if (missingKeptIds.length > 0) {
+        try {
+          const prices = await fetchOwnedTokenPrices(missingKeptIds);
+          missingKeptIds.forEach((id) => {
+            const existingData = currentKeptTokensMap.get(id);
+            if (existingData && prices[id]) {
+              const newPrice = prices[id];
+              // Estimate new mcap based on price change
+              const priceRatio = existingData.price
+                ? newPrice / existingData.price
+                : 1;
+              const newMcap = existingData.mcap * priceRatio;
 
-        // Set new tokens for animation (clear after 3 seconds)
-        if (newTokenAddresses.size > 0) {
-          console.log(`New tokens detected: ${newTokenAddresses.size}`);
-          setNewTokens(
-            new Set<string>(Array.from(newTokenAddresses) as string[]),
-          );
-          setTimeout(() => {
-            setNewTokens(new Set<string>());
-          }, 3000);
+              currentKeptTokensMap.set(id, {
+                ...existingData,
+                price: newPrice,
+                mcap: newMcap,
+                // Note: other fields like volume/change_1h will be stale until they reappear in main list
+                // or we implement a full token info fetch
+              });
+            }
+          });
+        } catch (err) {
+          console.error("Failed to update prices for kept tokens", err);
         }
-
-        setTokens(filteredAndSorted);
-        setError(null);
-      } else {
-        setTokens([]);
       }
+
+      setKeptTokensData(currentKeptTokensMap);
+
+      // Merge fetched tokens and missing kept tokens
+      // Missing kept tokens are those in keptTokensData but NOT in fetchedTokens
+      const missingKeptTokens = Array.from(
+        currentKeptTokensMap.values(),
+      ).filter(
+        (kt) =>
+          !fetchedTokens.some((ft) => ft.token_address === kt.token_address),
+      );
+
+      const finalTokens = [...fetchedTokens, ...missingKeptTokens];
+
+      // Sort by Kept status (first) then market cap (small to large)
+      finalTokens.sort((a, b) => {
+        const isKeptA = keptTokenIds.has(a.token_address);
+        const isKeptB = keptTokenIds.has(b.token_address);
+        if (isKeptA && !isKeptB) return -1;
+        if (!isKeptA && isKeptB) return 1;
+        return (a.mcap || 0) - (b.mcap || 0);
+      });
+
+      console.log(
+        `Filtered tokens: ${finalTokens.length} (mcap <= 300k + kept)`,
+      );
+
+      // Detect new tokens for animation
+      const currentTokenAddresses = new Set(
+        finalTokens.map((t) => t.token_address),
+      );
+      const newTokenAddresses = new Set<string>();
+
+      if (!previousTokensRef.current) {
+        previousTokensRef.current = new Set<string>();
+      }
+
+      for (const address of Array.from(currentTokenAddresses) as string[]) {
+        if (!previousTokensRef.current.has(address as string)) {
+          newTokenAddresses.add(address as string);
+        }
+      }
+
+      previousTokensRef.current = new Set<string>(
+        Array.from(currentTokenAddresses) as string[],
+      );
+
+      if (newTokenAddresses.size > 0) {
+        setNewTokens(
+          new Set<string>(Array.from(newTokenAddresses) as string[]),
+        );
+        setTimeout(() => {
+          setNewTokens(new Set<string>());
+        }, 3000);
+      }
+
+      setTokens(finalTokens);
+      setError(null);
     } catch (err) {
       console.error("Error fetching trending tokens:", err);
       setError("Failed to load trending tokens");
     } finally {
       setLoading(false);
     }
+  };
+
+  // Toggle Keep Token
+  const handleKeepToken = (token: TrendingToken, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const isKept = keptTokenIds.has(token.token_address);
+    let newKeptIds: Set<string>;
+
+    if (isKept) {
+      // Remove from kept
+      newKeptIds = new Set(keptTokenIds);
+      newKeptIds.delete(token.token_address);
+      setKeptTokenIds(newKeptIds);
+      setKeptTokensData((prev) => {
+        const m = new Map(prev);
+        m.delete(token.token_address);
+        return m;
+      });
+    } else {
+      // Add to kept
+      newKeptIds = new Set(keptTokenIds).add(token.token_address);
+      setKeptTokenIds(newKeptIds);
+      setKeptTokensData((prev) =>
+        new Map(prev).set(token.token_address, token),
+      );
+    }
+
+    // Re-sort current tokens immediately
+    setTokens((prev) => {
+      const sorted = [...prev].sort((a, b) => {
+        const isKeptA = newKeptIds.has(a.token_address);
+        const isKeptB = newKeptIds.has(b.token_address);
+        if (isKeptA && !isKeptB) return -1;
+        if (!isKeptA && isKeptB) return 1;
+        return (a.mcap || 0) - (b.mcap || 0);
+      });
+      return sorted;
+    });
+  };
+
+  // Toggle Ignore Token
+  const handleIgnoreToken = (token: TrendingToken, e: React.MouseEvent) => {
+    e.stopPropagation();
+    // Add to ignored
+    setIgnoredTokenIds((prev) => new Set(prev).add(token.token_address));
+    // Remove from kept if present
+    if (keptTokenIds.has(token.token_address)) {
+      setKeptTokenIds((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(token.token_address);
+        return newSet;
+      });
+      setKeptTokensData((prev) => {
+        const m = new Map(prev);
+        m.delete(token.token_address);
+        return m;
+      });
+    }
+    // Remove from current view immediately
+    setTokens((prev) =>
+      prev.filter((t) => t.token_address !== token.token_address),
+    );
   };
 
   // Fetch single quote on hover with caching and reset on mouse leave
@@ -786,7 +918,7 @@ export default function CatchTheCoinClient() {
       if (autoUpdateProgressRef.current)
         clearInterval(autoUpdateProgressRef.current);
     };
-  }, [isAnyTokenHovered]);
+  }, [isAnyTokenHovered, keptTokenIds, ignoredTokenIds, keptTokensData]); // Add dependencies to ensure state is fresh in fetchTrendingTokens
 
   // Clean up on unmount
   useEffect(() => {
@@ -1199,6 +1331,7 @@ export default function CatchTheCoinClient() {
               const sellQuote = sellQuotes.get(token.token_address);
               const ownedInfo = ownedTokens.get(token.token_address);
               const isOwned = ownedInfo && ownedInfo.balance > 0.001;
+              const isKept = keptTokenIds.has(token.token_address);
               const expectedTokens = quote
                 ? Number(quote.outAmount) / Math.pow(10, 6)
                 : 0; // Assuming 6 decimals
@@ -1226,6 +1359,30 @@ export default function CatchTheCoinClient() {
                   onMouseEnter={() => handleTokenCardMouseEnter(token)}
                   onMouseLeave={() => handleTokenCardMouseLeave(token)}
                 >
+                  {/* Keep/Ignore Controls */}
+                  <div className="absolute top-2 right-2 flex gap-1 z-30">
+                    <button
+                      onClick={(e) => handleKeepToken(token, e)}
+                      className={`p-1.5 rounded-lg border transition-all ${
+                        isKept
+                          ? "bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]"
+                          : "bg-gray-800/80 border-gray-600 text-gray-400 hover:text-blue-400 hover:border-blue-400"
+                      }`}
+                      title={
+                        isKept ? "Unkeep token" : "Keep token (always update)"
+                      }
+                    >
+                      {isKept ? "★" : "+"}
+                    </button>
+                    <button
+                      onClick={(e) => handleIgnoreToken(token, e)}
+                      className="p-1.5 rounded-lg bg-gray-800/80 border border-gray-600 text-gray-400 hover:text-red-400 hover:border-red-400 transition-all"
+                      title="Remove token"
+                    >
+                      −
+                    </button>
+                  </div>
+
                   {/* New Token Indicator */}
                   {isNewToken && (
                     <div className="flex items-center justify-center mb-3 p-2 bg-cyan-900/30 rounded-lg border border-cyan-400/50 animate-pulse">
