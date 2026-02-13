@@ -9,10 +9,20 @@ import React, {
 } from "react";
 import { useSearchParams, usePathname, useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
-import { executeBulkBuy } from "@/utils/jupiter";
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+import {
+  executeBulkBuy,
+  getSwapQuote,
+  getSwapTransaction,
+} from "@/utils/jupiter";
+import { TOKENS } from "@/utils/solana";
+import {
+  LAMPORTS_PER_SOL,
+  PublicKey,
+  VersionedTransaction,
+} from "@solana/web3.js";
 import { trackBuy } from "@/utils/operations-api";
 import { useTradingData } from "@/components/TradingDataProvider";
+import NavigationTabs from "@/components/NavigationTabs";
 import { getSolPriceUSD } from "@/utils/solana";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { BulkBuyRequest } from "@/types";
@@ -277,6 +287,9 @@ const ChartItem = React.memo(
     isDraggingGlobal,
     buyState,
     onBuy,
+    onSell,
+    onSimulate,
+    onSimulateSell,
     onEnd,
     onRemove,
     onMove,
@@ -310,9 +323,9 @@ const ChartItem = React.memo(
             />
           </div>
 
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 grid grid-cols-2 gap-2">
             <button
-              className={`flex-1 px-2 py-1 text-xs rounded text-white font-medium ${
+              className={`px-2 py-1 text-xs rounded text-white font-medium ${
                 buyState?.loading
                   ? "bg-yellow-600 cursor-wait"
                   : buyState?.status === "Success!"
@@ -330,11 +343,35 @@ const ChartItem = React.memo(
                 : buyState?.status || (buyState?.error ? "Failed" : `Buy`)}
             </button>
             <button
-              className="px-2 py-1 text-xs rounded text-white font-medium bg-purple-600 hover:bg-purple-500"
+              className="px-2 py-1 text-xs rounded text-white font-medium bg-red-600 hover:bg-red-500"
+              onClick={() => onSell(addr)}
+              title="Sell All (Instant)"
+            >
+              Sell
+            </button>
+            <button
+              className="px-2 py-1 text-xs rounded text-white font-medium bg-indigo-600 hover:bg-indigo-500"
+              onClick={() => onSimulate(addr)}
+              title="Simulate Buy"
+            >
+              Sim Buy
+            </button>
+            <button
+              className="px-2 py-1 text-xs rounded text-white font-medium bg-orange-600 hover:bg-orange-500"
+              onClick={() => onSimulateSell(addr)}
+              title="Simulate Sell"
+            >
+              Sim Sell
+            </button>
+          </div>
+
+          <div className="mt-2">
+            <button
+              className="w-full px-2 py-1 text-xs rounded text-white font-medium bg-purple-600 hover:bg-purple-500"
               onClick={() => onEnd(addr)}
               title="End Tracking (Save Result)"
             >
-              End
+              End Tracking
             </button>
           </div>
 
@@ -744,6 +781,251 @@ function ChartsContent() {
     moveToken(activeId, overId);
   };
 
+  const handleSimulateBuy = async (tokenAddress: string) => {
+    if (!publicKey) {
+      alert("Connect wallet to track simulation (wallet used as ID)");
+      return;
+    }
+
+    const amountSol = parseFloat(buyAmount);
+    if (isNaN(amountSol) || amountSol <= 0) return;
+
+    setStatus(`Simulating buy of ${amountSol} SOL...`);
+
+    try {
+      const solPrice = await getSolPriceUSD();
+      const prices = await fetchTokenPricesForTracking([tokenAddress]);
+      const tokenPrice = prices[tokenAddress] || 0;
+
+      if (tokenPrice === 0) {
+        setStatus("Failed to get token price for simulation");
+        return;
+      }
+
+      // Calculate token amount
+      const usdValue = amountSol * solPrice;
+      const tokenAmount = usdValue / tokenPrice;
+
+      const signal = signals[tokenAddress];
+
+      await trackOperation({
+        walletAddress: publicKey.toString(),
+        operationType: "buy",
+        is_simulation: true,
+        simulation_type: "manual",
+        tokens: [
+          {
+            mintAddress: tokenAddress,
+            symbol: signal?.token_symbol || "Unknown",
+            name: "Manual Simulation",
+            priceUsd: tokenPrice,
+            solPrice: solPrice,
+            tokenAmount: tokenAmount,
+            solAmount: amountSol,
+          },
+        ],
+        successCount: 1,
+        failureCount: 0,
+        totalTokens: 1,
+        solAmount: amountSol,
+        feesPaid: 0.000005,
+        solPriceUsd: solPrice,
+        totalUsdValue: usdValue,
+        signatures: [`sim-${Date.now()}`],
+        status: "tracking",
+      });
+
+      setStatus("Simulation tracked!");
+      setTimeout(() => setStatus(""), 2000);
+    } catch (e) {
+      console.error("Simulation failed", e);
+      setStatus("Simulation failed");
+    }
+  };
+
+  const handleSimulateSell = async (tokenAddress: string) => {
+    if (!publicKey) {
+      alert("Connect wallet to track simulation");
+      return;
+    }
+
+    setStatus(`Simulating sell for ${tokenAddress.slice(0, 8)}...`);
+
+    try {
+      // 1. Get prices
+      const solPrice = await getSolPriceUSD();
+      const prices = await fetchTokenPricesForTracking([tokenAddress]);
+      const tokenPrice = prices[tokenAddress] || 0;
+
+      if (tokenPrice === 0) {
+        setStatus("Failed to get token price for simulation");
+        return;
+      }
+
+      // 2. Find simulated position size
+      // We look for recent "buy" operations in the records
+      // This is an approximation. A robust system would track "open positions" explicitly.
+      // For now, we'll try to find the total simulated tokens bought.
+
+      // Since we don't have direct access to "all records" inside this component easily without fetching,
+      // and we want a quick action, we will assume we are selling the *equivalent value* of the default buy amount (0.1 SOL)
+      // or try to find if we have a record in `signals`? No, signals is just the Kanban state.
+
+      // BETTER APPROACH: Simulate selling "100%" of a standard position size (e.g. 0.1 SOL worth at current price)
+      // OR: Just track a "Sell" operation with a fixed USD value for PnL tracking purposes.
+
+      // Let's use the 'buyAmount' state as the reference for "how much we sold" (in SOL terms).
+      // i.e. we are exiting a position worth 'buyAmount' SOL.
+      const amountSol = parseFloat(buyAmount);
+      if (isNaN(amountSol) || amountSol <= 0) return;
+
+      const usdValue = amountSol * solPrice;
+      const tokenAmount = usdValue / tokenPrice;
+
+      const signal = signals[tokenAddress];
+
+      await trackOperation({
+        walletAddress: publicKey.toString(),
+        operationType: "sell",
+        is_simulation: true,
+        simulation_type: "manual",
+        tokens: [
+          {
+            mintAddress: tokenAddress,
+            symbol: signal?.token_symbol || "Unknown",
+            name: "Manual Simulation",
+            priceUsd: tokenPrice,
+            solPrice: solPrice,
+            tokenAmount: tokenAmount,
+            solAmount: amountSol, // Amount received
+          },
+        ],
+        successCount: 1,
+        failureCount: 0,
+        totalTokens: 1,
+        solAmount: amountSol,
+        feesPaid: 0.000005,
+        solPriceUsd: solPrice,
+        totalUsdValue: usdValue,
+        signatures: [`sim-sell-${Date.now()}`],
+        status: "tracking",
+      });
+
+      setStatus("Simulation sell tracked!");
+      setTimeout(() => setStatus(""), 2000);
+    } catch (e) {
+      console.error("Simulation sell failed", e);
+      setStatus("Simulation sell failed");
+    }
+  };
+
+  const handleInstantSell = async (tokenAddress: string) => {
+    if (!connected || !publicKey || !signAllTransactions) {
+      alert("Please connect wallet first");
+      return;
+    }
+
+    setStatus(`Selling ${tokenAddress.slice(0, 8)}...`);
+
+    try {
+      // 1. Fetch Token Balance
+      const accounts = await connection.getParsedTokenAccountsByOwner(
+        publicKey,
+        {
+          mint: new PublicKey(tokenAddress),
+        },
+      );
+
+      const tokenAccount = accounts.value[0];
+      if (!tokenAccount) {
+        setStatus("No token balance found");
+        return;
+      }
+
+      const balance =
+        tokenAccount.account.data.parsed.info.tokenAmount.uiAmount;
+      const balanceRaw =
+        tokenAccount.account.data.parsed.info.tokenAmount.amount;
+      const decimals =
+        tokenAccount.account.data.parsed.info.tokenAmount.decimals;
+
+      if (!balance || balance <= 0) {
+        setStatus("Balance is 0");
+        return;
+      }
+
+      console.log(`Selling ${balance} tokens (${balanceRaw} raw)`);
+
+      // 2. Get Swap Quote (Token -> SOL)
+      const quote = await getSwapQuote(
+        tokenAddress,
+        TOKENS.SOL,
+        parseInt(balanceRaw), // Input amount in smallest unit (lamports/raw)
+        200, // 2% slippage
+      );
+
+      if (!quote) {
+        throw new Error("Failed to get swap quote");
+      }
+
+      // 3. Get Transaction
+      const swapResult = await getSwapTransaction(quote, publicKey.toString());
+
+      if (!swapResult || !swapResult.swapTransaction) {
+        throw new Error("Failed to create swap transaction");
+      }
+
+      // 4. Sign and Send
+      const swapTransactionBuf = Buffer.from(
+        swapResult.swapTransaction,
+        "base64",
+      );
+      const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
+
+      const signedTx = await signAllTransactions([transaction]);
+      const signature = await connection.sendRawTransaction(
+        signedTx[0].serialize(),
+      );
+
+      setStatus("Confirming sell...");
+      await connection.confirmTransaction(signature, "confirmed");
+
+      // 5. Track Operation
+      const solReceived = quote.outAmount
+        ? parseInt(quote.outAmount) / LAMPORTS_PER_SOL
+        : 0;
+      const currentSolPrice = await getSolPriceUSD();
+
+      await trackOperation({
+        walletAddress: publicKey.toString(),
+        operationType: "sell",
+        tokens: [
+          {
+            mintAddress: tokenAddress,
+            symbol: symbols[tokenAddress] || "Unknown",
+            tokenAmount: balance,
+            solAmount: solReceived,
+            solPrice: currentSolPrice,
+          },
+        ],
+        successCount: 1,
+        failureCount: 0,
+        totalTokens: 1,
+        solAmount: solReceived,
+        feesPaid: 0.000005, // Estimate
+        solPriceUsd: currentSolPrice,
+        totalUsdValue: solReceived * currentSolPrice,
+        signatures: [signature],
+      });
+
+      setStatus("Sold successfully!");
+      setTimeout(() => setStatus(""), 3000);
+    } catch (e) {
+      console.error("Sell failed", e);
+      setStatus("Sell failed: " + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   const handleInstantBuy = useCallback(
     async (tokenAddress: string) => {
       if (!connected || !publicKey || !signAllTransactions) {
@@ -1030,6 +1312,18 @@ function ChartsContent() {
     (id: string) => handleInstantBuy(id),
     [handleInstantBuy],
   );
+  const onSell = useCallback(
+    (id: string) => handleInstantSell(id),
+    [handleInstantSell],
+  );
+  const onSimulate = useCallback(
+    (id: string) => handleSimulateBuy(id),
+    [handleSimulateBuy],
+  );
+  const onSimulateSell = useCallback(
+    (id: string) => handleSimulateSell(id),
+    [handleSimulateSell],
+  );
   const onEnd = useCallback(
     (id: string) => handleEndTracking(id),
     [handleEndTracking],
@@ -1050,6 +1344,9 @@ function ChartsContent() {
         isDraggingGlobal={isDraggingGlobal}
         buyState={buyStates[addr]}
         onBuy={onBuy}
+        onSell={onSell}
+        onSimulate={onSimulate}
+        onSimulateSell={onSimulateSell}
         onEnd={onEnd}
         onRemove={onRemove}
         onMove={onMove}
@@ -1063,6 +1360,9 @@ function ChartsContent() {
       buyStates,
       columns.watching,
       onBuy,
+      onSell,
+      onSimulate,
+      onSimulateSell,
       onEnd,
       onRemove,
       onMove,
@@ -1072,6 +1372,7 @@ function ChartsContent() {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4">
       <div className="max-w-[1600px] mx-auto">
+        <NavigationTabs />
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Chart Tracker</h1>
 

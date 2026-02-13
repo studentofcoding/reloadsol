@@ -40,6 +40,7 @@ export default function NavigationTabs({
     "/sell",
     "/swap",
     "/catch-the-coin",
+    "/charts",
     "/dev/signals",
     "/dev/trending-tracker",
     "/dev/tracking-history",

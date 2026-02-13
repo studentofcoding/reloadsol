@@ -2,13 +2,13 @@
 
 // API Configuration
 const JUPITER_API_CONFIG = {
-  // Primary version to try first - using v2 as v3 has moved to api.jup.ag
-  PRIMARY_VERSION: 'v2' as 'v2' | 'v3',
+  // Primary version to try first - now using v3 only
+  PRIMARY_VERSION: 'v3' as 'v2' | 'v3',
   // Fallback version if primary fails
   FALLBACK_VERSION: 'v2' as 'v2' | 'v3',
   // Disable automatic fallback - using v3 only
   AUTO_FALLBACK: false,
-  BASE_URL: 'https://api.jup.ag/price',
+  BASE_URL: 'https://lite-api.jup.ag/price',
   MAX_TOKENS_PER_REQUEST: 100,
   REQUEST_TIMEOUT: 7000,
   RETRY_ATTEMPTS: 3,
