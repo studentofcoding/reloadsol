@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '20')
     const date = searchParams.get('date') // YYYY-MM-DD
     const search = searchParams.get('search') || ''
-    
+
     const offset = (page - 1) * limit
 
     let query = supabase
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
       // Start of day
       const startDate = new Date(date)
       startDate.setHours(0, 0, 0, 0)
-      
+
       // End of day
       const endDate = new Date(date)
       endDate.setHours(23, 59, 59, 999)

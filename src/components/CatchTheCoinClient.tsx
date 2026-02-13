@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useTradingData } from "@/components/TradingDataProvider";
 import { tradingTracker } from "@/utils/trading-tracker";
@@ -81,12 +82,14 @@ async function fetchOwnedTokenPrices(
     const data = await resp.json();
     // Assume data.prices is { mint: price }
     return data.prices || {};
-  } catch {
+  } catch (e) {
+    console.error("Failed to fetch owned token prices:", e);
     return {};
   }
 }
 
 export default function CatchTheCoinClient() {
+  const router = useRouter();
   const { connected, publicKey, signTransaction, signAllTransactions } =
     useWallet();
   const { connection } = useConnection();
@@ -158,6 +161,89 @@ export default function CatchTheCoinClient() {
   const [keptTokensData, setKeptTokensData] = useState<
     Map<string, TrendingToken>
   >(new Map());
+  const [tokenLabels, setTokenLabels] = useState<Record<string, string>>({});
+
+  // Fetch labels from server
+  useEffect(() => {
+    async function fetchLabels() {
+      try {
+        const res = await fetch("/api/signals");
+        const json = await res.json();
+        if (json.success && Array.isArray(json.data)) {
+          const map: Record<string, string> = {};
+          json.data.forEach((item: any) => {
+            map[item.token_address] = item.label;
+          });
+          setTokenLabels(map);
+
+          // Also sync to kept tokens (watchlist)
+          const newKeptIds = new Set(keptTokenIds);
+          let changed = false;
+          json.data.forEach((item: any) => {
+            if (
+              ["watching", "potential", "rugged"].includes(item.label) &&
+              !newKeptIds.has(item.token_address)
+            ) {
+              newKeptIds.add(item.token_address);
+              changed = true;
+            }
+          });
+          if (changed) {
+            setKeptTokenIds(newKeptIds);
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch labels", e);
+      }
+    }
+    fetchLabels();
+  }, []);
+
+  const handleLabelToken = async (
+    token: TrendingToken,
+    label: "potential" | "rugged",
+    e: React.MouseEvent,
+  ) => {
+    e.stopPropagation();
+    const currentLabel = tokenLabels[token.token_address];
+
+    let targetLabel: string | null = label;
+    if (currentLabel === label) {
+      targetLabel = "watching"; // Revert to watching
+    }
+
+    // Optimistic update
+    setTokenLabels((prev) => ({
+      ...prev,
+      [token.token_address]: targetLabel!,
+    }));
+
+    // Ensure it's in the kept list
+    if (!keptTokenIds.has(token.token_address)) {
+      const newKeptIds = new Set(keptTokenIds).add(token.token_address);
+      setKeptTokenIds(newKeptIds);
+      setKeptTokensData((prev) =>
+        new Map(prev).set(token.token_address, token),
+      );
+    }
+
+    try {
+      await fetch("/api/signals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tokenAddress: token.token_address,
+          tokenSymbol: token.token_symbol,
+          mcap: token.mcap,
+          price: token.price,
+          initialPrice: token.price, // Explicitly set initial price
+          label: targetLabel,
+        }),
+      });
+    } catch (err) {
+      console.error("Failed to update label", err);
+    }
+  };
 
   // Fetch user's wallet tokens
   const fetchWalletTokens = async () => {
@@ -362,7 +448,7 @@ export default function CatchTheCoinClient() {
   };
 
   // Toggle Keep Token
-  const handleKeepToken = (token: TrendingToken, e: React.MouseEvent) => {
+  const handleKeepToken = async (token: TrendingToken, e: React.MouseEvent) => {
     e.stopPropagation();
     const isKept = keptTokenIds.has(token.token_address);
     let newKeptIds: Set<string>;
@@ -377,6 +463,20 @@ export default function CatchTheCoinClient() {
         m.delete(token.token_address);
         return m;
       });
+
+      // Also remove label from backend (untrack)
+      setTokenLabels((prev) => {
+        const next = { ...prev };
+        delete next[token.token_address];
+        return next;
+      });
+      try {
+        await fetch(`/api/signals?tokenAddress=${token.token_address}`, {
+          method: "DELETE",
+        });
+      } catch (e) {
+        console.error(e);
+      }
     } else {
       // Add to kept
       newKeptIds = new Set(keptTokenIds).add(token.token_address);
@@ -384,6 +484,27 @@ export default function CatchTheCoinClient() {
       setKeptTokensData((prev) =>
         new Map(prev).set(token.token_address, token),
       );
+
+      // Add 'watching' label to backend
+      setTokenLabels((prev) => ({
+        ...prev,
+        [token.token_address]: "watching",
+      }));
+      try {
+        await fetch("/api/signals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tokenAddress: token.token_address,
+            tokenSymbol: token.token_symbol,
+            mcap: token.mcap,
+            price: token.price,
+            label: "watching",
+          }),
+        });
+      } catch (e) {
+        console.error(e);
+      }
     }
 
     // Re-sort current tokens immediately
@@ -1064,6 +1185,619 @@ export default function CatchTheCoinClient() {
     handleTokenMouseLeave(token);
   };
 
+  const handleOpenCharts = () => {
+    const keptAddresses = Array.from(keptTokenIds);
+    if (keptAddresses.length === 0) {
+      alert("No starred tokens to view in charts");
+      return;
+    }
+    const url = `/charts?addresses=${keptAddresses.join(",")}`;
+    router.push(url);
+  };
+
+  // Token Card Component (defined inline to access state)
+  const TokenCard = ({ token }: { token: TrendingToken }) => {
+    const isHighlighted = highlightedTokens.has(token.token_address);
+    const isBuying = buyingTokens.has(token.token_address);
+    const isSelling = sellingTokens.has(token.token_address);
+    const isNewToken = newTokens.has(token.token_address);
+    const isLoadingQuote = loadingQuotes.has(token.token_address);
+    const quote = quotes.get(token.token_address);
+    const sellQuote = sellQuotes.get(token.token_address);
+    const ownedInfo = ownedTokens.get(token.token_address);
+    const isOwned = ownedInfo && ownedInfo.balance > 0.001;
+    const isKept = keptTokenIds.has(token.token_address);
+    const currentLabel = tokenLabels[token.token_address];
+    const isPotential = currentLabel === "potential";
+    const isRugged = currentLabel === "rugged";
+    const expectedTokens = quote
+      ? Number(quote.outAmount) / Math.pow(10, 6)
+      : 0; // Assuming 6 decimals
+    const expectedSol = sellQuote ? parseInt(sellQuote.outAmount) / 1e9 : 0;
+
+    return (
+      <div
+        className={`bg-gray-800 rounded-xl p-6 border transition-all duration-500 hover:scale-105 ${
+          isRugged
+            ? "border-red-600 shadow-lg shadow-red-600/20 bg-red-900/10"
+            : isPotential
+              ? "border-green-400 shadow-lg shadow-green-400/20 bg-green-900/10"
+              : isNewToken
+                ? "border-cyan-400 shadow-lg shadow-cyan-400/30 animate-bounce-in bg-gradient-to-br from-gray-800 to-cyan-900/20"
+                : isHighlighted
+                  ? "border-yellow-400 shadow-lg shadow-yellow-400/20 animate-pulse"
+                  : isOwned
+                    ? "border-green-500 shadow-lg shadow-green-500/20"
+                    : "border-gray-700 hover:border-gray-600"
+        }`}
+        style={{
+          animationDelay: isNewToken ? `${Math.random() * 0.5}s` : "0s",
+        }}
+        onMouseEnter={() => handleTokenCardMouseEnter(token)}
+        onMouseLeave={() => handleTokenCardMouseLeave(token)}
+      >
+        {/* Keep/Ignore Controls */}
+        <div className="absolute top-2 right-2 flex gap-1 z-30">
+          <button
+            onClick={(e) => handleLabelToken(token, "potential", e)}
+            className={`p-1.5 rounded-lg border transition-all ${
+              isPotential
+                ? "bg-green-600 border-green-400 text-white shadow-[0_0_10px_rgba(34,197,94,0.5)]"
+                : "bg-gray-800/80 border-gray-600 text-gray-400 hover:text-green-400 hover:border-green-400"
+            }`}
+            title={isPotential ? "Unmark Potential" : "Mark as Potential"}
+          >
+            🚀
+          </button>
+          <button
+            onClick={(e) => handleLabelToken(token, "rugged", e)}
+            className={`p-1.5 rounded-lg border transition-all ${
+              isRugged
+                ? "bg-red-600 border-red-400 text-white shadow-[0_0_10px_rgba(239,68,68,0.5)]"
+                : "bg-gray-800/80 border-gray-600 text-gray-400 hover:text-red-400 hover:border-red-400"
+            }`}
+            title={isRugged ? "Unmark Rug" : "Mark as Rug"}
+          >
+            ☠️
+          </button>
+          <div className="w-px h-6 bg-gray-700 mx-1 self-center"></div>
+          <button
+            onClick={(e) => handleKeepToken(token, e)}
+            className={`p-1.5 rounded-lg border transition-all ${
+              isKept
+                ? "bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]"
+                : "bg-gray-800/80 border-gray-600 text-gray-400 hover:text-blue-400 hover:border-blue-400"
+            }`}
+            title={isKept ? "Unkeep token" : "Keep token (always update)"}
+          >
+            {isKept ? "★" : "+"}
+          </button>
+          <button
+            onClick={(e) => handleIgnoreToken(token, e)}
+            className="p-1.5 rounded-lg bg-gray-800/80 border border-gray-600 text-gray-400 hover:text-red-400 hover:border-red-400 transition-all"
+            title="Remove token"
+          >
+            −
+          </button>
+        </div>
+
+        {/* New Token Indicator */}
+        {isNewToken && (
+          <div className="flex items-center justify-center mb-3 p-2 bg-cyan-900/30 rounded-lg border border-cyan-400/50 animate-pulse">
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-cyan-400 rounded-full animate-ping"></div>
+              <span className="text-cyan-400 text-sm font-bold">
+                🚀 NEW POTENTIAL
+              </span>
+              <div className="w-2 h-2 bg-cyan-400 rounded-full animate-ping"></div>
+            </div>
+          </div>
+        )}
+
+        {/* Owned Token Indicator */}
+        {isOwned && (
+          <div className="flex items-center justify-between mb-3 p-2 bg-green-900/20 rounded-lg border border-green-500/30">
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+              <span className="text-green-400 text-sm font-medium">OWNED</span>
+            </div>
+            <div className="text-right">
+              <div className="text-green-400 text-sm font-medium">
+                {formatNumber(ownedInfo.balance, 2)} {token.token_symbol}
+              </div>
+              {ownedInfo.pnlPercentage !== undefined && (
+                <div
+                  className={`text-xs ${ownedInfo.pnlPercentage >= 0 ? "text-green-400" : "text-red-400"}`}
+                >
+                  PnL: {ownedInfo.pnlPercentage >= 0 ? "+" : ""}
+                  {ownedInfo.pnlPercentage.toFixed(2)}%
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Token Header */}
+        <div className="flex items-center space-x-3 mb-4">
+          <div
+            className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 ${
+              isNewToken
+                ? "bg-gradient-to-r from-cyan-500 to-blue-500 animate-pulse"
+                : "bg-gradient-to-r from-purple-500 to-pink-500"
+            }`}
+          >
+            {token.logo_url ? (
+              <img
+                src={token.logo_url}
+                alt={token.token_symbol}
+                className="rounded-full object-cover"
+                style={{
+                  width: "40px",
+                  height: "40px",
+                  objectFit: "cover",
+                  borderRadius: "50%",
+                }}
+                onError={(e) => {
+                  e.currentTarget.style.display = "none";
+                }}
+              />
+            ) : (
+              <span className="text-white font-bold text-lg">
+                {token.token_symbol?.charAt(0) || "?"}
+              </span>
+            )}
+          </div>
+          <div className="flex-1">
+            <h3 className="text-white font-semibold text-lg">
+              {token.token_symbol}
+            </h3>
+            <div className="flex items-center space-x-2 mt-1">
+              <span className="text-white text-sm font-medium">
+                {formatCurrency(token.price, 6, false)}
+              </span>
+              <span
+                className={`text-xs font-semibold ${token.change_1h >= 0 ? "text-green-400" : "text-red-400"}`}
+              >
+                {token.change_1h >= 0 ? "+" : ""}
+                {Math.abs(token.change_1h) < 1
+                  ? (token.change_1h * 100).toFixed(2)
+                  : token.change_1h.toFixed(2)}
+                %
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Token Stats */}
+        <div className="space-y-2 mb-4 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-400">Market Cap:</span>
+            <span
+              className={`font-medium ${isNewToken ? "text-cyan-400" : "text-white"}`}
+            >
+              {formatCurrency(token.mcap)}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Volume 1h:</span>
+            <span className="text-white">
+              {formatCurrency(token.volume_1h)}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-400">Volume 5m:</span>
+            <span className="text-white">
+              {formatCurrency(token.volume_5m)}
+            </span>
+          </div>
+          {/* Quote info with loading state */}
+          {!isOwned && (
+            <div className="flex justify-between">
+              <span className="text-gray-400">You'll get:</span>
+              {loadingQuotes.has(token.token_address) &&
+              hoveredToken === token.token_address ? (
+                <div className="flex items-center space-x-1">
+                  <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                  <span className="text-gray-400 text-xs">
+                    Getting Quote...
+                  </span>
+                </div>
+              ) : quoteErrors.get(token.token_address) ? (
+                <span className="text-red-400 text-xs">
+                  {quoteErrors.get(token.token_address)}
+                </span>
+              ) : quotes.has(token.token_address) ? (
+                <span className="text-green-400">
+                  ~{formatNumber(expectedTokens, 2, false)} {token.token_symbol}
+                </span>
+              ) : (
+                <span className="text-gray-500 text-xs">Hover to quote</span>
+              )}
+            </div>
+          )}
+          {sellQuote && isOwned && (
+            <div className="flex justify-between">
+              <span className="text-gray-400">Sell for:</span>
+              <span className="text-blue-400">
+                ~{expectedSol.toFixed(4)} SOL
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Action Buttons */}
+        <div className="space-y-2">
+          {/* Chart Hover Button */}
+          <div
+            className="relative w-full z-20"
+            onMouseEnter={() => setHoveredChartToken(token.token_address)}
+            onMouseLeave={() => setHoveredChartToken(null)}
+          >
+            <button className="w-full py-2 px-4 rounded-lg font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600 transition-all duration-200 flex items-center justify-center gap-2 border border-gray-600">
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
+                />
+              </svg>
+              <span>Hover for Chart</span>
+            </button>
+
+            {/* Floating Chart Popup */}
+            {hoveredChartToken === token.token_address && (
+              <div
+                className="absolute bottom-full left-0 right-0 mb-2 bg-gray-900 rounded-lg shadow-2xl border border-gray-600 overflow-hidden z-50"
+                style={{ height: "250px" }}
+              >
+                <div className="absolute inset-0 bg-gray-800 flex items-center justify-center -z-10">
+                  <div className="w-6 h-6 border-2 border-gray-500 border-t-white rounded-full animate-spin"></div>
+                </div>
+                <iframe
+                  src={`https://www.gmgn.cc/kline/sol/${token.token_address}?interval=5`}
+                  className="w-full h-full"
+                  title={`Chart - ${token.token_symbol}`}
+                  frameBorder="0"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Buy Button */}
+          {!isOwned && (
+            <>
+              <button
+                onClick={() => handleBuyToken(token)}
+                disabled={
+                  isBuying ||
+                  !quotes.has(token.token_address) ||
+                  loadingQuotes.has(token.token_address) ||
+                  hoveredToken !== token.token_address
+                }
+                className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
+                  isBuying
+                    ? "bg-gray-600 text-gray-400 cursor-not-allowed"
+                    : quotes.has(token.token_address) &&
+                        hoveredToken === token.token_address
+                      ? isNewToken
+                        ? "bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-700 hover:to-blue-700 hover:scale-105"
+                        : "bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 hover:scale-105"
+                      : loadingQuotes.has(token.token_address) &&
+                          hoveredToken === token.token_address
+                        ? "bg-gray-700 text-gray-300 cursor-wait"
+                        : "bg-gray-600 text-gray-400 cursor-not-allowed"
+                }`}
+              >
+                {isBuying ? (
+                  <div className="flex items-center justify-center space-x-2">
+                    <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Buying...</span>
+                  </div>
+                ) : loadingQuotes.has(token.token_address) &&
+                  hoveredToken === token.token_address ? (
+                  <div className="flex items-center justify-center space-x-2">
+                    <div className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin"></div>
+                    <span>Getting Quote...</span>
+                  </div>
+                ) : quotes.has(token.token_address) &&
+                  hoveredToken === token.token_address ? (
+                  isNewToken ? (
+                    `🚀 Catch NEW ${token.token_symbol} (${buyAmount} SOL)`
+                  ) : (
+                    `🎯 Catch ${token.token_symbol} (${buyAmount} SOL)`
+                  )
+                ) : (
+                  "Hover to Quote"
+                )}
+              </button>
+
+              {/* Simulate Button */}
+              <button
+                onClick={() => handleSimulateBuyToken(token)}
+                disabled={
+                  !quotes.has(token.token_address) ||
+                  loadingQuotes.has(token.token_address)
+                }
+                className={`w-full py-2 px-4 rounded-lg font-semibold text-sm border border-gray-600 hover:bg-gray-700 text-gray-300 transition-all duration-200 flex items-center justify-center gap-2 ${
+                  !quotes.has(token.token_address)
+                    ? "opacity-50 cursor-not-allowed"
+                    : ""
+                }`}
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
+                  />
+                </svg>
+                <span>Simulate Buy</span>
+              </button>
+            </>
+          )}
+
+          {/* Sell Button */}
+          {isOwned && (
+            <button
+              onClick={() => handleSellToken(token)}
+              disabled={isSelling || !sellQuote}
+              className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
+                isSelling
+                  ? "bg-gray-600 text-gray-400 cursor-not-allowed"
+                  : sellQuote
+                    ? "bg-gradient-to-r from-red-600 to-orange-600 text-white hover:from-red-700 hover:to-orange-700 hover:scale-105"
+                    : "bg-gray-600 text-gray-400 cursor-not-allowed"
+              }`}
+            >
+              {isSelling ? (
+                <div className="flex items-center justify-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                  <span>Selling...</span>
+                </div>
+              ) : sellQuote ? (
+                `💰 Sell ${token.token_symbol} (${expectedSol.toFixed(4)} SOL)`
+              ) : (
+                "Getting Sell Quote..."
+              )}
+            </button>
+          )}
+        </div>
+
+        {/* Highlight Indicator */}
+        {isHighlighted && (
+          <div className="mt-2 text-center">
+            <span className="text-yellow-400 text-xs font-medium animate-pulse">
+              🔥 Price moved {`>`}5%!
+            </span>
+          </div>
+        )}
+
+        {/* Axiom Risk Indicators */}
+        <div className="mt-2 pt-2 border-t border-gray-700">
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-1">
+              <span className="text-gray-400">Risk:</span>
+              <span
+                className="text-gray-500 cursor-help"
+                title="Risk analysis based on insider holdings, bundler concentration, sniper activity, and holder distribution"
+              >
+                ℹ️
+              </span>
+            </div>
+            <div className="flex items-center space-x-1">
+              {(() => {
+                const tokenAxiomData = axiomData.get(token.token_address);
+                const isLoading = loadingAxiom.has(token.token_address);
+
+                if (isLoading) {
+                  return (
+                    <div className="flex items-center space-x-1">
+                      <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                      <span className="text-gray-400">Loading...</span>
+                    </div>
+                  );
+                }
+
+                if (!tokenAxiomData) {
+                  return (
+                    <button
+                      onClick={() => fetchAxiomData(token.token_address)}
+                      className="text-blue-400 hover:text-blue-300 text-xs"
+                    >
+                      Check Risk
+                    </button>
+                  );
+                }
+
+                // Handle pair not found case
+                if (tokenAxiomData.pairNotFound) {
+                  return (
+                    <div className="px-2 py-1 rounded text-xs font-medium bg-gray-900/20 border border-gray-500/30 text-gray-400">
+                      No Data
+                    </div>
+                  );
+                }
+
+                const { risk } = tokenAxiomData;
+                if (!risk) return null;
+
+                const riskDisplay = formatRiskDisplay(risk.overallRisk);
+
+                return (
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={`px-2 py-1 rounded text-xs font-medium ${riskDisplay.bg} ${riskDisplay.border} ${riskDisplay.color}`}
+                    >
+                      {riskDisplay.text}
+                    </div>
+                    <div className="text-xs text-gray-400">
+                      {risk.overallRisk === "HIGH"
+                        ? "⚠️"
+                        : risk.overallRisk === "MEDIUM"
+                          ? "⚡"
+                          : "✅"}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Detailed risk breakdown */}
+          {(() => {
+            const tokenAxiomData = axiomData.get(token.token_address);
+            if (
+              !tokenAxiomData ||
+              tokenAxiomData.pairNotFound ||
+              !tokenAxiomData.data ||
+              !tokenAxiomData.risk
+            )
+              return null;
+
+            const { data, risk } = tokenAxiomData;
+            if (!data || !risk) return null;
+
+            const insiderDisplay = formatRiskDisplay(risk!.insiderRisk);
+            const bundlerDisplay = formatRiskDisplay(risk!.bundlerRisk);
+            const sniperDisplay = formatRiskDisplay(risk!.sniperRisk);
+            const concentrationDisplay = formatRiskDisplay(
+              risk!.concentrationRisk,
+            );
+            const feeDisplay = formatRiskDisplay(risk!.feeRisk);
+
+            // Calculate fee analysis
+            const marketCap = token.mcap || 0;
+            const feeAnalysis = calculateFeeToMarketCapRatio(
+              data.totalPairFeesPaid,
+              marketCap,
+            );
+
+            return (
+              <div className="mt-2 space-y-2">
+                {/* Risk Metrics Grid */}
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Insiders:</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-white">
+                        {data.insidersHoldPercent.toFixed(1)}%
+                      </span>
+                      <span
+                        className={`px-1 py-0.5 rounded text-xs ${insiderDisplay.bg} ${insiderDisplay.color}`}
+                      >
+                        {insiderDisplay.text}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Bundlers:</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-white">
+                        {data.bundlersHoldPercent.toFixed(1)}%
+                      </span>
+                      <span
+                        className={`px-1 py-0.5 rounded text-xs ${bundlerDisplay.bg} ${bundlerDisplay.color}`}
+                      >
+                        {bundlerDisplay.text}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Snipers:</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-white">
+                        {data.snipersHoldPercent.toFixed(1)}%
+                      </span>
+                      <span
+                        className={`px-1 py-0.5 rounded text-xs ${sniperDisplay.bg} ${sniperDisplay.color}`}
+                      >
+                        {sniperDisplay.text}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-400">Top 10:</span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-white">
+                        {data.top10HoldersPercent.toFixed(1)}%
+                      </span>
+                      <span
+                        className={`px-1 py-0.5 rounded text-xs ${concentrationDisplay.bg} ${concentrationDisplay.color}`}
+                      >
+                        {concentrationDisplay.text}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Fee Analysis */}
+                <div className="border-t border-gray-700 pt-2 space-y-1">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-gray-400">Organic Trading:</span>
+                    <div className="flex items-center gap-1">
+                      <span
+                        className={`text-xs font-medium ${feeAnalysis.isOrganic ? "text-green-400" : "text-red-400"}`}
+                      >
+                        {feeAnalysis.isOrganic ? "✅ Organic" : "⚠️ Bundled"}
+                      </span>
+                      <span
+                        className={`px-1 py-0.5 rounded text-xs ${feeDisplay.bg} ${feeDisplay.color}`}
+                      >
+                        {feeDisplay.text}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Fees/MCap Ratio:</span>
+                    <span className="text-white font-medium">
+                      {feeAnalysis.ratio.toFixed(2)} SOL/5K MC
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                    <span className="text-gray-400">Organic Score:</span>
+                    <span
+                      className={`font-medium ${feeAnalysis.organicScore >= 70 ? "text-green-400" : feeAnalysis.organicScore >= 40 ? "text-yellow-400" : "text-red-400"}`}
+                    >
+                      {feeAnalysis.organicScore}/100
+                    </span>
+                  </div>
+                </div>
+
+                {/* Additional Info */}
+                <div className="flex justify-between text-xs border-t border-gray-700 pt-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400">Holders:</span>
+                    <span className="text-white font-medium">
+                      {data.numHolders.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-400">Fees:</span>
+                    <span className="text-white font-medium">
+                      {data.totalPairFeesPaid.toFixed(1)} SOL
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+    );
+  };
+
   if (!connected) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
@@ -1320,615 +2054,45 @@ export default function CatchTheCoinClient() {
 
         {/* Token Cards */}
         {!loading && !error && tokens.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {tokens.slice(0, 12).map((token) => {
-              const isHighlighted = highlightedTokens.has(token.token_address);
-              const isBuying = buyingTokens.has(token.token_address);
-              const isSelling = sellingTokens.has(token.token_address);
-              const isNewToken = newTokens.has(token.token_address);
-              const isLoadingQuote = loadingQuotes.has(token.token_address);
-              const quote = quotes.get(token.token_address);
-              const sellQuote = sellQuotes.get(token.token_address);
-              const ownedInfo = ownedTokens.get(token.token_address);
-              const isOwned = ownedInfo && ownedInfo.balance > 0.001;
-              const isKept = keptTokenIds.has(token.token_address);
-              const expectedTokens = quote
-                ? Number(quote.outAmount) / Math.pow(10, 6)
-                : 0; // Assuming 6 decimals
-              const expectedSol = sellQuote
-                ? parseInt(sellQuote.outAmount) / 1e9
-                : 0;
-
-              return (
-                <div
-                  key={token.token_address}
-                  className={`bg-gray-800 rounded-xl p-6 border transition-all duration-500 hover:scale-105 ${
-                    isNewToken
-                      ? "border-cyan-400 shadow-lg shadow-cyan-400/30 animate-bounce-in bg-gradient-to-br from-gray-800 to-cyan-900/20"
-                      : isHighlighted
-                        ? "border-yellow-400 shadow-lg shadow-yellow-400/20 animate-pulse"
-                        : isOwned
-                          ? "border-green-500 shadow-lg shadow-green-500/20"
-                          : "border-gray-700 hover:border-gray-600"
-                  }`}
-                  style={{
-                    animationDelay: isNewToken
-                      ? `${Math.random() * 0.5}s`
-                      : "0s",
-                  }}
-                  onMouseEnter={() => handleTokenCardMouseEnter(token)}
-                  onMouseLeave={() => handleTokenCardMouseLeave(token)}
-                >
-                  {/* Keep/Ignore Controls */}
-                  <div className="absolute top-2 right-2 flex gap-1 z-30">
-                    <button
-                      onClick={(e) => handleKeepToken(token, e)}
-                      className={`p-1.5 rounded-lg border transition-all ${
-                        isKept
-                          ? "bg-blue-600 border-blue-400 text-white shadow-[0_0_10px_rgba(37,99,235,0.5)]"
-                          : "bg-gray-800/80 border-gray-600 text-gray-400 hover:text-blue-400 hover:border-blue-400"
-                      }`}
-                      title={
-                        isKept ? "Unkeep token" : "Keep token (always update)"
-                      }
-                    >
-                      {isKept ? "★" : "+"}
-                    </button>
-                    <button
-                      onClick={(e) => handleIgnoreToken(token, e)}
-                      className="p-1.5 rounded-lg bg-gray-800/80 border border-gray-600 text-gray-400 hover:text-red-400 hover:border-red-400 transition-all"
-                      title="Remove token"
-                    >
-                      −
-                    </button>
-                  </div>
-
-                  {/* New Token Indicator */}
-                  {isNewToken && (
-                    <div className="flex items-center justify-center mb-3 p-2 bg-cyan-900/30 rounded-lg border border-cyan-400/50 animate-pulse">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-2 h-2 bg-cyan-400 rounded-full animate-ping"></div>
-                        <span className="text-cyan-400 text-sm font-bold">
-                          🚀 NEW POTENTIAL
-                        </span>
-                        <div className="w-2 h-2 bg-cyan-400 rounded-full animate-ping"></div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Owned Token Indicator */}
-                  {isOwned && (
-                    <div className="flex items-center justify-between mb-3 p-2 bg-green-900/20 rounded-lg border border-green-500/30">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                        <span className="text-green-400 text-sm font-medium">
-                          OWNED
-                        </span>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-green-400 text-sm font-medium">
-                          {formatNumber(ownedInfo.balance, 2)}{" "}
-                          {token.token_symbol}
-                        </div>
-                        {ownedInfo.pnlPercentage !== undefined && (
-                          <div
-                            className={`text-xs ${ownedInfo.pnlPercentage >= 0 ? "text-green-400" : "text-red-400"}`}
-                          >
-                            PnL: {ownedInfo.pnlPercentage >= 0 ? "+" : ""}
-                            {ownedInfo.pnlPercentage.toFixed(2)}%
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Token Header */}
-                  <div className="flex items-center space-x-3 mb-4">
-                    <div
-                      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 ${
-                        isNewToken
-                          ? "bg-gradient-to-r from-cyan-500 to-blue-500 animate-pulse"
-                          : "bg-gradient-to-r from-purple-500 to-pink-500"
-                      }`}
-                    >
-                      {token.logo_url ? (
-                        <img
-                          src={token.logo_url}
-                          alt={token.token_symbol}
-                          className="rounded-full object-cover"
-                          style={{
-                            width: "40px",
-                            height: "40px",
-                            objectFit: "cover",
-                            borderRadius: "50%",
-                          }}
-                          onError={(e) => {
-                            e.currentTarget.style.display = "none";
-                          }}
-                        />
-                      ) : (
-                        <span className="text-white font-bold text-lg">
-                          {token.token_symbol?.charAt(0) || "?"}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="text-white font-semibold text-lg">
-                        {token.token_symbol}
-                      </h3>
-                      <div className="flex items-center space-x-2 mt-1">
-                        <span className="text-white text-sm font-medium">
-                          {formatCurrency(token.price, 6, false)}
-                        </span>
-                        <span
-                          className={`text-xs font-semibold ${token.change_1h >= 0 ? "text-green-400" : "text-red-400"}`}
-                        >
-                          {token.change_1h >= 0 ? "+" : ""}
-                          {Math.abs(token.change_1h) < 1
-                            ? (token.change_1h * 100).toFixed(2)
-                            : token.change_1h.toFixed(2)}
-                          %
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Token Stats */}
-                  <div className="space-y-2 mb-4 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Market Cap:</span>
-                      <span
-                        className={`font-medium ${isNewToken ? "text-cyan-400" : "text-white"}`}
-                      >
-                        {formatCurrency(token.mcap)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Volume 1h:</span>
-                      <span className="text-white">
-                        {formatCurrency(token.volume_1h)}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-400">Volume 5m:</span>
-                      <span className="text-white">
-                        {formatCurrency(token.volume_5m)}
-                      </span>
-                    </div>
-                    {/* Quote info with loading state */}
-                    {!isOwned && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">You'll get:</span>
-                        {loadingQuotes.has(token.token_address) &&
-                        hoveredToken === token.token_address ? (
-                          <div className="flex items-center space-x-1">
-                            <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                            <span className="text-gray-400 text-xs">
-                              Getting Quote...
-                            </span>
-                          </div>
-                        ) : quoteErrors.get(token.token_address) ? (
-                          <span className="text-red-400 text-xs">
-                            {quoteErrors.get(token.token_address)}
-                          </span>
-                        ) : quotes.has(token.token_address) ? (
-                          <span className="text-green-400">
-                            ~{formatNumber(expectedTokens, 2, false)}{" "}
-                            {token.token_symbol}
-                          </span>
-                        ) : (
-                          <span className="text-gray-500 text-xs">
-                            Hover to quote
-                          </span>
-                        )}
-                      </div>
-                    )}
-                    {sellQuote && isOwned && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-400">Sell for:</span>
-                        <span className="text-blue-400">
-                          ~{expectedSol.toFixed(4)} SOL
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="space-y-2">
-                    {/* Chart Hover Button */}
-                    <div
-                      className="relative w-full z-20"
-                      onMouseEnter={() =>
-                        setHoveredChartToken(token.token_address)
-                      }
-                      onMouseLeave={() => setHoveredChartToken(null)}
-                    >
-                      <button className="w-full py-2 px-4 rounded-lg font-semibold bg-gray-700 text-gray-200 hover:bg-gray-600 transition-all duration-200 flex items-center justify-center gap-2 border border-gray-600">
-                        <svg
-                          className="w-4 h-4"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
-                          />
-                        </svg>
-                        <span>Hover for Chart</span>
-                      </button>
-
-                      {/* Floating Chart Popup */}
-                      {hoveredChartToken === token.token_address && (
-                        <div
-                          className="absolute bottom-full left-0 right-0 mb-2 bg-gray-900 rounded-lg shadow-2xl border border-gray-600 overflow-hidden z-50"
-                          style={{ height: "250px" }}
-                        >
-                          <div className="absolute inset-0 bg-gray-800 flex items-center justify-center -z-10">
-                            <div className="w-6 h-6 border-2 border-gray-500 border-t-white rounded-full animate-spin"></div>
-                          </div>
-                          <iframe
-                            src={`https://www.gmgn.cc/kline/sol/${token.token_address}?interval=5`}
-                            className="w-full h-full"
-                            title={`Chart - ${token.token_symbol}`}
-                            frameBorder="0"
-                          />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Buy Button */}
-                    {!isOwned && (
-                      <>
-                        <button
-                          onClick={() => handleBuyToken(token)}
-                          disabled={
-                            isBuying ||
-                            !quotes.has(token.token_address) ||
-                            loadingQuotes.has(token.token_address) ||
-                            hoveredToken !== token.token_address
-                          }
-                          className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
-                            isBuying
-                              ? "bg-gray-600 text-gray-400 cursor-not-allowed"
-                              : quotes.has(token.token_address) &&
-                                  hoveredToken === token.token_address
-                                ? isNewToken
-                                  ? "bg-gradient-to-r from-cyan-600 to-blue-600 text-white hover:from-cyan-700 hover:to-blue-700 hover:scale-105"
-                                  : "bg-gradient-to-r from-purple-600 to-pink-600 text-white hover:from-purple-700 hover:to-pink-700 hover:scale-105"
-                                : loadingQuotes.has(token.token_address) &&
-                                    hoveredToken === token.token_address
-                                  ? "bg-gray-700 text-gray-300 cursor-wait"
-                                  : "bg-gray-600 text-gray-400 cursor-not-allowed"
-                          }`}
-                        >
-                          {isBuying ? (
-                            <div className="flex items-center justify-center space-x-2">
-                              <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                              <span>Buying...</span>
-                            </div>
-                          ) : loadingQuotes.has(token.token_address) &&
-                            hoveredToken === token.token_address ? (
-                            <div className="flex items-center justify-center space-x-2">
-                              <div className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin"></div>
-                              <span>Getting Quote...</span>
-                            </div>
-                          ) : quotes.has(token.token_address) &&
-                            hoveredToken === token.token_address ? (
-                            isNewToken ? (
-                              `🚀 Catch NEW ${token.token_symbol} (${buyAmount} SOL)`
-                            ) : (
-                              `🎯 Catch ${token.token_symbol} (${buyAmount} SOL)`
-                            )
-                          ) : (
-                            "Hover to Quote"
-                          )}
-                        </button>
-
-                        {/* Simulate Button */}
-                        <button
-                          onClick={() => handleSimulateBuyToken(token)}
-                          disabled={
-                            !quotes.has(token.token_address) ||
-                            loadingQuotes.has(token.token_address)
-                          }
-                          className={`w-full py-2 px-4 rounded-lg font-semibold text-sm border border-gray-600 hover:bg-gray-700 text-gray-300 transition-all duration-200 flex items-center justify-center gap-2 ${
-                            !quotes.has(token.token_address)
-                              ? "opacity-50 cursor-not-allowed"
-                              : ""
-                          }`}
-                        >
-                          <svg
-                            className="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                            />
-                          </svg>
-                          <span>Simulate Buy</span>
-                        </button>
-                      </>
-                    )}
-
-                    {/* Sell Button */}
-                    {isOwned && (
-                      <button
-                        onClick={() => handleSellToken(token)}
-                        disabled={isSelling || !sellQuote}
-                        className={`w-full py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
-                          isSelling
-                            ? "bg-gray-600 text-gray-400 cursor-not-allowed"
-                            : sellQuote
-                              ? "bg-gradient-to-r from-red-600 to-orange-600 text-white hover:from-red-700 hover:to-orange-700 hover:scale-105"
-                              : "bg-gray-600 text-gray-400 cursor-not-allowed"
-                        }`}
-                      >
-                        {isSelling ? (
-                          <div className="flex items-center justify-center space-x-2">
-                            <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                            <span>Selling...</span>
-                          </div>
-                        ) : sellQuote ? (
-                          `💰 Sell ${token.token_symbol} (${expectedSol.toFixed(4)} SOL)`
-                        ) : (
-                          "Getting Sell Quote..."
-                        )}
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Highlight Indicator */}
-                  {isHighlighted && (
-                    <div className="mt-2 text-center">
-                      <span className="text-yellow-400 text-xs font-medium animate-pulse">
-                        🔥 Price moved {`>`}5%!
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Axiom Risk Indicators */}
-                  <div className="mt-2 pt-2 border-t border-gray-700">
-                    <div className="flex items-center justify-between text-xs">
-                      <div className="flex items-center gap-1">
-                        <span className="text-gray-400">Risk:</span>
-                        <span
-                          className="text-gray-500 cursor-help"
-                          title="Risk analysis based on insider holdings, bundler concentration, sniper activity, and holder distribution"
-                        >
-                          ℹ️
-                        </span>
-                      </div>
-                      <div className="flex items-center space-x-1">
-                        {(() => {
-                          const tokenAxiomData = axiomData.get(
-                            token.token_address,
-                          );
-                          const isLoading = loadingAxiom.has(
-                            token.token_address,
-                          );
-
-                          if (isLoading) {
-                            return (
-                              <div className="flex items-center space-x-1">
-                                <div className="w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                                <span className="text-gray-400">
-                                  Loading...
-                                </span>
-                              </div>
-                            );
-                          }
-
-                          if (!tokenAxiomData) {
-                            return (
-                              <button
-                                onClick={() =>
-                                  fetchAxiomData(token.token_address)
-                                }
-                                className="text-blue-400 hover:text-blue-300 text-xs"
-                              >
-                                Check Risk
-                              </button>
-                            );
-                          }
-
-                          // Handle pair not found case
-                          if (tokenAxiomData.pairNotFound) {
-                            return (
-                              <div className="px-2 py-1 rounded text-xs font-medium bg-gray-900/20 border border-gray-500/30 text-gray-400">
-                                No Data
-                              </div>
-                            );
-                          }
-
-                          const { risk } = tokenAxiomData;
-                          if (!risk) return null;
-
-                          const riskDisplay = formatRiskDisplay(
-                            risk.overallRisk,
-                          );
-
-                          return (
-                            <div className="flex items-center gap-2">
-                              <div
-                                className={`px-2 py-1 rounded text-xs font-medium ${riskDisplay.bg} ${riskDisplay.border} ${riskDisplay.color}`}
-                              >
-                                {riskDisplay.text}
-                              </div>
-                              <div className="text-xs text-gray-400">
-                                {risk.overallRisk === "HIGH"
-                                  ? "⚠️"
-                                  : risk.overallRisk === "MEDIUM"
-                                    ? "⚡"
-                                    : "✅"}
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    </div>
-
-                    {/* Detailed risk breakdown */}
-                    {(() => {
-                      const tokenAxiomData = axiomData.get(token.token_address);
-                      if (
-                        !tokenAxiomData ||
-                        tokenAxiomData.pairNotFound ||
-                        !tokenAxiomData.data ||
-                        !tokenAxiomData.risk
-                      )
-                        return null;
-
-                      const { data, risk } = tokenAxiomData;
-                      if (!data || !risk) return null;
-
-                      const insiderDisplay = formatRiskDisplay(
-                        risk!.insiderRisk,
-                      );
-                      const bundlerDisplay = formatRiskDisplay(
-                        risk!.bundlerRisk,
-                      );
-                      const sniperDisplay = formatRiskDisplay(risk!.sniperRisk);
-                      const concentrationDisplay = formatRiskDisplay(
-                        risk!.concentrationRisk,
-                      );
-                      const feeDisplay = formatRiskDisplay(risk!.feeRisk);
-
-                      // Calculate fee analysis
-                      const marketCap = token.mcap || 0;
-                      const feeAnalysis = calculateFeeToMarketCapRatio(
-                        data.totalPairFeesPaid,
-                        marketCap,
-                      );
-
-                      return (
-                        <div className="mt-2 space-y-2">
-                          {/* Risk Metrics Grid */}
-                          <div className="grid grid-cols-2 gap-2 text-xs">
-                            <div className="flex justify-between items-center">
-                              <span className="text-gray-400">Insiders:</span>
-                              <div className="flex items-center gap-1">
-                                <span className="text-white">
-                                  {data.insidersHoldPercent.toFixed(1)}%
-                                </span>
-                                <span
-                                  className={`px-1 py-0.5 rounded text-xs ${insiderDisplay.bg} ${insiderDisplay.color}`}
-                                >
-                                  {insiderDisplay.text}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span className="text-gray-400">Bundlers:</span>
-                              <div className="flex items-center gap-1">
-                                <span className="text-white">
-                                  {data.bundlersHoldPercent.toFixed(1)}%
-                                </span>
-                                <span
-                                  className={`px-1 py-0.5 rounded text-xs ${bundlerDisplay.bg} ${bundlerDisplay.color}`}
-                                >
-                                  {bundlerDisplay.text}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span className="text-gray-400">Snipers:</span>
-                              <div className="flex items-center gap-1">
-                                <span className="text-white">
-                                  {data.snipersHoldPercent.toFixed(1)}%
-                                </span>
-                                <span
-                                  className={`px-1 py-0.5 rounded text-xs ${sniperDisplay.bg} ${sniperDisplay.color}`}
-                                >
-                                  {sniperDisplay.text}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex justify-between items-center">
-                              <span className="text-gray-400">Top 10:</span>
-                              <div className="flex items-center gap-1">
-                                <span className="text-white">
-                                  {data.top10HoldersPercent.toFixed(1)}%
-                                </span>
-                                <span
-                                  className={`px-1 py-0.5 rounded text-xs ${concentrationDisplay.bg} ${concentrationDisplay.color}`}
-                                >
-                                  {concentrationDisplay.text}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Fee Analysis */}
-                          <div className="border-t border-gray-700 pt-2 space-y-1">
-                            <div className="flex justify-between items-center text-xs">
-                              <span className="text-gray-400">
-                                Organic Trading:
-                              </span>
-                              <div className="flex items-center gap-1">
-                                <span
-                                  className={`text-xs font-medium ${feeAnalysis.isOrganic ? "text-green-400" : "text-red-400"}`}
-                                >
-                                  {feeAnalysis.isOrganic
-                                    ? "✅ Organic"
-                                    : "⚠️ Bundled"}
-                                </span>
-                                <span
-                                  className={`px-1 py-0.5 rounded text-xs ${feeDisplay.bg} ${feeDisplay.color}`}
-                                >
-                                  {feeDisplay.text}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                              <span className="text-gray-400">
-                                Fees/MCap Ratio:
-                              </span>
-                              <span className="text-white font-medium">
-                                {feeAnalysis.ratio.toFixed(2)} SOL/5K MC
-                              </span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                              <span className="text-gray-400">
-                                Organic Score:
-                              </span>
-                              <span
-                                className={`font-medium ${feeAnalysis.organicScore >= 70 ? "text-green-400" : feeAnalysis.organicScore >= 40 ? "text-yellow-400" : "text-red-400"}`}
-                              >
-                                {feeAnalysis.organicScore}/100
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Additional Info */}
-                          <div className="flex justify-between text-xs border-t border-gray-700 pt-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-gray-400">Holders:</span>
-                              <span className="text-white font-medium">
-                                {data.numHolders.toLocaleString()}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-gray-400">Fees:</span>
-                              <span className="text-white font-medium">
-                                {data.totalPairFeesPaid.toFixed(1)} SOL
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
+          <div className="space-y-8">
+            {/* Kept Tokens Section */}
+            {tokens.some((t) => keptTokenIds.has(t.token_address)) && (
+              <div className="bg-gray-900/50 rounded-2xl p-6 border border-yellow-500/20">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-bold text-yellow-400 flex items-center gap-2">
+                    <span>⭐</span> Watchlist
+                  </h2>
+                  <button
+                    onClick={handleOpenCharts}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors flex items-center gap-2"
+                  >
+                    <span>📈</span> View All in Charts
+                  </button>
                 </div>
-              );
-            })}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {tokens
+                    .filter((t) => keptTokenIds.has(t.token_address))
+                    .map((token) => (
+                      <TokenCard key={token.token_address} token={token} />
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {/* Trending Tokens Section */}
+            <div>
+              <h2 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                <span>🔥</span> Trending Now
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {tokens
+                  .filter((t) => !keptTokenIds.has(t.token_address))
+                  .slice(0, 12)
+                  .map((token) => (
+                    <TokenCard key={token.token_address} token={token} />
+                  ))}
+              </div>
+            </div>
           </div>
         )}
 

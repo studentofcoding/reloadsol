@@ -6,7 +6,7 @@ import { TokenLabel } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
 
 // Valid label values
-const VALID_LABELS: TokenLabel[] = ['valid', 'traded_live', 'potential', 'rugged']
+const VALID_LABELS: TokenLabel[] = ['valid', 'traded_live', 'potential', 'rugged', 'watching']
 
 export async function PUT(request: NextRequest) {
   try {
