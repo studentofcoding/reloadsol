@@ -26,7 +26,8 @@ export async function GET(request: NextRequest) {
         price: d.price,
         initial_price: d.initial_price,
         result: d.result,
-        image_reference: d.image_reference
+        image_reference: d.image_reference,
+        source: d.source
       }))
     })
   } catch (error) {
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { tokenAddress, label, tokenSymbol, price, mcap, initialPrice, result, imageReference } = await request.json()
+    const { tokenAddress, label, tokenSymbol, price, mcap, initialPrice, result, imageReference, source } = await request.json()
 
     if (!tokenAddress) {
       return NextResponse.json({ success: false, error: 'Token address required' }, { status: 400 })
@@ -67,6 +68,8 @@ export async function POST(request: NextRequest) {
       if (initialPrice) updateData.initial_price = initialPrice
       if (result) updateData.result = result
       if (imageReference) updateData.image_reference = imageReference
+      // Source is usually immutable, but allow update if provided explicitly
+      if (source) updateData.source = source
 
       const { error: upError } = await supabase
         .from('trading_signals')
@@ -86,7 +89,8 @@ export async function POST(request: NextRequest) {
           updated_at: now,
           label: label || 'watching',
           result: result || null,
-          image_reference: imageReference || null
+          image_reference: imageReference || null,
+          source: source || 'manual'
         })
       error = inError
     }

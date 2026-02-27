@@ -35,11 +35,11 @@ import {
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { calculateWeightedDistribution } from "@/utils/position-sizing";
-import html2canvas from "html2canvas";
+import { useMCapTracker, FilterOptions } from "@/hooks/useMCapTracker";
 
 // --- Types & Constants ---
 
-type SectionType = "watching" | "potential" | "rugged";
+type SectionType = "watching" | "potential" | "rugged" | "mcap_tracker";
 
 interface SignalData {
   token_address: string;
@@ -50,13 +50,28 @@ interface SignalData {
   token_symbol?: string;
   result?: any;
   image_reference?: string;
+  source?: string;
 }
 
 const SECTIONS: { id: SectionType; title: string; color: string }[] = [
+  { id: "mcap_tracker", title: "Discovery (MCap)", color: "border-purple-600" },
   { id: "watching", title: "Unlabeled / Watching", color: "border-gray-600" },
   { id: "potential", title: "Potential", color: "border-green-600" },
   { id: "rugged", title: "Rugged", color: "border-red-600" },
 ];
+
+const DEFAULT_MCAP_FILTERS: FilterOptions = {
+  search: "",
+  sortBy: "first_seen_at",
+  sortOrder: "desc",
+  minGrowth: "",
+  maxGrowth: "",
+  minMcap: "1000",
+  maxMcap: "100000",
+  excludeZeroPnl: false,
+  timeFilter: "24h",
+  performanceFilter: "all",
+};
 
 function parseAddresses(param: string | null): string[] {
   if (!param) return [];
@@ -64,84 +79,6 @@ function parseAddresses(param: string | null): string[] {
     .split(/[|,]/)
     .map((s) => s.trim())
     .filter(Boolean);
-}
-
-// --- Screen Capture Helper ---
-async function captureElementWithScreenShare(
-  elementId: string,
-): Promise<string> {
-  try {
-    // Prompt user to select the current tab
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: {
-        displaySurface: "browser",
-      } as any,
-      audio: false,
-    });
-
-    const video = document.createElement("video");
-    video.style.position = "fixed";
-    video.style.top = "-10000px";
-    video.style.left = "-10000px";
-    document.body.appendChild(video);
-
-    video.srcObject = stream;
-    await video.play();
-
-    // Wait for video to stabilize
-    await new Promise((resolve) => setTimeout(resolve, 500));
-
-    const element = document.getElementById(elementId);
-    if (!element) {
-      stream.getTracks().forEach((t) => t.stop());
-      video.remove();
-      throw new Error("Element not found");
-    }
-
-    const rect = element.getBoundingClientRect();
-
-    const canvas = document.createElement("canvas");
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-    const ctx = canvas.getContext("2d");
-
-    if (!ctx) {
-      stream.getTracks().forEach((t) => t.stop());
-      video.remove();
-      throw new Error("Canvas context failed");
-    }
-
-    // Calculate scaling (Video dimensions vs Viewport dimensions)
-    const track = stream.getVideoTracks()[0];
-    const settings = track.getSettings();
-    const vW = settings.width || video.videoWidth;
-    const vH = settings.height || video.videoHeight;
-    const clientW = window.innerWidth;
-    const clientH = window.innerHeight;
-
-    const scaleX = vW / clientW;
-    const scaleY = vH / clientH;
-
-    ctx.drawImage(
-      video,
-      rect.left * scaleX,
-      rect.top * scaleY,
-      rect.width * scaleX,
-      rect.height * scaleY,
-      0,
-      0,
-      rect.width,
-      rect.height,
-    );
-
-    stream.getTracks().forEach((t) => t.stop());
-    video.remove();
-
-    return canvas.toDataURL("image/png");
-  } catch (err) {
-    console.error("Screen capture error:", err);
-    throw err;
-  }
 }
 
 // --- Draggable Card Component ---
@@ -294,6 +231,7 @@ const ChartItem = React.memo(
     onRemove,
     onMove,
     showMoveButtons,
+    isMcapSource,
   }: any) => {
     return (
       <DraggableCard
@@ -301,8 +239,15 @@ const ChartItem = React.memo(
         onRemove={onRemove ? () => onRemove(addr) : undefined}
       >
         <div className="flex-1">
-          <div className="text-sm font-medium text-white mb-1">
-            {symbol || addr.slice(0, 8) + "..."}
+          <div className="flex items-center justify-between text-sm font-medium text-white mb-1">
+            <div className="flex items-center gap-2">
+              {symbol || addr.slice(0, 8) + "..."}
+              {isMcapSource && (
+                <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1 rounded border border-purple-700">
+                  MCAP
+                </span>
+              )}
+            </div>
             <a
               href={`/chart/${addr}`}
               target="_blank"
@@ -455,7 +400,7 @@ function PreviewModal({ isOpen, onClose, onSave, onRetake, data }: any) {
               onClick={onRetake}
               className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg font-medium transition-colors"
             >
-              Retake (Screen Share)
+              Retake
             </button>
             <button
               onClick={onSave}
@@ -484,10 +429,21 @@ function ChartsContent() {
 
   // State
   const [columns, setColumns] = useState<Record<SectionType, string[]>>({
+    mcap_tracker: [],
     watching: [],
     potential: [],
     rugged: [],
   });
+  const [mcapFilters, setMcapFilters] =
+    useState<FilterOptions>(DEFAULT_MCAP_FILTERS);
+
+  // Fetch Mcap Data
+  const { data: mcapData } = useMCapTracker({
+    filters: mcapFilters,
+    page: 1,
+    limit: 50, // Fetch top 50
+  });
+
   const [symbols, setSymbols] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<string>("");
   const [newAddr, setNewAddr] = useState("");
@@ -533,6 +489,7 @@ function ChartsContent() {
 
         // Categorize DB tokens
         const newCols: Record<SectionType, string[]> = {
+          mcap_tracker: [],
           watching: [],
           potential: [],
           rugged: [],
@@ -581,6 +538,70 @@ function ChartsContent() {
     };
   }, [urlAddresses.join(",")]); // Re-run if URL params change (e.g. navigation)
 
+  // 1b. Sync Mcap Data to Columns & Signals
+  useEffect(() => {
+    if (!mcapData?.data) return;
+
+    // Convert mcap data to signals format and add to state
+    setSignals((prev) => {
+      const next = { ...prev };
+      let changed = false;
+
+      mcapData.data.forEach((t) => {
+        // Only add if not exists or update if source is mcap_tracker (to keep price fresh)
+        // If it exists but has a different source (e.g. 'manual'), we preserve the manual one
+        if (
+          !next[t.token_address] ||
+          next[t.token_address].source === "mcap_tracker"
+        ) {
+          next[t.token_address] = {
+            // Preserve existing fields if any
+            ...next[t.token_address],
+            token_address: t.token_address,
+            label: next[t.token_address]?.label || "mcap_tracker",
+            // Update live data
+            market_cap: t.current_mcap,
+            price: t.solPerToken.current,
+            initial_price:
+              next[t.token_address]?.initial_price || t.solPerToken.first,
+            token_symbol: t.token_symbol,
+            source: next[t.token_address]?.source || "mcap_tracker",
+          };
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+
+    // Update Columns
+    // We want mcap_tracker column to contain tokens that are NOT in other columns
+    const existingSet = new Set([
+      ...columns.watching,
+      ...columns.potential,
+      ...columns.rugged,
+    ]);
+
+    const newMcapIds = mcapData.data
+      .filter((t) => !existingSet.has(t.token_address))
+      .map((t) => t.token_address);
+
+    setColumns((prev) => {
+      // Check if different to avoid loop
+      const current = prev.mcap_tracker || [];
+      if (
+        current.length === newMcapIds.length &&
+        current.every((id, i) => id === newMcapIds[i])
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        mcap_tracker: newMcapIds,
+      };
+    });
+  }, [mcapData, columns.watching, columns.potential, columns.rugged]);
+
   const handleBuyPotential = async () => {
     const potentialTokens = columns.potential;
     if (potentialTokens.length === 0) {
@@ -604,14 +625,10 @@ function ChartsContent() {
 
     try {
       // 1. Refresh MCaps for potential tokens to ensure accuracy
-      // (Using stored mcaps for now, ideally we fetch fresh ones)
-      // We can use fetchTokenPricesForTracking if it returns mcap, but it returns price.
-      // For now, rely on what we have + maybe re-fetch if needed.
-      // Let's assume stored mcaps are relatively fresh or fallback to default weighting if missing.
-
+      // Use live data if available in signals map (populated by mcap_tracker or fetched DB data)
       const weightingInput = potentialTokens.map((addr) => ({
         address: addr,
-        marketCap: tokenMcaps[addr] || 0, // Default to 0 (lowest weight) if missing
+        marketCap: signals[addr]?.market_cap || tokenMcaps[addr] || 0,
       }));
 
       const distribution = calculateWeightedDistribution(
@@ -758,11 +775,31 @@ function ChartsContent() {
 
     // API Update
     try {
-      await fetch("/api/signals", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tokenAddress, label: targetSection }),
-      });
+      if (targetSection === "mcap_tracker") {
+        // Untrack (Delete from DB)
+        await fetch(`/api/signals?tokenAddress=${tokenAddress}`, {
+          method: "DELETE",
+        });
+      } else {
+        const signal = signals[tokenAddress];
+        await fetch("/api/signals", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tokenAddress,
+            label: targetSection,
+            // If it came from mcap_tracker, set source. If existing, preserve source.
+            source:
+              sourceSection === "mcap_tracker"
+                ? "mcap_tracker"
+                : signal?.source || "manual",
+            tokenSymbol: signal?.token_symbol,
+            mcap: signal?.market_cap,
+            price: signal?.price,
+            initialPrice: signal?.initial_price,
+          }),
+        });
+      }
     } catch (e) {
       console.error("Failed to save move", e);
       setStatus("Failed to save change to server");
@@ -1161,21 +1198,24 @@ function ChartsContent() {
 
   const handleEndTracking = useCallback(
     async (tokenAddress: string) => {
-      const cardElement = document.getElementById(`card-${tokenAddress}`);
-      if (!cardElement) return;
-
       // Use cursor to indicate loading without triggering re-render
       document.body.style.cursor = "wait";
+      setStatus(`Capturing chart for ${tokenAddress.slice(0, 8)}...`);
 
       try {
-        // Capture screenshot (ignoring iframe content due to CORS)
-        const canvas = await html2canvas(cardElement, {
-          useCORS: true,
-          allowTaint: true,
-          backgroundColor: "#1f2937",
-          ignoreElements: (element) => element.tagName === "IFRAME",
+        // Server-side capture
+        const res = await fetch("/api/capture", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tokenAddress }),
         });
-        const imageBase64 = canvas.toDataURL("image/png");
+        const data = await res.json();
+
+        if (!data.success) {
+          throw new Error(data.error || "Capture failed");
+        }
+
+        const imageBase64 = data.imageBase64;
 
         // Calculate PnL
         const signal = signals[tokenAddress];
@@ -1217,10 +1257,17 @@ function ChartsContent() {
     if (!previewData?.tokenAddress) return;
 
     try {
-      setStatus("Select 'This Tab' to capture...");
-      const imageBase64 = await captureElementWithScreenShare(
-        `card-${previewData.tokenAddress}`,
-      );
+      setStatus("Retaking capture...");
+      const res = await fetch("/api/capture", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tokenAddress: previewData.tokenAddress }),
+      });
+      const data = await res.json();
+
+      if (!data.success) throw new Error(data.error);
+
+      const imageBase64 = data.imageBase64;
       setPreviewData((prev) => (prev ? { ...prev, imageBase64 } : null));
       setStatus("Capture updated!");
       setTimeout(() => setStatus(""), 2000);
@@ -1235,14 +1282,29 @@ function ChartsContent() {
 
     setStatus("Saving result...");
     try {
+      const signal = signals[previewData.tokenAddress];
+
+      let labelToSave = signal?.label;
+      if (labelToSave === "mcap_tracker" || !labelToSave) {
+        labelToSave = "watching";
+      }
+
+      const payload: any = {
+        tokenAddress: previewData.tokenAddress,
+        result: previewData.result,
+        imageReference: previewData.imageBase64,
+        source: signal?.source || "manual",
+        tokenSymbol: signal?.token_symbol,
+        mcap: signal?.market_cap,
+        price: signal?.price,
+        initialPrice: signal?.initial_price,
+        label: labelToSave,
+      };
+
       await fetch("/api/signals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tokenAddress: previewData.tokenAddress,
-          result: previewData.result,
-          imageReference: previewData.imageBase64,
-        }),
+        body: JSON.stringify(payload),
       });
 
       setStatus("Tracking ended & saved!");
@@ -1299,7 +1361,11 @@ function ChartsContent() {
         await fetch("/api/signals", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tokenAddress: addr, label: "watching" }),
+          body: JSON.stringify({
+            tokenAddress: addr,
+            label: "watching",
+            source: "manual",
+          }),
         });
       } catch (e) {
         console.error(e);
@@ -1335,30 +1401,41 @@ function ChartsContent() {
   );
 
   const renderCard = useCallback(
-    (addr: string) => (
-      <ChartItem
-        key={addr}
-        addr={addr}
-        symbol={symbols[addr]}
-        interval={interval}
-        isDraggingGlobal={isDraggingGlobal}
-        buyState={buyStates[addr]}
-        onBuy={onBuy}
-        onSell={onSell}
-        onSimulate={onSimulate}
-        onSimulateSell={onSimulateSell}
-        onEnd={onEnd}
-        onRemove={onRemove}
-        onMove={onMove}
-        showMoveButtons={columns.watching.includes(addr)}
-      />
-    ),
+    (addr: string) => {
+      const signal = signals[addr];
+      const isMcapSource = signal?.source === "mcap_tracker";
+
+      return (
+        <ChartItem
+          key={addr}
+          addr={addr}
+          symbol={symbols[addr] || signal?.token_symbol}
+          interval={interval}
+          isDraggingGlobal={isDraggingGlobal}
+          buyState={buyStates[addr]}
+          onBuy={onBuy}
+          onSell={onSell}
+          onSimulate={onSimulate}
+          onSimulateSell={onSimulateSell}
+          onEnd={onEnd}
+          onRemove={onRemove}
+          onMove={onMove}
+          showMoveButtons={
+            columns.watching.includes(addr) ||
+            columns.mcap_tracker.includes(addr)
+          }
+          isMcapSource={isMcapSource}
+        />
+      );
+    },
     [
+      signals,
       symbols,
       interval,
       isDraggingGlobal,
       buyStates,
       columns.watching,
+      columns.mcap_tracker,
       onBuy,
       onSell,
       onSimulate,
