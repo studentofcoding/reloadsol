@@ -19,7 +19,10 @@ create table if not exists public.trading_signals (
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null,
   
   -- Optional: Track who added it (if auth is enabled)
-  user_wallet text
+  user_wallet text,
+
+  -- Source of the signal (manual, mcap_tracker, etc.)
+  source text default 'manual'
 );
 
 -- Add indexes
@@ -33,3 +36,12 @@ create policy "Allow public read access" on public.trading_signals for select us
 create policy "Allow public insert access" on public.trading_signals for insert with check (true);
 create policy "Allow public update access" on public.trading_signals for update using (true);
 create policy "Allow public delete access" on public.trading_signals for delete using (true);
+
+-- Add source column if it doesn't exist (for existing deployments)
+do $$
+begin
+  if not exists (select 1 from information_schema.columns where table_name = 'trading_signals' and column_name = 'source') then
+    alter table public.trading_signals add column source text default 'manual';
+  end if;
+end
+$$;
