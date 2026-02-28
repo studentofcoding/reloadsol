@@ -34,6 +34,8 @@ import {
   DragOverlay,
 } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
+import { ChartCaptureModal } from "@/components/ChartCaptureModal";
+import { useChartCapture } from "@/hooks/useChartCapture";
 import { calculateWeightedDistribution } from "@/utils/position-sizing";
 import { useMCapTracker, FilterOptions } from "@/hooks/useMCapTracker";
 
@@ -343,78 +345,6 @@ const ChartItem = React.memo(
 );
 ChartItem.displayName = "ChartItem";
 
-function PreviewModal({ isOpen, onClose, onSave, onRetake, data }: any) {
-  if (!isOpen || !data) return null;
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
-      <div className="bg-gray-800 border border-gray-700 rounded-xl p-6 max-w-2xl w-full shadow-2xl">
-        <h2 className="text-xl font-bold mb-4 text-white">Confirm Result</h2>
-
-        <div className="mb-4 bg-gray-900 rounded-lg overflow-hidden border border-gray-700 flex justify-center bg-[#1f2937]">
-          {data.imageBase64 ? (
-            <img
-              src={data.imageBase64}
-              alt="Result"
-              className="max-w-full max-h-[50vh] object-contain"
-            />
-          ) : (
-            <div className="p-10 text-gray-500">No Image Captured</div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-3 gap-4 mb-6">
-          <div className="bg-gray-700/50 p-3 rounded">
-            <div className="text-gray-400 text-xs">Initial</div>
-            <div className="text-white font-mono">
-              ${data.result.initial_price?.toFixed(6)}
-            </div>
-          </div>
-          <div className="bg-gray-700/50 p-3 rounded">
-            <div className="text-gray-400 text-xs">Final</div>
-            <div className="text-white font-mono">
-              ${data.result.final_price?.toFixed(6)}
-            </div>
-          </div>
-          <div
-            className={`p-3 rounded border ${data.result.pnl_percentage >= 0 ? "bg-green-900/20 border-green-800" : "bg-red-900/20 border-red-800"}`}
-          >
-            <div className="text-gray-400 text-xs">PnL</div>
-            <div
-              className={`font-bold font-mono ${data.result.pnl_percentage >= 0 ? "text-green-400" : "text-red-400"}`}
-            >
-              {data.result.pnl_percentage > 0 ? "+" : ""}
-              {data.result.pnl_percentage}%
-            </div>
-          </div>
-        </div>
-
-        <div className="flex justify-between gap-3">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg font-medium transition-colors"
-          >
-            Cancel
-          </button>
-          <div className="flex gap-3">
-            <button
-              onClick={onRetake}
-              className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg font-medium transition-colors"
-            >
-              Retake
-            </button>
-            <button
-              onClick={onSave}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium transition-colors"
-            >
-              Approve & Save
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // --- Main Content Component ---
 
 function ChartsContent() {
@@ -465,12 +395,21 @@ function ChartsContent() {
   const [potentialSolAmount, setPotentialSolAmount] = useState<string>("1.0");
   const [isBuyingPotential, setIsBuyingPotential] = useState(false);
 
-  const [previewModalOpen, setPreviewModalOpen] = useState(false);
-  const [previewData, setPreviewData] = useState<{
-    tokenAddress: string;
-    result: any;
-    imageBase64: string;
-  } | null>(null);
+  // Use Chart Capture Hook
+  const {
+    isOpen: captureOpen,
+    data: captureData,
+    status: captureStatus,
+    startCapture,
+    retakeCapture,
+    saveResult,
+    close: closeCapture,
+  } = useChartCapture();
+
+  // Sync hook status with local status if needed, or just display hook status
+  useEffect(() => {
+    if (captureStatus) setStatus(captureStatus);
+  }, [captureStatus]);
 
   // 1. Fetch initial data from API
 
@@ -1198,124 +1137,18 @@ function ChartsContent() {
 
   const handleEndTracking = useCallback(
     async (tokenAddress: string) => {
-      // Use cursor to indicate loading without triggering re-render
-      document.body.style.cursor = "wait";
-      setStatus(`Capturing chart for ${tokenAddress.slice(0, 8)}...`);
-
-      try {
-        // Server-side capture
-        const res = await fetch("/api/capture", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tokenAddress }),
-        });
-        const data = await res.json();
-
-        if (!data.success) {
-          throw new Error(data.error || "Capture failed");
-        }
-
-        const imageBase64 = data.imageBase64;
-
-        // Calculate PnL
-        const signal = signals[tokenAddress];
-        const initialPrice = signal?.initial_price || 0;
-
-        // Fetch fresh price
-        const prices = await fetchTokenPricesForTracking([tokenAddress]);
-        const currentPrice = prices[tokenAddress] || 0;
-
-        const pnl =
-          initialPrice > 0
-            ? ((currentPrice - initialPrice) / initialPrice) * 100
-            : 0;
-
-        const result = {
-          end_time: new Date().toISOString(),
-          initial_price: initialPrice,
-          final_price: currentPrice,
-          pnl_percentage: parseFloat(pnl.toFixed(2)),
-        };
-
-        setPreviewData({
-          tokenAddress,
-          result,
-          imageBase64,
-        });
-        setPreviewModalOpen(true);
-      } catch (e) {
-        console.error("End tracking failed", e);
-        setStatus("Failed to save result");
-      } finally {
-        document.body.style.cursor = "default";
-      }
-    },
-    [signals],
-  );
-
-  const handleRetakeCapture = async () => {
-    if (!previewData?.tokenAddress) return;
-
-    try {
-      setStatus("Retaking capture...");
-      const res = await fetch("/api/capture", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tokenAddress: previewData.tokenAddress }),
-      });
-      const data = await res.json();
-
-      if (!data.success) throw new Error(data.error);
-
-      const imageBase64 = data.imageBase64;
-      setPreviewData((prev) => (prev ? { ...prev, imageBase64 } : null));
-      setStatus("Capture updated!");
-      setTimeout(() => setStatus(""), 2000);
-    } catch (e) {
-      console.error("Retake failed", e);
-      setStatus("Capture cancelled or failed");
-    }
-  };
-
-  const handleSaveResult = async () => {
-    if (!previewData) return;
-
-    setStatus("Saving result...");
-    try {
-      const signal = signals[previewData.tokenAddress];
-
-      let labelToSave = signal?.label;
-      if (labelToSave === "mcap_tracker" || !labelToSave) {
-        labelToSave = "watching";
-      }
-
-      const payload: any = {
-        tokenAddress: previewData.tokenAddress,
-        result: previewData.result,
-        imageReference: previewData.imageBase64,
-        source: signal?.source || "manual",
-        tokenSymbol: signal?.token_symbol,
-        mcap: signal?.market_cap,
+      const signal = signals[tokenAddress];
+      await startCapture(tokenAddress, {
+        initial_price: signal?.initial_price,
+        label: signal?.label,
+        source: signal?.source,
+        token_symbol: signal?.token_symbol,
+        market_cap: signal?.market_cap,
         price: signal?.price,
-        initialPrice: signal?.initial_price,
-        label: labelToSave,
-      };
-
-      await fetch("/api/signals", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
       });
-
-      setStatus("Tracking ended & saved!");
-      setPreviewModalOpen(false);
-      setPreviewData(null);
-      setTimeout(() => setStatus(""), 3000);
-    } catch (e) {
-      console.error("Save failed", e);
-      setStatus("Failed to save result");
-    }
-  };
+    },
+    [signals, startCapture],
+  );
 
   const handleRemove = async (tokenAddress: string) => {
     // Optimistic remove
@@ -1511,12 +1344,12 @@ function ChartsContent() {
           </div>
         </DndContext>
 
-        <PreviewModal
-          isOpen={previewModalOpen}
-          data={previewData}
-          onClose={() => setPreviewModalOpen(false)}
-          onRetake={handleRetakeCapture}
-          onSave={handleSaveResult}
+        <ChartCaptureModal
+          isOpen={captureOpen}
+          data={captureData}
+          onClose={closeCapture}
+          onRetake={retakeCapture}
+          onSave={saveResult}
         />
       </div>
     </div>
