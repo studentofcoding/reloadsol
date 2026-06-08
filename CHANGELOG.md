@@ -10,7 +10,7 @@ All notable changes to ReloadSOL are documented in this file.
 - **`UniversalWalletButton`** — connect/disconnect UI that opens Jupiter’s unified wallet picker modal.
 - **`WalletNotification`** — lightweight toast feedback for connect, disconnect, and install prompts.
 - **DLMM Agent Dashboard** (`/dev/dlmm`) — Hunter screener + Healer position manager for Meteora DLMM pools, with deploy/edit/close, dry-run mode, decision feed, and Telegram bot integration.
-- **Docker stack** — one-command local and production deployment for Next.js web + Go cron (`npm run docker:up`, `docker:dev`, `docker:prod`).
+- **Docker stack** — one-command local and production deployment for Next.js web + Go cron (`npm run docker:up`, `docker:dev`, `docker:prod`); always runs `npm ci` before build/start.
 - **DLMM cron jobs** — automated pool screening (5m) and position management (60s) via `main.go`.
 - **`.env.docker.example`** — documented env template for Docker and DLMM agent configuration.
 - **`supabase/schema.sql`** — single consolidated Supabase schema (all app tables; removed unused `dlmm_pool_snapshots`).
@@ -18,6 +18,7 @@ All notable changes to ReloadSOL are documented in this file.
 
 ### Changed
 
+- **Dependencies** — wallet stack trimmed to `@jup-ag/wallet-adapter` only; removed direct `@solana/wallet-adapter-react`, `@emotion/*`, `styled-components`, and legacy `@solana/wallet-adapter-wallets` / `react-ui` (eliminates blocked `xrpl` on Tencent mirrors). `.npmrc` uses `registry.npmjs.org` + `legacy-peer-deps=true`.
 - **RPC provider** — all Solana RPC calls now use **Shyft** via `SHYFT_API_KEY` / `RPC_URL` (`src/utils/rpc-urls.ts`). Removed `HELIUS_API_KEY` and Helius Sender from `/api/buy`.
 - **`WalletProvider`** — replaced Phantom-only `window.solana` injection with Jupiter `UnifiedWalletProvider`; existing `useWallet()` / `useConnection()` hooks remain compatible across the app.
 - **`PhantomWalletButton`** — now re-exports `UniversalWalletButton` for backward compatibility.

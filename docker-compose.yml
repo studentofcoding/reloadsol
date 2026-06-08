@@ -3,8 +3,8 @@
 # One command (recommended):
 #   cp .env.docker.example .env && npm run docker:up
 #
-# Manual:
-#   npm run build && docker compose up --build
+# Manual (install + build + up):
+#   bash scripts/docker-install.sh && npm run build && docker compose up --build
 #
 # Dev hot-reload:  npm run docker:dev
 # Production:      npm run docker:prod

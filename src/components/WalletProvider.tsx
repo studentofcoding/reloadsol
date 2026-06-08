@@ -11,7 +11,8 @@ import {
   UnifiedWalletProvider,
   useUnifiedWallet,
 } from "@jup-ag/wallet-adapter";
-import type { WalletContextState } from "@solana/wallet-adapter-react";
+
+type WalletContextState = ReturnType<typeof useUnifiedWallet>;
 import { WalletNotification } from "@/components/WalletNotification";
 import { createConnection } from "@/utils/connection";
 

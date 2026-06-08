@@ -103,7 +103,7 @@ npm run docker:down      # stop containers
 npm run docker:logs      # tail logs
 ```
 
-**How it works:** `scripts/docker-up.sh` builds Next.js on the host (`npm run build` → `.next/standalone`) to avoid OOM inside the container, then packages it via `Dockerfile.web`. Cron calls the web service at `API_HOST=http://web:3000`.
+**How it works:** `scripts/docker-up.sh` always runs `npm ci` first (`scripts/docker-install.sh`), then builds Next.js on the host (`npm run build` → `.next/standalone`) to avoid OOM inside the container, and packages it via `Dockerfile.web`. Dev mode re-runs `npm ci` on every container start. Cron calls the web service at `API_HOST=http://web:3000`.
 
 First run may take several minutes while dependencies install and Next.js builds.
 
@@ -210,7 +210,7 @@ Check status: `GET /api/dlmm/health` · Config: `GET /api/dlmm/config`
 
 ## Wallet integration
 
-ReloadSOL uses Jupiter **Universal Wallet Kit** (`@jup-ag/wallet-adapter`):
+ReloadSOL uses Jupiter **Universal Wallet Kit** — a single wallet dependency (`@jup-ag/wallet-adapter`; no legacy `@solana/wallet-adapter-*` packages):
 
 ```tsx
 import { useWallet, useConnection } from '@/components/WalletProvider'
@@ -323,6 +323,20 @@ See [CHANGELOG.md](./CHANGELOG.md) for complete release notes.
 
 - Use HTTPS in production
 - Install a Wallet Standard wallet extension (Phantom, Solflare, etc.)
+
+### `npm install` fails on Tencent Cloud (HTTP 451 / `xrpl`)
+
+Tencent's default npm mirror blocks some packages (e.g. `xrpl`) with **451 Unavailable For Legal Reasons**. This project no longer depends on those packages (legacy Trezor wallet bundle removed).
+
+If install still fails:
+
+```bash
+# Project .npmrc already points at registry.npmjs.org — verify it is not overridden:
+npm config get registry
+
+# If it shows mirrors.tencentyun.com, reset for this project:
+npm install --registry=https://registry.npmjs.org/
+```
 
 ### Bulk buy failures
 

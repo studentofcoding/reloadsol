@@ -2,8 +2,8 @@
 FROM node:20-alpine AS deps
 RUN apk add --no-cache libc6-compat python3 make g++
 WORKDIR /app
-COPY package.json package-lock.json* ./
-RUN npm ci --legacy-peer-deps --ignore-scripts
+COPY package.json package-lock.json* .npmrc ./
+RUN npm ci --ignore-scripts
 
 FROM node:20-alpine AS builder
 WORKDIR /app
@@ -42,12 +42,14 @@ CMD ["node", "server.js"]
 FROM node:20-alpine AS development
 WORKDIR /app
 RUN apk add --no-cache libc6-compat python3 make g++ wget
-COPY package.json package-lock.json* ./
-RUN npm ci --legacy-peer-deps --ignore-scripts
+COPY package.json package-lock.json* .npmrc ./
+RUN npm ci --ignore-scripts
 COPY . .
 ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 EXPOSE 3000
-CMD ["npm", "run", "dev"]
+COPY scripts/docker-dev-entrypoint.sh /usr/local/bin/docker-dev-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-dev-entrypoint.sh
+CMD ["/usr/local/bin/docker-dev-entrypoint.sh"]
