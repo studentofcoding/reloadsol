@@ -1,21 +1,17 @@
 // RPC Configuration utility for multiple endpoints
+import { buildShyftRpcUrl, resolveRpcUrls } from './rpc-urls'
 
-// Environment detection
 const isServer = typeof window === 'undefined'
 
-/**
- * Parse RPC URLs from environment variable
- * Supports comma-separated list of URLs
- */
+/** Parse RPC URLs — delegates to shared resolver when no override given. */
 export const parseRpcUrls = (envValue?: string): string[] => {
-  if (!envValue) {
-    return ['https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d']
+  if (envValue) {
+    return envValue
+      .split(',')
+      .map((url) => url.trim())
+      .filter((url) => url.length > 0)
   }
-
-  return envValue
-    .split(',')
-    .map(url => url.trim())
-    .filter(url => url.length > 0)
+  return resolveRpcUrls()
 }
 
 /**
@@ -62,34 +58,17 @@ export const getRpcHealth = async (): Promise<any> => {
  * Example RPC configurations for different providers
  */
 export const RPC_EXAMPLES = {
-  // Free public endpoints
-  public: [
-    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
-    'https://solana-api.projectserum.com',
-  ],
-
-  // Pump.fun specialized endpoint
-  pumpFun: [
-    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
-    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b', // fallback
-  ],
-
-  // Premium providers (replace with your API keys)
+  shyft: [buildShyftRpcUrl('YOUR_SHYFT_API_KEY')],
+  public: ['https://solana-api.projectserum.com'],
   premium: [
-    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
-    'https://rpc.shyft.to/?api_key=YOUR_SHYFT_API_KEY',
+    buildShyftRpcUrl('YOUR_SHYFT_API_KEY'),
     'https://solana-mainnet.rpc.extrnode.com/YOUR_API_KEY',
-    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b', // fallback
   ],
-
-  // High-performance setup
   highPerformance: [
-    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
-    'https://rpc.shyft.to/?api_key=YOUR_SHYFT_API_KEY',
+    buildShyftRpcUrl('YOUR_SHYFT_API_KEY'),
     'https://solana-mainnet.rpc.extrnode.com/YOUR_API_KEY',
-    'https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
     'https://solana-api.projectserum.com',
-  ]
+  ],
 }
 
 /**
@@ -115,9 +94,9 @@ export const getConfigRecommendations = (useCase: 'development' | 'production' |
   switch (useCase) {
     case 'development':
       return {
-        description: 'Basic setup for development and testing',
-        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
-        endpoints: RPC_EXAMPLES.public
+        description: 'Shyft RPC for development and testing',
+        example: 'SHYFT_API_KEY=your-key\nRPC_URL=https://rpc.shyft.to?api_key=your-key',
+        endpoints: RPC_EXAMPLES.shyft,
       }
 
     // case 'pump-fun':
@@ -129,16 +108,16 @@ export const getConfigRecommendations = (useCase: 'development' | 'production' |
 
     case 'production':
       return {
-        description: 'Reliable setup with premium endpoints and fallbacks',
-        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=YOUR_KEY,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
-        endpoints: RPC_EXAMPLES.premium
+        description: 'Shyft primary with optional fallback endpoints',
+        example: 'RPC_URL=https://rpc.shyft.to?api_key=YOUR_KEY,https://solana-api.projectserum.com',
+        endpoints: RPC_EXAMPLES.premium,
       }
 
     case 'high-throughput':
       return {
-        description: 'Maximum reliability with multiple premium endpoints',
-        example: 'RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b',
-        endpoints: RPC_EXAMPLES.highPerformance
+        description: 'Shyft plus multiple fallback endpoints',
+        example: 'RPC_URL=https://rpc.shyft.to?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2',
+        endpoints: RPC_EXAMPLES.highPerformance,
       }
 
     default:
@@ -150,27 +129,13 @@ export const getConfigRecommendations = (useCase: 'development' | 'production' |
  * Environment variable setup instructions
  */
 export const SETUP_INSTRUCTIONS = `
-# Multiple RPC Endpoints Configuration
+# Shyft RPC Configuration (https://shyft.to)
 
-## Basic Setup (Development)
-RPC_URL=https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b
+## Basic Setup
+SHYFT_API_KEY=your-shyft-api-key
+RPC_URL=https://rpc.shyft.to?api_key=your-shyft-api-key
+NEXT_PUBLIC_RPC_URL=https://rpc.shyft.to?api_key=your-shyft-api-key
 
-## With Premium Provider (Recommended for Production)
-RPC_URL=https://rpc.shyft.to/?api_key=YOUR_SHYFT_KEY,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b
-
-## High Availability Setup (Multiple Providers)
-RPC_URL=https://rpc.shyft.to/?api_key=KEY1,https://solana-mainnet.rpc.extrnode.com/KEY2,https://pump-fe.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b,https://solana-api.projectserum.com
-
-## How It Works:
-1. The system tests all endpoints automatically
-2. Uses the fastest healthy endpoint
-3. Automatically fails over if an endpoint goes down
-4. Caches health status for 1 minute
-5. Removes failed endpoints from the rotation
-
-## Recommended Providers:
-- Shyft.to (Premium, reliable)
-- Extrnode (High performance)
-- Solana Labs (Free, public)
-- Project Serum (Free, public)
+## With Fallbacks (comma-separated)
+RPC_URL=https://rpc.shyft.to?api_key=KEY1,https://solana-api.projectserum.com
 ` 

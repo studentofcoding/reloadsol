@@ -2,8 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import JupiterTerminal from '@/components/JupiterTerminal'
-import { WalletProvider } from '@/components/WalletProvider'
-import TradingDataProvider from '@/components/TradingDataProvider'
 
 export default function SwapPageClient() {
   // Fixed trading pair: SOL -> USDC
@@ -341,16 +339,12 @@ export default function SwapPageClient() {
   
   return (
     <div className="flex flex-col items-center justify-center" style={{ minHeight: '550px' }}>
-      <WalletProvider>
-        <TradingDataProvider>
-          {isPageReady && (
-            <JupiterTerminal 
-              initialInputMint={inputMint}
-              initialOutputMint={outputMint}
-            />
-          )}
-        </TradingDataProvider>
-      </WalletProvider>
+      {isPageReady && (
+        <JupiterTerminal
+          initialInputMint={inputMint}
+          initialOutputMint={outputMint}
+        />
+      )}
     </div>
   )
 }

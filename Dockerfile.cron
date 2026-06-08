@@ -1,0 +1,21 @@
+FROM golang:1.22-alpine AS builder
+RUN apk add --no-cache git ca-certificates
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY main.go ./
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /cron-service main.go
+
+FROM alpine:3.19
+RUN apk add --no-cache ca-certificates wget \
+  && addgroup --system --gid 1001 reloadsol \
+  && adduser --system --uid 1001 --ingroup reloadsol reloadsol
+WORKDIR /app
+COPY --from=builder /cron-service /app/cron-service
+RUN chown -R reloadsol:reloadsol /app
+USER reloadsol
+ENV PORT=8080
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8080/health || exit 1
+CMD ["/app/cron-service"]

@@ -228,6 +228,9 @@ type Config struct {
     SignalRefreshInterval int   // seconds
     OHLCUpdateInterval int    // seconds
     OHLCBarInterval string    // e.g., "5m"
+    DLMMScreenInterval int    // seconds
+    DLMMManageInterval int    // seconds
+    DLMMSecret         string
 }
 
 type CronService struct {
@@ -288,6 +291,23 @@ func NewCronService() *CronService {
             }
             return "5m"
         }(),
+        DLMMScreenInterval: func() int {
+            if v := os.Getenv("DLMM_SCREEN_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
+                    return iv
+                }
+            }
+            return 300 // 5m
+        }(),
+        DLMMManageInterval: func() int {
+            if v := os.Getenv("DLMM_MANAGE_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
+                    return iv
+                }
+            }
+            return 60
+        }(),
+        DLMMSecret: getEnv("DLMM_MANAGE_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
     }
 
 	c := cron.New(cron.WithSeconds())
@@ -367,6 +387,22 @@ func (cs *CronService) Start() {
         log.Fatal("Failed to add OHLC update cron job:", err)
     }
 
+    // DLMM screen – every N seconds (default 300)
+    dlmmScreenSpec := fmt.Sprintf("@every %ds", cs.config.DLMMScreenInterval)
+    _, err = cs.cron.AddFunc(dlmmScreenSpec, cs.runDLMMScreen)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("Failed to add DLMM screen cron job: %v", err))
+        log.Fatal("Failed to add DLMM screen cron job:", err)
+    }
+
+    // DLMM manage – every M seconds (default 60)
+    dlmmManageSpec := fmt.Sprintf("@every %ds", cs.config.DLMMManageInterval)
+    _, err = cs.cron.AddFunc(dlmmManageSpec, cs.runDLMMManage)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("Failed to add DLMM manage cron job: %v", err))
+        log.Fatal("Failed to add DLMM manage cron job:", err)
+    }
+
     // Daily summary - once per day at midnight UTC
     _, err = cs.cron.AddFunc("0 0 0 * * *", cs.runDailySummary)
 	if err != nil {
@@ -391,6 +427,8 @@ func (cs *CronService) Start() {
 	http.HandleFunc("/trigger/sltp", cs.manualSLTPTrigger)
 	http.HandleFunc("/trigger/signals-refresh", cs.manualSignalsRefreshTrigger)
     http.HandleFunc("/trigger/ohlc", cs.manualOHLCTrigger)
+    http.HandleFunc("/trigger/dlmm-screen", cs.manualDLMMScreenTrigger)
+    http.HandleFunc("/trigger/dlmm-manage", cs.manualDLMMManageTrigger)
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
     cs.cron.Start()
@@ -402,6 +440,8 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("🛡️ SL/TP monitor: every %d seconds", cs.config.SLTPMonitorInterval))
     cs.logger.Info(fmt.Sprintf("📡 Signals refresh: every %d seconds", cs.config.SignalRefreshInterval))
     cs.logger.Info(fmt.Sprintf("🕯️ OHLC update: every %d seconds (bar %s)", cs.config.OHLCUpdateInterval, cs.config.OHLCBarInterval))
+    cs.logger.Info(fmt.Sprintf("🌊 DLMM screen: every %d seconds", cs.config.DLMMScreenInterval))
+    cs.logger.Info(fmt.Sprintf("🩺 DLMM manage: every %d seconds", cs.config.DLMMManageInterval))
 	cs.logger.Info("📋 Daily summary: daily at 00:00 UTC")
 	cs.logger.Info("💰 PnL update: daily at 02:00 UTC" )
 	cs.logger.Info("🔗 Health check: /health")
@@ -731,6 +771,60 @@ func (cs *CronService) manualSLTPTrigger(w http.ResponseWriter, r *http.Request)
 		"message":   "SL/TP monitor triggered manually",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+func (cs *CronService) runDLMMScreen() {
+    cs.logger.Info("🌊 Running DLMM screen...")
+    url := fmt.Sprintf("%s/api/dlmm/screen", cs.config.APIBaseURL)
+    resp, err := cs.makeRequest("POST", url, map[string]string{
+        "key": cs.config.DLMMSecret,
+    })
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ DLMM screen failed: %v", err))
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ DLMM screen completed: %s", resp))
+}
+
+func (cs *CronService) runDLMMManage() {
+    cs.logger.Info("🩺 Running DLMM manage...")
+    url := fmt.Sprintf("%s/api/dlmm/manage", cs.config.APIBaseURL)
+    resp, err := cs.makeRequest("POST", url, map[string]string{
+        "key": cs.config.DLMMSecret,
+    })
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ DLMM manage failed: %v", err))
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ DLMM manage completed: %s", resp))
+}
+
+func (cs *CronService) manualDLMMScreenTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual DLMM screen trigger")
+    cs.runDLMMScreen()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "DLMM screen triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualDLMMManageTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual DLMM manage trigger")
+    cs.runDLMMManage()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "DLMM manage triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
 }
 
 func (cs *CronService) runOHLCUpdate() {

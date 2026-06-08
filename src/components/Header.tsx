@@ -2,7 +2,7 @@
 
 import { FC, useContext } from "react";
 import Link from "next/link";
-import PhantomWalletButton from '@/components/PhantomWalletButton'
+import UniversalWalletButton from '@/components/UniversalWalletButton'
 // import TrendingTokens from "@/components/TrendingTokens";
 import UserContext from "@/context/usercontext";
 import { useWallet } from '@/components/WalletProvider';
@@ -76,7 +76,7 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
                 </span>
               </button>
             )}
-            <PhantomWalletButton />
+            <UniversalWalletButton />
           </div>
         </div>
       </header>

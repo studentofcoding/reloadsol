@@ -1,9 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // ===== CORE CONFIGURATION =====
+  output: 'standalone',
+  typescript: {
+    ignoreBuildErrors: process.env.SKIP_BUILD_CHECKS === 'true',
+  },
+  eslint: {
+    ignoreDuringBuilds: process.env.SKIP_BUILD_CHECKS === 'true',
+  },
   reactStrictMode: true,
   swcMinify: true,
   poweredByHeader: false,
+  transpilePackages: ['@jup-ag/wallet-adapter'],
 
   // ===== COMPRESSION & PERFORMANCE =====
   compress: true,
@@ -124,6 +132,7 @@ const nextConfig = {
 
   // ===== COMPILER OPTIMIZATIONS =====
   compiler: {
+    styledComponents: true,
     removeConsole: process.env.NODE_ENV === 'production' ? {
       exclude: ['error', 'warn']
     } : false,

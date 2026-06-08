@@ -12,6 +12,7 @@ import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { assessTokenRisk, formatDetailedRiskForDiscord } from '@/utils/risk-assessment'
 import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 import { calculateGainPercentage } from '@/utils/trading-math'
+import { createRpcConnection } from '@/utils/rpc-urls'
 
 export const runtime = 'nodejs'
 
@@ -6238,9 +6239,7 @@ let tradingSigner: ((transactions: VersionedTransaction[]) => Promise<VersionedT
 
 function initializeTradingConnection(): Connection {
   if (!tradingConnection) {
-    // Always use Shyft RPC for real trading as requested
-    const shyftRpcUrl = 'https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d'
-    tradingConnection = new Connection(shyftRpcUrl, 'confirmed')
+    tradingConnection = createRpcConnection('confirmed')
     console.log('🌐 Real trading connection initialized with Shyft RPC')
   }
   return tradingConnection

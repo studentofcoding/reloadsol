@@ -1,0 +1,67 @@
+# reloadSOL full stack — Next.js web + Go cron (trending, DLMM, SL/TP, etc.)
+#
+# One command (recommended):
+#   cp .env.docker.example .env && npm run docker:up
+#
+# Manual:
+#   npm run build && docker compose up --build
+#
+# Dev hot-reload:  npm run docker:dev
+# Production:      npm run docker:prod
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: reloadsol-web
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      # Cron hits this internal URL when both run in compose
+      NEXT_PUBLIC_API_HOST: ${NEXT_PUBLIC_API_HOST:-http://localhost:3000}
+      API_HOST: ${API_HOST:-http://web:3000}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - reloadsol
+
+  cron:
+    build:
+      context: .
+      dockerfile: Dockerfile.cron
+    container_name: reloadsol-cron
+    ports:
+      - "${CRON_PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      API_BASE_URL: http://web:3000
+      PORT: 8080
+      TZ: ${TZ:-Asia/Bangkok}
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - reloadsol
+
+networks:
+  reloadsol:
+    driver: bridge

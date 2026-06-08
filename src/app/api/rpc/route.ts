@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { resolveRpcUrls } from '@/utils/rpc-urls'
 
-// Shared RPC URL parsing utility
 const getRpcUrls = (): string[] => {
-  const rpcUrl = process.env.RPC_URL
-  if (!rpcUrl) {
-    return ['https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d']
+  const urls = resolveRpcUrls()
+  if (urls.length === 0) {
+    throw new Error('RPC not configured. Set RPC_URL or SHYFT_API_KEY in .env')
   }
-
-  // Split by comma and trim whitespace
-  return rpcUrl.split(',').map(url => url.trim()).filter(url => url.length > 0)
+  return urls
 }
 
 // Memoized RPC URLs to avoid repeated parsing

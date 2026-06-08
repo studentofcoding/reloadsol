@@ -1,15 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse } from 'next/server'
+import { resolveRpcUrls } from '@/utils/rpc-urls'
 
-// Shared RPC URL parsing utility (matches main RPC route)
-const getRpcUrls = (): string[] => {
-  const rpcUrl = process.env.RPC_URL
-  if (!rpcUrl) {
-    return ['https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d']
-  }
-
-  // Split by comma and trim whitespace
-  return rpcUrl.split(',').map(url => url.trim()).filter(url => url.length > 0)
-}
+const getRpcUrls = (): string[] => resolveRpcUrls()
 
 // Memoized RPC URLs to avoid repeated parsing
 let cachedRpcUrls: string[] | null = null

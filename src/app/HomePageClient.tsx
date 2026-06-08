@@ -3,10 +3,9 @@
 import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
 import LastReloadTracker from '@/components/LastReloadTracker'
-import PhantomWalletButton from '@/components/PhantomWalletButton'
+import UniversalWalletButton from '@/components/UniversalWalletButton'
 import Footer from '@/components/Footer'
-import { WalletProvider, useWallet } from '@/components/WalletProvider'
-import TradingDataProvider from '@/components/TradingDataProvider'
+import { useWallet } from '@/components/WalletProvider'
 import WelcomeModal from '@/components/WelcomeModal'
 
 function HomeContent() {
@@ -87,7 +86,7 @@ function HomeContent() {
           {/* Get Started Section */}
           {!connected && (
           <div className="max-w-4xl mx-auto mb-10 text-center">
-            <PhantomWalletButton />
+            <UniversalWalletButton />
           </div>
           )}
 
@@ -147,11 +146,5 @@ function HomeContent() {
 }
 
 export default function HomePageClient() {
-  return (
-    <WalletProvider>
-      <TradingDataProvider>
-        <HomeContent />
-      </TradingDataProvider>
-    </WalletProvider>
-  )
+  return <HomeContent />
 }

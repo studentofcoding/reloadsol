@@ -800,13 +800,20 @@ interface EnhancedComparisonResult {
   }
 }
 
-// RPC endpoints for testing redundancy
-const RPC_ENDPOINTS = [
-  { name: 'Helius', url: 'https://mainnet.helius-rpc.com/?api-key=1b8db865-a5a1-4535-9aec-01061440523b' },
-  { name: 'Shyft', url: 'https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d' },
-  { name: 'SolanaTracker', url: 'https://rpc-mainnet.solanatracker.io/?api_key=3efd278f-9f1d-4888-ac0e-8d24014714d5' },
-  { name: 'FluxBeam', url: 'https://eu.rpc.fluxbeam.xyz?key=94a42d66-8cc7-454a-9d33-513cff867307' }
-]
+function getRpcEndpoints() {
+  let shyftUrl = 'https://rpc.shyft.to'
+  try {
+    const { getPrimaryRpcUrl } = require('./rpc-urls') as typeof import('./rpc-urls')
+    shyftUrl = getPrimaryRpcUrl()
+  } catch {
+    // build-time or missing env — use base URL
+  }
+  return [
+    { name: 'Shyft', url: shyftUrl },
+    { name: 'SolanaTracker', url: 'https://rpc-mainnet.solanatracker.io/?api_key=3efd278f-9f1d-4888-ac0e-8d24014714d5' },
+    { name: 'FluxBeam', url: 'https://eu.rpc.fluxbeam.xyz?key=94a42d66-8cc7-454a-9d33-513cff867307' },
+  ]
+}
 
 // Cache for recent quotes (5 minute TTL)
 const quoteCache = new Map<string, { data: any; timestamp: number }>()
@@ -944,7 +951,7 @@ export async function performEnhancedTradeComparison(
   // Test configurations
   const slippageConfigs = [1, 2, 5] // 1%, 2%, 5%
   const providers: TradeProvider[] = ['jupiter', 'dflow', 'solana-tracker', 'gmgn']
-  const rpcs = RPC_ENDPOINTS
+  const rpcs = getRpcEndpoints()
 
   // Build all test combinations
   const testConfigurations: EnhancedTradeConfig[] = []

@@ -11,7 +11,7 @@ A Next.js application for buying multiple Solana tokens in bulk with a single tr
 - 🎯 **Flexible Input**: Paste multiple mint addresses separated by lines, commas, or spaces
 - ⚙️ **Customizable Settings**: Adjust slippage tolerance and priority fees
 - 📱 **Responsive Design**: Works on desktop and mobile devices
-- 🔐 **Wallet Integration**: Supports Phantom, Solflare, Torus, and Ledger wallets
+- 🔐 **Universal Wallet**: Jupiter [Wallet Kit](https://developers.jup.ag/docs/tool-kits/wallet-kit) — connect any Wallet Standard wallet (Phantom, Solflare, Backpack, Jupiter Wallet, mobile QR, and 20+ more) from one modal
 
 ### Analytics & Tracking
 - 📊 **Trending Token Tracker**: Automated 24/7 monitoring of trending tokens with win/loss tracking
@@ -24,7 +24,7 @@ A Next.js application for buying multiple Solana tokens in bulk with a single tr
 
 ## How It Works
 
-1. **Connect Wallet**: Connect your Solana wallet (Phantom, Solflare, etc.)
+1. **Connect Wallet**: Click **Connect Wallet** and pick any supported wallet from the Jupiter wallet picker
 2. **Enter SOL Amount**: Specify how much SOL you want to spend total
 3. **Add Token Addresses**: Paste up to 10 token mint addresses
 4. **Configure Settings**: Set slippage tolerance and priority fees
@@ -60,6 +60,53 @@ A Next.js application for buying multiple Solana tokens in bulk with a single tr
 
 5. **Open your browser**:
    Navigate to [http://localhost:3000](http://localhost:3000)
+
+### Docker (web + cron)
+
+Run the full stack locally with one command:
+
+```bash
+cp .env.docker.example .env   # fill in Supabase, RPC, Telegram, etc.
+npm run docker:up             # web :3000, cron :8080
+```
+
+| Command | Description |
+|---------|-------------|
+| `npm run docker:up` | Prod-like stack (foreground) |
+| `npm run docker:dev` | Hot-reload dev mode |
+| `npm run docker:prod` | Detached production |
+| `npm run docker:down` | Stop containers |
+| `npm run docker:logs` | Tail logs |
+
+## Wallet Integration
+
+ReloadSOL uses Jupiter’s **Universal Wallet Kit** (`@jup-ag/wallet-adapter`) instead of a single-wallet adapter. Users connect through a unified modal that auto-discovers installed wallets via [Wallet Standard](https://github.com/wallet-standard/wallet-standard).
+
+**Supported out of the box** (via auto-discovery):
+
+- Phantom, Solflare, Backpack, Coinbase Wallet
+- Jupiter Wallet Extension
+- Mobile wallets via Jupiter Mobile Adapter (QR)
+- Any other Wallet Standard–compatible wallet
+
+**Key components:**
+
+| File | Role |
+|------|------|
+| `src/components/WalletProvider.tsx` | Wraps app with `UnifiedWalletProvider` |
+| `src/components/UniversalWalletButton.tsx` | Opens wallet picker / shows connected state |
+| `src/components/JupiterTerminal.tsx` | Swap widget with wallet passthrough |
+
+**Usage in code** — the existing hooks are unchanged:
+
+```tsx
+import { useWallet, useConnection } from '@/components/WalletProvider'
+
+const { publicKey, connected, signAllTransactions } = useWallet()
+const { connection } = useConnection()
+```
+
+Docs: [Jupiter Wallet Kit](https://developers.jup.ag/docs/tool-kits/wallet-kit) · [Jupiter Plugin / Terminal](https://developers.jup.ag/docs/tool-kits/plugin)
 
 ## Usage
 
@@ -100,14 +147,15 @@ DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263 So111111111111111111111111111111111
 
 - **Frontend**: Next.js 14 with App Router
 - **Styling**: Tailwind CSS
-- **Wallet Integration**: Solana Wallet Adapter
+- **Wallet Integration**: Jupiter Universal Wallet Kit (`@jup-ag/wallet-adapter`)
 - **Swap API**: Jupiter Aggregator
 - **Blockchain**: Solana Web3.js
 
 ### Key Components
 
 - `BulkTokenBuyer`: Main component handling the purchase flow
-- `WalletProvider`: Solana wallet connection provider
+- `WalletProvider`: Jupiter Universal Wallet provider (20+ wallets)
+- `UniversalWalletButton`: Connect / disconnect UI
 - `jupiter.ts`: Jupiter API integration utilities
 - `solana.ts`: Solana connection and configuration
 
@@ -264,6 +312,10 @@ src/
 npm run build
 npm start
 ```
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for release notes and recent changes.
 
 ## Contributing
 

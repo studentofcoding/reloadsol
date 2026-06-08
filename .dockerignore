@@ -1,0 +1,42 @@
+# Dependencies & build output
+node_modules
+.next
+!.next/standalone
+!.next/static
+out
+dist
+
+# Git & IDE
+.git
+.gitignore
+.cursor
+.vscode
+*.swp
+*.swo
+
+# Env & secrets (mounted at runtime)
+.env
+.env.*
+!.env.docker.example
+
+# Logs & temp
+logs
+*.log
+npm-debug.log*
+.DS_Store
+
+# Docker (avoid recursive copy)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Docs & misc (not needed in image)
+docs
+content/blog
+strategies
+agent-transcripts
+terminals
+
+# Test artifacts
+coverage
+.nyc_output

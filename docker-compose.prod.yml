@@ -1,0 +1,14 @@
+# Production overrides — run detached with stricter restart policy
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+
+services:
+  web:
+    restart: always
+    environment:
+      NODE_ENV: production
+
+  cron:
+    restart: always
+    # Bind cron health port to localhost only on the host (optional hardening)
+    ports:
+      - "127.0.0.1:${CRON_PORT:-8080}:8080"

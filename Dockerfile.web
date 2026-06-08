@@ -1,0 +1,27 @@
+# Runner-only image — requires a pre-built Next.js standalone bundle on the host.
+# Run before building: npm run build
+# (Produces .next/standalone via output: 'standalone' in next.config.js)
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+RUN apk add --no-cache wget \
+  && addgroup --system --gid 1001 nodejs \
+  && adduser --system --uid 1001 nextjs
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+COPY public ./public
+COPY .next/standalone ./
+COPY .next/static ./.next/static
+RUN chown -R nextjs:nodejs /app
+
+USER nextjs
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1
+
+CMD ["node", "server.js"]

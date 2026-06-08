@@ -47,6 +47,7 @@ export default function NavigationTabs({
     "/dev/mcap-tracker",
     "/dev/pools",
     "/dev/pools-test",
+    "/dev/dlmm",
   ].some((path) => (pathname || "").startsWith(path));
 
   useEffect(() => {
@@ -271,6 +272,29 @@ export default function NavigationTabs({
                           strokeLinejoin="round"
                           strokeWidth={2}
                           d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
+                        />
+                      </svg>
+                    </Link>
+                    <Link
+                      href="/dev/dlmm"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                        isActive("/dev/dlmm")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                      }`}
+                      title="DLMM Agent (Dev)"
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M4 6h16M4 12h16M4 18h7"
                         />
                       </svg>
                     </Link>

@@ -1,72 +1,53 @@
-# Dockerfile for reloadSOL Next.js App
-# Multi-stage build for optimal production image
-
-# ===== Dependencies Stage =====
-FROM node:18-alpine AS deps
-RUN apk add --no-cache libc6-compat
+# reloadSOL Next.js — multi-stage production image
+FROM node:20-alpine AS deps
+RUN apk add --no-cache libc6-compat python3 make g++
 WORKDIR /app
+COPY package.json package-lock.json* ./
+RUN npm ci --legacy-peer-deps --ignore-scripts
 
-# Copy package files
-COPY package.json package-lock.json* pnpm-lock.yaml* ./
-
-# Install dependencies based on preferred package manager
-RUN \
-  if [ -f pnpm-lock.yaml ]; then \
-    corepack enable pnpm && pnpm install --frozen-lockfile; \
-  elif [ -f package-lock.json ]; then \
-    npm ci --only=production --ignore-scripts; \
-  else \
-    npm install --only=production --ignore-scripts; \
-  fi
-
-# ===== Builder Stage =====
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
-
-# Copy dependencies
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-
-# Set build environment
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV SKIP_BUILD_CHECKS=true
+ENV NODE_OPTIONS=--max-old-space-size=4096
+RUN npm run build
 
-# Build the application
-RUN \
-  if [ -f pnpm-lock.yaml ]; then \
-    corepack enable pnpm && pnpm build; \
-  else \
-    npm run build; \
-  fi
-
-# ===== Runner Stage =====
-FROM node:18-alpine AS runner
+FROM node:20-alpine AS runner
 WORKDIR /app
+RUN apk add --no-cache wget \
+  && addgroup --system --gid 1001 nodejs \
+  && adduser --system --uid 1001 nextjs
 
-# Create non-root user for security
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
-# Set production environment
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
 
-# Copy built application
 COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Set correct permissions
-RUN chown -R nextjs:nodejs /app
 USER nextjs
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1
-
-# Expose port
 EXPOSE 3000
 
-# Start the application
-CMD ["node", "server.js"] 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/api/health || exit 1
+
+CMD ["node", "server.js"]
+
+# ===== Development target (hot reload) =====
+FROM node:20-alpine AS development
+WORKDIR /app
+RUN apk add --no-cache libc6-compat python3 make g++ wget
+COPY package.json package-lock.json* ./
+RUN npm ci --legacy-peer-deps --ignore-scripts
+COPY . .
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+EXPOSE 3000
+CMD ["npm", "run", "dev"]

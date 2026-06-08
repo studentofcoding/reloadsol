@@ -1,17 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
-
-// Parse RPC URLs from environment variable (server-side only)
-const getRpcUrls = (): string[] => {
-  const rpcUrl = process.env.RPC_URL
-  if (!rpcUrl) {
-    return ['https://mainnet.helius-rpc.com/?api-key=9b707ec2-17da-4c3a-b17d-19bb3a58dd2d']
-  }
-
-  return rpcUrl
-    .split(',')
-    .map(url => url.trim())
-    .filter(url => url.length > 0)
-}
+import { NextResponse } from 'next/server'
+import { getRpcProviderType, resolveRpcUrls } from '@/utils/rpc-urls'
 
 // Sanitize URLs for public display (remove API keys)
 const sanitizeUrl = (url: string): string => {
@@ -31,7 +19,16 @@ const sanitizeUrl = (url: string): string => {
 
 export async function GET() {
   try {
-    const rpcUrls = getRpcUrls()
+    const rpcUrls = resolveRpcUrls()
+    if (rpcUrls.length === 0) {
+      return NextResponse.json(
+        {
+          status: 'error',
+          error: 'RPC not configured. Set RPC_URL or SHYFT_API_KEY in .env',
+        },
+        { status: 503 },
+      )
+    }
 
     return NextResponse.json({
       status: 'success',
@@ -41,10 +38,7 @@ export async function GET() {
         endpoints: rpcUrls.map((url, index) => ({
           index: index + 1,
           url: sanitizeUrl(url),
-          type: url.includes('helius') ? 'Helius' :
-            url.includes('shyft') ? 'Shyft' :
-              url.includes('extrnode') ? 'Extrnode' :
-                url.includes('projectserum') ? 'Project Serum' : 'Custom'
+          type: getRpcProviderType(url)
         })),
         proxy_available: true,
         health_check_available: true
