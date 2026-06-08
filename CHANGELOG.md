@@ -13,6 +13,8 @@ All notable changes to ReloadSOL are documented in this file.
 - **Docker stack** — one-command local and production deployment for Next.js web + Go cron (`npm run docker:up`, `docker:dev`, `docker:prod`).
 - **DLMM cron jobs** — automated pool screening (5m) and position management (60s) via `main.go`.
 - **`.env.docker.example`** — documented env template for Docker and DLMM agent configuration.
+- **`supabase/schema.sql`** — single consolidated Supabase schema (all app tables; removed unused `dlmm_pool_snapshots`).
+- **README** — full setup guide from git clone, Docker, Supabase, env vars, dashboards, and troubleshooting.
 
 ### Changed
 
@@ -28,3 +30,4 @@ All notable changes to ReloadSOL are documented in this file.
 - Docker web image OOM during in-container `next build` — host-build path via `Dockerfile.web` packages pre-built `.next/standalone`.
 - Removed duplicate nested `WalletProvider` wrappers in `HomePageClient` and `SwapPageClient`.
 - DLMM dashboard/cron errors when Supabase is unreachable — graceful fallbacks, setup banner on `/dev/dlmm`, `/api/dlmm/health`, and cron manage returns 200 (skipped) instead of 500.
+- Supabase schema script fails on existing DBs — `label` and `waiting_started_at` indexes moved after column patches.
