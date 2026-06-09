@@ -5,8 +5,7 @@ import Link from "next/link";
 import UniversalWalletButton from '@/components/UniversalWalletButton'
 // import TrendingTokens from "@/components/TrendingTokens";
 import UserContext from "@/context/usercontext";
-import { useWallet } from '@/components/WalletProvider';
-import { isDevWallet } from "@/config/devWallets";
+import { useDevWalletAccess, useWalletAddress } from '@/components/WalletProvider';
 import { FaExchangeAlt, FaFire } from 'react-icons/fa';
 import { useDailyStreak } from '@/hooks/useDailyStreak';
 
@@ -16,11 +15,11 @@ interface HeaderProps {
 }
 
 const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
-  const { publicKey } = useWallet();
-  const isDevUser = publicKey ? isDevWallet(publicKey.toBase58()) : false;
+  const walletAddress = useWalletAddress() ?? undefined;
+  const isDevUser = useDevWalletAccess();
 
   // Replace points with daily streak
-  const { streak } = useDailyStreak(publicKey?.toBase58());
+  const { streak } = useDailyStreak(walletAddress);
 
   return (
     <>
@@ -62,7 +61,7 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
 
           <div className="flex items-center gap-6">
             
-            {publicKey && (
+            {walletAddress && (
               <button 
                 onClick={onOpenDailyStreak}
                 className="flex items-center gap-1 md:gap-2 px-2 md:px-4 py-1 md:py-2 rounded-full

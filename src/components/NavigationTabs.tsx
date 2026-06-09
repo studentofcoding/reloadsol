@@ -4,8 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import WalletBalance from "@/components/WalletBalance";
-import { useWallet } from "@/components/WalletProvider";
-import { isDevWallet } from "@/utils/dev-wallet";
+import { useDevWalletAccess } from "@/components/WalletProvider";
 
 export default function NavigationTabs({
   activeOverlayTab,
@@ -15,7 +14,7 @@ export default function NavigationTabs({
   onTabSelect?: (tab: string | null) => void;
 }) {
   const pathname = usePathname();
-  const { connected, publicKey } = useWallet();
+  const isDevUser = useDevWalletAccess();
   const [mounted, setMounted] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
 
@@ -50,16 +49,6 @@ export default function NavigationTabs({
     "/dev/dlmm",
   ].some((path) => (pathname || "").startsWith(path));
 
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "production") {
-      console.log("NavigationTabs render", {
-        pathname,
-        viewportWidth: window.innerWidth,
-        mounted,
-      });
-    }
-  }, [pathname, mounted]);
-
   const handleTabClick = (tab: string) => {
     if (onTabSelect) {
       onTabSelect(activeOverlayTab === tab ? null : tab);
@@ -70,7 +59,7 @@ export default function NavigationTabs({
     <div className="w-full relative z-50">
       {/* Desktop Navigation */}
       <div
-        className={`hidden md:block ${mounted && isDevWallet(publicKey) ? "max-w-6xl" : "max-w-4xl"} mx-auto mb-2`}
+        className={`hidden md:block ${mounted && isDevUser ? "max-w-6xl" : "max-w-4xl"} mx-auto mb-2`}
       >
         <div className="flex items-center justify-between h-full mb-4">
           <div className="flex items-center space-x-2">
@@ -129,7 +118,7 @@ export default function NavigationTabs({
                   </div>
                 </Link>
 
-                {mounted && isDevWallet(publicKey) && (
+                {mounted && isDevUser && (
                   <>
                     <Link
                       href="/swap"
@@ -359,7 +348,7 @@ export default function NavigationTabs({
                   />
                 </svg>
               </button>
-              {mounted && isDevWallet(publicKey) && (
+              {mounted && isDevUser && (
                 <button
                   type="button"
                   onClick={() => handleTabClick("pnl")}
@@ -429,7 +418,7 @@ export default function NavigationTabs({
                 />
               </svg>
             </button>
-            {mounted && isDevWallet(publicKey) && (
+            {mounted && isDevUser && (
               <button
                 type="button"
                 onClick={() => handleTabClick("pnl")}
@@ -508,7 +497,7 @@ export default function NavigationTabs({
               <span className="text-xs font-medium">Buy</span>
             </Link>
 
-            {mounted && isDevWallet(publicKey) && (
+            {mounted && isDevUser && (
               <Link
                 href="/swap"
                 className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
@@ -531,7 +520,7 @@ export default function NavigationTabs({
                 <span className="text-xs font-medium">Swap</span>
               </Link>
             )}
-            {mounted && isDevWallet(publicKey) && (
+            {mounted && isDevUser && (
               <Link
                 href="/charts"
                 className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${

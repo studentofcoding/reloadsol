@@ -1,107 +1,125 @@
 /**
- * Developer wallet utilities for testing specific functionality
+ * Developer wallet utilities — Jupiter Universal Wallet compatible.
+ * Resolves addresses from publicKey, adapter.publicKey, or base58 strings.
  */
 
-// Cache for parsed dev wallets to avoid re-parsing on every call
-let cachedDevWallets: string[] | null = null
+import { PublicKey } from '@solana/web3.js';
 
-/**
- * Get the list of developer wallet addresses from environment variables
- * Uses comma-separated list format: DEV_WALLETS=wallet1,wallet2,wallet3
- */
-function getDevWallets(): string[] {
-  if (cachedDevWallets !== null) {
-    return cachedDevWallets
-  }
+/** Built-in dev wallets (always available in client bundles). */
+export const DEFAULT_DEV_WALLETS = [
+  '3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX',
+  '2KbA4Z1twQCYZj4MNvX5RKNKh8vWGpiQbGBPcAjtBpYS',
+] as const;
 
-  // Get comma-separated list from DEV_WALLETS environment variable
-  const devWalletsEnv = process.env.DEV_WALLETS || process.env.NEXT_PUBLIC_DEV_WALLETS || ''
-  
-  const devWallets = devWalletsEnv
+type WalletLike =
+  | string
+  | PublicKey
+  | { toBase58?: () => string; toString?: () => string; address?: string; publicKey?: string }
+  | null
+  | undefined;
+
+let cachedDevWallets: Set<string> | null = null;
+
+function parseWalletList(raw: string): string[] {
+  return raw
     .split(',')
-    .map(wallet => wallet.trim())
-    .filter(wallet => wallet.length > 0)
+    .map((wallet) => wallet.trim())
+    .filter((wallet) => wallet.length > 0);
+}
 
-  // Remove duplicates and cache the result
-  cachedDevWallets = Array.from(new Set(devWallets))
-  
-  if (cachedDevWallets.length > 0) {
-    console.log(`🛠️ Found ${cachedDevWallets.length} developer wallet(s) configured`)
-  }
-
-  return cachedDevWallets
+function normalizeAddress(address: string): string {
+  return address.trim();
 }
 
 /**
- * Check if a wallet address belongs to a developer
- * @param walletAddress - The wallet address to check (can be string or PublicKey)
- * @returns true if the wallet is a developer wallet, false otherwise
+ * Normalize any wallet public key shape (Jupiter / Solana PublicKey / Wallet Standard).
  */
-export function isDevWallet(walletAddress: string | { toString(): string } | null | undefined): boolean {
-  if (!walletAddress) {
-    return false
+export function toWalletAddress(wallet: WalletLike): string | null {
+  if (!wallet) return null;
+
+  if (typeof wallet === 'string') {
+    const trimmed = wallet.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
 
-  const addressString = typeof walletAddress === 'string' 
-    ? walletAddress 
-    : walletAddress.toString()
-
-  const devWallets = getDevWallets()
-  
-  // Case-insensitive comparison for better reliability
-  const normalizedAddress = addressString.toLowerCase().trim()
-  const isMatch = devWallets.some(devWallet => 
-    devWallet.toLowerCase().trim() === normalizedAddress
-  )
-
-  if (isMatch) {
-    console.log(`🛠️ Developer wallet detected: ${addressString.substring(0, 8)}...`)
+  if (wallet instanceof PublicKey) {
+    return wallet.toBase58();
   }
 
-  return isMatch
+  if (typeof wallet === 'object') {
+    if (typeof wallet.address === 'string' && wallet.address.trim()) {
+      return wallet.address.trim();
+    }
+
+    if (typeof wallet.publicKey === 'string' && wallet.publicKey.trim()) {
+      return wallet.publicKey.trim();
+    }
+
+    if (typeof wallet.toBase58 === 'function') {
+      try {
+        const address = wallet.toBase58().trim();
+        if (address) return address;
+      } catch {
+        // fall through
+      }
+    }
+
+    // Cross-bundle PublicKey (nested @solana/web3.js from wallet libs)
+    try {
+      const address = new PublicKey(wallet as PublicKey).toBase58();
+      if (address) return address;
+    } catch {
+      // fall through
+    }
+
+    if (typeof wallet.toString === 'function') {
+      const raw = wallet.toString().trim();
+      if (raw && raw !== '[object Object]' && raw.length >= 32) {
+        return raw;
+      }
+    }
+  }
+
+  return null;
 }
 
-/**
- * Get all configured developer wallets (for debugging)
- * @returns Array of developer wallet addresses
- */
+function getDevWalletSet(): Set<string> {
+  if (cachedDevWallets !== null) {
+    return cachedDevWallets;
+  }
+
+  const fromEnv = parseWalletList(
+    process.env.NEXT_PUBLIC_DEV_WALLETS ||
+      process.env.DEV_WALLETS ||
+      '',
+  );
+
+  cachedDevWallets = new Set(
+    [...DEFAULT_DEV_WALLETS, ...fromEnv].map(normalizeAddress),
+  );
+
+  return cachedDevWallets;
+}
+
+/** Check if a wallet address belongs to a developer. */
+export function isDevWallet(wallet: WalletLike): boolean {
+  const address = toWalletAddress(wallet);
+  if (!address) return false;
+
+  const isMatch = getDevWalletSet().has(normalizeAddress(address));
+
+  if (isMatch && process.env.NODE_ENV !== 'production') {
+    console.log(`🛠️ Developer wallet detected: ${address.slice(0, 8)}...`);
+  }
+
+  return isMatch;
+}
+
+/** All configured developer wallets (defaults + env). */
 export function getConfiguredDevWallets(): string[] {
-  return getDevWallets()
+  return Array.from(getDevWalletSet());
 }
 
-/**
- * Clear the cached dev wallets (useful for testing or if env vars change)
- */
 export function clearDevWalletCache(): void {
-  cachedDevWallets = null
+  cachedDevWallets = null;
 }
-
-/**
- * Hook-style function for React components to check dev wallet status
- * @param walletAddress - The wallet address to check
- * @returns boolean indicating if it's a dev wallet
- */
-export function useIsDevWallet(walletAddress: string | { toString(): string } | null | undefined): boolean {
-  return isDevWallet(walletAddress)
-}
-
-// Example usage:
-/*
-// In your .env.local file:
-DEV_WALLETS=ABC123def456ghi789...,XYZ987uvw654rst321...,MNO456pqr789stu012...
-
-// In your component:
-import { isDevWallet, useIsDevWallet } from '@/utils/dev-wallet'
-
-// Direct usage
-if (isDevWallet(publicKey)) {
-  console.log('This is a developer wallet!')
-  // Show debug features, admin panel, etc.
-}
-
-// In React component
-const isDev = useIsDevWallet(publicKey)
-if (isDev) {
-  // Show dev-only features
-}
-*/ 

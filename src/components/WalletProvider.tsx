@@ -11,10 +11,11 @@ import {
   UnifiedWalletProvider,
   useUnifiedWallet,
 } from "@jup-ag/wallet-adapter";
-
-type WalletContextState = ReturnType<typeof useUnifiedWallet>;
 import { WalletNotification } from "@/components/WalletNotification";
 import { createConnection } from "@/utils/connection";
+import { isDevWallet, toWalletAddress } from "@/utils/dev-wallet";
+
+type WalletContextState = ReturnType<typeof useUnifiedWallet>;
 
 const WalletContext = createContext<WalletContextState | null>(null);
 
@@ -25,12 +26,21 @@ interface WalletProviderProps {
 function WalletContextBridge({ children }: { children: React.ReactNode }) {
   const wallet = useUnifiedWallet();
 
+  const walletAddress =
+    toWalletAddress(wallet.publicKey) ??
+    toWalletAddress(wallet.wallet?.adapter?.publicKey ?? null);
+
   useEffect(() => {
-    if (wallet.connected && wallet.publicKey) {
+    const adapterConnected = Boolean(wallet.wallet?.adapter?.connected);
+    const isLive = wallet.connected || adapterConnected || Boolean(walletAddress);
+
+    if (isLive) {
       sessionStorage.removeItem("hasDisconnected");
     }
-  }, [wallet.connected, wallet.publicKey]);
+  }, [wallet.connected, wallet.wallet?.adapter?.connected, walletAddress]);
 
+  // Pass through the original wallet context — do not spread/copy it.
+  // Spreading breaks connect/sign methods bound to the adapter instance.
   return (
     <WalletContext.Provider value={wallet}>
       <ConnectionProvider>{children}</ConnectionProvider>
@@ -107,4 +117,26 @@ export function useConnection() {
     throw new Error("useConnection must be used within a WalletProvider");
   }
   return { connection };
+}
+
+/** Resolved base58 address from Jupiter wallet state (all known shapes). */
+export function useWalletAddress(): string | null {
+  const { publicKey, wallet, connected } = useWallet();
+
+  const adapterConnected = Boolean(wallet?.adapter?.connected);
+  if (!connected && !adapterConnected) return null;
+
+  return (
+    toWalletAddress(publicKey) ??
+    toWalletAddress(wallet?.adapter?.publicKey ?? null)
+  );
+}
+
+/**
+ * True when a dev-listed wallet is connected.
+ * Uses adapter.connected as well as context.connected (Jupiter quirk).
+ */
+export function useDevWalletAccess(): boolean {
+  const address = useWalletAddress();
+  return address !== null && isDevWallet(address);
 }
