@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
-import NavigationTabs from "@/components/NavigationTabs";
 import {
   useTrendingPools,
   type TrendingToken,
@@ -241,7 +240,6 @@ export default function TrendingPoolsPage() {
 
   return (
     <main className="min-h-screen bg-black py-8 relative">
-      <NavigationTabs />
       <div className="container mx-auto px-4">
         <div className="max-w-7xl mx-auto space-y-6">
           {/* Header */}

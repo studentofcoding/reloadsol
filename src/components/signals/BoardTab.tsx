@@ -37,8 +37,8 @@ import { ChartCaptureModal } from "@/components/ChartCaptureModal";
 import { useChartCapture } from "@/hooks/useChartCapture";
 import { calculateWeightedDistribution } from "@/utils/position-sizing";
 import { useMCapTracker, FilterOptions } from "@/hooks/useMCapTracker";
-
-// --- Types & Constants ---
+import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
+import { parseAddresses } from "@/components/signals/shared/parseAddresses";
 
 type SectionType = "watching" | "potential" | "rugged" | "mcap_tracker";
 
@@ -74,15 +74,7 @@ const DEFAULT_MCAP_FILTERS: FilterOptions = {
   performanceFilter: "all",
 };
 
-function parseAddresses(param: string | null): string[] {
-  if (!param) return [];
-  return param
-    .split(/[|,]/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-// --- Draggable Card Component ---
+// --- Types & Constants ---
 
 function DraggableCard({
   id,
@@ -176,6 +168,10 @@ function DroppableColumn({
   color,
   items,
   renderItem,
+  onBuyAll,
+  buyAmount,
+  setBuyAmount,
+  isBuying,
 }: {
   id: SectionType;
   title: string;
@@ -199,6 +195,28 @@ function DroppableColumn({
           {items.length}
         </span>
       </h2>
+      {onBuyAll && (
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-green-800 bg-green-900/20 p-2">
+          <input
+            type="number"
+            step="0.1"
+            min="0.01"
+            className="w-20 rounded border border-gray-600 bg-gray-900 px-2 py-1 text-sm text-white"
+            value={buyAmount ?? "1.0"}
+            onChange={(e) => setBuyAmount?.(e.target.value)}
+            disabled={isBuying}
+          />
+          <span className="text-xs text-gray-400">SOL</span>
+          <button
+            type="button"
+            onClick={onBuyAll}
+            disabled={isBuying || items.length === 0}
+            className="ml-auto rounded bg-green-600 px-3 py-1 text-xs font-medium hover:bg-green-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isBuying ? "Buying…" : "Buy All (Weighted)"}
+          </button>
+        </div>
+      )}
       <div
         ref={setNodeRef}
         className="flex-1 bg-gray-900/50 rounded-xl p-2 border border-gray-800 overflow-y-auto min-h-[200px]"
@@ -260,12 +278,11 @@ const ChartItem = React.memo(
           </div>
 
           <div className="relative h-[200px] w-full bg-black">
-            <iframe
-              src={`https://www.gmgn.cc/kline/sol/${addr}?interval=${interval}`}
-              title={`Chart ${addr}`}
+            <GmgnChartEmbed
+              tokenAddress={addr}
+              interval={interval}
               className={`w-full h-full ${isDraggingGlobal ? "pointer-events-none" : ""}`}
-              frameBorder={0}
-              allowFullScreen
+              height="200px"
             />
           </div>
 
@@ -1279,10 +1296,10 @@ function ChartsContent() {
   );
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4">
+    <div className="text-white">
       <div className="max-w-[1600px] mx-auto">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">Chart Tracker</h1>
+          <h2 className="text-xl font-semibold">Chart board</h2>
 
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 bg-gray-800 p-2 rounded-lg border border-gray-700">

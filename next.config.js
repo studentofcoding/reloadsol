@@ -260,33 +260,7 @@ const nextConfig = {
 
   // ===== REDIRECTS & REWRITES =====
   async redirects() {
-    return [
-      {
-        source: "/catch-the-coin",
-        destination: "/dev/signals?tab=live",
-        permanent: false,
-      },
-      {
-        source: "/charts",
-        destination: "/dev/signals?tab=board",
-        permanent: false,
-      },
-      {
-        source: "/dev/mcap-tracker",
-        destination: "/dev/signals?tab=tracker",
-        permanent: false,
-      },
-      {
-        source: "/dev/trending-tracker",
-        destination: "/dev/algo-tester",
-        permanent: false,
-      },
-      {
-        source: "/dev/tracking-history",
-        destination: "/dev/algo-tester?tab=history",
-        permanent: false,
-      },
-    ];
+    return [];
   },
 
   async rewrites() {

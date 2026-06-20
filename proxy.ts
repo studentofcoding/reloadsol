@@ -16,6 +16,8 @@ export function proxy(request: NextRequest) {
     "/dev/mcap-tracker": () => "/dev/signals?tab=tracker",
     "/dev/trending-tracker": () => "/dev/algo-tester",
     "/dev/tracking-history": () => "/dev/algo-tester?tab=history",
+    "/dev/pools": () => "/dev/dlmm",
+    "/dev/pools-test": () => "/dev/algo-tester",
   };
 
   const redirectBuilder = slimRedirects[pathname];

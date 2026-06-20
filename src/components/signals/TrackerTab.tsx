@@ -108,498 +108,10 @@ function PnlDistributionChart({
   );
 }
 
-// Daily Ranking Visualization Component
-function DailyRankingVisualization({
-  tokens,
-  stats,
-}: {
-  tokens: McapTrackingData[];
-  stats: any;
-}) {
-  const [selectedDate, setSelectedDate] = useState<string>("");
-  const [expandedSection, setExpandedSection] = useState<string | null>(null);
-  const [expandedRankings, setExpandedRankings] = useState<
-    Record<string, boolean>
-  >({});
-
-  const toggleRanking = (category: string) => {
-    setExpandedRankings((prev) => ({
-      ...prev,
-      [category]: !prev[category],
-    }));
-  };
-
-  // Get daily breakdown data from stats
-  const dailyData = stats?.thirtyDaysSummary?.dailyBreakdown || [];
-  const sortedDailyData = [...dailyData].sort(
-    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-  );
-
-  // Initialize selected date to today (most recent date)
-  React.useEffect(() => {
-    if (sortedDailyData.length > 0 && !selectedDate) {
-      setSelectedDate(sortedDailyData[0].date);
-    }
-  }, [sortedDailyData, selectedDate]);
-
-  // Get current day's data based on selected date
-  const currentDayData = sortedDailyData.find(
-    (day) => day.date === selectedDate,
-  ) || {
-    date: selectedDate || new Date().toISOString().split("T")[0],
-    tokensAdded: 0,
-    gainers: 0,
-    losers: 0,
-    avgGrowth: 0,
-    totalMcap: 0,
-  };
-
-  // Filter tokens based on selected date
-  const filteredTokens = React.useMemo(() => {
-    if (!selectedDate) return tokens;
-
-    const selectedDateObj = new Date(selectedDate);
-    const nextDay = new Date(selectedDateObj);
-    nextDay.setDate(nextDay.getDate() + 1);
-
-    return tokens.filter((token) => {
-      const tokenDate = new Date(token.first_seen_at);
-      const tokenDateOnly = new Date(
-        tokenDate.getFullYear(),
-        tokenDate.getMonth(),
-        tokenDate.getDate(),
-      );
-      const selectedDateOnly = new Date(
-        selectedDateObj.getFullYear(),
-        selectedDateObj.getMonth(),
-        selectedDateObj.getDate(),
-      );
-
-      return tokenDateOnly.getTime() === selectedDateOnly.getTime();
-    });
-  }, [tokens, selectedDate]);
-
-  // Separate tokens by performance
-  const gainersTokens = filteredTokens.filter(
-    (token) => token.mcap_growth_percent > 0,
-  );
-  const losersTokens = filteredTokens.filter(
-    (token) => token.mcap_growth_percent < 0,
-  );
-  const neutralTokens = filteredTokens.filter(
-    (token) => Math.abs(token.mcap_growth_percent) < 0.01,
-  );
-
-  // Calculate actual average growth from filtered tokens
-  const actualAvgGrowth =
-    filteredTokens.length > 0
-      ? filteredTokens.reduce(
-          (sum, token) => sum + token.mcap_growth_percent,
-          0,
-        ) / filteredTokens.length
-      : 0;
-
-  // Get top performers for different categories based on filtered tokens
-  const sortedGainers = [...gainersTokens].sort(
-    (a, b) => b.mcap_growth_percent - a.mcap_growth_percent,
-  );
-  const topGainers = expandedRankings["gainers"]
-    ? sortedGainers
-    : sortedGainers.slice(0, 5);
-
-  const sortedVolume = [...filteredTokens]
-    .filter((token) => token.current_mcap > 0)
-    .sort((a, b) => b.current_mcap - a.current_mcap);
-  const topVolume = expandedRankings["volume"]
-    ? sortedVolume
-    : sortedVolume.slice(0, 5);
-
-  const sortedMultipliers = [...filteredTokens]
-    .filter((token) => token.mcap_growth_percent > 100)
-    .sort((a, b) => b.mcap_growth_percent - a.mcap_growth_percent);
-  const topMultipliers = expandedRankings["multipliers"]
-    ? sortedMultipliers
-    : sortedMultipliers.slice(0, 5);
-
-  const formatNumber = (num: number): string => {
-    if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
-    if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
-    if (num >= 1e3) return `$${(num / 1e3).toFixed(0)}K`;
-    return `$${num.toFixed(0)}`;
-  };
-
-  const formatPercentage = (percent: number): string => {
-    return `${percent >= 0 ? "+" : ""}${percent.toFixed(2)}%`;
-  };
-
-  const getGrowthColor = (percent: number): string => {
-    if (Math.abs(percent) < 0.01) return "text-gray-400";
-    return percent >= 0 ? "text-green-400" : "text-red-400";
-  };
-
-  const formatDate = (dateString: string): string => {
-    const date = new Date(dateString);
-    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const dayName = days[date.getDay()];
-    const day = date.getDate().toString().padStart(2, "0");
-    const month = (date.getMonth() + 1).toString().padStart(2, "0");
-    const year = date.getFullYear().toString().slice(-2);
-    return `${dayName}, ${day}/${month}/${year}`;
-  };
-
-  const getChartUrl = (tokenAddress: string): string => {
-    return `https://reloadsol.app/chart/${tokenAddress}`;
-  };
-
-  const TokenItem = ({
-    token,
-    index,
-    category,
-  }: {
-    token: McapTrackingData;
-    index: number;
-    category: string;
-  }) => (
-    <div
-      key={token.token_address}
-      className="flex items-center justify-between"
-    >
-      <div className="flex items-center space-x-2">
-        <span className="text-yellow-400 font-bold">#{index + 1}</span>
-        <div>
-          <a
-            href={getChartUrl(token.token_address)}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-white font-medium hover:text-blue-400 transition-colors cursor-pointer"
-          >
-            {token.token_symbol}
-          </a>
-          <div className="text-xs text-gray-400">
-            {category === "volume"
-              ? `Started: ${formatNumber(token.first_mcap)}`
-              : formatNumber(token.current_mcap)}
-          </div>
-        </div>
-      </div>
-      <div className="text-right">
-        {category === "volume" ? (
-          <>
-            <div className="text-blue-400 font-bold">
-              {formatNumber(token.current_mcap)}
-            </div>
-            <div
-              className={`text-xs ${getGrowthColor(token.mcap_growth_percent)}`}
-            >
-              {formatPercentage(token.mcap_growth_percent)}
-            </div>
-          </>
-        ) : category === "multipliers" ? (
-          <>
-            <div className="text-purple-400 font-bold">
-              {(token.mcap_growth_percent / 100 + 1).toFixed(2)}x
-            </div>
-            <div
-              className={`text-xs ${getGrowthColor(token.mcap_growth_percent)}`}
-            >
-              {formatPercentage(token.mcap_growth_percent)}
-            </div>
-          </>
-        ) : (
-          <>
-            <div
-              className={`font-bold ${getGrowthColor(token.mcap_growth_percent)}`}
-            >
-              {formatPercentage(token.mcap_growth_percent)}
-            </div>
-            <div className="text-xs text-gray-400">
-              {(token.mcap_growth_percent / 100 + 1).toFixed(2)}x
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="bg-gray-800 rounded-lg p-6 mb-8">
-      <div className="flex items-center justify-between mb-6">
-        <h3 className="text-xl font-bold text-white">
-          🏆 Daily Performance Rankings
-        </h3>
-        <div className="text-sm text-gray-400">
-          {formatDate(currentDayData.date)}
-        </div>
-      </div>
-
-      {/* Date Slider */}
-      {sortedDailyData.length > 1 && (
-        <div className="mb-6">
-          <div className="flex items-center space-x-4">
-            <span className="text-sm text-gray-400">Select Date:</span>
-            <div className="flex-1">
-              <select
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm border border-gray-600 focus:border-blue-500 focus:outline-none"
-              >
-                {sortedDailyData.map((day, index) => (
-                  <option key={day.date} value={day.date}>
-                    {index === 0
-                      ? "Today"
-                      : index === 1
-                        ? "Yesterday"
-                        : `${index} days ago`}{" "}
-                    - {formatDate(day.date)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="text-sm text-white min-w-[120px]">
-              {filteredTokens.length} tokens
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Top Gainers */}
-        <div className="bg-gray-700 rounded-lg p-4">
-          <h4 className="text-lg font-semibold text-green-400 mb-4 flex items-center">
-            📈 Top Gainers
-          </h4>
-          <div className="space-y-3">
-            {topGainers.map((token, index) => (
-              <TokenItem
-                key={token.token_address}
-                token={token}
-                index={index}
-                category="gainers"
-              />
-            ))}
-            {sortedGainers.length === 0 && (
-              <div className="text-gray-400 text-center py-4">
-                No gainers today
-              </div>
-            )}
-            {sortedGainers.length > 5 && (
-              <button
-                onClick={() => toggleRanking("gainers")}
-                className="w-full mt-2 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-600 rounded transition-colors"
-              >
-                {expandedRankings["gainers"]
-                  ? "Show Less"
-                  : `Show All (${sortedGainers.length})`}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Top Volume */}
-        <div className="bg-gray-700 rounded-lg p-4">
-          <h4 className="text-lg font-semibold text-blue-400 mb-4 flex items-center">
-            💰 Highest Market Cap
-          </h4>
-          <div className="space-y-3">
-            {topVolume.map((token, index) => (
-              <TokenItem
-                key={token.token_address}
-                token={token}
-                index={index}
-                category="volume"
-              />
-            ))}
-            {sortedVolume.length === 0 && (
-              <div className="text-gray-400 text-center py-4">
-                No volume data
-              </div>
-            )}
-            {sortedVolume.length > 5 && (
-              <button
-                onClick={() => toggleRanking("volume")}
-                className="w-full mt-2 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-600 rounded transition-colors"
-              >
-                {expandedRankings["volume"]
-                  ? "Show Less"
-                  : `Show All (${sortedVolume.length})`}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Top Multipliers */}
-        <div className="bg-gray-700 rounded-lg p-4">
-          <h4 className="text-lg font-semibold text-purple-400 mb-4 flex items-center">
-            🚀 Top Multipliers ({">"}100%)
-          </h4>
-          <div className="space-y-3">
-            {topMultipliers.map((token, index) => (
-              <TokenItem
-                key={token.token_address}
-                token={token}
-                index={index}
-                category="multipliers"
-              />
-            ))}
-            {sortedMultipliers.length === 0 && (
-              <div className="text-gray-400 text-center py-4">
-                No 100%+ performers today
-              </div>
-            )}
-            {sortedMultipliers.length > 5 && (
-              <button
-                onClick={() => toggleRanking("multipliers")}
-                className="w-full mt-2 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-600 rounded transition-colors"
-              >
-                {expandedRankings["multipliers"]
-                  ? "Show Less"
-                  : `Show All (${sortedMultipliers.length})`}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Daily Summary Stats */}
-      <div className="mt-6 pt-6 border-t border-gray-600">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
-          <div>
-            <button
-              onClick={() =>
-                setExpandedSection(expandedSection === "total" ? null : "total")
-              }
-              className="w-full hover:bg-gray-700 rounded-lg p-2 transition-colors"
-            >
-              <div className="text-2xl font-bold text-white">
-                {filteredTokens.length}
-              </div>
-              <div className="text-sm text-gray-400">Total Tokens</div>
-              <div className="text-xs text-blue-400 mt-1">Click to view</div>
-            </button>
-            {expandedSection === "total" && (
-              <div className="mt-2 bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
-                <div className="text-left space-y-1">
-                  {filteredTokens.map((token, index) => (
-                    <TokenItem
-                      key={token.token_address}
-                      token={token}
-                      index={index}
-                      category="total"
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          <div>
-            <button
-              onClick={() =>
-                setExpandedSection(
-                  expandedSection === "gainers" ? null : "gainers",
-                )
-              }
-              className="w-full hover:bg-gray-700 rounded-lg p-2 transition-colors"
-            >
-              <div className="text-2xl font-bold text-green-400">
-                {gainersTokens.length}
-              </div>
-              <div className="text-sm text-gray-400">Gainers</div>
-              <div className="text-xs text-blue-400 mt-1">Click to view</div>
-            </button>
-            {expandedSection === "gainers" && (
-              <div className="mt-2 bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
-                <div className="text-left space-y-1">
-                  {gainersTokens.map((token, index) => (
-                    <TokenItem
-                      key={token.token_address}
-                      token={token}
-                      index={index}
-                      category="gainers"
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          <div>
-            <button
-              onClick={() =>
-                setExpandedSection(
-                  expandedSection === "losers" ? null : "losers",
-                )
-              }
-              className="w-full hover:bg-gray-700 rounded-lg p-2 transition-colors"
-            >
-              <div className="text-2xl font-bold text-red-400">
-                {losersTokens.length}
-              </div>
-              <div className="text-sm text-gray-400">Losers</div>
-              <div className="text-xs text-blue-400 mt-1">Click to view</div>
-            </button>
-            {expandedSection === "losers" && (
-              <div className="mt-2 bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
-                <div className="text-left space-y-1">
-                  {losersTokens.map((token, index) => (
-                    <TokenItem
-                      key={token.token_address}
-                      token={token}
-                      index={index}
-                      category="losers"
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          <div>
-            <button
-              onClick={() =>
-                setExpandedSection(
-                  expandedSection === "neutral" ? null : "neutral",
-                )
-              }
-              className="w-full hover:bg-gray-700 rounded-lg p-2 transition-colors"
-            >
-              <div className="text-2xl font-bold text-gray-400">
-                {neutralTokens.length}
-              </div>
-              <div className="text-sm text-gray-400">Neutral (0%)</div>
-              <div className="text-xs text-blue-400 mt-1">Click to view</div>
-            </button>
-            {expandedSection === "neutral" && (
-              <div className="mt-2 bg-gray-800 rounded-lg p-3 max-h-48 overflow-y-auto">
-                <div className="text-left space-y-1">
-                  {neutralTokens.map((token, index) => (
-                    <TokenItem
-                      key={token.token_address}
-                      token={token}
-                      index={index}
-                      category="neutral"
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-          <div>
-            <div
-              className={`text-2xl font-bold ${getGrowthColor(actualAvgGrowth)}`}
-            >
-              {formatPercentage(actualAvgGrowth)}
-            </div>
-            <div className="text-sm text-gray-400">Avg Growth</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function TrackerTab() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(100);
-  const [expandedChart, setExpandedChart] = useState<string | null>(null);
-  const [isChartLoading, setIsChartLoading] = useState(false);
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(
     new Set(),
   );
@@ -688,189 +200,6 @@ export default function TrackerTab() {
     totalPages: 0,
   };
 
-  // Toast handling
-  type ToastMessage = {
-    type: string;
-    title: string;
-    message: string;
-    items?: Array<{
-      symbol: string;
-      address: string;
-      growthPercent: number;
-      deltaPercent?: number;
-      currentMcap?: number;
-    }>;
-  };
-  type ToastWithId = ToastMessage & { id: number };
-  const DEFAULT_PNL_TOAST_THRESHOLD = Number(
-    process.env.NEXT_PUBLIC_MCAP_PNL_TOAST_THRESHOLD || 20,
-  );
-  const [activeToasts, setActiveToasts] = useState<ToastWithId[]>([]);
-  const toastTimers = useRef<Record<number, number>>({});
-  // Track last toast growthPercent per token to compute n-1 delta
-  const prevToastGrowth = useRef<Record<string, number>>({});
-  // Dedup toast pushes within a rolling window
-  const recentToastKeys = useRef<Record<string, number>>({});
-  const TOAST_DEDUP_WINDOW_MS = 30000;
-
-  const computeToastKey = (
-    t: ToastMessage,
-    enrichedItems?: Array<{
-      symbol: string;
-      address: string;
-      growthPercent: number;
-      deltaPercent?: number;
-      currentMcap?: number;
-    }>,
-  ) => {
-    const items = enrichedItems ?? t.items ?? [];
-    const itemKey = items
-      .map(
-        (i) => `${i.address}:${(i.deltaPercent ?? i.growthPercent).toFixed(2)}`,
-      )
-      .sort()
-      .join("|");
-    return `${t.title}|${t.type}|${t.message}|${itemKey}`;
-  };
-
-  const pushToasts = useCallback(
-    (toasts?: ToastMessage[]) => {
-      if (!toasts || toasts.length === 0) return;
-      // Prune old dedup keys
-      const now = Date.now();
-      Object.entries(recentToastKeys.current).forEach(([k, ts]) => {
-        if (now - ts > TOAST_DEDUP_WINDOW_MS) delete recentToastKeys.current[k];
-      });
-
-      toasts.forEach((t) => {
-        const id = Date.now() + Math.floor(Math.random() * 100000);
-        // Enrich items with deltaPercent (current - previous) and currentMcap
-        const enrichedItems =
-          t.items?.map((item) => {
-            const prev = prevToastGrowth.current[item.address];
-            const token = tokens.find(
-              (tok) => tok.token_address === item.address,
-            );
-            const baselinePrev =
-              typeof prev === "number"
-                ? prev
-                : typeof token?.mcap_growth_percent === "number"
-                  ? token!.mcap_growth_percent
-                  : undefined;
-            const delta =
-              typeof baselinePrev === "number"
-                ? item.growthPercent - baselinePrev
-                : item.growthPercent;
-            // Update prev map to this latest growth for next comparison
-            prevToastGrowth.current[item.address] = item.growthPercent;
-            return {
-              ...item,
-              deltaPercent: delta,
-              currentMcap: token?.current_mcap,
-            };
-          }) ?? t.items;
-
-        // Dedup: skip pushing identical toast within the window
-        const key = computeToastKey(t, enrichedItems);
-        const last = recentToastKeys.current[key];
-        if (last && now - last < TOAST_DEDUP_WINDOW_MS) {
-          return;
-        }
-        recentToastKeys.current[key] = now;
-
-        const normalizedType =
-          t.type && t.type.trim()
-            ? t.type
-            : t.title === "New Token Tracked"
-              ? "success"
-              : "info";
-
-        setActiveToasts((prev) => [
-          ...prev,
-          { ...t, items: enrichedItems, type: normalizedType, id },
-        ]);
-
-        const timeoutId = window.setTimeout(() => {
-          setActiveToasts((prev) => prev.filter((x) => x.id !== id));
-          delete toastTimers.current[id];
-        }, 6000);
-        toastTimers.current[id] = timeoutId;
-      });
-    },
-    [tokens],
-  );
-
-  // Map toast type to Tailwind styles
-  const getToastStyles = (type: string) => {
-    switch (type) {
-      case "success":
-        return "bg-green-600 border-green-400";
-      case "info":
-        return "bg-blue-600 border-blue-400";
-      case "warning":
-        return "bg-yellow-600 border-yellow-400 text-black";
-      case "error":
-        return "bg-red-600 border-red-400";
-      default:
-        return "bg-gray-700 border-gray-500";
-    }
-  };
-
-  // Compact currency formatter for MCap in toasts
-  const formatMcapCompact = (num?: number): string => {
-    if (typeof num !== "number" || !isFinite(num)) return "N/A";
-    if (num >= 1e9) return `$${(num / 1e9).toFixed(2)}B`;
-    if (num >= 1e6) return `$${(num / 1e6).toFixed(2)}M`;
-    if (num >= 1e3) return `$${(num / 1e3).toFixed(0)}K`;
-    return `$${num.toFixed(0)}`;
-  };
-
-  // PnL toast threshold (user-configurable, clamped to 30%)
-  const clampThreshold = useCallback(
-    (n: number) => Math.max(0, Math.min(30, Math.round(n))),
-    [],
-  );
-  const LOCAL_STORAGE_KEY_PNL_TOAST = "mcap_pnl_toast_threshold";
-  const [pnlToastThreshold, setPnlToastThreshold] = useState<number>(() => {
-    return clampThreshold(DEFAULT_PNL_TOAST_THRESHOLD);
-  });
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(LOCAL_STORAGE_KEY_PNL_TOAST);
-      const saved = raw != null ? Number(raw) : NaN;
-      if (Number.isFinite(saved)) {
-        setPnlToastThreshold(clampThreshold(saved));
-      }
-    } catch (e) {
-      // Ignore local storage errors
-    }
-  }, [clampThreshold]);
-
-  const handleSavePnlToastThreshold = useCallback(() => {
-    try {
-      localStorage.setItem(
-        LOCAL_STORAGE_KEY_PNL_TOAST,
-        String(pnlToastThreshold),
-      );
-      pushToasts([
-        {
-          type: "success",
-          title: "Threshold Saved",
-          message: `Toasts will use ${pnlToastThreshold}% until changed.`,
-        },
-      ]);
-    } catch (e) {
-      pushToasts([
-        {
-          type: "error",
-          title: "Save Failed",
-          message: "Could not save threshold to local storage",
-        },
-      ]);
-    }
-  }, [pnlToastThreshold]);
-
   // Helpers for timezone shifting and peak recompute (ensure these exist once)
   const padHourStr = (h: number | string) => {
     const n = typeof h === "string" ? parseInt(h, 10) : h;
@@ -900,12 +229,6 @@ export default function TrackerTab() {
 
   const gmtOptions = Array.from({ length: 27 }, (_, idx) => idx - 12);
 
-  // Show any server-suggested toasts
-  useEffect(() => {
-    if (apiResponse?.toasts) {
-      pushToasts(apiResponse.toasts);
-    }
-  }, [apiResponse, pushToasts]);
 
   // Move analytics hooks BEFORE any early returns
   const fetchAnalyticsForTokens = useCallback(
@@ -1055,30 +378,6 @@ export default function TrackerTab() {
     return percent >= 0 ? "📈" : "📉";
   };
 
-  const handleChartToggle = async (tokenAddress: string) => {
-    const tok = tokens.find((t) => t.token_address === tokenAddress);
-    if (tok?.is_finished) {
-      // Toggle chart without refetch if finished
-      if (expandedChart === tokenAddress) {
-        setExpandedChart(null);
-      } else {
-        setExpandedChart(tokenAddress);
-      }
-      setIsChartLoading(false);
-      return;
-    }
-
-    if (expandedChart === tokenAddress) {
-      setExpandedChart(null);
-      setIsChartLoading(false);
-    } else {
-      setExpandedChart(tokenAddress);
-      setIsChartLoading(true);
-
-      // Refetch current MCap data when opening chart (only if not finished)
-      await refetchTokenMcap(tokenAddress);
-    }
-  };
 
   const refetchTokenMcap = async (tokenAddress: string) => {
     const tok = tokens.find((t) => t.token_address === tokenAddress);
@@ -1089,13 +388,11 @@ export default function TrackerTab() {
 
     try {
       const response = await fetch(
-        `/api/mcap-tracking?action=refetch&token=${tokenAddress}&pnlThreshold=${pnlToastThreshold}`,
+        `/api/mcap-tracking?action=refetch&token=${tokenAddress}`,
       );
       const data = await response.json();
 
       if (data.success) {
-        // Show server-suggested toasts
-        pushToasts(data.toasts);
 
         // Refresh the full data to update stats (including finished status)
         await refetch();
@@ -1211,119 +508,10 @@ export default function TrackerTab() {
 
   if (loading && tokens.length === 0) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-6">
-        {/* Toasts (fixed, viewport-level) */}
-        {activeToasts.length > 0 && (
-          <div className="fixed top-4 right-4 z-50 space-y-2">
-            {activeToasts.map((t) => (
-              <div
-                key={t.id}
-                className={`w-80 rounded-md border shadow-lg p-3 text-white ${getToastStyles(t.type)}`}
-                onMouseEnter={() => {
-                  const tid = toastTimers.current[t.id];
-                  if (tid) {
-                    clearTimeout(tid);
-                    delete toastTimers.current[t.id];
-                  }
-                }}
-                onMouseLeave={() => {
-                  if (!toastTimers.current[t.id]) {
-                    const timeoutId = window.setTimeout(() => {
-                      setActiveToasts((prev) =>
-                        prev.filter((x) => x.id !== t.id),
-                      );
-                      delete toastTimers.current[t.id];
-                    }, 6000);
-                    toastTimers.current[t.id] = timeoutId;
-                  }
-                }}
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <div className="font-semibold">{t.title}</div>
-                    <div className="text-sm opacity-90">{t.message}</div>
-                    {t.items && t.items.length > 0 && (
-                      <div className="mt-2 max-h-64 overflow-auto pr-1 space-y-2">
-                        {t.items.map((item) => {
-                          const token = tokens.find(
-                            (tok) => tok.token_address === item.address,
-                          );
-                          const mcap = item.currentMcap ?? token?.current_mcap;
-                          const delta =
-                            typeof item.deltaPercent === "number"
-                              ? item.deltaPercent
-                              : typeof item.growthPercent === "number"
-                                ? item.growthPercent
-                                : 0;
-                          const up = delta >= 0;
-                          return (
-                            <div
-                              key={item.address}
-                              className="flex justify-between items-center text-sm"
-                            >
-                              <div className="flex flex-col">
-                                <a
-                                  href={`/chart/${item.address}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="underline hover:text-white"
-                                >
-                                  {item.symbol}
-                                </a>
-                                <div className="text-xs text-gray-300">
-                                  MCap: {formatMcapCompact(mcap)}
-                                </div>
-                              </div>
-                              <div
-                                className={`ml-2 font-medium ${up ? "text-green-300" : "text-red-300"}`}
-                              >
-                                {up ? "↑" : "↓"} {Math.abs(delta).toFixed(1)}%
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {t.items && t.items.length > 0 && (
-                      <div className="mt-3">
-                        {(() => {
-                          const uniq = Array.from(
-                            new Set(t.items!.map((i) => i.address)),
-                          );
-                          const url = `/dev/signals?tab=board&addresses=${encodeURIComponent(uniq.join(","))}`;
-                          return (
-                            <a
-                              href={url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white"
-                            >
-                              Open Charts ({uniq.length})
-                            </a>
-                          );
-                        })()}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    onClick={() =>
-                      setActiveToasts((prev) =>
-                        prev.filter((x) => x.id !== t.id),
-                      )
-                    }
-                    className="ml-3 text-white/80 hover:text-white"
-                    aria-label="Dismiss toast"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+      <div className="text-white">
         <div className="max-w-7xl mx-auto">
           <div className="mb-8">
-            <h1 className="text-3xl font-bold mb-2">MCap Tracker</h1>
+            <h2 className="text-xl font-semibold mb-2">MCap tracker</h2>
             <p className="text-gray-400">Loading market cap tracking data...</p>
           </div>
           <LoadingSkeleton />
@@ -1333,115 +521,7 @@ export default function TrackerTab() {
   }
 
   return (
-    <div className="min-h-screen max-w-7xl mx-auto text-white p-6">
-      {/* Toasts (fixed, viewport-level) */}
-      {activeToasts.length > 0 && (
-        <div className="fixed top-4 right-4 z-50 space-y-2">
-          {activeToasts.map((t) => (
-            <div
-              key={t.id}
-              className={`w-80 rounded-md border shadow-lg p-3 text-white ${getToastStyles(t.type)}`}
-              onMouseEnter={() => {
-                const tid = toastTimers.current[t.id];
-                if (tid) {
-                  clearTimeout(tid);
-                  delete toastTimers.current[t.id];
-                }
-              }}
-              onMouseLeave={() => {
-                if (!toastTimers.current[t.id]) {
-                  const timeoutId = window.setTimeout(() => {
-                    setActiveToasts((prev) =>
-                      prev.filter((x) => x.id !== t.id),
-                    );
-                    delete toastTimers.current[t.id];
-                  }, 6000);
-                  toastTimers.current[t.id] = timeoutId;
-                }
-              }}
-            >
-              <div className="flex justify-between items-start">
-                <div>
-                  <div className="font-semibold">{t.title}</div>
-                  <div className="text-sm opacity-90">{t.message}</div>
-                  {t.items && t.items.length > 0 && (
-                    <div className="mt-2 max-h-64 overflow-auto pr-1 space-y-2">
-                      {t.items.map((item) => {
-                        const token = tokens.find(
-                          (tok) => tok.token_address === item.address,
-                        );
-                        const mcap = item.currentMcap ?? token?.current_mcap;
-                        const delta =
-                          typeof item.deltaPercent === "number"
-                            ? item.deltaPercent
-                            : typeof item.growthPercent === "number"
-                              ? item.growthPercent
-                              : 0;
-                        const up = delta >= 0;
-                        return (
-                          <div
-                            key={item.address}
-                            className="flex justify-between items-center text-sm"
-                          >
-                            <div className="flex flex-col">
-                              <button
-                                onClick={() =>
-                                  setModalTokenAddress(item.address)
-                                }
-                                className="underline hover:text-white text-left"
-                              >
-                                {item.symbol}
-                              </button>
-                              <div className="text-xs text-gray-300">
-                                MCap: {formatMcapCompact(mcap)}
-                              </div>
-                            </div>
-                            <div
-                              className={`ml-2 font-medium ${up ? "text-green-300" : "text-red-300"}`}
-                            >
-                              {up ? "↑" : "↓"} {Math.abs(delta).toFixed(1)}%
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {t.items && t.items.length > 0 && (
-                    <div className="mt-3">
-                      {(() => {
-                        const uniq = Array.from(
-                          new Set(t.items!.map((i) => i.address)),
-                        );
-                        const url = `/dev/signals?tab=board&addresses=${encodeURIComponent(uniq.join(","))}`;
-                        return (
-                          <a
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded bg-blue-600 hover:bg-blue-500 text-white"
-                          >
-                            Open Charts ({uniq.length})
-                          </a>
-                        );
-                      })()}
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={() =>
-                    setActiveToasts((prev) => prev.filter((x) => x.id !== t.id))
-                  }
-                  className="ml-3 text-white/80 hover:text-white"
-                  aria-label="Dismiss toast"
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
+    <div className="max-w-7xl mx-auto text-white">
       {/* Chart Buy Modal */}
       {modalTokenAddress && (
         <ChartBuyModal
@@ -1472,7 +552,7 @@ export default function TrackerTab() {
 
       {/* Header */}
       <div className="mb-8 mx-auto">
-        <h1 className="text-3xl font-bold my-2">MCap Tracker</h1>
+        <h2 className="text-xl font-semibold my-2">MCap tracker</h2>
         <p className="text-gray-400">
           Monitor token market cap changes and growth patterns over time
         </p>
@@ -1482,40 +562,6 @@ export default function TrackerTab() {
           </p>
         )}
 
-        {/* PnL Toast Threshold Control (max 30%) */}
-        <div className="mt-4 flex items-center gap-3">
-          <span className="text-sm text-gray-300">PnL Toast Threshold (%)</span>
-          <input
-            type="range"
-            min={0}
-            max={30}
-            step={1}
-            value={pnlToastThreshold}
-            onChange={(e) =>
-              setPnlToastThreshold(clampThreshold(Number(e.target.value)))
-            }
-            className="w-40"
-          />
-          <input
-            type="number"
-            min={0}
-            max={30}
-            step={1}
-            value={pnlToastThreshold}
-            onChange={(e) =>
-              setPnlToastThreshold(clampThreshold(Number(e.target.value)))
-            }
-            className="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1"
-          />
-          <span className="text-xs text-gray-500">(max 30%)</span>
-          <button
-            onClick={handleSavePnlToastThreshold}
-            className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-md"
-            title="Save threshold as default for next reloads"
-          >
-            Save
-          </button>
-        </div>
       </div>
 
       {/* Enhanced Statistics Overview */}
@@ -1564,63 +610,6 @@ export default function TrackerTab() {
               <div className="text-sm text-gray-400">Total MCap</div>
             </div>
           </div>
-
-          {/* 30-Day Summary */}
-          <div className="bg-gray-800 rounded-lg p-6 mb-8">
-            <h3 className="text-xl font-bold mb-4">30-Day PnL Summary</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">
-                      Tokens Added (30 days):
-                    </span>
-                    <span className="text-white">
-                      {stats.thirtyDaysSummary.totalTokensAdded}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Avg Daily Growth:</span>
-                    <span
-                      className={getGrowthColor(
-                        stats.thirtyDaysSummary.avgDailyGrowth,
-                      )}
-                    >
-                      {formatPercentage(stats.thirtyDaysSummary.avgDailyGrowth)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              <div>
-                <h4 className="text-sm font-semibold text-gray-300 mb-2">
-                  Recent Daily Breakdown (Last 7 days)
-                </h4>
-                <div className="space-y-1 text-xs">
-                  {stats?.thirtyDaysSummary?.dailyBreakdown
-                    ?.slice(-7)
-                    .map((day: any, index: number) => (
-                      <div
-                        key={index}
-                        className="flex justify-between items-center"
-                      >
-                        <span className="text-gray-400">{day.date}:</span>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-white">
-                            {day.tokensAdded} tokens
-                          </span>
-                          <span className={getGrowthColor(day.avgGrowth)}>
-                            {formatPercentage(day.avgGrowth)}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Daily Ranking Visualization */}
-          <DailyRankingVisualization tokens={tokens} stats={stats} />
 
           {/* Buy & Sell Time Windows (Combined) with inline timezone controls and legend */}
           {stats.pnlTimeWindows && stats.pnlBuyTimeWindows && (
@@ -2061,16 +1050,6 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
-                        <PnlDistributionChart
-                          counts={
-                            stats.mcapRangeAnalysis.under50k.growthHistogram ||
-                            []
-                          }
-                          // Optionally pass labels if/when you have them:
-                          // labels={DEFAULT_PNL_LABELS}
-                          // Optionally control the red/green split if labels aren't provided:
-                          // negativeSplitIndex={4}
-                        />
                       </div>
                     </div>
                   )}
@@ -2229,12 +1208,6 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
-                        <PnlDistributionChart
-                          counts={
-                            stats.mcapRangeAnalysis.from51to100k
-                              .growthHistogram || []
-                          }
-                        />
                       </div>
                     </div>
                   )}
@@ -2393,12 +1366,6 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
-                        <PnlDistributionChart
-                          counts={
-                            stats.mcapRangeAnalysis.from101to200k
-                              .growthHistogram || []
-                          }
-                        />
                       </div>
                     </div>
                   )}
@@ -2557,12 +1524,6 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
-                        <PnlDistributionChart
-                          counts={
-                            stats.mcapRangeAnalysis.from201to500k
-                              .growthHistogram || []
-                          }
-                        />
                       </div>
                     </div>
                   )}
@@ -2721,12 +1682,6 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
-                        <PnlDistributionChart
-                          counts={
-                            stats.mcapRangeAnalysis.from501kto1M
-                              .growthHistogram || []
-                          }
-                        />
                       </div>
                     </div>
                   )}
@@ -2877,11 +1832,6 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
-                        <PnlDistributionChart
-                          counts={
-                            stats.mcapRangeAnalysis.over1M.growthHistogram || []
-                          }
-                        />
                       </div>
                     </div>
                   )}
@@ -3129,7 +2079,7 @@ export default function TrackerTab() {
                       {getGrowthIcon(token.mcap_growth_percent)}
                     </span>
                     <button
-                      onClick={() => handleChartToggle(token.token_address)}
+                      onClick={() => refetchTokenMcap(token.token_address)}
                       disabled={
                         refetchingTokens.has(token.token_address) ||
                         token.is_finished
@@ -3238,42 +2188,6 @@ export default function TrackerTab() {
                 </div>
               </div>
             </div>
-
-            {/* Inline Chart */}
-            {expandedChart === token.token_address && (
-              <div className="mt-4 pt-4 border-t border-gray-700">
-                <div className="relative" style={{ height: "400px" }}>
-                  {isChartLoading && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-gray-800 rounded-lg">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                        <span className="text-gray-400">Loading chart...</span>
-                      </div>
-                    </div>
-                  )}
-                  <iframe
-                    src={`https://www.gmgn.cc/kline/sol/${token.token_address}?interval=1D&theme=dark`}
-                    className="w-full h-full rounded-lg"
-                    style={{
-                      border: "none",
-                      display: isChartLoading ? "none" : "block",
-                    }}
-                    title={`GMGN Chart - ${token.token_symbol}`}
-                    onLoad={() => setIsChartLoading(false)}
-                    onError={() => {
-                      console.error(
-                        "Chart failed to load for token:",
-                        token.token_address,
-                      );
-                      setIsChartLoading(false);
-                    }}
-                    allowFullScreen
-                    frameBorder="0"
-                    sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-                  />
-                </div>
-              </div>
-            )}
 
             {/* Additional Information */}
             <div className="mt-4 pt-4 border-t border-gray-700">

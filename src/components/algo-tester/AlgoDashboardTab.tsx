@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { boardTabUrl } from "@/components/signals/shared/parseAddresses";
 import UnifiedTokenModal from "@/components/UnifiedTokenModal";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import TokenDetailsModal from "@/components/TokenDetailsModal";
@@ -204,7 +205,7 @@ export default function AlgoDashboardTab() {
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") {
-      console.log("TrendingTrackerPage state", {
+      console.log("AlgoDashboardTab state", {
         loading,
         error,
         hasStats: Boolean(stats),
@@ -233,7 +234,7 @@ export default function AlgoDashboardTab() {
   const handleOpenSelectedCharts = () => {
     if (selectedTokens.size === 0) return;
     const addresses = Array.from(selectedTokens).join(",");
-    router.push(`/dev/signals?tab=board&addresses=${addresses}`);
+    router.push(boardTabUrl(addresses.split(",").filter(Boolean)));
   };
 
   // Helper functions for search and pagination
@@ -754,7 +755,7 @@ export default function AlgoDashboardTab() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-6">
+      <div className="text-white p-4">
         <div className="max-w-7xl mx-auto">
           <h1 className="text-3xl font-bold mb-8">reloadSOL Algo tester</h1>
           <div className="flex items-center justify-center h-64">
@@ -768,7 +769,7 @@ export default function AlgoDashboardTab() {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-6">
+      <div className="text-white p-4">
         <div className="max-w-7xl mx-auto">
           <div className="bg-red-900/20 border border-red-600/30 rounded-xl p-6 text-center">
             <p className="text-red-400 text-lg mb-4">Error loading data</p>
@@ -787,7 +788,7 @@ export default function AlgoDashboardTab() {
 
   if (!stats) {
     return (
-      <div className="min-h-screen bg-gray-900 text-white p-6">
+      <div className="text-white p-4">
         <div className="max-w-7xl mx-auto">
           <p className="text-gray-400">No data available</p>
         </div>
@@ -796,7 +797,7 @@ export default function AlgoDashboardTab() {
   }
 
   return (
-    <div className="min-h-screen text-white p-4 md:p-6">
+    <div className="text-white p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-bold">reloadSOL Algo tester</h1>

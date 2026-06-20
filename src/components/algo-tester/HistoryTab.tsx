@@ -237,38 +237,25 @@ export default function HistoryTab() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-black py-8">
+      <div className="py-4">
         <div className="container mx-auto px-4">
           <div className="max-w-7xl mx-auto space-y-6">
             <div className="text-center mb-8">
-              <h1 className="text-5xl font-bold text-white mb-4">
-                📈 Token Tracking History
-              </h1>
-              <h2 className="text-xl text-gray-400">
-                Loading complete tracking history...
+              <h2 className="text-xl font-semibold text-white mb-4">
+                Loading history…
               </h2>
             </div>
             <LoadingSkeleton />
           </div>
         </div>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="min-h-screen bg-black py-8">
+    <div className="py-4">
       <div className="container mx-auto px-4">
         <div className="max-w-7xl mx-auto space-y-6">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-5xl font-bold text-white mb-4">
-              📈 Token Tracking History
-            </h1>
-            <h2 className="text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
-              Complete history of all tracked tokens with detailed analytics
-            </h2>
-          </div>
-
           {/* Statistics Overview - Use stats from API */}
           {stats && (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
@@ -1109,6 +1096,6 @@ export default function HistoryTab() {
           {/* Unified Tracker Module removed to avoid duplication */}
         </div>
       </div>
-    </main>
+    </div>
   );
 }

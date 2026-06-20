@@ -179,12 +179,11 @@ MAX_PURCHASES_PER_TOKEN=2
 
 | Route | Description |
 |-------|-------------|
-| `/dev/dlmm` | Meteora DLMM agent — pools, positions, deploy/edit/close, dry-run toggle |
-| `/dev/trending-tracker` | Trending token win/loss dashboard |
-| `/dev/mcap-tracker` | Market cap growth tracking |
-| `/dev/signals` | Manual trading signals |
-| `/dev/tracking-history` | Historical tracking data |
-| `/dev/pools` | Pool analytics |
+| `/dev/signals` | Signals hub — signals, live trending, chart board, mcap tracker (`?tab=`) |
+| `/dev/algo-tester` | Algo tester — trending win/loss dashboard + tracking history |
+| `/dev/dlmm` | Meteora DLMM agent — pools, positions, deploy/edit/close |
+
+Legacy routes redirect via `proxy.ts` (e.g. `/charts` → `/dev/signals?tab=board`, `/dev/trending-tracker` → `/dev/algo-tester`).
 
 ---
 

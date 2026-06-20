@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { boardTabUrl } from "@/components/signals/shared/parseAddresses";
+import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
 import { useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useTradingData } from "@/components/TradingDataProvider";
@@ -620,45 +622,7 @@ export default function LiveTab() {
     });
   };
 
-  // Fetch Jupiter quotes for buying
-  const fetchBuyQuotes = async () => {
-    if (!tokens.length || buyAmount <= 0) return;
-
-    const inputAmount = Math.floor(buyAmount * 1e9); // Convert SOL to lamports
-
-    try {
-      const quotePromises = tokens.map(async (token) => {
-        try {
-          const quote = await getSwapQuote(
-            TOKENS.SOL,
-            token.token_address,
-            inputAmount,
-            300, // 3% slippage
-          );
-          return quote ? { mint: token.token_address, quote } : null;
-        } catch (err) {
-          console.error(
-            `Failed to get buy quote for ${token.token_symbol}:`,
-            err,
-          );
-          return null;
-        }
-      });
-
-      const results = await Promise.all(quotePromises);
-      const newQuotes = new Map<string, JupiterQuote>();
-
-      results.forEach((result) => {
-        if (result) {
-          newQuotes.set(result.mint, result.quote);
-        }
-      });
-
-      setQuotes(newQuotes);
-    } catch (err) {
-      console.error("Error fetching buy quotes:", err);
-    }
-  };
+  // Fetch Jupiter quotes for buying — removed (no auto-quoting on hover)
 
   // Check for price changes and highlight tokens
   const checkPriceChanges = () => {
@@ -999,17 +963,7 @@ export default function LiveTab() {
     }
   }, [userTokens]);
 
-  useEffect(() => {
-    // Check for price changes every 5 seconds
-    const interval = setInterval(() => {
-      if (tokens.length > 0) {
-        fetchTrendingTokens();
-      }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [tokens]);
-
-  // Auto-update logic with moving indicator and pause on hover
+  // Auto-update: single 5s poll with progress bar; pauses while hovering a token
   useEffect(() => {
     // Clear any previous intervals
     if (autoUpdateIntervalRef.current)
@@ -1191,8 +1145,7 @@ export default function LiveTab() {
       alert("No starred tokens to view in charts");
       return;
     }
-    const url = `/dev/signals?tab=board&addresses=${keptAddresses.join(",")}`;
-    router.push(url);
+    router.push(boardTabUrl(keptAddresses));
   };
 
   // Token Card Component (defined inline to access state)
@@ -1459,11 +1412,12 @@ export default function LiveTab() {
                 <div className="absolute inset-0 bg-gray-800 flex items-center justify-center -z-10">
                   <div className="w-6 h-6 border-2 border-gray-500 border-t-white rounded-full animate-spin"></div>
                 </div>
-                <iframe
-                  src={`https://www.gmgn.cc/kline/sol/${token.token_address}?interval=5`}
+                <GmgnChartEmbed
+                  tokenAddress={token.token_address}
+                  interval="5"
                   className="w-full h-full"
+                  height="250px"
                   title={`Chart - ${token.token_symbol}`}
-                  frameBorder="0"
                 />
               </div>
             )}
@@ -1802,9 +1756,9 @@ export default function LiveTab() {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-white mb-4">
-            🎯 Catch the Coin
-          </h1>
+          <h2 className="text-xl font-semibold text-white mb-4">
+            Live trending
+          </h2>
           <p className="text-gray-400 mb-8">
             Connect your wallet to start catching trending tokens!
           </p>
@@ -1824,9 +1778,9 @@ export default function LiveTab() {
       <div className="flex-1">
         {/* Header */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white mb-4">
-            🎯 Catch the Coin
-          </h1>
+          <h2 className="text-xl font-semibold text-white mb-4">
+            Live trending
+          </h2>
           <div className="bg-gray-900 rounded-xl p-4 shadow-lg sticky top-8 z-40">
             {/* Header styled like TradingHistory */}
             <div className="mb-4 p-3 bg-cyan-900/30 rounded-lg border border-cyan-500/30 flex items-center gap-3">

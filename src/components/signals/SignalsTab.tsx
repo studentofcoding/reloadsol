@@ -10,6 +10,7 @@ const TypedDraggable = Draggable as React.ComponentType<
 >;
 import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
+import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
 import { useTradingSignals, SignalItem } from "@/hooks/useTradingSignals";
 
 // Removed local types SignalItem and SignalsResponse as they are now imported
@@ -48,7 +49,7 @@ const dateFmt = (iso?: string | null) => {
   }
 };
 
-export default function TradingSignals() {
+export default function SignalsTab() {
   const { connected, publicKey, signTransaction } = useWallet();
   const { connection } = useConnection();
   const [isClient, setIsClient] = useState(false);
@@ -649,19 +650,12 @@ export default function TradingSignals() {
                         </button>
                       </div>
 
-                      {/* Chart iframe */}
-                      <iframe
-                        src={`https://www.gmgn.cc/kline/sol/${chart.tokenAddress}?interval=5`}
+                      <GmgnChartEmbed
+                        tokenAddress={chart.tokenAddress}
+                        interval="5"
                         className="w-full h-full rounded-b-lg"
-                        style={{
-                          height: "calc(100% - 60px)",
-                          display: chart.isLoading ? "none" : "block",
-                        }}
+                        height="calc(100% - 60px)"
                         title={`GMGN Chart - ${chart.tokenAddress}`}
-                        onLoad={() => handleChartLoad(chart.id)}
-                        onError={() => handleChartError(chart.id)}
-                        allowFullScreen
-                        frameBorder="0"
                       />
                     </div>
                   ))}
@@ -867,19 +861,12 @@ export default function TradingSignals() {
                 </button>
               </div>
 
-              {/* Chart iframe */}
-              <iframe
-                src={`https://gmgn.ai/sol/token/${chart.tokenAddress}`}
+              <GmgnChartEmbed
+                tokenAddress={chart.tokenAddress}
+                interval="5"
                 className="w-full h-full rounded-b-lg"
-                style={{
-                  height: "calc(100% - 60px)",
-                  display: chart.isLoading ? "none" : "block",
-                }}
+                height="calc(100% - 60px)"
                 title={`GMGN Chart - ${chart.tokenAddress}`}
-                onLoad={() => handleChartLoad(chart.id)}
-                onError={() => handleChartError(chart.id)}
-                allowFullScreen
-                frameBorder="0"
               />
             </div>
           </TypedDraggable>

@@ -1,9 +1,16 @@
 "use client";
 
-import React, { Suspense } from "react";
+import React, { Suspense, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import AlgoDashboardTab from "@/components/algo-tester/AlgoDashboardTab";
-import HistoryTab from "@/components/algo-tester/HistoryTab";
+
+const AlgoDashboardTab = dynamic(
+  () => import("@/components/algo-tester/AlgoDashboardTab"),
+  { loading: () => <TabLoading label="Dashboard" /> },
+);
+const HistoryTab = dynamic(() => import("@/components/algo-tester/HistoryTab"), {
+  loading: () => <TabLoading label="History" />,
+});
 
 const TABS = [
   { id: "dashboard", label: "Dashboard" },
@@ -16,12 +23,30 @@ function isTabId(value: string | null): value is TabId {
   return TABS.some((tab) => tab.id === value);
 }
 
+function TabLoading({ label }: { label: string }) {
+  return (
+    <div className="py-8 text-center text-gray-400">Loading {label}…</div>
+  );
+}
+
 function AlgoTesterHubContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
   const rawTab = searchParams.get("tab");
   const activeTab: TabId = isTabId(rawTab) ? rawTab : "dashboard";
+  const [mountedTabs, setMountedTabs] = useState<Set<TabId>>(
+    () => new Set([activeTab]),
+  );
+
+  useEffect(() => {
+    setMountedTabs((prev) => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
 
   const setTab = (tab: TabId) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -49,19 +74,26 @@ function AlgoTesterHubContent() {
         ))}
       </div>
 
-      {activeTab === "dashboard" && <AlgoDashboardTab />}
-      {activeTab === "history" && <HistoryTab />}
+      {mountedTabs.has("dashboard") && (
+        <div
+          hidden={activeTab !== "dashboard"}
+          aria-hidden={activeTab !== "dashboard"}
+        >
+          <AlgoDashboardTab />
+        </div>
+      )}
+      {mountedTabs.has("history") && (
+        <div hidden={activeTab !== "history"} aria-hidden={activeTab !== "history"}>
+          <HistoryTab />
+        </div>
+      )}
     </div>
   );
 }
 
 export default function AlgoTesterHub() {
   return (
-    <Suspense
-      fallback={
-        <div className="py-8 text-center text-gray-400">Loading algo tester…</div>
-      }
-    >
+    <Suspense fallback={<TabLoading label="algo tester" />}>
       <AlgoTesterHubContent />
     </Suspense>
   );

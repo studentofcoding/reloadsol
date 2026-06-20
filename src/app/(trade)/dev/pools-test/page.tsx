@@ -2,7 +2,6 @@
 
 import React, { useState, useCallback } from "react";
 import TokenSearchInterface from "@/components/TokenSearchInterface";
-import NavigationTabs from "@/components/NavigationTabs";
 import {
   usePoolsTest,
   type PoolTestResult,
@@ -218,7 +217,6 @@ export default function PoolsTestPage() {
 
   return (
     <main className="min-h-screen bg-black py-8 relative">
-      <NavigationTabs />
       <div className="container mx-auto px-4">
         <div className="max-w-4xl mx-auto space-y-6">
           {/* Header */}
