@@ -4,15 +4,19 @@ import React, { useState, useEffect } from "react";
 import { TrackingRecord, TrackingStats } from "@/utils/trading-tracker";
 import { useWalletAddress } from "./WalletProvider";
 import { useTradingData } from "./TradingDataProvider";
+import { useWalletSession } from "./WalletSessionContext";
+import WalletSignInPrompt from "./WalletSignInPrompt";
 import TokenSkeleton from "./TokenSkeleton";
 import { getSolPriceUSD } from "@/utils/solana";
 
 export default function TradingHistory() {
   const walletAddress = useWalletAddress();
+  const { status: walletSessionStatus } = useWalletSession();
   const {
     records: rawRecords,
     isLoadingRecords,
     deleteRecord,
+    recordsError,
   } = useTradingData();
   const [processedRecords, setProcessedRecords] = useState<TrackingRecord[]>(
     [],
@@ -374,6 +378,27 @@ export default function TradingHistory() {
         <TokenSkeleton count={5} variant="trading-history" />
       </div>
     );
+  }
+
+  if (walletAddress && walletSessionStatus !== "ready") {
+    if (
+      walletSessionStatus === "signing" ||
+      walletSessionStatus === "idle"
+    ) {
+      return (
+        <div className="">
+          <TokenSkeleton count={5} variant="trading-history" />
+        </div>
+      );
+    }
+
+    return (
+      <WalletSignInPrompt title="Sign in to load trading history" />
+    );
+  }
+
+  if (recordsError === "WALLET_SESSION_REQUIRED") {
+    return <WalletSignInPrompt title="Sign in to load trading history" />;
   }
 
   return (

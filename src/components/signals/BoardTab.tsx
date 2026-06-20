@@ -24,6 +24,8 @@ import { trackBuy } from "@/utils/operations-api";
 import { useTradingData } from "@/components/TradingDataProvider";
 import { getSolPriceUSD } from "@/utils/solana";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
+import { trackSimBuy, trackSimClose } from "@/utils/trade-tracking";
+import TradeOutcomeModal, { useTradeOutcome } from "@/components/TradeOutcomeModal";
 import { BulkBuyRequest } from "@/types";
 import {
   DndContext,
@@ -412,7 +414,8 @@ function ChartsContent() {
   // Instant Buy State
   const { publicKey, signAllTransactions, connected } = useWallet();
   const { connection } = useConnection();
-  const { trackOperation } = useTradingData();
+  const { trackOperation, records } = useTradingData();
+  const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const [buyAmount, setBuyAmount] = useState("0.1");
   const [buyStates, setBuyStates] = useState<
     Record<string, { loading: boolean; status?: string; error?: string }>
@@ -646,13 +649,34 @@ function ChartsContent() {
 
           if (result.success) {
             successCount++;
-            // Track it
             trackBuy(publicKey.toString(), 1, {
               failureCount: 0,
               solAmount: item.solAmount,
               tokenMints: [item.address],
               signatures: result.signatures,
             });
+
+            try {
+              await trackOperation({
+                walletAddress: publicKey.toString(),
+                operationType: "buy",
+                tokens: [
+                  {
+                    mintAddress: item.address,
+                    symbol: symbols[item.address],
+                    solAmount: item.solAmount,
+                  },
+                ],
+                successCount: 1,
+                failureCount: 0,
+                totalTokens: 1,
+                solAmount: item.solAmount,
+                feesPaid: 0,
+                signatures: result.signatures,
+              });
+            } catch (trackErr) {
+              console.error(`Failed to track buy for ${item.address}`, trackErr);
+            }
           } else {
             failCount++;
             console.error(
@@ -811,38 +835,36 @@ function ChartsContent() {
 
       const signal = signals[tokenAddress];
 
-      await trackOperation({
+      await trackSimBuy(trackOperation, {
         walletAddress: publicKey.toString(),
-        operationType: "buy",
-        is_simulation: true,
-        simulation_type: "manual",
-        tokens: [
-          {
-            mintAddress: tokenAddress,
-            symbol: signal?.token_symbol || "Unknown",
-            name: "Manual Simulation",
-            priceUsd: tokenPrice,
-            solPrice: solPrice,
-            tokenAmount: tokenAmount,
-            solAmount: amountSol,
-          },
-        ],
-        successCount: 1,
-        failureCount: 0,
-        totalTokens: 1,
+        mintAddress: tokenAddress,
+        symbol: signal?.token_symbol || "Unknown",
+        name: "Manual Simulation",
         solAmount: amountSol,
-        feesPaid: 0.000005,
-        solPriceUsd: solPrice,
-        totalUsdValue: usdValue,
-        signatures: [`sim-${Date.now()}`],
-        status: "tracking",
+        tokenAmount,
+        priceUsd: tokenPrice,
       });
 
-      setStatus("Simulation tracked!");
-      setTimeout(() => setStatus(""), 2000);
+      showOutcome({
+        success: true,
+        operation: "buy",
+        isSimulation: true,
+        tokenSymbol: signal?.token_symbol || "Unknown",
+        mintAddress: tokenAddress,
+        solAmount: amountSol,
+      });
+      setStatus("");
     } catch (e) {
       console.error("Simulation failed", e);
-      setStatus("Simulation failed");
+      showOutcome({
+        success: false,
+        operation: "buy",
+        isSimulation: true,
+        mintAddress: tokenAddress,
+        tokenSymbol: signals[tokenAddress]?.token_symbol,
+        error: e instanceof Error ? e.message : "Simulation failed",
+      });
+      setStatus("");
     }
   };
 
@@ -855,70 +877,36 @@ function ChartsContent() {
     setStatus(`Simulating sell for ${tokenAddress.slice(0, 8)}...`);
 
     try {
-      // 1. Get prices
-      const solPrice = await getSolPriceUSD();
-      const prices = await fetchTokenPricesForTracking([tokenAddress]);
-      const tokenPrice = prices[tokenAddress] || 0;
-
-      if (tokenPrice === 0) {
-        setStatus("Failed to get token price for simulation");
-        return;
-      }
-
-      // 2. Find simulated position size
-      // We look for recent "buy" operations in the records
-      // This is an approximation. A robust system would track "open positions" explicitly.
-      // For now, we'll try to find the total simulated tokens bought.
-
-      // Since we don't have direct access to "all records" inside this component easily without fetching,
-      // and we want a quick action, we will assume we are selling the *equivalent value* of the default buy amount (0.1 SOL)
-      // or try to find if we have a record in `signals`? No, signals is just the Kanban state.
-
-      // BETTER APPROACH: Simulate selling "100%" of a standard position size (e.g. 0.1 SOL worth at current price)
-      // OR: Just track a "Sell" operation with a fixed USD value for PnL tracking purposes.
-
-      // Let's use the 'buyAmount' state as the reference for "how much we sold" (in SOL terms).
-      // i.e. we are exiting a position worth 'buyAmount' SOL.
-      const amountSol = parseFloat(buyAmount);
-      if (isNaN(amountSol) || amountSol <= 0) return;
-
-      const usdValue = amountSol * solPrice;
-      const tokenAmount = usdValue / tokenPrice;
-
       const signal = signals[tokenAddress];
 
-      await trackOperation({
+      await trackSimClose({
         walletAddress: publicKey.toString(),
-        operationType: "sell",
-        is_simulation: true,
-        simulation_type: "manual",
-        tokens: [
-          {
-            mintAddress: tokenAddress,
-            symbol: signal?.token_symbol || "Unknown",
-            name: "Manual Simulation",
-            priceUsd: tokenPrice,
-            solPrice: solPrice,
-            tokenAmount: tokenAmount,
-            solAmount: amountSol, // Amount received
-          },
-        ],
-        successCount: 1,
-        failureCount: 0,
-        totalTokens: 1,
-        solAmount: amountSol,
-        feesPaid: 0.000005,
-        solPriceUsd: solPrice,
-        totalUsdValue: usdValue,
-        signatures: [`sim-sell-${Date.now()}`],
-        status: "tracking",
+        mintAddress: tokenAddress,
+        records,
+        trackOperation,
+        symbol: signal?.token_symbol || "Unknown",
+        name: "Manual Simulation",
       });
 
-      setStatus("Simulation sell tracked!");
-      setTimeout(() => setStatus(""), 2000);
+      showOutcome({
+        success: true,
+        operation: "sell",
+        isSimulation: true,
+        tokenSymbol: signal?.token_symbol || "Unknown",
+        mintAddress: tokenAddress,
+      });
+      setStatus("");
     } catch (e) {
       console.error("Simulation sell failed", e);
-      setStatus("Simulation sell failed");
+      showOutcome({
+        success: false,
+        operation: "sell",
+        isSimulation: true,
+        mintAddress: tokenAddress,
+        tokenSymbol: signals[tokenAddress]?.token_symbol,
+        error: e instanceof Error ? e.message : "Simulation sell failed",
+      });
+      setStatus("");
     }
   };
 
@@ -1021,11 +1009,26 @@ function ChartsContent() {
         signatures: [signature],
       });
 
-      setStatus("Sold successfully!");
-      setTimeout(() => setStatus(""), 3000);
+      showOutcome({
+        success: true,
+        operation: "sell",
+        isSimulation: false,
+        tokenSymbol: symbols[tokenAddress] || "Unknown",
+        mintAddress: tokenAddress,
+        solAmount: solReceived,
+      });
+      setStatus("");
     } catch (e) {
       console.error("Sell failed", e);
-      setStatus("Sell failed: " + (e instanceof Error ? e.message : String(e)));
+      showOutcome({
+        success: false,
+        operation: "sell",
+        isSimulation: false,
+        mintAddress: tokenAddress,
+        tokenSymbol: symbols[tokenAddress],
+        error: e instanceof Error ? e.message : String(e),
+      });
+      setStatus("");
     }
   };
 
@@ -1390,6 +1393,7 @@ function ChartsContent() {
           onRetake={retakeCapture}
           onSave={saveResult}
         />
+        <TradeOutcomeModal {...outcomeModalProps} />
       </div>
     </div>
   );

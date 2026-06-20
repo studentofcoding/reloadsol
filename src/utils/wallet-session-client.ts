@@ -2,26 +2,36 @@
 
 import bs58 from 'bs58';
 
+type SignMessageFn = (message: Uint8Array) => Promise<Uint8Array>;
+
 type WalletAdapterLike = {
-  signMessage?: (message: Uint8Array) => Promise<Uint8Array>;
+  signMessage?: SignMessageFn;
 };
 
-async function signWithAdapter(
-  adapter: unknown,
+async function signChallenge(
   message: string,
+  signMessage?: SignMessageFn,
+  adapter?: unknown,
 ): Promise<string> {
-  const signer = adapter as WalletAdapterLike | null;
-  if (!signer?.signMessage) {
-    throw new Error('Wallet does not support message signing');
+  const encoded = new TextEncoder().encode(message);
+
+  if (signMessage) {
+    const signature = await signMessage(encoded);
+    return bs58.encode(signature);
   }
 
-  const encoded = new TextEncoder().encode(message);
-  const signature = await signer.signMessage(encoded);
-  return bs58.encode(signature);
+  const signer = adapter as WalletAdapterLike | null;
+  if (signer?.signMessage) {
+    const signature = await signer.signMessage(encoded);
+    return bs58.encode(signature);
+  }
+
+  throw new Error('This wallet cannot sign messages');
 }
 
 export async function establishWalletSession(input: {
   address: string;
+  signMessage?: SignMessageFn;
   adapter?: unknown;
 }): Promise<{ dev: boolean; expiresAt: string }> {
   const challengeRes = await fetch(
@@ -33,11 +43,11 @@ export async function establishWalletSession(input: {
     throw new Error(challenge.error || 'Failed to start wallet sign-in');
   }
 
-  if (!input.adapter) {
-    throw new Error('Wallet adapter unavailable');
-  }
-
-  const signature = await signWithAdapter(input.adapter, challenge.message);
+  const signature = await signChallenge(
+    challenge.message,
+    input.signMessage,
+    input.adapter,
+  );
 
   const verifyRes = await fetch('/api/auth/wallet/session', {
     method: 'POST',
@@ -73,13 +83,24 @@ export async function getWalletSessionStatus(): Promise<{
   dev: boolean;
 }> {
   const res = await fetch('/api/auth/wallet/session', {
-    method: 'HEAD',
     credentials: 'include',
   });
   const data = await res.json();
+  if (!res.ok || !data.success) {
+    return { authenticated: false, address: null, dev: false };
+  }
   return {
     authenticated: Boolean(data.authenticated),
     address: data.address ?? null,
     dev: Boolean(data.dev),
   };
+}
+
+export function canSignMessages(input: {
+  signMessage?: SignMessageFn;
+  adapter?: unknown;
+}): boolean {
+  if (input.signMessage) return true;
+  const signer = input.adapter as WalletAdapterLike | null;
+  return Boolean(signer?.signMessage);
 }

@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { assertSessionWallet, requireWalletSession } from '@/utils/api-auth'
 import { supabase } from '@/utils/supabase'
+import {
+  insertTradingRecord,
+  shouldSkipTradingRecord,
+} from '@/utils/trading-records-db'
 
 // Database schema for Supabase
 interface DatabaseRecord {
@@ -262,10 +266,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Skip records with errors
-    if (
-      (record.errors && record.errors.length > 0) ||
-      (record.failureCount > 0 && record.successCount === 0)
-    ) {
+    if (shouldSkipTradingRecord(record)) {
       return NextResponse.json({
         success: true,
         skipped: true,
@@ -273,21 +274,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const dbRecord: Omit<DatabaseRecord, 'created_at'> = {
-      id: record.id,
-      wallet_address: record.walletAddress,
-      operation_type: record.operationType,
-      timestamp: new Date(record.timestamp).toISOString(),
-      data: record
-    }
-
-    const { error } = await supabase
-      .from('trading_records')
-      .insert(dbRecord)
-
-    if (error) {
-      throw error
-    }
+    await insertTradingRecord(record)
 
     // Invalidate cache for this wallet address
     const keysToDelete: string[] = []
@@ -299,6 +286,28 @@ export async function POST(request: NextRequest) {
     keysToDelete.forEach(key => tradingRecordsCache.delete(key))
 
     console.log(`🗑️ Invalidated ${keysToDelete.length} cache entries for wallet ${record.walletAddress.substring(0, 8)}...`)
+
+    // Broadcast SSE update to connected clients
+    try {
+      const baseUrl =
+        process.env.NEXTAUTH_URL ||
+        process.env.API_HOST ||
+        'http://localhost:3000'
+      await fetch(`${baseUrl}/api/trading/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          walletAddress: record.walletAddress,
+          type: 'trade_update',
+          data: {
+            operationType: record.operationType,
+            timestamp: new Date().toISOString(),
+          },
+        }),
+      })
+    } catch (broadcastError) {
+      console.warn('Failed to broadcast trade update:', broadcastError)
+    }
 
     const allowedOrigin = resolveAllowedOrigin(request)
 

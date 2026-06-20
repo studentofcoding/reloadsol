@@ -24,6 +24,7 @@ export const WALLET_API_PREFIXES = [
   '/api/trending/search',
   '/api/trending/filtered',
   '/api/trending/prices',
+  '/api/trading/subscribe',
 ] as const;
 
 /** Dev whitelist wallet session. */
@@ -37,7 +38,6 @@ export const DEV_API_PREFIXES = [
   '/api/analytics',
   '/api/sl-tp-monitor',
   '/api/trading/sync',
-  '/api/trading/subscribe',
   '/api/capture',
   '/api/pnl/update',
 ] as const;

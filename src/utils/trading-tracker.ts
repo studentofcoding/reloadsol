@@ -48,6 +48,7 @@ export interface TrackingRecord {
   bot_strategy?: string // Bot strategy used
   is_simulation?: boolean // Whether this is a simulation
   simulation_type?: 'manual' | 'strategy' // Type of simulation
+  close_position?: boolean // Force-close sim cycle (full exit)
   trade_comparison_data?: any // Trade comparison result
   trading_simulation?: any // Trading simulation data
   price_history?: Array<{ timestamp: string; price_usd: number; volume?: number }>
@@ -151,32 +152,37 @@ class TradingTracker {
 
   // Add a new tracking record (with offline support)
   async trackOperation(record: Omit<TrackingRecord, 'id' | 'timestamp'>): Promise<void> {
-    try {
-      const newRecord: TrackingRecord = {
-        ...record,
-        id: this.generateId(),
-        timestamp: Date.now()
-      }
+    const newRecord: TrackingRecord = {
+      ...record,
+      id: this.generateId(),
+      timestamp: Date.now(),
+    }
 
+    try {
       if (this.isOnline) {
-        // Try to save via API first
         await this.saveViaAPI(newRecord)
       } else {
-        // Save to offline cache
         this.saveToOfflineCache(newRecord)
       }
 
-      // Update local cache
       this.updateLocalCache(record.walletAddress, [newRecord])
-
-      // Notify subscribers
       this.notifySubscribers(record.walletAddress)
 
-      // Dispatch event for backward compatibility
       if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('tradingRecordAdded', {
-          detail: { record: newRecord, operationType: record.operationType }
-        }))
+        window.dispatchEvent(
+          new CustomEvent('tradingRecordAdded', {
+            detail: { record: newRecord, operationType: record.operationType },
+          }),
+        )
+
+        const { notifyTradingUpdate } = await import('@/utils/trading-notifications')
+        void notifyTradingUpdate(record.walletAddress, 'trade_update', {
+          operationType: record.operationType,
+          tokenAddress: record.tokens[0]?.mintAddress,
+          tokenSymbol: record.tokens[0]?.symbol,
+          amount: record.solAmount,
+          signature: record.signatures[0],
+        })
       }
 
       console.log(`📊 Tracked ${record.operationType} operation:`, {
@@ -184,17 +190,19 @@ class TradingTracker {
         tokens: record.totalTokens,
         success: record.successCount,
         failed: record.failureCount,
-        online: this.isOnline
+        online: this.isOnline,
       })
     } catch (error) {
       console.error('Failed to track operation:', error)
-      // Fallback to offline cache on error
-      const newRecord: TrackingRecord = {
-        ...record,
-        id: this.generateId(),
-        timestamp: Date.now()
+
+      if (!this.isOnline) {
+        this.saveToOfflineCache(newRecord)
+        this.updateLocalCache(record.walletAddress, [newRecord])
+        this.notifySubscribers(record.walletAddress)
+        return
       }
-      this.saveToOfflineCache(newRecord)
+
+      throw error
     }
   }
 
@@ -449,8 +457,33 @@ class TradingTracker {
 
       return deduped
     } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'WALLET_SESSION_REQUIRED'
+      ) {
+        throw error
+      }
+
       console.error('Error fetching wallet records:', error)
-      return this.cache.get(walletAddress) || []
+
+      let offlineRecords: TrackingRecord[] = []
+      if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        const offlineKey = `offline_trading_${walletAddress}`
+        offlineRecords = localStorage.getItem(offlineKey)
+          ? JSON.parse(localStorage.getItem(offlineKey) || '[]')
+          : []
+      }
+
+      const cached = this.cache.get(walletAddress) || []
+      const fallback = [...offlineRecords, ...cached].filter(
+        (record, index, self) =>
+          self.findIndex((r) => r.id === record.id) === index,
+      )
+      if (fallback.length > 0) {
+        return fallback.sort((a, b) => b.timestamp - a.timestamp)
+      }
+
+      throw error
     }
   }
 
@@ -491,7 +524,7 @@ class TradingTracker {
 
       const apiUrl = `${baseUrl}/api/trading/records/all?limit=1000`
 
-      const response = await fetch(apiUrl)
+      const response = await fetch(apiUrl, { credentials: 'include' })
 
       if (!response.ok) {
         throw new Error(`Failed to fetch records: ${response.statusText}`)
@@ -842,7 +875,7 @@ class TradingTracker {
       } catch (error) {
         console.error('Polling error:', error)
       }
-    }, 30000) // Poll every 30 seconds
+    }, 8000) // Poll every 8 seconds
   }
 
   /**

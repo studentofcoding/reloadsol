@@ -7,6 +7,8 @@ import {
 } from "@/utils/trading-tracker";
 import { useWallet, useConnection, useWalletAddress } from "./WalletProvider";
 import { useTradingData } from "./TradingDataProvider";
+import { useWalletSession } from "./WalletSessionContext";
+import WalletSignInPrompt from "./WalletSignInPrompt";
 import TokenSkeleton from "./TokenSkeleton";
 import { getSolPriceUSD } from "@/utils/solana";
 import {
@@ -23,6 +25,9 @@ import { trackSell } from "@/utils/operations-api";
 import { usePnLShare } from "@/hooks/usePnLShare";
 import PnLShareModal from "./PnLShareModal";
 import { pnlShareService } from "@/utils/pnl-share-service";
+import { closeSimulationPosition } from "@/utils/simulation-trades";
+import { requireSignAllTransactions } from "@/utils/wallet-signing";
+import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 
 interface PnLRecord {
   id: string;
@@ -101,7 +106,9 @@ export default function PnLTracker() {
   const { publicKey, connected, signAllTransactions } = useWallet();
   const walletAddress = useWalletAddress();
   const { connection } = useConnection();
-  const { records, trackOperation, isLoadingRecords } = useTradingData();
+  const { status: walletSessionStatus } = useWalletSession();
+  const { records, trackOperation, isLoadingRecords, recordsError } =
+    useTradingData();
   const [pnlRecords, setPnlRecords] = useState<PnLRecord[]>([]);
   const [openPositions, setOpenPositions] = useState<OpenPosition[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -152,6 +159,8 @@ export default function PnLTracker() {
     hideShareModal,
     autoTriggerShare,
   } = usePnLShare();
+
+  const { showOutcome, outcomeModalProps } = useTradeOutcome();
 
   // Hint message state
   const [showClosedPositionsHint, setShowClosedPositionsHint] =
@@ -650,10 +659,20 @@ export default function PnLTracker() {
               }
 
               const tokenAmt = tkn.tokenAmount || 0;
+              let deducted = tokenAmt;
+              if (op.is_simulation && op.close_position) {
+                deducted = cycle.remainingTokenAmount;
+              } else if (
+                op.is_simulation &&
+                tokenAmt >= cycle.remainingTokenAmount * 0.99
+              ) {
+                deducted = cycle.remainingTokenAmount;
+              }
+
               cycle.totalSolSold += solPerToken;
               cycle.remainingTokenAmount = Math.max(
                 0,
-                cycle.remainingTokenAmount - tokenAmt,
+                cycle.remainingTokenAmount - deducted,
               );
               if (tkn.priceUsd) {
                 cycle.weightedSellPriceUsd =
@@ -894,13 +913,18 @@ export default function PnLTracker() {
 
   // ✅ NEW: Handle bulk sell
   const handleBulkSell = useCallback(async () => {
-    if (
-      !connected ||
-      !publicKey ||
-      !signAllTransactions ||
-      selectedTokens.size === 0
-    ) {
+    if (!connected || !publicKey || selectedTokens.size === 0) {
       setBulkSellError("Please connect your wallet and select tokens to sell");
+      return;
+    }
+
+    const positionsToSell = openPositions.filter((pos) =>
+      selectedTokens.has(pos.id),
+    );
+    const hasRealPositions = positionsToSell.some((pos) => !pos.isSimulation);
+
+    if (hasRealPositions && !signAllTransactions) {
+      setBulkSellError("Wallet signing is required to sell on-chain positions");
       return;
     }
 
@@ -921,10 +945,45 @@ export default function PnLTracker() {
         throw new Error("No valid positions selected for selling");
       }
 
-      // Prepare tokens for bulk sell
+      const simPositions = positionsToSell.filter((pos) => pos.isSimulation);
+      const realPositions = positionsToSell.filter((pos) => !pos.isSimulation);
+
+      for (const position of simPositions) {
+        await closeSimulationPosition({
+          walletAddress: publicKey.toString(),
+          mintAddress: position.mintAddress,
+          records,
+          trackOperation,
+          symbol: position.symbol,
+          name: position.name,
+          logoURI: position.logoURI,
+          sellPriceUsd: position.currentTokenPriceUsd,
+        });
+        clearNotificationFlag(position.mintAddress);
+      }
+
+      if (realPositions.length === 0) {
+        setSelectedTokens(new Set());
+        setShowBulkSellOverlay(false);
+        setBulkSellError("");
+        showOutcome({
+          success: true,
+          operation: "sell",
+          isSimulation: true,
+          tokenSymbol:
+            simPositions.length === 1
+              ? simPositions[0].symbol || simPositions[0].name
+              : `${simPositions.length} simulation positions`,
+          mintAddress:
+            simPositions.length === 1 ? simPositions[0].mintAddress : undefined,
+        });
+        return;
+      }
+
+      // Prepare tokens for bulk sell (real positions only)
       const tokensToSell: TokenToSell[] = [];
 
-      for (const position of positionsToSell) {
+      for (const position of realPositions) {
         if (
           !position.walletTokenData ||
           position.walletTokenData.uiAmount <= 0
@@ -956,11 +1015,15 @@ export default function PnLTracker() {
       };
 
       // Execute bulk sell using the more efficient executeBulkSellAlt
+      const signTx = requireSignAllTransactions(
+        signAllTransactions,
+        "Wallet signing is required to sell on-chain positions",
+      );
       const sellResult = await executeBulkSellAlt(
         sellRequest,
         publicKey.toString(),
         connection,
-        signAllTransactions,
+        signTx,
       );
 
       // Get balance after operation for better tracking
@@ -974,7 +1037,9 @@ export default function PnLTracker() {
       if (sellResult.success && sellResult.successfulSwaps.length > 0) {
         // Clear notification flags for sold tokens
         positionsToSell.forEach((position) => {
-          clearNotificationFlag(position.mintAddress);
+          if (!position.isSimulation) {
+            clearNotificationFlag(position.mintAddress);
+          }
         });
 
         // Track the successful bulk sell operation
@@ -1001,12 +1066,12 @@ export default function PnLTracker() {
 
         // Track operations for PnL and history
         try {
-          const tokenMints = positionsToSell.map((pos) => pos.mintAddress);
+          const tokenMints = realPositions.map((pos) => pos.mintAddress);
           const tokenPrices = await fetchTokenPricesForTracking(tokenMints);
           const currentSolPrice = await getSolPriceUSD();
 
           // Track each sold token
-          for (const position of positionsToSell) {
+          for (const position of realPositions) {
             const enhancedTokenData = {
               mintAddress: position.mintAddress,
               symbol: position.symbol,
@@ -1057,6 +1122,17 @@ export default function PnLTracker() {
         console.log(
           `✅ Bulk sell completed: ${sellResult.successfulSwaps.length} successful, ${sellResult.failedSwaps.length} failed`,
         );
+
+        showOutcome({
+          success: true,
+          operation: "sell",
+          isSimulation: false,
+          tokenSymbol:
+            realPositions.length === 1
+              ? realPositions[0].symbol || realPositions[0].name
+              : `${realPositions.length} tokens`,
+          solAmount: sellResult.totalReceived || 0,
+        });
       } else {
         throw new Error(
           `Bulk sell failed: ${sellResult.failedSwaps[0]?.error || "Unknown error"}`,
@@ -1064,9 +1140,15 @@ export default function PnLTracker() {
       }
     } catch (err) {
       console.error("Bulk sell error:", err);
-      setBulkSellError(
-        err instanceof Error ? err.message : "Failed to execute bulk sell",
-      );
+      const message =
+        err instanceof Error ? err.message : "Failed to execute bulk sell";
+      setBulkSellError(message);
+      showOutcome({
+        success: false,
+        operation: "sell",
+        isSimulation: positionsToSell.every((p) => p.isSimulation),
+        error: message,
+      });
     } finally {
       setIsBulkSelling(false);
     }
@@ -1077,9 +1159,11 @@ export default function PnLTracker() {
     connection,
     selectedTokens,
     openPositions,
+    records,
     clearNotificationFlag,
     trackOperation,
     calculatePnL,
+    showOutcome,
   ]);
 
   // ✅ NEW: Check for notification-worthy positions
@@ -1586,8 +1670,13 @@ export default function PnLTracker() {
       event.preventDefault();
       event.stopPropagation();
 
-      if (!connected || !publicKey || !signAllTransactions) {
+      if (!connected || !publicKey) {
         setSellError("Please connect your wallet first");
+        return;
+      }
+
+      if (!position.isSimulation && !signAllTransactions) {
+        setSellError("Wallet signing is required to sell on-chain");
         return;
       }
 
@@ -1596,6 +1685,36 @@ export default function PnLTracker() {
       setSellError("");
 
       try {
+        if (position.isSimulation) {
+          if (!walletAddress) {
+            setSellError("Please connect your wallet first");
+            return;
+          }
+
+          await closeSimulationPosition({
+            walletAddress,
+            mintAddress: position.mintAddress,
+            records,
+            trackOperation,
+            symbol: position.symbol,
+            name: position.name,
+            logoURI: position.logoURI,
+            sellPriceUsd: position.currentTokenPriceUsd,
+          });
+
+          clearNotificationFlag(position.mintAddress);
+          setSellError("");
+          showOutcome({
+            success: true,
+            operation: "sell",
+            isSimulation: true,
+            tokenSymbol: position.symbol || position.name,
+            mintAddress: position.mintAddress,
+            solAmount: position.solAmountBought,
+          });
+          return;
+        }
+
         // Get balance before operation for better tracking
         const balanceBeforeOp = await connection.getBalance(publicKey);
         const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL;
@@ -1650,11 +1769,15 @@ export default function PnLTracker() {
         };
 
         // Execute the sell using the more efficient executeBulkSellAlt
+        const signTx = requireSignAllTransactions(
+          signAllTransactions,
+          "Wallet signing is required to sell on-chain",
+        );
         const sellResult = await executeBulkSellAlt(
           sellRequest,
           publicKey.toString(),
           connection,
-          signAllTransactions,
+          signTx,
         );
 
         // Get balance after operation for better tracking
@@ -1760,6 +1883,15 @@ export default function PnLTracker() {
             // Show success message briefly
             setSellError("");
 
+            showOutcome({
+              success: true,
+              operation: "sell",
+              isSimulation: false,
+              tokenSymbol: position.symbol || position.name,
+              mintAddress: position.mintAddress,
+              solAmount: sellResult.totalReceived || 0,
+            });
+
             // The PnL will refresh automatically via React Query subscription
             // No need for manual calculatePnL() call
           } catch (trackError) {
@@ -1782,9 +1914,17 @@ export default function PnLTracker() {
         }
       } catch (err) {
         console.error("Fast sell error:", err);
-        setSellError(
-          err instanceof Error ? err.message : "Failed to sell token",
-        );
+        const message =
+          err instanceof Error ? err.message : "Failed to sell token";
+        setSellError(message);
+        showOutcome({
+          success: false,
+          operation: "sell",
+          isSimulation: position.isSimulation,
+          tokenSymbol: position.symbol || position.name,
+          mintAddress: position.mintAddress,
+          error: message,
+        });
       } finally {
         setIsSelling(false);
         setSellingTokenId("");
@@ -1793,14 +1933,17 @@ export default function PnLTracker() {
     [
       connected,
       publicKey,
+      walletAddress,
       signAllTransactions,
       connection,
+      records,
       calculatePnL,
       clearNotificationFlag,
       sellQuotes,
       showShareModal,
       autoTriggerShare,
       trackOperation,
+      showOutcome,
     ],
   );
   // Initial price fetch and automatic refresh every 30 seconds
@@ -1912,6 +2055,32 @@ export default function PnLTracker() {
       </div>
     );
   }
+
+  if (recordsError === "WALLET_SESSION_REQUIRED") {
+    return <WalletSignInPrompt title="Sign in to load P&amp;L" />;
+  }
+
+  if (walletAddress && walletSessionStatus !== "ready") {
+    if (
+      walletSessionStatus === "signing" ||
+      walletSessionStatus === "idle"
+    ) {
+      return (
+        <div className="">
+          <TokenSkeleton count={3} variant="trading-history" />
+        </div>
+      );
+    }
+
+    return <WalletSignInPrompt title="Sign in to load P&amp;L" />;
+  }
+
+  const selectedOpenPositions = openPositions.filter((pos) =>
+    selectedTokens.has(pos.id),
+  );
+  const selectedAllSimulation =
+    selectedOpenPositions.length > 0 &&
+    selectedOpenPositions.every((pos) => pos.isSimulation);
 
   return (
     <div className="space-y-4">
@@ -2061,9 +2230,15 @@ export default function PnLTracker() {
                   <button
                     onClick={() => setShowBulkSellOverlay(true)}
                     className="px-2 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
-                    title={`Sell ${selectedTokens.size} selected tokens`}
+                    title={
+                      selectedAllSimulation
+                        ? `Close ${selectedTokens.size} simulation positions`
+                        : `Sell ${selectedTokens.size} selected tokens`
+                    }
                   >
-                    Sell ({selectedTokens.size})
+                    {selectedAllSimulation
+                      ? `Close (${selectedTokens.size})`
+                      : `Sell (${selectedTokens.size})`}
                   </button>
                   <button
                     onClick={clearAllSelections}
@@ -2925,6 +3100,7 @@ export default function PnLTracker() {
         shareData={shareData}
         onCopySuccess={() => console.log("Tweet text copied!")}
       />
+      <TradeOutcomeModal {...outcomeModalProps} />
     </div>
   );
 }

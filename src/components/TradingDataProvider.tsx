@@ -10,6 +10,7 @@ import {
 } from "@tanstack/react-query";
 import { tradingTracker, TrackingRecord } from "@/utils/trading-tracker";
 import { useWallet, useWalletAddress } from "./WalletProvider";
+import { useWalletSession } from "./WalletSessionContext";
 
 // Create a stable query client instance
 const queryClient = new QueryClient({
@@ -91,7 +92,10 @@ export function useSolPrice() {
 }
 
 // Trading records hook
-export function useTradingRecords(walletAddress?: string) {
+export function useTradingRecords(
+  walletAddress?: string,
+  sessionReady = true,
+) {
   return useQuery({
     queryKey: QUERY_KEYS.tradingRecords(walletAddress || ""),
     queryFn: async () => {
@@ -100,13 +104,14 @@ export function useTradingRecords(walletAddress?: string) {
     },
     retry: (failureCount, error) => {
       if (error instanceof Error && error.message === 'WALLET_SESSION_REQUIRED') {
-        return failureCount < 5;
+        return failureCount < 2;
       }
       return failureCount < 2;
     },
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 8000),
-    enabled: !!walletAddress,
-    staleTime: 1000 * 60 * 2, // 2 minutes for trading records
+    enabled: !!walletAddress && sessionReady,
+    staleTime: 1000 * 10, // 10 seconds for trading records
+    refetchInterval: sessionReady && walletAddress ? 1000 * 15 : false,
   });
 }
 
@@ -119,21 +124,45 @@ export function useTrackOperation() {
     mutationFn: async (operation: Omit<TrackingRecord, "id" | "timestamp">) => {
       await tradingTracker.trackOperation(operation);
     },
-    onSuccess: () => {
+    onMutate: async (operation) => {
+      if (!walletAddress) return undefined;
+
+      await queryClient.cancelQueries({
+        queryKey: QUERY_KEYS.tradingRecords(walletAddress),
+      });
+
+      const previous = queryClient.getQueryData<TrackingRecord[]>(
+        QUERY_KEYS.tradingRecords(walletAddress),
+      );
+
+      const optimisticRecord: TrackingRecord = {
+        ...operation,
+        id: `optimistic-${Date.now()}`,
+        timestamp: Date.now(),
+      };
+
+      queryClient.setQueryData<TrackingRecord[]>(
+        QUERY_KEYS.tradingRecords(walletAddress),
+        (old) => [optimisticRecord, ...(old ?? [])],
+      );
+
+      return { previous };
+    },
+    onError: (error, _operation, context) => {
+      if (walletAddress && context?.previous !== undefined) {
+        queryClient.setQueryData(
+          QUERY_KEYS.tradingRecords(walletAddress),
+          context.previous,
+        );
+      }
+      console.error("Failed to track operation:", error);
+    },
+    onSettled: () => {
       if (walletAddress) {
         queryClient.invalidateQueries({
           queryKey: QUERY_KEYS.tradingRecords(walletAddress),
         });
-
-        setTimeout(() => {
-          queryClient.refetchQueries({
-            queryKey: QUERY_KEYS.tradingRecords(walletAddress),
-          });
-        }, 500);
       }
-    },
-    onError: (error) => {
-      console.error("Failed to track operation:", error);
     },
   });
 }
@@ -170,8 +199,9 @@ export function useDeleteRecord() {
 
 // Trading data provider component
 function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
-  const { publicKey } = useWallet();
   const walletAddress = useWalletAddress();
+  const { status: walletSessionStatus } = useWalletSession();
+  const sessionReady = walletSessionStatus === 'ready';
 
   // Query for trading records
   const {
@@ -179,7 +209,7 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
     isLoading: isLoadingRecords,
     error: recordsError,
     refetch: refetchRecords,
-  } = useTradingRecords(walletAddress ?? undefined);
+  } = useTradingRecords(walletAddress ?? undefined, sessionReady);
 
   // Track operation mutation
   const trackOperationMutation = useTrackOperation();
@@ -209,7 +239,7 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
   const [isSubscribed, setIsSubscribed] = React.useState(false);
 
   React.useEffect(() => {
-    if (!walletAddress) {
+    if (!walletAddress || !sessionReady) {
       setIsSubscribed(false);
       return;
     }
@@ -247,7 +277,7 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
       window.removeEventListener("reloadsol-wallet-session", onSessionReady);
       unsubscribe();
     };
-  }, [walletAddress, queryClient]);
+  }, [walletAddress, sessionReady, queryClient]);
 
   const contextValue: TradingDataContextType = {
     records,

@@ -2691,21 +2691,27 @@ async function trackBotOperation(
   strategy: string = 'auto-trending'
 ): Promise<void> {
   try {
-    // Only track if we have a keypair (real bot operations)
-    if (!tradingKeypair && !isSimulated) return
-
     const { getSolPriceUSD } = await import('@/utils/solana')
-    const { tradingTracker } = await import('@/utils/trading-tracker')
+    const {
+      buildTradingRecord,
+      insertTradingRecord,
+    } = await import('@/utils/trading-records-db')
 
     const currentSolPrice = await getSolPriceUSD()
     const walletAddress = tradingKeypair?.publicKey.toString() || 'simulation'
+    const tokenDecimals = 6
 
-    // Calculate SOL amount based on operation type
-    // For buys: use actual input lamports → SOL; fallback to strategy buy amount
-    // For sells: use output lamports → SOL
-    const solAmount = operationType === 'buy'
-      ? (bestResult.inputAmount ? parseFloat(bestResult.inputAmount) / 1e9 : getBuyAmountForStrategy(strategy))
-      : parseFloat(bestResult.outputAmount) / 1e9 // Convert lamports to SOL for sells
+    const solAmount =
+      operationType === 'buy'
+        ? bestResult.inputAmount
+          ? parseFloat(bestResult.inputAmount) / 1e9
+          : getBuyAmountForStrategy(strategy)
+        : parseFloat(bestResult.outputAmount) / 1e9
+
+    const tokenAmount =
+      operationType === 'buy'
+        ? parseFloat(bestResult.outputAmount) / Math.pow(10, tokenDecimals)
+        : parseFloat(bestResult.inputAmount) / Math.pow(10, tokenDecimals)
 
     const tokenData = {
       mintAddress: token.token_address,
@@ -2713,13 +2719,12 @@ async function trackBotOperation(
       name: token.token_name,
       logoURI: token.logo_url,
       priceUsd: token.current_price || token.last_price_usd,
-      tokenAmount: parseFloat(bestResult.outputAmount) || 0,
+      tokenAmount: Number.isFinite(tokenAmount) ? tokenAmount : 0,
       solAmount,
       solPrice: currentSolPrice,
-      // Remove bot fields from token data - they belong on the main record
     }
 
-    await tradingTracker.trackOperation({
+    const record = buildTradingRecord({
       walletAddress,
       operationType,
       tokens: [tokenData],
@@ -2731,21 +2736,23 @@ async function trackBotOperation(
       solPriceUsd: currentSolPrice,
       totalUsdValue: currentSolPrice ? solAmount * currentSolPrice : undefined,
       signatures: bestResult.signature ? [bestResult.signature] : [],
-      slippage: 3, // 3% slippage for bot operations
-      priorityFee: 100000, // 0.0001 SOL priority fee
+      slippage: 3,
+      priorityFee: 100000,
       errors: undefined,
-      // ✅ FIXED: Move bot operation fields to the main record level
       is_bot_operation: true,
-      bot_strategy: strategy
+      bot_strategy: strategy,
+      is_simulation: isSimulated,
+      simulation_type: isSimulated ? 'strategy' : undefined,
+      close_position: operationType === 'sell' && isSimulated ? true : undefined,
     })
 
-    console.log(`🤖 Bot operation tracked: ${operationType} ${token.token_symbol} (${strategy})`)
+    await insertTradingRecord(record)
 
-    // ✅ NEW: Trigger real-time sync for UI updates
+    console.log(`🤖 Bot operation tracked: ${operationType} ${token.token_symbol} (${strategy}, sim=${isSimulated})`)
+
     await triggerPnLSync(walletAddress)
   } catch (error) {
     console.error(`❌ Failed to track bot operation:`, error)
-    // Don't throw - continue with the operation even if tracking fails
   }
 }
 

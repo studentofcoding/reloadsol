@@ -13,14 +13,26 @@ export interface WalletSessionPayload {
 
 const DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+let devSessionSecret: string | null = null;
+
 function getSessionSecret(): string {
   const secret = process.env.WALLET_SESSION_SECRET;
 
-  if (!secret) {
-    throw new Error('WALLET_SESSION_SECRET must be set');
+  if (secret) {
+    return secret;
   }
 
-  return secret;
+  if (process.env.NODE_ENV !== 'production') {
+    if (!devSessionSecret) {
+      devSessionSecret = randomBytes(32).toString('hex');
+      console.warn(
+        '[wallet-session] WALLET_SESSION_SECRET is not set — using ephemeral dev secret. Set WALLET_SESSION_SECRET in .env.local for stable sessions across restarts.',
+      );
+    }
+    return devSessionSecret;
+  }
+
+  throw new Error('WALLET_SESSION_SECRET must be set');
 }
 
 function getSessionTtlMs(): number {

@@ -12,11 +12,16 @@ import {
 
 export async function GET(req: NextRequest) {
   const address = req.nextUrl.searchParams.get('address')?.trim();
+
   if (!address) {
-    return NextResponse.json(
-      { success: false, error: 'address query param is required' },
-      { status: 400 },
-    );
+    const session = getWalletSessionFromRequest(req);
+    return NextResponse.json({
+      success: true,
+      authenticated: Boolean(session),
+      address: session?.address ?? null,
+      dev: session?.dev ?? false,
+      expiresAt: session ? new Date(session.exp).toISOString() : null,
+    });
   }
 
   try {

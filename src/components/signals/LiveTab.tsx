@@ -8,7 +8,8 @@ import { useRugList } from "@/hooks/useRugList";
 import { useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useTradingData } from "@/components/TradingDataProvider";
-import { tradingTracker } from "@/utils/trading-tracker";
+import { trackRealBuy, trackRealSell, trackSimBuy, trackSimClose } from "@/utils/trade-tracking";
+import { computeOpenSimCycle } from "@/utils/simulation-trades";
 import { PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { formatNumber, formatCurrency } from "@/utils/formatters";
 import {
@@ -29,6 +30,7 @@ import {
   RiskIndicators,
 } from "@/utils/axiom";
 import { notifyTradingUpdate } from "@/utils/trading-notifications";
+import TradeOutcomeModal, { useTradeOutcome } from "@/components/TradeOutcomeModal";
 
 interface TrendingToken {
   token_address: string;
@@ -97,7 +99,8 @@ export default function LiveTab() {
   const { connected, publicKey, signTransaction, signAllTransactions } =
     useWallet();
   const { connection } = useConnection();
-  const { records, solPrice: currentSolPrice } = useTradingData();
+  const { records, solPrice: currentSolPrice, trackOperation } = useTradingData();
+  const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const { isRugged: isTokenRugged, markRug, unmarkRug } = useRugList();
   const [tokens, setTokens] = useState<TrendingToken[]>([]);
   const [loading, setLoading] = useState(true);
@@ -764,18 +767,49 @@ export default function LiveTab() {
       // Wait for confirmation
       await connection.confirmTransaction(signature, "confirmed");
 
-      alert(
-        `Successfully bought ${token.token_symbol}! Transaction: ${signature}`,
-      );
+      const tokenAmount = parseInt(quote.outAmount) / Math.pow(10, 6);
+
+      await trackRealBuy(trackOperation, {
+        walletAddress: publicKey.toString(),
+        tokens: [
+          {
+            mintAddress: token.token_address,
+            symbol: token.token_symbol,
+            name: token.token_symbol,
+            logoURI: token.logo_url,
+            tokenAmount,
+            solAmount: buyAmount,
+          },
+        ],
+        signatures: [signature],
+        solAmount: buyAmount,
+        feesPaid: 0,
+        slippage: 300,
+        priorityFee: 30000,
+      });
+
+      showOutcome({
+        success: true,
+        operation: "buy",
+        isSimulation: false,
+        tokenSymbol: token.token_symbol,
+        mintAddress: token.token_address,
+        solAmount: buyAmount,
+      });
 
       // Refresh wallet tokens and quotes
       await fetchWalletTokens();
       await fetchSellQuotes();
     } catch (err) {
       console.error("Error buying token:", err);
-      alert(
-        `Failed to buy ${token.token_symbol}: ${err instanceof Error ? err.message : "Unknown error"}`,
-      );
+      showOutcome({
+        success: false,
+        operation: "buy",
+        isSimulation: false,
+        tokenSymbol: token.token_symbol,
+        mintAddress: token.token_address,
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
     } finally {
       setBuyingTokens((prev) => {
         const newSet = new Set(prev);
@@ -807,48 +841,78 @@ export default function LiveTab() {
       // Ideally we should know the decimals. TrendingToken doesn't have it?
       // TOKENS list might have it if it's a known token.
 
-      const estimatedTokenAmount = parseInt(quote.outAmount) / Math.pow(10, 6); // Approximation if unknown
+      const estimatedTokenAmount = parseInt(quote.outAmount) / Math.pow(10, 6);
 
-      await tradingTracker.trackOperation({
+      await trackSimBuy(trackOperation, {
         walletAddress: publicKey.toString(),
-        operationType: "buy",
-        is_simulation: true,
-        simulation_type: "manual",
-        tokens: [
-          {
-            mintAddress: token.token_address,
-            symbol: token.token_symbol,
-            name: token.token_symbol,
-            logoURI: token.logo_url,
-            tokenAmount: estimatedTokenAmount,
-            solAmount: solAmount,
-            solPrice: currentSolPrice,
-            priceUsd: currentSolPrice
-              ? (solAmount * currentSolPrice) / estimatedTokenAmount
-              : 0,
-          },
-        ],
-        successCount: 1,
-        failureCount: 0,
-        totalTokens: 1,
-        solAmount: solAmount,
-        feesPaid: 0,
-        solPriceUsd: currentSolPrice,
-        totalUsdValue: currentSolPrice ? solAmount * currentSolPrice : 0,
-        signatures: [
-          "simulation-" +
-            Date.now() +
-            "-" +
-            Math.random().toString(36).substring(7),
-        ],
-        slippage: 0,
-        priorityFee: 0,
+        mintAddress: token.token_address,
+        symbol: token.token_symbol,
+        name: token.token_symbol,
+        logoURI: token.logo_url,
+        solAmount,
+        tokenAmount: estimatedTokenAmount,
+        priceUsd:
+          currentSolPrice && estimatedTokenAmount > 0
+            ? (solAmount * currentSolPrice) / estimatedTokenAmount
+            : 0,
       });
 
-      alert(`Simulation saved! Checked ${token.token_symbol}`);
+      showOutcome({
+        success: true,
+        operation: "buy",
+        isSimulation: true,
+        tokenSymbol: token.token_symbol,
+        mintAddress: token.token_address,
+        solAmount,
+      });
     } catch (err) {
       console.error("Error simulating buy:", err);
-      alert("Failed to save simulation");
+      showOutcome({
+        success: false,
+        operation: "buy",
+        isSimulation: true,
+        tokenSymbol: token.token_symbol,
+        mintAddress: token.token_address,
+        error: err instanceof Error ? err.message : "Failed to save simulation",
+      });
+    }
+  };
+
+  const handleSimulateSellToken = async (token: TrendingToken) => {
+    if (!connected || !publicKey) {
+      alert("Please connect your wallet first");
+      return;
+    }
+
+    try {
+      await trackSimClose({
+        walletAddress: publicKey.toString(),
+        mintAddress: token.token_address,
+        records,
+        trackOperation,
+        symbol: token.token_symbol,
+        name: token.token_symbol,
+        logoURI: token.logo_url,
+      });
+
+      showOutcome({
+        success: true,
+        operation: "sell",
+        isSimulation: true,
+        tokenSymbol: token.token_symbol,
+        mintAddress: token.token_address,
+      });
+    } catch (err) {
+      console.error("Error closing simulation:", err);
+      showOutcome({
+        success: false,
+        operation: "sell",
+        isSimulation: true,
+        tokenSymbol: token.token_symbol,
+        mintAddress: token.token_address,
+        error:
+          err instanceof Error ? err.message : "Failed to close simulation",
+      });
     }
   };
 
@@ -912,6 +976,27 @@ export default function LiveTab() {
       // Wait for confirmation
       await connection.confirmTransaction(signature, "confirmed");
 
+      const tokenSold = ownedInfo.balance || 0;
+
+      await trackRealSell(trackOperation, {
+        walletAddress: publicKey.toString(),
+        tokens: [
+          {
+            mintAddress: token.token_address,
+            symbol: token.token_symbol,
+            name: token.token_symbol,
+            logoURI: token.logo_url,
+            tokenAmount: tokenSold,
+            solAmount: expectedSol,
+          },
+        ],
+        signatures: [signature],
+        solAmount: expectedSol,
+        feesPaid: 0,
+        slippage: 300,
+        priorityFee: 30000,
+      });
+
       // After successful sell, notify other devices
       if (publicKey) {
         await notifyTradingUpdate(publicKey.toString(), "trade_update", {
@@ -922,18 +1007,28 @@ export default function LiveTab() {
         });
       }
 
-      alert(
-        `Successfully sold ${token.token_symbol} for ${expectedSol.toFixed(4)} SOL! Transaction: ${signature}`,
-      );
+      showOutcome({
+        success: true,
+        operation: "sell",
+        isSimulation: false,
+        tokenSymbol: token.token_symbol,
+        mintAddress: token.token_address,
+        solAmount: expectedSol,
+      });
 
       // Refresh wallet tokens and quotes
       await fetchWalletTokens();
       await fetchSellQuotes();
     } catch (err) {
       console.error("Error selling token:", err);
-      alert(
-        `Failed to sell ${token.token_symbol}: ${err instanceof Error ? err.message : "Unknown error"}`,
-      );
+      showOutcome({
+        success: false,
+        operation: "sell",
+        isSimulation: false,
+        tokenSymbol: token.token_symbol,
+        mintAddress: token.token_address,
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
     } finally {
       setSellingTokens((prev) => {
         const newSet = new Set(prev);
@@ -1520,6 +1615,14 @@ export default function LiveTab() {
                 </svg>
                 <span>Simulate Buy</span>
               </button>
+              {computeOpenSimCycle(records, token.token_address) && (
+                <button
+                  onClick={() => handleSimulateSellToken(token)}
+                  className="w-full mt-2 py-2 px-4 rounded-lg font-medium bg-blue-900/40 border border-blue-600/40 text-blue-200 hover:bg-blue-900/60 transition-colors"
+                >
+                  Sim Close
+                </button>
+              )}
             </>
           )}
 
@@ -1802,6 +1905,7 @@ export default function LiveTab() {
   }
 
   return (
+    <>
     <div className="max-w-8xl mx-auto px-4 py-8 flex flex-col md:flex-row-reverse gap-6">
       {/* Main content: Trending tokens grid */}
       <div className="flex-1">
@@ -2097,5 +2201,7 @@ export default function LiveTab() {
         )}
       </div>
     </div>
+    <TradeOutcomeModal {...outcomeModalProps} />
+    </>
   );
 }

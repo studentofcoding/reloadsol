@@ -8,6 +8,66 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Sim close, trade feedback, real-time records, wallet session
+
+- **`trackOperation`** — re-throws API failures when online (no silent success); offline still caches locally. Notifies SSE subscribers after successful save.
+- **`POST /api/trading/records`** — broadcasts `trade_update` to SSE clients after insert.
+- **`TradingDataProvider`** — optimistic record updates on track; `staleTime` 10s + 15s refetch interval while session ready.
+- **Sim close** — close records use `status: 'won'`; failures surface in UI instead of disappearing on refetch.
+- **`TradeOutcomeModal`** — unified success/failure modal on PnL, LiveTab, and BoardTab (sim + live buy/sell).
+- **`WalletSessionProvider`** — session cookie persists across wallet disconnect; re-sign only when session missing or wallet address changes (not every reconnect).
+
+### Fixed — Wallet sign-in (401 on trading records)
+
+- **Session status check** — `getWalletSessionStatus()` now uses `GET /api/auth/wallet/session` (no query) instead of broken `HEAD` + JSON parse.
+- **Message signing** — uses Jupiter `useWallet().signMessage` first, with adapter fallback (`wallet-session-client.ts`).
+- **`WalletSessionProvider`** — replaces silent `WalletSessionBridge`; exposes `useWalletSession()` with `signIn()` retry and error state.
+- **`WalletSignInPrompt`** — visible Sign in button on History/P&amp;L when session is missing or rejected.
+- **`TradingDataProvider`** — defers record fetch until `walletSessionStatus === 'ready'` (stops 401 retry spam).
+- **Dev env** — ephemeral `WALLET_SESSION_SECRET` in non-production when unset; documented in `.env.docker.example`.
+
+### Added — Trade tracking utilities
+
+- **`src/utils/simulation-trades.ts`** — `computeOpenSimCycle()` and `closeSimulationPosition()` close sim positions using exact open-cycle token amounts (not recalculated spot prices).
+- **`src/utils/trade-tracking.ts`** — shared wrappers: `trackRealBuy` / `trackRealSell` / `trackRealClose`, `trackSimBuy`, `trackSimClose`.
+- **`src/utils/trading-records-db.ts`** — `insertTradingRecord()` and `buildTradingRecord()` for direct Supabase writes (server/cron paths).
+- **`TrackingRecord.close_position`** — optional flag on sim sells to force-close a cycle when amounts drift.
+
+### Fixed — History & PnL data pipeline
+
+- **`getWalletRecords`** — re-throws `WALLET_SESSION_REQUIRED` instead of returning `[]`, so React Query retries and session errors surface correctly; still merges offline `localStorage` cache as fallback.
+- **`WalletSessionBridge`** — always dispatches `reloadsol-wallet-session` after successful sign-in (fixes race where first fetch 401’d before cookie was set).
+- **`TradingHistory` / `PnLTracker`** — show “Sign in to load history/P&amp;L” when wallet session is missing (not a misleading empty state).
+- **`/api/trading/subscribe`** — moved from dev tier to **wallet tier** in [`api-access.ts`](src/config/api-access.ts) so all connected users get SSE record refresh.
+- **`getAllRecords`** — fetch now sends `credentials: 'include'`.
+- **`TradingDataProvider` / `PnLTracker` / `TradingHistory`** — use `useWalletAddress()` consistently so Jupiter adapter “connected” state matches record fetches (fixes empty History/PnL when wallet was connected but adapter `connected` was false).
+- **Trading record fetches** — `credentials: 'include'` on client GETs; refetch on `reloadsol-wallet-session` after wallet sign-in completes.
+
+### Fixed — Simulation trade close
+
+- **`PnLTracker`** — Fast Sell and bulk **Sell** route SIM positions through `closeSimulationPosition()` (no on-chain Jupiter swap); bulk button label becomes **Close (N)** when all selected positions are sim.
+- **PnL cycle math** — sim sells honor `close_position` and treat ≥99% of remaining tokens as a full close (handles float drift).
+- **`BoardTab`** — `handleSimulateSell` uses shared close helper + live `records` (replaces approximate price-based sell sizing that left positions stuck open).
+- **`LiveTab`** — sim buy via `trackSimBuy`; **Sim Close** button when an open sim cycle exists; real buy/sell now tracked to `/api/trading/records`.
+
+### Changed — Route trade tracking coverage
+
+- **`LiveTab`** — real Jupiter buy/sell calls `trackRealBuy` / `trackRealSell` after confirmed txs (previously on-chain only, no history).
+- **`BoardTab`** — weighted Potential bulk buy also calls `trackOperation` (was points-only via `trackBuy`); sim buy/sell use `trade-tracking` helpers.
+- **`trackBotOperation`** ([`/api/trending/track`](src/app/api/trending/track/route.ts)) — writes directly to Supabase via `insertTradingRecord()` (no wallet-cookie HTTP POST); sets `is_simulation`, `simulation_type: 'strategy'`, and correct sell `tokenAmount` from input lamports (not SOL output).
+
+### Changed — WalletConnectGate UX
+
+- **Non-connected layout** — two-column grid matching the buy page: **Trending Tokens** on the left, connect CTA on the right (`lg:grid-cols-3`, same as connected bulk buy).
+- **Gate copy** — default title “Catch the trending token with our platform”; button **Check now** (`UniversalWalletButton` `connectLabel`).
+- **Trending preview** — public GET for `/api/trending/filtered` and `/api/trending/prices`; `TrendingTokens` `preview` mode on the gate (click token → open wallet modal).
+- **History/P&amp;L overlays** — gate still uses `showTrending={false}` and “Connect Wallet” label.
+
+### Added — Deploy lockfile repair
+
+- **`scripts/npm-ci-sync.sh`** — runs `npm ci`, and on lockfile drift runs `npm install` once then retries (fixes `Missing: tweetnacl@1.0.3 from lock file` and similar deploy failures).
+- **`package.json`** — `lockfile:sync` and `install:ci` scripts; [`docker-deploy.sh`](scripts/docker-deploy.sh), [`docker-install.sh`](scripts/docker-install.sh), and [`docker-dev-entrypoint.sh`](scripts/docker-dev-entrypoint.sh) use the sync script.
+
 ### Changed — Supabase secret API keys
 
 - **New key model** — server requires `SUPABASE_SECRET_KEY` (`sb_secret_...`); legacy `service_role` / `anon` / `NEXT_PUBLIC_SUPABASE_*` env vars removed.
@@ -179,6 +239,12 @@ If you bookmarked old dev URLs, use the redirects above or navigate directly:
 - MCap admin → `/dev/signals?tab=tracker`
 - Trending algo → `/dev/algo-tester`
 - Tracking history → `/dev/algo-tester?tab=history`
+
+### Wallet session required for History / PnL
+
+After Phase 2, `/api/trading/records` requires a wallet API session (httpOnly cookie from `POST /api/auth/wallet/session`). Ensure `WALLET_SESSION_SECRET` is set in production. Users must approve the sign-message prompt once after connecting; without it, History and P&amp;L show a sign-in prompt rather than data.
+
+Sim positions are closed from P&amp;L via **Close** (not on-chain sell). Use **Sim Close** on Live tab or Board simulate sell for the same behavior.
 
 ### Build & verify
 
