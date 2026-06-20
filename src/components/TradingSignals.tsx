@@ -2,7 +2,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
-import Draggable from "react-draggable";
+import Draggable, { DraggableProps } from "react-draggable";
+
+// react-draggable v4.6 types require all props; runtime defaults cover the rest
+const TypedDraggable = Draggable as React.ComponentType<
+  React.PropsWithChildren<Partial<DraggableProps>>
+>;
 import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import { useTradingSignals, SignalItem } from "@/hooks/useTradingSignals";
@@ -797,7 +802,7 @@ export default function TradingSignals() {
       {floatingCharts
         .filter((chart) => chart.isDraggable && !chart.isInGrid)
         .map((chart) => (
-          <Draggable
+          <TypedDraggable
             key={chart.id}
             defaultPosition={chart.position}
             onStart={() => handleDragStart(chart.id)}
@@ -877,7 +882,7 @@ export default function TradingSignals() {
                 frameBorder="0"
               />
             </div>
-          </Draggable>
+          </TypedDraggable>
         ))}{" "}
       {/* Chart Buy Modal */}
       {chartModalTokenAddress && (
