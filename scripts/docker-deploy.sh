@@ -54,21 +54,53 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
+verify_standalone_build() {
+  local missing=false
+
+  for path in .next/standalone/server.js .next/static .next/standalone/.next/required-server-files.json; do
+    if [[ ! -e "$path" ]]; then
+      log "Build output missing: ${path}"
+      missing=true
+    fi
+  done
+
+  if [[ "$missing" == true ]]; then
+    log "Next.js standalone build is incomplete — fix build errors before deploying."
+    return 1
+  fi
+
+  log "Standalone build verified (.next/standalone + .next/static)"
+}
+
 wait_for_health() {
   local url="$1"
   local attempts="${2:-60}"
   local delay="${3:-5}"
+  local container="${4:-reloadsol-web}"
 
-  log "Waiting for ${url} ..."
+  log "Waiting for ${container} to become healthy ..."
   for ((i = 1; i <= attempts; i++)); do
-    if curl -fsS "$url" >/dev/null 2>&1; then
-      log "Health check OK"
-      return 0
+    local status
+    status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || echo "missing")"
+
+    if [[ "$status" == "healthy" ]]; then
+      if curl -fsS "$url" >/dev/null 2>&1; then
+        log "Health check OK (${url})"
+        return 0
+      fi
+      log "Container healthy but ${url} not reachable yet — retrying ..."
+    elif [[ "$status" == "unhealthy" ]]; then
+      log "Container reported unhealthy"
+      "${COMPOSE[@]}" logs --tail=80 web || true
+      return 1
+    elif [[ "$status" == "missing" ]]; then
+      log "Container ${container} not found yet ..."
     fi
+
     sleep "$delay"
   done
 
-  log "Health check failed after $((attempts * delay))s"
+  log "Health check failed after $((attempts * delay))s (last status: ${status:-unknown})"
   "${COMPOSE[@]}" logs --tail=80 web || true
   return 1
 }
@@ -103,9 +135,10 @@ log "Building Next.js on host (old container still running) ..."
 export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
 export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
 npm run build
+verify_standalone_build
 
 log "Rebuilding and recreating containers ..."
-"${COMPOSE[@]}" up --build -d
+"${COMPOSE[@]}" up --build -d --force-recreate
 
 wait_for_health "$HEALTH_URL" 60 5
 

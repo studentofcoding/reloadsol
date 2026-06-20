@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Docker deploy health wait
+
+- **`scripts/docker-deploy.sh`** — verifies `.next/standalone` + `.next/static` immediately after `npm run build` (fails fast on incomplete builds); recreates containers with `--force-recreate`; waits on Docker `reloadsol-web` health before curling `/api/health` (surfaces web logs on `unhealthy` instead of a blind 5-minute loop).
+- **`GET /api/health`** — explicit `HEAD` handler for Docker `wget` and in-app connectivity checks.
+- **Docker healthchecks** — [`docker-compose.yml`](docker-compose.yml) and [`Dockerfile.web`](Dockerfile.web) use `wget -O /dev/null` (GET) instead of `--spider` (HEAD).
+
 ### Improved — Post-implementation hardening
 
 - **Shared record notifications** — `afterTradingRecordInserted()` invalidates server cache (30s TTL) and broadcasts SSE for all inserts, including bot/cron paths via `insertTradingRecord`.
