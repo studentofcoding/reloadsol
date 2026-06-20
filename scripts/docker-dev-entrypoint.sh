@@ -2,10 +2,6 @@
 set -e
 cd /app
 echo "→ Installing npm dependencies (dev container)..."
-if [ -f package-lock.json ]; then
-  npm ci
-else
-  npm install
-fi
+bash scripts/npm-ci-sync.sh
 echo "✓ Starting Next.js dev server..."
 exec npm run dev

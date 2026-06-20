@@ -97,7 +97,7 @@ if [[ "$CLEAN" == true ]]; then
 fi
 
 log "Installing dependencies (npm ci) ..."
-npm ci
+bash scripts/npm-ci-sync.sh
 
 log "Building Next.js on host (old container still running) ..."
 export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
