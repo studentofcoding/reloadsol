@@ -91,6 +91,10 @@ export interface CloseSimulationParams {
   logoURI?: string
 }
 
+export interface CloseSimulationResult {
+  solReceived: number
+}
+
 /** Close an open simulation position using exact remaining token amount. */
 export async function closeSimulationPosition({
   walletAddress,
@@ -101,7 +105,7 @@ export async function closeSimulationPosition({
   symbol,
   name,
   logoURI,
-}: CloseSimulationParams): Promise<void> {
+}: CloseSimulationParams): Promise<CloseSimulationResult> {
   const cycle = computeOpenSimCycle(records, mintAddress)
   if (!cycle) {
     throw new Error('No open simulation position found for this token')
@@ -149,4 +153,6 @@ export async function closeSimulationPosition({
     signatures: [`sim-close-${Date.now()}`],
     status: 'won',
   })
+
+  return { solReceived }
 }

@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import { useWallet, useConnection } from "../components/WalletProvider";
 import PhantomWalletButton from "./PhantomWalletButton";
-import TransactionResultModal from "./TransactionResultModal";
+import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
 import ProgressiveTokenItem from "./ProgressiveTokenItem";
 import {
@@ -66,6 +66,7 @@ export default function BulkTokenSeller() {
   const { publicKey, signAllTransactions, connected } = useWallet();
   const { connection } = useConnection();
   const { trackOperation } = useTradingData();
+  const { showOutcome, outcomeModalProps } = useTradeOutcome();
 
   // ✅ NEW: Add PnL sharing hook
   const {
@@ -92,20 +93,11 @@ export default function BulkTokenSeller() {
   const [isInitialLoad, setIsInitialLoad] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isClosingAccounts, setIsClosingAccounts] = useState<boolean>(false);
-  const [result, setResult] = useState<BulkSellResult | null>(null);
   const [sellPointsEarned, setSellPointsEarned] = useState<number | null>(null);
   const [closePointsEarned, setClosePointsEarned] = useState<number | null>(
     null,
   );
-  const [closeResult, setCloseResult] = useState<{
-    successful: string[];
-    failed: Array<{ mintAddress: string; error: string }>;
-    signatures: string[];
-  } | null>(null);
   const [error, setError] = useState<string>("");
-  const [showResultModal, setShowResultModal] = useState<boolean>(false);
-  const [showCloseResultModal, setShowCloseResultModal] =
-    useState<boolean>(false);
   const [selectedToken, setSelectedToken] = useState<string>("");
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
   const [showDustOnly, setShowDustOnly] = useState<boolean>(true);
@@ -956,10 +948,8 @@ export default function BulkTokenSeller() {
 
     setIsLoading(true);
     setError("");
-    setResult(null);
     setSellPointsEarned(null);
     setClosePointsEarned(null);
-    setCloseResult(null); // Clear any previous close-only results
 
     try {
       // Get balance before operation
@@ -1027,9 +1017,6 @@ export default function BulkTokenSeller() {
       const balanceAfterSOL = balanceAfterOp / LAMPORTS_PER_SOL;
       setBalanceAfter(balanceAfterSOL);
 
-      setResult(sellResult);
-
-      // Only show modal if there were actual transaction attempts (success or failure)
       if (
         sellResult &&
         (sellResult.successfulSwaps.length > 0 ||
@@ -1037,7 +1024,23 @@ export default function BulkTokenSeller() {
           sellResult.successfulCloses.length > 0 ||
           sellResult.failedCloses.length > 0)
       ) {
-        setShowResultModal(true);
+        showOutcome({
+          success: sellResult.success,
+          operation: "sell",
+          isSimulation: false,
+          tokenSymbol:
+            sellResult.successfulSwaps.length === 1
+              ? selectedTokens.find(
+                  (t) =>
+                    t.mintAddress ===
+                    sellResult.successfulSwaps[0]?.mintAddress,
+                )?.symbol
+              : `${sellResult.successfulSwaps.length} tokens`,
+          solAmount: sellResult.totalReceived,
+          error: sellResult.success
+            ? undefined
+            : sellResult.failedSwaps[0]?.error || "Sell failed",
+        });
       }
 
       // Track the sell operation
@@ -1285,23 +1288,25 @@ export default function BulkTokenSeller() {
     } catch (err) {
       console.error("Bulk operation error:", err);
 
-      // Better error handling for different types of errors
+      let message = "An unknown error occurred. Please try again.";
       if (err instanceof Error) {
         if (
           err.message.includes("ChunkLoadError") ||
           err.message.includes("Loading chunk")
         ) {
-          setError(
-            "Network error occurred. Please refresh the page and try again.",
-          );
-        } else if (err.message.includes("Close account")) {
-          setError(`Account closing failed: ${err.message}`);
+          message =
+            "Network error occurred. Please refresh the page and try again.";
         } else {
-          setError(err.message);
+          message = err.message;
         }
-      } else {
-        setError("An unknown error occurred. Please try again.");
       }
+      setError(message);
+      showOutcome({
+        success: false,
+        operation: "sell",
+        isSimulation: false,
+        error: message,
+      });
     } finally {
       setIsLoading(false);
     }
@@ -1318,6 +1323,7 @@ export default function BulkTokenSeller() {
     swapProvider,
     executeCustomSwap,
     autoTriggerShare,
+    showOutcome,
   ]);
 
   // Handle close-only (burn) operation without selling any tokens
@@ -1334,7 +1340,6 @@ export default function BulkTokenSeller() {
 
     setIsLoading(true);
     setError("");
-    setCloseResult(null);
     setClosePointsEarned(null);
 
     try {
@@ -1358,10 +1363,20 @@ export default function BulkTokenSeller() {
         signatures: closeOnlyResult.signatures,
       };
 
-      setCloseResult(closeData);
-
       if (closeData.successful.length > 0 || closeData.failed.length > 0) {
-        setShowCloseResultModal(true);
+        showOutcome({
+          success: closeData.failed.length === 0,
+          operation: "close",
+          isSimulation: false,
+          tokenSymbol:
+            closeData.successful.length === 1
+              ? `${closeData.successful[0].slice(0, 4)}…`
+              : `${closeData.successful.length} accounts`,
+          error:
+            closeData.failed.length > 0
+              ? closeData.failed[0]?.error || "Close failed"
+              : undefined,
+        });
       }
 
       // Points tracking
@@ -1434,11 +1449,17 @@ export default function BulkTokenSeller() {
       }
     } catch (err) {
       console.error("Close-only operation error:", err);
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError("An unknown error occurred. Please try again.");
-      }
+      const message =
+        err instanceof Error
+          ? err.message
+          : "An unknown error occurred. Please try again.";
+      setError(message);
+      showOutcome({
+        success: false,
+        operation: "close",
+        isSimulation: false,
+        error: message,
+      });
     } finally {
       setIsLoading(false);
     }
@@ -1453,6 +1474,7 @@ export default function BulkTokenSeller() {
     priorityFee,
     fetchTokens,
     trackOperation,
+    showOutcome,
   ]);
 
   // Fetch user tokens on wallet connection
@@ -2323,25 +2345,8 @@ export default function BulkTokenSeller() {
           </div>
         )}
 
-        {/* Transaction Result Modal */}
-        <TransactionResultModal
-          isOpen={showResultModal}
-          onClose={() => setShowResultModal(false)}
-          operation="sell"
-          result={result}
-          balanceBefore={balanceBefore}
-          balanceAfter={balanceAfter}
-          pointsEarned={sellPointsEarned ?? undefined}
-        />
-
-        {/* Close Result Modal */}
-        <TransactionResultModal
-          isOpen={showCloseResultModal}
-          onClose={() => setShowCloseResultModal(false)}
-          operation="close"
-          result={closeResult}
-          pointsEarned={closePointsEarned ?? undefined}
-        />
+        {/* Trade outcome modal */}
+        <TradeOutcomeModal {...outcomeModalProps} />
 
         {/* ✅ NEW: Add PnL Share Modal */}
         <PnLShareModal

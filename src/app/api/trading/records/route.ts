@@ -5,6 +5,13 @@ import {
   insertTradingRecord,
   shouldSkipTradingRecord,
 } from '@/utils/trading-records-db'
+import {
+  generateRecordsCacheKey,
+  getCachedRecords,
+  invalidateTradingRecordsCache,
+  ongoingRecordsRequests,
+  setCachedRecords,
+} from '@/utils/trading-records-cache'
 
 // Database schema for Supabase
 interface DatabaseRecord {
@@ -16,122 +23,35 @@ interface DatabaseRecord {
   created_at?: string
 }
 
-// Caching for trading records
-interface TradingRecordsCache {
-  data: any[]
-  walletAddress: string
-  limit: number
-  timestamp: number
-  expiresAt: number
-}
-
-interface OngoingRecordsRequest {
-  promise: Promise<any[]>
-  walletAddress: string
-  limit: number
-  timestamp: number
-}
-
-const tradingRecordsCache = new Map<string, TradingRecordsCache>()
-const ongoingRecordsRequests = new Map<string, OngoingRecordsRequest>()
-
-const CACHE_TTL_MS = 2 * 60 * 1000 // 2 minutes cache for trading records
-const MAX_CACHE_ENTRIES = 50 // Cache for different wallet/limit combinations
-const REQUEST_TIMEOUT = 10000 // 10 second timeout
-
-// Clean up expired cache entries
-function cleanupRecordsCache() {
-  const now = Date.now()
-
-  // Clean expired cache entries
-  for (const [key, cache] of Array.from(tradingRecordsCache.entries())) {
-    if (now > cache.expiresAt) {
-      tradingRecordsCache.delete(key)
-    }
-  }
-
-  // Clean expired ongoing requests
-  for (const [key, request] of Array.from(ongoingRecordsRequests.entries())) {
-    if (now - request.timestamp > REQUEST_TIMEOUT) {
-      ongoingRecordsRequests.delete(key)
-    }
-  }
-
-  // Limit cache size
-  if (tradingRecordsCache.size > MAX_CACHE_ENTRIES) {
-    const entries = Array.from(tradingRecordsCache.entries())
-    entries.sort((a, b) => a[1].timestamp - b[1].timestamp)
-    const toDelete = entries.slice(0, tradingRecordsCache.size - MAX_CACHE_ENTRIES)
-    toDelete.forEach(([key]) => tradingRecordsCache.delete(key))
-  }
-}
-
-// Generate cache key for trading records
-function generateRecordsCacheKey(walletAddress: string, limit: number): string {
-  return `${walletAddress}-${limit}`
-}
-
-// Get cached trading records
-function getCachedRecords(walletAddress: string, limit: number): any[] | null {
-  const cacheKey = generateRecordsCacheKey(walletAddress, limit)
-  const cached = tradingRecordsCache.get(cacheKey)
-  if (!cached) return null
-
-  const now = Date.now()
-  if (now <= cached.expiresAt) {
-    return cached.data
-  }
-
-  tradingRecordsCache.delete(cacheKey)
-  return null
-}
-
-// Set cached trading records
-function setCachedRecords(walletAddress: string, limit: number, data: any[]) {
-  const now = Date.now()
-  const cacheKey = generateRecordsCacheKey(walletAddress, limit)
-
-  tradingRecordsCache.set(cacheKey, {
-    data,
-    walletAddress,
-    limit,
-    timestamp: now,
-    expiresAt: now + CACHE_TTL_MS
-  })
-
-  cleanupRecordsCache()
-}
+const REQUEST_TIMEOUT = 10000
 
 // Fetch trading records with caching and deduplication
 async function fetchTradingRecordsWithCache(walletAddress: string, limit: number): Promise<any[]> {
-  // Check cache first
   const cached = getCachedRecords(walletAddress, limit)
   if (cached) {
     console.log(`🎯 Cache hit for trading records: ${walletAddress.substring(0, 8)}... (${limit} records)`)
-    return cached
+    return cached as any[]
   }
 
   const cacheKey = generateRecordsCacheKey(walletAddress, limit)
 
-  // Check if there's an ongoing request
   const ongoing = ongoingRecordsRequests.get(cacheKey)
   if (ongoing) {
     console.log(`⏳ Waiting for ongoing trading records request: ${walletAddress.substring(0, 8)}...`)
     try {
-      return await ongoing.promise
+      return (await ongoing.promise) as any[]
     } catch (error) {
       ongoingRecordsRequests.delete(cacheKey)
       throw error
     }
   }
 
-  // Create new request
   const requestPromise = fetchTradingRecordsFromDB(walletAddress, limit)
   ongoingRecordsRequests.set(cacheKey, {
     promise: requestPromise,
     walletAddress,
     limit,
-    timestamp: Date.now()
+    timestamp: Date.now(),
   })
 
   try {
@@ -149,7 +69,6 @@ async function fetchTradingRecordsWithCache(walletAddress: string, limit: number
   }
 }
 
-// Actual database fetch function
 async function fetchTradingRecordsFromDB(walletAddress: string, limit: number): Promise<any[]> {
   const { data, error } = await supabase
     .from('trading_records')
@@ -165,7 +84,6 @@ async function fetchTradingRecordsFromDB(walletAddress: string, limit: number): 
   return (data || []).map((item: DatabaseRecord) => item.data)
 }
 
-// Determine allowed origin for CORS (any https subdomain of reloadsol.xyz)
 function resolveAllowedOrigin(request: NextRequest): string | null {
   const origin = request.headers.get('origin')
   if (!origin) return null
@@ -177,7 +95,6 @@ function resolveAllowedOrigin(request: NextRequest): string | null {
     if (process.env.NODE_ENV === 'production' && protocol !== 'https:') return null
     if (hostname === 'reloadsol.xyz' || hostname.endsWith('.reloadsol.xyz')) return origin
 
-    // Allow localhost in non-production for testing
     if (
       process.env.NODE_ENV !== 'production' &&
       (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:'))
@@ -190,7 +107,6 @@ function resolveAllowedOrigin(request: NextRequest): string | null {
   }
 }
 
-// GET /api/trading/records?wallet=<address>&limit=<number>
 export async function GET(request: NextRequest) {
   try {
     const auth = requireWalletSession(request)
@@ -224,7 +140,7 @@ export async function GET(request: NextRequest) {
       cached: getCachedRecords(walletAddress, limit) !== null
     }, {
       headers: {
-        'Cache-Control': 'public, max-age=120, stale-while-revalidate=60',
+        'Cache-Control': 'public, max-age=30, stale-while-revalidate=15',
         'X-Cache-Status': getCachedRecords(walletAddress, limit) ? 'HIT' : 'MISS',
         ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin } : {}),
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -243,7 +159,6 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/trading/records - Save new trading record
 export async function POST(request: NextRequest) {
   try {
     const auth = requireWalletSession(request)
@@ -265,7 +180,6 @@ export async function POST(request: NextRequest) {
       return mismatch
     }
 
-    // Skip records with errors
     if (shouldSkipTradingRecord(record)) {
       return NextResponse.json({
         success: true,
@@ -275,39 +189,6 @@ export async function POST(request: NextRequest) {
     }
 
     await insertTradingRecord(record)
-
-    // Invalidate cache for this wallet address
-    const keysToDelete: string[] = []
-    for (const [key, cache] of Array.from(tradingRecordsCache.entries())) {
-      if (cache.walletAddress === record.walletAddress) {
-        keysToDelete.push(key)
-      }
-    }
-    keysToDelete.forEach(key => tradingRecordsCache.delete(key))
-
-    console.log(`🗑️ Invalidated ${keysToDelete.length} cache entries for wallet ${record.walletAddress.substring(0, 8)}...`)
-
-    // Broadcast SSE update to connected clients
-    try {
-      const baseUrl =
-        process.env.NEXTAUTH_URL ||
-        process.env.API_HOST ||
-        'http://localhost:3000'
-      await fetch(`${baseUrl}/api/trading/subscribe`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          walletAddress: record.walletAddress,
-          type: 'trade_update',
-          data: {
-            operationType: record.operationType,
-            timestamp: new Date().toISOString(),
-          },
-        }),
-      })
-    } catch (broadcastError) {
-      console.warn('Failed to broadcast trade update:', broadcastError)
-    }
 
     const allowedOrigin = resolveAllowedOrigin(request)
 
@@ -333,7 +214,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// DELETE /api/trading/records?id=<id>&wallet=<address> - Delete a trading record
 export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -356,16 +236,8 @@ export async function DELETE(request: NextRequest) {
       throw error
     }
 
-    // Invalidate cache for this wallet address
-    const keysToDelete: string[] = []
-    for (const [key, cache] of Array.from(tradingRecordsCache.entries())) {
-      if (cache.walletAddress === walletAddress) {
-        keysToDelete.push(key)
-      }
-    }
-    keysToDelete.forEach(key => tradingRecordsCache.delete(key))
-
-    console.log(`🗑️ Deleted record ${id} and invalidated cache for wallet ${walletAddress.substring(0, 8)}...`)
+    const invalidated = invalidateTradingRecordsCache(walletAddress)
+    console.log(`🗑️ Deleted record ${id} and invalidated ${invalidated} cache entries for wallet ${walletAddress.substring(0, 8)}...`)
 
     const allowedOrigin = resolveAllowedOrigin(request)
 
@@ -391,7 +263,6 @@ export async function DELETE(request: NextRequest) {
   }
 }
 
-// OPTIONS /api/trading/records - Handle CORS preflight
 export async function OPTIONS(request: NextRequest) {
   const allowedOrigin = resolveAllowedOrigin(request)
   return new NextResponse(null, {

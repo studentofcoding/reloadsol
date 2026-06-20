@@ -16,7 +16,12 @@ import {
   getWalletSessionStatus,
 } from '@/utils/wallet-session-client';
 
-export type WalletSessionStatus = 'idle' | 'signing' | 'ready' | 'error';
+export type WalletSessionStatus =
+  | 'idle'
+  | 'checking'
+  | 'signing'
+  | 'ready'
+  | 'error';
 
 type WalletSessionContextValue = {
   status: WalletSessionStatus;
@@ -46,7 +51,6 @@ export function useWalletSession(): WalletSessionContextValue {
   return context;
 }
 
-/** Optional hook for components that may render outside the provider. */
 export function useWalletSessionOptional(): WalletSessionContextValue | null {
   return useContext(WalletSessionContext);
 }
@@ -84,7 +88,7 @@ export function WalletSessionProvider({
     if (signingRef.current) return;
 
     signingRef.current = true;
-    setStatus('signing');
+    setStatus('checking');
     setError(null);
 
     try {
@@ -96,6 +100,7 @@ export function WalletSessionProvider({
         return;
       }
 
+      setStatus('signing');
       await establishWalletSession({
         address,
         signMessage,
@@ -118,20 +123,15 @@ export function WalletSessionProvider({
 
   useEffect(() => {
     if (!address) {
-      // Keep session cookie on disconnect so reconnect does not require re-sign
       setStatus('idle');
       setSessionAddress(null);
       setError(null);
       return;
     }
 
-    if (lastAddressRef.current && lastAddressRef.current !== address) {
-      signingRef.current = false;
-      void clearWalletSession().catch(() => undefined);
-      setStatus('idle');
-      setSessionAddress(null);
-      setError(null);
-    }
+    const addressChanged =
+      lastAddressRef.current !== null &&
+      lastAddressRef.current !== address;
 
     lastAddressRef.current = address;
 
@@ -141,7 +141,23 @@ export function WalletSessionProvider({
       return;
     }
 
-    void runSignIn();
+    void (async () => {
+      if (addressChanged) {
+        signingRef.current = false;
+        setStatus('checking');
+        setSessionAddress(null);
+        setError(null);
+        try {
+          await clearWalletSession();
+        } catch {
+          /* continue to sign in for new wallet */
+        }
+      } else {
+        setStatus('checking');
+      }
+
+      await runSignIn();
+    })();
   }, [address, signMessage, adapter, runSignIn]);
 
   const value: WalletSessionContextValue = {

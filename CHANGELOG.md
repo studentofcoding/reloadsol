@@ -8,6 +8,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Improved — Post-implementation hardening
+
+- **Shared record notifications** — `afterTradingRecordInserted()` invalidates server cache (30s TTL) and broadcasts SSE for all inserts, including bot/cron paths via `insertTradingRecord`.
+- **`checking` wallet session** — reconnect no longer flashes P&amp;L/History skeleton while validating an existing cookie.
+- **Deduped refetch** — removed redundant client SSE notify after POST save; SSE subscriber uses invalidate-only (no double refetch).
+- **Sim close proceeds** — `closeSimulationPosition()` returns `solReceived`; success modals show received SOL, not buy cost.
+- **`TradeOutcomeModal`** extended to Bulk Buy/Sell and BoardTab instant buy.
+
 ### Fixed — Sim close, trade feedback, real-time records, wallet session
 
 - **`trackOperation`** — re-throws API failures when online (no silent success); offline still caches locally. Notifies SSE subscribers after successful save.

@@ -948,8 +948,9 @@ export default function PnLTracker() {
       const simPositions = positionsToSell.filter((pos) => pos.isSimulation);
       const realPositions = positionsToSell.filter((pos) => !pos.isSimulation);
 
+      let totalSimSolReceived = 0;
       for (const position of simPositions) {
-        await closeSimulationPosition({
+        const { solReceived } = await closeSimulationPosition({
           walletAddress: publicKey.toString(),
           mintAddress: position.mintAddress,
           records,
@@ -959,6 +960,7 @@ export default function PnLTracker() {
           logoURI: position.logoURI,
           sellPriceUsd: position.currentTokenPriceUsd,
         });
+        totalSimSolReceived += solReceived;
         clearNotificationFlag(position.mintAddress);
       }
 
@@ -976,6 +978,7 @@ export default function PnLTracker() {
               : `${simPositions.length} simulation positions`,
           mintAddress:
             simPositions.length === 1 ? simPositions[0].mintAddress : undefined,
+          solAmount: totalSimSolReceived,
         });
         return;
       }
@@ -1691,7 +1694,7 @@ export default function PnLTracker() {
             return;
           }
 
-          await closeSimulationPosition({
+          const { solReceived } = await closeSimulationPosition({
             walletAddress,
             mintAddress: position.mintAddress,
             records,
@@ -1710,7 +1713,7 @@ export default function PnLTracker() {
             isSimulation: true,
             tokenSymbol: position.symbol || position.name,
             mintAddress: position.mintAddress,
-            solAmount: position.solAmountBought,
+            solAmount: solReceived,
           });
           return;
         }
@@ -2060,18 +2063,15 @@ export default function PnLTracker() {
     return <WalletSignInPrompt title="Sign in to load P&amp;L" />;
   }
 
-  if (walletAddress && walletSessionStatus !== "ready") {
-    if (
-      walletSessionStatus === "signing" ||
-      walletSessionStatus === "idle"
-    ) {
-      return (
-        <div className="">
-          <TokenSkeleton count={3} variant="trading-history" />
-        </div>
-      );
-    }
+  if (walletAddress && walletSessionStatus === "signing") {
+    return (
+      <div className="">
+        <TokenSkeleton count={3} variant="trading-history" />
+      </div>
+    );
+  }
 
+  if (walletAddress && walletSessionStatus === "error") {
     return <WalletSignInPrompt title="Sign in to load P&amp;L" />;
   }
 

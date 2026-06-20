@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useWallet, useConnection } from "../components/WalletProvider";
 import PhantomWalletButton from "./PhantomWalletButton";
 import TrendingTokens from "./TrendingTokens";
-import TransactionResultModal from "./TransactionResultModal";
+import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
 import RiskAnalysis from "./RiskAnalysis";
 import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
@@ -41,6 +41,7 @@ export default function BulkTokenBuyer() {
   const { publicKey, signAllTransactions, connected } = useWallet();
   const { connection } = useConnection();
   const { trackOperation } = useTradingData();
+  const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const searchParams = useSearchParams();
 
   // Form state
@@ -68,10 +69,8 @@ export default function BulkTokenBuyer() {
   // UI state
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLoadingMetadata, setIsLoadingMetadata] = useState<boolean>(false);
-  const [result, setResult] = useState<BulkBuyResult | null>(null);
   const [pointsEarned, setPointsEarned] = useState<number | null>(null);
   const [error, setError] = useState<string>("");
-  const [showResultModal, setShowResultModal] = useState<boolean>(false);
   const [selectedToken, setSelectedToken] = useState<string>("");
   const [selectedTokenInfo, setSelectedTokenInfo] = useState<TokenInfo | null>(
     null,
@@ -436,7 +435,6 @@ export default function BulkTokenBuyer() {
     setIsLoading(true);
     setPointsEarned(null);
     setError("");
-    setResult(null);
 
     try {
       // Get balance before operation
@@ -501,15 +499,30 @@ export default function BulkTokenBuyer() {
       const balanceAfterSOL = balanceAfterOp / LAMPORTS_PER_SOL;
       setBalanceAfter(balanceAfterSOL);
 
-      setResult(buyResult);
-
       // Only show modal if there were actual transaction attempts (success or failure)
       if (
         buyResult &&
         (buyResult.successfulPurchases.length > 0 ||
           buyResult.failedPurchases.length > 0)
       ) {
-        setShowResultModal(true);
+        const firstSymbol =
+          buyResult.successfulPurchases[0]?.symbol ||
+          tokenList.find(
+            (t) => t.address === buyResult.successfulPurchases[0]?.mintAddress,
+          )?.symbol;
+        showOutcome({
+          success: buyResult.success,
+          operation: "buy",
+          isSimulation: false,
+          tokenSymbol:
+            buyResult.successfulPurchases.length === 1
+              ? firstSymbol
+              : `${buyResult.successfulPurchases.length} tokens`,
+          solAmount: parseFloat(solAmount),
+          error: buyResult.success
+            ? undefined
+            : buyResult.failedPurchases[0]?.error || "Buy failed",
+        });
       }
 
       // Track the buy operation
@@ -634,9 +647,15 @@ export default function BulkTokenBuyer() {
         loadUserTokens(); // Refresh user token list
       }
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "An unknown error occurred",
-      );
+      const message =
+        err instanceof Error ? err.message : "An unknown error occurred";
+      setError(message);
+      showOutcome({
+        success: false,
+        operation: "buy",
+        isSimulation: false,
+        error: message,
+      });
     } finally {
       setIsLoading(false);
     }
@@ -649,6 +668,10 @@ export default function BulkTokenBuyer() {
     validMints,
     slippage,
     priorityFee,
+    showOutcome,
+    tokenList,
+    selectedCurrency,
+    trackOperation,
   ]);
 
   // Fetch wallet balance and user tokens
@@ -1634,17 +1657,7 @@ export default function BulkTokenBuyer() {
                 </div>
               )}
 
-              {/* Transaction Result Modal */}
-              <TransactionResultModal
-                isOpen={showResultModal}
-                onClose={() => setShowResultModal(false)}
-                operation="buy"
-                result={result}
-                balanceBefore={balanceBefore}
-                balanceAfter={balanceAfter}
-                onSelectToken={handleSelectToken}
-                pointsEarned={pointsEarned ?? undefined}
-              />
+              <TradeOutcomeModal {...outcomeModalProps} />
             </div>
           )}
 

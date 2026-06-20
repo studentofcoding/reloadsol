@@ -151,7 +151,7 @@ class TradingTracker {
   }
 
   // Add a new tracking record (with offline support)
-  async trackOperation(record: Omit<TrackingRecord, 'id' | 'timestamp'>): Promise<void> {
+  async trackOperation(record: Omit<TrackingRecord, 'id' | 'timestamp'>): Promise<TrackingRecord> {
     const newRecord: TrackingRecord = {
       ...record,
       id: this.generateId(),
@@ -174,15 +174,6 @@ class TradingTracker {
             detail: { record: newRecord, operationType: record.operationType },
           }),
         )
-
-        const { notifyTradingUpdate } = await import('@/utils/trading-notifications')
-        void notifyTradingUpdate(record.walletAddress, 'trade_update', {
-          operationType: record.operationType,
-          tokenAddress: record.tokens[0]?.mintAddress,
-          tokenSymbol: record.tokens[0]?.symbol,
-          amount: record.solAmount,
-          signature: record.signatures[0],
-        })
       }
 
       console.log(`📊 Tracked ${record.operationType} operation:`, {
@@ -192,6 +183,8 @@ class TradingTracker {
         failed: record.failureCount,
         online: this.isOnline,
       })
+
+      return newRecord
     } catch (error) {
       console.error('Failed to track operation:', error)
 
@@ -199,7 +192,7 @@ class TradingTracker {
         this.saveToOfflineCache(newRecord)
         this.updateLocalCache(record.walletAddress, [newRecord])
         this.notifySubscribers(record.walletAddress)
-        return
+        return newRecord
       }
 
       throw error

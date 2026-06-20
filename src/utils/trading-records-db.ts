@@ -1,5 +1,7 @@
 import { supabase } from '@/utils/supabase'
 import type { TrackingRecord } from '@/utils/trading-tracker'
+import { invalidateTradingRecordsCache } from '@/utils/trading-records-cache'
+import { broadcastTradeUpdateServer } from '@/utils/trading-notifications'
 
 interface DatabaseRecord {
   id: string
@@ -46,7 +48,27 @@ export async function insertTradingRecord(
     throw error
   }
 
+  await afterTradingRecordInserted(record)
+
   return { inserted: true }
+}
+
+/** Invalidate GET cache and broadcast SSE after any successful insert. */
+export async function afterTradingRecordInserted(
+  record: TrackingRecord,
+): Promise<void> {
+  const invalidated = invalidateTradingRecordsCache(record.walletAddress)
+  if (invalidated > 0) {
+    console.log(
+      `🗑️ Invalidated ${invalidated} cache entries for wallet ${record.walletAddress.substring(0, 8)}...`,
+    )
+  }
+
+  try {
+    await broadcastTradeUpdateServer(record.walletAddress, record.operationType)
+  } catch (broadcastError) {
+    console.warn('Failed to broadcast trade update:', broadcastError)
+  }
 }
 
 /** Build a complete record with id/timestamp for server inserts. */

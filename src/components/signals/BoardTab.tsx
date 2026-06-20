@@ -879,7 +879,7 @@ function ChartsContent() {
     try {
       const signal = signals[tokenAddress];
 
-      await trackSimClose({
+      const { solReceived } = await trackSimClose({
         walletAddress: publicKey.toString(),
         mintAddress: tokenAddress,
         records,
@@ -894,6 +894,7 @@ function ChartsContent() {
         isSimulation: true,
         tokenSymbol: signal?.token_symbol || "Unknown",
         mintAddress: tokenAddress,
+        solAmount: solReceived,
       });
       setStatus("");
     } catch (e) {
@@ -1083,6 +1084,15 @@ function ChartsContent() {
         );
 
         if (buyResult.success) {
+          showOutcome({
+            success: true,
+            operation: "buy",
+            isSimulation: false,
+            tokenSymbol: symbols[tokenAddress] || "Token",
+            mintAddress: tokenAddress,
+            solAmount: parseFloat(buyAmount),
+          });
+
           setBuyStates((prev) => ({
             ...prev,
             [tokenAddress]: { loading: false, status: "Success!" },
@@ -1145,13 +1155,22 @@ function ChartsContent() {
           );
         }
       } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed";
         setBuyStates((prev) => ({
           ...prev,
           [tokenAddress]: {
             loading: false,
-            error: err instanceof Error ? err.message : "Failed",
+            error: message,
           },
         }));
+        showOutcome({
+          success: false,
+          operation: "buy",
+          isSimulation: false,
+          mintAddress: tokenAddress,
+          tokenSymbol: symbols[tokenAddress],
+          error: message,
+        });
       }
     },
     [
@@ -1162,6 +1181,7 @@ function ChartsContent() {
       buyAmount,
       trackOperation,
       symbols,
+      showOutcome,
     ],
   );
 

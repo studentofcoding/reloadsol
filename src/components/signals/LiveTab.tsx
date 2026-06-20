@@ -885,7 +885,7 @@ export default function LiveTab() {
     }
 
     try {
-      await trackSimClose({
+      const { solReceived } = await trackSimClose({
         walletAddress: publicKey.toString(),
         mintAddress: token.token_address,
         records,
@@ -901,6 +901,7 @@ export default function LiveTab() {
         isSimulation: true,
         tokenSymbol: token.token_symbol,
         mintAddress: token.token_address,
+        solAmount: solReceived,
       });
     } catch (err) {
       console.error("Error closing simulation:", err);

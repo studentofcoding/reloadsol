@@ -16,6 +16,18 @@ interface NotificationData {
 }
 
 /**
+ * Server-side SSE broadcast (works in API routes and cron jobs).
+ */
+export async function broadcastTradeUpdateServer(
+    walletAddress: string,
+    operationType?: 'buy' | 'sell' | 'close',
+): Promise<boolean> {
+    return notifyTradingUpdate(walletAddress, 'trade_update', {
+        operationType,
+    })
+}
+
+/**
  * Notify all connected devices about a trading update
  */
 export async function notifyTradingUpdate(

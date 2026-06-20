@@ -122,7 +122,7 @@ export function useTrackOperation() {
 
   return useMutation({
     mutationFn: async (operation: Omit<TrackingRecord, "id" | "timestamp">) => {
-      await tradingTracker.trackOperation(operation);
+      return await tradingTracker.trackOperation(operation);
     },
     onMutate: async (operation) => {
       if (!walletAddress) return undefined;
@@ -146,7 +146,23 @@ export function useTrackOperation() {
         (old) => [optimisticRecord, ...(old ?? [])],
       );
 
-      return { previous };
+      return { previous, optimisticId: optimisticRecord.id };
+    },
+    onSuccess: (savedRecord, _operation, context) => {
+      if (!walletAddress) return;
+
+      queryClient.setQueryData<TrackingRecord[]>(
+        QUERY_KEYS.tradingRecords(walletAddress),
+        (old) => {
+          const withoutOptimistic = (old ?? []).filter(
+            (r) => r.id !== context?.optimisticId && !r.id.startsWith('optimistic-'),
+          );
+          const withoutDuplicate = withoutOptimistic.filter(
+            (r) => r.id !== savedRecord.id,
+          );
+          return [savedRecord, ...withoutDuplicate];
+        },
+      );
     },
     onError: (error, _operation, context) => {
       if (walletAddress && context?.previous !== undefined) {
@@ -156,13 +172,6 @@ export function useTrackOperation() {
         );
       }
       console.error("Failed to track operation:", error);
-    },
-    onSettled: () => {
-      if (walletAddress) {
-        queryClient.invalidateQueries({
-          queryKey: QUERY_KEYS.tradingRecords(walletAddress),
-        });
-      }
     },
   });
 }
@@ -201,7 +210,8 @@ export function useDeleteRecord() {
 function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
   const walletAddress = useWalletAddress();
   const { status: walletSessionStatus } = useWalletSession();
-  const sessionReady = walletSessionStatus === 'ready';
+  const sessionReady =
+    walletSessionStatus === 'ready' || walletSessionStatus === 'checking';
 
   // Query for trading records
   const {
@@ -250,11 +260,6 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({
         queryKey: QUERY_KEYS.tradingRecords(walletAddress),
       });
-      setTimeout(() => {
-        queryClient.refetchQueries({
-          queryKey: QUERY_KEYS.tradingRecords(walletAddress),
-        });
-      }, 300);
     };
 
     const onSessionReady = (event: Event) => {

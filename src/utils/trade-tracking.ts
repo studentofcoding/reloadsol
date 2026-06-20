@@ -150,6 +150,6 @@ export async function trackSimBuy(
 
 export async function trackSimClose(
   params: CloseSimulationParams,
-): Promise<void> {
-  await closeSimulationPosition(params)
+): Promise<{ solReceived: number }> {
+  return closeSimulationPosition(params)
 }

@@ -380,18 +380,15 @@ export default function TradingHistory() {
     );
   }
 
-  if (walletAddress && walletSessionStatus !== "ready") {
-    if (
-      walletSessionStatus === "signing" ||
-      walletSessionStatus === "idle"
-    ) {
-      return (
-        <div className="">
-          <TokenSkeleton count={5} variant="trading-history" />
-        </div>
-      );
-    }
+  if (walletAddress && walletSessionStatus === "signing") {
+    return (
+      <div className="">
+        <TokenSkeleton count={5} variant="trading-history" />
+      </div>
+    );
+  }
 
+  if (walletAddress && walletSessionStatus === "error") {
     return (
       <WalletSignInPrompt title="Sign in to load trading history" />
     );
