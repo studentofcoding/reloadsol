@@ -15,9 +15,10 @@ import {
   useRemovePosition,
   useUpdateDlmmConfig,
 } from "@/hooks/useDlmmPositions";
-import type { DlmmPosition, DlmmLesson, DlmmScreenCandidate } from "@/types/dlmm";
-import GmgnKlineChart from "@/components/GmgnKlineChart";
-import { getPoolChartMint } from "@/utils/gmgn";
+import type { DlmmPosition, DlmmLesson } from "@/types/dlmm";
+import HunterCandidateTabs, {
+  type DisplayCandidate,
+} from "@/components/dlmm/HunterCandidateTabs";
 
 function formatUsd(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
@@ -60,12 +61,7 @@ export default function DlmmDashboardPage() {
     [positions],
   );
 
-  type DisplayCandidate = DlmmScreenCandidate & {
-    token_x_address?: string;
-    token_y_address?: string;
-  };
-
-  const displayCandidates: DisplayCandidate[] = useMemo(() => {
+  const generalCandidates: DisplayCandidate[] = useMemo(() => {
     if (candidates.length > 0) {
       return candidates.map((c) => {
         const pool = pools.find((p) => p.address === c.pool_address);
@@ -236,106 +232,15 @@ export default function DlmmDashboardPage() {
           </section>
 
           {/* Hunter candidates */}
-          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-4">
-              Hunter Candidates
-            </h2>
-            {poolsLoading ? (
-              <p className="text-gray-400">Loading pools from Meteora...</p>
-            ) : poolsError ? (
-              <p className="text-red-400 text-sm">
-                {poolsErrorMsg instanceof Error ? poolsErrorMsg.message : "Failed to load pools"}
-              </p>
-            ) : displayCandidates.length === 0 ? (
-              <p className="text-gray-500 text-sm">No pools matched screening thresholds.</p>
-            ) : (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                {displayCandidates.map((c) => {
-                  const chartMint = getPoolChartMint(
-                    c.token_x_address,
-                    c.token_y_address,
-                  );
-                  const chartSymbol =
-                    chartMint === c.token_y_address
-                      ? c.token_y_symbol
-                      : c.token_x_symbol;
-
-                  return (
-                  <div
-                    key={c.pool_address}
-                    className="bg-gray-800 border border-gray-600 rounded-lg p-4 flex flex-col gap-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <h3 className="text-white font-bold">{c.pool_name}</h3>
-                      <span className="text-xs text-gray-500 shrink-0">
-                        Score {c.score.toFixed(1)}
-                      </span>
-                    </div>
-
-                    {chartMint ? (
-                      <GmgnKlineChart
-                        tokenMint={chartMint}
-                        symbol={chartSymbol}
-                        height={300}
-                        interval="5m"
-                      />
-                    ) : (
-                      <div className="h-[300px] rounded-lg border border-gray-700 bg-gray-900 flex items-center justify-center text-gray-500 text-sm">
-                        Chart unavailable (missing token mint)
-                      </div>
-                    )}
-
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm text-gray-400">
-                      <div>
-                        <div className="text-gray-500 text-xs">TVL</div>
-                        {formatUsd(c.tvl)}
-                      </div>
-                      <div>
-                        <div className="text-gray-500 text-xs">Fee/TVL 24h</div>
-                        {(c.fee_tvl_ratio_24h * 100).toFixed(2)}%
-                      </div>
-                      <div>
-                        <div className="text-gray-500 text-xs">Organic</div>
-                        {c.organic_score.toFixed(1)}
-                      </div>
-                      <div>
-                        <div className="text-gray-500 text-xs">Holders</div>
-                        {c.holders.toLocaleString()}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => {
-                        const pool = pools.find(
-                          (p) => p.address === c.pool_address,
-                        );
-                        if (pool) {
-                          setDeployPool(pool);
-                          return;
-                        }
-                        setDeployPool({
-                          address: c.pool_address,
-                          name: c.pool_name,
-                          token_x: { address: '', name: '', symbol: c.token_x_symbol, decimals: 9 },
-                          token_y: { address: '', name: '', symbol: c.token_y_symbol, decimals: 9 },
-                          tvl: c.tvl,
-                          current_price: 0,
-                          pool_config: { bin_step: 0, base_fee_pct: 0, max_fee_pct: 0, protocol_fee_pct: 0, collect_fee_mode: 0 },
-                          organic_score: c.organic_score,
-                          fee_tvl_ratio_24h: c.fee_tvl_ratio_24h,
-                        } as EnrichedPool);
-                      }}
-                      disabled={!dbReady}
-                      className="mt-3 w-full py-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-700 text-white text-sm rounded"
-                    >
-                      Deploy
-                    </button>
-                  </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+          <HunterCandidateTabs
+            generalCandidates={generalCandidates}
+            pools={pools}
+            poolsLoading={poolsLoading}
+            poolsError={poolsError}
+            poolsErrorMsg={poolsErrorMsg}
+            dbReady={!!dbReady}
+            onDeploy={setDeployPool}
+          />
 
           {/* Positions */}
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">

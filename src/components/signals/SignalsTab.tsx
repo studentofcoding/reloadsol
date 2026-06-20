@@ -11,6 +11,7 @@ const TypedDraggable = Draggable as React.ComponentType<
 import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
+import DlmmListButton from "@/components/dlmm/DlmmListButton";
 import { useTradingSignals, SignalItem } from "@/hooks/useTradingSignals";
 
 // Removed local types SignalItem and SignalsResponse as they are now imported
@@ -763,7 +764,7 @@ export default function SignalsTab() {
                         <td className="border-b p-2">
                           {s.is_tracking_stuck ? "Yes" : "No"}
                         </td>
-                        <td className="border-b p-2 flex gap-2">
+                        <td className="border-b p-2 flex gap-2 flex-wrap items-center">
                           <button
                             onClick={() =>
                               setChartModalTokenAddress(s.token_address)
@@ -782,6 +783,11 @@ export default function SignalsTab() {
                           >
                             Buy
                           </button>
+                          <DlmmListButton
+                            tokenAddress={s.token_address}
+                            tokenSymbol={s.token_symbol}
+                            source="signals"
+                          />
                         </td>
                       </tr>
                     ))

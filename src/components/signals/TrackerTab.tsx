@@ -7,6 +7,7 @@ import {
   EnrichedTokenData,
 } from "@/utils/data-aggregation";
 import ChartBuyModal from "@/components/ChartBuyModal";
+import DlmmListButton from "@/components/dlmm/DlmmListButton";
 import {
   useMCapTracker,
   FilterOptions,
@@ -2112,6 +2113,11 @@ export default function TrackerTab() {
                     >
                       Buy
                     </button>
+                    <DlmmListButton
+                      tokenAddress={token.token_address}
+                      tokenSymbol={token.token_symbol}
+                      source="tracker"
+                    />
                     <button
                       onClick={() =>
                         stopTrackingToken(

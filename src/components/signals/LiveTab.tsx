@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { boardTabUrl } from "@/components/signals/shared/parseAddresses";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
+import DlmmListButton from "@/components/dlmm/DlmmListButton";
 import { useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useTradingData } from "@/components/TradingDataProvider";
@@ -1527,6 +1528,14 @@ export default function LiveTab() {
               )}
             </button>
           )}
+
+          <div className="flex justify-end pt-1">
+            <DlmmListButton
+              tokenAddress={token.token_address}
+              tokenSymbol={token.token_symbol}
+              source="live"
+            />
+          </div>
         </div>
 
         {/* Highlight Indicator */}

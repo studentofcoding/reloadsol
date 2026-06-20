@@ -3,6 +3,8 @@ import type {
   DlmmAgentConfig,
   DlmmLesson,
   DlmmPosition,
+  DlmmPotentialEntry,
+  DlmmPotentialSource,
   DlmmScreenCandidate,
 } from '@/types/dlmm';
 import { defaultAgentConfig } from '@/utils/dlmm/config';
@@ -165,6 +167,75 @@ export async function getLatestCandidates(limit = 20): Promise<DlmmScreenCandida
   } catch (error) {
     logDbReadFallback('getLatestCandidates', error);
     return [];
+  }
+}
+
+function mapPotentialEntry(row: Record<string, unknown>): DlmmPotentialEntry {
+  return {
+    id: String(row.id),
+    token_address: String(row.token_address),
+    token_symbol: row.token_symbol ? String(row.token_symbol) : null,
+    source: row.source as DlmmPotentialSource,
+    notes: row.notes ? String(row.notes) : null,
+    added_at: String(row.added_at),
+  };
+}
+
+export async function getPotentialList(): Promise<DlmmPotentialEntry[]> {
+  try {
+    const { data, error } = await supabase
+      .from('dlmm_potential_list')
+      .select('*')
+      .order('added_at', { ascending: false });
+
+    if (error) throw error;
+    return (data ?? []).map(mapPotentialEntry);
+  } catch (error) {
+    logDbReadFallback('getPotentialList', error);
+    return [];
+  }
+}
+
+export async function addPotentialEntry(input: {
+  token_address: string;
+  token_symbol?: string | null;
+  source: DlmmPotentialSource;
+  notes?: string | null;
+}): Promise<DlmmPotentialEntry> {
+  try {
+    const { data, error } = await supabase
+      .from('dlmm_potential_list')
+      .upsert(
+        {
+          token_address: input.token_address,
+          token_symbol: input.token_symbol ?? null,
+          source: input.source,
+          notes: input.notes ?? null,
+          added_at: new Date().toISOString(),
+        },
+        { onConflict: 'token_address' },
+      )
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    clearDlmmDbStatusCache();
+    return mapPotentialEntry(data);
+  } catch (error) {
+    assertDbWritable(error);
+  }
+}
+
+export async function removePotentialEntry(tokenAddress: string): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from('dlmm_potential_list')
+      .delete()
+      .eq('token_address', tokenAddress);
+    if (error) throw error;
+    clearDlmmDbStatusCache();
+  } catch (error) {
+    assertDbWritable(error);
   }
 }
 

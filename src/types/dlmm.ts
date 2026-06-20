@@ -60,6 +60,23 @@ export interface DlmmScreenCandidate {
   screened_at: string;
 }
 
+export type DlmmPotentialSource =
+  | 'signals'
+  | 'live'
+  | 'board'
+  | 'tracker'
+  | 'algo-dashboard'
+  | 'algo-history';
+
+export interface DlmmPotentialEntry {
+  id: string;
+  token_address: string;
+  token_symbol: string | null;
+  source: DlmmPotentialSource;
+  notes: string | null;
+  added_at: string;
+}
+
 export interface DlmmAgentConfig {
   id: string;
   enabled: boolean;

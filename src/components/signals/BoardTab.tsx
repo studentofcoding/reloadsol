@@ -38,6 +38,7 @@ import { useChartCapture } from "@/hooks/useChartCapture";
 import { calculateWeightedDistribution } from "@/utils/position-sizing";
 import { useMCapTracker, FilterOptions } from "@/hooks/useMCapTracker";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
+import DlmmListButton from "@/components/dlmm/DlmmListButton";
 import { parseAddresses } from "@/components/signals/shared/parseAddresses";
 
 type SectionType = "watching" | "potential" | "rugged" | "mcap_tracker";
@@ -326,6 +327,14 @@ const ChartItem = React.memo(
             >
               Sim Sell
             </button>
+          </div>
+
+          <div className="mt-2 flex justify-end">
+            <DlmmListButton
+              tokenAddress={addr}
+              tokenSymbol={symbol}
+              source="board"
+            />
           </div>
 
           <div className="mt-2">

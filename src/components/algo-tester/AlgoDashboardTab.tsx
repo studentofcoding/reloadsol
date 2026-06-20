@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { boardTabUrl } from "@/components/signals/shared/parseAddresses";
 import UnifiedTokenModal from "@/components/UnifiedTokenModal";
 import ChartBuyModal from "@/components/ChartBuyModal";
+import DlmmListButton from "@/components/dlmm/DlmmListButton";
 import TokenDetailsModal from "@/components/TokenDetailsModal";
 import { useTrendingStats } from "@/hooks/useTrendingStats";
 import { useTokenHistory } from "@/hooks/useTokenHistory";
@@ -1979,6 +1980,16 @@ export default function AlgoDashboardTab() {
                         >
                           <span>📈</span> Chart & Buy
                         </button>
+                        <div
+                          className="mt-2 flex justify-end"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <DlmmListButton
+                            tokenAddress={token.token_address}
+                            tokenSymbol={token.token_symbol}
+                            source="algo-dashboard"
+                          />
+                        </div>
                       </div>
                     ))}
                   </div>

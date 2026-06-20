@@ -15,6 +15,7 @@ import {
 import { Line } from "react-chartjs-2";
 import "chartjs-adapter-date-fns";
 import ChartBuyModal from "@/components/ChartBuyModal";
+import DlmmListButton from "@/components/dlmm/DlmmListButton";
 import {
   useTrackingHistory,
   type FilterOptions,
@@ -607,7 +608,7 @@ export default function HistoryTab() {
                 </div>
 
                 {/* Action Buttons */}
-                <div className="flex justify-end space-x-2">
+                <div className="flex justify-end space-x-2 flex-wrap items-center gap-y-2">
                   <button
                     onClick={() =>
                       setChartModalTokenAddress(token.token_address)
@@ -616,6 +617,11 @@ export default function HistoryTab() {
                   >
                     <span>📈</span> Buy
                   </button>
+                  <DlmmListButton
+                    tokenAddress={token.token_address}
+                    tokenSymbol={token.token_symbol}
+                    source="algo-history"
+                  />
                   <button
                     onClick={() => {
                       setSelectedToken(token);

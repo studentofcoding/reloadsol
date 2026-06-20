@@ -324,6 +324,19 @@ CREATE TABLE IF NOT EXISTS dlmm_candidates (
 CREATE INDEX IF NOT EXISTS idx_dlmm_candidates_screened ON dlmm_candidates(screened_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dlmm_candidates_pool ON dlmm_candidates(pool_address);
 
+-- Manually curated DLMM watchlist (added from Signals / Algo Tester / Board)
+CREATE TABLE IF NOT EXISTS dlmm_potential_list (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_address TEXT NOT NULL UNIQUE,
+  token_symbol TEXT,
+  source TEXT NOT NULL DEFAULT 'signals',
+  notes TEXT,
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dlmm_potential_added ON dlmm_potential_list(added_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dlmm_potential_token ON dlmm_potential_list(token_address);
+
 CREATE TABLE IF NOT EXISTS dlmm_positions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   pool_address TEXT NOT NULL,
