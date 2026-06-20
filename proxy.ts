@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   // Base allowed origins (exact matches)
   const baseAllowedOrigins = [
     'https://reloadsol.xyz',
@@ -69,12 +69,12 @@ export function middleware(request: NextRequest) {
       return new Response(null, { status: 200, headers: preflightHeaders })
     }
   }
-  
+
   // Add origin header if missing (for Server Actions)
   if (!requestHeaders.has('origin')) {
     const host = requestHeaders.get('host')
     const protocol = request.nextUrl.protocol
-    
+
     if (host) {
       requestHeaders.set('origin', `${protocol}//${host}`)
     }
@@ -83,11 +83,11 @@ export function middleware(request: NextRequest) {
   // Add forwarded headers for PM2/proxy setups
   const forwarded = requestHeaders.get('x-forwarded-for')
   const realIp = requestHeaders.get('x-real-ip')
-  
+
   if (forwarded && !requestHeaders.has('x-forwarded-for')) {
     requestHeaders.set('x-forwarded-for', forwarded)
   }
-  
+
   if (realIp && !requestHeaders.has('x-real-ip')) {
     requestHeaders.set('x-real-ip', realIp)
   }

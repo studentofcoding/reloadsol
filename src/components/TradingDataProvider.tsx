@@ -73,7 +73,7 @@ export function useSolPrice() {
       try {
         // Try to fetch from API
         if (typeof window !== "undefined") {
-          const response = await fetch("/api/sol-price");
+          const response = await fetch("/api/solprice");
           if (response.ok) {
             const data = await response.json();
             return data.price || 0;

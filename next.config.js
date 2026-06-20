@@ -1,20 +1,60 @@
 /** @type {import('next').NextConfig} */
+const imageHosts = [
+  'raw.githubusercontent.com',
+  'github.com',
+  'assets.coingecko.com',
+  'coin-images.coingecko.com',
+  'cryptologos.cc',
+  'tokens.1inch.io',
+  'jupiter-aggregator.vercel.app',
+  's3.coinmarketcap.com',
+  'pbs.twimg.com',
+  'ipfs.io',
+  'arweave.net',
+  'cdn.jsdelivr.net',
+  'i.degencdn.com',
+  'static-create.jup.ag',
+  'proxy.duckduckgo.com',
+  'ipfs.filebase.io',
+  'image-cdn.solana.fm',
+  'cf-ipfs.com',
+  'kuji44lsf4frvko7srm7jdj6nqy2jzvdl5hy5dsodi7nva75rbtq.arweave.net',
+]
+
 const nextConfig = {
   // ===== CORE CONFIGURATION =====
   output: 'standalone',
+  outputFileTracingRoot: require('path').join(__dirname),
   typescript: {
     ignoreBuildErrors: process.env.SKIP_BUILD_CHECKS === 'true',
   },
-  eslint: {
-    ignoreDuringBuilds: process.env.SKIP_BUILD_CHECKS === 'true',
-  },
   reactStrictMode: true,
-  swcMinify: true,
   poweredByHeader: false,
   transpilePackages: ['@jup-ag/wallet-adapter'],
+  serverExternalPackages: ['puppeteer'],
 
   // ===== COMPRESSION & PERFORMANCE =====
   compress: true,
+
+  // ===== TURBOPACK (Solana/crypto polyfills) =====
+  turbopack: {
+    root: __dirname,
+    resolveAlias: {
+      fs: { browser: './empty-module.js' },
+      net: { browser: './empty-module.js' },
+      tls: { browser: './empty-module.js' },
+      crypto: './node_modules/crypto-browserify/index.js',
+      stream: './node_modules/stream-browserify/index.js',
+      url: './node_modules/url/url.js',
+      zlib: './node_modules/browserify-zlib/lib/index.js',
+      http: './node_modules/stream-http/index.js',
+      https: './node_modules/https-browserify/index.js',
+      assert: './node_modules/assert/build/assert.js',
+      os: './node_modules/os-browserify/browser.js',
+      path: './node_modules/path-browserify/index.js',
+      'pino-pretty': { browser: './empty-module.js' },
+    },
+  },
 
   // ===== IMAGES OPTIMIZATION =====
   images: {
@@ -24,54 +64,14 @@ const nextConfig = {
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     dangerouslyAllowSVG: true,
     contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
-    domains: [
-      'raw.githubusercontent.com',
-      'github.com',
-      'assets.coingecko.com',
-      'coin-images.coingecko.com',
-      'cryptologos.cc',
-      'tokens.1inch.io',
-      'jupiter-aggregator.vercel.app',
-      's3.coinmarketcap.com',
-      'pbs.twimg.com',
-      'ipfs.io',
-      'arweave.net',
-      'cdn.jsdelivr.net',
-      'i.degencdn.com',
-      'static-create.jup.ag',
-      'proxy.duckduckgo.com',
-      'ipfs.filebase.io',
-      'image-cdn.solana.fm',
-      'cf-ipfs.com',
-      'kuji44lsf4frvko7srm7jdj6nqy2jzvdl5hy5dsodi7nva75rbtq.arweave.net'
-    ],
+    remotePatterns: imageHosts.map((hostname) => ({
+      protocol: 'https',
+      hostname,
+    })),
   },
 
   // ===== SECURITY HEADERS =====
   async headers() {
-    // Define allowed origins based on environment
-    const getAllowedOrigins = () => {
-      const baseOrigins = [
-        'https://reloadsol.app',      // Production
-        'https://reloadsol.xyz',
-        'https://testing.reloadsol.xyz', // Testing/Staging
-      ];
-
-      // Add development origins in non-production
-      if (process.env.NODE_ENV !== 'production') {
-        baseOrigins.push(
-          'http://localhost:3000',
-          'http://localhost:3001',
-          'http://127.0.0.1:3000',
-          'http://127.0.0.1:3001'
-        );
-      }
-
-      return baseOrigins;
-    };
-
-    const allowedOrigins = getAllowedOrigins();
-
     return [
       {
         source: '/(.*)',
@@ -132,16 +132,14 @@ const nextConfig = {
 
   // ===== COMPILER OPTIMIZATIONS =====
   compiler: {
-    styledComponents: true,
     removeConsole: process.env.NODE_ENV === 'production' ? {
       exclude: ['error', 'warn']
     } : false,
     reactRemoveProperties: process.env.NODE_ENV === 'production',
   },
 
-  // ===== WEBPACK OPTIMIZATIONS =====
-  webpack: (config, { dev, isServer, webpack }) => {
-    // Polyfills for Solana and crypto libraries
+  // ===== WEBPACK OPTIMIZATIONS (fallback when using --webpack) =====
+  webpack: (config, { dev, isServer }) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,
       fs: false,
@@ -159,7 +157,6 @@ const nextConfig = {
       'pino-pretty': false,
     }
 
-    // Exclude development files from production builds
     if (!dev) {
       config.module.rules.push({
         test: /tokenOperations\.ts$/,
@@ -167,19 +164,16 @@ const nextConfig = {
       })
     }
 
-    // Production optimizations - FIXED: More conservative bundle splitting
     if (!dev && !isServer) {
       config.optimization.splitChunks = {
         chunks: 'all',
         minSize: 20000,
-        maxSize: 200000, // Reduced from 244000
-        maxInitialRequests: 6, // Limit initial chunks
+        maxSize: 200000,
+        maxInitialRequests: 6,
         maxAsyncRequests: 10,
         cacheGroups: {
           default: false,
           vendors: false,
-
-          // ESSENTIAL: Only framework in initial bundle
           framework: {
             name: 'framework',
             chunks: 'all',
@@ -187,26 +181,20 @@ const nextConfig = {
             priority: 50,
             enforce: true,
           },
-
-          // ASYNC: Load Solana libraries on-demand only
           solana: {
             name: 'solana',
-            chunks: 'async', // Changed from 'all' to 'async'
+            chunks: 'async',
             test: /[\\/]node_modules[\\/](@solana|@metaplex)[\\/]/,
             priority: 45,
             enforce: true,
           },
-
-          // ASYNC: Charts load when needed
           charts: {
             name: 'charts',
-            chunks: 'async', // Changed from 'all' to 'async'
+            chunks: 'async',
             test: /[\\/]node_modules[\\/](chart\.js|react-chartjs-2)[\\/]/,
             priority: 40,
             enforce: true,
           },
-
-          // ESSENTIAL: Keep React Query in initial (used everywhere)
           reactQuery: {
             name: 'react-query',
             chunks: 'all',
@@ -214,8 +202,6 @@ const nextConfig = {
             priority: 38,
             enforce: true,
           },
-
-          // ESSENTIAL: Keep Supabase in initial (used for auth/data)
           supabase: {
             name: 'supabase',
             chunks: 'all',
@@ -223,17 +209,13 @@ const nextConfig = {
             priority: 37,
             enforce: true,
           },
-
-          // ASYNC: Crypto polyfills load when wallet connects
           crypto: {
             name: 'crypto',
-            chunks: 'async', // Changed from 'all' to 'async'
+            chunks: 'async',
             test: /[\\/]node_modules[\\/](crypto-browserify|stream-browserify|https-browserify|os-browserify|path-browserify|browserify-zlib|stream-http|assert)[\\/]/,
             priority: 35,
             enforce: true,
           },
-
-          // SHARED: Common utilities in initial bundle
           utils: {
             name: 'utils',
             chunks: 'all',
@@ -241,17 +223,13 @@ const nextConfig = {
             priority: 30,
             enforce: true,
           },
-
-          // ASYNC: Other vendor libraries load on-demand
           vendor: {
             name: 'vendor',
-            chunks: 'async', // Changed from 'all' to 'async'
+            chunks: 'async',
             test: /[\\/]node_modules[\\/]/,
             priority: 20,
             minChunks: 2,
           },
-
-          // Common application code
           common: {
             name: 'common',
             chunks: 'all',
@@ -262,14 +240,12 @@ const nextConfig = {
         },
       }
 
-      // Enhanced tree shaking
       config.optimization.usedExports = true
       config.optimization.sideEffects = false
       config.optimization.concatenateModules = true
       config.optimization.minimize = true
     }
 
-    // Ignore source maps in production
     if (!dev) {
       config.devtool = false
     }
@@ -298,13 +274,10 @@ const nextConfig = {
 
   // ===== BUNDLE ANALYSIS =====
   ...(process.env.ANALYZE === 'true' && {
-    experimental: {
-      bundlePagesExternals: false
-    }
+    bundlePagesRouterDependencies: false,
   }),
 }
 
-// Bundle analyzer
 if (process.env.ANALYZE === 'true') {
   const withBundleAnalyzer = require('@next/bundle-analyzer')({
     enabled: true,

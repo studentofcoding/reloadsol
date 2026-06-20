@@ -4186,7 +4186,11 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
     const testFilter = searchParams.get('test') === 'filter'
 
     if (secretKey !== expectedSecretKey) {
-      logger.warn('api_request', 'Unauthorized attempt to change trading mode', { ip: request.ip })
+      logger.warn('api_request', 'Unauthorized attempt to change trading mode', {
+        ip: request.headers.get('x-forwarded-for') ||
+          request.headers.get('x-real-ip') ||
+          'unknown',
+      })
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

@@ -9,10 +9,11 @@ function getPassword(req: NextRequest): string | null {
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const position = await getPositionById(params.id);
+    const { id } = await params;
+    const position = await getPositionById(id);
     if (!position) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
@@ -27,14 +28,15 @@ export async function GET(
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     if (!isDlmmApiAuthorized(getPassword(req))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    const { id } = await params;
     const body = await req.json();
-    const result = await editPosition(params.id, {
+    const result = await editPosition(id, {
       takeProfitPct: body.takeProfitPct != null ? Number(body.takeProfitPct) : undefined,
       stopLossPct: body.stopLossPct != null ? Number(body.stopLossPct) : undefined,
       oorTimeoutMin: body.oorTimeoutMin != null ? Number(body.oorTimeoutMin) : undefined,
@@ -52,13 +54,14 @@ export async function PATCH(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     if (!isDlmmApiAuthorized(getPassword(req))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const result = await removePosition(params.id);
+    const { id } = await params;
+    const result = await removePosition(id);
     return NextResponse.json(result, { status: result.success ? 200 : 400 });
   } catch (error) {
     return NextResponse.json(

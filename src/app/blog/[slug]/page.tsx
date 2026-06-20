@@ -5,14 +5,15 @@ import Link from 'next/link';
 import Footer from '@/components/Footer';
 
 type Props = {
-  params: {
+  params: Promise<{
     slug: string;
-  };
+  }>;
 };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { slug } = await params;
   try {
-    const post = await getPostData(params.slug);
+    const post = await getPostData(slug);
     return {
       title: `${post.title} | ReloadSOL Blog`,
       description: `Read the latest post from the ReloadSOL team: ${post.title}`,
@@ -31,9 +32,10 @@ export function generateStaticParams() {
 }
 
 export default async function Post({ params }: Props) {
+  const { slug } = await params;
   let post;
   try {
-    post = await getPostData(params.slug);
+    post = await getPostData(slug);
   } catch (error) {
     notFound();
   }
@@ -64,4 +66,4 @@ export default async function Post({ params }: Props) {
       <Footer />
     </>
   );
-} 
+}
