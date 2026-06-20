@@ -8,6 +8,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Supabase secret API keys
+
+- **New key model** — server requires `SUPABASE_SECRET_KEY` (`sb_secret_...`); legacy `service_role` / `anon` / `NEXT_PUBLIC_SUPABASE_*` env vars removed.
+- **Pure admin client** — [`src/utils/supabase.ts`](src/utils/supabase.ts) uses secret key only with `detectSessionInUrl: false` (no user JWT mixing).
+- **Scripts / CI** — admin scripts and [`deploy_pm2.yml`](.github/workflows/deploy_pm2.yml) updated for `SUPABASE_SECRET_KEY`.
+
+### Added — Wallet API sessions + Supabase hardening (Phase 2)
+
+- **Wallet sign-in** — `/api/auth/wallet/session` issues an httpOnly cookie after ed25519 message signing (`WalletSessionBridge` auto-signs on connect).
+- **API middleware** — [`proxy.ts`](proxy.ts) + [`src/config/api-access.ts`](src/config/api-access.ts) enforce wallet vs dev tiers on API routes; cron/webhook bearer secrets still bypass.
+- **Supabase RLS** — all app tables in [`supabase/schema.sql`](supabase/schema.sql) now have RLS enabled (blocks direct PostgREST access).
+- **Env** — `SUPABASE_SECRET_KEY`, `WALLET_SESSION_SECRET`, optional `WALLET_SESSION_TTL_HOURS`.
+
 ### Changed — Wallet tier access (UI)
 
 - **Route tiers** — [`src/config/route-access.ts`](src/config/route-access.ts): wallet-required routes (`/buy`, `/sell`, `/swap`, `/history`, `/pnl`) vs dev whitelist routes (`/dev/signals`, `/dev/algo-tester`, `/dev/dlmm`).

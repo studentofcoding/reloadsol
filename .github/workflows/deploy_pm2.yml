@@ -44,7 +44,8 @@ jobs:
         env:
           NODE_OPTIONS: "--max-old-space-size=1024"
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          WALLET_SESSION_SECRET: ${{ secrets.WALLET_SESSION_SECRET }}
           RPC_URL: ${{ secrets.RPC_URL }}
           
       - name: Deploy with PM2
@@ -53,7 +54,8 @@ jobs:
           pm2 save
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          WALLET_SESSION_SECRET: ${{ secrets.WALLET_SESSION_SECRET }}
           RPC_URL: ${{ secrets.RPC_URL }}
           
       - name: Health check

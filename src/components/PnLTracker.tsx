@@ -5,7 +5,7 @@ import {
   TrackingRecord,
   fetchTokenPricesForTracking,
 } from "@/utils/trading-tracker";
-import { useWallet, useConnection } from "./WalletProvider";
+import { useWallet, useConnection, useWalletAddress } from "./WalletProvider";
 import { useTradingData } from "./TradingDataProvider";
 import TokenSkeleton from "./TokenSkeleton";
 import { getSolPriceUSD } from "@/utils/solana";
@@ -99,6 +99,7 @@ interface OpenPosition {
 
 export default function PnLTracker() {
   const { publicKey, connected, signAllTransactions } = useWallet();
+  const walletAddress = useWalletAddress();
   const { connection } = useConnection();
   const { records, trackOperation, isLoadingRecords } = useTradingData();
   const [pnlRecords, setPnlRecords] = useState<PnLRecord[]>([]);
@@ -466,7 +467,7 @@ export default function PnLTracker() {
 
   // Calculate PnL records by matching buy and sell operations
   const calculatePnL = useCallback(async () => {
-    if (!connected || !publicKey) {
+    if (!walletAddress) {
       setPnlRecords([]);
       setOpenPositions([]);
       return;
@@ -476,7 +477,6 @@ export default function PnLTracker() {
     setError("");
 
     try {
-      const walletAddress = publicKey.toString();
       const allRecords = records; // Use records from React Query
 
       // Get successful buy and sell records
@@ -863,7 +863,7 @@ export default function PnLTracker() {
     } finally {
       setIsLoading(false);
     }
-  }, [connected, publicKey, records, solPriceUsd]);
+  }, [walletAddress, records, solPriceUsd]);
 
   // ✅ NEW: Toggle token selection for bulk sell
   const toggleTokenSelection = useCallback(
@@ -1310,11 +1310,11 @@ export default function PnLTracker() {
 
   // Load PnL data when wallet connects or records change
   useEffect(() => {
-    if (connected && publicKey && records.length >= 0) {
+    if (walletAddress && records.length >= 0) {
       // Allow for empty records array
       calculatePnL();
     }
-  }, [calculatePnL, connected, publicKey, records]);
+  }, [calculatePnL, walletAddress, records]);
 
   // Real-time updates are now handled by React Query in TradingDataProvider
   // No need for manual subscription here
@@ -2798,7 +2798,7 @@ export default function PnLTracker() {
           </>
         )}
 
-        {!connected && (
+        {!walletAddress && (
           <div className="text-center py-8">
             <p className="text-gray-400 text-sm">
               Connect your wallet to track trading performance

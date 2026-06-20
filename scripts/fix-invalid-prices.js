@@ -1,19 +1,20 @@
 // Load environment variables from .env file
-require('dotenv').config({ path: __dirname + '/.env' })
+require('dotenv').config({ path: __dirname + '/../.env.local' })
+require('dotenv').config({ path: __dirname + '/../.env' })
 
 const { createClient } = require('@supabase/supabase-js')
 
 // Try both possible environment variable names
-const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseKey = process.env.SUPABASE_ANON_KEY
+const supabaseUrl = process.env.SUPABASE_URL
+const supabaseKey = process.env.SUPABASE_SECRET_KEY
 
 if (!supabaseUrl) {
-    console.error('❌ Supabase URL not found. Please set SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL environment variable.')
+    console.error('❌ Supabase URL not found. Please set SUPABASE_URL environment variable.')
     process.exit(1)
 }
 
 if (!supabaseKey) {
-    console.error('❌ Supabase key not found. Please set SUPABASE_ANON_KEY environment variable.')
+    console.error('❌ Supabase key not found. Please set SUPABASE_SECRET_KEY environment variable.')
     process.exit(1)
 }
 

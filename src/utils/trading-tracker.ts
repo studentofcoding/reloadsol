@@ -240,6 +240,7 @@ class TradingTracker {
 
     const response = await fetch(`${baseUrl}/api/trading/records?id=${id}&wallet=${walletAddress}`, {
       method: 'DELETE',
+      credentials: 'include',
     });
 
     if (!response.ok) {
@@ -282,6 +283,7 @@ class TradingTracker {
       headers: {
         'Content-Type': 'application/json',
       },
+      credentials: 'include',
       body: JSON.stringify(record)
     });
 
@@ -419,7 +421,11 @@ class TradingTracker {
         : ((typeof process !== 'undefined' ? (process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST) : undefined) || 'http://localhost:3000');
 
       const apiUrl = `${baseUrl}/api/trading/records?wallet=${encodeURIComponent(walletAddress)}&limit=500`
-      const response = await fetch(apiUrl)
+      const response = await fetch(apiUrl, { credentials: 'include' })
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('WALLET_SESSION_REQUIRED')
+      }
 
       if (!response.ok) {
         console.error('Failed to fetch wallet records:', response.statusText)

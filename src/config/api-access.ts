@@ -1,0 +1,103 @@
+/** API routes that stay open without a wallet session. */
+export const PUBLIC_API_PREFIXES = [
+  '/api/auth',
+  '/api/health',
+  '/api/solprice',
+  '/api/rpc',
+  '/api/tokens',
+  '/api/jupiter',
+  '/api/providers',
+  '/api/trade/health',
+  '/api/trade/test',
+  '/api/trade/pools-test',
+  '/api/axiom',
+  '/api/logs',
+] as const;
+
+/** Any connected wallet session (buy/sell/swap analytics). Checked before dev prefixes. */
+export const WALLET_API_PREFIXES = [
+  '/api/buy',
+  '/api/operations',
+  '/api/trading/records',
+  '/api/trade/compare',
+  '/api/trade/enhanced-compare',
+  '/api/trending/search',
+  '/api/trending/filtered',
+  '/api/trending/prices',
+] as const;
+
+/** Dev whitelist wallet session. */
+export const DEV_API_PREFIXES = [
+  '/api/signals',
+  '/api/rug',
+  '/api/dlmm',
+  '/api/trading/signals',
+  '/api/mcap-tracking',
+  '/api/trending',
+  '/api/analytics',
+  '/api/sl-tp-monitor',
+  '/api/trading/sync',
+  '/api/trading/subscribe',
+  '/api/capture',
+  '/api/pnl/update',
+] as const;
+
+/** Cron / webhook / bearer routes that bypass wallet sessions. */
+export const SERVICE_AUTH_API_PREFIXES = [
+  '/api/dlmm/screen',
+  '/api/dlmm/manage',
+  '/api/dlmm/telegram',
+] as const;
+
+export type ApiAccessTier = 'public' | 'wallet' | 'dev' | 'open';
+
+export function matchesApiPrefix(
+  pathname: string,
+  prefixes: readonly string[],
+): boolean {
+  const path = pathname || '';
+  return prefixes.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`),
+  );
+}
+
+/** GET /api/ohlc is used by public chart pages; POST uses OHLC_UPDATE_TOKEN in-route. */
+export function isPublicOhlcRead(pathname: string, method: string): boolean {
+  return (
+    (pathname === '/api/ohlc' || pathname.startsWith('/api/ohlc/')) &&
+    method === 'GET'
+  );
+}
+
+/** GET trending lists for marketing preview (wallet gate, landing). */
+export function isPublicTrendingRead(pathname: string, method: string): boolean {
+  if (method !== 'GET') return false;
+  return (
+    pathname === '/api/trending/filtered' ||
+    pathname === '/api/trending/prices'
+  );
+}
+
+export function getApiAccessTier(pathname: string, method: string): ApiAccessTier {
+  if (matchesApiPrefix(pathname, PUBLIC_API_PREFIXES)) {
+    return 'public';
+  }
+
+  if (isPublicOhlcRead(pathname, method)) {
+    return 'public';
+  }
+
+  if (isPublicTrendingRead(pathname, method)) {
+    return 'public';
+  }
+
+  if (matchesApiPrefix(pathname, WALLET_API_PREFIXES)) {
+    return 'wallet';
+  }
+
+  if (matchesApiPrefix(pathname, DEV_API_PREFIXES)) {
+    return 'dev';
+  }
+
+  return 'open';
+}

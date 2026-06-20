@@ -12,6 +12,7 @@ import {
   useUnifiedWallet,
 } from "@jup-ag/wallet-adapter";
 import { WalletNotification } from "@/components/WalletNotification";
+import WalletSessionBridge from "@/components/WalletSessionBridge";
 import { createConnection } from "@/utils/connection";
 import { isDevWallet, toWalletAddress } from "@/utils/dev-wallet";
 
@@ -46,7 +47,10 @@ function WalletContextBridge({ children }: { children: React.ReactNode }) {
   // Spreading breaks connect/sign methods bound to the adapter instance.
   return (
     <WalletContext.Provider value={wallet}>
-      <ConnectionProvider>{children}</ConnectionProvider>
+      <ConnectionProvider>
+        <WalletSessionBridge />
+        {children}
+      </ConnectionProvider>
     </WalletContext.Provider>
   );
 }

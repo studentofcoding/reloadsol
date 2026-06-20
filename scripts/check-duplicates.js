@@ -5,21 +5,24 @@
  * Usage: node scripts/check-duplicates.js
  */
 
+require('dotenv').config({ path: __dirname + '/../.env.local' })
+require('dotenv').config({ path: __dirname + '/../.env' })
+
 const { createClient } = require('@supabase/supabase-js')
 
 // Configuration
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+const SUPABASE_URL = process.env.SUPABASE_URL
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY
 const TABLE_NAME = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+if (!SUPABASE_URL || !SUPABASE_SECRET_KEY) {
   console.error('❌ Missing Supabase environment variables')
-  console.error('   NEXT_PUBLIC_SUPABASE_URL')
-  console.error('   NEXT_PUBLIC_SUPABASE_ANON_KEY')
+  console.error('   SUPABASE_URL')
+  console.error('   SUPABASE_SECRET_KEY')
   process.exit(1)
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+const supabase = createClient(SUPABASE_URL, SUPABASE_SECRET_KEY)
 
 async function checkDuplicates() {
   try {
@@ -212,8 +215,8 @@ switch (command) {
     console.log('  node scripts/check-duplicates.js cleanup  # Preview cleanup actions')
     console.log('')
     console.log('Environment variables needed:')
-    console.log('  NEXT_PUBLIC_SUPABASE_URL     # Supabase project URL')
-    console.log('  NEXT_PUBLIC_SUPABASE_ANON_KEY # Supabase anon key')
+    console.log('  SUPABASE_URL          # Supabase project URL')
+    console.log('  SUPABASE_SECRET_KEY   # sb_secret_... from dashboard')
     console.log('  NODE_ENV                     # development or production')
     process.exit(1)
 } 

@@ -16,9 +16,10 @@ export function getSupabaseHost(): string | null {
 
 export function isSupabaseConfigured(): boolean {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_ANON_KEY;
+  const key = process.env.SUPABASE_SECRET_KEY?.trim();
   if (!url || !key) return false;
-  if (key === 'your-anon-key' || key === 'placeholder-key') return false;
+  if (key === 'your-secret-key' || key === 'placeholder-key') return false;
+  if (key.startsWith('PASTE_')) return false;
   const host = getSupabaseHost();
   if (!host) return false;
   return !PLACEHOLDER_HOSTS.some((p) => host === p || host.includes('your-project'));
@@ -68,7 +69,7 @@ export function isMissingSchemaError(error: unknown): boolean {
 export function formatDbError(error: unknown): string {
   if (isDbConnectivityError(error)) {
     const host = getSupabaseHost() ?? 'unknown host';
-    return `Supabase unreachable (${host}). Set valid SUPABASE_URL and SUPABASE_ANON_KEY in .env, then apply supabase/schema.sql.`;
+    return `Supabase unreachable (${host}). Set valid SUPABASE_URL and SUPABASE_SECRET_KEY in .env, then apply supabase/schema.sql.`;
   }
 
   if (isMissingSchemaError(error)) {

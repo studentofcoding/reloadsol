@@ -1,18 +1,35 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // Environment detection
 const isServer = typeof window === 'undefined';
 
-// Server-side configuration (private env vars only)
-const getServerSupabaseConfig = () => {
+type SupabaseServerConfig = {
+  url: string;
+  key: string;
+};
+
+// Server-side configuration — secret key bypasses RLS (sb_secret_* from Dashboard).
+const getServerSupabaseConfig = (): SupabaseServerConfig => {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_ANON_KEY;
-  
-  if (!url || !key) {
-    throw new Error('Server supabase config missing: SUPABASE_URL and SUPABASE_ANON_KEY must be set');
+  const secretKey = process.env.SUPABASE_SECRET_KEY?.trim();
+
+  if (!url) {
+    throw new Error('Server supabase config missing: SUPABASE_URL must be set');
   }
-  
-  return { url, key };
+
+  if (!secretKey) {
+    throw new Error(
+      'Server supabase config missing: SUPABASE_SECRET_KEY must be set (Dashboard → API Keys → default secret key, sb_secret_...)',
+    );
+  }
+
+  if (!secretKey.startsWith('sb_secret_')) {
+    console.warn(
+      'SUPABASE_SECRET_KEY does not start with sb_secret_ — did you paste a legacy service_role JWT instead of the new secret key?',
+    );
+  }
+
+  return { url, key: secretKey };
 };
 
 // Client-side configuration (will use API proxy instead of direct connection)
@@ -21,54 +38,54 @@ const getClientSupabaseConfig = () => {
   // This forces all client-side operations to go through API routes
   return {
     url: 'https://placeholder.supabase.co', // Placeholder URL
-    key: 'placeholder-key' // Placeholder key
+    key: 'placeholder-key', // Placeholder key
   };
 };
 
 // Create appropriate configuration based on environment
 const config = isServer ? getServerSupabaseConfig() : getClientSupabaseConfig();
 
-// Main supabase client - only works properly on server
-export const supabase = createClient(config.url, config.key, {
-  auth: {
-    persistSession: !isServer, // Only persist session on client
-    autoRefreshToken: !isServer,
-  }
-});
+function createServerClient(): SupabaseClient {
+  return createClient(config.url, config.key, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
 
-// Admin supabase client - server only
-export const adminSupabase = isServer 
-  ? createClient(config.url, config.key, {
+// Main supabase client - only works properly on server
+export const supabase = isServer
+  ? createServerClient()
+  : createClient(config.url, config.key, {
       auth: {
-        autoRefreshToken: false,
-        persistSession: false
-      }
-    })
-  : supabase; // Fallback to main client on browser (will error appropriately)
+        persistSession: true,
+        autoRefreshToken: true,
+      },
+    });
+
+// Admin supabase client - server only (same key; kept for call-site clarity)
+export const adminSupabase = isServer ? createServerClient() : supabase;
 
 // Client-side operations should go through API routes instead
 if (!isServer) {
   // Override supabase methods to throw helpful errors on client
-  const clientError = () => {
-    throw new Error('Direct supabase access not allowed on client. Use API routes instead.');
-  };
-  
-  // We'll keep the client creation for typing but override dangerous methods
   supabase.from = () => {
     throw new Error('Direct supabase.from() not allowed on client. Use fetch("/api/...") instead.');
   };
-  
+
   // Block other direct access methods
   supabase.auth = new Proxy({} as any, {
     get: () => {
       throw new Error('Direct supabase.auth not allowed on client. Use auth API routes instead.');
-    }
+    },
   });
-  
+
   supabase.realtime = new Proxy({} as any, {
     get: () => {
       throw new Error('Direct supabase.realtime not allowed on client. Use SSE/WebSocket API routes instead.');
-    }
+    },
   });
 }
 

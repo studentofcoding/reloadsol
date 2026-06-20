@@ -37,7 +37,7 @@ export async function getDlmmDbStatus(force = false): Promise<DlmmDbStatus> {
       schemaReady: false,
       host,
       error:
-        'Supabase not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY in .env (see .env.docker.example).',
+        'Supabase not configured. Set SUPABASE_URL and SUPABASE_SECRET_KEY in .env (see .env.docker.example).',
     };
     cachedStatus = { at: Date.now(), value };
     return value;

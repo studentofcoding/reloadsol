@@ -129,7 +129,7 @@ export default function DlmmDashboardPage() {
               </p>
               <ol className="list-decimal list-inside space-y-1 text-red-200/90">
                 <li>Set <code className="text-red-100">SUPABASE_URL</code> and{" "}
-                  <code className="text-red-100">SUPABASE_ANON_KEY</code> in{" "}
+                  <code className="text-red-100">SUPABASE_SECRET_KEY</code> in{" "}
                   <code className="text-red-100">.env</code>
                 </li>
                 <li>Run <code className="text-red-100">supabase/schema.sql</code> in Supabase SQL editor</li>

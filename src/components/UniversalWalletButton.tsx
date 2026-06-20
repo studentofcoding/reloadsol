@@ -8,10 +8,12 @@ import {
 
 interface UniversalWalletButtonProps {
   variant?: "default" | "jupiter";
+  connectLabel?: string;
 }
 
 export default function UniversalWalletButton({
   variant = "default",
+  connectLabel = "Connect Wallet",
 }: UniversalWalletButtonProps) {
   const { connected, connecting } = useUnifiedWallet();
   const { setShowModal } = useUnifiedWalletContext();
@@ -56,7 +58,7 @@ export default function UniversalWalletButton({
           <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
             <path d="M12 2L2 7v10c0 5.55 3.84 9.74 9 11 5.16-1.26 9-5.45 9-11V7l-10-5z" />
           </svg>
-          <span>Connect Wallet</span>
+          <span>{connectLabel}</span>
         </>
       )}
     </button>

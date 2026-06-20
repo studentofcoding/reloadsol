@@ -9,7 +9,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { tradingTracker, TrackingRecord } from "@/utils/trading-tracker";
-import { useWallet } from "./WalletProvider";
+import { useWallet, useWalletAddress } from "./WalletProvider";
 
 // Create a stable query client instance
 const queryClient = new QueryClient({
@@ -98,6 +98,13 @@ export function useTradingRecords(walletAddress?: string) {
       if (!walletAddress) return [];
       return await tradingTracker.getWalletRecords(walletAddress, false); // Force fresh fetch
     },
+    retry: (failureCount, error) => {
+      if (error instanceof Error && error.message === 'WALLET_SESSION_REQUIRED') {
+        return failureCount < 5;
+      }
+      return failureCount < 2;
+    },
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 8000),
     enabled: !!walletAddress,
     staleTime: 1000 * 60 * 2, // 2 minutes for trading records
   });
@@ -106,21 +113,18 @@ export function useTradingRecords(walletAddress?: string) {
 // Track operation mutation
 export function useTrackOperation() {
   const queryClient = useQueryClient();
-  const { publicKey } = useWallet();
+  const walletAddress = useWalletAddress();
 
   return useMutation({
     mutationFn: async (operation: Omit<TrackingRecord, "id" | "timestamp">) => {
       await tradingTracker.trackOperation(operation);
     },
     onSuccess: () => {
-      // Invalidate and refetch trading records for the current wallet
-      if (publicKey) {
-        const walletAddress = publicKey.toString();
+      if (walletAddress) {
         queryClient.invalidateQueries({
           queryKey: QUERY_KEYS.tradingRecords(walletAddress),
         });
 
-        // Also trigger a manual refresh after a small delay to ensure Supabase sync
         setTimeout(() => {
           queryClient.refetchQueries({
             queryKey: QUERY_KEYS.tradingRecords(walletAddress),
@@ -138,15 +142,15 @@ export function useTrackOperation() {
 export function useDeleteRecord() {
   const queryClient = useQueryClient();
   const { publicKey } = useWallet();
+  const walletAddress = useWalletAddress();
 
   return useMutation({
     mutationFn: async (id: string) => {
-      if (!publicKey) throw new Error("Wallet not connected");
-      await tradingTracker.deleteRecord(id, publicKey.toString());
+      if (!walletAddress) throw new Error("Wallet not connected");
+      await tradingTracker.deleteRecord(id, walletAddress);
     },
     onSuccess: () => {
-      if (publicKey) {
-        const walletAddress = publicKey.toString();
+      if (walletAddress) {
         queryClient.invalidateQueries({
           queryKey: QUERY_KEYS.tradingRecords(walletAddress),
         });
@@ -166,11 +170,8 @@ export function useDeleteRecord() {
 
 // Trading data provider component
 function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
-  const { publicKey, connected } = useWallet();
-  const queryClient = useQueryClient();
-
-  const walletAddress =
-    connected && publicKey ? publicKey.toString() : undefined;
+  const { publicKey } = useWallet();
+  const walletAddress = useWalletAddress();
 
   // Query for trading records
   const {
@@ -178,7 +179,7 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
     isLoading: isLoadingRecords,
     error: recordsError,
     refetch: refetchRecords,
-  } = useTradingRecords(walletAddress);
+  } = useTradingRecords(walletAddress ?? undefined);
 
   // Track operation mutation
   const trackOperationMutation = useTrackOperation();
@@ -215,25 +216,35 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
 
     setIsSubscribed(true);
 
-    // Subscribe to real-time updates
-    const unsubscribe = tradingTracker.subscribeToWallet(walletAddress, () => {
-      console.log("📡 Real-time update received, invalidating queries...");
-
-      // Invalidate and refetch queries
+    const refetchRecordsForWallet = () => {
       queryClient.invalidateQueries({
         queryKey: QUERY_KEYS.tradingRecords(walletAddress),
       });
-
-      // Force refetch after a delay to ensure Supabase sync
       setTimeout(() => {
         queryClient.refetchQueries({
           queryKey: QUERY_KEYS.tradingRecords(walletAddress),
         });
       }, 300);
+    };
+
+    const onSessionReady = (event: Event) => {
+      const detail = (event as CustomEvent<{ address?: string }>).detail;
+      if (!detail?.address || detail.address === walletAddress) {
+        refetchRecordsForWallet();
+      }
+    };
+
+    window.addEventListener("reloadsol-wallet-session", onSessionReady);
+
+    // Subscribe to real-time updates
+    const unsubscribe = tradingTracker.subscribeToWallet(walletAddress, () => {
+      console.log("📡 Real-time update received, invalidating queries...");
+      refetchRecordsForWallet();
     });
 
     return () => {
       setIsSubscribed(false);
+      window.removeEventListener("reloadsol-wallet-session", onSessionReady);
       unsubscribe();
     };
   }, [walletAddress, queryClient]);

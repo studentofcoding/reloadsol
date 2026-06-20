@@ -466,3 +466,28 @@ ALTER TABLE token_mcap_tracking
   ADD COLUMN IF NOT EXISTS label TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_token_mcap_label ON token_mcap_tracking(label);
+
+-- =============================================================================
+-- Row Level Security
+-- Blocks direct PostgREST access with publishable/anon keys.
+-- Next.js API routes use SUPABASE_SECRET_KEY (sb_secret_...) and bypass RLS.
+-- =============================================================================
+
+ALTER TABLE token_operations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trading_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trading_signals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sl_tp_positions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trending_token_tracker ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trending_token_summary ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trending_token_tracker_dev ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trending_token_summary_dev ENABLE ROW LEVEL SECURITY;
+ALTER TABLE token_mcap_tracking ENABLE ROW LEVEL SECURITY;
+ALTER TABLE mcap_threshold_notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE token_ohlc_bars ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dlmm_agent_config ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dlmm_candidates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dlmm_potential_list ENABLE ROW LEVEL SECURITY;
+ALTER TABLE token_rug_list ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dlmm_positions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dlmm_lessons ENABLE ROW LEVEL SECURITY;
+

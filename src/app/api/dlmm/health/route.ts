@@ -24,7 +24,7 @@ export async function GET() {
       setup:
         !dbStatus.configured || !dbStatus.reachable || !dbStatus.schemaReady
           ? [
-              'Set SUPABASE_URL and SUPABASE_ANON_KEY in .env',
+              'Set SUPABASE_URL and SUPABASE_SECRET_KEY in .env',
               'Run supabase/schema.sql in Supabase SQL editor',
               'Restart: npm run docker:down && npm run docker:up',
             ]

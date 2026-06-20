@@ -1,9 +1,25 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { enforceApiAccess } from '@/utils/api-auth'
 
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const searchParams = request.nextUrl.searchParams;
+
+  if (pathname.startsWith('/api/')) {
+    const authResponse = enforceApiAccess(request);
+    if (authResponse) {
+      const origin = request.headers.get('origin');
+      if (origin) {
+        authResponse.headers.set('Access-Control-Allow-Origin', origin);
+      }
+      authResponse.headers.set(
+        'Access-Control-Allow-Headers',
+        'Content-Type, Authorization, X-Requested-With, Origin, x-dlmm-password',
+      );
+      return authResponse;
+    }
+  }
 
   const slimRedirects: Record<string, (params: URLSearchParams) => string> = {
     "/catch-the-coin": () => "/dev/signals?tab=live",
@@ -84,7 +100,7 @@ export function proxy(request: NextRequest) {
     }
 
     response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
-    response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Origin')
+    response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Origin, x-dlmm-password')
     response.headers.set('Access-Control-Max-Age', '86400') // 24 hours
 
     // Handle preflight requests

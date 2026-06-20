@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { assertSessionWallet, requireWalletSession } from '@/utils/api-auth'
 import { supabase } from '@/utils/supabase'
 
 // Database schema for Supabase
@@ -188,11 +189,10 @@ function resolveAllowedOrigin(request: NextRequest): string | null {
 // GET /api/trading/records?wallet=<address>&limit=<number>
 export async function GET(request: NextRequest) {
   try {
-    // Verify authentication
-    // const authResult = await validateAuth(request)
-    // if (!authResult.valid) {
-    //   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    // }
+    const auth = requireWalletSession(request)
+    if (auth instanceof NextResponse) {
+      return auth
+    }
 
     const { searchParams } = new URL(request.url)
     const walletAddress = searchParams.get('wallet')
@@ -203,6 +203,11 @@ export async function GET(request: NextRequest) {
         { error: 'wallet parameter is required' },
         { status: 400 }
       )
+    }
+
+    const mismatch = assertSessionWallet(auth.session.address, walletAddress)
+    if (mismatch) {
+      return mismatch
     }
 
     const records = await fetchTradingRecordsWithCache(walletAddress, limit)
@@ -237,6 +242,11 @@ export async function GET(request: NextRequest) {
 // POST /api/trading/records - Save new trading record
 export async function POST(request: NextRequest) {
   try {
+    const auth = requireWalletSession(request)
+    if (auth instanceof NextResponse) {
+      return auth
+    }
+
     const record = await request.json()
 
     if (!record.id || !record.walletAddress || !record.operationType) {
@@ -244,6 +254,11 @@ export async function POST(request: NextRequest) {
         { error: 'Missing required fields: id, walletAddress, operationType' },
         { status: 400 }
       )
+    }
+
+    const mismatch = assertSessionWallet(auth.session.address, record.walletAddress)
+    if (mismatch) {
+      return mismatch
     }
 
     // Skip records with errors

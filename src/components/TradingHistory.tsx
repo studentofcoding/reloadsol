@@ -2,13 +2,13 @@
 
 import React, { useState, useEffect } from "react";
 import { TrackingRecord, TrackingStats } from "@/utils/trading-tracker";
-import { useWallet } from "./WalletProvider";
+import { useWalletAddress } from "./WalletProvider";
 import { useTradingData } from "./TradingDataProvider";
 import TokenSkeleton from "./TokenSkeleton";
 import { getSolPriceUSD } from "@/utils/solana";
 
 export default function TradingHistory() {
-  const { publicKey, connected } = useWallet();
+  const walletAddress = useWalletAddress();
   const {
     records: rawRecords,
     isLoadingRecords,
@@ -48,7 +48,7 @@ export default function TradingHistory() {
 
   // Function to process raw records and stats
   const processRecords = React.useCallback(() => {
-    if (!connected || !publicKey || !rawRecords) {
+    if (!walletAddress || !rawRecords) {
       setProcessedRecords([]);
       setStats(null);
       return;
@@ -209,7 +209,7 @@ export default function TradingHistory() {
       setProcessedRecords([]);
       setStats(null);
     }
-  }, [connected, publicKey, rawRecords, solPriceUsd]);
+  }, [walletAddress, rawRecords, solPriceUsd]);
 
   // Fetch SOL price for USDC conversion
   const fetchSolPrice = React.useCallback(async () => {
@@ -223,13 +223,13 @@ export default function TradingHistory() {
 
   // Fetch SOL price on component mount and periodically
   useEffect(() => {
-    if (connected && publicKey) {
+    if (walletAddress) {
       fetchSolPrice();
       // Update price every 5 minutes
       const interval = setInterval(fetchSolPrice, 300000);
       return () => clearInterval(interval);
     }
-  }, [connected, publicKey, fetchSolPrice]);
+  }, [walletAddress, fetchSolPrice]);
 
   // Process records when data changes
   useEffect(() => {
@@ -412,7 +412,7 @@ export default function TradingHistory() {
       )} */}
 
       {/* Horizontal Records List */}
-      {connected && processedRecords.length === 0 ? (
+      {walletAddress && processedRecords.length === 0 ? (
         <div className="text-center py-4">
           <p className="text-gray-400 text-sm">
             Trade on reloadsol to track your history

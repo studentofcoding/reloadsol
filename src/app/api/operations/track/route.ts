@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { assertSessionWallet, requireWalletSession } from '@/utils/api-auth';
 import { supabase } from '@/utils/supabase';
 
 interface TrackOperationRequest {
@@ -125,6 +126,11 @@ Security considerations for this endpoint:
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = requireWalletSession(request);
+    if (auth instanceof NextResponse) {
+      return auth;
+    }
+
     const body = await request.json();
     
     // Handle both old and new request formats
@@ -177,6 +183,11 @@ export async function POST(request: NextRequest) {
         { error: 'Invalid wallet address format' },
         { status: 400 }
       );
+    }
+
+    const mismatch = assertSessionWallet(auth.session.address, walletAddress);
+    if (mismatch) {
+      return mismatch;
     }
 
     // Rate limiting check (simple in-memory, consider Redis for production)

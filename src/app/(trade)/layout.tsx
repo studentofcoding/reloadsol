@@ -46,7 +46,11 @@ export default function TradeLayout({
 
         <div className="max-w-8xl mx-auto min-h-[300px] mt-4 relative">
           {activeOverlayTab === "history" && (
-            <WalletConnectGate title="Connect to view history">
+            <WalletConnectGate
+              title="Connect to view history"
+              showTrending={false}
+              connectLabel="Connect Wallet"
+            >
               <div className="w-full mt-8 border-t border-gray-800 pt-8 max-w-6xl mx-auto">
                 <h2 className="text-xl font-bold mb-4 text-white">
                   Trading History
@@ -57,7 +61,11 @@ export default function TradeLayout({
           )}
 
           {activeOverlayTab === "pnl" && (
-            <WalletConnectGate title="Connect to view P&amp;L">
+            <WalletConnectGate
+              title="Connect to view P&amp;L"
+              showTrending={false}
+              connectLabel="Connect Wallet"
+            >
               <div className="w-full mt-8 border-t border-gray-800 pt-8 max-w-6xl mx-auto">
                 <h2 className="text-xl font-bold mb-4 text-white">
                   Profit & Loss Tracker
