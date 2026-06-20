@@ -23,8 +23,6 @@ cd "$ROOT"
 
 COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml)
 BRANCH="${DEPLOY_BRANCH:-main}"
-WEB_PORT="${WEB_PORT:-3000}"
-HEALTH_URL="http://127.0.0.1:${WEB_PORT}/api/health"
 SKIP_PULL=false
 CLEAN=false
 FULL_DOWN=false
@@ -54,6 +52,32 @@ log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
 
+read_env_var() {
+  local key="$1"
+  if [[ ! -f .env ]]; then
+    return 1
+  fi
+  grep -E "^${key}=" .env | tail -1 | cut -d= -f2- | tr -d '"'"'"
+}
+
+resolve_web_host_port() {
+  local from_docker from_env
+
+  from_docker="$(docker port reloadsol-web 3000/tcp 2>/dev/null | head -1 | sed 's/.*://')"
+  if [[ -n "$from_docker" ]]; then
+    echo "$from_docker"
+    return
+  fi
+
+  from_env="$(read_env_var WEB_PORT 2>/dev/null || true)"
+  if [[ -n "$from_env" ]]; then
+    echo "$from_env"
+    return
+  fi
+
+  echo "${WEB_PORT:-3000}"
+}
+
 verify_standalone_build() {
   local missing=false
 
@@ -77,8 +101,12 @@ wait_for_health() {
   local attempts="${2:-60}"
   local delay="${3:-5}"
   local container="${4:-reloadsol-web}"
+  local configured_web_port docker_host_port
 
-  log "Waiting for ${container} to become healthy ..."
+  configured_web_port="$(read_env_var WEB_PORT 2>/dev/null || echo "${WEB_PORT:-3000}")"
+  docker_host_port="$(docker port "$container" 3000/tcp 2>/dev/null | head -1 | sed 's/.*://' || true)"
+
+  log "Waiting for ${container} to become healthy (host URL: ${url}) ..."
   for ((i = 1; i <= attempts; i++)); do
     local status
     status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || echo "missing")"
@@ -88,7 +116,7 @@ wait_for_health() {
         log "Health check OK (${url})"
         return 0
       fi
-      log "Container healthy but ${url} not reachable yet — retrying ..."
+      log "Container healthy but ${url} not reachable yet — retrying (WEB_PORT=${configured_web_port}, docker port=${docker_host_port:-unknown}) ..."
     elif [[ "$status" == "unhealthy" ]]; then
       log "Container reported unhealthy"
       "${COMPOSE[@]}" logs --tail=80 web || true
@@ -100,7 +128,7 @@ wait_for_health() {
     sleep "$delay"
   done
 
-  log "Health check failed after $((attempts * delay))s (last status: ${status:-unknown})"
+  log "Health check failed after $((attempts * delay))s (last status: ${status:-unknown}, WEB_PORT=${configured_web_port}, docker port=${docker_host_port:-unknown}, tried ${url})"
   "${COMPOSE[@]}" logs --tail=80 web || true
   return 1
 }
@@ -109,6 +137,9 @@ if [[ ! -f .env ]]; then
   log "Missing .env — copy from .env.docker.example and fill secrets."
   exit 1
 fi
+
+WEB_PORT="$(read_env_var WEB_PORT 2>/dev/null || echo "${WEB_PORT:-3000}")"
+log "Configured WEB_PORT=${WEB_PORT} (host mapping to container :3000)"
 
 if [[ "$SKIP_PULL" == false ]]; then
   log "Fetching origin/${BRANCH} ..."
@@ -139,6 +170,10 @@ verify_standalone_build
 
 log "Rebuilding and recreating containers ..."
 "${COMPOSE[@]}" up --build -d --force-recreate
+
+WEB_HOST_PORT="$(resolve_web_host_port)"
+HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/api/health"
+log "Host health URL: ${HEALTH_URL}"
 
 wait_for_health "$HEALTH_URL" 60 5
 

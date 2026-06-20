@@ -24,6 +24,3 @@ jobs:
         env:
           SKIP_BUILD_CHECKS: "true"
           NODE_OPTIONS: "--max-old-space-size=4096"
-
-      - name: Health check
-        run: curl -fsS http://127.0.0.1:3000/api/health

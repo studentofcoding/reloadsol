@@ -11,6 +11,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed — Docker deploy health wait
 
 - **`scripts/docker-deploy.sh`** — verifies `.next/standalone` + `.next/static` immediately after `npm run build` (fails fast on incomplete builds); recreates containers with `--force-recreate`; waits on Docker `reloadsol-web` health before curling `/api/health` (surfaces web logs on `unhealthy` instead of a blind 5-minute loop).
+- **Host health URL** — resolves published port from `docker port reloadsol-web` / `WEB_PORT` in `.env` (fixes production mappings like `80:3000` where the script previously curled `:3000` forever).
 - **`GET /api/health`** — explicit `HEAD` handler for Docker `wget` and in-app connectivity checks.
 - **Docker healthchecks** — [`docker-compose.yml`](docker-compose.yml) and [`Dockerfile.web`](Dockerfile.web) use `wget -O /dev/null` (GET) instead of `--spider` (HEAD).
 
