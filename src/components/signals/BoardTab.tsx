@@ -22,7 +22,6 @@ import {
 } from "@solana/web3.js";
 import { trackBuy } from "@/utils/operations-api";
 import { useTradingData } from "@/components/TradingDataProvider";
-import NavigationTabs from "@/components/NavigationTabs";
 import { getSolPriceUSD } from "@/utils/solana";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { BulkBuyRequest } from "@/types";
@@ -1282,7 +1281,6 @@ function ChartsContent() {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4">
       <div className="max-w-[1600px] mx-auto">
-        <NavigationTabs />
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Chart Tracker</h1>
 
@@ -1356,7 +1354,7 @@ function ChartsContent() {
   );
 }
 
-export default function MultiChartsPage() {
+export default function BoardTab() {
   return (
     <Suspense fallback={<div className="p-4 text-center">Loading...</div>}>
       <ChartsContent />

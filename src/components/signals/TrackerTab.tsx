@@ -595,7 +595,7 @@ function DailyRankingVisualization({
   );
 }
 
-export default function McapTrackerPage() {
+export default function TrackerTab() {
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(100);
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
@@ -1290,7 +1290,7 @@ export default function McapTrackerPage() {
                           const uniq = Array.from(
                             new Set(t.items!.map((i) => i.address)),
                           );
-                          const url = `/charts?addresses=${encodeURIComponent(uniq.join(","))}`;
+                          const url = `/dev/signals?tab=board&addresses=${encodeURIComponent(uniq.join(","))}`;
                           return (
                             <a
                               href={url}
@@ -1412,7 +1412,7 @@ export default function McapTrackerPage() {
                         const uniq = Array.from(
                           new Set(t.items!.map((i) => i.address)),
                         );
-                        const url = `/charts?addresses=${encodeURIComponent(uniq.join(","))}`;
+                        const url = `/dev/signals?tab=board&addresses=${encodeURIComponent(uniq.join(","))}`;
                         return (
                           <a
                             href={url}

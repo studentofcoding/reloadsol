@@ -2,6 +2,28 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 export function proxy(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const searchParams = request.nextUrl.searchParams;
+
+  const slimRedirects: Record<string, (params: URLSearchParams) => string> = {
+    "/catch-the-coin": () => "/dev/signals?tab=live",
+    "/charts": (params) => {
+      const addresses = params.get("addresses");
+      return addresses
+        ? `/dev/signals?tab=board&addresses=${encodeURIComponent(addresses)}`
+        : "/dev/signals?tab=board";
+    },
+    "/dev/mcap-tracker": () => "/dev/signals?tab=tracker",
+    "/dev/trending-tracker": () => "/dev/algo-tester",
+    "/dev/tracking-history": () => "/dev/algo-tester?tab=history",
+  };
+
+  const redirectBuilder = slimRedirects[pathname];
+  if (redirectBuilder) {
+    const destination = redirectBuilder(searchParams);
+    return NextResponse.redirect(new URL(destination, request.url));
+  }
+
   // Base allowed origins (exact matches)
   const baseAllowedOrigins = [
     'https://reloadsol.xyz',

@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import NavigationTabs from "@/components/NavigationTabs";
 import { PasswordGate } from "@/components/PasswordGate";
 import {
   useDlmmCandidates,

@@ -57,9 +57,7 @@ const LoadingSkeleton = () => (
   </div>
 );
 
-export const dynamic = "force-dynamic";
-
-export default function TrackingHistoryPage() {
+export default function HistoryTab() {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);

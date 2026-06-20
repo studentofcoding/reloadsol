@@ -1,16 +1,16 @@
-import TradingSignals from "@/components/TradingSignals";
+import SignalsHub from "@/components/signals/SignalsHub";
 
 export const dynamic = "force-dynamic";
 
 export default function SignalsPage() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
-      <h1 className="text-2xl font-semibold mb-4">Trading Signals</h1>
-      <p className="text-sm text-gray-600 mb-6">
-        Live signals generated from market cap tracker data. Adjust filters and
-        refresh to update.
+      <h1 className="mb-2 text-2xl font-semibold text-white">Signals</h1>
+      <p className="mb-6 text-sm text-gray-400">
+        Trading signals, live trending, chart board, and mcap tracker in one
+        place.
       </p>
-      <TradingSignals />
+      <SignalsHub />
     </div>
   );
 }

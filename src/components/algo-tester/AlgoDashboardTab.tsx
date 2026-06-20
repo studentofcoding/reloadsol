@@ -117,9 +117,7 @@ interface TradingConfig {
   notifyOnTrigger: boolean;
 }
 
-export const dynamic = "force-dynamic";
-
-export default function TrendingTrackerPage() {
+export default function AlgoDashboardTab() {
   const router = useRouter();
   const {
     data: stats,
@@ -235,7 +233,7 @@ export default function TrendingTrackerPage() {
   const handleOpenSelectedCharts = () => {
     if (selectedTokens.size === 0) return;
     const addresses = Array.from(selectedTokens).join(",");
-    router.push(`/charts?addresses=${addresses}`);
+    router.push(`/dev/signals?tab=board&addresses=${addresses}`);
   };
 
   // Helper functions for search and pagination

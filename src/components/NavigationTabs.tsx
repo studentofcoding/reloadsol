@@ -38,14 +38,8 @@ export default function NavigationTabs({
     "/buy",
     "/sell",
     "/swap",
-    "/catch-the-coin",
-    "/charts",
     "/dev/signals",
-    "/dev/trending-tracker",
-    "/dev/tracking-history",
-    "/dev/mcap-tracker",
-    "/dev/pools",
-    "/dev/pools-test",
+    "/dev/algo-tester",
     "/dev/dlmm",
   ].some((path) => (pathname || "").startsWith(path));
 
@@ -146,63 +140,13 @@ export default function NavigationTabs({
                       </div>
                     </Link>
                     <Link
-                      href="/catch-the-coin"
-                      className={`px-3 py-3 ml-1 rounded-lg font-semibold transition-all duration-200 ${
-                        isActive("/catch-the-coin")
-                          ? "bg-white text-black"
-                          : "text-gray-400 hover:text-white hover:bg-gray-700"
-                      }`}
-                      title="Catch The Coin"
-                    >
-                      <div className="flex items-center justify-center">
-                        <svg
-                          className="w-5 h-5"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                          />
-                        </svg>
-                      </div>
-                    </Link>
-                    <Link
-                      href="/charts"
-                      className={`px-3 py-3 ml-1 rounded-lg font-semibold transition-all duration-200 ${
-                        isActive("/charts")
-                          ? "bg-white text-black"
-                          : "text-gray-400 hover:text-white hover:bg-gray-700"
-                      }`}
-                      title="Charts (Kanban)"
-                    >
-                      <div className="flex items-center justify-center">
-                        <svg
-                          className="w-5 h-5"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"
-                          />
-                        </svg>
-                      </div>
-                    </Link>
-                    <Link
                       href="/dev/signals"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
                         isActive("/dev/signals")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
-                      title="Trading Signals"
+                      title="Signals"
                     >
                       <svg
                         className="w-5 h-5"
@@ -219,13 +163,13 @@ export default function NavigationTabs({
                       </svg>
                     </Link>
                     <Link
-                      href="/dev/trending-tracker"
+                      href="/dev/algo-tester"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                        isActive("/dev/trending-tracker")
+                        isActive("/dev/algo-tester")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
-                      title="Trending Tracker (Dev)"
+                      title="Algo Tester"
                     >
                       <svg
                         className="w-5 h-5"
@@ -242,36 +186,13 @@ export default function NavigationTabs({
                       </svg>
                     </Link>
                     <Link
-                      href="/dev/tracking-history"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                        isActive("/dev/tracking-history")
-                          ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
-                      }`}
-                      title="Tracking History (Dev)"
-                    >
-                      <svg
-                        className="w-5 h-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"
-                        />
-                      </svg>
-                    </Link>
-                    <Link
                       href="/dev/dlmm"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
                         isActive("/dev/dlmm")
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
-                      title="DLMM Agent (Dev)"
+                      title="DLMM Agent"
                     >
                       <svg
                         className="w-5 h-5"
@@ -284,36 +205,6 @@ export default function NavigationTabs({
                           strokeLinejoin="round"
                           strokeWidth={2}
                           d="M4 6h16M4 12h16M4 18h7"
-                        />
-                      </svg>
-                    </Link>
-                    <Link
-                      href="/dev/mcap-tracker"
-                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
-                        isActive("/dev/mcap-tracker")
-                          ? "bg-gray-700 text-white"
-                          : "text-gray-400 hover:text-white hover:bg-gray-800"
-                      }`}
-                      title="MCap Tracker (Dev)"
-                    >
-                      <svg
-                        className="w-5 h-5"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
-                        />
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M12 2v6m0 0v6m0-6h6m-6 0H6"
-                          opacity="0.5"
                         />
                       </svg>
                     </Link>
@@ -521,27 +412,77 @@ export default function NavigationTabs({
               </Link>
             )}
             {mounted && isDevUser && (
-              <Link
-                href="/charts"
-                className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
-                  isActive("/charts") ? "bg-white text-black" : "text-gray-400"
-                }`}
-              >
-                <svg
-                  className="w-6 h-6 mb-1"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
+              <>
+                <Link
+                  href="/dev/signals"
+                  className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                    isActive("/dev/signals")
+                      ? "bg-white text-black"
+                      : "text-gray-400"
+                  }`}
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"
-                  />
-                </svg>
-                <span className="text-xs font-medium">Charts</span>
-              </Link>
+                  <svg
+                    className="w-6 h-6 mb-1"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M13 10V3L4 14h7v7l9-11h-7z"
+                    />
+                  </svg>
+                  <span className="text-xs font-medium">Signals</span>
+                </Link>
+                <Link
+                  href="/dev/algo-tester"
+                  className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                    isActive("/dev/algo-tester")
+                      ? "bg-white text-black"
+                      : "text-gray-400"
+                  }`}
+                >
+                  <svg
+                    className="w-6 h-6 mb-1"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"
+                    />
+                  </svg>
+                  <span className="text-xs font-medium">Algo</span>
+                </Link>
+                <Link
+                  href="/dev/dlmm"
+                  className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                    isActive("/dev/dlmm")
+                      ? "bg-white text-black"
+                      : "text-gray-400"
+                  }`}
+                >
+                  <svg
+                    className="w-6 h-6 mb-1"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 6h16M4 12h16M4 18h7"
+                    />
+                  </svg>
+                  <span className="text-xs font-medium">DLMM</span>
+                </Link>
+              </>
             )}
           </div>
         </div>
