@@ -21,6 +21,7 @@ import {
   type FilterOptions,
   type TrackedTokenHistory,
 } from "@/hooks/useTrackingHistory";
+import { formatAppDateTime, formatAppDate } from "@/utils/datetime";
 
 // Register Chart.js components
 ChartJS.register(
@@ -653,18 +654,14 @@ export default function HistoryTab() {
                     <div>
                       <span className="text-gray-400">Started:</span>
                       <span className="text-white ml-2">
-                        {new Date(
-                          token.tracking_started_at,
-                        ).toLocaleDateString()}
+                        {formatAppDate(token.tracking_started_at)}
                       </span>
                     </div>
                     <div>
                       <span className="text-gray-400">Status Changed:</span>
                       <span className="text-white ml-2">
                         {token.status_changed_at
-                          ? new Date(
-                              token.status_changed_at,
-                            ).toLocaleDateString()
+                          ? formatAppDate(token.status_changed_at)
                           : "Still active"}
                       </span>
                     </div>
@@ -897,9 +894,7 @@ export default function HistoryTab() {
                         <div>
                           <span className="text-gray-400">Created:</span>{" "}
                           <span className="text-white">
-                            {new Date(
-                              selectedToken.created_at,
-                            ).toLocaleString()}
+                            {formatAppDateTime(selectedToken.created_at)}
                           </span>
                         </div>
                         <div>
@@ -907,18 +902,14 @@ export default function HistoryTab() {
                             Tracking Started:
                           </span>{" "}
                           <span className="text-white">
-                            {new Date(
-                              selectedToken.tracking_started_at,
-                            ).toLocaleString()}
+                            {formatAppDateTime(selectedToken.tracking_started_at)}
                           </span>
                         </div>
                         <div>
                           <span className="text-gray-400">Status Changed:</span>{" "}
                           <span className="text-white">
                             {selectedToken.status_changed_at
-                              ? new Date(
-                                  selectedToken.status_changed_at,
-                                ).toLocaleString()
+                              ? formatAppDateTime(selectedToken.status_changed_at)
                               : "Still active"}
                           </span>
                         </div>

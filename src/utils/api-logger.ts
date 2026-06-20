@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { formatAppDateTime } from '@/utils/datetime'
 
 // Log levels
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'critical'
@@ -107,7 +108,7 @@ function writeLog(entry: ApiLogEntry): void {
   const resetColor = colors.reset
   
   const prefix = `${color}[${entry.level.toUpperCase()}]${resetColor}`
-  const timestamp = `[${new Date(entry.timestamp).toISOString()}]`
+  const timestamp = `[${formatAppDateTime(entry.timestamp)}]`
   const requestInfo = `[${entry.method} ${entry.endpoint}]`
   const duration = entry.duration ? `[${entry.duration}ms]` : ''
   const status = entry.response?.statusCode ? `[${entry.response.statusCode}]` : ''

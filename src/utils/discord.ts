@@ -1,5 +1,6 @@
 import { logTradeOperation } from '@/utils/logger'
 import { log } from '@/utils/unified-logger'
+import { formatAppDateTime } from '@/utils/datetime'
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_AUTO_TRADE || process.env.DISCORD_WEBHOOK_URL || ''
 
@@ -75,7 +76,7 @@ export async function sendNewTokenDetectionDiscord(params: {
     `🔗 **Trade on reloadSOL:**`,
     reloadSolLink,
     ``,
-    `⏰ ${new Date().toLocaleString()}`
+    `⏰ ${formatAppDateTime(new Date())}`
   ]
 
   const content = lines.join('\n')
@@ -176,7 +177,7 @@ export async function sendTradeAlertDiscord(params: {
   if (provider) lines.push(`Provider: ${provider}`)
   if (rpcUsed) lines.push(`RPC: ${rpcUsed}`)
   if (responseTime !== undefined) lines.push(`Response Time: ${responseTime}ms`)
-  lines.push(`Time: ${new Date().toLocaleString()}`)
+  lines.push(`Time: ${formatAppDateTime(new Date())}`)
 
   const content = [title, ...lines].join('\n')
   logTradeOperation('Discord Trade Alert', { tokenSymbol, status })

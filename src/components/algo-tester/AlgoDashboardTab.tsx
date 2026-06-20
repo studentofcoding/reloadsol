@@ -9,6 +9,7 @@ import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import TokenDetailsModal from "@/components/TokenDetailsModal";
 import { useTrendingStats } from "@/hooks/useTrendingStats";
 import { useTokenHistory } from "@/hooks/useTokenHistory";
+import { formatAppDateTime, formatAppNow } from "@/utils/datetime";
 
 // Use alternate tables in local development to avoid prod collisions
 const TRACKER_TABLE =
@@ -503,7 +504,7 @@ export default function AlgoDashboardTab() {
         `Provider: ${details.provider || "Unknown"}\n` +
         `RPC: ${details.rpc || "Default"}\n` +
         `Response Time: ${details.responseTime ? `${details.responseTime}ms` : "N/A"}\n` +
-        `Time: ${new Date().toLocaleString()}`;
+        `Time: ${formatAppNow()}`;
       await sendDiscordNotification(message);
     }
   };
@@ -684,9 +685,7 @@ export default function AlgoDashboardTab() {
     };
   };
 
-  const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
-  };
+  const formatTime = (dateString: string) => formatAppDateTime(dateString);
 
   const formatRelativeTime = (dateString: string) => {
     const now = Date.now();

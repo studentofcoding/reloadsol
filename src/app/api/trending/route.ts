@@ -4,6 +4,7 @@ import { JupiterBaseAsset, JupiterPool, JupiterResponse, TokenCache, Transformed
 import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from '@/utils/axiom'
 import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, bulkTrackTokenMcaps } from '@/utils/mcap-tracker'
+import { formatAppDateTimeWithZone } from '@/utils/datetime'
 
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
@@ -1291,19 +1292,6 @@ function createDailyRankingSection(
   tokens: TransformedToken[],
   mcapTrackingResults?: Map<string, any>
 ): { name: string; value: string } | null {
-  // Helper: format time in GMT+7 with date (DD/MM/YYYY)
-  const formatGmt7WithDate = (iso?: string): string => {
-    if (!iso) return ''
-    const d = new Date(iso)
-    const gmt7 = new Date(d.getTime() + 7 * 60 * 60 * 1000)
-    const hh = String(gmt7.getUTCHours()).padStart(2, '0')
-    const mm = String(gmt7.getUTCMinutes()).padStart(2, '0')
-    const dd = String(gmt7.getUTCDate()).padStart(2, '0')
-    const mo = String(gmt7.getUTCMonth() + 1).padStart(2, '0')
-    const yyyy = gmt7.getUTCFullYear()
-    return `${hh}:${mm} GMT+7 ${dd}/${mo}/${yyyy}`
-  }
-
   let rankingText = ''
 
   // Tracker-based Top Gainers only (by mcap_growth_percent). No price-change fallback.
@@ -1337,7 +1325,7 @@ function createDailyRankingSection(
     const firstStr = isFinite(tracking.firstMcap)
       ? Number(tracking.firstMcap).toLocaleString('en-US', { maximumFractionDigits: 3 })
       : '0'
-    const timeStr = formatGmt7WithDate(tracking.firstSeenAt)
+    const timeStr = formatAppDateTimeWithZone(tracking.firstSeenAt)
     rankingText += `${index + 1}. [${symbol}](${chartLink}) ${growthStr} | $${currentStr} | from $${firstStr}${timeStr ? ` | ${timeStr}` : ''}\n`
   })
 
@@ -1465,18 +1453,7 @@ function createDailySummaryHeader(tokens: TransformedToken[], mcapTrackingResult
       const growthStr = `${tracking.growthPercent >= 0 ? '+' : ''}${formatPercent(tracking.growthPercent || 0)}`
       const currentStr = isFinite(tracking.currentMcap) ? Number(tracking.currentMcap).toLocaleString('en-US', { maximumFractionDigits: 3 }) : '0'
       const firstStr = isFinite(tracking.firstMcap) ? Number(tracking.firstMcap).toLocaleString('en-US', { maximumFractionDigits: 3 }) : '0'
-      // Append GMT+7 time with date
-      const d = tracking.firstSeenAt ? new Date(tracking.firstSeenAt) : null
-      let dtStr = ''
-      if (d) {
-        const gmt7 = new Date(d.getTime() + 7 * 60 * 60 * 1000)
-        const hh = String(gmt7.getUTCHours()).padStart(2, '0')
-        const mm = String(gmt7.getUTCMinutes()).padStart(2, '0')
-        const dd = String(gmt7.getUTCDate()).padStart(2, '0')
-        const mo = String(gmt7.getUTCMonth() + 1).padStart(2, '0')
-        const yyyy = gmt7.getUTCFullYear()
-        dtStr = `${hh}:${mm} GMT+7 ${dd}/${mo}/${yyyy}`
-      }
+      const dtStr = formatAppDateTimeWithZone(tracking.firstSeenAt)
       summaryLines.push(`🚀 **Top Gainer:** ${symbol} (${growthStr}) | $${currentStr} | from $${firstStr}${dtStr ? ` | ${dtStr}` : ''}`)
     }
   }

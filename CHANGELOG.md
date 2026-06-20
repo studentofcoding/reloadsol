@@ -8,6 +8,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Unified datetime (Asia/Bangkok)
+
+- **[`src/utils/datetime.ts`](src/utils/datetime.ts)** — single formatter for display (`formatAppDateTime`, `formatAppTime`, `formatAppDateTimeWithZone`, `getAppLocalParts`); storage stays UTC ISO in Supabase and log buffers.
+- **Signals, Algo Tester, DLMM UI** — absolute timestamps use Bangkok wall clock instead of browser/Docker locale.
+- **Server notifications** — Discord/track route/mcap-tracker replace manual `+7h` offsets and `toLocaleString()` with shared formatters; trading-hours check uses `getAppLocalParts`.
+- **Logs** — [`api-logger`](src/utils/api-logger.ts), [`unified-logger`](src/utils/unified-logger.ts), [`/api/logs?format=text`](src/app/api/logs/route.ts), and [`scripts/tail-logs.js`](scripts/tail-logs.js) format human-readable lines in Asia/Bangkok.
+
 ### Changed — Repo cleanup (Docker-only deploy)
 
 - **Removed PM2 deploy path** — deleted `deploy_pm2.yml`, `ecosystem.config.js`, and PM2 shell scripts (`deploy-single-core.sh`, `deploy-update.sh`, `install-deploy-hook.sh`, `choose-package-manager.sh`); production docs now point at [`docker-deploy.sh`](scripts/docker-deploy.sh) and [`.github/workflows/deploy_docker.yml`](.github/workflows/deploy_docker.yml).

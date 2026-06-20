@@ -13,6 +13,13 @@ import { assessTokenRisk, formatDetailedRiskForDiscord } from '@/utils/risk-asse
 import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 import { calculateGainPercentage } from '@/utils/trading-math'
 import { createRpcConnection } from '@/utils/rpc-urls'
+import {
+  formatAppDateTime,
+  formatAppNowWithZone,
+  getAppLocalDayName,
+  getAppLocalParts,
+  getAppLocalWeekday,
+} from '@/utils/datetime'
 
 export const runtime = 'nodejs'
 
@@ -1446,7 +1453,7 @@ async function sendNewTokenDetectionDiscord(params: {
       `🔗 **Trade on reloadSOL:**`,
       reloadSolLink,
       ``,
-      `⏰ ${new Date().toLocaleString()}`
+      `⏰ ${formatAppDateTime(new Date())}`
     ]
 
     const content = lines.join('\n')
@@ -1602,7 +1609,7 @@ async function sendBuyNotificationDiscord(params: {
     }
 
     lines.push(``)
-    lines.push(`⏰ ${new Date().toLocaleString()}`)
+    lines.push(`⏰ ${formatAppDateTime(new Date())}`)
 
     const content = lines.join('\n')
 
@@ -1704,7 +1711,7 @@ async function sendTradeAlertDiscord(params: {
     if (provider) lines.push(`Provider: ${provider}`)
     if (rpcUsed) lines.push(`RPC: ${rpcUsed}`)
     if (responseTime !== undefined) lines.push(`Response Time: ${responseTime}ms`)
-    lines.push(`Time: ${new Date().toLocaleString()}`)
+    lines.push(`Time: ${formatAppDateTime(new Date())}`)
 
     const content = [title, ...lines].join('\n')
 
@@ -1900,7 +1907,7 @@ async function sendFilteringSummaryDiscord(summary: FilteringSummary, isRealTrad
     }
 
     lines.push(``)
-    lines.push(`⏰ ${new Date().toLocaleString()}`)
+    lines.push(`⏰ ${formatAppDateTime(new Date())}`)
 
     // Apply length management
     const content = truncateDiscordMessage(lines)
@@ -2020,7 +2027,7 @@ async function sendRejectedTokensDiscord(rejectedTokens: TokenFilterResult[], is
       lines.push(``)
     }
 
-    lines.push(`⏰ ${new Date().toLocaleString()}`)
+    lines.push(`⏰ ${formatAppDateTime(new Date())}`)
 
     // Apply length management
     const content = truncateDiscordMessage(lines)
@@ -2989,7 +2996,7 @@ async function sendSyncTradeNotificationDiscord(params: {
       lines.push(``)
     }
 
-    lines.push(`⏰ ${new Date().toLocaleString()}`)
+    lines.push(`⏰ ${formatAppDateTime(new Date())}`)
 
     const content = lines.join('\n')
 
@@ -3079,7 +3086,7 @@ async function sendSignificantDeviationsAlertDiscord(params: {
       `• Check RPC latency patterns`,
       `• Monitor market conditions during trades`,
       ``,
-      `⏰ ${new Date().toLocaleString()}`
+      `⏰ ${formatAppDateTime(new Date())}`
     )
 
     const content = lines.join('\n')
@@ -4529,7 +4536,7 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
           `${emoji} Trading Mode Changed`,
           `Mode: ${mode}`,
           `Keypair: ${keypairPath || 'Not specified'}`,
-          `Time: ${new Date().toLocaleString()}`,
+          `Time: ${formatAppDateTime(new Date())}`,
           `Status: Successfully activated`
         ].join('\n')
 
@@ -4559,17 +4566,12 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
 })
 
 function isWithinTradingHours(): { allowed: boolean; reason?: string; currentTime?: string } {
-  const now = new Date()
-
-  // Convert to GMT+7 (Asia/Bangkok timezone)
-  const gmt7Time = new Date(now.getTime() + (7 * 60 * 60 * 1000))
-  const hours = gmt7Time.getUTCHours()
-  const minutes = gmt7Time.getUTCMinutes()
-  const timeString = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')} GMT+7`
+  const parts = getAppLocalParts(new Date())
+  const timeString = formatAppNowWithZone()
 
   // Trading allowed from 16:00 to 04:00 GMT+7
   // This means: 15:00-23:59 and 00:00-05:59
-  const isAllowed = hours >= 15 || hours < 6
+  const isAllowed = parts.hour >= 15 || parts.hour < 6
 
   return {
     allowed: isAllowed,
@@ -4584,17 +4586,9 @@ function isWithinTradingHours(): { allowed: boolean; reason?: string; currentTim
  */
 function isDayTypeWeekend(): { isWeekend: boolean; dayType: 'weekend' | 'weekday'; dayName: string } {
   const now = new Date()
-
-  // Convert to GMT+7 (Asia/Bangkok timezone) to match the isWithinTradingHours function
-  const gmt7Time = new Date(now.getTime() + (7 * 60 * 60 * 1000))
-  const dayOfWeek = gmt7Time.getUTCDay() // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-
-  // Weekend is Saturday (6) or Sunday (0)
+  const dayOfWeek = getAppLocalWeekday(now)
   const isWeekend = dayOfWeek === 0 || dayOfWeek === 6
-
-  // Get day name for logging
-  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-  const dayName = dayNames[dayOfWeek]
+  const dayName = getAppLocalDayName(now)
 
   return {
     isWeekend,
@@ -4673,7 +4667,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             `Trading Hours: 16:00 - 04:00 GMT+7`,
             `Reason: ${timeCheck.reason}`,
             ``,
-            `⏰ ${new Date().toLocaleString()}`
+            `⏰ ${formatAppDateTime(new Date())}`
           ].join('\n')
 
           await fetch(DISCORD_WEBHOOK_URL, {

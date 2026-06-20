@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getLogs, getLogStats, clearLogs, LogLevel } from '@/utils/api-logger'
+import { formatAppDateTime } from '@/utils/datetime'
 
 export async function GET(request: NextRequest) {
   try {
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
     // Return plain text format for easy reading
     if (format === 'text') {
       const textOutput = logs.map(log => {
-        const timestamp = new Date(log.timestamp).toISOString()
+        const timestamp = formatAppDateTime(log.timestamp)
         const duration = log.duration ? `[${log.duration}ms]` : ''
         const status = log.response?.statusCode ? `[${log.response.statusCode}]` : ''
         const error = log.error ? ` ERROR: ${log.error.message}` : ''

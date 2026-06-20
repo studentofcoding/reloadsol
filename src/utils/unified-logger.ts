@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { formatAppDateTime } from '@/utils/datetime'
 
 // Log levels
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'critical'
@@ -114,7 +115,7 @@ function writeLog(entry: ApiLogEntry | TradeLogEntry): void {
     const emoji = operationEmojis[entry.operation] || '📝'
 
     const prefix = `${color}[${entry.level.toUpperCase()}]${resetColor}`
-    const timestamp = `[${new Date(entry.timestamp).toISOString()}]`
+    const timestamp = `[${formatAppDateTime(entry.timestamp)}]`
     const operation = `${emoji} [${entry.operation.toUpperCase()}]`
     const duration = entry.duration ? `[${entry.duration}ms]` : ''
     const requestId = entry.requestId ? `[${entry.requestId}]` : ''

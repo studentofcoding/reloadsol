@@ -15,6 +15,7 @@ import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTradingSignals, SignalItem } from "@/hooks/useTradingSignals";
+import { formatAppDateTime } from "@/utils/datetime";
 
 // Removed local types SignalItem and SignalsResponse as they are now imported
 
@@ -41,16 +42,7 @@ const percentFmt = (p?: number) => {
   return `${p.toFixed(2)}%`;
 };
 
-const dateFmt = (iso?: string | null) => {
-  if (!iso) return "—";
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "—";
-    return d.toLocaleString();
-  } catch {
-    return "—";
-  }
-};
+const dateFmt = (iso?: string | null) => formatAppDateTime(iso);
 
 export default function SignalsTab() {
   const queryClient = useQueryClient();

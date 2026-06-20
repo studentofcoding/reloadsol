@@ -137,8 +137,21 @@ Environment Variables:
 }
 
 // Format log entry for console output
+function formatLogTimestamp(isoTimestamp) {
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(new Date(isoTimestamp));
+}
+
 function formatLog(log) {
-  const timestamp = new Date(log.timestamp).toLocaleString();
+  const timestamp = formatLogTimestamp(log.timestamp);
   const level = log.level.toUpperCase().padEnd(8);
   const method = log.method.padEnd(6);
   const endpoint = log.endpoint;

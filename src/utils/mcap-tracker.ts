@@ -1,5 +1,6 @@
 import { supabase } from '@/utils/supabase'
 import { log } from '@/utils/unified-logger'
+import { formatAppTimeWithZone } from '@/utils/datetime'
 
 export type TokenLabel = 'valid' | 'traded_live' | 'potential' | 'rugged' | 'watching'
 
@@ -75,18 +76,6 @@ function shouldEnableNotifications(): boolean {
 // Helper function to convert MCap to integer (round to nearest dollar)
 function normalizeMarketCap(mcap: number): number {
   return Math.round(mcap)
-}
-
-// Helper function to format timestamp to GMT+7
-function formatTimestampGMT7(isoTimestamp: string): string {
-  const date = new Date(isoTimestamp)
-  // GMT+7 is UTC+7, so add 7 hours
-  const gmt7Date = new Date(date.getTime() + (7 * 60 * 60 * 1000))
-
-  const hours = gmt7Date.getUTCHours().toString().padStart(2, '0')
-  const minutes = gmt7Date.getUTCMinutes().toString().padStart(2, '0')
-
-  return `${hours}:${minutes} GMT+7`
 }
 
 // Helper function to get threshold column name
@@ -187,7 +176,7 @@ async function sendGrowthThresholdNotification(params: {
             },
             {
               name: '⏰ Timeline',
-              value: `**First Seen:** ${formatTimestampGMT7(firstSeenAt)}\n**Alert Time:** ${formatTimestampGMT7(new Date().toISOString())}`,
+              value: `**First Seen:** ${formatAppTimeWithZone(firstSeenAt)}\n**Alert Time:** ${formatAppTimeWithZone(new Date().toISOString())}`,
               inline: true
             },
             {
@@ -876,7 +865,7 @@ function formatGrowthPercent(growthPercent: number): string {
 export function getMcapDisplayString(trackingResult: McapTrackingResult): string {
   if (trackingResult.isFirstTime) {
     const timeStr = trackingResult.firstSeenAt ?
-      ` (1st seen: ${formatTimestampGMT7(trackingResult.firstSeenAt)})` : ''
+      ` (1st seen: ${formatAppTimeWithZone(trackingResult.firstSeenAt)})` : ''
     return `MCap: $${trackingResult.currentMcap.toLocaleString()}${timeStr}`
   }
 
@@ -884,7 +873,7 @@ export function getMcapDisplayString(trackingResult: McapTrackingResult): string
   const currentMcapStr = trackingResult.currentMcap.toLocaleString()
   const growthEmoji = trackingResult.growthPercent! >= 0 ? '📈' : '📉'
   const timeStr = trackingResult.firstSeenAt ?
-    `, 1st seen: ${formatTimestampGMT7(trackingResult.firstSeenAt)}` : ''
+    `, 1st seen: ${formatAppTimeWithZone(trackingResult.firstSeenAt)}` : ''
 
   return `MCap: $${currentMcapStr} (${growthEmoji} ${trackingResult.formattedGrowth} from $${firstMcapStr}${timeStr})`
 }

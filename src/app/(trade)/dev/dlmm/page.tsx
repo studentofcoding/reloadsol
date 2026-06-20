@@ -18,6 +18,7 @@ import type { DlmmPosition, DlmmLesson } from "@/types/dlmm";
 import HunterCandidateTabs, {
   type DisplayCandidate,
 } from "@/components/dlmm/HunterCandidateTabs";
+import { formatAppTime } from "@/utils/datetime";
 
 function formatUsd(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
@@ -84,7 +85,7 @@ export default function DlmmDashboardPage() {
       holders: Math.max(p.token_x.holders ?? 0, p.token_y.holders ?? 0),
       mcap: 0,
       score: p.organic_score,
-      screened_at: new Date().toISOString(),
+      screened_at: '',
     }));
   }, [candidates, pools]);
 
@@ -220,7 +221,7 @@ export default function DlmmDashboardPage() {
                   <div className="flex justify-between text-white">
                     <span className="font-semibold">{lesson.decision}</span>
                     <span className="text-gray-500">
-                      {new Date(lesson.created_at).toLocaleTimeString()}
+                      {formatAppTime(lesson.created_at)}
                     </span>
                   </div>
                   <div className="text-gray-400">{lesson.reason}</div>
