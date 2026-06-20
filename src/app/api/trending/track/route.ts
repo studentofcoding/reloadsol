@@ -2688,7 +2688,8 @@ async function trackBotOperation(
   token: any,
   bestResult: TradeExecutionResult,
   isSimulated: boolean,
-  strategy: string = 'auto-trending'
+  strategy: string = 'auto-trending',
+  tokenDecimals: number = 6,
 ): Promise<void> {
   try {
     const { getSolPriceUSD } = await import('@/utils/solana')
@@ -2699,7 +2700,7 @@ async function trackBotOperation(
 
     const currentSolPrice = await getSolPriceUSD()
     const walletAddress = tradingKeypair?.publicKey.toString() || 'simulation'
-    const tokenDecimals = 6
+    const decimals = tokenDecimals >= 0 ? tokenDecimals : 6
 
     const solAmount =
       operationType === 'buy'
@@ -2710,8 +2711,8 @@ async function trackBotOperation(
 
     const tokenAmount =
       operationType === 'buy'
-        ? parseFloat(bestResult.outputAmount) / Math.pow(10, tokenDecimals)
-        : parseFloat(bestResult.inputAmount) / Math.pow(10, tokenDecimals)
+        ? parseFloat(bestResult.outputAmount) / Math.pow(10, decimals)
+        : parseFloat(bestResult.inputAmount) / Math.pow(10, decimals)
 
     const tokenData = {
       mintAddress: token.token_address,
@@ -3185,14 +3186,25 @@ async function executeBuyOperationWithStrategy(
   const strategy = getTradingStrategy(strategyId)
   console.log(`🎯 Executing buy operation for ${token.token_symbol} using ${strategy.name} strategy`)
   const isSimulated = operationType === 'simulation'
+  let tradeLockHeld = false
 
   try {
+    if (!isSimulated) {
+      const { acquireTradeLock } = await import('@/utils/bot-trading-state')
+      const dbLock = await acquireTradeLock(token.token_address, strategyId)
+      if (!dbLock.acquired) {
+        console.error(`❌ Cannot execute real trade for ${token.token_symbol}: ${dbLock.reason}`)
+        return null
+      }
+      tradeLockHeld = true
+    }
+
     console.log(`💰 Performing synchronized buy ${operationType} for ${token.token_symbol} (${token.token_address})`)
 
     // SOL mint address and trading parameters
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
     let BUY_AMOUNT_SOL = getBuyAmountForStrategy(strategyId) // Dynamic based on strategy
-    let PRIORITY_FEE_SOL = getPriorityFeeForStrategy(strategyId) // Dynamic based on strategy
+    let PRIORITY_FEE_LAMPORTS = getPriorityFeeForStrategy(strategyId)
 
     let isRebuy = false
 
@@ -3219,8 +3231,6 @@ async function executeBuyOperationWithStrategy(
     }
 
     const BUY_AMOUNT_LAMPORTS = Math.floor(BUY_AMOUNT_SOL * 1e9)
-    // const PRIORITY_FEE_SOL = 0.001 // 0.001 SOL priority fee as specified
-    const PRIORITY_FEE_LAMPORTS = Math.floor(PRIORITY_FEE_SOL * 1e9)
 
     // Safety checks for real trading
     if (!isSimulated) {
@@ -3564,6 +3574,9 @@ async function executeBuyOperationWithStrategy(
       if (strategyActiveTrades) {
         strategyActiveTrades.delete(token.token_address)
       }
+
+      const { recordTradingSuccess } = await import('@/utils/bot-trading-state')
+      await recordTradingSuccess()
     }
 
     return buyOperation
@@ -3580,9 +3593,19 @@ async function executeBuyOperationWithStrategy(
       if (strategyActiveTrades) {
         strategyActiveTrades.delete(token.token_address)
       }
+
+      const { recordTradingFailure } = await import('@/utils/bot-trading-state')
+      await recordTradingFailure(
+        error instanceof Error ? error.message : 'Buy operation failed',
+      )
     }
 
     return null
+  } finally {
+    if (tradeLockHeld) {
+      const { releaseTradeLock } = await import('@/utils/bot-trading-state')
+      await releaseTradeLock(token.token_address, strategyId)
+    }
   }
 }
 
@@ -3595,8 +3618,27 @@ async function performSellOperation(
 ): Promise<SellOperation | null> {
   try {
     const isSimulated = simulation.is_simulated
+    const resolvedStrategy =
+      strategyId ||
+      simulation.buy_operation?.bot_strategy ||
+      getCurrentBotStrategy()
     const operationType = isSimulated ? 'simulation' : 'real trade'
     console.log(`💸 Performing ${sellPercentage}% sell ${operationType} for ${token.token_symbol} (${token.token_address})`)
+
+    // Real trades with active SL/TP rows are closed by the SL/TP monitor (avoids double-sell races).
+    if (!isSimulated && tradingKeypair) {
+      const { hasActiveSlTpPosition } = await import('@/utils/bot-position-close')
+      const deferred = await hasActiveSlTpPosition(
+        tradingKeypair.publicKey.toString(),
+        token.token_address,
+      )
+      if (deferred) {
+        console.log(
+          `⏭️ Deferring real sell for ${token.token_symbol} to SL/TP monitor (active sl_tp_positions row)`,
+        )
+        return null
+      }
+    }
 
     // SOL mint address
     const SOL_MINT = 'So11111111111111111111111111111111111111112'
@@ -3794,21 +3836,43 @@ async function performSellOperation(
       hold_duration_hours: holdDurationHours,
       // Enhanced bot tracking
       is_bot_operation: true,
-      bot_strategy: getCurrentBotStrategy(),
+      bot_strategy: resolvedStrategy,
       signature: bestResult.signature
     }
 
     // Update simulation's remaining token amount
     simulation.remaining_token_amount = remainingTokens
 
+    const isFullClose = sellPercentage === 100 || parseFloat(remainingTokens) < 1000
+
     // Track bot sell operation in the trading tracker system
     if (bestResult.success) {
       try {
-        const currentStrategy = getCurrentBotStrategy()
-        await trackBotOperation('sell', token, bestResult, isSimulated, currentStrategy)
+        const walletAddress =
+          tradingKeypair?.publicKey.toString() || 'simulation'
+        const { finalizeBotPositionClose } = await import('@/utils/bot-position-close')
+        await finalizeBotPositionClose({
+          tokenAddress: token.token_address,
+          tokenSymbol: token.token_symbol,
+          tokenName: token.token_name,
+          logoUrl: token.logo_url,
+          walletAddress,
+          strategyId: resolvedStrategy,
+          isSimulated,
+          sellResult: bestResult,
+          sellPercentage,
+          currentPriceUsd: token.last_price_usd || token.current_price,
+          initialPriceUsd: buyPrice,
+          closeReason: 'track_route',
+          isFullClose,
+          priorityFee: PRIORITY_FEE_LAMPORTS,
+          strictRecord: !isSimulated,
+        })
       } catch (trackError) {
         console.error('❌ Failed to track bot sell operation:', trackError)
-        // Don't fail the operation if tracking fails
+        if (!isSimulated) {
+          throw trackError
+        }
       }
     }
 
@@ -4542,6 +4606,16 @@ function isDayTypeWeekend(): { isWeekend: boolean; dayType: 'weekend' | 'weekday
 async function internalTrackPost(request: NextRequest, logger: any) {
   const requestStartTime = Date.now()
   const requestId = Math.random().toString(36).substring(7)
+
+  const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
+  const jobLock = await acquireJobLock('trending_track', 600)
+  if (!jobLock.acquired) {
+    console.log(`⏭️ Skipping track cycle: ${jobLock.reason}`)
+    return NextResponse.json(
+      { success: false, skipped: true, reason: jobLock.reason },
+      { status: 409 },
+    )
+  }
 
   try {
     // Log incoming request
@@ -5588,7 +5662,9 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 current_price: token.current_price
               },
               existingToken.trading_simulation,
-              sellDecision.sellPercentage
+              sellDecision.sellPercentage,
+              (existingToken.trading_simulation.buy_operation as { bot_strategy?: string })
+                ?.bot_strategy,
             )
 
             if (sellOperation) {
@@ -5616,6 +5692,10 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                   // Update simulation status to completed
                   existingToken.trading_simulation.current_status = 'completed'
                   existingToken.trading_simulation.remaining_token_amount = '0'
+
+                  const finalStatus = finalGain >= 0 ? 'won' : 'lost'
+                  existingToken.status = finalStatus
+                  existingToken.status_changed_at = new Date().toISOString()
 
                   // Calculate final result
                   const buyOperation = existingToken.trading_simulation.buy_operation
@@ -5749,6 +5829,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                   peak_price_usd: newPeakPrice,
                   current_gain_percentage: currentGain,
                   peak_gain_percentage: peakGain,
+                  status: existingToken.status,
+                  status_changed_at: existingToken.status_changed_at,
                   organic_score: token.organic_score,
                   market_cap: token.market_cap,
                   volume_1h: token.volume_1h,
@@ -6075,6 +6157,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
       requestId,
       timestamp: new Date().toISOString()
     }, { status: 500 })
+  } finally {
+    await releaseJobLock('trending_track')
   }
 }
 
@@ -6632,6 +6716,12 @@ async function canExecuteRealTradeWithStrategy(
   isRebuy?: boolean
 }> {
   console.log(`🔍 Checking if real trade can be executed for ${tokenSymbol || 'unknown'} using ${strategyId} strategy (${buyAmountSOL} SOL)`)
+
+  const { isRealTradingHalted } = await import('@/utils/bot-trading-state')
+  const halt = await isRealTradingHalted()
+  if (halt.halted) {
+    return { canTrade: false, reason: halt.reason || 'Real trading circuit breaker is open' }
+  }
 
   // Check if we can execute a real trade
   const { balance, canTrade: hasBalance } = await checkTradingBalance()

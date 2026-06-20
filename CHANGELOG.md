@@ -8,6 +8,31 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Repo cleanup (Docker-only deploy)
+
+- **Removed PM2 deploy path** — deleted `deploy_pm2.yml`, `ecosystem.config.js`, and PM2 shell scripts (`deploy-single-core.sh`, `deploy-update.sh`, `install-deploy-hook.sh`, `choose-package-manager.sh`); production docs now point at [`docker-deploy.sh`](scripts/docker-deploy.sh) and [`.github/workflows/deploy_docker.yml`](.github/workflows/deploy_docker.yml).
+- **Removed stale root docs** — deleted completed migration/planning markdown (integration summaries, `refactor_plan.md`, `slim_features.md`, etc.); history remains in this changelog.
+- **Removed duplicate Cursor skill** — deleted `.agents/react-doctor/` (user-level skill covers this).
+- **Dev Dockerfile healthcheck** — [`Dockerfile`](Dockerfile) uses `wget -O /dev/null` (GET) like [`Dockerfile.web`](Dockerfile.web).
+
+### Added — Bot automation env documentation
+
+- **`.env.docker.example`** — documents `BOT_TRADING_FAILURE_THRESHOLD`, `BOT_TRADING_HALT_MINUTES`, `BOT_TRADE_LOCK_TTL_SEC`, and optional `BOT_JOB_LOCK_TTL_SEC`; replaces legacy `SUPABASE_ANON_KEY` / `NEXT_PUBLIC_SUPABASE_*` with `SUPABASE_SECRET_KEY`.
+- **[`PRODUCTION_DEPLOYMENT.md`](PRODUCTION_DEPLOYMENT.md)** — Docker-only production guide with recommended bot env values for real trading.
+
+### Fixed — Auto trade robustness (algo + cron)
+
+- **Priority fee bug** — `getPriorityFeeForStrategy()` returns lamports; buy path no longer multiplies by `1e9` twice (was causing astronomical fees on real trades).
+- **Unified bot close path** — new [`src/utils/bot-position-close.ts`](src/utils/bot-position-close.ts) records sells to `trading_records` and sets tracker `status: won/lost` on full close; SL/TP monitor calls it after on-chain sells.
+- **Real sell deferral** — track route skips on-chain sells when an active `sl_tp_positions` row exists (SL/TP monitor is the sole real closer; avoids double-sell races).
+- **Sell metadata** — bot sells use the position's assigned `bot_strategy`, not `getCurrentBotStrategy()`.
+- **SL/TP auth** — `GET /api/sl-tp-monitor` requires `TRENDING_TRACKER_SECRET`; cron passes `key=` from [`main.go`](main.go).
+- **DLMM screen auth** — uses `DLMM_CONFIG.screenSecret` fallback chain (aligns with cron `DLMM_MANAGE_SECRET`).
+- **DLMM manage errors** — returns HTTP 500 on failure instead of masking as `skipped: true`.
+- **Job overlap locks** — [`bot_job_locks`](supabase/schema.sql) table + locks on trending track, SL/TP monitor, and DLMM manage cycles.
+- **DB trade locks + circuit breaker** — [`bot_trade_locks`](supabase/schema.sql) and [`bot_trading_state`](supabase/schema.sql) prevent duplicate buys across instances; halts real trading after consecutive failures.
+- **Cron timeouts** — trending track request timeout extended to 300s in [`main.go`](main.go).
+
 ### Fixed — Docker deploy health wait
 
 - **`scripts/docker-deploy.sh`** — verifies `.next/standalone` + `.next/static` immediately after `npm run build` (fails fast on incomplete builds); recreates containers with `--force-recreate`; waits on Docker `reloadsol-web` health before curling `/api/health` (surfaces web logs on `unhealthy` instead of a blind 5-minute loop).
@@ -87,7 +112,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **New key model** — server requires `SUPABASE_SECRET_KEY` (`sb_secret_...`); legacy `service_role` / `anon` / `NEXT_PUBLIC_SUPABASE_*` env vars removed.
 - **Pure admin client** — [`src/utils/supabase.ts`](src/utils/supabase.ts) uses secret key only with `detectSessionInUrl: false` (no user JWT mixing).
-- **Scripts / CI** — admin scripts and [`deploy_pm2.yml`](.github/workflows/deploy_pm2.yml) updated for `SUPABASE_SECRET_KEY`.
+- **Scripts / CI** — admin scripts and [`deploy_docker.yml`](.github/workflows/deploy_docker.yml) updated for `SUPABASE_SECRET_KEY`.
 
 ### Added — Wallet API sessions + Supabase hardening (Phase 2)
 

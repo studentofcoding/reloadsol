@@ -62,11 +62,9 @@ cp .env.docker.example .env
 Edit `.env` with your secrets. Minimum required for a working stack:
 
 ```bash
-# Supabase — Dashboard → Project Settings → API
+# Supabase — Dashboard → Project Settings → API Keys
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SECRET_KEY=your-sb-secret-key
 
 # Shyft RPC — https://shyft.to dashboard
 SHYFT_API_KEY=your-shyft-api-key
@@ -126,10 +124,11 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 
 | Variable | Description |
 |----------|-------------|
-| `SUPABASE_URL` / `SUPABASE_ANON_KEY` | Server-side Supabase |
-| `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Client-exposed Supabase URL/key |
+| `SUPABASE_URL` | Supabase project URL |
+| `SUPABASE_SECRET_KEY` | Server secret key (`sb_secret_...`) |
 | `SHYFT_API_KEY` | Shyft dashboard API key |
 | `RPC_URL` / `NEXT_PUBLIC_RPC_URL` | `https://rpc.shyft.to?api_key=...` |
+| `WALLET_SESSION_SECRET` | httpOnly wallet session cookie signing |
 
 ### Cron secrets
 
@@ -171,6 +170,9 @@ MAX_SOL_AT_RISK=1.0
 MIN_SOL_BALANCE=0.1
 TOKEN_PURCHASE_COOLDOWN_HOURS=24
 MAX_PURCHASES_PER_TOKEN=2
+BOT_TRADING_FAILURE_THRESHOLD=3
+BOT_TRADING_HALT_MINUTES=20
+BOT_TRADE_LOCK_TTL_SEC=120
 ```
 
 ---

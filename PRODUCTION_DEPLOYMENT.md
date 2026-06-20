@@ -1,200 +1,105 @@
-# 🚀 reloadSOL Production Deployment Guide
+# reloadSOL Production Deployment Guide
 
-## Overview
+Production deployment uses **Docker Compose** (Next.js web + Go cron). PM2 scripts have been removed.
 
-This guide covers deploying the optimized reloadSOL Next.js application on your Contabo VPS (3 vCPU, 8GB RAM) with maximum performance and security.
+## Stack
 
-## ✅ Optimizations Applied
+| Service | Container | Default port | Role |
+|---------|-----------|--------------|------|
+| **web** | `reloadsol-web` | `WEB_PORT` (3000 or 80) | Next.js app + API routes |
+| **cron** | `reloadsol-cron` | `CRON_PORT` (8080) | Trending track, SL/TP, DLMM, signals |
 
-### Next.js 14.0.0 Configuration
-- **SWC Minification**: Faster builds and smaller bundles
-- **Bundle Splitting**: Optimized chunks for better caching
-  - Solana libraries chunk (40KB saved on cache hits)
-  - React libraries chunk 
-  - Charts.js chunk
-  - Vendor libraries chunk
-- **Tree Shaking**: Removes unused code
-- **Console Removal**: Production console logs stripped
-- **Standalone Output**: Optimal for self-hosting
-- **Image Optimization**: WebP/AVIF support with 30-day cache
-- **Compression**: gzip enabled for all assets
+Host build produces `.next/standalone` (avoids OOM in-container); [`Dockerfile.web`](Dockerfile.web) packages the pre-built bundle.
 
-### Security Headers
-- **CSP**: Content Security Policy for XSS protection
-- **Frame Options**: Prevents clickjacking
-- **HTTPS Enforcement**: Wallet connection compatibility
-- **Asset Caching**: 1-year cache for static assets
-
-### Performance Features
-- **PM2 Clustering**: Configurable for 1 or 3 CPU cores
-- **Memory Management**: Auto-restart at 800MB-1GB usage
-- **Health Monitoring**: Built-in health checks
-- **Bundle Analysis**: Size optimization tracking
-
-## 📊 Expected Performance
-
-### Server Resources (3 vCPU, 8GB RAM)
-
-#### Full Resource Usage (3 cores)
-- **Memory Usage**: 200-400MB (peaks at 600MB during GC)
-- **CPU Usage**: <2% idle, 10-50ms spikes per request
-- **Capacity**: ~100-150 requests/second
-- **Build Time**: 60-120 seconds
-
-#### Single Core Usage (recommended for shared servers)
-- **Memory Usage**: 400-800MB (limited to single process)
-- **CPU Usage**: 10-30% of 1 core only
-- **Capacity**: ~50-75 requests/second
-- **Available for other apps**: 2 cores + ~7GB RAM
-
-### Bundle Sizes
-- **Main Bundle**: 313KB (shared by all pages)
-- **Vendor Chunk**: 310KB (Solana + React libraries)
-- **Page Bundles**: 8-83KB (depending on complexity)
-- **Total First Load**: 359KB for home page
-
-## 🔧 Deployment Options
-
-### Option 1: Single-Core Deployment (Recommended for Shared Servers)
-
-**Perfect when running other programs on the same server**
+## Quick deploy
 
 ```bash
-# Clone your repository
-git clone https://github.com/your-username/reloadsol.git
+git clone https://github.com/your-org/reloadsol.git
 cd reloadsol
 
-# Run single-core deployment
-chmod +x scripts/deploy-single-core.sh
-./scripts/deploy-single-core.sh --with-ssl
+cp .env.docker.example .env
+# Edit .env — SUPABASE_SECRET_KEY, SHYFT_API_KEY, WALLET_SESSION_SECRET, cron secrets
 
-# Follow prompts for SSL certificate
-sudo certbot --nginx -d yourdomain.com
+# Run supabase/schema.sql in Supabase SQL Editor (includes bot_* lock tables)
+
+npm run docker:deploy
+# or: bash scripts/docker-deploy.sh
 ```
 
-**Resource allocation:**
-- reloadSOL: 1 CPU core + ~800MB RAM
-- Other programs: 2 CPU cores + ~7GB RAM
-
-### Option 2: Full Resource Deployment
-
-**Use when reloadSOL is the primary application**
+Production with host port 80:
 
 ```bash
-# Clone your repository
-git clone https://github.com/your-username/reloadsol.git
-cd reloadsol
-
-# Run full deployment
-chmod +x scripts/deploy.sh
-./scripts/deploy.sh --with-ssl
-
-# Follow prompts for SSL certificate
-sudo certbot --nginx -d yourdomain.com
+WEB_PORT=80 ./scripts/docker-deploy.sh
 ```
 
-### Option 3: Manual Deployment
+## CI / GitHub Actions
+
+Push to `main` triggers [`.github/workflows/deploy_docker.yml`](.github/workflows/deploy_docker.yml) on a self-hosted runner:
 
 ```bash
-# Install dependencies
-npm ci --only=production
-
-# Build application
-npm run build
-
-# Install PM2 globally
-sudo npm install -g pm2
-
-# Start with PM2 (single-core)
-pm2 start ecosystem.config.js --env production
-pm2 save
-pm2 startup
+bash scripts/docker-deploy.sh --skip-pull
 ```
 
-### Option 4: Docker Deployment
+Optional post-pull hook:
 
 ```bash
-# Build Docker image
-docker build -t reloadsol .
-
-# Run container (resource-limited)
-docker run -p 3000:3000 \
-  --cpus="1.0" \
-  --memory="800m" \
-  -e NODE_ENV=production \
-  -e SUPABASE_URL=your-url \
-  -e SUPABASE_ANON_KEY=your-key \
-  reloadsol
+npm run docker:deploy:hook
 ```
 
-## ⚙️ Resource Management
+## Environment variables
 
-### CPU Affinity (Advanced)
-Bind reloadSOL to a specific CPU core:
+Copy from [`.env.docker.example`](.env.docker.example). Minimum for production:
 
 ```bash
-# Find reloadSOL process ID
-PID=$(pm2 jlist | jq -r '.[] | select(.name=="reloadsol") | .pid')
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_SECRET_KEY=sb_secret_...
 
-# Bind to CPU core 0 (cores 1 & 2 free for other apps)
-sudo taskset -cp 0 $PID
+SHYFT_API_KEY=...
+RPC_URL=https://rpc.shyft.to?api_key=...
+NEXT_PUBLIC_RPC_URL=https://rpc.shyft.to?api_key=...
 
-# Verify CPU affinity
-taskset -cp $PID
+WALLET_SESSION_SECRET=...   # openssl rand -hex 32
+TRENDING_TRACKER_SECRET=...
+PNL_UPDATE_SECRET=...
+DLMM_SCREEN_SECRET=...
+DLMM_MANAGE_SECRET=...
+
+WEB_PORT=80                 # host → container :3000
+API_HOST=http://web:3000    # cron → web (inside compose network)
 ```
 
-### Memory Monitoring
+### Bot automation (real trading)
+
 ```bash
-# Monitor memory usage
-watch 'pm2 monit --no-interaction'
-
-# Check system memory
-free -h
-
-# Restart if memory usage is high
-pm2 restart reloadsol
+BOT_TRADING_FAILURE_THRESHOLD=3   # halt after N consecutive real buy failures
+BOT_TRADING_HALT_MINUTES=20       # auto-resume after halt
+BOT_TRADE_LOCK_TTL_SEC=120        # duplicate-buy lock TTL
 ```
 
-### Performance Comparison
+Sim-only deployments can omit these (defaults apply; circuit breaker affects real buys only).
 
-| Configuration | CPU Cores | Memory | Requests/sec | Available Resources |
-|---------------|-----------|--------|--------------|-------------------|
-| Single-Core   | 1 core    | 800MB  | 50-75       | 2 cores + 7GB     |
-| Full Resource | 3 cores   | 400MB  | 100-150     | 0 cores + 7.6GB   |
+### Live trading
 
-## 🔐 SSL/HTTPS Setup (Required for Wallet Connection)
-
-### Why HTTPS is Required
-Solana wallets (Phantom, Solflare) require HTTPS for security in production.
-
-### Quick SSL Setup
 ```bash
-# Install nginx and certbot
-sudo apt update
-sudo apt install nginx certbot python3-certbot-nginx
-
-# Use automated script (single-core)
-./scripts/deploy-single-core.sh --with-ssl
-
-# Get SSL certificate
-sudo certbot --nginx -d yourdomain.com
+TRADING_KEYPAIR_JSON=[1,2,3,...]
+MAX_SOL_AT_RISK=1.0
+MIN_SOL_BALANCE=0.1
 ```
 
-### Manual Nginx Configuration
+## SSL / HTTPS
+
+Solana wallets require HTTPS in production. Terminate TLS at nginx (or your load balancer) and proxy to `WEB_PORT`:
+
 ```nginx
 server {
     listen 443 ssl;
     server_name yourdomain.com;
-    
+
     ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
-    
-    # Rate limiting for shared servers
-    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
-    
+
     location / {
-        limit_req zone=api burst=20 nodelay;
-        proxy_pass http://localhost:3000;
+        proxy_pass http://127.0.0.1:80;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -203,214 +108,45 @@ server {
 }
 ```
 
-## 📊 Monitoring & Maintenance
-
-### PM2 Commands
 ```bash
-# Check status
-pm2 status
-
-# View logs
-pm2 logs reloadsol
-
-# Monitor resources (single-core specific)
-pm2 monit
-
-# Restart (zero-downtime)
-pm2 reload reloadsol
-
-# Stop application
-pm2 stop reloadsol
+sudo certbot --nginx -d yourdomain.com
 ```
 
-### Resource Monitoring
-```bash
-# Application health
-curl http://localhost:3000/api/health
-
-# System resource check
-pm2 status && df -h && free -h
-
-# CPU usage per core
-htop  # Press F2 -> Display options -> Show detailed CPU time
-
-# Check which core reloadSOL is using
-ps -eLo pid,ppid,tid,cls,rtprio,pri,psr,pcpu,stat,wchan:14,comm | grep node
-```
-
-### Bundle Analysis
-```bash
-# Analyze bundle size
-npm run build:analyze
-
-# View results
-open .next/analyze/bundle.html
-```
-
-## 🔧 Environment Variables
-
-Create `.env.production.local`:
-```env
-NODE_ENV=production
-NEXT_TELEMETRY_DISABLED=1
-
-# Supabase Configuration
-SUPABASE_URL=your-production-supabase-url
-SUPABASE_ANON_KEY=your-production-supabase-key
-
-# Trading Configuration (if using real trading)
-TRADING_KEYPAIR_JSON=[123,45,67,89...] # Your wallet private key array
-DISCORD_WEBHOOK_AUTO_TRADE=https://discord.com/api/webhooks/your-webhook
-
-# Performance Limits (adjusted for single-core)
-MAX_SOL_AT_RISK=1.0
-MIN_SOL_BALANCE=0.1
-
-# Node.js optimization for single core
-NODE_OPTIONS=--max-old-space-size=768
-```
-
-## 🚨 Security Checklist
-
-- [ ] HTTPS certificate installed
-- [ ] Environment variables secured
-- [ ] Trading keypair protected
-- [ ] Firewall configured (ports 80, 443, 22 only)
-- [ ] SSH key authentication enabled
-- [ ] Regular security updates enabled
-- [ ] Discord webhook secured
-- [ ] Database access restricted
-- [ ] CPU affinity configured (if using single-core)
-
-## 📈 Performance Optimization Tips
-
-### 1. Single-Core Optimization
-```bash
-# Set CPU governor to performance mode
-echo performance | sudo tee /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor
-
-# Monitor core-specific usage
-watch 'cat /proc/loadavg && echo "Core 0:" && cat /proc/cpuinfo | grep "processor.*0" -A 10'
-```
-
-### 2. Database Optimization
-```sql
--- Add indexes for frequently queried columns
-CREATE INDEX idx_token_address ON trending_token_tracker(token_address);
-CREATE INDEX idx_status ON trending_token_tracker(status);
-CREATE INDEX idx_tracking_started ON trending_token_tracker(tracking_started_at);
-```
-
-### 3. Memory Optimization for Single Core
-```bash
-# Enable memory compression
-echo 1 | sudo tee /proc/sys/vm/compact_memory
-
-# Adjust swappiness for better performance
-echo 10 | sudo tee /proc/sys/vm/swappiness
-```
-
-### 4. Process Monitoring
-```bash
-# Monitor reloadSOL process specifically
-watch 'ps -p $(pm2 jlist | jq -r ".[] | select(.name==\"reloadsol\") | .pid") -o pid,ppid,cpu,pmem,time,comm'
-
-# Check if process is bound to correct core
-taskset -cp $(pm2 jlist | jq -r '.[] | select(.name=="reloadsol") | .pid')
-```
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-**Wallet won't connect:**
-- Ensure HTTPS is properly configured
-- Check browser console for errors
-- Verify wallet extension is installed
-
-**High CPU usage on shared server:**
-- Verify CPU affinity: `taskset -cp $(pgrep node)`
-- Check if bound to single core
-- Monitor with `htop` and verify only 1 core is used
-
-**Memory pressure:**
-- Monitor with `pm2 monit`
-- Restart if memory exceeds 800MB
-- Check for memory leaks in logs
-
-**Slow response times (single-core):**
-- Expected: 50-75 req/sec (vs 100-150 on 3 cores)
-- Check RPC endpoint health
-- Monitor database query performance
-- Verify only 1 core is being used
-
-### Resource Conflicts
-```bash
-# Check what else is using CPU
-top -H -p $(pgrep -d',' -f node)
-
-# Monitor memory per process
-ps aux --sort=-%mem | head -10
-
-# Check if other processes are competing
-iotop -ao -d 1
-```
-
-## 📞 Support & Maintenance
-
-### Regular Maintenance Tasks
-- Weekly security updates: `sudo apt update && sudo apt upgrade`
-- Monthly dependency updates: `npm audit fix`
-- SSL certificate renewal: automatic with certbot
-- Database cleanup: purge old records monthly
-- Log rotation: configure with logrotate
-- CPU affinity verification: ensure process stays on assigned core
-
-### Performance Baselines
-
-#### Single-Core Mode
-- Initial load: <3 seconds
-- API response time: <300ms average
-- Memory usage: <800MB normal operation
-- CPU usage: <30% of assigned core
-
-#### Full Resource Mode
-- Initial load: <2 seconds
-- API response time: <200ms average
-- Memory usage: <500MB normal operation
-- CPU usage: <20% average across cores
-
-### Scaling Considerations
-- **Single-core scaling**: Monitor CPU usage of assigned core, scale up when >70%
-- **Memory scaling**: Add swap or upgrade RAM when consistently >6GB used
-- **Horizontal scaling**: Add load balancer + multiple single-core instances
-- **Database scaling**: Consider read replicas for heavy queries
-
----
-
-## 🎉 Deployment Complete!
-
-Your reloadSOL application is now optimized and ready for production with:
-- ✅ **Flexible resource usage**: 1 core or 3 cores based on your needs
-- ✅ **HTTPS support** for wallet connections  
-- ✅ **Security headers** and protections
-- ✅ **Resource monitoring** and health checks
-- ✅ **Automated deployment** scripts
-- ✅ **Production-grade** configuration
-- ✅ **Shared server** compatibility
-
-**Deployment Commands:**
+## Monitoring
 
 ```bash
-# For shared servers (recommended)
-./scripts/deploy-single-core.sh --with-ssl
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+docker compose logs -f web
+docker compose logs -f cron
 
-# For dedicated servers
-./scripts/deploy.sh --with-ssl
+curl -fsS "http://127.0.0.1:${WEB_PORT:-3000}/api/health"
+curl -fsS "http://127.0.0.1:${CRON_PORT:-8080}/health"
 ```
 
-**Resource Summary:**
-- **Single-core**: 1 CPU + 800MB RAM (leaves 2 cores + 7GB for other apps)
-- **Full resource**: 3 CPUs + 400MB RAM (dedicates server to reloadSOL)
+Manual cron triggers (cron container port 8080):
 
-Happy trading! 🚀 
+```bash
+curl -X POST http://127.0.0.1:8080/trigger/trending
+curl -X POST http://127.0.0.1:8080/trigger/sltp
+```
+
+## Security checklist
+
+- [ ] HTTPS in front of web
+- [ ] Strong `WALLET_SESSION_SECRET` and cron secrets (not defaults)
+- [ ] `SUPABASE_SECRET_KEY` server-only (never `NEXT_PUBLIC_*`)
+- [ ] Trading keypair only in `.env` (not committed)
+- [ ] Firewall: 22, 80, 443 only
+- [ ] Supabase RLS enabled (`supabase/schema.sql`)
+
+## Troubleshooting
+
+**Deploy hangs on health check:** ensure `WEB_PORT` in `.env` matches the host port Docker publishes (e.g. `80:3000` → curl `:80`, not `:3000`).
+
+**Cron 401 on SL/TP:** pass `TRENDING_TRACKER_SECRET` as `?key=` (configured in `main.go`).
+
+**Real trading halted:** check `bot_trading_state` in Supabase; circuit breaker opens after `BOT_TRADING_FAILURE_THRESHOLD` failures.
+
+**Build OOM:** host build uses `NODE_OPTIONS=--max-old-space-size=4096` in `docker-deploy.sh`.
+
+See also [`README.md`](README.md) and [`CHANGELOG.md`](CHANGELOG.md).

@@ -468,10 +468,41 @@ ALTER TABLE token_mcap_tracking
 CREATE INDEX IF NOT EXISTS idx_token_mcap_label ON token_mcap_tracking(label);
 
 -- =============================================================================
--- Row Level Security
--- Blocks direct PostgREST access with publishable/anon keys.
--- Next.js API routes use SUPABASE_SECRET_KEY (sb_secret_...) and bypass RLS.
+-- Bot automation state (locks, circuit breaker)
 -- =============================================================================
+
+CREATE TABLE IF NOT EXISTS bot_job_locks (
+  job_name TEXT PRIMARY KEY,
+  locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  locked_by TEXT,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bot_trade_locks (
+  token_address TEXT NOT NULL,
+  strategy_id TEXT NOT NULL,
+  locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (token_address, strategy_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bot_trade_locks_expires ON bot_trade_locks(expires_at);
+
+CREATE TABLE IF NOT EXISTS bot_trading_state (
+  id TEXT PRIMARY KEY DEFAULT 'global',
+  consecutive_failures INT NOT NULL DEFAULT 0,
+  real_trading_halted BOOLEAN NOT NULL DEFAULT false,
+  halted_at TIMESTAMPTZ,
+  halt_reason TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO bot_trading_state (id) VALUES ('global') ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE bot_job_locks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_trade_locks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_trading_state ENABLE ROW LEVEL SECURITY;
+
 
 ALTER TABLE token_operations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trading_records ENABLE ROW LEVEL SECURITY;

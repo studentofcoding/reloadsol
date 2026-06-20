@@ -517,7 +517,7 @@ func (cs *CronService) runTrendingTracker() {
 	
 	resp, err := cs.makeRequest("POST", url, map[string]string{
 		"key": cs.config.TrendingSecret,
-	})
+	}, 300)
 	
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("❌ Trending tracker failed: %v", err))
@@ -674,7 +674,9 @@ func (cs *CronService) runSLTPMonitor() {
 
 	url := fmt.Sprintf("%s/api/sl-tp-monitor", cs.config.APIBaseURL)
 
-	resp, err := cs.makeRequest("GET", url, nil)
+	resp, err := cs.makeRequest("GET", url, map[string]string{
+		"key": cs.config.TrendingSecret,
+	}, 120)
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("❌ SL/TP monitor failed: %v", err))
 		return
@@ -858,7 +860,7 @@ func (cs *CronService) manualOHLCTrigger(w http.ResponseWriter, r *http.Request)
     })
 }
 
-func (cs *CronService) makeRequest(method, url string, params map[string]string) (string, error) {
+func (cs *CronService) makeRequest(method, url string, params map[string]string, timeoutSec ...int) (string, error) {
 	// Add query parameters
 	if len(params) > 0 {
 		url += "?"
@@ -868,7 +870,12 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string)
 		url = url[:len(url)-1] // Remove trailing &
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	timeout := 30 * time.Second
+	if len(timeoutSec) > 0 && timeoutSec[0] > 0 {
+		timeout = time.Duration(timeoutSec[0]) * time.Second
+	}
+
+	client := &http.Client{Timeout: timeout}
 	
 	req, err := http.NewRequest(method, url, nil)
 	if err != nil {

@@ -36,7 +36,6 @@ export const DEV_API_PREFIXES = [
   '/api/mcap-tracking',
   '/api/trending',
   '/api/analytics',
-  '/api/sl-tp-monitor',
   '/api/trading/sync',
   '/api/capture',
   '/api/pnl/update',
@@ -47,6 +46,7 @@ export const SERVICE_AUTH_API_PREFIXES = [
   '/api/dlmm/screen',
   '/api/dlmm/manage',
   '/api/dlmm/telegram',
+  '/api/sl-tp-monitor',
 ] as const;
 
 export type ApiAccessTier = 'public' | 'wallet' | 'dev' | 'open';

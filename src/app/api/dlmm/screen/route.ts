@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isAuthorizedRequest } from '@/utils/dlmm/config';
+import { DLMM_CONFIG, isAuthorizedRequest } from '@/utils/dlmm/config';
 import { runDlmmScreen } from '@/utils/dlmm/screener';
 
 export async function POST(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const key = searchParams.get('key');
-    if (!isAuthorizedRequest(key, process.env.DLMM_SCREEN_SECRET)) {
+    if (!isAuthorizedRequest(key, DLMM_CONFIG.screenSecret)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

@@ -828,6 +828,50 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
             triggerType: triggerResult.trigger_type
         })
 
+        const isFullClose = updateData.is_active === false
+        const closeReasonMap: Record<string, 'sl' | 'tp1' | 'tp2' | 'tp3'> = {
+            stop_loss: 'sl',
+            take_profit_1: 'tp1',
+            take_profit_2: 'tp2',
+            take_profit_3: 'tp3',
+        }
+
+        try {
+            const { finalizeBotPositionClose } = await import('@/utils/bot-position-close')
+            await finalizeBotPositionClose({
+                tokenAddress: position.token_address,
+                tokenSymbol: position.token_symbol,
+                walletAddress: position.wallet_address,
+                strategyId: position.strategy_id || 'auto-trending',
+                isSimulated: false,
+                sellResult: {
+                    success: true,
+                    signature,
+                    inputAmount: String(amountInUnits),
+                    outputAmount: quoteResult.outAmount || '0',
+                    fees: { totalFees: 0 },
+                    provider: 'jupiter',
+                    rpcUsed: 'default',
+                },
+                sellPercentage: triggerResult.sell_percentage,
+                currentPriceUsd: triggerResult.current_price,
+                initialPriceUsd: position.entry_price,
+                tokenDecimals: decimals,
+                closeReason:
+                    closeReasonMap[triggerResult.trigger_type] || 'sltp_monitor',
+                isFullClose,
+                priorityFee: 1_000_000,
+                strictRecord: true,
+            })
+        } catch (closeErr) {
+            log.error(
+                'sell_execution',
+                'Failed to finalize bot position close after SL/TP sell',
+                closeErr as Error,
+                { positionId: position.id },
+            )
+        }
+
         return true
 
     } catch (error) {

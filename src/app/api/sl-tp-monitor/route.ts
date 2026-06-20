@@ -8,6 +8,15 @@ import {
 } from '@/utils/sl-tp-tracker'
 import { log } from '@/utils/unified-logger'
 
+function isServiceAuthorized(request: NextRequest): boolean {
+  const { searchParams } = new URL(request.url)
+  const key = searchParams.get('key')
+  const expected = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+  if (key && key === expected) return true
+  const auth = request.headers.get('authorization')
+  return auth === `Bearer ${expected}`
+}
+
 // GET - Monitor all active SL/TP positions
 export async function GET(request: NextRequest) {
   try {
@@ -37,19 +46,36 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Default action: run monitoring and return comprehensive summary
-    const summary = await runSLTPMonitorAndSummarize()
-    
-    return NextResponse.json({
-      success: true,
-      message: 'SL/TP monitoring completed',
-      counts: {
-        active: summary.statistics.total_active,
-        finished: summary.statistics.total_finished,
-        totalTrackedTokens: summary.statistics.total_tracked_tokens,
-      },
-      summary
-    })
+    // Default action: run monitoring and return comprehensive summary (cron)
+    if (!isServiceAuthorized(request)) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { acquireJobLock, releaseJobLock } = await import('@/utils/bot-job-lock')
+    const jobLock = await acquireJobLock('sltp_monitor', 120)
+    if (!jobLock.acquired) {
+      return NextResponse.json(
+        { success: false, skipped: true, reason: jobLock.reason },
+        { status: 409 },
+      )
+    }
+
+    try {
+      const summary = await runSLTPMonitorAndSummarize()
+
+      return NextResponse.json({
+        success: true,
+        message: 'SL/TP monitoring completed',
+        counts: {
+          active: summary.statistics.total_active,
+          finished: summary.statistics.total_finished,
+          totalTrackedTokens: summary.statistics.total_tracked_tokens,
+        },
+        summary,
+      })
+    } finally {
+      await releaseJobLock('sltp_monitor')
+    }
 
   } catch (error) {
     log.error('error_handling', 'SL/TP monitor API error', error as Error)
