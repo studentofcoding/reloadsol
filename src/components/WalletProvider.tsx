@@ -62,8 +62,8 @@ export function WalletProvider({ children }: WalletProviderProps) {
       url:
         typeof window !== "undefined"
           ? window.location.origin
-          : "https://v2.reloadsol.xyz",
-      iconUrls: ["https://v2.reloadsol.xyz/logo.png"],
+          : "https://reloadsol.app",
+      iconUrls: ["https://reloadsol.app/logo.png"],
     }),
     [],
   );

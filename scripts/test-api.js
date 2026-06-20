@@ -5,7 +5,7 @@ const chalk = require('chalk');
 const ora = require('ora');
 
 // Configuration
-const API_HOST = 'https://v2.reloadsol.xyz';
+const API_HOST = 'https://reloadsol.app';
 const TEST_WALLET = 'DGJqRtDKdBiKfXGwgQbaC5YJW3PGd5TtE2tGmKSLtVwx'; // Example wallet for testing
 const TEST_TOKEN = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'; // USDC token for testing
 const SOL_TOKEN = 'So11111111111111111111111111111111111111112';

@@ -1432,7 +1432,7 @@ async function sendNewTokenDetectionDiscord(params: {
     const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
 
     // Create reloadSOL swap link as requested
-    const reloadSolLink = `https://v2.reloadsol.xyz/buy?sol=0.1&mints=${tokenAddress}`
+    const reloadSolLink = `https://reloadsol.app/buy?sol=0.1&mints=${tokenAddress}`
 
     const lines = [
       `${emoji} New Token Detected (${mode})`,

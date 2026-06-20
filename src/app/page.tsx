@@ -10,13 +10,13 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'ReloadSOL - Reload your Solana from worthless memecoins',
     description: 'Easily reload your Solana by converting dust tokens and useless tokens back to SOL. Trade smarter with bulk buy/sell operations.',
-    url: 'https://v2.reloadsol.xyz',
+    url: 'https://reloadsol.app',
     siteName: 'ReloadSOL',
     locale: 'en-US',
     type: 'website',
     images: [
       {
-        url: 'https://v2.reloadsol.xyz/og-reload.png',
+        url: 'https://reloadsol.app/og-reload.png',
         width: 1200,
         height: 630,
         alt: 'ReloadSOL - Reload your Solana from worthless memecoins',
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'ReloadSOL - Reload your Solana from worthless memecoins',
     description: 'Easily reload your Solana by converting dust tokens and useless tokens back to SOL. Trade smarter with bulk buy/sell operations.',
-    images: ['https://v2.reloadsol.xyz/og-reload.png'],
+    images: ['https://reloadsol.app/og-reload.png'],
   },
 }
 

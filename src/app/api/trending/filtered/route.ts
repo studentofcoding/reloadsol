@@ -198,8 +198,8 @@ async function sendFilteredTokensNotification() {
         return;
     }
 
-    if (hostname !== 'v2.reloadsol.xyz') {
-        console.log(`Skipping Discord notification: server hostname is '${hostname}', not 'v2.reloadsol.xyz'`);
+    if (hostname !== 'reloadsol.app') {
+        console.log(`Skipping Discord notification: server hostname is '${hostname}', not 'reloadsol.app'`);
         return;
     }
 
@@ -337,7 +337,7 @@ async function sendFilteredTokensNotification() {
                     : `MCap: $${token.mcap.toLocaleString()}`;
 
                 // Construct chart link
-                const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
+                const chartLink = `https://reloadsol.app/chart/${token.token_address}`;
 
                 return `**[${token.token_symbol}](${chartLink})** ${riskEmoji}\n` +
                     `Price: $${token.price.toFixed(6)} ${hourChangeEmoji} ${hourChangePercent}%\n` +

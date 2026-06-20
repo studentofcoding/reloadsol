@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
           ? vercelUrl
           : vercelUrl !== ''
             ? `https://${vercelUrl}`
-            : 'https://v2.reloadsol.xyz'
+            : 'https://reloadsol.app'
 
         const priceResp = await fetch(`${baseUrl}/api/tokens/prices?tokens=${token.token_address}`)
         if (!priceResp.ok) continue

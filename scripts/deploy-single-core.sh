@@ -156,7 +156,7 @@ if [ "$WITH_SSL" = true ]; then
 # Nginx configuration optimized for shared server resources
 server {
     listen 80;
-    server_name v2.reloadsol.xyz;
+    server_name reloadsol.app;
     
     # Worker processes (limit for shared server)
     worker_processes 1;
@@ -239,7 +239,7 @@ EOF
   sudo systemctl restart nginx
   sudo systemctl enable nginx
   
-  echo -e "${GREEN}✅ SSL setup complete. Run 'sudo certbot --nginx -d v2.reloadsol.xyz' to get certificate${NC}"
+  echo -e "${GREEN}✅ SSL setup complete. Run 'sudo certbot --nginx -d reloadsol.app' to get certificate${NC}"
 fi
 
 # Display resource usage
@@ -276,7 +276,7 @@ echo -e "${GREEN}🎉 reloadSOL is running efficiently in single-core mode!${NC}
 # Show application URL and resource summary
 PORT=$(pm2 jlist | jq -r '.[] | select(.name=="reloadsol") | .pm2_env.PORT // "3000"')
 if [ "$WITH_SSL" = true ]; then
-  echo -e "${BLUE}🌐 Application URL: https://v2.reloadsol.xyz${NC}"
+  echo -e "${BLUE}🌐 Application URL: https://reloadsol.app${NC}"
 else
   echo -e "${BLUE}🌐 Application URL: http://localhost:${PORT}${NC}"
 fi

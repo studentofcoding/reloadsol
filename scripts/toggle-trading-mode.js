@@ -9,7 +9,7 @@
  */
 
 const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
-const API_HOST = process.env.API_HOST || 'https://v2.reloadsol.xyz'
+const API_HOST = process.env.API_HOST || 'https://reloadsol.app'
 
 async function checkTradingMode() {
   try {

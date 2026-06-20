@@ -197,7 +197,7 @@ export class PnLShareService {
       return customMessage
     }
 
-    return `Just ${isProfit ? 'made' : 'took'} ${Math.abs(profitPercentage).toFixed(1)}% ${isProfit ? 'profit' : 'loss'} trading $${coinName}! 📈\n\n${tokenAddress ? `Trade here: https://v2.reloadsol.xyz/buy?mints=${tokenAddress}` : ''}\n\n #Solana #Trading #Crypto #reloadsol`
+    return `Just ${isProfit ? 'made' : 'took'} ${Math.abs(profitPercentage).toFixed(1)}% ${isProfit ? 'profit' : 'loss'} trading $${coinName}! 📈\n\n${tokenAddress ? `Trade here: https://reloadsol.app/buy?mints=${tokenAddress}` : ''}\n\n #Solana #Trading #Crypto #reloadsol`
   }
 
   // Prepare share data

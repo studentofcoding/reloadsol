@@ -23,13 +23,13 @@ export const metadata: Metadata = {
       "Reclaim your Solana from worthless memecoins (via Reload or Swap & Reload)",
     description:
       "Easily reload your Solana with converting dust tokens and useless tokens back to SOL.",
-    url: "https://v2.reloadsol.xyz",
+    url: "https://reloadsol.app",
     siteName: "ReloadSOL",
     locale: "en-US",
     type: "website",
     images: [
       {
-        url: "https://v2.reloadsol.xyz/og-reload.png",
+        url: "https://reloadsol.app/og-reload.png",
         width: 1200,
         height: 630,
         alt: "Reclaim your Solana from worthless memecoins (via Reload or Swap & Reload)",
@@ -41,12 +41,12 @@ export const metadata: Metadata = {
     title: "Reload your Solana & trade smarter with us!",
     description:
       "Easily reload your Solana tokens with converting dust tokens and useless tokens back to SOL.",
-    images: ["https://v2.reloadsol.xyz/og-reload.png"],
+    images: ["https://reloadsol.app/og-reload.png"],
   },
   keywords:
     "Solana, SOL, reclaim solana, buy bulk tokens, buy memecoin, beli koin meme, reclaim your solana, burn token, reload sol dust tokens, token converter, crypto tools, blockchain, DeFi",
   authors: [{ name: "ReloadSOL Team" }],
-  metadataBase: new URL("https://v2.reloadsol.xyz"),
+  metadataBase: new URL("https://reloadsol.app"),
   robots: {
     index: true,
     follow: true,

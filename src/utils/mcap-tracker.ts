@@ -157,8 +157,8 @@ async function sendGrowthThresholdNotification(params: {
   } = params
 
   try {
-    const chartLink = `https://v2.reloadsol.xyz/chart/${tokenAddress}`
-    const reloadSolLink = `https://v2.reloadsol.xyz/buy?sol=0.1&mints=${tokenAddress}`
+    const chartLink = `https://reloadsol.app/chart/${tokenAddress}`
+    const reloadSolLink = `https://reloadsol.app/buy?sol=0.1&mints=${tokenAddress}`
 
     // Determine emoji and color based on threshold
     let emoji = '🚀'

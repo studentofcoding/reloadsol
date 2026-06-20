@@ -241,7 +241,7 @@ type CronService struct {
 
 func NewCronService() *CronService {
     config := &Config{
-        APIBaseURL:     getEnv("API_BASE_URL", "https://v2.reloadsol.xyz"),
+        APIBaseURL:     getEnv("API_BASE_URL", "https://reloadsol.app"),
         TrendingSecret: getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending"),
         PnLSecret:      getEnv("PNL_UPDATE_SECRET", "r3l0ads0l-pnl"),
         DiscordWebhook: getEnv("DISCORD_WEBHOOK_URL", ""),

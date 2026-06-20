@@ -16,7 +16,7 @@ const http = require('http');
 // Configuration - All values now configurable via environment variables
 const BASE_URL = process.env.VERCEL_URL
   ? `https://${process.env.VERCEL_URL}`
-  : process.env.TEST_BASE_URL || 'https://v2.reloadsol.xyz';
+  : process.env.TEST_BASE_URL || 'https://reloadsol.app';
 
 const SECRET_KEY = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending';
 const CONTENT_TYPE = process.env.TEST_CONTENT_TYPE || 'application/json';

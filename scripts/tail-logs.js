@@ -6,7 +6,7 @@ const { URL } = require('url');
 
 // Configuration with smart URL parsing
 function parseHostConfig() {
-  const envHost = process.env.API_HOST || 'https://v2.reloadsol.xyz/';
+  const envHost = process.env.API_HOST || 'https://reloadsol.app/';
   
   // Check if it's a full URL
   if (envHost.startsWith('http://') || envHost.startsWith('https://')) {

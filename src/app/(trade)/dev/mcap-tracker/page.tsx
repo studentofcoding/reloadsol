@@ -248,7 +248,7 @@ function DailyRankingVisualization({
   };
 
   const getChartUrl = (tokenAddress: string): string => {
-    return `https://v2.reloadsol.xyz/chart/${tokenAddress}`;
+    return `https://reloadsol.app/chart/${tokenAddress}`;
   };
 
   const TokenItem = ({

@@ -8,7 +8,7 @@ const chalk = require('chalk');
 const ora = require('ora');
 
 // Configuration - matches other scripts
-const API_HOST = process.env.API_HOST || 'https://v2.reloadsol.xyz';
+const API_HOST = process.env.API_HOST || 'https://reloadsol.app';
 const LOCAL_API_HOST = 'http://localhost:3000';
 
 // Utility functions for consistent logging

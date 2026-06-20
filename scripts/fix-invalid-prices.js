@@ -44,7 +44,7 @@ async function fixInvalidPrices() {
 
             try {
                 // Try to fetch current price
-                const priceResp = await fetch(`https://v2.reloadsol.xyz/api/tokens/prices?tokens=${token.token_address}`)
+                const priceResp = await fetch(`https://reloadsol.app/api/tokens/prices?tokens=${token.token_address}`)
 
                 if (priceResp.ok) {
                     const { priceUsd } = await priceResp.json()

@@ -38,7 +38,7 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
             {/* Navigation Links */}
             <nav className="hidden md:flex items-center gap-4">
               <Link 
-                href="https://v2.reloadsol.xyz/buy"
+                href="https://reloadsol.app/buy"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 px-3 py-2 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-all duration-300"
@@ -50,7 +50,7 @@ const Header: FC<HeaderProps> = ({ onOpenDailyStreak }) => {
             
             {/* Mobile Trade Link */}
             <Link 
-              href="https://v2.reloadsol.xyz/buy"
+              href="https://reloadsol.app/buy"
               target="_blank"
               rel="noopener noreferrer"
               className="md:hidden flex items-center gap-1 px-2 py-1 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-all duration-300"

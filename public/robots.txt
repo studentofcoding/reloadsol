@@ -3,4 +3,4 @@ User-agent: *
 Allow: /
 
 # Sitemap location
-Sitemap: https://v2.reloadsol.xyz/sitemap.xml
+Sitemap: https://reloadsol.app/sitemap.xml

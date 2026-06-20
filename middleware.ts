@@ -5,7 +5,7 @@ export function middleware(request: NextRequest) {
   // Base allowed origins (exact matches)
   const baseAllowedOrigins = [
     'https://reloadsol.xyz',
-    'https://v2.reloadsol.xyz',
+    'https://reloadsol.app',
     'https://testing.reloadsol.xyz',
   ]
 

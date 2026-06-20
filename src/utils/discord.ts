@@ -61,7 +61,7 @@ export async function sendNewTokenDetectionDiscord(params: {
 
   const emoji = isRealTrading ? '🔥' : '💻'
   const mode = isRealTrading ? 'LIVE TRADING' : 'SIMULATION'
-  const reloadSolLink = `https://v2.reloadsol.xyz/buy?sol=0.1&mints=${tokenAddress}`
+  const reloadSolLink = `https://reloadsol.app/buy?sol=0.1&mints=${tokenAddress}`
 
   const lines = [
     `${emoji} New Token Detected (${mode})`,

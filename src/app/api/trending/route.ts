@@ -264,11 +264,11 @@ async function sendDiscordNotification(
   //   SERVER_URL,
   //   PUBLIC_SERVER_URL: process.env.PUBLIC_SERVER_URL,
   //   VERCEL_URL: process.env.VERCEL_URL,
-  //   matches: SERVER_URL === 'v2.reloadsol.xyz'
+  //   matches: SERVER_URL === 'reloadsol.app'
   // });
 
-  // if (SERVER_URL !== 'v2.reloadsol.xyz') {
-  //   console.log(`⏭️ Skipping Discord notification: server URL is ${SERVER_URL}, not v2.reloadsol.xyz`);
+  // if (SERVER_URL !== 'reloadsol.app') {
+  //   console.log(`⏭️ Skipping Discord notification: server URL is ${SERVER_URL}, not reloadsol.app`);
   //   return;
   // }
 
@@ -367,7 +367,7 @@ async function sendDiscordNotification(
           : `MCap: $${isFinite(token.mcap) ? token.mcap.toLocaleString() : '0'}`;
 
         // Construct chart link
-        const chartLink = `https://v2.reloadsol.xyz/chart/${token.token_address}`;
+        const chartLink = `https://reloadsol.app/chart/${token.token_address}`;
 
         return `**[${token.token_symbol}](${chartLink})** ${riskEmoji}\n` +
           `Price: $${isFinite(token.price) ? token.price.toFixed(6) : '0.000000'} ${hourChangeEmoji} ${hourChangePercent}%\n` +
@@ -1329,7 +1329,7 @@ function createDailyRankingSection(
   trackerTop.forEach(([tokenAddress, tracking], index) => {
     const token = tokens.find(t => t.token_address === tokenAddress)
     const symbol = token?.token_symbol || 'UNKNOWN'
-    const chartLink = `https://v2.reloadsol.xyz/chart/${tokenAddress}`
+    const chartLink = `https://reloadsol.app/chart/${tokenAddress}`
     const growthStr = `${tracking.growthPercent >= 0 ? '+' : ''}${(tracking.growthPercent || 0).toFixed(1)}%`
     const currentStr = isFinite(tracking.currentMcap)
       ? Number(tracking.currentMcap).toLocaleString('en-US', { maximumFractionDigits: 3 })

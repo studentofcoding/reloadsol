@@ -10,11 +10,11 @@ const http = require('http');
 
 // Configuration
 const config = {
-    targetUrl: 'https://v2.reloadsol.xyz/api/trending',
+    targetUrl: 'https://reloadsol.app/api/trending',
     testOrigins: [
         'https://reloadsol.xyz',
         'https://testing.reloadsol.xyz',
-        'https://v2.reloadsol.xyz',
+        'https://reloadsol.app',
         'http://localhost:3000',
         'https://example.com' // Should fail
     ]
