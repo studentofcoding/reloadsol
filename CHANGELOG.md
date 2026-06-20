@@ -8,6 +8,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Strategy admin hub
+
+- **[`/dev/strategies`](src/app/(trade)/dev/strategies/page.tsx)** — central admin for trending bot strategies (editable TP/SL, buy size, mcap band, active toggle); read-only Signals templates and DLMM config; outcomes table for ML feed.
+- **[`src/strategies/`](src/strategies/)** — typed registry (`att`, `lowcap_moonbag`, `scalper`, `hodl`), DB merge loader, token assignment, union pre-filter for multi-strategy mode.
+- **Supabase** — `strategy_definitions`, `strategy_outcomes` tables; PATCH `/api/strategies/[id]` persists overrides.
+- **Track route** — uses shared registry instead of inline `TRADING_STRATEGIES`; writes `strategy_outcomes` on full bot close via [`bot-position-close.ts`](src/utils/bot-position-close.ts).
+
 ### Added — Unified datetime (Asia/Bangkok)
 
 - **[`src/utils/datetime.ts`](src/utils/datetime.ts)** — single formatter for display (`formatAppDateTime`, `formatAppTime`, `formatAppDateTimeWithZone`, `getAppLocalParts`); storage stays UTC ISO in Supabase and log buffers.

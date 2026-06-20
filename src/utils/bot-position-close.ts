@@ -5,6 +5,7 @@ import {
   insertTradingRecord,
 } from '@/utils/trading-records-db'
 import { calculateGainPercentage } from '@/utils/trading-math'
+import { recordTrendingBotOutcome } from '@/strategies/outcomes'
 
 const TRACKER_TABLE =
   process.env.NODE_ENV === 'development'
@@ -172,4 +173,23 @@ export async function finalizeBotPositionClose(
       updated_at: new Date().toISOString(),
     })
     .eq('id', tracker.id)
+
+  const entryAt =
+    typeof sim.simulation_started_at === 'string' ? sim.simulation_started_at : null
+
+  await recordTrendingBotOutcome({
+    strategyId: params.strategyId,
+    tokenAddress: params.tokenAddress,
+    entryAt,
+    exitAt: new Date().toISOString(),
+    pnlPct: gainPct,
+    status: finalStatus,
+    features: {
+      close_reason: params.closeReason,
+      is_simulated: params.isSimulated,
+      sell_percentage: params.sellPercentage,
+      initial_price_usd: params.initialPriceUsd,
+      exit_price_usd: params.currentPriceUsd,
+    },
+  })
 }

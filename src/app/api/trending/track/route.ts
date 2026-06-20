@@ -21,6 +21,19 @@ import {
   getAppLocalWeekday,
 } from '@/utils/datetime'
 
+import type { TokenFilterConfig, TrendingBotStrategy as TradingStrategyConfig } from '@/strategies/types'
+import { DEFAULT_FILTER_CONFIG } from '@/strategies/registry'
+import { assignTokenToStrategy } from '@/strategies/assign'
+import {
+  refreshTrackStrategyCache,
+  resolveTradingStrategy,
+  getActiveStrategiesSync,
+  getCurrentBotStrategySync,
+  getTrackStrategyRegistry,
+  getStrategyStatusSummary,
+  getUnionFilterForActiveStrategies,
+} from '@/strategies/load-strategy'
+
 export const runtime = 'nodejs'
 
 // ====================================================================================================
@@ -58,7 +71,7 @@ const dbg = (...args: any[]): void => {
 // Unified buy operation (supports both simulation and real trading)
 // async function performBuyOperation(token: any, simulation: TradingSimulation): Promise<BuyOperation | null> {
 //   // Get the strategy for this token
-//   const strategyId = (simulation.buy_operation as any)?.bot_strategy || getCurrentBotStrategy()
+//   const strategyId = (simulation.buy_operation as any)?.bot_strategy || getCurrentBotStrategySync()
 //   const operationType = simulation.is_simulated ? 'simulation' : 'real'
 
 //   return await executeBuyOperationWithStrategy(token, strategyId, operationType as 'simulation' | 'real', simulation)
@@ -116,536 +129,6 @@ interface TopWinner {
   peak_gain_percentage: number
   tracking_duration_hours: number
   status_changed_at: string
-}
-
-interface TokenFilterConfig {
-  enabled: boolean
-  mcap?: {
-    min?: number
-    max?: number
-  }
-  priceChange5m?: {
-    min?: number
-    max?: number
-  }
-  priceChange1h?: {
-    min?: number
-    max?: number
-  }
-  priceChange6h?: {
-    min?: number
-    max?: number
-  }
-  organicScore?: {
-    min?: number
-  }
-  topHoldersPercentage?: {
-    max?: number
-  }
-  requireCompleteData?: boolean
-  checkManualTradingHistory?: boolean
-}
-
-// Default filter configuration
-const DEFAULT_FILTER_CONFIG: TokenFilterConfig = {
-  enabled: true,
-  mcap: {
-    min: 350_000,
-    max: 3_000_000
-  },
-  priceChange5m: {
-    max: -40.00
-  },
-  priceChange1h: {
-    max: 100.00
-  },
-  priceChange6h: {
-    max: 60.00
-  },
-  organicScore: {
-    min: 70
-  },
-  topHoldersPercentage: {
-    max: 25
-  },
-  requireCompleteData: true,
-  checkManualTradingHistory: true
-}
-
-// Add trading strategy configuration interfaces
-interface TradingStrategyConfig {
-  id: string
-  name: string
-  description: string
-  is_active: boolean
-  take_profit_levels: {
-    tp1_percentage: number
-    tp1_sell_percentage: number
-    tp2_percentage: number
-    tp3_percentage: number
-    tp3_enabled: boolean
-  }
-  buy_amount_sol: number
-  priority_fee_lamports: number
-  stop_loss_percentage: number
-  max_hold_hours: number
-  conditions?: {
-    min_market_cap?: number
-    max_market_cap?: number
-    min_organic_score?: number
-    max_risk_level?: 'low' | 'medium' | 'high'
-  }
-  filtering?: TokenFilterConfig
-}
-
-// Define available trading strategies
-const TRADING_STRATEGIES: Record<string, TradingStrategyConfig> = {
-  att: {
-    id: 'att',
-    name: 'Attention Strategy',
-    description: 'Original aggressive trading strategy',
-    is_active: true,
-    take_profit_levels: {
-      tp1_percentage: 45,
-      tp1_sell_percentage: 90,
-      tp2_percentage: 100,
-      tp3_percentage: 30,
-      tp3_enabled: false
-    },
-    buy_amount_sol: 0.035,
-    priority_fee_lamports: 1000000,
-    stop_loss_percentage: -35,
-    max_hold_hours: 24,
-    conditions: {
-      max_risk_level: 'high'
-    },
-    // Aggressive filtering - allows more volatile tokens
-    filtering: {
-      enabled: true,
-      mcap: {
-        min: 200_000,
-        max: 5_000_000
-      },
-      priceChange5m: {
-        max: -50.00 // Allow deeper drops
-      },
-      priceChange1h: {
-        max: 150.00 // Allow higher pumps
-      },
-      priceChange6h: {
-        max: 80.00
-      },
-      organicScore: {
-        min: 60 // Lower organic score requirement
-      },
-      topHoldersPercentage: {
-        max: 30
-      },
-      requireCompleteData: true,
-      checkManualTradingHistory: true
-    }
-  },
-  lowcap_moonbag: {
-    id: 'lowcap_moonbag',
-    name: 'low cap potentail moonback',
-    description: 'Lower risk, steady gains approach',
-    is_active: true,
-    take_profit_levels: {
-      tp1_percentage: 200,
-      tp1_sell_percentage: 90,
-      tp2_percentage: 400,
-      tp3_percentage: 600,
-      tp3_enabled: true
-    },
-    buy_amount_sol: 0.008,
-    priority_fee_lamports: 1000000,
-    stop_loss_percentage: -30,
-    max_hold_hours: 12,
-    conditions: {
-      min_market_cap: 35000,
-      max_market_cap: 90000,
-      min_organic_score: 0,
-      max_risk_level: 'low'
-    },
-    // Conservative filtering - stricter requirements
-    filtering: {
-      enabled: true,
-      mcap: {
-        min: 35_000,
-        max: 90_000
-      },
-      priceChange5m: {
-        max: -25.00 // Less tolerance for drops
-      },
-      priceChange1h: {
-        max: 600.00 // Lower pump tolerance
-      },
-      priceChange6h: {
-        max: 600.00
-      },
-      organicScore: {
-        min: 0 // Higher organic score requirement
-      },
-      topHoldersPercentage: {
-        max: 25
-      },
-      requireCompleteData: true,
-      checkManualTradingHistory: true
-    }
-  },
-  scalper: {
-    id: 'scalper',
-    name: 'Scalping Strategy',
-    description: 'Quick profits, fast exits',
-    is_active: false,
-    take_profit_levels: {
-      tp1_percentage: 15,
-      tp1_sell_percentage: 90,
-      tp2_percentage: 25,
-      tp3_percentage: 40,
-      tp3_enabled: true
-    },
-    buy_amount_sol: 0.008,
-    priority_fee_lamports: 1000000,
-    stop_loss_percentage: -15,
-    max_hold_hours: 6,
-    conditions: {
-      max_risk_level: 'medium'
-    },
-    // Scalper filtering - focus on momentum
-    filtering: {
-      enabled: true,
-      mcap: {
-        min: 300_000,
-        max: 4_000_000
-      },
-      priceChange5m: {
-        min: -30.00, // Allow some drops but not too severe
-        max: -10.00
-      },
-      priceChange1h: {
-        min: 20.00, // Require some upward momentum
-        max: 80.00
-      },
-      priceChange6h: {
-        max: 70.00
-      },
-      organicScore: {
-        min: 65
-      },
-      topHoldersPercentage: {
-        max: 25
-      },
-      requireCompleteData: true,
-      checkManualTradingHistory: true
-    }
-  },
-  hodl: {
-    id: 'hodl',
-    name: 'HODL Strategy',
-    description: 'Long-term holding strategy',
-    is_active: false,
-    take_profit_levels: {
-      tp1_percentage: 100,
-      tp1_sell_percentage: 25,
-      tp2_percentage: 200,
-      tp3_percentage: 500,
-      tp3_enabled: true
-    },
-    buy_amount_sol: 0.006,
-    priority_fee_lamports: 1000000,
-    stop_loss_percentage: -60,
-    max_hold_hours: 168, // 7 days
-    conditions: {
-      min_market_cap: 500000,
-      min_organic_score: 80,
-      max_risk_level: 'low'
-    },
-    // HODL filtering - quality over quantity
-    filtering: {
-      enabled: true,
-      mcap: {
-        min: 1_000_000,
-        max: 10_000_000 // Allow higher market cap
-      },
-      priceChange5m: {
-        max: -20.00 // Very conservative on drops
-      },
-      priceChange1h: {
-        max: 30.00 // Prefer steady growth
-      },
-      priceChange6h: {
-        max: 50.00
-      },
-      organicScore: {
-        min: 85 // Highest organic score requirement
-      },
-      topHoldersPercentage: {
-        max: 15 // Strictest holder distribution
-      },
-      requireCompleteData: true,
-      checkManualTradingHistory: true
-    }
-  }
-}
-
-function isStrategyActive(strategyId: string): boolean {
-  const strategy = TRADING_STRATEGIES[strategyId]
-  if (!strategy) {
-    console.warn(`⚠️ Strategy '${strategyId}' not found`)
-    return false
-  }
-
-  // Check for environment variable override first
-  const envKey = `STRATEGY_ACTIVE_${strategyId.toUpperCase()}`
-  const envValue = process.env[envKey]
-
-  if (envValue !== undefined) {
-    const isActive = envValue.toLowerCase() === 'true'
-    console.log(`🔧 Strategy '${strategyId}' activation overridden by ${envKey}: ${isActive}`)
-    return isActive
-  }
-
-  // Check global strategies enabled flag
-  const globalEnabled = process.env.STRATEGIES_ENABLED
-  if (globalEnabled !== undefined) {
-    const isGlobalEnabled = globalEnabled.toLowerCase() === 'true'
-    if (!isGlobalEnabled) {
-      console.log(`🚫 All strategies disabled by STRATEGIES_ENABLED: false`)
-      return false
-    }
-  }
-
-  // Check day type (weekend/weekday) specific overrides
-  const dayTypeInfo = isDayTypeWeekend()
-  console.log(`🗓️ Current day: ${dayTypeInfo.dayName} (${dayTypeInfo.dayType})`)
-  const dayTypeEnvKey = `STRATEGY_ACTIVE_${dayTypeInfo.dayType.toUpperCase()}_${strategyId.toUpperCase()}`
-  const dayTypeEnvValue = process.env[dayTypeEnvKey]
-
-  if (dayTypeEnvValue !== undefined) {
-    const isDayTypeActive = dayTypeEnvValue.toLowerCase() === 'true'
-    console.log(`🔧 Strategy '${strategyId}' ${dayTypeInfo.dayType} activation overridden by ${dayTypeEnvKey}: ${isDayTypeActive}`)
-    return isDayTypeActive
-  }
-
-  // Check global weekend/weekday override
-  const globalDayTypeEnvKey = `STRATEGIES_${dayTypeInfo.dayType.toUpperCase()}_ENABLED`
-  const globalDayTypeEnvValue = process.env[globalDayTypeEnvKey]
-
-  if (globalDayTypeEnvValue !== undefined) {
-    const isGlobalDayTypeEnabled = globalDayTypeEnvValue.toLowerCase() === 'true'
-    if (!isGlobalDayTypeEnabled) {
-      console.log(`🚫 All strategies disabled for ${dayTypeInfo.dayType} (${dayTypeInfo.dayName}) by ${globalDayTypeEnvKey}: false`)
-      return false
-    }
-  }
-
-  console.log(`🔄 Strategy '${strategyId}' final activation state: ${strategy.is_active ? '✅ ACTIVE' : '❌ INACTIVE'}`)
-
-  // Use default active state from strategy configuration
-  return strategy.is_active
-}
-
-// Helper function to get all active strategies with their configurations
-function getActiveStrategiesWithState(): { strategies: string[], configs: Record<string, TradingStrategyConfig>, allocation: Record<string, number> } {
-  // First, get strategies that are marked as active
-  const activeStrategyIds = Object.keys(TRADING_STRATEGIES).filter(strategyId => {
-    const isActive = isStrategyActive(strategyId)
-    console.log(`📊 Strategy '${strategyId}' (${TRADING_STRATEGIES[strategyId].name}): ${isActive ? '✅ ACTIVE' : '❌ INACTIVE'}`)
-    return isActive
-  })
-
-  // If environment variables specify active strategies, intersect with active state
-  const envStrategies = process.env.ACTIVE_STRATEGIES || process.env.BOT_STRATEGY || process.env.TRADING_STRATEGY
-  let finalActiveStrategies = activeStrategyIds
-
-  if (envStrategies) {
-    const envStrategyList = envStrategies.split(',').map(s => s.trim()).filter(s => s)
-    // Only include strategies that are both in environment AND marked as active
-    finalActiveStrategies = activeStrategyIds.filter(strategyId =>
-      envStrategyList.includes(strategyId)
-    )
-
-    console.log(`🔄 Environment strategies: [${envStrategyList.join(', ')}]`)
-    console.log(`🔄 Active strategies: [${activeStrategyIds.join(', ')}]`)
-    console.log(`🎯 Final active strategies: [${finalActiveStrategies.join(', ')}]`)
-  }
-
-  // Validate that we have at least one active strategy
-  if (finalActiveStrategies.length === 0) {
-    console.warn(`⚠️ No active strategies found! Falling back to 'att' strategy`)
-    // Force activate ATT as fallback
-    finalActiveStrategies = ['att']
-  }
-
-  // Get strategy configurations
-  const activeConfigs: Record<string, TradingStrategyConfig> = {}
-  finalActiveStrategies.forEach(strategyId => {
-    if (TRADING_STRATEGIES[strategyId]) {
-      activeConfigs[strategyId] = TRADING_STRATEGIES[strategyId]
-    }
-  })
-
-  // Calculate allocation
-  const allocationEnv = process.env.STRATEGY_ALLOCATION || ''
-  const allocation: Record<string, number> = {}
-
-  if (allocationEnv) {
-    // Parse allocation like "att:0.4,conservative:0.3,scalper:0.3"
-    const allocPairs = allocationEnv.split(',').map(s => s.trim())
-    let totalAllocation = 0
-
-    for (const pair of allocPairs) {
-      const [strategyId, percentStr] = pair.split(':')
-      const percent = parseFloat(percentStr)
-
-      if (finalActiveStrategies.includes(strategyId) && !isNaN(percent) && percent > 0) {
-        allocation[strategyId] = percent
-        totalAllocation += percent
-      }
-    }
-
-    // Normalize allocations to sum to 1.0
-    if (totalAllocation > 0) {
-      for (const strategyId of finalActiveStrategies) {
-        if (allocation[strategyId]) {
-          allocation[strategyId] = allocation[strategyId] / totalAllocation
-        }
-      }
-    }
-  }
-
-  // If no valid allocation provided, use equal distribution
-  if (Object.keys(allocation).length === 0) {
-    const equalShare = 1.0 / finalActiveStrategies.length
-    finalActiveStrategies.forEach(strategyId => {
-      allocation[strategyId] = equalShare
-    })
-  }
-
-  console.log(`🎯 Final active strategies with allocation:`, allocation)
-  return {
-    strategies: finalActiveStrategies,
-    configs: activeConfigs,
-    allocation
-  }
-}
-
-// Helper function to get strategy status summary
-function getStrategyStatusSummary(): { is_active: string[], is_inactive: string[], total: number } {
-  const allStrategies = Object.keys(TRADING_STRATEGIES)
-  const activeStrategies: string[] = []
-  const inactiveStrategies: string[] = []
-
-  allStrategies.forEach(strategyId => {
-    if (isStrategyActive(strategyId)) {
-      activeStrategies.push(strategyId)
-    } else {
-      inactiveStrategies.push(strategyId)
-    }
-  })
-
-  return {
-    is_active: activeStrategies,
-    is_inactive: inactiveStrategies,
-    total: allStrategies.length
-  }
-}
-
-function setStrategyActiveState(strategyId: string, is_active: boolean): boolean {
-  if (!TRADING_STRATEGIES[strategyId]) {
-    console.error(`❌ Strategy '${strategyId}' not found`)
-    return false
-  }
-
-  // Note: This modifies the in-memory configuration
-  // For persistent changes, environment variables should be used
-  TRADING_STRATEGIES[strategyId].is_active = is_active
-
-  console.log(`🔄 Strategy '${strategyId}' (${TRADING_STRATEGIES[strategyId].name}) set to: ${is_active ? '✅ ACTIVE' : '❌ INACTIVE'}`)
-
-  // Validate that at least one strategy remains is_active
-  const statusSummary = getStrategyStatusSummary()
-  if (statusSummary.is_active.length === 0) {
-    console.warn(`⚠️ No strategies would be is_active! Reverting change for '${strategyId}'`)
-    TRADING_STRATEGIES[strategyId].is_active = !is_active
-    return false
-  }
-
-  return true
-}
-
-// Strategy validation and selection functions
-function validateStrategyConfig(config: TradingStrategyConfig): boolean {
-  // Validate percentage ranges
-  if (config.take_profit_levels.tp1_percentage < 5 || config.take_profit_levels.tp1_percentage > 1000) return false
-  if (config.take_profit_levels.tp1_sell_percentage < 10 || config.take_profit_levels.tp1_sell_percentage > 100) return false
-  if (config.stop_loss_percentage > -5 || config.stop_loss_percentage < -90) return false
-  if (config.max_hold_hours < 1 || config.max_hold_hours > 720) return false // Max 30 days
-
-  return true
-}
-
-function getTradingStrategy(strategyId?: string): TradingStrategyConfig {
-  // Default to 'att' if no strategy specified
-  const selectedId = strategyId || process.env.DEFAULT_TRADING_STRATEGY || 'att'
-
-  // Get strategy from registry
-  const strategy = TRADING_STRATEGIES[selectedId]
-
-  if (!strategy) {
-    console.warn(`⚠️ Unknown trading strategy '${selectedId}', falling back to 'att'`)
-    return TRADING_STRATEGIES.att
-  }
-
-  // Validate strategy configuration
-  if (!validateStrategyConfig(strategy)) {
-    console.error(`❌ Invalid strategy configuration for '${selectedId}', falling back to 'att'`)
-    return TRADING_STRATEGIES.att
-  }
-
-  return strategy
-}
-
-// Helper function to create TradingSimulation with strategy configuration
-function createTradingSimulation(
-  token: any,
-  strategyId?: string,
-  isRealTradingActive: boolean = false,
-  keypairPath?: string,
-  startTime?: string
-): TradingSimulation {
-  const strategy = getTradingStrategy(strategyId)
-
-  console.log(`🎯 Creating trading simulation for ${token.token_symbol} using '${strategy.name}' strategy`)
-
-  return {
-    token_address: token.token_address,
-    token_symbol: token.token_symbol,
-    simulation_started_at: startTime || new Date().toISOString(),
-    buy_operation: null,
-    sell_operations: [],
-    current_status: 'buying',
-    remaining_token_amount: '0',
-    initial_token_amount: '0',
-    is_simulated: !isRealTradingActive,
-    keypair_path: keypairPath,
-    take_profit_levels: { ...strategy.take_profit_levels },
-    stop_loss_percentage: strategy.stop_loss_percentage,
-    max_hold_hours: strategy.max_hold_hours,
-    final_result: null
-  }
-}
-
-function getActiveStrategies(): { strategies: string[], allocation: Record<string, number> } {
-  const { strategies, allocation } = getActiveStrategiesWithState()
-  return { strategies, allocation }
-}
-
-function getCurrentBotStrategy(): string {
-  // Maintain backward compatibility - return first active strategy
-  const { strategies } = getActiveStrategies()
-  return strategies[0]
 }
 
 // Add TradingSimulation interfaces
@@ -768,6 +251,33 @@ interface TradingSimulation {
       rpc_used: string
     }[]
   } | null
+}
+
+function createTradingSimulation(
+  token: { token_address: string; token_symbol: string | null },
+  strategyId?: string,
+  isRealTradingActive: boolean = false,
+  keypairPath?: string,
+  startTime?: string,
+): TradingSimulation {
+  const strategy = resolveTradingStrategy(strategyId)
+
+  return {
+    token_address: token.token_address,
+    token_symbol: token.token_symbol,
+    simulation_started_at: startTime || new Date().toISOString(),
+    buy_operation: null,
+    sell_operations: [],
+    current_status: 'buying',
+    remaining_token_amount: '0',
+    initial_token_amount: '0',
+    is_simulated: !isRealTradingActive,
+    keypair_path: keypairPath,
+    take_profit_levels: { ...strategy.take_profit_levels },
+    stop_loss_percentage: strategy.stop_loss_percentage,
+    max_hold_hours: strategy.max_hold_hours,
+    final_result: null,
+  }
 }
 
 // Add unified trade execution system
@@ -2173,7 +1683,7 @@ async function performEnhancedFiltering(
     filterConfig = { ...DEFAULT_FILTER_CONFIG, ...customConfig }
   } else if (strategyId) {
     // Use strategy-specific configuration
-    const strategy = getTradingStrategy(strategyId)
+    const strategy = resolveTradingStrategy(strategyId)
     filterConfig = strategy.filtering || DEFAULT_FILTER_CONFIG
   } else {
     // Use default configuration
@@ -3143,7 +2653,7 @@ function getBuyAmountForStrategy(strategyId?: string): number {
   }
 
   // Use strategy-specific buy amount
-  const strategy = getTradingStrategy(strategyId)
+  const strategy = resolveTradingStrategy(strategyId)
   console.log(`💰 Using ${strategy.name} buy amount: ${strategy.buy_amount_sol} SOL`)
   return strategy.buy_amount_sol
 }
@@ -3178,7 +2688,7 @@ function getPriorityFeeForStrategy(strategyId?: string): number {
   }
 
   // Use strategy-specific priority fee
-  const strategy = getTradingStrategy(strategyId)
+  const strategy = resolveTradingStrategy(strategyId)
   console.log(`⚡ Using ${strategy.name} priority fee: ${strategy.priority_fee_lamports} lamports`)
   return strategy.priority_fee_lamports
 }
@@ -3190,7 +2700,7 @@ async function executeBuyOperationWithStrategy(
   operationType: 'simulation' | 'real' = 'simulation',
   simulation: TradingSimulation
 ): Promise<BuyOperation | null> {
-  const strategy = getTradingStrategy(strategyId)
+  const strategy = resolveTradingStrategy(strategyId)
   console.log(`🎯 Executing buy operation for ${token.token_symbol} using ${strategy.name} strategy`)
   const isSimulated = operationType === 'simulation'
   let tradeLockHeld = false
@@ -3628,7 +3138,7 @@ async function performSellOperation(
     const resolvedStrategy =
       strategyId ||
       simulation.buy_operation?.bot_strategy ||
-      getCurrentBotStrategy()
+      getCurrentBotStrategySync()
     const operationType = isSimulated ? 'simulation' : 'real trade'
     console.log(`💸 Performing ${sellPercentage}% sell ${operationType} for ${token.token_symbol} (${token.token_address})`)
 
@@ -4319,7 +3829,7 @@ export const PUT = withUnifiedLogging(async (request: NextRequest, logger) => {
         console.log(`Track Filter Test: Fetched ${data.pools.length} pools from Jupiter API`)
 
         // Perform enhanced filtering
-        const currentStrategy = getCurrentBotStrategy()
+        const currentStrategy = getCurrentBotStrategySync()
         const customFilterConfig = parseCustomFilterConfig()
         const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(
           data.pools,
@@ -4612,6 +4122,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
   }
 
   try {
+    await refreshTrackStrategyCache()
+
     // Log incoming request
     logger.info('api_request', 'Tracking Request Started', {
       userAgent: request.headers.get('user-agent'),
@@ -4619,14 +4131,14 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     })
 
     // Log strategy status at startup
-    const strategyStatus = getStrategyStatusSummary()
+    const strategyStatus = await getStrategyStatusSummary()
     console.log(`🎯 Strategy Status Summary:`)
     console.log(`  ✅ Active (${strategyStatus.is_active.length}): ${strategyStatus.is_active.join(', ') || 'none'}`)
     console.log(`  ❌ Inactive (${strategyStatus.is_inactive.length}): ${strategyStatus.is_inactive.join(', ') || 'none'}`)
     console.log(`  📊 Total: ${strategyStatus.total} strategies`)
 
     // Get active strategies with their configurations
-    const { strategies: activeStrategies, configs: activeConfigs, allocation } = getActiveStrategiesWithState()
+    const { strategies: activeStrategies, configs: activeConfigs, allocation } = getActiveStrategiesSync()
 
     if (activeStrategies.length === 0) {
       throw new Error('No active strategies available for trading')
@@ -4752,23 +4264,19 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
     // Enhanced filtering with comprehensive tracking
     console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)
-    const currentStrategy = getCurrentBotStrategy()
     const customFilterConfig = parseCustomFilterConfig()
+    const { filterConfig: unionFilter } = await getUnionFilterForActiveStrategies()
 
-    // Add debug logging for strategy and configuration
-    console.log(`🎯 Current strategy: ${currentStrategy}`)
-    if (customFilterConfig && Object.keys(customFilterConfig).length > 0) {
-      console.log(`🔧 Custom filter config:`, customFilterConfig)
-    } else {
-      const strategy = getTradingStrategy(currentStrategy)
-      console.log(`🔧 Using strategy filter config:`, strategy.filtering)
-    }
+    const effectiveFilter =
+      customFilterConfig && Object.keys(customFilterConfig).length > 0
+        ? { ...unionFilter, ...customFilterConfig }
+        : unionFilter
 
-    const { results: filterResults, summary: filteringSummary } = await performEnhancedFiltering(
-      data.pools,
-      currentStrategy,
-      customFilterConfig && Object.keys(customFilterConfig).length > 0 ? customFilterConfig : undefined
-    )
+    console.log(`🎯 Active strategies: ${activeStrategies.join(', ')}`)
+    console.log(`🔧 Union pre-filter config:`, effectiveFilter)
+
+    const { results: filterResults, summary: filteringSummary } =
+      await performEnhancedFiltering(data.pools, undefined, effectiveFilter)
 
     // Extract accepted tokens
     const filteredTokens = filterResults
@@ -4903,7 +4411,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             ? Math.round((Date.now() - new Date(existingAnyStatus.updated_at).getTime()) / (1000 * 60)) / 100
             : 'Unknown'
 
-          const { strategies: activeStrategies } = getActiveStrategies()
+          const { strategies: activeStrategies } = getActiveStrategiesSync()
           const strategyInfo = activeStrategies.length > 0 ? `[Strategies: ${activeStrategies.join(', ')}]` : '[No active strategies]'
           console.warn(`⏭️ Token ${token.token_symbol}, from strategy:${strategyInfo} already exists in database. Skipping duplicate`)
           console.log(`📊 ${token.token_symbol} Details:`, {
@@ -5105,10 +4613,10 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             }
 
             // Assign token to strategy
-            const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation)
+            const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation, getTrackStrategyRegistry())
 
             // Enforce strategy-specific constraints before proceeding
-            const strategy = getTradingStrategy(assignedStrategy)
+            const strategy = resolveTradingStrategy(assignedStrategy)
 
             // Market cap constraints
             if (strategy.conditions?.min_market_cap && token.market_cap < strategy.conditions.min_market_cap) {
@@ -5164,7 +4672,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               // Add position to SL/TP tracker for real-time monitoring
               if (!initialSimulation.is_simulated && tradingKeypair) {
                 try {
-                  const strategy = getTradingStrategy(assignedStrategy)
+                  const strategy = resolveTradingStrategy(assignedStrategy)
                   await addSLTPPosition({
                     walletAddress: tradingKeypair.publicKey.toString(),
                     tokenAddress: token.token_address,
@@ -5385,10 +4893,10 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               }
 
               // Assign token to strategy
-              const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation)
+              const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation, getTrackStrategyRegistry())
 
               // Enforce strategy-specific constraints before proceeding
-              const strategy = getTradingStrategy(assignedStrategy)
+              const strategy = resolveTradingStrategy(assignedStrategy)
 
               // Market cap constraints
               if (strategy.conditions?.min_market_cap && token.market_cap < strategy.conditions.min_market_cap) {
@@ -5446,7 +4954,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 // Add position to SL/TP tracker for real-time monitoring
                 if (!initialSimulation.is_simulated && tradingKeypair) {
                   try {
-                    const strategy = getTradingStrategy(assignedStrategy)
+                    const strategy = resolveTradingStrategy(assignedStrategy)
                     await addSLTPPosition({
                       walletAddress: tradingKeypair.publicKey.toString(),
                       tokenAddress: token.token_address,
@@ -6124,7 +5632,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
       const strategyActiveTrades = activeTradesByStrategy.get(strategyId)
       acc[strategyId] = {
         active_trades: strategyActiveTrades ? strategyActiveTrades.size : 0,
-        strategy_name: TRADING_STRATEGIES[strategyId]?.name || strategyId
+        strategy_name: getTrackStrategyRegistry()[strategyId]?.name || strategyId
       }
       return acc
     }, {} as Record<string, any>)
@@ -6262,60 +5770,6 @@ function initializeStrategyTracking(strategies: string[]) {
       activeTradesByStrategy.set(strategyId, new Set<string>())
     }
   })
-}
-
-// Strategy assignment logic
-function assignTokenToStrategy(token: any, strategies: string[], allocation: Record<string, number>): string {
-  // Strategy assignment based on token characteristics
-  const marketCap = token.market_cap || 0
-  const organicScore = token.organic_score || 0
-  const volume1h = token.volume_1h || 0
-
-  // Rule-based assignment with fallback to allocation
-  for (const strategyId of strategies) {
-    const strategy = TRADING_STRATEGIES[strategyId]
-
-    // Check if token meets strategy conditions
-    if (strategy.conditions) {
-      let meetsConditions = true
-
-      if (strategy.conditions.min_market_cap && marketCap < strategy.conditions.min_market_cap) {
-        meetsConditions = false
-      }
-
-      // Add check for max_market_cap if defined in conditions
-      if (strategy.conditions.max_market_cap && marketCap > strategy.conditions.max_market_cap) {
-        meetsConditions = false
-      }
-
-      if (strategy.conditions.min_organic_score && organicScore < strategy.conditions.min_organic_score) {
-        meetsConditions = false
-      }
-
-      // Note: Risk assessment is now handled before assignment with comprehensive risk assessment
-
-      if (meetsConditions) {
-        console.log(`🎯 Token ${token.token_symbol} assigned to ${strategyId} strategy (rule-based)`)
-        return strategyId
-      }
-    }
-  }
-
-  // Fallback to weighted random selection based on allocation
-  const random = Math.random()
-  let cumulativeWeight = 0
-
-  for (const strategyId of strategies) {
-    cumulativeWeight += allocation[strategyId]
-    if (random <= cumulativeWeight) {
-      console.log(`🎯 Token ${token.token_symbol} assigned to ${strategyId} strategy (allocation-based)`)
-      return strategyId
-    }
-  }
-
-  // Final fallback to first strategy
-  console.log(`🎯 Token ${token.token_symbol} assigned to ${strategies[0]} strategy (fallback)`)
-  return strategies[0]
 }
 
 // Enhanced duplicate prevention: track recent purchases
@@ -6692,7 +6146,7 @@ async function canExecuteRealTrade(buyAmountSOL: number, tokenAddress?: string, 
   isRebuy?: boolean
 }> {
   // Maintain backward compatibility - use first active strategy
-  const { strategies } = getActiveStrategies()
+  const { strategies } = getActiveStrategiesSync()
   return canExecuteRealTradeWithStrategy(buyAmountSOL, strategies[0], tokenAddress, tokenSymbol, currentPrice)
 }
 
@@ -6755,7 +6209,7 @@ async function canExecuteRealTradeWithStrategy(
 
   // Calculate strategy-specific risk
   const totalAtRisk = await getTotalSOLAtRiskByStrategy(strategyId)
-  const { allocation } = getActiveStrategies()
+  const { allocation } = getActiveStrategiesSync()
   const strategyMaxRisk = MAX_SOL_AT_RISK * (allocation[strategyId] || 0.25) // Default 25% if not specified
   const newTotalAtRisk = totalAtRisk + adjustedBuyAmount
 

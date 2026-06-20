@@ -4,6 +4,8 @@
 
 The goal is to identify high-potential early-stage Solana tokens (low market cap), track their performance, and execute weighted bulk buys on the most promising candidates.
 
+**Strategy admin (trending bot):** [`/dev/strategies`](/dev/strategies) · [`docs/STRATEGY_ARCHITECTURE.md`](../docs/STRATEGY_ARCHITECTURE.md)
+
 ## 📊 Data Structure: `trading_signals`
 
 All signal data is stored in the Supabase `trading_signals` table.

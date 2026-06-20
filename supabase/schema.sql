@@ -499,6 +499,45 @@ CREATE TABLE IF NOT EXISTS bot_trading_state (
 
 INSERT INTO bot_trading_state (id) VALUES ('global') ON CONFLICT (id) DO NOTHING;
 
+-- =============================================================================
+-- Strategy admin (trending bot overrides + ML outcome snapshots)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS strategy_definitions (
+  id TEXT PRIMARY KEY,
+  domain TEXT NOT NULL CHECK (domain IN ('trending_bot', 'signals', 'dlmm')),
+  name TEXT NOT NULL,
+  description TEXT,
+  config JSONB NOT NULL DEFAULT '{}',
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  version INT NOT NULL DEFAULT 1,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS strategy_outcomes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  strategy_id TEXT NOT NULL,
+  domain TEXT NOT NULL CHECK (domain IN ('trending_bot', 'signals', 'dlmm')),
+  token_address TEXT,
+  entry_at TIMESTAMPTZ,
+  exit_at TIMESTAMPTZ,
+  pnl_pct NUMERIC,
+  status TEXT,
+  features JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_strategy ON strategy_outcomes(strategy_id);
+CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_created ON strategy_outcomes(created_at DESC);
+
+INSERT INTO strategy_definitions (id, domain, name, description, config, is_active)
+VALUES
+  ('att', 'trending_bot', 'Attention Strategy', 'Original aggressive trading strategy', '{}', true),
+  ('lowcap_moonbag', 'trending_bot', 'Low cap moonbag', 'Lower risk steady gains', '{}', true),
+  ('scalper', 'trending_bot', 'Scalping Strategy', 'Quick profits fast exits', '{}', false),
+  ('hodl', 'trending_bot', 'HODL Strategy', 'Long-term holding', '{}', false)
+ON CONFLICT (id) DO NOTHING;
+
 ALTER TABLE bot_job_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_trade_locks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_trading_state ENABLE ROW LEVEL SECURITY;
@@ -521,4 +560,6 @@ ALTER TABLE dlmm_potential_list ENABLE ROW LEVEL SECURITY;
 ALTER TABLE token_rug_list ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dlmm_positions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dlmm_lessons ENABLE ROW LEVEL SECURITY;
+ALTER TABLE strategy_definitions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE strategy_outcomes ENABLE ROW LEVEL SECURITY;
 
