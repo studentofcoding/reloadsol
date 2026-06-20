@@ -21,6 +21,7 @@ import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { useTradingData } from "@/components/TradingDataProvider";
+import { usePostBuyRefresh } from "@/hooks/usePostBuyRefresh";
 import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -87,6 +88,7 @@ export default function ChartBuyModal({
   const { publicKey, signAllTransactions, connected } = useWallet();
   const { connection } = useConnection();
   const { trackOperation } = useTradingData();
+  const triggerPostBuyRefresh = usePostBuyRefresh();
 
   // Refs for tracking
   const lastUpdateRef = useRef<number>(Date.now());
@@ -180,7 +182,7 @@ export default function ChartBuyModal({
 
   // Load user tokens function
   const loadUserTokens = useCallback(
-    async (showLoading = true) => {
+    async (showLoading = true, forceRefresh = false) => {
       if (!connected || !publicKey || !tokenAddress) {
         setCurrentPosition(null);
         return;
@@ -191,9 +193,10 @@ export default function ChartBuyModal({
         const tokens = await fetchUserTokensEfficient(
           connection,
           publicKey,
-          false, // includeZeroBalance
-          false, // includeNFTs
+          false,
+          false,
           () => {},
+          forceRefresh,
         );
 
         const significantTokens = tokens.filter(
@@ -213,6 +216,20 @@ export default function ChartBuyModal({
     },
     [connected, publicKey, connection, tokenAddress],
   );
+
+  const refreshBalances = useCallback(async () => {
+    if (connected && publicKey && connection) {
+      try {
+        const lamports = await connection.getBalance(publicKey);
+        setWalletBalance(lamports / LAMPORTS_PER_SOL);
+      } catch (error) {
+        console.error("Error fetching balance:", error);
+        setWalletBalance(null);
+      }
+    } else {
+      setWalletBalance(null);
+    }
+  }, [connected, publicKey, connection]);
 
   // Setup periodic refresh
   useEffect(() => {
@@ -238,23 +255,9 @@ export default function ChartBuyModal({
     };
   }, [connected, publicKey, loadUserTokens]);
 
-  // Fetch wallet balance
   useEffect(() => {
-    async function fetchBalance() {
-      if (connected && publicKey && connection) {
-        try {
-          const lamports = await connection.getBalance(publicKey);
-          setWalletBalance(lamports / LAMPORTS_PER_SOL);
-        } catch (error) {
-          console.error("Error fetching balance:", error);
-          setWalletBalance(null);
-        }
-      } else {
-        setWalletBalance(null);
-      }
-    }
-    fetchBalance();
-  }, [connected, publicKey, connection]);
+    void refreshBalances();
+  }, [refreshBalances]);
 
   useEffect(() => {
     if (!tokenAddress || !isValidMintAddress(tokenAddress)) {
@@ -496,9 +499,15 @@ export default function ChartBuyModal({
         }
 
         try {
-          const { fetchTokenPricesForTracking } =
-            await import("@/utils/trading-tracker");
           const currentSolPrice = await getSolPriceUSD();
+          const tokenPrices = await fetchTokenPricesForTracking([tokenAddress]);
+          const priceUsd =
+            tokenPrices[tokenAddress] || tokenInfo.price || 0;
+          const buySol = parseFloat(buyAmount);
+          const tokenAmount =
+            priceUsd > 0 && buySol > 0 && currentSolPrice > 0
+              ? (buySol * currentSolPrice) / priceUsd
+              : 0;
 
           const tokenData = [
             {
@@ -506,9 +515,9 @@ export default function ChartBuyModal({
               symbol: tokenInfo.symbol,
               name: tokenInfo.name,
               logoURI: tokenInfo.logoURI,
-              priceUsd: tokenInfo.price || 0,
-              tokenAmount: 0,
-              solAmount: parseFloat(buyAmount),
+              priceUsd,
+              tokenAmount,
+              solAmount: buySol,
             },
           ];
 
@@ -546,9 +555,11 @@ export default function ChartBuyModal({
 
       if (buyResult.success) {
         setBuyAmount(initialBuyAmount);
-        setTimeout(() => {
-          loadUserTokens(false);
-        }, 2000);
+        triggerPostBuyRefresh({
+          refreshWalletTokens: (forceRefresh) =>
+            loadUserTokens(false, forceRefresh),
+          refreshBalances,
+        });
       }
     } catch (err) {
       setError(
@@ -569,6 +580,8 @@ export default function ChartBuyModal({
     tokenInfo,
     trackOperation,
     loadUserTokens,
+    refreshBalances,
+    triggerPostBuyRefresh,
     initialBuyAmount,
   ]);
 

@@ -632,7 +632,18 @@ export default function PnLTracker() {
                 openCycles.set(cycleKey, cycle);
               }
 
-              const tokenAmt = tkn.tokenAmount || 0;
+              const solForToken = tkn.solAmount ?? solPerToken;
+              const solPrice =
+                op.solPriceUsd ?? tkn.solPrice ?? solPriceCache;
+              let tokenAmt = tkn.tokenAmount || 0;
+              if (
+                tokenAmt === 0 &&
+                solForToken > 0 &&
+                tkn.priceUsd &&
+                solPrice > 0
+              ) {
+                tokenAmt = (solForToken * solPrice) / tkn.priceUsd;
+              }
               cycle.totalSolBought += solPerToken;
               cycle.totalTokenBought += tokenAmt;
               cycle.remainingTokenAmount += tokenAmt;
@@ -1402,6 +1413,15 @@ export default function PnLTracker() {
       calculatePnL();
     }
   }, [calculatePnL, walletAddress, records]);
+
+  useEffect(() => {
+    const handleRecordAdded = () => {
+      void calculatePnL();
+    };
+    window.addEventListener("tradingRecordAdded", handleRecordAdded);
+    return () =>
+      window.removeEventListener("tradingRecordAdded", handleRecordAdded);
+  }, [calculatePnL]);
 
   // Real-time updates are now handled by React Query in TradingDataProvider
   // No need for manual subscription here

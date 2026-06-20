@@ -140,7 +140,7 @@ export async function GET(request: NextRequest) {
       cached: getCachedRecords(walletAddress, limit) !== null
     }, {
       headers: {
-        'Cache-Control': 'public, max-age=30, stale-while-revalidate=15',
+        'Cache-Control': 'private, no-cache, no-store, must-revalidate',
         'X-Cache-Status': getCachedRecords(walletAddress, limit) ? 'HIT' : 'MISS',
         ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin } : {}),
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',

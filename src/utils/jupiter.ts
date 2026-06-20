@@ -940,8 +940,13 @@ export async function fetchUserTokens(
   connection: Connection,
   userPublicKey: PublicKey,
   includeZeroBalance: boolean = false,
-  includeNFTs: boolean = false
+  includeNFTs: boolean = false,
+  forceRefresh: boolean = false,
 ): Promise<UserToken[]> {
+  if (forceRefresh) {
+    tokenFetchPromise = null
+  }
+
   // If a fetch is already in progress, return the existing promise
   if (tokenFetchPromise) {
     console.log('Token fetch already in progress, joining existing request...')
@@ -2810,10 +2815,17 @@ export async function fetchUserTokensEfficient(
   userPublicKey: PublicKey,
   includeZeroBalance: boolean = false,
   includeNFTs: boolean = false,
-  progressCallback?: (progress: number) => void
+  progressCallback?: (progress: number) => void,
+  forceRefresh: boolean = false,
 ): Promise<UserToken[]> {
-  // Use the optimized fetchUserTokens function instead
-  return fetchUserTokens(connection, userPublicKey, includeZeroBalance, includeNFTs)
+  void progressCallback
+  return fetchUserTokens(
+    connection,
+    userPublicKey,
+    includeZeroBalance,
+    includeNFTs,
+    forceRefresh,
+  )
 }
 
 // Efficient batch price refresh for multiple tokens

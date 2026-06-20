@@ -933,7 +933,7 @@ class TradingTracker {
    */
   private async handleRealTimeUpdate(walletAddress: string) {
     try {
-      const records = await this.getWalletRecords(walletAddress)
+      const records = await this.getWalletRecords(walletAddress, false)
       this.updateLocalCache(walletAddress, records)
       this.notifySubscribers(walletAddress)
     } catch (error) {

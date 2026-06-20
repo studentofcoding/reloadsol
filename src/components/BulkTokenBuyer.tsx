@@ -28,6 +28,7 @@ import {
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
 import { useTradingData } from "./TradingDataProvider";
+import { usePostBuyRefresh } from "@/hooks/usePostBuyRefresh";
 import { connection } from "../utils/connection";
 import {
   fetchAxiomTokenInfo,
@@ -41,6 +42,7 @@ export default function BulkTokenBuyer() {
   const { publicKey, signAllTransactions, connected } = useWallet();
   const { connection } = useConnection();
   const { trackOperation } = useTradingData();
+  const triggerPostBuyRefresh = usePostBuyRefresh();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const searchParams = useSearchParams();
 
@@ -410,6 +412,69 @@ export default function BulkTokenBuyer() {
     setSelectedCurrency((prev) => (prev === "SOL" ? "USDC" : "SOL"));
   };
 
+  const refreshBalances = useCallback(async () => {
+    if (connected && publicKey && connection) {
+      const lamports = await connection.getBalance(publicKey);
+      setWalletBalance(lamports / LAMPORTS_PER_SOL);
+
+      try {
+        const usdcMint = new PublicKey(TOKENS.USDC);
+        const { getAssociatedTokenAddress, getAccount } =
+          await import("@solana/spl-token");
+        const usdcTokenAccount = await getAssociatedTokenAddress(
+          usdcMint,
+          publicKey,
+        );
+
+        try {
+          const accountInfo = await getAccount(connection, usdcTokenAccount);
+          setUsdcBalance(Number(accountInfo.amount) / 1e6);
+        } catch {
+          setUsdcBalance(0);
+        }
+      } catch (error) {
+        console.error("Error fetching USDC balance:", error);
+        setUsdcBalance(0);
+      }
+    } else {
+      setWalletBalance(null);
+      setUsdcBalance(null);
+    }
+  }, [connected, publicKey, connection]);
+
+  const loadUserTokens = useCallback(
+    async (forceRefresh = false) => {
+      if (!connected || !publicKey) {
+        setUserTokens([]);
+        return;
+      }
+
+      setIsLoadingUserTokens(true);
+      try {
+        const tokens = await fetchUserTokensEfficient(
+          connection,
+          publicKey,
+          false,
+          false,
+          (progress) => {
+            console.log(`Token fetching progress: ${progress}%`);
+          },
+          forceRefresh,
+        );
+        const significantTokens = tokens.filter(
+          (token: UserToken) => token.uiAmount > 0.000001 && !token.isNFT,
+        );
+        setUserTokens(significantTokens);
+      } catch (error) {
+        console.error("Error fetching user tokens:", error);
+        setUserTokens([]);
+      } finally {
+        setIsLoadingUserTokens(false);
+      }
+    },
+    [connected, publicKey, connection],
+  );
+
   // Handle form submission
   const handleBulkBuy = useCallback(async () => {
     if (!connected || !publicKey || !signAllTransactions) {
@@ -601,12 +666,21 @@ export default function BulkTokenBuyer() {
                 (p) => p.mintAddress === token.mintAddress,
               ),
             )
-            .map((token) => ({
-              ...token,
-              priceUsd: tokenPrices[token.mintAddress] || 0,
-              tokenAmount: 0, // We don't have exact token amounts from buy result
-              solAmount: solAmountPerToken, // Individual SOL equivalent amount for this token
-            }));
+            .map((token) => {
+              const priceUsd = tokenPrices[token.mintAddress] || 0;
+              const tokenAmount =
+                priceUsd > 0 &&
+                solAmountPerToken > 0 &&
+                currentSolPrice > 0
+                  ? (solAmountPerToken * currentSolPrice) / priceUsd
+                  : 0;
+              return {
+                ...token,
+                priceUsd,
+                tokenAmount,
+                solAmount: solAmountPerToken,
+              };
+            });
 
           // Track via centralized React Query system
           await trackOperation({
@@ -641,10 +715,12 @@ export default function BulkTokenBuyer() {
       }
 
       if (buyResult.success) {
-        // Reset form on success and refresh user tokens
         setSolAmount("");
         setTokenMints("");
-        loadUserTokens(); // Refresh user token list
+        triggerPostBuyRefresh({
+          refreshWalletTokens: (forceRefresh) => loadUserTokens(forceRefresh),
+          refreshBalances: refreshBalances,
+        });
       }
     } catch (err) {
       const message =
@@ -672,43 +748,14 @@ export default function BulkTokenBuyer() {
     tokenList,
     selectedCurrency,
     trackOperation,
+    triggerPostBuyRefresh,
+    refreshBalances,
+    loadUserTokens,
   ]);
 
-  // Fetch wallet balance and user tokens
   useEffect(() => {
-    async function fetchBalance() {
-      if (connected && publicKey && connection) {
-        // Fetch SOL balance
-        const lamports = await connection.getBalance(publicKey);
-        setWalletBalance(lamports / LAMPORTS_PER_SOL);
-
-        // Fetch USDC balance
-        try {
-          const usdcMint = new PublicKey(TOKENS.USDC);
-          const { getAssociatedTokenAddress, getAccount } =
-            await import("@solana/spl-token");
-          const usdcTokenAccount = await getAssociatedTokenAddress(
-            usdcMint,
-            publicKey,
-          );
-
-          try {
-            const accountInfo = await getAccount(connection, usdcTokenAccount);
-            setUsdcBalance(Number(accountInfo.amount) / 1e6); // USDC has 6 decimals
-          } catch {
-            setUsdcBalance(0); // Account doesn't exist, balance is 0
-          }
-        } catch (error) {
-          console.error("Error fetching USDC balance:", error);
-          setUsdcBalance(0);
-        }
-      } else {
-        setWalletBalance(null);
-        setUsdcBalance(null);
-      }
-    }
-    fetchBalance();
-  }, [connected, publicKey, connection]);
+    void refreshBalances();
+  }, [refreshBalances]);
 
   // Handle metadata updates from background enrichment
   const handleMetadataUpdate = useCallback((updatedTokens: UserToken[]) => {
@@ -726,38 +773,6 @@ export default function BulkTokenBuyer() {
       }),
     );
   }, []);
-
-  // Fetch user's current token holdings
-  const loadUserTokens = useCallback(async () => {
-    if (!connected || !publicKey) {
-      setUserTokens([]);
-      return;
-    }
-
-    setIsLoadingUserTokens(true);
-    try {
-      // Use efficient batch fetching like in BulkTokenSeller
-      const tokens = await fetchUserTokensEfficient(
-        connection,
-        publicKey,
-        false, // Don't include zero balance
-        false, // Exclude NFTs
-        (progress) => {
-          console.log(`Token fetching progress: ${progress}%`);
-        },
-      );
-      // Filter out tokens with very small values to avoid clutter
-      const significantTokens = tokens.filter(
-        (token: UserToken) => token.uiAmount > 0.000001 && !token.isNFT,
-      );
-      setUserTokens(significantTokens);
-    } catch (error) {
-      console.error("Error fetching user tokens:", error);
-      setUserTokens([]);
-    } finally {
-      setIsLoadingUserTokens(false);
-    }
-  }, [connected, publicKey, connection]);
 
   // Fetch user tokens when wallet connects
   useEffect(() => {

@@ -18,7 +18,7 @@ interface OngoingRecordsRequest {
 const tradingRecordsCache = new Map<string, TradingRecordsCache>()
 export const ongoingRecordsRequests = new Map<string, OngoingRecordsRequest>()
 
-export const TRADING_RECORDS_CACHE_TTL_MS = 30 * 1000
+export const TRADING_RECORDS_CACHE_TTL_MS = 5 * 1000
 
 const MAX_CACHE_ENTRIES = 50
 const REQUEST_TIMEOUT = 10000

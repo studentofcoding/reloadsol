@@ -110,29 +110,29 @@ export function useTradingRecords(
     },
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 8000),
     enabled: !!walletAddress && sessionReady,
-    staleTime: 1000 * 10, // 10 seconds for trading records
-    refetchInterval: sessionReady && walletAddress ? 1000 * 15 : false,
+    staleTime: 1000 * 3,
+    refetchInterval: sessionReady && walletAddress ? 1000 * 5 : false,
   });
 }
 
 // Track operation mutation
 export function useTrackOperation() {
   const queryClient = useQueryClient();
-  const walletAddress = useWalletAddress();
 
   return useMutation({
     mutationFn: async (operation: Omit<TrackingRecord, "id" | "timestamp">) => {
       return await tradingTracker.trackOperation(operation);
     },
     onMutate: async (operation) => {
-      if (!walletAddress) return undefined;
+      const opWallet = operation.walletAddress;
+      if (!opWallet) return undefined;
 
       await queryClient.cancelQueries({
-        queryKey: QUERY_KEYS.tradingRecords(walletAddress),
+        queryKey: QUERY_KEYS.tradingRecords(opWallet),
       });
 
       const previous = queryClient.getQueryData<TrackingRecord[]>(
-        QUERY_KEYS.tradingRecords(walletAddress),
+        QUERY_KEYS.tradingRecords(opWallet),
       );
 
       const optimisticRecord: TrackingRecord = {
@@ -142,17 +142,18 @@ export function useTrackOperation() {
       };
 
       queryClient.setQueryData<TrackingRecord[]>(
-        QUERY_KEYS.tradingRecords(walletAddress),
+        QUERY_KEYS.tradingRecords(opWallet),
         (old) => [optimisticRecord, ...(old ?? [])],
       );
 
-      return { previous, optimisticId: optimisticRecord.id };
+      return { previous, optimisticId: optimisticRecord.id, opWallet };
     },
     onSuccess: (savedRecord, _operation, context) => {
-      if (!walletAddress) return;
+      const opWallet = context?.opWallet ?? _operation.walletAddress;
+      if (!opWallet) return;
 
       queryClient.setQueryData<TrackingRecord[]>(
-        QUERY_KEYS.tradingRecords(walletAddress),
+        QUERY_KEYS.tradingRecords(opWallet),
         (old) => {
           const withoutOptimistic = (old ?? []).filter(
             (r) => r.id !== context?.optimisticId && !r.id.startsWith('optimistic-'),
@@ -164,14 +165,26 @@ export function useTrackOperation() {
         },
       );
     },
-    onError: (error, _operation, context) => {
-      if (walletAddress && context?.previous !== undefined) {
+    onError: (error, operation, context) => {
+      const opWallet = context?.opWallet ?? operation.walletAddress;
+      if (opWallet && context?.previous !== undefined) {
         queryClient.setQueryData(
-          QUERY_KEYS.tradingRecords(walletAddress),
+          QUERY_KEYS.tradingRecords(opWallet),
           context.previous,
         );
       }
       console.error("Failed to track operation:", error);
+    },
+    onSettled: (_data, _error, operation) => {
+      const opWallet = operation.walletAddress;
+      if (!opWallet) return;
+
+      queryClient.invalidateQueries({
+        queryKey: QUERY_KEYS.tradingRecords(opWallet),
+      });
+      void queryClient.refetchQueries({
+        queryKey: QUERY_KEYS.tradingRecords(opWallet),
+      });
     },
   });
 }
