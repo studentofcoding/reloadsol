@@ -35,7 +35,7 @@ export default function LastReloadTracker({
       });
 
       if (!response.ok) {
-        if (response.status === 404) {
+        if (response.status === 404 || response.status >= 500) {
           setLastReloads([]);
           setError('');
           return;

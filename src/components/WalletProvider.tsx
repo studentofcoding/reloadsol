@@ -23,6 +23,9 @@ interface WalletProviderProps {
   children: React.ReactNode;
 }
 
+const WALLET_APP_URL =
+  process.env.NEXT_PUBLIC_SITE_URL ?? "https://v2.reloadsol.xyz";
+
 function WalletContextBridge({ children }: { children: React.ReactNode }) {
   const wallet = useUnifiedWallet();
 
@@ -59,29 +62,31 @@ export function WalletProvider({ children }: WalletProviderProps) {
     () => ({
       name: "ReloadSOL",
       description: "Reload your Solana and trade smarter",
-      url:
-        typeof window !== "undefined"
-          ? window.location.origin
-          : "https://v2.reloadsol.xyz",
-      iconUrls: ["https://v2.reloadsol.xyz/logo.png"],
+      url: WALLET_APP_URL,
+      iconUrls: [`${WALLET_APP_URL}/logo.png`],
     }),
     [],
+  );
+
+  const walletConfig = useMemo(
+    () => ({
+      autoConnect,
+      env: "mainnet-beta" as const,
+      metadata,
+      notificationCallback: WalletNotification,
+      walletlistExplanation: {
+        href: "https://developers.jup.ag/docs/tool-kits/wallet-kit",
+      },
+      theme: "dark" as const,
+      lang: "en" as const,
+    }),
+    [autoConnect, metadata],
   );
 
   return (
     <UnifiedWalletProvider
       wallets={[]}
-      config={{
-        autoConnect,
-        env: "mainnet-beta",
-        metadata,
-        notificationCallback: WalletNotification,
-        walletlistExplanation: {
-          href: "https://developers.jup.ag/docs/tool-kits/wallet-kit",
-        },
-        theme: "dark",
-        lang: "en",
-      }}
+      config={walletConfig}
       localStorageKey="reloadsol-wallet"
     >
       <WalletContextBridge>{children}</WalletContextBridge>

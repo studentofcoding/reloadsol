@@ -1,7 +1,8 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import LastReloadTracker from '@/components/LastReloadTracker'
 import UniversalWalletButton from '@/components/UniversalWalletButton'
 import Footer from '@/components/Footer'
@@ -11,13 +12,14 @@ import WelcomeModal from '@/components/WelcomeModal'
 function HomeContent() {
   const [showWelcome, setShowWelcome] = useState(false)
   const { connected } = useWallet()
+  const router = useRouter()
+  const hasRedirectedRef = useRef(false)
 
-  // Auto-redirect connected users to sell page, but only on fresh connections
+  // Auto-redirect connected users to sell page, but only once per session
   useEffect(() => {
-    // Prevent redirect if user explicitly disconnected earlier
-    const hasDisconnected = sessionStorage.getItem('hasDisconnected')
+    if (hasRedirectedRef.current) return
 
-    // Check if we just disconnected to prevent redirect loop
+    const hasDisconnected = sessionStorage.getItem('hasDisconnected')
     const justDisconnected = sessionStorage.getItem('justDisconnected')
     if (justDisconnected) {
       sessionStorage.removeItem('justDisconnected')
@@ -25,13 +27,10 @@ function HomeContent() {
     }
 
     if (connected && !hasDisconnected) {
-      // Small delay to ensure wallet connection is stable
-      const timer = setTimeout(() => {
-        window.location.href = '/sell'
-      }, 500)
-      return () => clearTimeout(timer)
+      hasRedirectedRef.current = true
+      router.replace('/sell')
     }
-  }, [connected])
+  }, [connected, router])
 
   // Check if user should see welcome modal (only for non-connected users on landing)
   useEffect(() => {

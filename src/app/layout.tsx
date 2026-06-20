@@ -5,11 +5,7 @@ import Header from "@/components/Header";
 // import { PasswordGate } from '@/components/PasswordGate'
 import { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
-
-// This is needed for static export with App Router
-export function generateStaticParams() {
-  return [];
-}
+import Script from "next/script";
 
 export const metadata: Metadata = {
   title: "Reload your Solana & trade smarter with us!",
@@ -63,8 +59,8 @@ export default function RootLayout({
     process.env.VERCEL === "1" || process.env.VERCEL_URL;
 
   return (
-    <html lang="en">
-      <body>
+    <html lang="en" suppressHydrationWarning>
+      <body suppressHydrationWarning>
         <WalletProvider>
           <TradingDataProvider>
             <div className="min-h-screen bg-black">
@@ -74,17 +70,16 @@ export default function RootLayout({
           </TradingDataProvider>
         </WalletProvider>
         {isVercelDeployment && <Analytics />}
+        <Script
+          src="https://scripts.simpleanalyticscdn.com/latest.js"
+          strategy="lazyOnload"
+        />
+        <Script
+          src="https://terminal.jup.ag/main-v4.js"
+          strategy="lazyOnload"
+          data-enable-lazy-load
+        />
       </body>
-      <script
-        async
-        src="https://scripts.simpleanalyticscdn.com/latest.js"
-      ></script>
-      {/* Jupiter Terminal script to prevent hydration mismatches */}
-      <script
-        async
-        src="https://terminal.jup.ag/main-v4.js"
-        data-enable-lazy-load
-      ></script>
     </html>
   );
 }
