@@ -1,8 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { TRENDING_BOT_STRATEGIES } from '@/strategies/registry'
+import { TRENDING_BOT_STRATEGIES, SIGNALS_STRATEGIES, DLMM_STRATEGY_DEFAULTS } from '@/strategies/registry'
 import { mergeStrategyOverride } from '@/strategies/merge'
-import { invalidateStrategyCache } from '@/strategies/load-strategy'
-import { upsertStrategyDefinition } from '@/strategies/db'
+import { mergeSignalsStrategy } from '@/strategies/merge-signals'
+import { mergeDlmmStrategy, dlmmConfigToAgentPatch } from '@/strategies/merge-dlmm'
+import {
+  invalidateStrategyCache,
+} from '@/strategies/load-strategy'
+import { invalidateSignalsCache } from '@/strategies/load-signals'
+import { invalidateDlmmStrategyCache } from '@/strategies/load-dlmm'
+import { upsertStrategyDefinition, loadStrategyDefinitionById } from '@/strategies/db'
+import { updateAgentConfig } from '@/utils/dlmm/db'
+import type {
+  ExecutionMode,
+  TrendingBotStrategyOverride,
+  SignalsStrategyOverride,
+  DlmmStrategyOverride,
+} from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,7 +23,22 @@ type PatchBody = {
   is_active?: boolean
   name?: string
   description?: string
+  execution_mode?: ExecutionMode
   config?: Record<string, unknown>
+  confirm_live?: boolean
+}
+
+function resolveStrategyBase(id: string) {
+  if (TRENDING_BOT_STRATEGIES[id]) {
+    return { domain: 'trending_bot' as const, base: TRENDING_BOT_STRATEGIES[id] }
+  }
+  if (SIGNALS_STRATEGIES[id]) {
+    return { domain: 'signals' as const, base: SIGNALS_STRATEGIES[id] }
+  }
+  if (id === 'dlmm_default') {
+    return { domain: 'dlmm' as const, base: DLMM_STRATEGY_DEFAULTS }
+  }
+  return null
 }
 
 export async function PATCH(
@@ -19,9 +47,9 @@ export async function PATCH(
 ) {
   try {
     const { id } = await context.params
-    const base = TRENDING_BOT_STRATEGIES[id]
+    const resolved = resolveStrategyBase(id)
 
-    if (!base) {
+    if (!resolved) {
       return NextResponse.json(
         { success: false, error: `Unknown strategy: ${id}` },
         { status: 404 },
@@ -29,36 +57,91 @@ export async function PATCH(
     }
 
     const body = (await request.json()) as PatchBody
-    const configOverride = (body.config ?? {}) as import('@/strategies/types').TrendingBotStrategyOverride
+    const existingRow = await loadStrategyDefinitionById(id)
 
-    const merged = mergeStrategyOverride(
-      base,
+    if (resolved.domain === 'trending_bot') {
+      const configOverride = (body.config ?? {}) as TrendingBotStrategyOverride
+      const merged = mergeStrategyOverride(
+        resolved.base as import('@/strategies/types').TrendingBotStrategy,
+        configOverride,
+        body.is_active ?? null,
+      )
+
+      const result = await upsertStrategyDefinition({
+        id,
+        domain: 'trending_bot',
+        name: body.name ?? merged.name,
+        description: body.description ?? merged.description,
+        config: configOverride,
+        is_active: body.is_active ?? merged.is_active,
+        execution_mode: body.execution_mode ?? existingRow?.execution_mode ?? 'sim_only',
+      })
+
+      if (!result.ok) {
+        return NextResponse.json({ success: false, error: result.error }, { status: 500 })
+      }
+
+      invalidateStrategyCache()
+      return NextResponse.json({ success: true, strategy: merged })
+    }
+
+    if (resolved.domain === 'signals') {
+      const configOverride = (body.config ?? {}) as SignalsStrategyOverride
+      const merged = mergeSignalsStrategy(
+        resolved.base as import('@/strategies/types').SignalsStrategy,
+        configOverride,
+        body.is_active ?? null,
+      )
+      if (body.execution_mode) merged.execution_mode = body.execution_mode
+
+      const result = await upsertStrategyDefinition({
+        id,
+        domain: 'signals',
+        name: body.name ?? merged.name,
+        description: body.description ?? merged.description,
+        config: configOverride,
+        is_active: body.is_active ?? merged.is_active,
+        execution_mode: body.execution_mode ?? existingRow?.execution_mode ?? merged.execution_mode,
+      })
+
+      if (!result.ok) {
+        return NextResponse.json({ success: false, error: result.error }, { status: 500 })
+      }
+
+      invalidateSignalsCache()
+      return NextResponse.json({ success: true, strategy: merged })
+    }
+
+    const configOverride = (body.config ?? {}) as DlmmStrategyOverride
+    const merged = mergeDlmmStrategy(
+      resolved.base as import('@/strategies/types').DlmmStrategy,
       configOverride,
       body.is_active ?? null,
     )
+    if (body.execution_mode) merged.execution_mode = body.execution_mode
 
     const result = await upsertStrategyDefinition({
       id,
-      domain: 'trending_bot',
+      domain: 'dlmm',
       name: body.name ?? merged.name,
       description: body.description ?? merged.description,
       config: configOverride,
       is_active: body.is_active ?? merged.is_active,
+      execution_mode: body.execution_mode ?? existingRow?.execution_mode ?? merged.execution_mode,
     })
 
     if (!result.ok) {
-      return NextResponse.json(
-        { success: false, error: result.error },
-        { status: 500 },
-      )
+      return NextResponse.json({ success: false, error: result.error }, { status: 500 })
     }
 
-    invalidateStrategyCache()
+    try {
+      await updateAgentConfig(dlmmConfigToAgentPatch(merged.config) as Parameters<typeof updateAgentConfig>[0])
+    } catch (err) {
+      console.warn('[strategies/patch] dlmm_agent_config sync failed:', err)
+    }
 
-    return NextResponse.json({
-      success: true,
-      strategy: merged,
-    })
+    invalidateDlmmStrategyCache()
+    return NextResponse.json({ success: true, strategy: merged })
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : String(error) },

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { boardTabUrl } from "@/components/signals/shared/parseAddresses";
 import UnifiedTokenModal from "@/components/UnifiedTokenModal";
@@ -122,13 +123,42 @@ interface TradingConfig {
 
 export default function AlgoDashboardTab() {
   const router = useRouter();
+  const [statsSimFilter, setStatsSimFilter] = useState<
+    "all" | "sim" | "live"
+  >("all");
+  const [strategyFilter, setStrategyFilter] = useState<string>("");
+  const [strategyMeta, setStrategyMeta] = useState<{
+    active: string[];
+    allocation: Record<string, number>;
+  } | null>(null);
+
   const {
     data: stats,
     isLoading: loading,
     error: queryError,
     refetch,
-  } = useTrendingStats();
+  } = useTrendingStats(30000, {
+    isSimulated:
+      statsSimFilter === "all"
+        ? undefined
+        : statsSimFilter === "sim",
+    strategyId: strategyFilter || undefined,
+  });
   const error = queryError ? queryError.message : "";
+
+  useEffect(() => {
+    fetch("/api/strategies")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.success && j.trending_bot) {
+          setStrategyMeta({
+            active: j.trending_bot.active ?? [],
+            allocation: j.trending_bot.allocation ?? {},
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const [activeTab, setActiveTab] = useState<
     "overview" | "tracking" | "winners" | "losers"
@@ -831,6 +861,48 @@ export default function AlgoDashboardTab() {
               </span>
             )}
           </button>
+        </div>
+
+        <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
+          <Link
+            href="/dev/strategies?tab=reports"
+            className="text-blue-400 underline"
+          >
+            Strategy reports (A/B)
+          </Link>
+          {strategyMeta && (
+            <span className="text-gray-400">
+              Active: {strategyMeta.active.join(", ") || "none"}
+              {Object.entries(strategyMeta.allocation).map(([id, pct]) => (
+                <span key={id} className="ml-2">
+                  {id}: {(pct * 100).toFixed(0)}%
+                </span>
+              ))}
+            </span>
+          )}
+          <select
+            value={strategyFilter}
+            onChange={(e) => setStrategyFilter(e.target.value)}
+            className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
+          >
+            <option value="">All strategies</option>
+            {(strategyMeta?.active ?? []).map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
+          <select
+            value={statsSimFilter}
+            onChange={(e) =>
+              setStatsSimFilter(e.target.value as "all" | "sim" | "live")
+            }
+            className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
+          >
+            <option value="all">All modes</option>
+            <option value="sim">Simulation only</option>
+            <option value="live">Live only</option>
+          </select>
         </div>
 
         {/* Trading Mode Banner */}

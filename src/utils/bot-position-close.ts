@@ -184,6 +184,7 @@ export async function finalizeBotPositionClose(
     exitAt: new Date().toISOString(),
     pnlPct: gainPct,
     status: finalStatus,
+    isSimulated: params.isSimulated,
     features: {
       close_reason: params.closeReason,
       is_simulated: params.isSimulated,

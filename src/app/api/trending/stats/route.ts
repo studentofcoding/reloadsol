@@ -14,6 +14,22 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const refresh = searchParams.get('refresh') === 'true'
     const nocache = searchParams.get('nocache') === 'true'
+    const isSimParam = searchParams.get('is_simulated')
+    const strategyFilter = searchParams.get('strategy_id')
+
+    const filterBySim = (token: { trading_simulation?: unknown }) => {
+      if (isSimParam === null || isSimParam === '') return true
+      const sim = token.trading_simulation as { is_simulated?: boolean } | null | undefined
+      const isSim = sim?.is_simulated !== false
+      return isSimParam === 'true' ? isSim : !isSim
+    }
+
+    const filterByStrategy = (token: { trading_simulation?: unknown }) => {
+      if (!strategyFilter) return true
+      const sim = token.trading_simulation as { strategy?: string; strategy_id?: string } | null | undefined
+      const sid = sim?.strategy_id ?? sim?.strategy
+      return sid === strategyFilter
+    }
 
     console.log(`📊 Fetching trending token statistics... ${refresh ? '(forced refresh)' : ''}${nocache ? '(no cache)' : ''}`)
 
@@ -65,9 +81,18 @@ export async function GET(request: NextRequest) {
     if (historicalResult.error) throw new Error(`Failed to fetch historical summaries: ${historicalResult.error.message}`)
 
     const summaries = summaryResult.data
-    const trackingTokens = trackingResult.data
-    const recentCompleted = completedResult.data
+    let trackingTokens = trackingResult.data
+    let recentCompleted = completedResult.data
     const historicalSummaries = historicalResult.data
+
+    if (isSimParam !== null && isSimParam !== '') {
+      trackingTokens = trackingTokens?.filter(filterBySim) ?? []
+      recentCompleted = recentCompleted?.filter(filterBySim) ?? []
+    }
+    if (strategyFilter) {
+      trackingTokens = trackingTokens?.filter(filterByStrategy) ?? []
+      recentCompleted = recentCompleted?.filter(filterByStrategy) ?? []
+    }
 
     // If we have a recent summary, get ALL tokens from that period (dependent query)
     let allSummaryTokens = null

@@ -107,6 +107,8 @@ export interface SimBuyMeta {
   solAmount: number
   tokenAmount: number
   priceUsd?: number
+  botStrategy?: string
+  simulationType?: 'manual' | 'strategy'
 }
 
 export async function trackSimBuy(
@@ -123,7 +125,8 @@ export async function trackSimBuy(
     walletAddress: meta.walletAddress,
     operationType: 'buy',
     is_simulation: true,
-    simulation_type: 'manual',
+    simulation_type: meta.simulationType ?? 'manual',
+    bot_strategy: meta.botStrategy,
     tokens: [
       {
         mintAddress: meta.mintAddress,

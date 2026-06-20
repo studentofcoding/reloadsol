@@ -3,16 +3,20 @@ import type {
   StrategyDefinitionRow,
   StrategyDomain,
   StrategyOutcomeRow,
+  StrategyReportBreakdown,
   TrendingBotStrategyOverride,
+  ExecutionMode,
 } from './types'
 
 export async function loadStrategyDefinitionRows(
-  domain: StrategyDomain = 'trending_bot',
+  domain?: StrategyDomain,
 ): Promise<StrategyDefinitionRow[]> {
-  const { data, error } = await supabase
-    .from('strategy_definitions')
-    .select('*')
-    .eq('domain', domain)
+  let query = supabase.from('strategy_definitions').select('*')
+  if (domain) {
+    query = query.eq('domain', domain)
+  }
+
+  const { data, error } = await query
 
   if (error) {
     if (error.code === '42P01' || error.message?.includes('does not exist')) {
@@ -25,26 +29,51 @@ export async function loadStrategyDefinitionRows(
   return (data ?? []) as StrategyDefinitionRow[]
 }
 
+export async function loadStrategyDefinitionById(
+  id: string,
+): Promise<StrategyDefinitionRow | null> {
+  const { data, error } = await supabase
+    .from('strategy_definitions')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return null
+    }
+    console.warn('[strategies/db] load by id failed:', error.message)
+    return null
+  }
+
+  return (data as StrategyDefinitionRow) ?? null
+}
+
 export async function upsertStrategyDefinition(params: {
   id: string
   domain: StrategyDomain
   name: string
   description?: string | null
-  config: TrendingBotStrategyOverride
+  config: Record<string, unknown>
   is_active: boolean
+  execution_mode?: ExecutionMode
 }): Promise<{ ok: boolean; error?: string }> {
-  const { error } = await supabase.from('strategy_definitions').upsert(
-    {
-      id: params.id,
-      domain: params.domain,
-      name: params.name,
-      description: params.description ?? null,
-      config: params.config,
-      is_active: params.is_active,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'id' },
-  )
+  const row: Record<string, unknown> = {
+    id: params.id,
+    domain: params.domain,
+    name: params.name,
+    description: params.description ?? null,
+    config: params.config,
+    is_active: params.is_active,
+    updated_at: new Date().toISOString(),
+  }
+  if (params.execution_mode) {
+    row.execution_mode = params.execution_mode
+  }
+
+  const { error } = await supabase.from('strategy_definitions').upsert(row, {
+    onConflict: 'id',
+  })
 
   if (error) {
     return { ok: false, error: error.message }
@@ -60,6 +89,7 @@ export async function insertStrategyOutcome(params: {
   exit_at?: string | null
   pnl_pct?: number | null
   status?: string | null
+  is_simulated?: boolean
   features?: Record<string, unknown> | null
 }): Promise<void> {
   const { error } = await supabase.from('strategy_outcomes').insert({
@@ -70,6 +100,7 @@ export async function insertStrategyOutcome(params: {
     exit_at: params.exit_at ?? new Date().toISOString(),
     pnl_pct: params.pnl_pct ?? null,
     status: params.status ?? null,
+    is_simulated: params.is_simulated ?? true,
     features: params.features ?? null,
   })
 
@@ -83,6 +114,10 @@ export async function insertStrategyOutcome(params: {
 
 export async function listStrategyOutcomes(params: {
   strategyId?: string
+  domain?: StrategyDomain
+  isSimulated?: boolean
+  from?: string
+  to?: string
   limit?: number
   offset?: number
 }): Promise<{ rows: StrategyOutcomeRow[]; total: number }> {
@@ -98,6 +133,18 @@ export async function listStrategyOutcomes(params: {
   if (params.strategyId) {
     query = query.eq('strategy_id', params.strategyId)
   }
+  if (params.domain) {
+    query = query.eq('domain', params.domain)
+  }
+  if (params.isSimulated !== undefined) {
+    query = query.eq('is_simulated', params.isSimulated)
+  }
+  if (params.from) {
+    query = query.gte('exit_at', params.from)
+  }
+  if (params.to) {
+    query = query.lte('exit_at', params.to)
+  }
 
   const { data, error, count } = await query
 
@@ -110,3 +157,122 @@ export async function listStrategyOutcomes(params: {
 
   return { rows: (data ?? []) as StrategyOutcomeRow[], total: count ?? 0 }
 }
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+export async function aggregateStrategyReports(params: {
+  domain?: StrategyDomain
+  strategyId?: string
+  isSimulated?: boolean
+  from?: string
+  to?: string
+}): Promise<{
+  breakdown: StrategyReportBreakdown[]
+  abPairs: import('./types').StrategyAbPair[]
+  topTrades: StrategyOutcomeRow[]
+  worstTrades: StrategyOutcomeRow[]
+}> {
+  let query = supabase.from('strategy_outcomes').select('*')
+
+  if (params.strategyId) query = query.eq('strategy_id', params.strategyId)
+  if (params.domain) query = query.eq('domain', params.domain)
+  if (params.isSimulated !== undefined) query = query.eq('is_simulated', params.isSimulated)
+  if (params.from) query = query.gte('exit_at', params.from)
+  if (params.to) query = query.lte('exit_at', params.to)
+
+  const { data, error } = await query
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return { breakdown: [], abPairs: [], topTrades: [], worstTrades: [] }
+    }
+    throw error
+  }
+
+  const rows = (data ?? []) as StrategyOutcomeRow[]
+  const groups = new Map<string, StrategyOutcomeRow[]>()
+
+  for (const row of rows) {
+    const key = `${row.domain}|${row.strategy_id}|${row.is_simulated}`
+    const list = groups.get(key) ?? []
+    list.push(row)
+    groups.set(key, list)
+  }
+
+  const breakdown: StrategyReportBreakdown[] = []
+
+  for (const [key, groupRows] of Array.from(groups.entries())) {
+    const [domain, strategy_id, simStr] = key.split('|')
+    const pnls = groupRows
+      .map((r: StrategyOutcomeRow) => (r.pnl_pct != null ? Number(r.pnl_pct) : null))
+      .filter((v: number | null): v is number => v != null)
+    const wins = pnls.filter((p: number) => p >= 0).length
+    const losses = pnls.filter((p: number) => p < 0).length
+
+    breakdown.push({
+      strategy_id,
+      domain: domain as StrategyDomain,
+      is_simulated: simStr === 'true',
+      trade_count: groupRows.length,
+      win_count: wins,
+      loss_count: losses,
+      win_rate: groupRows.length ? wins / groupRows.length : 0,
+      avg_pnl_pct: pnls.length ? pnls.reduce((a: number, b: number) => a + b, 0) / pnls.length : 0,
+      median_pnl_pct: median(pnls),
+      total_pnl_pct: pnls.reduce((a: number, b: number) => a + b, 0),
+    })
+  }
+
+  breakdown.sort((a, b) => b.win_rate - a.win_rate)
+
+  const defRows = await loadStrategyDefinitionRows()
+  const abParallelIds = defRows
+    .filter((d) => d.execution_mode === 'ab_parallel')
+    .map((d) => d.id)
+
+  const abPairs: import('./types').StrategyAbPair[] = abParallelIds.map((id) => {
+    const domain = defRows.find((d) => d.id === id)?.domain ?? 'trending_bot'
+    const sim = breakdown.find(
+      (b) => b.strategy_id === id && b.is_simulated && b.domain === domain,
+    ) ?? null
+    const live = breakdown.find(
+      (b) => b.strategy_id === id && !b.is_simulated && b.domain === domain,
+    ) ?? null
+    return { strategy_id: id, domain: domain as StrategyDomain, sim, live }
+  })
+
+  const withPnl = rows.filter((r) => r.pnl_pct != null)
+  const topTrades = [...withPnl]
+    .sort((a, b) => Number(b.pnl_pct) - Number(a.pnl_pct))
+    .slice(0, 5)
+  const worstTrades = [...withPnl]
+    .sort((a, b) => Number(a.pnl_pct) - Number(b.pnl_pct))
+    .slice(0, 5)
+
+  return { breakdown, abPairs, topTrades, worstTrades }
+}
+
+export async function fetchTradingRecordsForWallet(
+  walletAddress: string,
+): Promise<import('@/utils/trading-tracker').TrackingRecord[]> {
+  const { data, error } = await supabase
+    .from('trading_records')
+    .select('data')
+    .eq('wallet_address', walletAddress)
+    .order('timestamp', { ascending: true })
+
+  if (error) {
+    console.warn('[strategies/db] trading_records fetch failed:', error.message)
+    return []
+  }
+
+  return (data ?? []).map((r) => r.data as import('@/utils/trading-tracker').TrackingRecord)
+}
+
+/** @deprecated use Record<string, unknown> config in upsert */
+export type { TrendingBotStrategyOverride }

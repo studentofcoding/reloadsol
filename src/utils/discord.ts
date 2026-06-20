@@ -183,3 +183,13 @@ export async function sendTradeAlertDiscord(params: {
   logTradeOperation('Discord Trade Alert', { tokenSymbol, status })
   await postToWebhook(content)
 }
+
+export async function sendStrategyReportDiscord(body: string): Promise<boolean> {
+  if (!shouldEnableNotifications()) return false
+  try {
+    await postToWebhook(`📊 **Strategy Report Digest**\n\`\`\`\n${body.slice(0, 3500)}\n\`\`\``)
+    return true
+  } catch {
+    return false
+  }
+}

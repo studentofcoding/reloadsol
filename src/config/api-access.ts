@@ -48,6 +48,8 @@ export const SERVICE_AUTH_API_PREFIXES = [
   '/api/dlmm/manage',
   '/api/dlmm/telegram',
   '/api/sl-tp-monitor',
+  '/api/signals/sim-track',
+  '/api/strategies/report-digest',
 ] as const;
 
 export type ApiAccessTier = 'public' | 'wallet' | 'dev' | 'open';

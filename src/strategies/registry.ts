@@ -140,6 +140,83 @@ export const TRENDING_BOT_STRATEGIES: Record<string, TrendingBotStrategy> = {
   },
 }
 
+export const DEFAULT_SIGNALS_SCORING = {
+  recencyBoostMax: 20,
+  milestone80: 15,
+  milestone120: 20,
+  milestone200: 25,
+  speedTo80Fast: 15,
+  speedTo80Medium: 10,
+  speedTo80Slow: 5,
+  inTrackingRange: 10,
+  stuckPenalty: 50,
+  stopLossPenalty: 100,
+  sellOver100LatePenalty: 40,
+}
+
+export const SIGNALS_STRATEGIES: Record<string, import('./types').SignalsStrategy> = {
+  signals_default: {
+    id: 'signals_default',
+    name: 'Default momentum',
+    description: 'Enter on strong growth + score floor',
+    is_active: true,
+    execution_mode: 'sim_only',
+    config: {
+      template: 'default',
+      enterScoreFloor: 50,
+      query: {
+        limit: 50,
+        recencyMinutes: 240,
+        minGrowth: 0,
+        includeStuck: false,
+        maxAgeMinutes: 2880,
+      },
+      scoring: { ...DEFAULT_SIGNALS_SCORING },
+      execution: { simBuySol: 0.01, maxOpenPositions: 10 },
+    },
+  },
+  signals_sell_over_100: {
+    id: 'signals_sell_over_100',
+    name: 'Sell over 100%',
+    description: 'Favor exit above 100% growth; penalize late surges',
+    is_active: true,
+    execution_mode: 'sim_only',
+    config: {
+      template: 'sell_over_100',
+      enterScoreFloor: 50,
+      query: {
+        limit: 50,
+        recencyMinutes: 240,
+        minGrowth: 0,
+        includeStuck: false,
+        maxAgeMinutes: 2880,
+      },
+      scoring: { ...DEFAULT_SIGNALS_SCORING },
+      execution: { simBuySol: 0.01, maxOpenPositions: 10 },
+    },
+  },
+}
+
+export const DLMM_STRATEGY_DEFAULTS: import('./types').DlmmStrategy = {
+  id: 'dlmm_default',
+  name: 'DLMM Hunter/Healer',
+  description: 'Meteora LP screener + reasoner thresholds',
+  is_active: true,
+  execution_mode: 'sim_only',
+  config: {
+    min_tvl: 50_000,
+    min_fee_tvl: 0.1,
+    min_organic_score: 50,
+    min_holders: 100,
+    take_profit_pct: 5,
+    stop_loss_pct: -10,
+    oor_timeout_min: 16,
+    max_sol_per_position: 1,
+    max_sol_at_risk: 5,
+    bin_range_interval: 10,
+  },
+}
+
 export const SIGNALS_STRATEGY_META = [
   {
     id: 'default' as const,

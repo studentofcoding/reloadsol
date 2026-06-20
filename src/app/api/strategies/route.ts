@@ -6,16 +6,20 @@ import {
   getActiveStrategiesWithState,
   getStrategyStatusSummary,
 } from '@/strategies/load-strategy'
-import { SIGNALS_STRATEGY_META, TRENDING_BOT_STRATEGIES } from '@/strategies/registry'
+import { getMergedSignalsRegistry } from '@/strategies/load-signals'
+import { getMergedDlmmStrategy } from '@/strategies/load-dlmm'
+import { TRENDING_BOT_STRATEGIES } from '@/strategies/registry'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    const [registry, active, status] = await Promise.all([
+    const [registry, active, status, signalsRegistry, dlmmStrategy] = await Promise.all([
       getMergedTrendingBotRegistry(),
       getActiveStrategiesWithState(),
       getStrategyStatusSummary(),
+      getMergedSignalsRegistry(),
+      getMergedDlmmStrategy(),
     ])
 
     let dlmmConfig = defaultAgentConfig()
@@ -35,12 +39,15 @@ export async function GET() {
         status,
       },
       signals: {
-        templates: SIGNALS_STRATEGY_META,
-        note: 'Signals scoring is read-only in v1; edit via /dev/signals tab params.',
+        effective: signalsRegistry,
+        active: Object.values(signalsRegistry)
+          .filter((s) => s.is_active)
+          .map((s) => s.id),
       },
       dlmm: {
+        effective: dlmmStrategy,
         config: dlmmConfig,
-        note: 'Enable/dry-run on /dev/dlmm; threshold editing in Phase 2.',
+        note: 'Enable/dry-run on /dev/dlmm; thresholds editable below.',
       },
     })
   } catch (error) {

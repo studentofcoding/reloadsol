@@ -510,6 +510,7 @@ CREATE TABLE IF NOT EXISTS strategy_definitions (
   description TEXT,
   config JSONB NOT NULL DEFAULT '{}',
   is_active BOOLEAN NOT NULL DEFAULT true,
+  execution_mode TEXT NOT NULL DEFAULT 'sim_only' CHECK (execution_mode IN ('sim_only', 'live_only', 'ab_parallel')),
   version INT NOT NULL DEFAULT 1,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -523,6 +524,7 @@ CREATE TABLE IF NOT EXISTS strategy_outcomes (
   exit_at TIMESTAMPTZ,
   pnl_pct NUMERIC,
   status TEXT,
+  is_simulated BOOLEAN NOT NULL DEFAULT true,
   features JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -530,12 +532,26 @@ CREATE TABLE IF NOT EXISTS strategy_outcomes (
 CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_strategy ON strategy_outcomes(strategy_id);
 CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_created ON strategy_outcomes(created_at DESC);
 
-INSERT INTO strategy_definitions (id, domain, name, description, config, is_active)
+-- Phase 2 migration (run BEFORE index on is_simulated — safe on existing Phase 1 DBs)
+ALTER TABLE strategy_definitions ADD COLUMN IF NOT EXISTS execution_mode TEXT DEFAULT 'sim_only';
+UPDATE strategy_definitions SET execution_mode = 'sim_only' WHERE execution_mode IS NULL;
+ALTER TABLE strategy_definitions ALTER COLUMN execution_mode SET DEFAULT 'sim_only';
+
+ALTER TABLE strategy_outcomes ADD COLUMN IF NOT EXISTS is_simulated BOOLEAN DEFAULT true;
+UPDATE strategy_outcomes SET is_simulated = COALESCE((features->>'is_simulated')::boolean, true) WHERE is_simulated IS NULL;
+ALTER TABLE strategy_outcomes ALTER COLUMN is_simulated SET DEFAULT true;
+
+CREATE INDEX IF NOT EXISTS idx_strategy_outcomes_domain_sim ON strategy_outcomes(domain, strategy_id, is_simulated, exit_at DESC);
+
+INSERT INTO strategy_definitions (id, domain, name, description, config, is_active, execution_mode)
 VALUES
-  ('att', 'trending_bot', 'Attention Strategy', 'Original aggressive trading strategy', '{}', true),
-  ('lowcap_moonbag', 'trending_bot', 'Low cap moonbag', 'Lower risk steady gains', '{}', true),
-  ('scalper', 'trending_bot', 'Scalping Strategy', 'Quick profits fast exits', '{}', false),
-  ('hodl', 'trending_bot', 'HODL Strategy', 'Long-term holding', '{}', false)
+  ('att', 'trending_bot', 'Attention Strategy', 'Original aggressive trading strategy', '{}', true, 'sim_only'),
+  ('lowcap_moonbag', 'trending_bot', 'Low cap moonbag', 'Lower risk steady gains', '{}', true, 'sim_only'),
+  ('scalper', 'trending_bot', 'Scalping Strategy', 'Quick profits fast exits', '{}', false, 'sim_only'),
+  ('hodl', 'trending_bot', 'HODL Strategy', 'Long-term holding', '{}', false, 'sim_only'),
+  ('signals_default', 'signals', 'Default momentum', 'Enter on strong growth + score floor', '{}', true, 'sim_only'),
+  ('signals_sell_over_100', 'signals', 'Sell over 100%', 'Favor exit above 100% growth', '{}', true, 'sim_only'),
+  ('dlmm_default', 'dlmm', 'DLMM Hunter/Healer', 'Meteora LP screener + reasoner thresholds', '{}', true, 'sim_only')
 ON CONFLICT (id) DO NOTHING;
 
 ALTER TABLE bot_job_locks ENABLE ROW LEVEL SECURITY;

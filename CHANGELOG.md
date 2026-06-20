@@ -15,6 +15,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Supabase** — `strategy_definitions`, `strategy_outcomes` tables; PATCH `/api/strategies/[id]` persists overrides.
 - **Track route** — uses shared registry instead of inline `TRADING_STRATEGIES`; writes `strategy_outcomes` on full bot close via [`bot-position-close.ts`](src/utils/bot-position-close.ts).
 
+### Added — Phase 2 simulation hub
+
+- **Signals** — editable scoring/query config in admin; automated paper trading via `POST /api/signals/sim-track` (cron `SIGNALS_SIM_INTERVAL`); `recordSignalsOutcome` on sim close.
+- **DLMM** — editable thresholds in admin (syncs to `dlmm_agent_config`); `recordDlmmOutcome` on position close.
+- **Reports** — `GET /api/strategies/reports`, CSV export on outcomes, A/B tab on `/dev/strategies`, optional Discord/Telegram digest (`STRATEGY_REPORT_*` env).
+- **Promotion** — `POST /api/strategies/[id]/promote` copies winning config to live slot after A/B review.
+- **Algo Tester** — strategy + sim/live filters on stats; link to strategy reports.
+- **Schema** — `execution_mode` on `strategy_definitions`, `is_simulated` on `strategy_outcomes`; seed `signals_*` and `dlmm_default` rows.
+
 ### Added — Unified datetime (Asia/Bangkok)
 
 - **[`src/utils/datetime.ts`](src/utils/datetime.ts)** — single formatter for display (`formatAppDateTime`, `formatAppTime`, `formatAppDateTimeWithZone`, `getAppLocalParts`); storage stays UTC ISO in Supabase and log buffers.

@@ -192,6 +192,23 @@ export async function removePosition(id: string): Promise<DlmmActionResult> {
     fee_tvl_at_entry: null,
   });
 
+  const { recordDlmmOutcome } = await import('@/strategies/outcomes');
+  await recordDlmmOutcome({
+    strategyId: 'dlmm_default',
+    poolAddress: position.pool_address,
+    entryAt: position.created_at ?? null,
+    exitAt: new Date().toISOString(),
+    pnlPct: position.pnl_pct,
+    status: (position.pnl_pct ?? 0) >= 0 ? 'won' : 'lost',
+    isSimulated: config.dry_run,
+    features: {
+      pool_name: position.pool_name,
+      position_id: id,
+      amount_sol: position.amount_sol,
+      close_reason: execResult.message,
+    },
+  });
+
   return { ...execResult, positionId: id };
 }
 

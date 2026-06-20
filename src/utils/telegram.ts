@@ -121,3 +121,11 @@ export async function sendDlmmScreenAlert(candidates: Array<{ name: string; scor
     parseMode: 'HTML',
   });
 }
+
+export async function sendStrategyReportTelegram(body: string): Promise<boolean> {
+  const chatId = process.env.STRATEGY_REPORT_TELEGRAM_CHAT_ID || process.env.TELEGRAM_ALERT_CHAT_ID
+  return sendTelegramAlert(`📊 <b>Strategy Report Digest</b>\n\n<pre>${body.slice(0, 3500)}</pre>`, {
+    parseMode: 'HTML',
+    chatId,
+  })
+}

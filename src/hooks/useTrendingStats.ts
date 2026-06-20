@@ -20,23 +20,34 @@ export interface TrendingStatsResponse {
   expires_in: number;
 }
 
-export function useTrendingStats(refreshInterval = 30000) {
+export interface TrendingStatsFilters {
+  isSimulated?: boolean;
+  strategyId?: string;
+}
+
+export function useTrendingStats(
+  refreshInterval = 30000,
+  filters?: TrendingStatsFilters,
+) {
+  const params = new URLSearchParams({ nocache: 'true' });
+  if (filters?.isSimulated !== undefined) {
+    params.set('is_simulated', String(filters.isSimulated));
+  }
+  if (filters?.strategyId) {
+    params.set('strategy_id', filters.strategyId);
+  }
+
   return useQuery({
-    queryKey: ['trending-stats'],
+    queryKey: ['trending-stats', filters?.isSimulated, filters?.strategyId],
     queryFn: async () => {
-      // Use nocache=true to ensure we get fresh data from the API (API handles its own internal caching)
-      // but React Query handles the client-side caching/deduping
-      const res = await fetch('/api/trending/stats?nocache=true');
+      const res = await fetch(`/api/trending/stats?${params.toString()}`);
       if (!res.ok) {
         throw new Error('Failed to fetch trending stats');
       }
       return res.json() as Promise<TrendingStatsResponse>;
     },
-    // Auto-refresh every 30s by default
     refetchInterval: refreshInterval,
-    // Don't refetch if user tabs away (saves resources)
     refetchOnWindowFocus: true,
-    // Keep data fresh for 10s
     staleTime: 10000,
   });
 }

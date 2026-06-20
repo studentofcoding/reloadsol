@@ -226,6 +226,8 @@ type Config struct {
     PriceAlertThreshold  float64
     SLTPMonitorInterval  int    // seconds
     SignalRefreshInterval int   // seconds
+    SignalsSimInterval   int    // seconds
+    StrategyReportInterval int  // seconds (0 = disabled)
     OHLCUpdateInterval int    // seconds
     OHLCBarInterval string    // e.g., "5m"
     DLMMScreenInterval int    // seconds
@@ -276,6 +278,22 @@ func NewCronService() *CronService {
                 }
             }
             return 60 // default 60s
+        }(),
+        SignalsSimInterval: func() int {
+            if v := os.Getenv("SIGNALS_SIM_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
+                    return iv
+                }
+            }
+            return 120 // default 120s
+        }(),
+        StrategyReportInterval: func() int {
+            if v := os.Getenv("STRATEGY_REPORT_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
+                    return iv
+                }
+            }
+            return 86400 // default daily (86400s); set 0 to disable
         }(),
         OHLCUpdateInterval: func() int {
             if v := os.Getenv("OHLC_UPDATE_INTERVAL"); v != "" {
@@ -379,6 +397,23 @@ func (cs *CronService) Start() {
         log.Fatal("Failed to add signals refresh cron job:", err)
     }
 
+    // Signals sim track – every N seconds (default 120)
+    signalsSimSpec := fmt.Sprintf("@every %ds", cs.config.SignalsSimInterval)
+    _, err = cs.cron.AddFunc(signalsSimSpec, cs.runSignalsSimTrack)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("Failed to add signals sim track cron job: %v", err))
+        log.Fatal("Failed to add signals sim track cron job:", err)
+    }
+
+    if cs.config.StrategyReportInterval > 0 {
+        reportSpec := fmt.Sprintf("@every %ds", cs.config.StrategyReportInterval)
+        _, err = cs.cron.AddFunc(reportSpec, cs.runStrategyReportDigest)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add strategy report digest cron job: %v", err))
+            log.Fatal("Failed to add strategy report digest cron job:", err)
+        }
+    }
+
     // OHLC update – every N seconds (default 300)
     ohlcSpec := fmt.Sprintf("@every %ds", cs.config.OHLCUpdateInterval)
     _, err = cs.cron.AddFunc(ohlcSpec, cs.runOHLCUpdate)
@@ -426,6 +461,8 @@ func (cs *CronService) Start() {
 	http.HandleFunc("/trigger/price-monitor", cs.manualPriceMonitorTrigger)
 	http.HandleFunc("/trigger/sltp", cs.manualSLTPTrigger)
 	http.HandleFunc("/trigger/signals-refresh", cs.manualSignalsRefreshTrigger)
+    http.HandleFunc("/trigger/signals-sim-track", cs.manualSignalsSimTrackTrigger)
+    http.HandleFunc("/trigger/strategy-report", cs.manualStrategyReportTrigger)
     http.HandleFunc("/trigger/ohlc", cs.manualOHLCTrigger)
     http.HandleFunc("/trigger/dlmm-screen", cs.manualDLMMScreenTrigger)
     http.HandleFunc("/trigger/dlmm-manage", cs.manualDLMMManageTrigger)
@@ -439,6 +476,12 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("📉 Price monitor: every %d seconds", cs.config.PriceMonitorInterval))
     cs.logger.Info(fmt.Sprintf("🛡️ SL/TP monitor: every %d seconds", cs.config.SLTPMonitorInterval))
     cs.logger.Info(fmt.Sprintf("📡 Signals refresh: every %d seconds", cs.config.SignalRefreshInterval))
+    cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
+    if cs.config.StrategyReportInterval > 0 {
+        cs.logger.Info(fmt.Sprintf("📊 Strategy report digest: every %d seconds", cs.config.StrategyReportInterval))
+    } else {
+        cs.logger.Info("📊 Strategy report digest: disabled (STRATEGY_REPORT_INTERVAL=0)")
+    }
     cs.logger.Info(fmt.Sprintf("🕯️ OHLC update: every %d seconds (bar %s)", cs.config.OHLCUpdateInterval, cs.config.OHLCBarInterval))
     cs.logger.Info(fmt.Sprintf("🌊 DLMM screen: every %d seconds", cs.config.DLMMScreenInterval))
     cs.logger.Info(fmt.Sprintf("🩺 DLMM manage: every %d seconds", cs.config.DLMMManageInterval))
@@ -508,6 +551,48 @@ func (cs *CronService) runSignalRefresh() {
         // Fallback: log raw length to avoid spam
         cs.logger.Success(fmt.Sprintf("✅ Signals refresh completed (response %d bytes)", len(resp)))
     }
+}
+
+func (cs *CronService) runSignalsSimTrack() {
+    cs.logger.Info("🧪 Running signals sim track...")
+    url := fmt.Sprintf("%s/api/signals/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Signals sim track failed: %v", err))
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Signals sim track completed (%d bytes)", len(resp)))
+}
+
+func (cs *CronService) runStrategyReportDigest() {
+    cs.logger.Info("📊 Running strategy report digest...")
+    url := fmt.Sprintf("%s/api/strategies/report-digest?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Strategy report digest failed: %v", err))
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Strategy report digest completed (%d bytes)", len(resp)))
+}
+
+func (cs *CronService) manualSignalsSimTrackTrigger(w http.ResponseWriter, r *http.Request) {
+    cs.logger.Info("🔧 Manual signals sim track trigger")
+    go cs.runSignalsSimTrack()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "Signals sim track triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualStrategyReportTrigger(w http.ResponseWriter, r *http.Request) {
+    cs.logger.Info("🔧 Manual strategy report trigger")
+    go cs.runStrategyReportDigest()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "Strategy report digest triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
 }
 
 func (cs *CronService) runTrendingTracker() {

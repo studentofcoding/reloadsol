@@ -28,5 +28,9 @@ Run new tables from `supabase/schema.sql` (`strategy_definitions`, `strategy_out
 
 ## Phase 2
 
-- Wire Signals scoring weights and DLMM thresholds into `strategy_definitions`.
-- Export outcomes CSV + baseline model comparison by `strategy_id`.
+- Editable Signals + DLMM strategies in `/dev/strategies` (Config tab).
+- Automated signals paper trading via `POST /api/signals/sim-track` cron.
+- Unified outcomes in `strategy_outcomes` (all domains, `is_simulated` column).
+- Reports tab: A/B sim vs live, CSV export, ranking.
+- `POST /api/strategies/[id]/promote` copies winning config after review.
+- Optional digest: `STRATEGY_REPORT_DISCORD_ENABLED`, `STRATEGY_REPORT_TELEGRAM_ENABLED`, cron `STRATEGY_REPORT_INTERVAL`.
