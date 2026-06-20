@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { boardTabUrl } from "@/components/signals/shared/parseAddresses";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
-import DlmmListButton from "@/components/dlmm/DlmmListButton";
+import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
+import { useRugList } from "@/hooks/useRugList";
 import { useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useTradingData } from "@/components/TradingDataProvider";
@@ -97,6 +98,7 @@ export default function LiveTab() {
     useWallet();
   const { connection } = useConnection();
   const { records, solPrice: currentSolPrice } = useTradingData();
+  const { isRugged: isTokenRugged, markRug, unmarkRug } = useRugList();
   const [tokens, setTokens] = useState<TrendingToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -211,8 +213,12 @@ export default function LiveTab() {
     const currentLabel = tokenLabels[token.token_address];
 
     let targetLabel: string | null = label;
-    if (currentLabel === label) {
-      targetLabel = "watching"; // Revert to watching
+    if (label === "rugged") {
+      const alreadyRugged =
+        currentLabel === "rugged" || isTokenRugged(token.token_address);
+      targetLabel = alreadyRugged ? "watching" : "rugged";
+    } else if (currentLabel === label) {
+      targetLabel = "watching";
     }
 
     // Optimistic update
@@ -231,6 +237,19 @@ export default function LiveTab() {
     }
 
     try {
+      if (label === "rugged") {
+        if (targetLabel === "watching") {
+          await unmarkRug(token.token_address);
+        } else {
+          await markRug({
+            tokenAddress: token.token_address,
+            tokenSymbol: token.token_symbol,
+            source: "live",
+          });
+        }
+        return;
+      }
+
       await fetch("/api/signals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1163,7 +1182,8 @@ export default function LiveTab() {
     const isKept = keptTokenIds.has(token.token_address);
     const currentLabel = tokenLabels[token.token_address];
     const isPotential = currentLabel === "potential";
-    const isRugged = currentLabel === "rugged";
+    const isRugged =
+      isTokenRugged(token.token_address) || currentLabel === "rugged";
     const expectedTokens = quote
       ? Number(quote.outAmount) / Math.pow(10, 6)
       : 0; // Assuming 6 decimals
@@ -1530,7 +1550,7 @@ export default function LiveTab() {
           )}
 
           <div className="flex justify-end pt-1">
-            <DlmmListButton
+            <DlmmChartActions
               tokenAddress={token.token_address}
               tokenSymbol={token.token_symbol}
               source="live"

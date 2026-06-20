@@ -3,8 +3,10 @@
 import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import GmgnKlineChart from '@/components/GmgnKlineChart';
+import DlmmChartActions from '@/components/dlmm/DlmmChartActions';
 import { useDlmmPotentialList } from '@/hooks/useDlmmPotentialList';
-import type { DlmmScreenCandidate } from '@/types/dlmm';
+import { useRugList } from '@/hooks/useRugList';
+import type { DlmmPotentialSource, DlmmScreenCandidate } from '@/types/dlmm';
 import type { EnrichedPool } from '@/hooks/useDlmmPools';
 import { getPoolChartMint } from '@/utils/gmgn';
 
@@ -40,6 +42,10 @@ function findPoolForToken(pools: EnrichedPool[], tokenAddress: string) {
   );
 }
 
+export function chartTokenAddress(c: DisplayCandidate): string {
+  return c.list_token_address ?? c.token_x_address ?? c.pool_address;
+}
+
 function CandidateCard({
   c,
   pools,
@@ -47,6 +53,7 @@ function CandidateCard({
   onDeploy,
   onRemove,
   showSource,
+  actionSource,
 }: {
   c: DisplayCandidate;
   pools: EnrichedPool[];
@@ -54,6 +61,7 @@ function CandidateCard({
   onDeploy: (pool: EnrichedPool) => void;
   onRemove?: () => void;
   showSource?: boolean;
+  actionSource: DlmmPotentialSource;
 }) {
   const chartMint = getPoolChartMint(c.token_x_address, c.token_y_address);
   const chartSymbol =
@@ -86,6 +94,12 @@ function CandidateCard({
           )}
         </div>
       </div>
+
+      <DlmmChartActions
+        tokenAddress={chartTokenAddress(c)}
+        tokenSymbol={c.token_x_symbol}
+        source={actionSource}
+      />
 
       {chartMint ? (
         <GmgnKlineChart
@@ -175,6 +189,7 @@ export default function HunterCandidateTabs({
 }: HunterCandidateTabsProps) {
   const [tab, setTab] = useState<'general' | 'potential'>('general');
   const { entries, remove, isLoading: potentialLoading } = useDlmmPotentialList();
+  const { addressSet: rugAddressSet, isLoading: rugLoading } = useRugList();
 
   const potentialCandidates: DisplayCandidate[] = useMemo(() => {
     return entries.map((entry) => {
@@ -224,8 +239,23 @@ export default function HunterCandidateTabs({
     });
   }, [entries, pools]);
 
-  const activeList =
-    tab === 'general' ? generalCandidates : potentialCandidates;
+  const visibleGeneral = useMemo(
+    () =>
+      generalCandidates.filter(
+        (c) => !rugAddressSet.has(chartTokenAddress(c)),
+      ),
+    [generalCandidates, rugAddressSet],
+  );
+
+  const visiblePotential = useMemo(
+    () =>
+      potentialCandidates.filter(
+        (c) => !rugAddressSet.has(chartTokenAddress(c)),
+      ),
+    [potentialCandidates, rugAddressSet],
+  );
+
+  const activeList = tab === 'general' ? visibleGeneral : visiblePotential;
 
   return (
     <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
@@ -241,7 +271,7 @@ export default function HunterCandidateTabs({
                 : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
             }`}
           >
-            General ({generalCandidates.length})
+            General ({visibleGeneral.length})
           </button>
           <button
             type="button"
@@ -252,7 +282,7 @@ export default function HunterCandidateTabs({
                 : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
             }`}
           >
-            Potential ({potentialCandidates.length})
+            Potential ({visiblePotential.length})
           </button>
         </div>
       </div>
@@ -263,13 +293,14 @@ export default function HunterCandidateTabs({
         </p>
       ) : (
         <p className="text-gray-500 text-sm mb-4">
-          Curated from Signals, Board, Tracker, or Algo Tester via{' '}
-          <span className="text-purple-300">DLMM+</span>. Add or remove on any
-          token row, then deploy when a Meteora pool is found.
+          Curated from Signals, Board, Tracker, or Algo Tester. Use{' '}
+          <span className="text-green-300">Potential</span> or{' '}
+          <span className="text-red-300">Rug</span> on any chart — rugged
+          tokens are excluded from both tabs.
         </p>
       )}
 
-      {poolsLoading || (tab === 'potential' && potentialLoading) ? (
+      {poolsLoading || (tab === 'potential' && potentialLoading) || rugLoading ? (
         <p className="text-gray-400">Loading pools from Meteora...</p>
       ) : poolsError ? (
         <p className="text-red-400 text-sm">
@@ -284,7 +315,7 @@ export default function HunterCandidateTabs({
           ) : (
             <>
               No tokens on the Potential list yet. Use{' '}
-              <span className="text-purple-300">DLMM+</span> on{' '}
+              <span className="text-green-300">Potential</span> on{' '}
               <Link href="/dev/signals" className="text-blue-400 underline">
                 Signals
               </Link>{' '}
@@ -306,6 +337,11 @@ export default function HunterCandidateTabs({
               dbReady={dbReady}
               onDeploy={onDeploy}
               showSource={tab === 'potential'}
+              actionSource={
+                tab === 'potential' && c.source
+                  ? (c.source as DlmmPotentialSource)
+                  : 'dlmm-general'
+              }
               onRemove={
                 tab === 'potential' && c.list_token_address
                   ? () => void remove(c.list_token_address!)

@@ -22,6 +22,21 @@ All signal data is stored in the Supabase `trading_signals` table.
 | `created_at`      | timestamp | Record creation time                      |
 | `updated_at`      | timestamp | Last update time                          |
 
+## 🚫 Shared rug registry: `token_rug_list`
+
+Manual rug marks use a **single shared table** across DLMM, Signals (Board/Live/Tracker), and Algo Tester.
+
+| Field           | Type      | Description                                      |
+| --------------- | --------- | ------------------------------------------------ |
+| `token_address` | text      | Solana mint (unique)                             |
+| `token_symbol`  | text      | Ticker                                           |
+| `source`        | text      | Where marked (`live`, `board`, `tracker`, etc.)  |
+| `added_at`      | timestamp | When added to rug list                           |
+
+- **API**: `GET/POST/DELETE` `/api/rug` (canonical); `/api/dlmm/rug` is an alias.
+- **Sync**: marking rugged also updates `trading_signals.label` and `token_mcap_tracking.label` when those rows exist.
+- **Exclusion**: rugged tokens are hidden from DLMM Hunter lists, the trading signals feed, and Board Watching/Potential columns.
+
 ## 🔄 Signal Lifecycle
 
 1.  **Discovery**:

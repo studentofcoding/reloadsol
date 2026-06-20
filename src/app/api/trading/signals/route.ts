@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic'
 import { supabase } from '@/utils/supabase'
 import { isInTrackingRange, STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
+import { getRugAddressSet } from '@/utils/rug-list/db'
 
 // Rug pull protection: Check for sudden market cap drops
 async function validateTokensAgainstRugPulls(signals: SignalItem[]): Promise<SignalItem[]> {
@@ -306,13 +307,18 @@ export async function GET(request: NextRequest) {
     // Apply rug pull protection before final sorting
     const validatedSignals = await validateTokensAgainstRugPulls(signals)
 
+    const manualRugSet = await getRugAddressSet()
+    const withoutManualRugs = validatedSignals.filter(
+      (s) => !manualRugSet.has(s.token_address),
+    )
+
     // Final sort by score descending, then growth
-    validatedSignals.sort((a: SignalItem, b: SignalItem) => {
+    withoutManualRugs.sort((a: SignalItem, b: SignalItem) => {
       if (b.score !== a.score) return b.score - a.score
       return (b.mcap_growth_percent || 0) - (a.mcap_growth_percent || 0)
     })
 
-    const limited = validatedSignals.slice(0, limit)
+    const limited = withoutManualRugs.slice(0, limit)
 
     log.info('mcap_tracker', 'Generated trading signals', {
       count: limited.length,

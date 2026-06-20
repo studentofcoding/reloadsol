@@ -11,7 +11,9 @@ const TypedDraggable = Draggable as React.ComponentType<
 import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
-import DlmmListButton from "@/components/dlmm/DlmmListButton";
+import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
+import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
+import { useQueryClient } from "@tanstack/react-query";
 import { useTradingSignals, SignalItem } from "@/hooks/useTradingSignals";
 
 // Removed local types SignalItem and SignalsResponse as they are now imported
@@ -51,6 +53,7 @@ const dateFmt = (iso?: string | null) => {
 };
 
 export default function SignalsTab() {
+  const queryClient = useQueryClient();
   const { connected, publicKey, signTransaction } = useWallet();
   const { connection } = useConnection();
   const [isClient, setIsClient] = useState(false);
@@ -282,6 +285,7 @@ export default function SignalsTab() {
             chart.id === chartId ? { ...chart, label } : chart,
           ),
         );
+        void queryClient.invalidateQueries({ queryKey: RUG_LIST_QUERY_KEY });
       } else {
         console.error("Failed to update label:", result.error);
         alert(`Failed to update label: ${result.error}`);
@@ -783,7 +787,7 @@ export default function SignalsTab() {
                           >
                             Buy
                           </button>
-                          <DlmmListButton
+                          <DlmmChartActions
                             tokenAddress={s.token_address}
                             tokenSymbol={s.token_symbol}
                             source="signals"

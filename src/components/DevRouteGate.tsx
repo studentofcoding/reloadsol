@@ -1,21 +1,51 @@
-"use client";
+'use client';
 
-import { useDevWalletAccess } from "@/components/WalletProvider";
+import Link from 'next/link';
+import UniversalWalletButton from '@/components/UniversalWalletButton';
+import {
+  useDevWalletAccess,
+  useWalletAddress,
+} from '@/components/WalletProvider';
 
 export default function DevRouteGate({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const address = useWalletAddress();
   const isDevUser = useDevWalletAccess();
+
+  if (!address) {
+    return (
+      <div className="mx-auto max-w-lg rounded-lg border border-gray-700 bg-gray-900 p-8 text-center text-gray-300">
+        <p className="text-lg font-medium text-white">Connect your wallet</p>
+        <p className="mt-2 text-sm text-gray-400">
+          Dev tools require a connected wallet first.
+        </p>
+        <div className="mt-6 flex justify-center">
+          <UniversalWalletButton />
+        </div>
+      </div>
+    );
+  }
 
   if (!isDevUser) {
     return (
       <div className="mx-auto max-w-lg rounded-lg border border-gray-700 bg-gray-900 p-8 text-center text-gray-300">
         <p className="text-lg font-medium text-white">Dev access required</p>
         <p className="mt-2 text-sm text-gray-400">
-          Connect a dev wallet to use this tool.
+          This tool is limited to authorized wallets. Your connected wallet is
+          not on the dev allowlist.
         </p>
+        <p className="mt-4 text-xs text-gray-500 font-mono break-all">
+          {address}
+        </p>
+        <Link
+          href="/buy"
+          className="mt-6 inline-block rounded-lg bg-white px-4 py-2 text-sm font-semibold text-black hover:bg-gray-100"
+        >
+          Back to Buy
+        </Link>
       </div>
     );
   }

@@ -38,7 +38,8 @@ import { useChartCapture } from "@/hooks/useChartCapture";
 import { calculateWeightedDistribution } from "@/utils/position-sizing";
 import { useMCapTracker, FilterOptions } from "@/hooks/useMCapTracker";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
-import DlmmListButton from "@/components/dlmm/DlmmListButton";
+import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
+import { useRugList } from "@/hooks/useRugList";
 import { parseAddresses } from "@/components/signals/shared/parseAddresses";
 
 type SectionType = "watching" | "potential" | "rugged" | "mcap_tracker";
@@ -330,7 +331,7 @@ const ChartItem = React.memo(
           </div>
 
           <div className="mt-2 flex justify-end">
-            <DlmmListButton
+            <DlmmChartActions
               tokenAddress={addr}
               tokenSymbol={symbol}
               source="board"
@@ -376,6 +377,7 @@ function ChartsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  const { addressSet: rugAddressSet } = useRugList();
   const urlAddresses = useMemo(
     () => parseAddresses(searchParams.get("addresses")),
     [searchParams],
@@ -1258,6 +1260,19 @@ function ChartsContent() {
     [moveToken],
   );
 
+  const visibleColumnItems = useCallback(
+    (sectionId: SectionType): string[] => {
+      const items = columns[sectionId];
+      if (sectionId === "rugged") {
+        const merged = new Set(items);
+        rugAddressSet.forEach((addr) => merged.add(addr));
+        return Array.from(merged);
+      }
+      return items.filter((addr) => !rugAddressSet.has(addr));
+    },
+    [columns, rugAddressSet],
+  );
+
   const renderCard = useCallback(
     (addr: string) => {
       const signal = signals[addr];
@@ -1355,7 +1370,7 @@ function ChartsContent() {
                 id={section.id}
                 title={section.title}
                 color={section.color}
-                items={columns[section.id]}
+                items={visibleColumnItems(section.id)}
                 renderItem={renderCard}
                 onBuyAll={
                   section.id === "potential" ? handleBuyPotential : undefined

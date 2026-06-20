@@ -1,30 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { TokenRugSource } from '@/types/rug-list';
 import {
-  addPotentialEntry,
-  getPotentialList,
-  removePotentialEntry,
-} from '@/utils/dlmm/db';
-import type { DlmmPotentialSource } from '@/types/dlmm';
+  getRugList,
+  markTokenRug,
+  unmarkTokenRug,
+} from '@/utils/rug-list/service';
 
-const VALID_SOURCES: DlmmPotentialSource[] = [
+const VALID_SOURCES: TokenRugSource[] = [
   'signals',
   'live',
   'board',
   'tracker',
+  'tracker-stop',
+  'signals-label',
   'algo-dashboard',
   'algo-history',
   'dlmm-general',
 ];
 
+/** Backward-compatible alias — delegates to shared token_rug_list service. */
 export async function GET() {
   try {
-    const entries = await getPotentialList();
+    const entries = await getRugList();
     return NextResponse.json({ success: true, entries });
   } catch (error) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to load potential list',
+        error: error instanceof Error ? error.message : 'Failed to load rug list',
       },
       { status: 500 },
     );
@@ -36,8 +39,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const tokenAddress = String(body.tokenAddress ?? body.token_address ?? '').trim();
     const tokenSymbol = body.tokenSymbol ?? body.token_symbol ?? null;
-    const source = (body.source ?? 'signals') as DlmmPotentialSource;
-    const notes = body.notes ?? null;
+    const source = (body.source ?? 'dlmm-general') as TokenRugSource;
 
     if (!tokenAddress) {
       return NextResponse.json(
@@ -53,11 +55,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const entry = await addPotentialEntry({
-      token_address: tokenAddress,
-      token_symbol: tokenSymbol ? String(tokenSymbol) : null,
+    const entry = await markTokenRug({
+      tokenAddress,
+      tokenSymbol: tokenSymbol ? String(tokenSymbol) : null,
       source,
-      notes: notes ? String(notes) : null,
     });
 
     return NextResponse.json({ success: true, entry });
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to add to DLMM list',
+        error: error instanceof Error ? error.message : 'Failed to add to rug list',
       },
       { status: 500 },
     );
@@ -82,13 +83,13 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    await removePotentialEntry(tokenAddress);
+    await unmarkTokenRug(tokenAddress);
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to remove from DLMM list',
+        error: error instanceof Error ? error.message : 'Failed to remove from rug list',
       },
       { status: 500 },
     );

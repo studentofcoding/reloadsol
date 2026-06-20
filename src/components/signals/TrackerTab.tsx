@@ -7,7 +7,9 @@ import {
   EnrichedTokenData,
 } from "@/utils/data-aggregation";
 import ChartBuyModal from "@/components/ChartBuyModal";
-import DlmmListButton from "@/components/dlmm/DlmmListButton";
+import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
+import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useMCapTracker,
   FilterOptions,
@@ -111,6 +113,7 @@ function PnlDistributionChart({
 
 
 export default function TrackerTab() {
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(100);
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(
@@ -453,6 +456,8 @@ export default function TrackerTab() {
 
       if (!labelResponse.ok || labelResult.success === false) {
         console.error("Failed to mark token as loss:", labelResult.error);
+      } else {
+        void queryClient.invalidateQueries({ queryKey: RUG_LIST_QUERY_KEY });
       }
 
       await refetch();
@@ -2113,7 +2118,7 @@ export default function TrackerTab() {
                     >
                       Buy
                     </button>
-                    <DlmmListButton
+                    <DlmmChartActions
                       tokenAddress={token.token_address}
                       tokenSymbol={token.token_symbol}
                       source="tracker"

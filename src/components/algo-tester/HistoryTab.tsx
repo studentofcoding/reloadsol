@@ -15,7 +15,7 @@ import {
 import { Line } from "react-chartjs-2";
 import "chartjs-adapter-date-fns";
 import ChartBuyModal from "@/components/ChartBuyModal";
-import DlmmListButton from "@/components/dlmm/DlmmListButton";
+import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import {
   useTrackingHistory,
   type FilterOptions,
@@ -617,7 +617,7 @@ export default function HistoryTab() {
                   >
                     <span>📈</span> Buy
                   </button>
-                  <DlmmListButton
+                  <DlmmChartActions
                     tokenAddress={token.token_address}
                     tokenSymbol={token.token_symbol}
                     source="algo-history"

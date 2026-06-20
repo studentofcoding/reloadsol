@@ -4,6 +4,8 @@ export const dynamic = 'force-dynamic'
 import { supabase } from '@/utils/supabase'
 import { TokenLabel } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
+import { markTokenRug } from '@/utils/rug-list/service'
+import { removeRugEntry } from '@/utils/rug-list/db'
 
 // Valid label values
 const VALID_LABELS: TokenLabel[] = ['valid', 'traded_live', 'potential', 'rugged', 'watching']
@@ -62,6 +64,16 @@ export async function PUT(request: NextRequest) {
         label
       })
       throw updateError
+    }
+
+    if (label === 'rugged') {
+      await markTokenRug({
+        tokenAddress,
+        tokenSymbol: existingToken.token_symbol,
+        source: 'signals-label',
+      })
+    } else if (existingToken.label === 'rugged') {
+      await removeRugEntry(tokenAddress)
     }
 
     log.info('api_request', 'Successfully updated token label', {

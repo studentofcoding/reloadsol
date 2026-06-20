@@ -2,7 +2,6 @@ import "./globals.css";
 import { WalletProvider } from "@/components/WalletProvider";
 import TradingDataProvider from "@/components/TradingDataProvider";
 import Header from "@/components/Header";
-// import { PasswordGate } from '@/components/PasswordGate'
 import { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import Script from "next/script";

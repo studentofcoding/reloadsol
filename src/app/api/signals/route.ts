@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/utils/supabase'
+import { markTokenRug, unmarkTokenRug } from '@/utils/rug-list/service'
+import { removeRugEntry } from '@/utils/rug-list/db'
+import { getRugList } from '@/utils/rug-list/service'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,11 +16,41 @@ export async function GET(request: NextRequest) {
 
     if (error) throw error
 
+    const rugEntries = await getRugList()
+    const byAddress = new Map(
+      (data ?? []).map((d) => [d.token_address, d]),
+    )
+
+    for (const rug of rugEntries) {
+      if (byAddress.has(rug.token_address)) {
+        const row = byAddress.get(rug.token_address)!
+        if (row.label !== 'rugged') {
+          row.label = 'rugged'
+        }
+      } else {
+        byAddress.set(rug.token_address, {
+          token_address: rug.token_address,
+          token_symbol: rug.token_symbol,
+          label: 'rugged',
+          market_cap: 0,
+          price: 0,
+          initial_price: 0,
+          result: null,
+          image_reference: null,
+          source: rug.source,
+          updated_at: rug.added_at,
+        })
+      }
+    }
+
+    const merged = Array.from(byAddress.values()).sort(
+      (a, b) =>
+        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+    )
+
     return NextResponse.json({
       success: true,
-      data: data.map(d => ({
-        // Map new schema to old expected format for frontend compatibility if needed, 
-        // or frontend can adapt. Let's map to be safe.
+      data: merged.map(d => ({
         token_address: d.token_address,
         label: d.label,
         mcap: d.market_cap,
@@ -96,6 +129,16 @@ export async function POST(request: NextRequest) {
     }
 
     if (error) throw error
+
+    if (label === 'rugged') {
+      await markTokenRug({
+        tokenAddress,
+        tokenSymbol: tokenSymbol || existing?.token_symbol,
+        source: 'board',
+      })
+    } else if (label) {
+      await removeRugEntry(tokenAddress)
+    }
 
     return NextResponse.json({ success: true })
   } catch (error) {

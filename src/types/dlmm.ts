@@ -66,7 +66,8 @@ export type DlmmPotentialSource =
   | 'board'
   | 'tracker'
   | 'algo-dashboard'
-  | 'algo-history';
+  | 'algo-history'
+  | 'dlmm-general';
 
 export interface DlmmPotentialEntry {
   id: string;
@@ -74,6 +75,16 @@ export interface DlmmPotentialEntry {
   token_symbol: string | null;
   source: DlmmPotentialSource;
   notes: string | null;
+  added_at: string;
+}
+
+export type DlmmRugSource = import('@/types/rug-list').TokenRugSource;
+
+export interface DlmmRugEntry {
+  id: string;
+  token_address: string;
+  token_symbol: string | null;
+  source: DlmmRugSource;
   added_at: string;
 }
 

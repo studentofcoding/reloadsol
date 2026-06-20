@@ -337,6 +337,43 @@ CREATE TABLE IF NOT EXISTS dlmm_potential_list (
 CREATE INDEX IF NOT EXISTS idx_dlmm_potential_added ON dlmm_potential_list(added_at DESC);
 CREATE INDEX IF NOT EXISTS idx_dlmm_potential_token ON dlmm_potential_list(token_address);
 
+-- App-wide rug registry (Signals, Algo Tester, DLMM) — excluded from lists/feeds
+CREATE TABLE IF NOT EXISTS token_rug_list (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_address TEXT NOT NULL UNIQUE,
+  token_symbol TEXT,
+  source TEXT NOT NULL DEFAULT 'dlmm-general',
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_rug_added ON token_rug_list(added_at DESC);
+CREATE INDEX IF NOT EXISTS idx_token_rug_token ON token_rug_list(token_address);
+
+-- Migrate legacy dlmm_rug_list name if present
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'dlmm_rug_list'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'token_rug_list'
+  ) THEN
+    ALTER TABLE dlmm_rug_list RENAME TO token_rug_list;
+  END IF;
+END $$;
+
+-- Backfill from legacy label columns into token_rug_list
+INSERT INTO token_rug_list (token_address, token_symbol, source, added_at)
+SELECT token_address, token_symbol, 'board', updated_at
+FROM trading_signals WHERE label = 'rugged'
+ON CONFLICT (token_address) DO NOTHING;
+
+INSERT INTO token_rug_list (token_address, token_symbol, source, added_at)
+SELECT token_address, token_symbol, 'tracker', last_updated_at
+FROM token_mcap_tracking WHERE label = 'rugged'
+ON CONFLICT (token_address) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS dlmm_positions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   pool_address TEXT NOT NULL,

@@ -8,6 +8,37 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Wallet tier access (UI)
+
+- **Route tiers** — [`src/config/route-access.ts`](src/config/route-access.ts): wallet-required routes (`/buy`, `/sell`, `/swap`, `/history`, `/pnl`) vs dev whitelist routes (`/dev/signals`, `/dev/algo-tester`, `/dev/dlmm`).
+- **`WalletConnectGate`** — blocks wallet-required pages and History/P&amp;L overlays until a Solana wallet is connected.
+- **`DevRouteGate`** — centralized in [`src/app/(trade)/layout.tsx`](src/app/(trade)/layout.tsx); connect-first, then dev allowlist check. Removed per-page gates on Signals and Algo Tester.
+- **DLMM** — removed hardcoded `PasswordGate`; dev wallet allowlist only (DLMM API writes still use `DLMM_API_PASSWORD`).
+- **Navigation** — Swap, History, and P&amp;L visible to all users; dev tool links remain dev-wallet only.
+- **Env** — `NEXT_PUBLIC_DEV_WALLETS` or `DEV_WALLETS` (comma-separated) plus built-in defaults in [`src/utils/dev-wallet.ts`](src/utils/dev-wallet.ts).
+
+### Changed — Unified shared rug list
+
+- **`token_rug_list`** — canonical app-wide rug registry (renamed from `dlmm_rug_list`); one list shared by DLMM, Signals, and Algo Tester.
+- **Backfill migration** in [`supabase/schema.sql`](supabase/schema.sql) — copies legacy `trading_signals.label = 'rugged'` and `token_mcap_tracking.label = 'rugged'` into `token_rug_list`.
+- **Shared service** — [`src/utils/rug-list/service.ts`](src/utils/rug-list/service.ts) `markTokenRug` / `unmarkTokenRug` syncs legacy labels and removes from `dlmm_potential_list`.
+- **API** — canonical `GET/POST/DELETE` [`/api/rug`](src/app/api/rug/route.ts); [`/api/dlmm/rug`](src/app/api/dlmm/rug/route.ts) delegates for backward compat.
+- **Server sync** — [`/api/signals`](src/app/api/signals/route.ts) and [`/api/mcap-tracking/label`](src/app/api/mcap-tracking/label/route.ts) read/write the shared rug list; Board GET merges rug-list tokens into the Rugged column.
+- **Filtering** — manual rugs excluded from [`/api/trading/signals`](src/app/api/trading/signals/route.ts) feed and Board Watching/Potential columns.
+- **Hook** — `useRugList` (replaces `useDlmmRugList`); Live/Board/Tracker/Signals invalidate or read unified rug state.
+
+### Added — DLMM Potential / Rug chart actions
+
+- **DLMM Hunter Candidates** — split into **General** (automated Hunter screen) and **Potential** (manual watchlist) tabs via `HunterCandidateTabs`.
+- **`dlmm_potential_list`** — persisted watchlist; tokens added from Signals, Board, Tracker, Algo Tester, or DLMM charts.
+- **`token_rug_list`** — shared exclusion list; rugged tokens hidden from DLMM General/Potential, trading signals feed, and non-Rugged board columns.
+- **`DlmmChartActions`** — shared **Potential** / **Rug** toggle buttons on every chart/token row:
+  - DLMM dashboard (`HunterCandidateTabs` cards)
+  - Signals hub — Signals, Live, Board, Tracker tabs
+  - Algo Tester — Dashboard and History tabs
+- **API** — `GET/POST/DELETE` `/api/dlmm/potential`, `/api/rug`, and `/api/dlmm/rug` (alias).
+- **Hooks** — `useDlmmPotentialList`, `useRugList`, `useDlmmChartActions` (mutually exclusive: marking Potential clears Rug and vice versa).
+
 ### Added — Slim dev surfaces (Signals, Algo Tester, DLMM)
 
 - **Signals hub** (`/dev/signals`) — four tabs via `?tab=signals|live|board|tracker`:
@@ -23,7 +54,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `parseAddresses.ts` / `boardTabUrl()` — deep links to Board tab with `?addresses=`
   - `GmgnChartEmbed.tsx` — unified GMGN kline iframe
   - `TokenLabelActions.tsx` — rugged / potential / watching label buttons (extracted; wiring in tabs is incremental)
-- **`DevRouteGate`** — dev-wallet check on `/dev/signals` and `/dev/algo-tester` (aligns with nav gating; DLMM still uses `PasswordGate`).
+- **`DevRouteGate`** — dev-wallet check on `/dev/*` routes via trade layout (replaces per-page gates and DLMM password gate).
 - **`slim_features.md`** — plan + checklist for the dev-route consolidation.
 
 ### Added — Next.js 16 migration
