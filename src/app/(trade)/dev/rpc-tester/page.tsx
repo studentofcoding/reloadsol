@@ -60,12 +60,11 @@ export default function RpcTesterPage() {
         undefined,
         true,
       );
-      const { sellable, unsellable, zeroBalance, frozen, nfts } =
+      const { valuable, dust, zeroValue, sellable, zeroBalance, frozen, nfts } =
         categorizeUserTokens(allTokens);
-      const closeOnly = [...unsellable, ...zeroBalance, ...frozen];
-      const dustFiltered = showDustOnly
-        ? sellable.filter((t) => t.usdValue < 0.1)
-        : sellable;
+      const closeOnly = [...zeroValue, ...zeroBalance, ...frozen];
+      const dustTokenList = [...dust, ...zeroValue];
+      const dustFiltered = showDustOnly ? dustTokenList : valuable;
 
       const rpcRow = diagnostics.find((d) => d.index === selectedEndpointIndex);
       const rawRpcCount = rpcRow?.rawAccountCount ?? allTokens.length;
@@ -82,9 +81,19 @@ export default function RpcTesterPage() {
           lost: Math.max(0, rawRpcCount - allTokens.length),
         },
         {
-          label: "Sellable bucket",
-          count: sellable.length,
-          lost: Math.max(0, allTokens.length - sellable.length - closeOnly.length - nfts.length),
+          label: "Valuable bucket (>= $1)",
+          count: valuable.length,
+          lost: 0,
+        },
+        {
+          label: "Dust bucket ($0.001 – $1)",
+          count: dust.length,
+          lost: 0,
+        },
+        {
+          label: "Zero-value bucket (< $0.001)",
+          count: zeroValue.length,
+          lost: 0,
         },
         {
           label: "Close-only bucket",
@@ -92,9 +101,18 @@ export default function RpcTesterPage() {
           lost: 0,
         },
         {
-          label: showDustOnly ? "After dust filter (< $0.10)" : "Visible sell list",
+          label: showDustOnly
+            ? "After dust filter (< $1.00)"
+            : "Visible sell list (valuable)",
           count: dustFiltered.length,
-          lost: Math.max(0, sellable.length - dustFiltered.length),
+          lost: showDustOnly
+            ? Math.max(0, valuable.length)
+            : Math.max(0, dustTokenList.length),
+        },
+        {
+          label: "Swappable (sellable alias)",
+          count: sellable.length,
+          lost: 0,
         },
       ]);
     } catch (error) {

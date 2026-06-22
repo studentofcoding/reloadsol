@@ -1028,12 +1028,18 @@ export async function fetchUserTokens(
       console.log(`Processed ${processedTokens.length} tokens efficiently`)
 
       return processedTokens.sort((a, b) => {
-        const aIsSellable = (a.usdValue >= 0.001 || isPumpFunToken(a.mintAddress)) && !a.frozen
-        const bIsSellable = (b.usdValue >= 0.001 || isPumpFunToken(b.mintAddress)) && !b.frozen
+        const aIsSellable = isSwappableToken(a)
+        const bIsSellable = isSwappableToken(b)
 
         if (aIsSellable && !bIsSellable) return -1
         if (!aIsSellable && bIsSellable) return 1
-        if (aIsSellable && bIsSellable) return b.usdValue - a.usdValue
+        if (aIsSellable && bIsSellable) {
+          const aValuable = a.usdValue >= DUST_USD_THRESHOLD
+          const bValuable = b.usdValue >= DUST_USD_THRESHOLD
+          if (aValuable && !bValuable) return -1
+          if (!aValuable && bValuable) return 1
+          return b.usdValue - a.usdValue
+        }
 
         return (a.symbol || '').localeCompare(b.symbol || '')
       })
@@ -1252,12 +1258,11 @@ export async function fetchZeroBalanceTokens(
 ): Promise<UserToken[]> {
   try {
     const allTokens = await fetchUserTokens(connection, userPublicKey, true)
-    // Include tokens with zero balance OR tokens with USD value < 0.001 (unsellable), but exclude pump.fun tokens AND frozen tokens
-    return allTokens.filter(token =>
-      !token.frozen && (
-        token.uiAmount <= 0.000000000001 ||
-        (token.usdValue < 0.001 && !isPumpFunToken(token.mintAddress))
-      )
+    // Include empty accounts or zero-value tokens (no market price), excluding frozen tokens
+    return allTokens.filter(
+      (token) =>
+        !token.frozen &&
+        (token.uiAmount <= MIN_BALANCE_UI || isZeroValueToken(token)),
     )
   } catch (error) {
     console.error('Error fetching zero balance tokens:', error)
@@ -2386,35 +2391,78 @@ export function parseMintAddresses(input: string): string[] {
     .slice(0, 10) // Limit to 10 addresses
 }
 
+// Token categorization thresholds (USD position value)
+export const DUST_USD_THRESHOLD = 1
+export const ZERO_VALUE_USD_THRESHOLD = 0.001
+export const MIN_BALANCE_UI = 0.000000000001
+
+export function isSwappableToken(token: UserToken): boolean {
+  return (
+    !token.frozen &&
+    !token.isNFT &&
+    token.uiAmount > MIN_BALANCE_UI &&
+    (token.usdValue >= ZERO_VALUE_USD_THRESHOLD ||
+      isPumpFunToken(token.mintAddress))
+  )
+}
+
+export function isZeroValueToken(token: UserToken): boolean {
+  return (
+    !token.frozen &&
+    !token.isNFT &&
+    token.uiAmount > MIN_BALANCE_UI &&
+    token.usdValue < ZERO_VALUE_USD_THRESHOLD &&
+    !isPumpFunToken(token.mintAddress)
+  )
+}
+
+export function isDustToken(token: UserToken): boolean {
+  return (
+    !token.frozen &&
+    !token.isNFT &&
+    token.uiAmount > MIN_BALANCE_UI &&
+    token.usdValue < DUST_USD_THRESHOLD
+  )
+}
+
 // Helper function to categorize user tokens for easier UI handling
 export function categorizeUserTokens(tokens: UserToken[]): {
+  valuable: UserToken[]
+  dust: UserToken[]
+  zeroValue: UserToken[]
   sellable: UserToken[]
-  unsellable: UserToken[]
   frozen: UserToken[]
   zeroBalance: UserToken[]
   nfts: UserToken[]
 } {
-  const sellable: UserToken[] = []
-  const unsellable: UserToken[] = []
+  const valuable: UserToken[] = []
+  const dust: UserToken[] = []
+  const zeroValue: UserToken[] = []
   const frozen: UserToken[] = []
   const zeroBalance: UserToken[] = []
   const nfts: UserToken[] = []
 
-  tokens.forEach(token => {
+  tokens.forEach((token) => {
     if (token.isNFT) {
       nfts.push(token)
     } else if (token.frozen) {
       frozen.push(token)
-    } else if (token.uiAmount <= 0.000000000001) {
+    } else if (token.uiAmount <= MIN_BALANCE_UI) {
       zeroBalance.push(token)
-    } else if (token.usdValue >= 0.001 || isPumpFunToken(token.mintAddress)) {
-      sellable.push(token)
-    } else {
-      unsellable.push(token)
+    } else if (isZeroValueToken(token)) {
+      zeroValue.push(token)
+    } else if (isSwappableToken(token)) {
+      if (token.usdValue >= DUST_USD_THRESHOLD) {
+        valuable.push(token)
+      } else {
+        dust.push(token)
+      }
     }
   })
 
-  return { sellable, unsellable, frozen, zeroBalance, nfts }
+  const sellable = [...valuable, ...dust]
+
+  return { valuable, dust, zeroValue, sellable, frozen, zeroBalance, nfts }
 }
 
 // New function to close only zero-balance token accounts

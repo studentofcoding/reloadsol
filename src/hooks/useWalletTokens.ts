@@ -11,6 +11,9 @@ import type { TokenFetchMeta } from "@/contexts/RpcContext";
 
 export type WalletTokensData = {
   allTokens: UserToken[];
+  valuable: UserToken[];
+  dust: UserToken[];
+  zeroValue: UserToken[];
   sellable: UserToken[];
   closeOnly: UserToken[];
   meta: TokenFetchMeta;
@@ -40,12 +43,15 @@ async function fetchWalletTokens(
     forceRefresh,
   );
 
-  const { sellable, unsellable, zeroBalance, frozen } =
+  const { valuable, dust, zeroValue, sellable, zeroBalance, frozen } =
     categorizeUserTokens(allTokens);
-  const closeOnly = [...unsellable, ...zeroBalance, ...frozen];
+  const closeOnly = [...zeroValue, ...zeroBalance, ...frozen];
 
   return {
     allTokens,
+    valuable,
+    dust,
+    zeroValue,
     sellable,
     closeOnly,
     meta: {
@@ -126,6 +132,9 @@ export function useWalletTokens({
     ...query,
     refetchTokens,
     patchTokens,
+    valuable: query.data?.valuable ?? [],
+    dust: query.data?.dust ?? [],
+    zeroValue: query.data?.zeroValue ?? [],
     sellable: query.data?.sellable ?? [],
     closeOnly: query.data?.closeOnly ?? [],
     allTokens: query.data?.allTokens ?? [],

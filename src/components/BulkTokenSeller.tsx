@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import { useWallet, useConnection } from "../components/WalletProvider";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
-import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useWalletTokens, type WalletTokensData } from "@/hooks/useWalletTokens";
 import { useSolPrice } from "@/hooks/useSolPrice";
 import PhantomWalletButton from "./PhantomWalletButton";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
@@ -31,6 +31,7 @@ import {
   isPumpFunToken,
   getAllFeeRates,
   getFeeForOperation,
+  MIN_BALANCE_UI,
   setMetadataUpdateCallback,
   clearMetadataUpdateCallback,
   UserToken,
@@ -53,6 +54,21 @@ import { useRpc } from "@/contexts/RpcContext";
 import RpcPanel from "./RpcPanel";
 import PnLShareModal from "./PnLShareModal";
 import { pnlShareService } from "@/utils/pnl-share-service";
+
+function patchWalletTokenLists(
+  data: WalletTokensData,
+  patchList: (tokens: UserToken[]) => UserToken[],
+): WalletTokensData {
+  return {
+    ...data,
+    allTokens: patchList(data.allTokens),
+    valuable: patchList(data.valuable),
+    dust: patchList(data.dust),
+    zeroValue: patchList(data.zeroValue),
+    sellable: patchList(data.sellable),
+    closeOnly: patchList(data.closeOnly),
+  };
+}
 
 // Quote data interface for different providers
 interface QuoteData {
@@ -108,7 +124,10 @@ export default function BulkTokenSeller() {
   const [priorityFee, setPriorityFee] = useState<number>(30000); // 0.00003 SOL
 
   const {
-    sellable: userTokens,
+    valuable: userTokens,
+    dust: dustTokens,
+    zeroValue: zeroValueTokens,
+    sellable: swappableTokens,
     closeOnly: zeroBalanceTokens,
     allTokens,
     fetchMeta: lastFetchMeta,
@@ -407,22 +426,16 @@ export default function BulkTokenSeller() {
         `Updating UI with enriched metadata for ${updatedTokens.length} tokens`,
       );
 
-      patchTokens((data) => {
-        const patchList = (tokens: UserToken[]) =>
+      patchTokens((data) =>
+        patchWalletTokenLists(data, (tokens) =>
           tokens.map((token) => {
             const updated = updatedTokens.find(
               (u) => u.mintAddress === token.mintAddress,
             );
             return updated || token;
-          });
-
-        return {
-          ...data,
-          allTokens: patchList(data.allTokens),
-          sellable: patchList(data.sellable),
-          closeOnly: patchList(data.closeOnly),
-        };
-      });
+          }),
+        ),
+      );
 
       setSelectedTokens((prev) =>
         prev.map((token) => {
@@ -590,29 +603,28 @@ export default function BulkTokenSeller() {
 
   // Refresh all token prices efficiently
   const refreshAllPrices = useCallback(async () => {
-    if (!publicKey || userTokens.length === 0) return;
+    if (!publicKey || swappableTokens.length === 0) return;
 
-    patchTokens((data) => ({
-      ...data,
-      sellable: data.sellable.map((token) => ({
-        ...token,
-        isLoadingPrice: true,
-      })),
-    }));
+    patchTokens((data) =>
+      patchWalletTokenLists(data, (tokens) =>
+        tokens.map((token) => ({ ...token, isLoadingPrice: true })),
+      ),
+    );
 
     try {
       console.log("Starting efficient batch price refresh...");
-      const updatedTokens = await refreshTokenPricesBatch(userTokens);
+      const updatedTokens = await refreshTokenPricesBatch(swappableTokens);
 
-      patchTokens((data) => ({
-        ...data,
-        sellable: data.sellable.map((token) => {
-          const updated = updatedTokens.find(
-            (t) => t.mintAddress === token.mintAddress,
-          );
-          return updated ?? { ...token, isLoadingPrice: false };
-        }),
-      }));
+      patchTokens((data) =>
+        patchWalletTokenLists(data, (tokens) =>
+          tokens.map((token) => {
+            const updated = updatedTokens.find(
+              (t) => t.mintAddress === token.mintAddress,
+            );
+            return updated ?? { ...token, isLoadingPrice: false };
+          }),
+        ),
+      );
 
       setSelectedTokens((prev) =>
         prev.map((selectedToken) => {
@@ -635,43 +647,43 @@ export default function BulkTokenSeller() {
       console.error("Error refreshing all prices:", error);
       setError("Failed to refresh token prices");
 
-      patchTokens((data) => ({
-        ...data,
-        sellable: data.sellable.map((token) => ({
-          ...token,
-          isLoadingPrice: false,
-        })),
-      }));
+      patchTokens((data) =>
+        patchWalletTokenLists(data, (tokens) =>
+          tokens.map((token) => ({ ...token, isLoadingPrice: false })),
+        ),
+      );
     }
-  }, [publicKey, userTokens, patchTokens]);
+  }, [publicKey, swappableTokens, patchTokens]);
 
   // Refresh individual token price efficiently
   const refreshTokenPrice = useCallback(
     async (token: UserToken) => {
       if (!publicKey) return;
 
-      patchTokens((data) => ({
-        ...data,
-        sellable: data.sellable.map((t) =>
-          t.mintAddress === token.mintAddress
-            ? { ...t, isLoadingPrice: true }
-            : t,
+      patchTokens((data) =>
+        patchWalletTokenLists(data, (tokens) =>
+          tokens.map((t) =>
+            t.mintAddress === token.mintAddress
+              ? { ...t, isLoadingPrice: true }
+              : t,
+          ),
         ),
-      }));
+      );
 
       try {
         const updatedTokens = await refreshTokenPricesBatch([token]);
         const updatedToken = updatedTokens[0];
 
         if (updatedToken) {
-          patchTokens((data) => ({
-            ...data,
-            sellable: data.sellable.map((t) =>
-              t.mintAddress === token.mintAddress
-                ? { ...updatedToken, isLoadingPrice: false }
-                : t,
+          patchTokens((data) =>
+            patchWalletTokenLists(data, (tokens) =>
+              tokens.map((t) =>
+                t.mintAddress === token.mintAddress
+                  ? { ...updatedToken, isLoadingPrice: false }
+                  : t,
+              ),
             ),
-          }));
+          );
 
           setSelectedTokens((prev) =>
             prev.map((t) =>
@@ -687,14 +699,15 @@ export default function BulkTokenSeller() {
         }
       } catch (error) {
         console.error("Error refreshing token price:", error);
-        patchTokens((data) => ({
-          ...data,
-          sellable: data.sellable.map((t) =>
-            t.mintAddress === token.mintAddress
-              ? { ...t, isLoadingPrice: false }
-              : t,
+        patchTokens((data) =>
+          patchWalletTokenLists(data, (tokens) =>
+            tokens.map((t) =>
+              t.mintAddress === token.mintAddress
+                ? { ...t, isLoadingPrice: false }
+                : t,
+            ),
           ),
-        }));
+        );
       }
     },
     [publicKey, patchTokens],
@@ -1529,16 +1542,21 @@ export default function BulkTokenSeller() {
   const estimatedSOL = grossSOL - sellFee - closeFee + rentRecovery;
 
   // Calculate total reload estimation based on showDustOnly filter
-  const tokensForCalculation = showDustOnly
-    ? userTokens.filter((token) => token.usdValue < 0.1)
-    : userTokens;
+  const dustTokenList = useMemo(
+    () => [...dustTokens, ...zeroValueTokens],
+    [dustTokens, zeroValueTokens],
+  );
+
+  const tokensForCalculation = showDustOnly ? dustTokenList : userTokens;
 
   const totalGrossUSD = tokensForCalculation.reduce(
     (total, token) => total + token.usdValue,
     0,
   );
-  // Include zero-balance tokens in calculation (they contribute to rent recovery)
-  const totalZeroTokens = zeroBalanceTokens.length;
+  // Include zero-value tokens in calculation (they contribute to rent recovery)
+  const totalZeroTokens = showDustOnly
+    ? zeroValueTokens.length
+    : zeroBalanceTokens.length;
   const totalGrossSOL = totalGrossUSD / solPriceUsd;
   const totalSellFee = getFeeForOperation("SELL", totalGrossSOL);
   const totalCloseFee =
@@ -1557,20 +1575,33 @@ export default function BulkTokenSeller() {
   }, []);
 
   const zeroBalanceMintSet = useMemo(
-    () => new Set(zeroBalanceTokens.map((t) => t.mintAddress)),
+    () => new Set(zeroValueTokens.map((t) => t.mintAddress)),
+    [zeroValueTokens],
+  );
+
+  const emptyAccountTokens = useMemo(
+    () =>
+      zeroBalanceTokens.filter((token) => token.uiAmount <= MIN_BALANCE_UI),
     [zeroBalanceTokens],
   );
 
   const displayUserTokens = useMemo(() => {
+    if (showDustOnly) {
+      return dustTokenList;
+    }
     if (showZeroBalance) {
-      return [...userTokens, ...zeroBalanceTokens];
+      return [...userTokens, ...emptyAccountTokens];
     }
     return userTokens;
-  }, [showZeroBalance, userTokens, zeroBalanceTokens]);
+  }, [
+    showDustOnly,
+    showZeroBalance,
+    userTokens,
+    dustTokenList,
+    emptyAccountTokens,
+  ]);
 
-  const filteredUserTokens = showDustOnly
-    ? displayUserTokens.filter((token) => token.usdValue < 0.1)
-    : displayUserTokens;
+  const filteredUserTokens = displayUserTokens;
 
   const incompleteRpcBanner = useMemo(() => {
     if (diagnostics.length === 0 || !selectedEndpoint) return null;
@@ -1676,7 +1707,8 @@ export default function BulkTokenSeller() {
           <div>
             <h3 className="text-xl font-light text-white mb-1">
               You have{" "}
-              {userTokens.length > 0 && totalReloadEstimate > 0 && (
+              {(showDustOnly ? dustTokenList.length > 0 : userTokens.length > 0) &&
+                totalReloadEstimate > 0 && (
                 <span className="font-bold">
                   ~ {totalReloadEstimate.toFixed(3)} SOL
                 </span>
@@ -1686,13 +1718,12 @@ export default function BulkTokenSeller() {
             <p className="text-gray-400 text-sm">
               {selectedTokens.length} of {filteredUserTokens.length}{" "}
               {showDustOnly ? "dust" : "valuable"} tokens selected
-              {showDustOnly && filteredUserTokens.length !== userTokens.length}
             </p>
           </div>
           <div className="flex items-center space-x-3">
             <button
               onClick={refreshAllPrices}
-              disabled={isLoadingTokens || userTokens.length === 0}
+              disabled={isLoadingTokens || swappableTokens.length === 0}
               className="p-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Refresh Prices"
             >
@@ -1836,6 +1867,24 @@ export default function BulkTokenSeller() {
               Test RPCs
             </button>
           </div>
+        ) : userTokens.length === 0 &&
+          dustTokenList.length > 0 &&
+          !showDustOnly ? (
+          <div className="text-center py-12">
+            <h3 className="text-lg font-semibold text-gray-300 mb-2">
+              No valuable tokens
+            </h3>
+            <p className="text-gray-400 mb-4">
+              You have {dustTokenList.length} dust token
+              {dustTokenList.length === 1 ? "" : "s"} worth less than $1.
+            </p>
+            <button
+              onClick={toggleDustFilter}
+              className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg transition-colors"
+            >
+              Show dust tokens
+            </button>
+          </div>
         ) : userTokens.length === 0 && zeroBalanceTokens.length > 0 && !showZeroBalance ? (
           <div className="text-center py-12">
             <h3 className="text-lg font-semibold text-gray-300 mb-2">
@@ -1903,7 +1952,7 @@ export default function BulkTokenSeller() {
               No dust tokens found
             </h3>
             <p className="text-gray-400 mb-4">
-              You don't have any tokens worth less than $0.1
+              You don&apos;t have any tokens worth less than $1
             </p>
             <button
               onClick={toggleDustFilter}
@@ -1977,7 +2026,7 @@ export default function BulkTokenSeller() {
         )}
 
         {/* Zero-Balance Tokens Section */}
-        {!showZeroBalance && zeroBalanceTokens.length > 0 && (
+        {!showDustOnly && !showZeroBalance && zeroBalanceTokens.length > 0 && (
           <>
             <div className="border-t border-gray-600 pt-8">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">

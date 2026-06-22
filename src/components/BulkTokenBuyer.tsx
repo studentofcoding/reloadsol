@@ -683,27 +683,25 @@ export default function BulkTokenBuyer() {
         `Updating UI with enriched metadata for ${updatedTokens.length} tokens`,
       );
 
-      patchTokens((prev) => ({
-        ...prev,
-        allTokens: prev.allTokens.map((token) => {
-          const updated = updatedTokens.find(
-            (u) => u.mintAddress === token.mintAddress,
-          );
-          return updated || token;
-        }),
-        sellable: prev.sellable.map((token) => {
-          const updated = updatedTokens.find(
-            (u) => u.mintAddress === token.mintAddress,
-          );
-          return updated || token;
-        }),
-        closeOnly: prev.closeOnly.map((token) => {
-          const updated = updatedTokens.find(
-            (u) => u.mintAddress === token.mintAddress,
-          );
-          return updated || token;
-        }),
-      }));
+      patchTokens((prev) => {
+        const patchList = (tokens: UserToken[]) =>
+          tokens.map((token) => {
+            const updated = updatedTokens.find(
+              (u) => u.mintAddress === token.mintAddress,
+            );
+            return updated || token;
+          });
+
+        return {
+          ...prev,
+          allTokens: patchList(prev.allTokens),
+          valuable: patchList(prev.valuable),
+          dust: patchList(prev.dust),
+          zeroValue: patchList(prev.zeroValue),
+          sellable: patchList(prev.sellable),
+          closeOnly: patchList(prev.closeOnly),
+        };
+      });
     },
     [patchTokens],
   );
