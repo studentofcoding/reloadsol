@@ -8,6 +8,9 @@ import React, {
   useRef,
 } from "react";
 import { useWallet, useConnection } from "../components/WalletProvider";
+import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
+import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useSolPrice } from "@/hooks/useSolPrice";
 import PhantomWalletButton from "./PhantomWalletButton";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
@@ -21,7 +24,6 @@ import {
   executeBulkSell,
   executeBulkSellAlt,
   fetchUserTokens,
-  fetchUserTokensEfficient,
   refreshTokenPricesBatch,
   fetchZeroBalanceTokens,
   closeZeroBalanceTokens,
@@ -46,6 +48,9 @@ import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { useTradingData } from "./TradingDataProvider";
 // ✅ NEW: Import PnL sharing system
 import { usePnLShare } from "@/hooks/usePnLShare";
+import { usePostTradeRefresh } from "@/hooks/usePostTradeRefresh";
+import { useRpc } from "@/contexts/RpcContext";
+import RpcPanel from "./RpcPanel";
 import PnLShareModal from "./PnLShareModal";
 import { pnlShareService } from "@/utils/pnl-share-service";
 
@@ -63,8 +68,24 @@ interface QuoteData {
 }
 
 export default function BulkTokenSeller() {
-  const { publicKey, signAllTransactions, connected } = useWallet();
+  const { signAllTransactions, connected } = useWallet();
+  const { publicKey, walletAddress, isWalletReady } =
+    useResolvedWalletPublicKey();
   const { connection } = useConnection();
+  const {
+    selectedEndpoint,
+    selectedEndpointIndex,
+    endpoints,
+    activeRpcUrl,
+    diagnostics,
+    isRunningDiagnostics,
+    setSelectedEndpointIndex,
+    runDiagnostics,
+    autoSelectBest,
+    setAutoSelectBest,
+    autoSelectBestEndpoint,
+  } = useRpc();
+  const triggerPostTradeRefresh = usePostTradeRefresh({ refetchRecords: true });
   const { trackOperation } = useTradingData();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
 
@@ -78,7 +99,7 @@ export default function BulkTokenSeller() {
     autoTriggerShare,
   } = usePnLShare();
 
-  // Form state - Updated to use TokenToSell
+  // UI state — token lists come from useWalletTokens query
   const [selectedTokens, setSelectedTokens] = useState<TokenToSell[]>([]);
   const [selectedZeroBalanceTokens, setSelectedZeroBalanceTokens] = useState<
     UserToken[]
@@ -86,11 +107,34 @@ export default function BulkTokenSeller() {
   const [slippage, setSlippage] = useState<number>(200); // 2%
   const [priorityFee, setPriorityFee] = useState<number>(30000); // 0.00003 SOL
 
-  // UI state
-  const [userTokens, setUserTokens] = useState<UserToken[]>([]);
-  const [zeroBalanceTokens, setZeroBalanceTokens] = useState<UserToken[]>([]);
-  const [isLoadingTokens, setIsLoadingTokens] = useState<boolean>(false);
-  const [isInitialLoad, setIsInitialLoad] = useState<boolean>(true);
+  const {
+    sellable: userTokens,
+    closeOnly: zeroBalanceTokens,
+    allTokens,
+    fetchMeta: lastFetchMeta,
+    isPending: isInitialLoad,
+    isFetching: isLoadingTokens,
+    error: tokensQueryError,
+    refetchTokens,
+    patchTokens,
+  } = useWalletTokens({
+    connection,
+    publicKey,
+    walletAddress,
+    activeRpcUrl,
+    rpcLabel: selectedEndpoint?.provider ?? "RPC",
+    enabled: isWalletReady,
+  });
+
+  const allTokensCount = allTokens.length;
+  const fetchError =
+    tokensQueryError instanceof Error
+      ? tokensQueryError.message
+      : tokensQueryError
+        ? String(tokensQueryError)
+        : lastFetchMeta?.error ?? "";
+
+  const autoSelectRanAfterFetchRef = useRef(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isClosingAccounts, setIsClosingAccounts] = useState<boolean>(false);
   const [sellPointsEarned, setSellPointsEarned] = useState<number | null>(null);
@@ -100,7 +144,9 @@ export default function BulkTokenSeller() {
   const [error, setError] = useState<string>("");
   const [selectedToken, setSelectedToken] = useState<string>("");
   const [isChartLoading, setIsChartLoading] = useState<boolean>(false);
-  const [showDustOnly, setShowDustOnly] = useState<boolean>(true);
+  const [showDustOnly, setShowDustOnly] = useState<boolean>(false);
+  const [showZeroBalance, setShowZeroBalance] = useState<boolean>(false);
+  const [showRpcPanel, setShowRpcPanel] = useState<boolean>(false);
 
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0);
@@ -127,15 +173,18 @@ export default function BulkTokenSeller() {
   ] as const;
 
   // Quote utilities
-  const getQuoteForToken = (mintAddress: string): QuoteData | null => {
-    return quotes[mintAddress] || null;
-  };
+  const getQuoteForToken = useCallback(
+    (mintAddress: string): QuoteData | null => {
+      return quotes[mintAddress] || null;
+    },
+    [quotes],
+  );
 
-  const isQuoteValid = (quote: QuoteData | null): boolean => {
+  const isQuoteValid = useCallback((quote: QuoteData | null): boolean => {
     if (!quote) return false;
     const age = Date.now() - quote.timestamp;
     return age < 30000; // Valid for 30 seconds
-  };
+  }, []);
 
   // Quote fetching functions for different providers
   const fetchJupiterQuote = useCallback(
@@ -344,132 +393,68 @@ export default function BulkTokenSeller() {
     return () => clearInterval(interval);
   }, [autoQuote, tokensHash, selectedTokens.length]);
 
-  // Clear quotes when provider changes
-  useEffect(() => {
+  const handleSwapProviderChange = (provider: "jupiter" | "gmgn") => {
+    setSwapProvider(provider);
     setQuotes({});
     setLastQuoteTime(0);
-  }, [swapProvider]);
+  };
 
-  // Fetch SOL price using robust multi-API system
-  const fetchSolPrice = useCallback(async () => {
-    try {
-      const price = await getSolPriceUSD();
-      setSolPriceUsd(price);
-      console.log(`SOL price updated: $${price}`);
-    } catch (error) {
-      console.error("Error fetching SOL price:", error);
-      // Keep using current price if fetch fails
-    }
-  }, []);
+  // Fetch SOL price using robust multi-API system — handled by useSolPrice
 
-  // Handle metadata updates from background enrichment
-  const handleMetadataUpdate = useCallback((updatedTokens: UserToken[]) => {
-    console.log(
-      `Updating UI with enriched metadata for ${updatedTokens.length} tokens`,
-    );
-
-    // Update userTokens state
-    setUserTokens((prev) =>
-      prev.map((token) => {
-        const updated = updatedTokens.find(
-          (u) => u.mintAddress === token.mintAddress,
-        );
-        return updated || token;
-      }),
-    );
-
-    // Update zeroBalanceTokens state
-    setZeroBalanceTokens((prev) =>
-      prev.map((token) => {
-        const updated = updatedTokens.find(
-          (u) => u.mintAddress === token.mintAddress,
-        );
-        return updated || token;
-      }),
-    );
-
-    // Update selectedTokens state
-    setSelectedTokens((prev) =>
-      prev.map((token) => {
-        const updated = updatedTokens.find(
-          (u) => u.mintAddress === token.mintAddress,
-        );
-        return updated
-          ? {
-              ...updated,
-              sellAmount: token.sellAmount,
-              sellPercentage: token.sellPercentage,
-            }
-          : token;
-      }),
-    );
-
-    // Update selectedZeroBalanceTokens state
-    setSelectedZeroBalanceTokens((prev) =>
-      prev.map((token) => {
-        const updated = updatedTokens.find(
-          (u) => u.mintAddress === token.mintAddress,
-        );
-        return updated || token;
-      }),
-    );
-  }, []);
-
-  const fetchTokens = useCallback(async () => {
-    if (!publicKey) return;
-
-    setIsLoadingTokens(true);
-    setError("");
-    try {
-      // Fetch all tokens efficiently using Jupiter API v2 with progress callback
-      // Note: Removed clearAllCaches() to prevent redundant fetches - caching improves performance
-      const allTokens = await fetchUserTokensEfficient(
-        connection,
-        publicKey,
-        true, // Include zero balance
-        false, // Exclude NFTs
-        (progress) => {
-          // Optional: Add progress indicator in the future
-          console.log(`Token fetching progress: ${progress}%`);
-        },
-      );
-
-      // Separate sellable tokens from zero-balance/unsellable tokens
-      // Sellable tokens: have meaningful balance AND (USD value >= 0.001 OR pump.fun token)
-      const sellableTokens = allTokens.filter(
-        (token) =>
-          token.uiAmount > 0.000000000001 &&
-          (token.usdValue >= 0.001 || isPumpFunToken(token.mintAddress)),
-      );
-
-      // Zero-balance/unsellable tokens: either zero balance OR (USD value < 0.001 AND not pump.fun)
-      const zeroTokens = allTokens.filter(
-        (token) =>
-          token.uiAmount <= 0.000000000001 ||
-          (token.usdValue < 0.001 && !isPumpFunToken(token.mintAddress)),
-      );
-
-      setUserTokens(sellableTokens);
-      setZeroBalanceTokens(zeroTokens);
-      setIsInitialLoad(false); // Mark initial load as complete
-
+  const handleMetadataUpdate = useCallback(
+    (updatedTokens: UserToken[]) => {
       console.log(
-        `Efficiently fetched ${sellableTokens.length} sellable and ${zeroTokens.length} zero/unsellable tokens`,
+        `Updating UI with enriched metadata for ${updatedTokens.length} tokens`,
       );
-    } catch (error) {
-      console.error("Error fetching tokens:", error);
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      if (errorMessage.includes("Rate limit") || errorMessage.includes("429")) {
-        setError("Rate limit exceeded. Please wait a moment and try again.");
-      } else {
-        setError("Failed to fetch your tokens. Please try again.");
-      }
-      setIsInitialLoad(false); // Mark initial load as complete even on error
-    } finally {
-      setIsLoadingTokens(false);
-    }
-  }, [connection, publicKey]);
+
+      patchTokens((data) => {
+        const patchList = (tokens: UserToken[]) =>
+          tokens.map((token) => {
+            const updated = updatedTokens.find(
+              (u) => u.mintAddress === token.mintAddress,
+            );
+            return updated || token;
+          });
+
+        return {
+          ...data,
+          allTokens: patchList(data.allTokens),
+          sellable: patchList(data.sellable),
+          closeOnly: patchList(data.closeOnly),
+        };
+      });
+
+      setSelectedTokens((prev) =>
+        prev.map((token) => {
+          const updated = updatedTokens.find(
+            (u) => u.mintAddress === token.mintAddress,
+          );
+          return updated
+            ? {
+                ...updated,
+                sellAmount: token.sellAmount,
+                sellPercentage: token.sellPercentage,
+              }
+            : token;
+        }),
+      );
+
+      setSelectedZeroBalanceTokens((prev) =>
+        prev.map((token) => {
+          const updated = updatedTokens.find(
+            (u) => u.mintAddress === token.mintAddress,
+          );
+          return updated || token;
+        }),
+      );
+    },
+    [patchTokens],
+  );
+
+  const fetchTokens = useCallback(
+    (forceRefresh = false) => refetchTokens(forceRefresh),
+    [refetchTokens],
+  );
 
   // Handle token selection
   const toggleTokenSelection = (token: UserToken) => {
@@ -563,7 +548,8 @@ export default function BulkTokenSeller() {
 
   // Select all tokens
   const selectAllTokens = () => {
-    const tokensToSelect = showDustOnly ? filteredUserTokens : userTokens;
+    const tokensToSelect = (showDustOnly ? filteredUserTokens : displayUserTokens)
+      .filter((token) => !zeroBalanceMintSet.has(token.mintAddress));
     const tokensToSell: TokenToSell[] = tokensToSelect.map((token) => ({
       ...token,
       sellAmount: token.balance,
@@ -606,21 +592,28 @@ export default function BulkTokenSeller() {
   const refreshAllPrices = useCallback(async () => {
     if (!publicKey || userTokens.length === 0) return;
 
-    // Set loading state for all tokens
-    setUserTokens((prev) =>
-      prev.map((token) => ({ ...token, isLoadingPrice: true })),
-    );
+    patchTokens((data) => ({
+      ...data,
+      sellable: data.sellable.map((token) => ({
+        ...token,
+        isLoadingPrice: true,
+      })),
+    }));
 
     try {
       console.log("Starting efficient batch price refresh...");
-
-      // Use efficient batch price refresh
       const updatedTokens = await refreshTokenPricesBatch(userTokens);
 
-      // Update tokens state
-      setUserTokens(updatedTokens);
+      patchTokens((data) => ({
+        ...data,
+        sellable: data.sellable.map((token) => {
+          const updated = updatedTokens.find(
+            (t) => t.mintAddress === token.mintAddress,
+          );
+          return updated ?? { ...token, isLoadingPrice: false };
+        }),
+      }));
 
-      // Update selected tokens with new prices
       setSelectedTokens((prev) =>
         prev.map((selectedToken) => {
           const updatedToken = updatedTokens.find(
@@ -642,43 +635,44 @@ export default function BulkTokenSeller() {
       console.error("Error refreshing all prices:", error);
       setError("Failed to refresh token prices");
 
-      // Clear loading states
-      setUserTokens((prev) =>
-        prev.map((token) => ({ ...token, isLoadingPrice: false })),
-      );
+      patchTokens((data) => ({
+        ...data,
+        sellable: data.sellable.map((token) => ({
+          ...token,
+          isLoadingPrice: false,
+        })),
+      }));
     }
-  }, [publicKey, userTokens]);
+  }, [publicKey, userTokens, patchTokens]);
 
   // Refresh individual token price efficiently
   const refreshTokenPrice = useCallback(
     async (token: UserToken) => {
       if (!publicKey) return;
 
-      // Update the loading state for this specific token
-      setUserTokens((prev) =>
-        prev.map((t) =>
+      patchTokens((data) => ({
+        ...data,
+        sellable: data.sellable.map((t) =>
           t.mintAddress === token.mintAddress
             ? { ...t, isLoadingPrice: true }
             : t,
         ),
-      );
+      }));
 
       try {
-        // Use efficient batch refresh for single token (leverages caching)
         const updatedTokens = await refreshTokenPricesBatch([token]);
         const updatedToken = updatedTokens[0];
 
         if (updatedToken) {
-          // Update the token with new price
-          setUserTokens((prev) =>
-            prev.map((t) =>
+          patchTokens((data) => ({
+            ...data,
+            sellable: data.sellable.map((t) =>
               t.mintAddress === token.mintAddress
                 ? { ...updatedToken, isLoadingPrice: false }
                 : t,
             ),
-          );
+          }));
 
-          // Update selected tokens if this token is selected
           setSelectedTokens((prev) =>
             prev.map((t) =>
               t.mintAddress === token.mintAddress
@@ -693,16 +687,17 @@ export default function BulkTokenSeller() {
         }
       } catch (error) {
         console.error("Error refreshing token price:", error);
-        setUserTokens((prev) =>
-          prev.map((t) =>
+        patchTokens((data) => ({
+          ...data,
+          sellable: data.sellable.map((t) =>
             t.mintAddress === token.mintAddress
               ? { ...t, isLoadingPrice: false }
               : t,
           ),
-        );
+        }));
       }
     },
-    [publicKey],
+    [publicKey, patchTokens],
   );
 
   // Custom swap execution using provider-specific quotes
@@ -928,9 +923,6 @@ export default function BulkTokenSeller() {
       getQuoteForToken,
       isQuoteValid,
       priorityFee,
-      signAllTransactions,
-      connection,
-      publicKey,
     ],
   );
 
@@ -1280,10 +1272,11 @@ export default function BulkTokenSeller() {
       }
 
       if (sellResult.success || sellResult.successfulCloses.length > 0) {
-        // Refresh token list and clear selection
-        await fetchTokens();
         setSelectedTokens([]);
         setSelectedZeroBalanceTokens([]);
+        triggerPostTradeRefresh({
+          refreshWalletTokens: (forceRefresh) => fetchTokens(forceRefresh ?? true),
+        });
       }
     } catch (err) {
       console.error("Bulk operation error:", err);
@@ -1323,7 +1316,9 @@ export default function BulkTokenSeller() {
     swapProvider,
     executeCustomSwap,
     autoTriggerShare,
+    triggerPostTradeRefresh,
     showOutcome,
+    trackOperation,
   ]);
 
   // Handle close-only (burn) operation without selling any tokens
@@ -1443,9 +1438,11 @@ export default function BulkTokenSeller() {
 
       // Refresh token list and clear selection
       if (closeData.successful.length > 0) {
-        await fetchTokens();
         setSelectedTokens([]);
         setSelectedZeroBalanceTokens([]);
+        triggerPostTradeRefresh({
+          refreshWalletTokens: (forceRefresh) => fetchTokens(forceRefresh ?? true),
+        });
       }
     } catch (err) {
       console.error("Close-only operation error:", err);
@@ -1474,32 +1471,42 @@ export default function BulkTokenSeller() {
     priorityFee,
     fetchTokens,
     trackOperation,
+    triggerPostTradeRefresh,
     showOutcome,
   ]);
 
-  // Fetch user tokens on wallet connection
   useEffect(() => {
-    if (connected && publicKey) {
-      setIsInitialLoad(true); // Set initial load state before fetching
-      fetchTokens();
-      fetchSolPrice();
-    } else {
-      setUserTokens([]);
-      setZeroBalanceTokens([]);
-      setSelectedTokens([]);
-      setSelectedZeroBalanceTokens([]);
-      setIsInitialLoad(true); // Reset initial load state when wallet disconnects
+    autoSelectRanAfterFetchRef.current = false;
+  }, [walletAddress]);
+
+  useEffect(() => {
+    if (
+      !autoSelectBest ||
+      !walletAddress ||
+      !isWalletReady ||
+      isInitialLoad ||
+      autoSelectRanAfterFetchRef.current
+    ) {
+      return;
     }
-  }, [connected, publicKey, fetchTokens, fetchSolPrice]);
 
-  // Refresh SOL price periodically
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchSolPrice();
-    }, 30000); // Every 30 seconds
+    autoSelectRanAfterFetchRef.current = true;
+    void autoSelectBestEndpoint(walletAddress);
+  }, [
+    autoSelectBest,
+    walletAddress,
+    isWalletReady,
+    isInitialLoad,
+    autoSelectBestEndpoint,
+  ]);
 
-    return () => clearInterval(interval);
-  }, [fetchSolPrice]);
+  if (
+    !isWalletReady &&
+    (selectedTokens.length > 0 || selectedZeroBalanceTokens.length > 0)
+  ) {
+    setSelectedTokens([]);
+    setSelectedZeroBalanceTokens([]);
+  }
 
   // Set up metadata update callback
   useEffect(() => {
@@ -1523,8 +1530,8 @@ export default function BulkTokenSeller() {
 
   // Calculate total reload estimation based on showDustOnly filter
   const tokensForCalculation = showDustOnly
-    ? userTokens.filter((token) => token.usdValue < 0.1) // Only dust tokens
-    : userTokens.filter((token) => token.usdValue >= 0.1); // Only non-dust tokens
+    ? userTokens.filter((token) => token.usdValue < 0.1)
+    : userTokens;
 
   const totalGrossUSD = tokensForCalculation.reduce(
     (total, token) => total + token.usdValue,
@@ -1549,10 +1556,51 @@ export default function BulkTokenSeller() {
     setIsChartLoading(true);
   }, []);
 
-  // Filter tokens based on dust filter
+  const zeroBalanceMintSet = useMemo(
+    () => new Set(zeroBalanceTokens.map((t) => t.mintAddress)),
+    [zeroBalanceTokens],
+  );
+
+  const displayUserTokens = useMemo(() => {
+    if (showZeroBalance) {
+      return [...userTokens, ...zeroBalanceTokens];
+    }
+    return userTokens;
+  }, [showZeroBalance, userTokens, zeroBalanceTokens]);
+
   const filteredUserTokens = showDustOnly
-    ? userTokens.filter((token) => token.usdValue < 0.1)
-    : userTokens;
+    ? displayUserTokens.filter((token) => token.usdValue < 0.1)
+    : displayUserTokens;
+
+  const incompleteRpcBanner = useMemo(() => {
+    if (diagnostics.length === 0 || !selectedEndpoint) return null;
+    const current = diagnostics.find((d) => d.index === selectedEndpointIndex);
+    const best = [...diagnostics]
+      .filter((d) => d.healthy)
+      .sort((a, b) => b.rawAccountCount - a.rawAccountCount)[0];
+    if (
+      current &&
+      best &&
+      current.index !== best.index &&
+      current.rawAccountCount === 0 &&
+      best.rawAccountCount > 0
+    ) {
+      return `Current RPC may be incomplete — switch to ${best.provider} (${best.rawAccountCount} accounts).`;
+    }
+    return null;
+  }, [diagnostics, selectedEndpoint, selectedEndpointIndex]);
+
+  const handleTestAllRpcs = useCallback(async () => {
+    if (!publicKey) return;
+    await runDiagnostics(publicKey.toString());
+  }, [publicKey, runDiagnostics]);
+
+  const handleRpcSelect = useCallback(
+    (index: number) => {
+      setSelectedEndpointIndex(index);
+    },
+    [setSelectedEndpointIndex],
+  );
 
   // Toggle dust filter
   const toggleDustFilter = () => {
@@ -1606,6 +1654,23 @@ export default function BulkTokenSeller() {
           </div>
         )}
 
+        {connected && (
+          <RpcPanel
+            expanded={showRpcPanel}
+            onToggle={() => setShowRpcPanel((prev) => !prev)}
+            endpoints={endpoints}
+            selectedEndpointIndex={selectedEndpointIndex}
+            onSelectEndpoint={handleRpcSelect}
+            autoSelectBest={autoSelectBest}
+            onAutoSelectBestChange={setAutoSelectBest}
+            onTestAll={handleTestAllRpcs}
+            isRunningDiagnostics={isRunningDiagnostics}
+            diagnostics={diagnostics}
+            lastFetchMeta={lastFetchMeta}
+            incompleteRpcBanner={incompleteRpcBanner}
+          />
+        )}
+
         {/* Token Selection Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
@@ -1644,6 +1709,16 @@ export default function BulkTokenSeller() {
                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                 />
               </svg>
+            </button>
+            <button
+              onClick={() => setShowZeroBalance((prev) => !prev)}
+              className={`px-4 py-2 rounded-lg transition-colors text-sm ${
+                showZeroBalance
+                  ? "bg-blue-600 hover:bg-blue-500 text-white"
+                  : "bg-gray-600 hover:bg-gray-500 text-white"
+              }`}
+            >
+              {showZeroBalance ? "Hide zero balance" : "Show zero balance"}
             </button>
             <button
               onClick={toggleDustFilter}
@@ -1705,7 +1780,7 @@ export default function BulkTokenSeller() {
         </div>
 
         {/* Token List */}
-        {isInitialLoad && connected ? (
+        {isInitialLoad && isWalletReady ? (
           <div className="text-center py-12">
             <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
               <div className="w-6 h-6 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
@@ -1719,7 +1794,65 @@ export default function BulkTokenSeller() {
           <>
             <TokenSkeleton count={3} variant="progressive" />
           </>
-        ) : userTokens.length === 0 ? (
+        ) : fetchError ? (
+          <div className="text-center py-12">
+            <h3 className="text-lg font-semibold text-gray-300 mb-2">
+              Failed to load tokens
+            </h3>
+            <p className="text-gray-400 mb-4">{fetchError}</p>
+            <div className="flex justify-center gap-3">
+              <button
+                onClick={() => fetchTokens(true)}
+                className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
+              >
+                Refresh Tokens
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowRpcPanel(true)}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors"
+              >
+                Check RPC
+              </button>
+            </div>
+          </div>
+        ) : allTokensCount === 0 &&
+          userTokens.length === 0 &&
+          zeroBalanceTokens.length === 0 ? (
+          <div className="text-center py-12">
+            <h3 className="text-lg font-semibold text-gray-300 mb-2">
+              RPC returned no token accounts
+            </h3>
+            <p className="text-gray-400 mb-4">
+              Try another RPC endpoint or run diagnostics below.
+            </p>
+            <button
+              onClick={() => {
+                setShowRpcPanel(true);
+                void handleTestAllRpcs();
+              }}
+              className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
+            >
+              Test RPCs
+            </button>
+          </div>
+        ) : userTokens.length === 0 && zeroBalanceTokens.length > 0 && !showZeroBalance ? (
+          <div className="text-center py-12">
+            <h3 className="text-lg font-semibold text-gray-300 mb-2">
+              No sellable tokens
+            </h3>
+            <p className="text-gray-400 mb-4">
+              {zeroBalanceTokens.length} close-only account
+              {zeroBalanceTokens.length === 1 ? "" : "s"} below.
+            </p>
+            <button
+              onClick={() => setShowZeroBalance(true)}
+              className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
+            >
+              Show zero balance tokens
+            </button>
+          </div>
+        ) : userTokens.length === 0 && zeroBalanceTokens.length === 0 ? (
           <div className="text-center py-12">
             <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
               <svg
@@ -1740,10 +1873,10 @@ export default function BulkTokenSeller() {
               No tokens found
             </h3>
             <p className="text-gray-400 mb-4">
-              You don't have any tokens to sell
+              You don&apos;t have any tokens to sell
             </p>
             <button
-              onClick={fetchTokens}
+              onClick={() => fetchTokens(true)}
               className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
             >
               Refresh Tokens
@@ -1782,6 +1915,43 @@ export default function BulkTokenSeller() {
         ) : (
           <div className="grid max-h-96 overflow-y-auto border border-gray-600 rounded-xl">
             {filteredUserTokens.map((token) => {
+              if (zeroBalanceMintSet.has(token.mintAddress)) {
+                const isSelected = selectedZeroBalanceTokens.some(
+                  (t) => t.mintAddress === token.mintAddress,
+                );
+                return (
+                  <div
+                    key={token.mintAddress}
+                    className={`group p-2 m-1 rounded-xl transition-all duration-200 ${
+                      isSelected ? "bg-gray-700" : "bg-gray-900"
+                    }`}
+                  >
+                    <div
+                      className="flex items-center justify-between cursor-pointer"
+                      onClick={() => toggleZeroBalanceTokenSelection(token)}
+                    >
+                      <div className="flex items-center space-x-3">
+                        <div
+                          className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
+                            isSelected
+                              ? "bg-blue-500 border-blue-500"
+                              : "border-gray-500"
+                          }`}
+                        >
+                          {isSelected && (
+                            <span className="text-white text-xs">✓</span>
+                          )}
+                        </div>
+                        <span className="font-semibold text-gray-300">
+                          {token.name || token.symbol || "Unknown"}
+                        </span>
+                        <span className="text-xs text-gray-500">Close only</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
               const isSelected = selectedTokens.some(
                 (t) => t.mintAddress === token.mintAddress,
               );
@@ -1807,7 +1977,7 @@ export default function BulkTokenSeller() {
         )}
 
         {/* Zero-Balance Tokens Section */}
-        {zeroBalanceTokens.length > 0 && (
+        {!showZeroBalance && zeroBalanceTokens.length > 0 && (
           <>
             <div className="border-t border-gray-600 pt-8">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
@@ -1976,7 +2146,9 @@ export default function BulkTokenSeller() {
                         id="swapProvider"
                         value={swapProvider}
                         onChange={(e) =>
-                          setSwapProvider(e.target.value as "jupiter" | "gmgn")
+                          handleSwapProviderChange(
+                            e.target.value as "jupiter" | "gmgn",
+                          )
                         }
                         className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-xl text-white focus:bg-gray-600 focus:border-gray-400 transition-all duration-200"
                         disabled={isLoading}

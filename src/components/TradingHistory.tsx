@@ -1,13 +1,147 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import { OptimizedImage } from "@/components/OptimizedImage";
+import React, { useMemo, useState } from "react";
 import { TrackingRecord, TrackingStats } from "@/utils/trading-tracker";
 import { useWalletAddress } from "./WalletProvider";
 import { useTradingData } from "./TradingDataProvider";
 import { useWalletSession } from "./WalletSessionContext";
 import WalletSignInPrompt from "./WalletSignInPrompt";
 import TokenSkeleton from "./TokenSkeleton";
-import { getSolPriceUSD } from "@/utils/solana";
+import { useSolPrice } from "@/hooks/useSolPrice";
+
+function checkLocalStorageAvailable(): boolean {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      const testKey = "__localStorage_test__";
+      localStorage.setItem(testKey, "test");
+      localStorage.removeItem(testKey);
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function processTradingRecords(
+  walletAddress: string | null,
+  rawRecords: TrackingRecord[] | undefined,
+  solPriceUsd: number,
+): { processedRecords: TrackingRecord[]; stats: TrackingStats | null } {
+  if (!walletAddress || !rawRecords) {
+    return { processedRecords: [], stats: null };
+  }
+
+  const successfulRecords = rawRecords.filter((record) => record.successCount > 0);
+  const processedForConversion = successfulRecords.map((record) => {
+    if (
+      record.operationType === "buy" &&
+      record.solAmount &&
+      solPriceUsd > 0 &&
+      record.solAmount > 10
+    ) {
+      return {
+        ...record,
+        solAmount: record.solAmount / solPriceUsd,
+      };
+    }
+    return record;
+  });
+
+  const combinedRecords: TrackingRecord[] = [];
+  const processedRecordIds = new Set<string>();
+
+  processedForConversion.forEach((record: TrackingRecord) => {
+    if (processedRecordIds.has(record.id)) return;
+
+    if (record.operationType === "sell") {
+      const closeRecord = successfulRecords.find(
+        (r: TrackingRecord) =>
+          r.operationType === "close" &&
+          !processedRecordIds.has(r.id) &&
+          Math.abs(r.timestamp - record.timestamp) <= 30000,
+      );
+
+      if (closeRecord) {
+        combinedRecords.push({
+          ...record,
+          operationType: "sell" as const,
+          tokens: [...record.tokens, ...closeRecord.tokens].filter(
+            (token, index, self) =>
+              index === self.findIndex((t) => t.mintAddress === token.mintAddress),
+          ),
+          successCount: record.successCount + closeRecord.successCount,
+          failureCount: record.failureCount + closeRecord.failureCount,
+          totalTokens: record.totalTokens + closeRecord.totalTokens,
+          signatures: [...record.signatures, ...closeRecord.signatures],
+          feesPaid: record.feesPaid + closeRecord.feesPaid,
+          errors: [...(record.errors || []), ...(closeRecord.errors || [])],
+        });
+        processedRecordIds.add(record.id);
+        processedRecordIds.add(closeRecord.id);
+      } else {
+        combinedRecords.push(record);
+        processedRecordIds.add(record.id);
+      }
+    } else if (record.operationType === "close") {
+      const sellRecord = successfulRecords.find(
+        (r: TrackingRecord) =>
+          r.operationType === "sell" &&
+          !processedRecordIds.has(r.id) &&
+          Math.abs(r.timestamp - record.timestamp) <= 30000,
+      );
+      if (!sellRecord) {
+        combinedRecords.push(record);
+        processedRecordIds.add(record.id);
+      }
+    } else {
+      combinedRecords.push(record);
+      processedRecordIds.add(record.id);
+    }
+  });
+
+  combinedRecords.sort((a, b) => b.timestamp - a.timestamp);
+
+  const buyCount = combinedRecords.filter((r) => r.operationType === "buy").length;
+  const sellCount = combinedRecords.filter((r) => r.operationType === "sell").length;
+  const closeCount = combinedRecords.filter((r) => r.operationType === "close").length;
+
+  return {
+    processedRecords: combinedRecords,
+    stats: {
+      totalOperations: combinedRecords.length,
+      totalBuys: buyCount,
+      totalSells: sellCount,
+      totalCloses: closeCount,
+      totalSolSpent: combinedRecords
+        .filter((r) => r.operationType === "buy")
+        .reduce((sum, r) => sum + (r.solAmount || 0), 0),
+      totalSolReceived: combinedRecords
+        .filter((r) => r.operationType === "sell")
+        .reduce((sum, r) => sum + (r.solAmount || 0), 0),
+      totalFeesPaid: combinedRecords.reduce((sum, r) => sum + r.feesPaid, 0),
+      totalTokensBought: combinedRecords
+        .filter((r) => r.operationType === "buy")
+        .reduce((sum, r) => sum + r.successCount, 0),
+      totalTokensSold: combinedRecords
+        .filter((r) => r.operationType === "sell")
+        .reduce((sum, r) => sum + r.successCount, 0),
+      totalAccountsClosed: combinedRecords
+        .filter((r) => r.operationType === "close")
+        .reduce((sum, r) => sum + r.successCount, 0),
+      successRate:
+        combinedRecords.length > 0
+          ? (combinedRecords.reduce((sum, r) => sum + r.successCount, 0) /
+              combinedRecords.reduce(
+                (sum, r) => sum + r.successCount + r.failureCount,
+                0,
+              )) *
+            100
+          : 0,
+    },
+  };
+}
 
 export default function TradingHistory() {
   const walletAddress = useWalletAddress();
@@ -18,227 +152,22 @@ export default function TradingHistory() {
     deleteRecord,
     recordsError,
   } = useTradingData();
-  const [processedRecords, setProcessedRecords] = useState<TrackingRecord[]>(
-    [],
-  );
-  const [stats, setStats] = useState<TrackingStats | null>(null);
   const [timeFilter, setTimeFilter] = useState<"all" | "24h" | "7d" | "30d">(
     "7d",
   );
   const [error, setError] = useState<string>("");
-  const [isLocalStorageAvailable, setIsLocalStorageAvailable] =
-    useState<boolean>(true);
-  const [solPriceUsd, setSolPriceUsd] = useState<number>(145); // Default fallback
+  const [isLocalStorageAvailable] = useState(() => checkLocalStorageAvailable());
+  const { data: solPriceUsd = 145 } = useSolPrice(300_000);
 
-  // Check if localStorage is available
-  useEffect(() => {
-    try {
-      if (typeof window !== "undefined" && window.localStorage) {
-        const testKey = "__localStorage_test__";
-        localStorage.setItem(testKey, "test");
-        localStorage.removeItem(testKey);
-        setIsLocalStorageAvailable(true);
-      } else {
-        setIsLocalStorageAvailable(false);
-      }
-    } catch (e) {
-      console.warn("localStorage is not available:", e);
-      setIsLocalStorageAvailable(false);
-      setError(
-        "Browser storage is not available. Trading history will not be saved.",
-      );
-    }
-  }, []);
+  const { processedRecords, stats } = useMemo(
+    () => processTradingRecords(walletAddress, rawRecords, solPriceUsd),
+    [walletAddress, rawRecords, solPriceUsd],
+  );
 
-  // Function to process raw records and stats
-  const processRecords = React.useCallback(() => {
-    if (!walletAddress || !rawRecords) {
-      setProcessedRecords([]);
-      setStats(null);
-      return;
-    }
-
-    try {
-      // Get recent successful records only
-      const successfulRecords = rawRecords.filter(
-        (record) => record.successCount > 0,
-      );
-
-      // Process records to handle USDC conversion
-      const processedForConversion = successfulRecords.map((record) => {
-        // For buy operations, check if this might be a USDC purchase
-        // USDC purchases typically have solAmount values that represent USDC amounts (not SOL)
-        // We can identify them by checking if the solAmount seems too high for SOL (> 10 SOL is likely USDC)
-        if (
-          record.operationType === "buy" &&
-          record.solAmount &&
-          solPriceUsd > 0
-        ) {
-          // Heuristic: if solAmount > 10, it's likely USDC amount, not SOL
-          // This is because most users don't spend more than 10 SOL per transaction
-          const isLikelyUsdcPurchase = record.solAmount > 10;
-
-          if (isLikelyUsdcPurchase) {
-            const solEquivalentAmount = record.solAmount / solPriceUsd;
-            console.log(
-              `🔄 TradingHistory USDC conversion: ${record.solAmount} USDC → ${solEquivalentAmount.toFixed(6)} SOL (SOL price: $${solPriceUsd})`,
-            );
-
-            return {
-              ...record,
-              solAmount: solEquivalentAmount,
-            };
-          }
-        }
-        return record;
-      });
-
-      // Combine sell and close operations that happen within 30 seconds of each other
-      const combinedRecords: TrackingRecord[] = [];
-      const processedRecordIds = new Set<string>();
-
-      processedForConversion.forEach((record: TrackingRecord) => {
-        if (processedRecordIds.has(record.id)) return;
-
-        if (record.operationType === "sell") {
-          // Look for a close operation within 30 seconds
-          const closeRecord = successfulRecords.find(
-            (r: TrackingRecord) =>
-              r.operationType === "close" &&
-              !processedRecordIds.has(r.id) &&
-              Math.abs(r.timestamp - record.timestamp) <= 30000, // 30 seconds
-          );
-
-          if (closeRecord) {
-            // Combine sell and close into one record
-            const combinedRecord: TrackingRecord = {
-              ...record,
-              operationType: "sell" as const, // Keep as 'sell' but it represents sell+close
-              tokens: [...record.tokens, ...closeRecord.tokens].filter(
-                (token, index, self) =>
-                  index ===
-                  self.findIndex((t) => t.mintAddress === token.mintAddress),
-              ), // Remove duplicates
-              successCount: record.successCount + closeRecord.successCount,
-              failureCount: record.failureCount + closeRecord.failureCount,
-              totalTokens: record.totalTokens + closeRecord.totalTokens,
-              signatures: [...record.signatures, ...closeRecord.signatures],
-              feesPaid: record.feesPaid + closeRecord.feesPaid,
-              errors: [...(record.errors || []), ...(closeRecord.errors || [])],
-            };
-
-            combinedRecords.push(combinedRecord);
-            processedRecordIds.add(record.id);
-            processedRecordIds.add(closeRecord.id);
-          } else {
-            // No matching close operation, keep sell as is
-            combinedRecords.push(record);
-            processedRecordIds.add(record.id);
-          }
-        } else if (record.operationType === "close") {
-          // Check if this close wasn't already combined with a sell
-          const sellRecord = successfulRecords.find(
-            (r: TrackingRecord) =>
-              r.operationType === "sell" &&
-              !processedRecordIds.has(r.id) &&
-              Math.abs(r.timestamp - record.timestamp) <= 30000, // 30 seconds
-          );
-
-          if (!sellRecord) {
-            // Standalone close operation
-            combinedRecords.push(record);
-            processedRecordIds.add(record.id);
-          }
-          // If there's a matching sell, it will be handled when we process the sell record
-        } else {
-          // Buy operations and others - keep as is
-          combinedRecords.push(record);
-          processedRecordIds.add(record.id);
-        }
-      });
-
-      // Sort by timestamp (most recent first)
-      combinedRecords.sort((a, b) => b.timestamp - a.timestamp);
-
-      setProcessedRecords(combinedRecords);
-
-      // Calculate stats including bot operations
-      const buyCount = combinedRecords.filter(
-        (r) => r.operationType === "buy",
-      ).length;
-      const sellCount = combinedRecords.filter(
-        (r) => r.operationType === "sell",
-      ).length;
-      const closeCount = combinedRecords.filter(
-        (r) => r.operationType === "close",
-      ).length;
-      const botOperationsCount = combinedRecords.filter(
-        (r) => r.is_bot_operation,
-      ).length;
-
-      setStats({
-        totalOperations: combinedRecords.length,
-        totalBuys: buyCount,
-        totalSells: sellCount,
-        totalCloses: closeCount,
-        totalSolSpent: combinedRecords
-          .filter((r) => r.operationType === "buy")
-          .reduce((sum, r) => sum + (r.solAmount || 0), 0),
-        totalSolReceived: combinedRecords
-          .filter((r) => r.operationType === "sell")
-          .reduce((sum, r) => sum + (r.solAmount || 0), 0),
-        totalFeesPaid: combinedRecords.reduce((sum, r) => sum + r.feesPaid, 0),
-        totalTokensBought: combinedRecords
-          .filter((r) => r.operationType === "buy")
-          .reduce((sum, r) => sum + r.successCount, 0),
-        totalTokensSold: combinedRecords
-          .filter((r) => r.operationType === "sell")
-          .reduce((sum, r) => sum + r.successCount, 0),
-        totalAccountsClosed: combinedRecords
-          .filter((r) => r.operationType === "close")
-          .reduce((sum, r) => sum + r.successCount, 0),
-        successRate:
-          combinedRecords.length > 0
-            ? (combinedRecords.reduce((sum, r) => sum + r.successCount, 0) /
-                combinedRecords.reduce(
-                  (sum, r) => sum + r.successCount + r.failureCount,
-                  0,
-                )) *
-              100
-            : 0,
-      });
-    } catch (err) {
-      console.error("Error processing trading records:", err);
-      setError("Failed to process trading history");
-      setProcessedRecords([]);
-      setStats(null);
-    }
-  }, [walletAddress, rawRecords, solPriceUsd]);
-
-  // Fetch SOL price for USDC conversion
-  const fetchSolPrice = React.useCallback(async () => {
-    try {
-      const price = await getSolPriceUSD();
-      setSolPriceUsd(price);
-    } catch (error) {
-      console.error("Failed to fetch SOL price:", error);
-    }
-  }, []);
-
-  // Fetch SOL price on component mount and periodically
-  useEffect(() => {
-    if (walletAddress) {
-      fetchSolPrice();
-      // Update price every 5 minutes
-      const interval = setInterval(fetchSolPrice, 300000);
-      return () => clearInterval(interval);
-    }
-  }, [walletAddress, fetchSolPrice]);
-
-  // Process records when data changes
-  useEffect(() => {
-    processRecords();
-  }, [processRecords]);
+  const storageWarning = !isLocalStorageAvailable
+    ? "Browser storage is not available. Trading history will not be saved."
+    : "";
+  const displayError = error || storageWarning;
 
   // Enhanced operation icon with bot support
   const getOperationIcon = (type: string, isBot?: boolean, status?: string) => {
@@ -497,7 +426,7 @@ export default function TradingHistory() {
                         style={{ marginLeft: idx > 0 ? "-0.5rem" : "0" }}
                       >
                         {token.logoURI ? (
-                          <img
+                          <OptimizedImage
                             src={token.logoURI}
                             alt={token.symbol || token.name || "Token"}
                             className="w-full h-full object-cover"

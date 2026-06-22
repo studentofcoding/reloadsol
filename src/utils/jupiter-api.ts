@@ -409,7 +409,7 @@ export async function testApiVersions(tokens: string[]): Promise<{
   }
 }
 
-export default {
+const jupiterApi = {
   fetchTokenPrices,
   fetchTokenPricesBatch,
   getTokenPrices,
@@ -422,5 +422,7 @@ export default {
   getFallbackConfig,
   getJupiterApiConfig,
   testApiVersions,
-  JupiterAPIError
-}
+  JupiterAPIError,
+};
+
+export default jupiterApi;

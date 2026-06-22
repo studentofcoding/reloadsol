@@ -6,7 +6,9 @@ import React, {
   useEffect,
   Suspense,
   useCallback,
+  useRef,
 } from "react";
+import { useBoardInit } from "@/hooks/useBoardInit";
 import { useSearchParams, usePathname, useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import {
@@ -436,114 +438,50 @@ function ChartsContent() {
     close: closeCapture,
   } = useChartCapture();
 
-  // Sync hook status with local status if needed, or just display hook status
-  useEffect(() => {
-    if (captureStatus) setStatus(captureStatus);
-  }, [captureStatus]);
+  const displayStatus = captureStatus || status;
 
-  // 1. Fetch initial data from API
+  const { data: boardInitData, error: boardInitError } = useBoardInit(urlAddresses);
+  const initLoadedRef = useRef(false);
 
-  useEffect(() => {
-    let mounted = true;
+  if (boardInitData && !initLoadedRef.current) {
+    initLoadedRef.current = true;
+    setColumns(boardInitData.columns);
+    setTokenMcaps(boardInitData.tokenMcaps);
+    setSignals(boardInitData.signals as Record<string, SignalData>);
+    setIsLoaded(true);
+  }
 
-    async function init() {
-      try {
-        // Fetch all labeled tokens from server
-        const res = await fetch("/api/signals");
-        const json = await res.json();
+  const initErrorMessage = boardInitError ? "Failed to load saved tokens" : "";
+  const effectiveStatus = displayStatus || initErrorMessage;
 
-        if (!json.success) throw new Error(json.error);
+  const mergedSignals = useMemo(() => {
+    if (!mcapData?.data) return signals;
 
-        const dbTokens: any[] = json.data || [];
-
-        // Categorize DB tokens
-        const newCols: Record<SectionType, string[]> = {
-          mcap_tracker: [],
-          watching: [],
-          potential: [],
-          rugged: [],
+    const next = { ...signals };
+    mcapData.data.forEach((t) => {
+      if (
+        !next[t.token_address] ||
+        next[t.token_address].source === "mcap_tracker"
+      ) {
+        next[t.token_address] = {
+          ...next[t.token_address],
+          token_address: t.token_address,
+          label: next[t.token_address]?.label || "mcap_tracker",
+          market_cap: t.current_mcap,
+          price: t.solPerToken.current,
+          initial_price:
+            next[t.token_address]?.initial_price || t.solPerToken.first,
+          token_symbol: t.token_symbol,
+          source: next[t.token_address]?.source || "mcap_tracker",
         };
-        const mcaps: Record<string, number> = {};
-        const signalsMap: Record<string, SignalData> = {};
-
-        const seen = new Set<string>();
-
-        dbTokens.forEach((t) => {
-          const label = (t.label || "watching") as SectionType;
-          if (newCols[label]) {
-            newCols[label].push(t.token_address);
-            seen.add(t.token_address);
-            if (t.mcap) mcaps[t.token_address] = t.mcap;
-            signalsMap[t.token_address] = t;
-          }
-        });
-
-        // Merge URL tokens (treat as watching if not in DB)
-        urlAddresses.forEach((addr) => {
-          if (!seen.has(addr)) {
-            newCols.watching.push(addr);
-            seen.add(addr);
-            // Optionally: we could auto-save these to DB as 'watching'
-            // but let's wait for user interaction to persist
-          }
-        });
-
-        if (mounted) {
-          setColumns(newCols);
-          setTokenMcaps(mcaps);
-          setSignals(signalsMap);
-          setIsLoaded(true);
-        }
-      } catch (e) {
-        console.error("Failed to load tokens", e);
-        if (mounted) setStatus("Failed to load saved tokens");
       }
-    }
-
-    init();
-
-    return () => {
-      mounted = false;
-    };
-  }, [urlAddresses.join(",")]); // Re-run if URL params change (e.g. navigation)
-
-  // 1b. Sync Mcap Data to Columns & Signals
-  useEffect(() => {
-    if (!mcapData?.data) return;
-
-    // Convert mcap data to signals format and add to state
-    setSignals((prev) => {
-      const next = { ...prev };
-      let changed = false;
-
-      mcapData.data.forEach((t) => {
-        // Only add if not exists or update if source is mcap_tracker (to keep price fresh)
-        // If it exists but has a different source (e.g. 'manual'), we preserve the manual one
-        if (
-          !next[t.token_address] ||
-          next[t.token_address].source === "mcap_tracker"
-        ) {
-          next[t.token_address] = {
-            // Preserve existing fields if any
-            ...next[t.token_address],
-            token_address: t.token_address,
-            label: next[t.token_address]?.label || "mcap_tracker",
-            // Update live data
-            market_cap: t.current_mcap,
-            price: t.solPerToken.current,
-            initial_price:
-              next[t.token_address]?.initial_price || t.solPerToken.first,
-            token_symbol: t.token_symbol,
-            source: next[t.token_address]?.source || "mcap_tracker",
-          };
-          changed = true;
-        }
-      });
-      return changed ? next : prev;
     });
+    return next;
+  }, [signals, mcapData]);
 
-    // Update Columns
-    // We want mcap_tracker column to contain tokens that are NOT in other columns
+  const displayColumns = useMemo(() => {
+    if (!mcapData?.data) return columns;
+
     const existingSet = new Set([
       ...columns.watching,
       ...columns.potential,
@@ -554,25 +492,22 @@ function ChartsContent() {
       .filter((t) => !existingSet.has(t.token_address))
       .map((t) => t.token_address);
 
-    setColumns((prev) => {
-      // Check if different to avoid loop
-      const current = prev.mcap_tracker || [];
-      if (
-        current.length === newMcapIds.length &&
-        current.every((id, i) => id === newMcapIds[i])
-      ) {
-        return prev;
-      }
+    const current = columns.mcap_tracker || [];
+    if (
+      current.length === newMcapIds.length &&
+      current.every((id, i) => id === newMcapIds[i])
+    ) {
+      return columns;
+    }
 
-      return {
-        ...prev,
-        mcap_tracker: newMcapIds,
-      };
-    });
-  }, [mcapData, columns.watching, columns.potential, columns.rugged]);
+    return {
+      ...columns,
+      mcap_tracker: newMcapIds,
+    };
+  }, [columns, mcapData]);
 
   const handleBuyPotential = async () => {
-    const potentialTokens = columns.potential;
+    const potentialTokens = displayColumns.potential;
     if (potentialTokens.length === 0) {
       alert("No tokens in Potential category");
       return;
@@ -735,13 +670,11 @@ function ChartsContent() {
         });
       })
       .catch(console.error);
-  }, [columns]);
+  }, [columns, symbols]);
 
   // Move token helper
-  const moveToken = async (
-    tokenAddress: string,
-    targetSection: SectionType,
-  ) => {
+  const moveToken = useCallback(
+    async (tokenAddress: string, targetSection: SectionType) => {
     // Find source column
     let sourceSection: SectionType | undefined;
     for (const [key, items] of Object.entries(columns)) {
@@ -794,7 +727,9 @@ function ChartsContent() {
       console.error("Failed to save move", e);
       setStatus("Failed to save change to server");
     }
-  };
+  },
+    [columns, signals],
+  );
 
   // Handle Drag End
   const handleDragEnd = async (event: DragEndEvent) => {
@@ -808,7 +743,8 @@ function ChartsContent() {
     moveToken(activeId, overId);
   };
 
-  const handleSimulateBuy = async (tokenAddress: string) => {
+  const handleSimulateBuy = useCallback(
+    async (tokenAddress: string) => {
     if (!publicKey) {
       alert("Connect wallet to track simulation (wallet used as ID)");
       return;
@@ -866,9 +802,12 @@ function ChartsContent() {
       });
       setStatus("");
     }
-  };
+  },
+    [publicKey, buyAmount, signals, trackOperation, showOutcome],
+  );
 
-  const handleSimulateSell = async (tokenAddress: string) => {
+  const handleSimulateSell = useCallback(
+    async (tokenAddress: string) => {
     if (!publicKey) {
       alert("Connect wallet to track simulation");
       return;
@@ -909,9 +848,12 @@ function ChartsContent() {
       });
       setStatus("");
     }
-  };
+  },
+    [publicKey, signals, records, trackOperation, showOutcome],
+  );
 
-  const handleInstantSell = async (tokenAddress: string) => {
+  const handleInstantSell = useCallback(
+    async (tokenAddress: string) => {
     if (!connected || !publicKey || !signAllTransactions) {
       alert("Please connect wallet first");
       return;
@@ -1031,7 +973,17 @@ function ChartsContent() {
       });
       setStatus("");
     }
-  };
+  },
+    [
+      connected,
+      publicKey,
+      signAllTransactions,
+      connection,
+      symbols,
+      trackOperation,
+      showOutcome,
+    ],
+  );
 
   const handleInstantBuy = useCallback(
     async (tokenAddress: string) => {
@@ -1381,7 +1333,7 @@ function ChartsContent() {
 
         {status && (
           <div className="bg-red-900/50 text-red-200 p-2 rounded mb-4 text-sm">
-            {status}
+            {effectiveStatus}
           </div>
         )}
 

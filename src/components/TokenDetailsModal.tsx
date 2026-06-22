@@ -1,5 +1,6 @@
 "use client";
 
+import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useMemo, useEffect, useRef } from "react";
 import { Line } from "react-chartjs-2";
 import {
@@ -230,7 +231,7 @@ export default function TokenDetailsModal({
         <div className="bg-gray-800 p-4 sticky top-0 z-10 flex justify-between items-center border-b border-gray-700">
           <div className="flex items-center space-x-3">
             {token.logo_url ? (
-              <img
+              <OptimizedImage
                 src={token.logo_url}
                 alt={token.token_symbol}
                 className="w-10 h-10 rounded-full"

@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { fetchAxiomTokenInfo, getRiskIndicators, formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom';
+import React, { useEffect, useState } from 'react';
+import { formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom';
+import { useAxiomRisk } from '@/hooks/useAxiomRisk';
 
 type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
 
@@ -28,14 +29,11 @@ interface RiskAnalysisProps {
   tokenAddress: string;
   marketCap: number;
   onLoad?: () => void;
-  // Optional: accept pre-fetched data to avoid duplicate API calls
   axiomData?: AxiomTokenInfo;
   riskData?: RiskIndicators;
-  // Optional: control default expanded state
   defaultExpanded?: boolean;
 }
 
-// Helper component to render risk display
 const RiskBadge: React.FC<{ riskLevel: RiskLevel }> = ({ riskLevel }) => {
   const display = formatRiskDisplay(riskLevel);
   return (
@@ -62,43 +60,26 @@ export default function RiskAnalysis({
   riskData: propRiskData,
   defaultExpanded = false 
 }: RiskAnalysisProps) {
-  const [axiomData, setAxiomData] = useState<AxiomTokenInfo | null>(propAxiomData || null);
-  const [risk, setRisk] = useState<RiskIndicators | null>(propRiskData || null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const hasPropData = !!(propAxiomData && propRiskData);
+  const query = useAxiomRisk(tokenAddress, marketCap, !hasPropData);
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const onLoadCalledRef = React.useRef(false);
+
+  const axiomData = hasPropData ? propAxiomData! : query.data?.axiomData ?? null;
+  const risk = hasPropData ? propRiskData! : query.data?.risk ?? null;
+  const isLoading = !hasPropData && query.isLoading;
+  const error = !hasPropData && query.isError ? 'Failed to load risk data' : null;
 
   useEffect(() => {
-    // If data is provided via props, use it
-    if (propAxiomData && propRiskData) {
-      setAxiomData(propAxiomData);
-      setRisk(propRiskData);
-      onLoad?.();
-      return;
+    if ((axiomData && risk) && onLoad && !onLoadCalledRef.current) {
+      onLoadCalledRef.current = true;
+      onLoad();
     }
+  }, [axiomData, risk, onLoad]);
 
-    // Otherwise fetch the data
-    const loadData = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const result = await fetchAxiomTokenInfo(tokenAddress);
-        if (result.success && result.data) {
-          setAxiomData(result.data);
-          const calculatedRisk = getRiskIndicators(result.data, marketCap);
-          setRisk(calculatedRisk);
-          onLoad?.();
-        } else {
-          setError('Failed to load risk data');
-        }
-      } catch (err) {
-        setError('Error fetching risk data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    loadData();
-  }, [tokenAddress, marketCap, onLoad, propAxiomData, propRiskData]);
+  useEffect(() => {
+    onLoadCalledRef.current = false;
+  }, [tokenAddress]);
 
   const toggleExpanded = () => {
     setIsExpanded(!isExpanded);
@@ -114,7 +95,6 @@ export default function RiskAnalysis({
 
   const feeToMcap = calculateFeeToMarketCapRatio(axiomData.totalPairFeesPaid, marketCap);
   
-  // Calculate organic score based on risk levels
   const calculateOrganicScore = () => {
     let score = 100;
     if (risk.insiderRisk === 'HIGH') score -= 25;
@@ -139,7 +119,6 @@ export default function RiskAnalysis({
 
   return (
     <div className="text-xs">
-      {/* Collapsible Header - Always Visible */}
       <div 
         className="flex items-center justify-between cursor-pointer hover:bg-gray-800/50 rounded px-1 py-0.5 transition-colors"
         onClick={toggleExpanded}
@@ -166,7 +145,6 @@ export default function RiskAnalysis({
         </div>
       </div>
 
-      {/* Collapsible Content */}
       <div className={`overflow-hidden transition-all duration-300 ease-in-out ${isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'}`}>
         <div className="space-y-1 pt-2 border-t border-gray-700/50 mt-1">
           <div className="flex items-center justify-between">

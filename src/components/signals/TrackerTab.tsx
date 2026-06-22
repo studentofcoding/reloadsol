@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
   getTokenWithAnalytics,
@@ -15,6 +15,7 @@ import {
   FilterOptions,
   McapTrackingData,
 } from "@/hooks/useMCapTracker";
+import { useTokenAnalytics } from "@/hooks/useTokenAnalytics";
 
 // Interfaces imported from hook
 
@@ -127,10 +128,6 @@ export default function TrackerTab() {
   // Base offset for Sell section (server local timezone; unknown => default 0)
   const [sellServerBaseOffset, setSellServerBaseOffset] = useState<number>(0);
 
-  const [analyticsData, setAnalyticsData] = useState<
-    Record<string, EnrichedTokenData>
-  >({});
-  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [expandedAnalytics, setExpandedAnalytics] = useState<
     Record<string, boolean>
   >({});
@@ -195,7 +192,14 @@ export default function TrackerTab() {
   });
 
   const error = queryError ? queryError.message : "";
-  const tokens = apiResponse?.data || [];
+  const tokens = useMemo(() => apiResponse?.data || [], [apiResponse?.data]);
+  const tokenAddresses = useMemo(
+    () => tokens.map((t) => t.token_address),
+    [tokens],
+  );
+  const analyticsQuery = useTokenAnalytics(tokenAddresses);
+  const analyticsData = analyticsQuery.data ?? {};
+  const analyticsLoading = analyticsQuery.isFetching;
   const stats = apiResponse?.stats || null;
   const pagination = apiResponse?.pagination || {
     page: 1,
@@ -232,51 +236,6 @@ export default function TrackerTab() {
       .map(([hour]) => `${hour}:00`);
 
   const gmtOptions = Array.from({ length: 27 }, (_, idx) => idx - 12);
-
-
-  // Move analytics hooks BEFORE any early returns
-  const fetchAnalyticsForTokens = useCallback(
-    async (tokenAddresses: string[]) => {
-      if (tokenAddresses.length === 0) return;
-
-      // tokenAddresses is already the correct format
-
-      try {
-        const response = await fetch("/api/analytics/token", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            tokenAddresses,
-            maxAge: 60, // Only recent data
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`API request failed: ${response.status}`);
-        }
-
-        const result = await response.json();
-
-        if (!result.success) {
-          throw new Error(result.error || "Analytics request failed");
-        }
-
-        // Update analytics data state
-        const newAnalyticsData: Record<string, EnrichedTokenData> = {};
-        result.data.forEach((token: EnrichedTokenData) => {
-          newAnalyticsData[token.token_address] = token;
-        });
-
-        setAnalyticsData((prev) => ({ ...prev, ...newAnalyticsData }));
-      } catch (error) {
-        console.error("Failed to fetch analytics for tokens:", error);
-        // Don't throw here to prevent breaking the UI
-      }
-    },
-    [],
-  );
 
   const toggleAnalytics = (tokenAddress: string) => {
     setExpandedAnalytics((prev) => ({
@@ -341,13 +300,7 @@ export default function TrackerTab() {
     setPage(1);
   };
 
-  // Analytics useEffect - also moved before early return
-  useEffect(() => {
-    if (tokens.length > 0) {
-      const tokenAddresses = tokens.map((t) => t.token_address);
-      fetchAnalyticsForTokens(tokenAddresses);
-    }
-  }, [tokens, fetchAnalyticsForTokens]);
+  // Analytics loaded via useTokenAnalytics
 
   // Utility functions
   const formatNumber = (num?: number | null): string => {
@@ -2490,7 +2443,7 @@ export default function TrackerTab() {
                       </div>
                       <button
                         onClick={() =>
-                          fetchAnalyticsForTokens([token.token_address])
+                          void analyticsQuery.refetch()
                         }
                         className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors"
                       >

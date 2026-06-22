@@ -1,5 +1,6 @@
 'use client'
 
+import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useEffect, useState, useRef } from 'react'
 import ChartOverview from './ChartOverview'
 import TokenSkeleton from './TokenSkeleton'
@@ -431,7 +432,7 @@ export default function TrendingTokens({
                     <div className="relative">
                       <div className="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center text-white font-bold overflow-hidden">
                         {token.logo_url ? (
-                          <img 
+                          <OptimizedImage 
                             src={token.logo_url} 
                             alt={token.token_symbol} 
                             className="w-full h-full object-cover"

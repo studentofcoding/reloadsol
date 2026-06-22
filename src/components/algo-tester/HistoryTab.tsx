@@ -1,5 +1,6 @@
 "use client";
 
+import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Chart as ChartJS,
@@ -529,7 +530,7 @@ export default function HistoryTab() {
                 <div className="flex justify-between items-start mb-4">
                   <div className="flex items-center space-x-3">
                     {token.logo_url ? (
-                      <img
+                      <OptimizedImage
                         src={token.logo_url}
                         alt={token.token_symbol || "Token"}
                         className="w-10 h-10 rounded-full"

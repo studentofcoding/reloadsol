@@ -121,11 +121,10 @@ export function WalletSessionProvider({
     }
   }, [address, signMessage, adapter]);
 
+  const walletCanSign = address ? canSign : false;
+
   useEffect(() => {
-    if (!address) {
-      setStatus('idle');
-      setSessionAddress(null);
-      setError(null);
+    if (!address || !walletCanSign) {
       return;
     }
 
@@ -136,8 +135,6 @@ export function WalletSessionProvider({
     lastAddressRef.current = address;
 
     if (!canSignMessages({ signMessage, adapter })) {
-      setStatus('error');
-      setError('This wallet cannot sign messages. Try Phantom or Solflare.');
       return;
     }
 
@@ -158,13 +155,17 @@ export function WalletSessionProvider({
 
       await runSignIn();
     })();
-  }, [address, signMessage, adapter, runSignIn]);
+  }, [address, signMessage, adapter, runSignIn, walletCanSign]);
 
   const value: WalletSessionContextValue = {
-    status,
-    error,
-    sessionAddress,
-    canSign,
+    status: !address ? 'idle' : !walletCanSign ? 'error' : status,
+    error: !address
+      ? null
+      : !walletCanSign
+        ? 'This wallet cannot sign messages. Try Phantom or Solflare.'
+        : error,
+    sessionAddress: address ? sessionAddress : null,
+    canSign: walletCanSign,
     signIn: runSignIn,
   };
 

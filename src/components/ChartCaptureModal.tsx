@@ -1,3 +1,4 @@
+import { OptimizedImage } from "@/components/OptimizedImage";
 import React from "react";
 
 interface ChartCaptureModalProps {
@@ -76,7 +77,7 @@ export function ChartCaptureModal({
 
           {/* Screenshot Preview */}
           <div className="relative aspect-video w-full bg-black rounded-lg border border-gray-800 overflow-hidden group">
-            <img
+            <OptimizedImage
               src={data.imageBase64}
               alt="Chart Capture"
               className="w-full h-full object-contain"

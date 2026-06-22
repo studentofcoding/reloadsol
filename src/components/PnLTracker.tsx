@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import { OptimizedImage } from "@/components/OptimizedImage";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
   TrackingRecord,
   fetchTokenPricesForTracking,
@@ -23,6 +24,9 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { SwapQuote } from "@/types";
 import { trackSell } from "@/utils/operations-api";
 import { usePnLShare } from "@/hooks/usePnLShare";
+import { useNotificationPermission } from "@/hooks/useNotificationPermission";
+import { useSolPrice } from "@/hooks/useSolPrice";
+import { useQuery } from "@tanstack/react-query";
 import PnLShareModal from "./PnLShareModal";
 import { pnlShareService } from "@/utils/pnl-share-service";
 import { closeSimulationPosition } from "@/utils/simulation-trades";
@@ -113,11 +117,10 @@ export default function PnLTracker() {
   const [openPositions, setOpenPositions] = useState<OpenPosition[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const [solPriceUsd, setSolPriceUsd] = useState<number>(145);
+  const solPriceQuery = useSolPrice();
+  const solPriceUsd = solPriceQuery.data ?? 145;
   const [activeTab, setActiveTab] = useState<"completed" | "open">("completed");
   const [isRefreshingPrices, setIsRefreshingPrices] = useState<boolean>(false);
-  const [hasInitialPricesFetched, setHasInitialPricesFetched] =
-    useState<boolean>(false);
 
   // Fast sell state
   const [isSelling, setIsSelling] = useState<boolean>(false);
@@ -137,8 +140,7 @@ export default function PnLTracker() {
       return false;
     },
   );
-  const [notificationPermission, setNotificationPermission] =
-    useState<NotificationPermission>("default");
+  const notificationPermission = useNotificationPermission();
   const [notificationThreshold, setNotificationThreshold] = useState<number>(
     () => {
       if (typeof window !== "undefined") {
@@ -214,6 +216,28 @@ export default function PnLTracker() {
   const [isBulkSelling, setIsBulkSelling] = useState<boolean>(false);
   const [bulkSellError, setBulkSellError] = useState<string>("");
 
+  // Helper function to check if element is within selection rectangle
+  const isElementInSelection = useCallback(
+    (
+      elementRect: DOMRect,
+      start: { x: number; y: number },
+      end: { x: number; y: number },
+    ) => {
+      const selectionLeft = Math.min(start.x, end.x);
+      const selectionRight = Math.max(start.x, end.x);
+      const selectionTop = Math.min(start.y, end.y);
+      const selectionBottom = Math.max(start.y, end.y);
+
+      return (
+        elementRect.left < selectionRight &&
+        elementRect.right > selectionLeft &&
+        elementRect.top < selectionBottom &&
+        elementRect.bottom > selectionTop
+      );
+    },
+    [],
+  );
+
   // ✅ NEW: Drag selection handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return; // Only left mouse button
@@ -254,7 +278,7 @@ export default function PnLTracker() {
 
       setSelectedTokens(newSelection);
     },
-    [isDragging, dragStart, openPositions],
+    [isDragging, dragStart, openPositions, isElementInSelection],
   );
 
   const handleMouseUp = useCallback(() => {
@@ -262,28 +286,6 @@ export default function PnLTracker() {
     setDragStart(null);
     setDragEnd(null);
   }, []);
-
-  // Helper function to check if element is within selection rectangle
-  const isElementInSelection = useCallback(
-    (
-      elementRect: DOMRect,
-      start: { x: number; y: number },
-      end: { x: number; y: number },
-    ) => {
-      const selectionLeft = Math.min(start.x, end.x);
-      const selectionRight = Math.max(start.x, end.x);
-      const selectionTop = Math.min(start.y, end.y);
-      const selectionBottom = Math.max(start.y, end.y);
-
-      return (
-        elementRect.left < selectionRight &&
-        elementRect.right > selectionLeft &&
-        elementRect.top < selectionBottom &&
-        elementRect.bottom > selectionTop
-      );
-    },
-    [],
-  );
 
   // ✅ NEW: Clear selection helper
   const clearSelection = useCallback(() => {
@@ -305,12 +307,7 @@ export default function PnLTracker() {
     [],
   );
 
-  // ✅ NEW: Check notification permission on mount
-  useEffect(() => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      setNotificationPermission(Notification.permission);
-    }
-  }, []);
+  // ✅ NEW: Check notification permission on mount — via useNotificationPermission hook
 
   // ✅ NEW: Request notification permission
   const requestNotificationPermission = useCallback(async () => {
@@ -321,7 +318,6 @@ export default function PnLTracker() {
 
     try {
       const permission = await Notification.requestPermission();
-      setNotificationPermission(permission);
       return permission === "granted";
     } catch (error) {
       console.error("Error requesting notification permission:", error);
@@ -893,7 +889,21 @@ export default function PnLTracker() {
     } finally {
       setIsLoading(false);
     }
-  }, [walletAddress, records, solPriceUsd]);
+  }, [walletAddress, records, solPriceUsd, connection, publicKey]);
+
+  const recordsKey = useMemo(
+    () => records.map((r) => `${r.id}:${r.timestamp}`).join("|"),
+    [records],
+  );
+
+  const { refetch: refetchPnL } = useQuery({
+    queryKey: ["pnl-calc", walletAddress, recordsKey, solPriceUsd],
+    queryFn: async () => {
+      await calculatePnL();
+      return true;
+    },
+    enabled: !!walletAddress,
+  });
 
   // ✅ NEW: Toggle token selection for bulk sell
   const toggleTokenSelection = useCallback(
@@ -1124,7 +1134,6 @@ export default function PnLTracker() {
           // Fallback: manual refresh
           setTimeout(() => {
             calculatePnL();
-            setHasInitialPricesFetched(false);
           }, 200);
         }
 
@@ -1336,31 +1345,13 @@ export default function PnLTracker() {
     );
   };
 
-  // Add this useEffect after other useEffect hooks to persist dismissal state
-  useEffect(() => {
-    const hintDismissed = localStorage.getItem(
-      "pnl-closed-positions-hint-dismissed",
-    );
-    if (hintDismissed === "true") {
-      setShowClosedPositionsHint(false);
-    }
-  }, []);
+  // Hint dismissal persisted via lazy useState initializer above
 
   // Clear old localStorage data on component mount
   useEffect(() => {
     console.log(
       "🧹 PnLTracker: Cleared old localStorage data, now using Supabase!",
     );
-  }, []);
-
-  // Fetch SOL price
-  const fetchSolPrice = React.useCallback(async () => {
-    try {
-      const price = await getSolPriceUSD();
-      setSolPriceUsd(price);
-    } catch (error) {
-      console.error("Error fetching SOL price:", error);
-    }
   }, []);
 
   // ✅ NEW: Bot operation sync polling
@@ -1404,35 +1395,21 @@ export default function PnLTracker() {
     return () => {
       if (syncInterval) clearInterval(syncInterval);
     };
-  }, [connected, publicKey, lastBotSync, calculatePnL]);
-
-  // Load PnL data when wallet connects or records change
-  useEffect(() => {
-    if (walletAddress && records.length >= 0) {
-      // Allow for empty records array
-      calculatePnL();
-    }
-  }, [calculatePnL, walletAddress, records]);
+  }, [connected, publicKey, lastBotSync, calculatePnL, refetchPnL]);
 
   useEffect(() => {
     const handleRecordAdded = () => {
-      void calculatePnL();
+      void refetchPnL();
     };
     window.addEventListener("tradingRecordAdded", handleRecordAdded);
     return () =>
       window.removeEventListener("tradingRecordAdded", handleRecordAdded);
-  }, [calculatePnL]);
+  }, [refetchPnL]);
 
   // Real-time updates are now handled by React Query in TradingDataProvider
   // No need for manual subscription here
 
-  // Fetch SOL price on mount and periodically (reduced frequency)
-  useEffect(() => {
-    fetchSolPrice();
-    // Reduced frequency: every 5 minutes instead of 1 minute
-    const interval = setInterval(fetchSolPrice, 300000);
-    return () => clearInterval(interval);
-  }, [fetchSolPrice]);
+  // SOL price fetched via useSolPrice hook
 
   // Function to refresh wallet balances for open positions
   const refreshWalletBalances = React.useCallback(async () => {
@@ -1592,6 +1569,25 @@ export default function PnLTracker() {
       setIsRefreshingPrices(false);
     }
   }, [openPositions, solPriceUsd]);
+
+  const openMintsKey = useMemo(
+    () =>
+      openPositions
+        .map((p) => p.mintAddress)
+        .sort()
+        .join(","),
+    [openPositions],
+  );
+
+  useQuery({
+    queryKey: ["pnl-open-prices", openMintsKey, solPriceUsd],
+    queryFn: async () => {
+      await refreshOpenPositionPrices();
+      return true;
+    },
+    enabled: openPositions.length > 0 && !isRefreshingPrices,
+    refetchInterval: openPositions.length > 0 ? 30_000 : false,
+  });
 
   // Handle token selection for chart display
   const handleSelectToken = useCallback((mintAddress: string) => {
@@ -1926,7 +1922,6 @@ export default function PnLTracker() {
             // Fallback: manual refresh if tracking fails
             setTimeout(() => {
               calculatePnL();
-              setHasInitialPricesFetched(false);
             }, 200);
           }
         } else {
@@ -1963,50 +1958,11 @@ export default function PnLTracker() {
       calculatePnL,
       clearNotificationFlag,
       sellQuotes,
-      showShareModal,
       autoTriggerShare,
       trackOperation,
       showOutcome,
     ],
   );
-  // Initial price fetch and automatic refresh every 30 seconds
-  useEffect(() => {
-    if (
-      openPositions.length > 0 &&
-      !hasInitialPricesFetched &&
-      !isRefreshingPrices
-    ) {
-      console.log("📊 Initial price fetch for open positions...");
-      refreshOpenPositionPrices();
-      setHasInitialPricesFetched(true);
-    } else if (openPositions.length === 0) {
-      // Reset flag when no open positions
-      setHasInitialPricesFetched(false);
-    }
-  }, [
-    openPositions.length,
-    hasInitialPricesFetched,
-    refreshOpenPositionPrices,
-    isRefreshingPrices,
-  ]);
-
-  // Auto-refresh prices every 30 seconds for open positions
-  useEffect(() => {
-    if (openPositions.length === 0) return;
-
-    console.log("⏰ Setting up 30s auto-refresh for open position prices");
-    const interval = setInterval(() => {
-      if (!isRefreshingPrices) {
-        console.log("🔄 Auto-refreshing open position prices (30s interval)");
-        refreshOpenPositionPrices();
-      }
-    }, 30000); // 30 seconds
-
-    return () => {
-      console.log("⏰ Clearing auto-refresh interval");
-      clearInterval(interval);
-    };
-  }, [openPositions.length, refreshOpenPositionPrices, isRefreshingPrices]);
 
   // Cleanup timeouts when component unmounts
   useEffect(() => {
@@ -2488,7 +2444,7 @@ export default function PnLTracker() {
                             <div className="relative flex items-center">
                               <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
                                 {record.logoURI ? (
-                                  <img
+                                  <OptimizedImage
                                     src={record.logoURI}
                                     alt={
                                       record.symbol || record.name || "Token"
@@ -2811,7 +2767,7 @@ export default function PnLTracker() {
                                 <div className="relative flex items-center">
                                   <div className="w-4 h-4 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden border border-gray-600">
                                     {position.logoURI ? (
-                                      <img
+                                      <OptimizedImage
                                         src={position.logoURI}
                                         alt={
                                           position.symbol ||
@@ -3049,9 +3005,9 @@ export default function PnLTracker() {
                     >
                       <div className="w-3 h-3 bg-gray-700 rounded-full flex items-center justify-center text-white text-xs font-bold overflow-hidden">
                         {position.logoURI ? (
-                          <img
+                          <OptimizedImage
                             src={position.logoURI}
-                            alt={position.symbol}
+                            alt={position.symbol ?? "Token"}
                             className="w-full h-full object-cover"
                           />
                         ) : (

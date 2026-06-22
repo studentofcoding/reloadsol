@@ -1,5 +1,6 @@
 'use client'
 
+import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
@@ -143,7 +144,7 @@ export default function TradeComparisonModal({
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
               {logoUrl && (
-                <img 
+                <OptimizedImage 
                   src={logoUrl} 
                   alt={tokenSymbol || 'Token'} 
                   className="w-8 h-8 rounded-full"

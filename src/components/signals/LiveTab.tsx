@@ -1,6 +1,11 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import { OptimizedImage } from "@/components/OptimizedImage";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useLiveTrendingTokens } from "@/hooks/useLiveTrendingTokens";
+import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useOwnedTokenPrices } from "@/hooks/useOwnedTokenPrices";
 import { boardTabUrl } from "@/components/signals/shared/parseAddresses";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
@@ -102,8 +107,41 @@ export default function LiveTab() {
   const { records, solPrice: currentSolPrice, trackOperation } = useTradingData();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const { isRugged: isTokenRugged, markRug, unmarkRug } = useRugList();
+  const walletAddress = connected && publicKey ? publicKey.toString() : null;
+
+  const trendingQuery = useLiveTrendingTokens(5 * 60 * 1000);
+  const { refetch: refetchTrending } = trendingQuery;
+
+  const {
+    allTokens: walletTokenList,
+    refetchTokens,
+  } = useWalletTokens({
+    connection,
+    publicKey,
+    walletAddress,
+    activeRpcUrl: connection.rpcEndpoint,
+    enabled: connected && !!publicKey,
+    includeZeroBalance: false,
+  });
+
+  const userTokens = useMemo(
+    () => walletTokenList.filter((t) => !t.isNFT),
+    [walletTokenList],
+  );
+
+  const ownedMints = useMemo(
+    () =>
+      userTokens
+        .filter((t) => t.uiAmount > 0.001)
+        .map((t) => t.mintAddress),
+    [userTokens],
+  );
+
+  const ownedPricesQuery = useOwnedTokenPrices(ownedMints);
+  const ownedTokenPrices = ownedPricesQuery.data ?? {};
+
   const [tokens, setTokens] = useState<TrendingToken[]>([]);
-  const [loading, setLoading] = useState(true);
+  const loading = trendingQuery.isLoading && tokens.length === 0;
   const [error, setError] = useState<string | null>(null);
   const [highlightedTokens, setHighlightedTokens] = useState<Set<string>>(
     new Set(),
@@ -115,10 +153,6 @@ export default function LiveTab() {
     new Map(),
   );
   const [buyAmount, setBuyAmount] = useState<number>(0.1); // Default 0.1 SOL
-  const [ownedTokens, setOwnedTokens] = useState<Map<string, OwnedTokenInfo>>(
-    new Map(),
-  );
-  const [userTokens, setUserTokens] = useState<UserToken[]>([]);
   const [newTokens, setNewTokens] = useState<Set<string>>(new Set()); // Track new tokens for animation
   const [loadingQuotes, setLoadingQuotes] = useState<Set<string>>(new Set()); // Track which tokens are loading quotes
   const previousPricesRef = useRef<Map<string, number>>(new Map());
@@ -139,9 +173,6 @@ export default function LiveTab() {
   const autoUpdateProgressRef = useRef<NodeJS.Timeout | null>(null);
 
   // Add sidebar state for owned token prices, sell quotes, and loading
-  const [ownedTokenPrices, setOwnedTokenPrices] = useState<
-    Record<string, number>
-  >({});
   const [sidebarSellQuotes, setSidebarSellQuotes] = useState<
     Record<string, JupiterQuote | null>
   >({});
@@ -185,20 +216,20 @@ export default function LiveTab() {
           setTokenLabels(map);
 
           // Also sync to kept tokens (watchlist)
-          const newKeptIds = new Set(keptTokenIds);
-          let changed = false;
-          json.data.forEach((item: any) => {
-            if (
-              ["watching", "potential", "rugged"].includes(item.label) &&
-              !newKeptIds.has(item.token_address)
-            ) {
-              newKeptIds.add(item.token_address);
-              changed = true;
-            }
+          setKeptTokenIds((prev) => {
+            const newKeptIds = new Set(prev);
+            let changed = false;
+            json.data.forEach((item: any) => {
+              if (
+                ["watching", "potential", "rugged"].includes(item.label) &&
+                !newKeptIds.has(item.token_address)
+              ) {
+                newKeptIds.add(item.token_address);
+                changed = true;
+              }
+            });
+            return changed ? newKeptIds : prev;
           });
-          if (changed) {
-            setKeptTokenIds(newKeptIds);
-          }
         }
       } catch (e) {
         console.error("Failed to fetch labels", e);
@@ -270,207 +301,196 @@ export default function LiveTab() {
     }
   };
 
-  // Fetch user's wallet tokens
-  const fetchWalletTokens = async () => {
-    if (!connected || !publicKey) return;
+  // Fetch user's wallet tokens — derived from useWalletTokens
+  const ownedTokens = useMemo(() => {
+    const ownedMap = new Map<string, OwnedTokenInfo>();
+    userTokens.forEach((token) => {
+      if (token.uiAmount > 0.001) {
+        const buyRecords = records.filter(
+          (record) =>
+            record.operationType === "buy" &&
+            record.tokens.some((t) => t.mintAddress === token.mintAddress),
+        );
 
-    try {
-      const walletTokens = await fetchUserTokens(
-        connection,
-        publicKey,
-        false,
-        false,
-      );
-      setUserTokens(walletTokens);
+        let totalSolSpent = 0;
+        let totalTokensBought = 0;
 
-      // Create owned tokens map with PnL calculation
-      const ownedMap = new Map<string, OwnedTokenInfo>();
-
-      walletTokens.forEach((token) => {
-        if (token.uiAmount > 0.001) {
-          // Only include meaningful balances
-          // Calculate PnL based on trading records
-          const buyRecords = records.filter(
-            (record) =>
-              record.operationType === "buy" &&
-              record.tokens.some((t) => t.mintAddress === token.mintAddress),
+        buyRecords.forEach((record) => {
+          const tokenInRecord = record.tokens.find(
+            (t) => t.mintAddress === token.mintAddress,
           );
+          if (tokenInRecord && record.solAmount) {
+            const solPerToken = record.solAmount / record.successCount;
+            totalSolSpent += solPerToken;
+            totalTokensBought += tokenInRecord.tokenAmount || 0;
+          }
+        });
 
-          let totalSolSpent = 0;
-          let totalTokensBought = 0;
+        const avgBuyPrice =
+          totalTokensBought > 0 ? totalSolSpent / totalTokensBought : 0;
+        const currentPrice = token.usdValue / token.uiAmount;
+        const pnlPercentage =
+          avgBuyPrice > 0
+            ? ((currentPrice - avgBuyPrice) / avgBuyPrice) * 100
+            : 0;
 
-          buyRecords.forEach((record) => {
-            const tokenInRecord = record.tokens.find(
-              (t) => t.mintAddress === token.mintAddress,
-            );
-            if (tokenInRecord && record.solAmount) {
-              const solPerToken = record.solAmount / record.successCount;
-              totalSolSpent += solPerToken;
-              totalTokensBought += tokenInRecord.tokenAmount || 0;
-            }
-          });
-
-          const avgBuyPrice =
-            totalTokensBought > 0 ? totalSolSpent / totalTokensBought : 0;
-          const currentPrice = token.usdValue / token.uiAmount;
-          const pnlPercentage =
-            avgBuyPrice > 0
-              ? ((currentPrice - avgBuyPrice) / avgBuyPrice) * 100
-              : 0;
-
-          ownedMap.set(token.mintAddress, {
-            balance: token.uiAmount,
-            usdValue: token.usdValue,
-            pnlPercentage: totalSolSpent > 0 ? pnlPercentage : undefined,
-            buyPrice: avgBuyPrice > 0 ? avgBuyPrice : undefined,
-            currentPrice: currentPrice,
-          });
-        }
-      });
-
-      setOwnedTokens(ownedMap);
-    } catch (err) {
-      console.error("Error fetching wallet tokens:", err);
-    }
-  };
-
-  // Fetch trending tokens with filtering and sorting
-  const fetchTrendingTokens = async () => {
-    try {
-      const response = await fetch("/api/trending?cache=off", {
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error("Failed to fetch trending tokens");
-
-      const data = await response.json();
-      console.log("Raw trending tokens:", data.tokens?.length || 0);
-
-      let fetchedTokens: TrendingToken[] = [];
-
-      if (data.tokens && data.tokens.length > 0) {
-        // Filter tokens with market cap <= 300k
-        fetchedTokens = data.tokens.filter((token: TrendingToken) => {
-          const mcap = token.mcap || 0;
-          return mcap > 0 && mcap <= 300000; // Max 300k market cap
+        ownedMap.set(token.mintAddress, {
+          balance: token.uiAmount,
+          usdValue: token.usdValue,
+          pnlPercentage: totalSolSpent > 0 ? pnlPercentage : undefined,
+          buyPrice: avgBuyPrice > 0 ? avgBuyPrice : undefined,
+          currentPrice,
         });
       }
+    });
+    return ownedMap;
+  }, [userTokens, records]);
 
-      // Filter out ignored tokens
-      fetchedTokens = fetchedTokens.filter(
-        (t) => !ignoredTokenIds.has(t.token_address),
-      );
+  const recordsKey = useMemo(() => records.length, [records]);
 
-      // Handle Kept Tokens
-      const currentKeptTokensMap = new Map(keptTokensData);
-      const keptIds = Array.from(keptTokenIds);
-      const missingKeptIds: string[] = [];
+  useQuery({
+    queryKey: ["live-wallet-sync", walletAddress, recordsKey],
+    queryFn: async () => {
+      await refetchTokens();
+      return true;
+    },
+    enabled: connected && !!publicKey,
+  });
 
-      // Update kept tokens with fresh data if available in fetch
-      keptIds.forEach((id) => {
-        const found = fetchedTokens.find((t) => t.token_address === id);
-        if (found) {
-          currentKeptTokensMap.set(id, found);
-        } else {
-          // If not found in fetch but we have it in memory, check if we need to fetch price
-          const existing = currentKeptTokensMap.get(id);
-          if (existing) {
-            missingKeptIds.push(id);
+  // Fetch trending tokens with filtering and sorting
+  const processTrendingData = useCallback(
+    async (rawTokens?: TrendingToken[]) => {
+      try {
+        let fetchedTokens: TrendingToken[] = rawTokens ?? [];
+
+        if (!rawTokens) {
+          const response = await fetch("/api/trending?cache=off", {
+            cache: "no-store",
+          });
+          if (!response.ok) throw new Error("Failed to fetch trending tokens");
+          const data = await response.json();
+          fetchedTokens = (data.tokens ?? []).filter((token: TrendingToken) => {
+            const mcap = token.mcap || 0;
+            return mcap > 0 && mcap <= 300000;
+          });
+        }
+
+        fetchedTokens = fetchedTokens.filter(
+          (t) => !ignoredTokenIds.has(t.token_address),
+        );
+
+        const currentKeptTokensMap = new Map(keptTokensData);
+        const keptIds = Array.from(keptTokenIds);
+        const missingKeptIds: string[] = [];
+
+        keptIds.forEach((id) => {
+          const found = fetchedTokens.find((t) => t.token_address === id);
+          if (found) {
+            currentKeptTokensMap.set(id, found);
+          } else {
+            const existing = currentKeptTokensMap.get(id);
+            if (existing) {
+              missingKeptIds.push(id);
+            }
+          }
+        });
+
+        if (missingKeptIds.length > 0) {
+          try {
+            const prices = await fetchOwnedTokenPrices(missingKeptIds);
+            missingKeptIds.forEach((id) => {
+              const existingData = currentKeptTokensMap.get(id);
+              if (existingData && prices[id]) {
+                const newPrice = prices[id];
+                const priceRatio = existingData.price
+                  ? newPrice / existingData.price
+                  : 1;
+                currentKeptTokensMap.set(id, {
+                  ...existingData,
+                  price: newPrice,
+                  mcap: existingData.mcap * priceRatio,
+                });
+              }
+            });
+          } catch (err) {
+            console.error("Failed to update prices for kept tokens", err);
           }
         }
-      });
 
-      // Fetch prices for missing kept tokens to ensure 5s update
-      if (missingKeptIds.length > 0) {
-        try {
-          const prices = await fetchOwnedTokenPrices(missingKeptIds);
-          missingKeptIds.forEach((id) => {
-            const existingData = currentKeptTokensMap.get(id);
-            if (existingData && prices[id]) {
-              const newPrice = prices[id];
-              // Estimate new mcap based on price change
-              const priceRatio = existingData.price
-                ? newPrice / existingData.price
-                : 1;
-              const newMcap = existingData.mcap * priceRatio;
+        setKeptTokensData(currentKeptTokensMap);
 
-              currentKeptTokensMap.set(id, {
-                ...existingData,
-                price: newPrice,
-                mcap: newMcap,
-                // Note: other fields like volume/change_1h will be stale until they reappear in main list
-                // or we implement a full token info fetch
-              });
-            }
-          });
-        } catch (err) {
-          console.error("Failed to update prices for kept tokens", err);
-        }
-      }
-
-      setKeptTokensData(currentKeptTokensMap);
-
-      // Merge fetched tokens and missing kept tokens
-      // Missing kept tokens are those in keptTokensData but NOT in fetchedTokens
-      const missingKeptTokens = Array.from(
-        currentKeptTokensMap.values(),
-      ).filter(
-        (kt) =>
-          !fetchedTokens.some((ft) => ft.token_address === kt.token_address),
-      );
-
-      const finalTokens = [...fetchedTokens, ...missingKeptTokens];
-
-      // Sort by Kept status (first) then market cap (small to large)
-      finalTokens.sort((a, b) => {
-        const isKeptA = keptTokenIds.has(a.token_address);
-        const isKeptB = keptTokenIds.has(b.token_address);
-        if (isKeptA && !isKeptB) return -1;
-        if (!isKeptA && isKeptB) return 1;
-        return (a.mcap || 0) - (b.mcap || 0);
-      });
-
-      console.log(
-        `Filtered tokens: ${finalTokens.length} (mcap <= 300k + kept)`,
-      );
-
-      // Detect new tokens for animation
-      const currentTokenAddresses = new Set(
-        finalTokens.map((t) => t.token_address),
-      );
-      const newTokenAddresses = new Set<string>();
-
-      if (!previousTokensRef.current) {
-        previousTokensRef.current = new Set<string>();
-      }
-
-      for (const address of Array.from(currentTokenAddresses) as string[]) {
-        if (!previousTokensRef.current.has(address as string)) {
-          newTokenAddresses.add(address as string);
-        }
-      }
-
-      previousTokensRef.current = new Set<string>(
-        Array.from(currentTokenAddresses) as string[],
-      );
-
-      if (newTokenAddresses.size > 0) {
-        setNewTokens(
-          new Set<string>(Array.from(newTokenAddresses) as string[]),
+        const missingKeptTokens = Array.from(
+          currentKeptTokensMap.values(),
+        ).filter(
+          (kt) =>
+            !fetchedTokens.some((ft) => ft.token_address === kt.token_address),
         );
-        setTimeout(() => {
-          setNewTokens(new Set<string>());
-        }, 3000);
-      }
 
-      setTokens(finalTokens);
-      setError(null);
-    } catch (err) {
-      console.error("Error fetching trending tokens:", err);
-      setError("Failed to load trending tokens");
-    } finally {
-      setLoading(false);
-    }
-  };
+        const finalTokens = [...fetchedTokens, ...missingKeptTokens];
+
+        finalTokens.sort((a, b) => {
+          const isKeptA = keptTokenIds.has(a.token_address);
+          const isKeptB = keptTokenIds.has(b.token_address);
+          if (isKeptA && !isKeptB) return -1;
+          if (!isKeptA && isKeptB) return 1;
+          return (a.mcap || 0) - (b.mcap || 0);
+        });
+
+        const currentTokenAddresses = new Set(
+          finalTokens.map((t) => t.token_address),
+        );
+        const newTokenAddresses = new Set<string>();
+
+        if (!previousTokensRef.current) {
+          previousTokensRef.current = new Set<string>();
+        }
+
+        for (const address of Array.from(currentTokenAddresses) as string[]) {
+          if (!previousTokensRef.current.has(address as string)) {
+            newTokenAddresses.add(address as string);
+          }
+        }
+
+        previousTokensRef.current = new Set<string>(
+          Array.from(currentTokenAddresses) as string[],
+        );
+
+        if (newTokenAddresses.size > 0) {
+          setNewTokens(new Set<string>(Array.from(newTokenAddresses) as string[]));
+          setTimeout(() => {
+            setNewTokens(new Set<string>());
+          }, 3000);
+        }
+
+        setTokens(finalTokens);
+        setError(null);
+      } catch (err) {
+        console.error("Error fetching trending tokens:", err);
+        setError("Failed to load trending tokens");
+      }
+    },
+    [ignoredTokenIds, keptTokensData, keptTokenIds],
+  );
+
+  const fetchTrendingTokens = useCallback(async () => {
+    await processTrendingData(trendingQuery.data);
+  }, [processTrendingData, trendingQuery.data]);
+
+  useQuery({
+    queryKey: [
+      "live-tokens-process",
+      trendingQuery.dataUpdatedAt,
+      Array.from(ignoredTokenIds).join(","),
+      Array.from(keptTokenIds).join(","),
+    ],
+    queryFn: async () => {
+      if (trendingQuery.data) {
+        await processTrendingData(trendingQuery.data);
+      }
+      return true;
+    },
+    enabled: !!trendingQuery.data,
+  });
 
   // Toggle Keep Token
   const handleKeepToken = async (token: TrendingToken, e: React.MouseEvent) => {
@@ -648,7 +668,7 @@ export default function LiveTab() {
   // Fetch Jupiter quotes for buying — removed (no auto-quoting on hover)
 
   // Check for price changes and highlight tokens
-  const checkPriceChanges = () => {
+  const checkPriceChanges = useCallback(() => {
     const newHighlighted = new Set<string>();
 
     tokens.forEach((token) => {
@@ -672,10 +692,10 @@ export default function LiveTab() {
         setHighlightedTokens(new Set());
       }, 3000);
     }
-  };
+  }, [tokens]);
 
   // Fetch Jupiter quotes for selling owned tokens
-  const fetchSellQuotes = async () => {
+  const fetchSellQuotes = useCallback(async () => {
     if (!userTokens.length) return;
 
     try {
@@ -710,7 +730,7 @@ export default function LiveTab() {
     } catch (err) {
       console.error("Error fetching sell quotes:", err);
     }
-  };
+  }, [userTokens]);
 
   // Execute buy transaction using existing Jupiter utilities
   const handleBuyToken = async (token: TrendingToken) => {
@@ -798,7 +818,7 @@ export default function LiveTab() {
       });
 
       // Refresh wallet tokens and quotes
-      await fetchWalletTokens();
+      await refetchTokens();
       await fetchSellQuotes();
     } catch (err) {
       console.error("Error buying token:", err);
@@ -1018,7 +1038,7 @@ export default function LiveTab() {
       });
 
       // Refresh wallet tokens and quotes
-      await fetchWalletTokens();
+      await refetchTokens();
       await fetchSellQuotes();
     } catch (err) {
       console.error("Error selling token:", err);
@@ -1052,55 +1072,59 @@ export default function LiveTab() {
     return "Just now";
   };
 
-  // Effects
-  useEffect(() => {
-    fetchTrendingTokens();
-    const interval = setInterval(fetchTrendingTokens, 5 * 60 * 1000); // Every 5 minutes
-    return () => clearInterval(interval);
-  }, []);
+  const userTokensKey = useMemo(
+    () => userTokens.map((t) => t.mintAddress).join(","),
+    [userTokens],
+  );
 
-  useEffect(() => {
-    if (connected && publicKey) {
-      fetchWalletTokens();
-    }
-  }, [connected, publicKey, records]);
-
-  // Remove the auto-quoting useEffect
-  useEffect(() => {
-    if (tokens.length > 0) {
+  useQuery({
+    queryKey: [
+      "live-price-changes",
+      tokens.map((t) => `${t.token_address}:${t.price}`).join("|"),
+    ],
+    queryFn: async () => {
       checkPriceChanges();
-      // Removed: fetchBuyQuotes() - no more auto-quoting
-    }
-  }, [tokens, buyAmount]);
+      return true;
+    },
+    enabled: tokens.length > 0,
+  });
 
-  useEffect(() => {
-    if (userTokens.length > 0) {
-      fetchSellQuotes();
-    }
-  }, [userTokens]);
+  useQuery({
+    queryKey: ["live-sell-quotes", userTokensKey],
+    queryFn: async () => {
+      await fetchSellQuotes();
+      return true;
+    },
+    enabled: userTokens.length > 0,
+  });
 
-  // Auto-update: single 5s poll with progress bar; pauses while hovering a token
-  useEffect(() => {
-    // Clear any previous intervals
-    if (autoUpdateIntervalRef.current)
-      clearInterval(autoUpdateIntervalRef.current);
-    if (autoUpdateProgressRef.current)
-      clearInterval(autoUpdateProgressRef.current);
+  const autoUpdateDepsKey = `${isAnyTokenHovered}-${keptTokenIds.size}-${ignoredTokenIds.size}`;
+  const prevAutoUpdateKeyRef = useRef(autoUpdateDepsKey);
+  if (prevAutoUpdateKeyRef.current !== autoUpdateDepsKey) {
+    prevAutoUpdateKeyRef.current = autoUpdateDepsKey;
     setAutoUpdateProgress(0);
-    if (isAnyTokenHovered) return; // Pause auto-update when hovering
+  }
 
-    // Progress bar: update every 100ms
+  useEffect(() => {
+    if (isAnyTokenHovered) {
+      if (autoUpdateIntervalRef.current)
+        clearInterval(autoUpdateIntervalRef.current);
+      if (autoUpdateProgressRef.current)
+        clearInterval(autoUpdateProgressRef.current);
+      return;
+    }
+
     let progress = 0;
     autoUpdateProgressRef.current = setInterval(() => {
-      progress += 2; // 2% every 100ms = 5s for 100%
+      progress += 2;
       setAutoUpdateProgress(progress);
       if (progress >= 100) progress = 0;
     }, 100);
 
-    // Auto-update every 5 seconds
     autoUpdateIntervalRef.current = setInterval(() => {
-      fetchTrendingTokens();
+      void refetchTrending();
       setAutoUpdateProgress(0);
+      progress = 0;
     }, 5000);
 
     return () => {
@@ -1109,29 +1133,7 @@ export default function LiveTab() {
       if (autoUpdateProgressRef.current)
         clearInterval(autoUpdateProgressRef.current);
     };
-  }, [isAnyTokenHovered, keptTokenIds, ignoredTokenIds, keptTokensData]); // Add dependencies to ensure state is fresh in fetchTrendingTokens
-
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (autoUpdateIntervalRef.current)
-        clearInterval(autoUpdateIntervalRef.current);
-      if (autoUpdateProgressRef.current)
-        clearInterval(autoUpdateProgressRef.current);
-    };
-  }, []);
-
-  // Fetch prices for owned tokens (positions) whenever userTokens changes
-  useEffect(() => {
-    const mints = userTokens
-      .filter((t) => t.uiAmount > 0.001)
-      .map((t) => t.mintAddress);
-    if (mints.length) {
-      fetchOwnedTokenPrices(mints).then(setOwnedTokenPrices);
-    } else {
-      setOwnedTokenPrices({});
-    }
-  }, [userTokens]);
+  }, [isAnyTokenHovered, autoUpdateDepsKey, refetchTrending]);
 
   // Fetch sell quote for sidebar position on hover
   const handleSidebarHover = async (token: UserToken) => {
@@ -1236,7 +1238,7 @@ export default function LiveTab() {
       );
       await connection.confirmTransaction(signature, "confirmed");
       alert(`Successfully sold ${token.symbol}! Transaction: ${signature}`);
-      await fetchWalletTokens();
+      await refetchTokens();
       await fetchSellQuotes();
     } catch (err) {
       alert(`Failed to sell ${token.symbol}`);
@@ -1397,7 +1399,7 @@ export default function LiveTab() {
             }`}
           >
             {token.logo_url ? (
-              <img
+              <OptimizedImage
                 src={token.logo_url}
                 alt={token.token_symbol}
                 className="rounded-full object-cover"
@@ -2008,9 +2010,9 @@ export default function LiveTab() {
                       >
                         <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center overflow-hidden">
                           {token.logoURI ? (
-                            <img
+                            <OptimizedImage
                               src={token.logoURI}
-                              alt={token.symbol}
+                              alt={token.symbol ?? "Token"}
                               className="object-cover w-10 h-10 rounded-full"
                             />
                           ) : (

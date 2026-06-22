@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet, useConnection } from "./WalletProvider";
-import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { fetchUserTokens, UserToken } from "@/utils/jupiter";
+import { useSolPriceFromApi } from "@/hooks/useSolPrice";
+import { useWalletBalances } from "@/hooks/useWalletBalances";
 
 interface WalletBalanceProps {
   onBalanceChange?: (balance: number) => void;
@@ -12,78 +13,42 @@ interface WalletBalanceProps {
 export default function WalletBalance({ onBalanceChange }: WalletBalanceProps) {
   const { publicKey, connected } = useWallet();
   const { connection } = useConnection();
-  const [balance, setBalance] = useState<number>(0);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [solPrice, setSolPrice] = useState<number>(0);
+  const walletAddress = connected && publicKey ? publicKey.toString() : null;
   const [showUSD, setShowUSD] = useState<boolean>(false);
-  const [isPriceLoading, setIsPriceLoading] = useState<boolean>(false);
   const [totalPortfolioValue, setTotalPortfolioValue] = useState<number>(0);
   const [isLoadingPortfolio, setIsLoadingPortfolio] = useState<boolean>(false);
+  const isFetchingRef = useRef(false);
 
-  // Refs to hold latest values for async operations
-  const balanceRef = React.useRef(0);
-  const solPriceRef = React.useRef(0);
-  const isFetchingRef = React.useRef(false);
+  const {
+    walletBalance: balance,
+    isLoadingBalances: isLoading,
+    refreshBalances,
+  } = useWalletBalances({
+    connection,
+    publicKey,
+    walletAddress,
+    enabled: connected && !!publicKey,
+  });
 
-  const fetchBalance = async () => {
-    if (!publicKey || !connected) return;
+  const { data: solPrice = 0 } = useSolPriceFromApi(60_000);
 
-    // Simple debounce/lock
-    if (isLoading) return;
-
-    setIsLoading(true);
-    try {
-      const balanceLamports = await connection.getBalance(publicKey);
-      const balanceSOL = balanceLamports / LAMPORTS_PER_SOL;
-
-      if (balanceSOL !== balanceRef.current) {
-        console.log("💰 SOL Balance updated:", balanceSOL);
-        setBalance(balanceSOL);
-        balanceRef.current = balanceSOL;
-        onBalanceChange?.(balanceSOL);
-      }
-    } catch (error) {
-      console.error("Error fetching wallet balance:", error);
-    } finally {
-      setIsLoading(false);
+  useEffect(() => {
+    if (balance != null) {
+      onBalanceChange?.(balance);
     }
-  };
+  }, [balance, onBalanceChange]);
 
-  const fetchSolPrice = async () => {
-    if (isPriceLoading) return;
-
-    setIsPriceLoading(true);
-    try {
-      const response = await fetch("/api/solprice");
-      const data = await response.json();
-      if (data.price && data.price > 0 && data.price !== solPriceRef.current) {
-        console.log("💲 SOL Price updated:", data.price);
-        setSolPrice(data.price);
-        solPriceRef.current = data.price;
-      }
-    } catch (error) {
-      console.error("Error fetching SOL price:", error);
-    } finally {
-      setIsPriceLoading(false);
-    }
-  };
-
-  const fetchTotalPortfolioValue = async () => {
-    const currentBalance = balanceRef.current;
-    const currentPrice = solPriceRef.current;
-
-    if (!publicKey || !connected || currentBalance <= 0 || currentPrice <= 0) {
+  const fetchTotalPortfolioValue = useCallback(async () => {
+    if (!publicKey || !connected || !balance || balance <= 0 || solPrice <= 0) {
       return;
     }
 
-    // Prevent concurrent portfolio updates
     if (isFetchingRef.current) return;
 
     isFetchingRef.current = true;
     setIsLoadingPortfolio(true);
 
     try {
-      // Fetch all user tokens with USD values
       const userTokens = await fetchUserTokens(
         connection,
         publicKey,
@@ -91,85 +56,42 @@ export default function WalletBalance({ onBalanceChange }: WalletBalanceProps) {
         false,
       );
 
-      // Calculate total USD value of all SPL tokens
       const tokensValue = userTokens.reduce(
         (total, token) => total + token.usdValue,
         0,
       );
 
-      // Calculate SOL value in USD using the passed parameters
-      const solValue = currentBalance * currentPrice;
-
-      // Total portfolio = SPL tokens + SOL
+      const solValue = balance * solPrice;
       const totalPortfolio = tokensValue + solValue;
 
       setTotalPortfolioValue(totalPortfolio);
-      console.log("✅ Portfolio value updated:", totalPortfolio.toFixed(2));
     } catch (error) {
-      console.error("❌ Error fetching portfolio value:", error);
+      console.error("Error fetching portfolio value:", error);
     } finally {
       setIsLoadingPortfolio(false);
       isFetchingRef.current = false;
     }
-  };
+  }, [publicKey, connected, balance, solPrice, connection]);
+
+  useEffect(() => {
+    if (balance && balance > 0 && solPrice > 0) {
+      const timeoutId = setTimeout(() => {
+        void fetchTotalPortfolioValue();
+      }, 1000);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [balance, solPrice, connected, publicKey, fetchTotalPortfolioValue]);
 
   const handleToggleDisplay = () => {
     setShowUSD((prev) => !prev);
   };
 
   const handleRefresh = () => {
-    fetchBalance();
-    fetchSolPrice();
-    // Trigger portfolio update manually in case balance/price didn't change but we want to refresh
+    void refreshBalances();
     setTimeout(() => {
-      fetchTotalPortfolioValue();
+      void fetchTotalPortfolioValue();
     }, 1000);
   };
-
-  // Effect to handle initial data load and periodic updates
-  useEffect(() => {
-    if (!connected || !publicKey) {
-      setBalance(0);
-      balanceRef.current = 0;
-      setTotalPortfolioValue(0);
-      return;
-    }
-
-    // Initial fetch
-    fetchBalance();
-    fetchSolPrice();
-
-    // Periodic balance refresh (every 30s is enough)
-    const balanceInterval = setInterval(fetchBalance, 30000);
-
-    // Periodic price refresh (every 60s)
-    const priceInterval = setInterval(fetchSolPrice, 60000);
-
-    return () => {
-      clearInterval(balanceInterval);
-      clearInterval(priceInterval);
-    };
-  }, [connected, publicKey]);
-
-  // Effect to trigger portfolio calculation when balance or price changes
-  useEffect(() => {
-    if (balance > 0 && solPrice > 0) {
-      // Debounce portfolio calculation
-      const timeoutId = setTimeout(() => {
-        fetchTotalPortfolioValue();
-      }, 1000); // Wait 1s after changes settle
-
-      return () => clearTimeout(timeoutId);
-    }
-  }, [balance, solPrice]);
-
-  // Remove the old useEffect that was causing the race condition
-  // useEffect(() => {
-  //   if (connected && publicKey && balance > 0 && solPrice > 0) {
-  //     console.log('🔄 Triggering portfolio recalculation due to balance/price change')
-  //     fetchTotalPortfolioValue()
-  //   }
-  // }, [balance, solPrice, connected, publicKey])
 
   if (!connected) {
     return (
@@ -200,7 +122,7 @@ export default function WalletBalance({ onBalanceChange }: WalletBalanceProps) {
       return `$${totalPortfolioValue.toFixed(2)} (Total)`;
     }
 
-    return `${balance.toFixed(4)} SOL`;
+    return `${(balance ?? 0).toFixed(4)} SOL`;
   };
 
   return (

@@ -1,7 +1,8 @@
 'use client'
 
+import { OptimizedImage } from "@/components/OptimizedImage";
 
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Line, Bar } from 'react-chartjs-2'
 import {
@@ -132,8 +133,6 @@ export default function TradingSimulationModal({
   keypairPath,
   onTradeTriggered
 }: TradingSimulationModalProps) {
-  const [simulationData, setSimulationData] = useState<TradingSimulationData | null>(null)
-  const [priceHistory, setPriceHistory] = useState<PriceRecord[]>([])
   const lastNotifiedStatusRef = React.useRef<string | null>(null)
   const [refreshId, setRefreshId] = useState(0)
 
@@ -156,44 +155,44 @@ export default function TradingSimulationModal({
 
   const error = queryError ? (queryError as Error).message : ''
 
-  // Update local state when fresh data arrives
+  const priceHistory = useMemo<PriceRecord[]>(
+    () => apiData?.token?.price_history ?? [],
+    [apiData],
+  )
+
+  const simulationData = useMemo(
+    () => apiData?.token?.trading_simulation ?? null,
+    [apiData],
+  )
+
+  // Notify on trade status changes
   useEffect(() => {
-    if (!apiData || !apiData.success) return
+    if (!apiData?.success || !apiData.token?.trading_simulation) return
 
-    if (apiData.token) {
-      if (apiData.token.price_history) {
-        setPriceHistory(apiData.token.price_history)
+    const newStatus = apiData.token.trading_simulation.current_status
+    if (
+      onTradeTriggered &&
+      newStatus !== lastNotifiedStatusRef.current
+    ) {
+      const latestOperation =
+        apiData.token.trading_simulation.sell_operation ??
+        apiData.token.trading_simulation.buy_operation
+
+      const bestConfig: any = latestOperation?.best_config || {}
+
+      const details = {
+        currentGain: apiData.token.current_gain_percentage,
+        peakGain: apiData.token.peak_gain_percentage,
+        price: apiData.token.last_price_usd,
+        status: newStatus,
+        provider: bestConfig.provider || (latestOperation as any)?.configurations?.best?.provider,
+        rpc: bestConfig.rpc_used || (latestOperation as any)?.configurations?.best?.rpc_used,
+        responseTime: bestConfig.response_time || (latestOperation as any)?.configurations?.best?.response_time,
       }
-      if (apiData.token.trading_simulation) {
-        setSimulationData(apiData.token.trading_simulation)
-
-        const newStatus = apiData.token.trading_simulation.current_status
-        if (
-          onTradeTriggered &&
-          newStatus !== lastNotifiedStatusRef.current &&
-          newStatus !== simulationData?.current_status
-        ) {
-          const latestOperation =
-            apiData.token.trading_simulation.sell_operation ??
-            apiData.token.trading_simulation.buy_operation
-
-          const bestConfig: any = latestOperation?.best_config || {}
-
-          const details = {
-            currentGain: apiData.token.current_gain_percentage,
-            peakGain: apiData.token.peak_gain_percentage,
-            price: apiData.token.last_price_usd,
-            status: newStatus,
-            provider: bestConfig.provider || (latestOperation as any)?.configurations?.best?.provider,
-            rpc: bestConfig.rpc_used || (latestOperation as any)?.configurations?.best?.rpc_used,
-            responseTime: bestConfig.response_time || (latestOperation as any)?.configurations?.best?.response_time,
-          }
-          onTradeTriggered(newStatus, details)
-          lastNotifiedStatusRef.current = newStatus
-        }
-      }
+      onTradeTriggered(newStatus, details)
+      lastNotifiedStatusRef.current = newStatus
     }
-  }, [apiData])
+  }, [apiData, onTradeTriggered])
 
   const triggerRefresh = () => setRefreshId(id => id + 1)
 
@@ -370,14 +369,16 @@ export default function TradingSimulationModal({
 
   const chartConfig = React.useMemo(
     () => getPriceHistoryChartConfig(priceHistory),
-    // Recompute only when the latest datapoint changes
-    [priceHistory.length ? priceHistory[priceHistory.length - 1] : null]
-  )
+    [priceHistory],
+  );
 
   const configPerformanceChart = React.useMemo(
-    () => simulationData ? getConfigurationPerformanceChartConfig(simulationData) : null,
-    [simulationData?.buy_operation?.timestamp, simulationData?.sell_operation?.timestamp]
-  )
+    () =>
+      simulationData
+        ? getConfigurationPerformanceChartConfig(simulationData)
+        : null,
+    [simulationData],
+  );
 
   if (!isOpen) return null
 
@@ -388,7 +389,7 @@ export default function TradingSimulationModal({
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
           <div className="flex items-center space-x-3">
             {logoUrl && (
-              <img 
+              <OptimizedImage 
                 src={logoUrl} 
                 alt={tokenSymbol || 'Token'} 
                 className="w-8 h-8 rounded-full"
@@ -653,7 +654,9 @@ export default function TradingSimulationModal({
                   
                   <h4 className="font-semibold mb-2 text-gray-300">Buy Configurations Tested</h4>
                   <div className="grid gap-3">
-                    {Object.entries(simulationData.buy_operation.configurations).map(([key, config]) => (
+                    {Object.entries(simulationData.buy_operation.configurations).map(([key, configEntry]) => {
+                      const config = configEntry as BuyConfigResult;
+                      return (
                       <div key={key} className="border border-gray-700 rounded p-3 bg-gray-800/50">
                         <div className="flex items-center justify-between mb-2">
                           <h5 className="font-medium capitalize text-gray-300">
@@ -688,7 +691,8 @@ export default function TradingSimulationModal({
                           </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -726,7 +730,9 @@ export default function TradingSimulationModal({
                   
                   <h4 className="font-semibold mb-2 text-gray-300">Sell Configurations Tested</h4>
                   <div className="grid gap-3">
-                    {Object.entries(simulationData.sell_operation.configurations).map(([key, config]) => (
+                    {Object.entries(simulationData.sell_operation.configurations).map(([key, configEntry]) => {
+                      const config = configEntry as SellConfigResult;
+                      return (
                       <div key={key} className="border border-gray-700 rounded p-3 bg-gray-800/50">
                         <div className="flex items-center justify-between mb-2">
                           <h5 className="font-medium capitalize text-gray-300">
@@ -761,7 +767,8 @@ export default function TradingSimulationModal({
                           </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}

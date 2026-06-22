@@ -259,15 +259,12 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
   );
 
   // Set up real-time subscription
-  const [isSubscribed, setIsSubscribed] = React.useState(false);
+  const isSubscribed = !!(walletAddress && sessionReady);
 
   React.useEffect(() => {
     if (!walletAddress || !sessionReady) {
-      setIsSubscribed(false);
       return;
     }
-
-    setIsSubscribed(true);
 
     const refetchRecordsForWallet = () => {
       queryClient.invalidateQueries({
@@ -291,11 +288,10 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
     });
 
     return () => {
-      setIsSubscribed(false);
       window.removeEventListener("reloadsol-wallet-session", onSessionReady);
       unsubscribe();
     };
-  }, [walletAddress, sessionReady, queryClient]);
+  }, [walletAddress, sessionReady]);
 
   const contextValue: TradingDataContextType = {
     records,

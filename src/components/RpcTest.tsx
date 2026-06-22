@@ -1,35 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useConnection } from './WalletProvider'
-import { getRpcHealth, makeClientRpcRequest } from '@/utils/rpc-config'
-
-interface HealthResult {
-  url: string
-  healthy: boolean
-  responseTime: number
-  error?: string
-}
-
-interface HealthResponse {
-  status: string
-  timestamp: string
-  summary: {
-    total: number
-    healthy: number
-    unhealthy: number
-  }
-  endpoints: HealthResult[]
-  healthyEndpoints: string[]
-}
+import { useRpcHealth } from '@/hooks/useRpcHealth'
 
 export default function RpcTest() {
   const { connection } = useConnection()
+  const { data: healthData, isFetching: isHealthLoading, refetch: refetchHealth, error: healthError } = useRpcHealth()
   const [isLoading, setIsLoading] = useState(false)
-  const [isHealthLoading, setIsHealthLoading] = useState(false)
   const [result, setResult] = useState<string>('')
   const [error, setError] = useState<string>('')
-  const [healthData, setHealthData] = useState<HealthResponse | null>(null)
 
   const testConnection = async () => {
     setIsLoading(true)
@@ -37,7 +17,6 @@ export default function RpcTest() {
     setResult('')
     
     try {
-      // Test basic RPC call
       const slot = await connection.getSlot()
       setResult(`✅ RPC Connection working! Current slot: ${slot}`)
     } catch (err) {
@@ -49,22 +28,15 @@ export default function RpcTest() {
   }
 
   const checkHealth = async () => {
-    setIsHealthLoading(true)
     try {
-      const data = await getRpcHealth()
-      setHealthData(data)
+      await refetchHealth()
     } catch (err) {
       console.error('Health check failed:', err)
       setError(`❌ Health check failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
-    } finally {
-      setIsHealthLoading(false)
     }
   }
 
-  // Auto-load health on mount
-  useEffect(() => {
-    checkHealth()
-  }, [])
+  const displayError = error || (healthError instanceof Error ? healthError.message : '')
 
   return (
     <div className="bg-gray-800 border border-gray-600 rounded-xl p-6 max-w-2xl">
@@ -88,7 +60,6 @@ export default function RpcTest() {
         </button>
       </div>
 
-      {/* Health Summary */}
       {healthData && (
         <div className="mb-4 p-4 bg-gray-700 rounded-lg">
           <div className="flex justify-between items-center mb-3">
@@ -115,12 +86,11 @@ export default function RpcTest() {
         </div>
       )}
 
-      {/* Endpoint Details */}
       {healthData && healthData.endpoints.length > 0 && (
         <div className="mb-4">
           <h4 className="text-white font-medium mb-3">Endpoint Details</h4>
           <div className="space-y-2">
-            {healthData.endpoints.map((endpoint, index) => (
+            {healthData.endpoints.map((endpoint: { url: string; healthy: boolean; responseTime: number; error?: string }, index: number) => (
               <div
                 key={index}
                 className={`p-3 rounded-lg border ${
@@ -134,7 +104,7 @@ export default function RpcTest() {
                     <div className="flex items-center space-x-2">
                       <span className={`w-2 h-2 rounded-full ${endpoint.healthy ? 'bg-green-400' : 'bg-red-400'}`} />
                       <span className="text-sm font-mono text-gray-300 break-all">
-                        {endpoint.url.replace(/\?.*$/, '?***')} {/* Hide API keys */}
+                        {endpoint.url.replace(/\?.*$/, '?***')}
                       </span>
                     </div>
                     {endpoint.error && (
@@ -158,16 +128,15 @@ export default function RpcTest() {
         </div>
       )}
 
-      {/* Test Results */}
       {result && (
         <div className="mb-4 p-3 bg-green-900/30 border border-green-500/30 rounded text-green-200 text-sm">
           {result}
         </div>
       )}
       
-      {error && (
+      {displayError && (
         <div className="mb-4 p-3 bg-red-900/30 border border-red-500/30 rounded text-red-200 text-sm">
-          {error}
+          {displayError}
         </div>
       )}
       
@@ -182,4 +151,4 @@ export default function RpcTest() {
       </div>
     </div>
   )
-} 
+}

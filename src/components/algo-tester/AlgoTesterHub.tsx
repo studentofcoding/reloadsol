@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useEffect, useState } from "react";
+import React, { Suspense, useState } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -39,14 +39,14 @@ function AlgoTesterHubContent() {
     () => new Set([activeTab]),
   );
 
-  useEffect(() => {
+  if (!mountedTabs.has(activeTab)) {
     setMountedTabs((prev) => {
       if (prev.has(activeTab)) return prev;
       const next = new Set(prev);
       next.add(activeTab);
       return next;
     });
-  }, [activeTab]);
+  }
 
   const setTab = (tab: TabId) => {
     const params = new URLSearchParams(searchParams.toString());

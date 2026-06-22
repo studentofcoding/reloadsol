@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import type {
   TrendingBotStrategy,
@@ -52,30 +53,20 @@ type AbPair = {
 const EXECUTION_MODES: ExecutionMode[] = ["sim_only", "live_only", "ab_parallel"];
 
 export default function StrategyAdminHub() {
-  const [tab, setTab] = useState<"config" | "reports">("config");
-  const [data, setData] = useState<StrategiesResponse | null>(null);
-  const [outcomes, setOutcomes] = useState<OutcomeRow[]>([]);
-  const [reports, setReports] = useState<{
-    breakdown: ReportBreakdown[];
-    ab_pairs: AbPair[];
-    ranking: ReportBreakdown[];
-  } | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"config" | "reports">(() => {
+    if (typeof window === "undefined") return "config";
+    const params = new URLSearchParams(window.location.search);
+    return params.get("tab") === "reports" ? "reports" : "config";
+  });
   const [saving, setSaving] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
   const [reportDomain, setReportDomain] = useState("");
 
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get("tab") === "reports") setTab("reports");
-  }, []);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
+  const strategiesQuery = useQuery({
+    queryKey: ["strategy-admin", reportFrom, reportTo, reportDomain],
+    queryFn: async () => {
       const reportParams = new URLSearchParams();
       if (reportFrom) reportParams.set("from", reportFrom);
       if (reportTo) reportParams.set("to", reportTo);
@@ -90,25 +81,33 @@ export default function StrategyAdminHub() {
       const outJson = await outRes.json();
       const repJson = await repRes.json();
       if (!strJson.success) throw new Error(strJson.error || "Failed to load");
-      setData(strJson);
-      setOutcomes(outJson.outcomes ?? []);
-      if (repJson.success) {
-        setReports({
-          breakdown: repJson.breakdown ?? [],
-          ab_pairs: repJson.ab_pairs ?? [],
-          ranking: repJson.ranking ?? [],
-        });
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [reportFrom, reportTo, reportDomain]);
+      return {
+        data: strJson as StrategiesResponse,
+        outcomes: (outJson.outcomes ?? []) as OutcomeRow[],
+        reports: repJson.success
+          ? {
+              breakdown: repJson.breakdown ?? [],
+              ab_pairs: repJson.ab_pairs ?? [],
+              ranking: repJson.ranking ?? [],
+            }
+          : null,
+      };
+    },
+  });
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  const data = strategiesQuery.data?.data ?? null;
+  const outcomes = strategiesQuery.data?.outcomes ?? [];
+  const reports = strategiesQuery.data?.reports ?? null;
+  const loading = strategiesQuery.isLoading;
+  const error = actionError ?? (strategiesQuery.error
+    ? strategiesQuery.error instanceof Error
+      ? strategiesQuery.error.message
+      : String(strategiesQuery.error)
+    : null);
+
+  const load = useCallback(async () => {
+    await strategiesQuery.refetch();
+  }, [strategiesQuery]);
 
   const saveStrategy = async (
     id: string,
@@ -129,7 +128,7 @@ export default function StrategyAdminHub() {
       if (!json.success) throw new Error(json.error || "Save failed");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setActionError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(null);
     }
@@ -148,7 +147,7 @@ export default function StrategyAdminHub() {
       alert(json.message ?? "Promoted");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setActionError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(null);
     }
@@ -312,7 +311,7 @@ export default function StrategyAdminHub() {
                   </tr>
                 </thead>
                 <tbody>
-                  {reports.ab_pairs.map((p) => (
+                  {reports.ab_pairs.map((p: AbPair) => (
                     <tr key={p.strategy_id} className="border-b border-gray-800 text-gray-300">
                       <td className="p-2">{p.strategy_id}</td>
                       <td className="p-2 text-center">
@@ -337,7 +336,7 @@ export default function StrategyAdminHub() {
 
             <h3 className="text-lg font-semibold text-white mb-2">Ranking (n≥10)</h3>
             <ul className="text-sm text-gray-300 mb-6 space-y-1">
-              {(reports?.ranking ?? []).slice(0, 10).map((r) => (
+              {(reports?.ranking ?? []).slice(0, 10).map((r: ReportBreakdown) => (
                 <li key={`${r.domain}-${r.strategy_id}-${r.is_simulated}`}>
                   {r.domain}/{r.strategy_id} [{r.is_simulated ? "SIM" : "LIVE"}]: WR{" "}
                   {(r.win_rate * 100).toFixed(1)}%, avg {r.avg_pnl_pct.toFixed(2)}% ({r.trade_count} trades)

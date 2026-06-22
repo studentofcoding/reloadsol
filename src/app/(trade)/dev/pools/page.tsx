@@ -1,5 +1,6 @@
 "use client";
 
+import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect, useCallback } from "react";
 import {
   useTrendingPools,
@@ -313,7 +314,7 @@ export default function TrendingPoolsPage() {
                             {/* Token Header */}
                             <div className="flex items-center gap-3 mb-4">
                               {token.logo_url && (
-                                <img
+                                <OptimizedImage
                                   src={token.logo_url}
                                   alt={token.token_symbol}
                                   className="w-10 h-10 rounded-full"
@@ -516,7 +517,7 @@ export default function TrendingPoolsPage() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
                 {selectedToken.logo_url && (
-                  <img
+                  <OptimizedImage
                     src={selectedToken.logo_url}
                     alt={selectedToken.token_symbol}
                     className="w-8 h-8 rounded-full"

@@ -13,7 +13,7 @@ import {
 } from "@jup-ag/wallet-adapter";
 import { WalletNotification } from "@/components/WalletNotification";
 import { WalletSessionProvider } from "@/components/WalletSessionContext";
-import { createConnection } from "@/utils/connection";
+import { RpcProvider, useRpc } from "@/contexts/RpcContext";
 import { isDevWallet, toWalletAddress } from "@/utils/dev-wallet";
 
 type WalletContextState = ReturnType<typeof useUnifiedWallet>;
@@ -47,19 +47,21 @@ function WalletContextBridge({ children }: { children: React.ReactNode }) {
   // Spreading breaks connect/sign methods bound to the adapter instance.
   return (
     <WalletContext.Provider value={wallet}>
-      <ConnectionProvider>
-        <WalletSessionProvider>{children}</WalletSessionProvider>
-      </ConnectionProvider>
+      <RpcProvider>
+        <ConnectionProvider>
+          <WalletSessionProvider>{children}</WalletSessionProvider>
+        </ConnectionProvider>
+      </RpcProvider>
     </WalletContext.Provider>
   );
 }
 
 export function WalletProvider({ children }: WalletProviderProps) {
-  const [autoConnect, setAutoConnect] = useState(false);
-
-  useEffect(() => {
-    setAutoConnect(!sessionStorage.getItem("hasDisconnected"));
-  }, []);
+  const [autoConnect] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      !sessionStorage.getItem("hasDisconnected"),
+  );
 
   const metadata = useMemo(
     () => ({
@@ -105,12 +107,12 @@ export function useWallet(): WalletContextState {
   return context;
 }
 
-const ConnectionContext = createContext<ReturnType<typeof createConnection> | null>(
+const ConnectionContext = createContext<ReturnType<typeof useRpc>["connection"] | null>(
   null,
 );
 
 function ConnectionProvider({ children }: { children: React.ReactNode }) {
-  const connection = useMemo(() => createConnection("mainnet"), []);
+  const { connection } = useRpc();
 
   return (
     <ConnectionContext.Provider value={connection}>

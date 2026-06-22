@@ -13,6 +13,7 @@ export const DEV_ROUTES = [
   '/dev/algo-tester',
   '/dev/dlmm',
   '/dev/strategies',
+  '/dev/rpc-tester',
 ] as const;
 
 export type WalletRequiredRoute = (typeof WALLET_REQUIRED_ROUTES)[number];

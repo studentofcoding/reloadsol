@@ -1,6 +1,7 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import { OptimizedImage } from "@/components/OptimizedImage";
+import React, { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Line, Bar } from 'react-chartjs-2'
 import {
@@ -24,6 +25,12 @@ type CloseResult = {
   signatures: string[]
 }
 
+interface PriceRecord {
+  timestamp: string
+  price_usd: number
+  volume: number | null
+}
+
 interface TradingSimulationData {
   token_address: string
   token_symbol: string | null
@@ -35,12 +42,6 @@ interface TradingSimulationData {
   stop_loss_percentage: number
   max_hold_hours: number
   final_result: any
-}
-
-interface PriceRecord {
-  timestamp: string
-  price_usd: number
-  volume: number | null
 }
 
 type UnifiedTokenModalProps = {
@@ -90,10 +91,10 @@ export default function UnifiedTokenModal({
 }: UnifiedTokenModalProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'charts' | 'raw-json'>('overview')
   const [tokenNames, setTokenNames] = useState<Record<string, string>>({})
-  const [simulationData, setSimulationData] = useState<TradingSimulationData | null>(null)
-  const [priceHistory, setPriceHistory] = useState<PriceRecord[]>([])
-  const [rawJsonData, setRawJsonData] = useState<any>(null)
   const [refreshId, setRefreshId] = useState(0)
+
+  const transactionRawJson =
+    modalType === 'transaction' && result ? result : null
 
   // Trading simulation data fetching
   const {
@@ -107,35 +108,24 @@ export default function UnifiedTokenModal({
       const url = `/api/trending/track?token=${tokenAddress}&isSimulated=${isSimulated}&keypairPath=${encodeURIComponent(keypairPath)}&t=${Date.now()}`
       const res = await fetch(url)
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      setRawJsonData(data) // Store raw JSON response
-      return data
+      return res.json()
     },
     enabled: isOpen && modalType === 'trading' && !!tokenAddress,
     staleTime: 60_000,
     gcTime: 5 * 60_000,
   })
 
-  // Store raw JSON for transaction results
-  useEffect(() => {
-    if (modalType === 'transaction' && result) {
-      setRawJsonData(result)
-    }
-  }, [modalType, result])
+  const priceHistory = useMemo<PriceRecord[]>(
+    () => apiData?.token?.price_history ?? [],
+    [apiData],
+  )
 
-  // Update simulation data when API data changes
-  useEffect(() => {
-    if (!apiData || !apiData.success) return
+  const simulationData = useMemo(
+    () => apiData?.token?.trading_simulation ?? null,
+    [apiData],
+  )
 
-    if (apiData.token) {
-      if (apiData.token.price_history) {
-        setPriceHistory(apiData.token.price_history)
-      }
-      if (apiData.token.trading_simulation) {
-        setSimulationData(apiData.token.trading_simulation)
-      }
-    }
-  }, [apiData])
+  const rawJsonData = modalType === 'trading' ? apiData : transactionRawJson
 
   // Fetch token metadata for transaction results
   useEffect(() => {
@@ -410,11 +400,11 @@ export default function UnifiedTokenModal({
             <div className="h-64 flex items-center justify-center text-gray-400">
               <Line
                 data={{
-                  labels: priceHistory.map(p => new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
+                  labels: priceHistory.map((p: PriceRecord) => new Date(p.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })),
                   datasets: [
                     {
                       label: 'Price (USD)',
-                      data: priceHistory.map(p => p.price_usd),
+                      data: priceHistory.map((p: PriceRecord) => p.price_usd),
                       borderColor: '#60a5fa',
                       backgroundColor: 'rgba(96,165,250,0.1)',
                       pointRadius: 0,
@@ -492,7 +482,7 @@ export default function UnifiedTokenModal({
         <div className="flex items-center justify-between p-6 border-b border-gray-700">
           <div className="flex items-center space-x-3">
             {logoUrl && (
-              <img src={logoUrl} alt="Token" className="w-10 h-10 rounded-full" />
+              <OptimizedImage src={logoUrl} alt="Token" className="w-10 h-10 rounded-full" />
             )}
             <div>
               <h2 className="text-xl font-bold text-white">

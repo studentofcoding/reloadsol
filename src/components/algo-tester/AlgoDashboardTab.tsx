@@ -1,5 +1,6 @@
 "use client";
 
+import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -121,6 +122,23 @@ interface TradingConfig {
   notifyOnTrigger: boolean;
 }
 
+function readTradingConfig(): TradingConfig {
+  const defaults: TradingConfig = {
+    isSimulated: true,
+    keypairPath: "",
+    discordWebhook: "",
+    notifyOnTrigger: true,
+  };
+  if (typeof window === "undefined") return defaults;
+  const savedConfig = localStorage.getItem("tradingConfig");
+  if (!savedConfig) return defaults;
+  try {
+    return { ...defaults, ...JSON.parse(savedConfig) };
+  } catch {
+    return defaults;
+  }
+}
+
 export default function AlgoDashboardTab() {
   const router = useRouter();
   const [statsSimFilter, setStatsSimFilter] = useState<
@@ -220,12 +238,7 @@ export default function AlgoDashboardTab() {
   const [showAllSummaryTokens, setShowAllSummaryTokens] = useState(false);
 
   // Trading config state
-  const [tradingConfig, setTradingConfig] = useState<TradingConfig>({
-    isSimulated: true,
-    keypairPath: "",
-    discordWebhook: "",
-    notifyOnTrigger: true,
-  });
+  const [tradingConfig, setTradingConfig] = useState<TradingConfig>(readTradingConfig);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [chartModalTokenAddress, setChartModalTokenAddress] = useState<
     string | null
@@ -487,18 +500,7 @@ export default function AlgoDashboardTab() {
     setTradingConfig(config);
   };
 
-  // Load trading config from localStorage on mount
-  useEffect(() => {
-    const savedConfig = localStorage.getItem("tradingConfig");
-    if (savedConfig) {
-      try {
-        const config = JSON.parse(savedConfig);
-        setTradingConfig(config);
-      } catch (error) {
-        console.error("Failed to parse saved trading config:", error);
-      }
-    }
-  }, []);
+  // Trading config loaded via lazy useState initializer
 
   // Function to send Discord notification
   const sendDiscordNotification = async (message: string) => {
@@ -754,7 +756,7 @@ export default function AlgoDashboardTab() {
   const TokenIcon = ({ token }: { token: TrackedToken | TopWinner }) => (
     <div className="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center overflow-hidden">
       {token.logo_url ? (
-        <img
+        <OptimizedImage
           src={token.logo_url}
           alt={token.token_symbol || "Token"}
           className="w-full h-full object-cover"

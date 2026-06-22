@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "type-check": "tsc --noEmit",
+    "verify:no-raw-useeffect": "node scripts/verify-no-raw-useeffect.js",
     "logs": "node scripts/tail-logs.js",
     "logs:follow": "node scripts/tail-logs.js -f",
     "logs:errors": "node scripts/tail-logs.js -l error",

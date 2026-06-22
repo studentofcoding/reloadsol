@@ -266,7 +266,7 @@ export default function JupiterTerminal({
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [initialInputMint, initialOutputMint, handleSwapSuccess, handleSwapError]);
+  }, [initialInputMint, initialOutputMint, handleSwapSuccess, handleSwapError, walletContextState]);
 
   // Sync wallet state with Jupiter Terminal
   useEffect(() => {
@@ -295,7 +295,7 @@ export default function JupiterTerminal({
         );
       }
     }
-  }, [walletContextState.connected, walletContextState.publicKey]); // More specific dependencies
+  }, [walletContextState]);
 
   return (
     <div className="mx-auto border-none">

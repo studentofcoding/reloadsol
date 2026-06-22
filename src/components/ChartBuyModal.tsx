@@ -1,7 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { OptimizedImage } from "@/components/OptimizedImage";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useWallet, useConnection } from "@/components/WalletProvider";
+import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useWalletBalances } from "@/hooks/useWalletBalances";
+import { useChartTokenInfo } from "@/hooks/useChartTokenInfo";
+import { useAxiomRisk } from "@/hooks/useAxiomRisk";
 import PhantomWalletButton from "@/components/PhantomWalletButton";
 import RiskAnalysis from "@/components/RiskAnalysis";
 import TransactionResultModal from "@/components/TransactionResultModal";
@@ -89,21 +94,69 @@ export default function ChartBuyModal({
   const { connection } = useConnection();
   const { trackOperation } = useTradingData();
   const triggerPostBuyRefresh = usePostBuyRefresh();
+  const walletAddress = connected && publicKey ? publicKey.toString() : null;
+  const validTokenAddress =
+    tokenAddress && isValidMintAddress(tokenAddress) ? tokenAddress : null;
 
-  // Refs for tracking
   const lastUpdateRef = useRef<number>(Date.now());
-  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Token and risk data state
-  const [isLoading, setIsLoading] = useState(true);
-  const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
-  const [riskInfo, setRiskInfo] = useState<RiskInfo | null>(null);
+  const {
+    data: chartTokenInfo,
+    isLoading,
+    error: tokenQueryError,
+  } = useChartTokenInfo(validTokenAddress);
 
-  // Position tracking state
-  const [isLoadingPositions, setIsLoadingPositions] = useState(false);
-  const [currentPosition, setCurrentPosition] = useState<UserToken | null>(
-    null,
+  const tokenInfo: TokenInfo | null = useMemo(
+    () =>
+      chartTokenInfo
+        ? {
+            symbol: chartTokenInfo.symbol,
+            name: chartTokenInfo.name,
+            price: chartTokenInfo.price,
+            address: chartTokenInfo.address,
+            logoURI: chartTokenInfo.logoURI,
+            decimals: chartTokenInfo.decimals,
+            marketCap: chartTokenInfo.marketCap,
+          }
+        : null,
+    [chartTokenInfo],
   );
+
+  const fetchError = !validTokenAddress
+    ? "Invalid token address"
+    : tokenQueryError instanceof Error
+      ? tokenQueryError.message
+      : "";
+
+  const { allTokens, refetchTokens } = useWalletTokens({
+    connection,
+    publicKey,
+    walletAddress,
+    activeRpcUrl: connection.rpcEndpoint,
+    enabled: connected && !!publicKey && !!validTokenAddress,
+  });
+
+  const currentPosition = useMemo(() => {
+    if (!validTokenAddress) return null;
+    return (
+      allTokens.find(
+        (token) =>
+          token.mintAddress === validTokenAddress &&
+          token.uiAmount > 0.001 &&
+          !token.frozen &&
+          !token.isNFT,
+      ) ?? null
+    );
+  }, [allTokens, validTokenAddress]);
+
+  const isLoadingPositions = false;
+
+  const { walletBalance, refreshBalances } = useWalletBalances({
+    connection,
+    publicKey,
+    walletAddress,
+    enabled: connected && !!publicKey,
+  });
 
   // Buy form state
   const [buyAmount, setBuyAmount] = useState(initialBuyAmount);
@@ -118,12 +171,43 @@ export default function ChartBuyModal({
     undefined,
   );
   const [error, setError] = useState<string>("");
-  const [showResultModal, setShowResultModal] = useState<boolean>(false);
+  const displayError = error || fetchError;
+  const [riskInfo, setRiskInfo] = useState<RiskInfo | null>(null);
 
-  // Balance tracking
+  const axiomQuery = useAxiomRisk(
+    validTokenAddress ?? "",
+    tokenInfo?.marketCap ?? 0,
+    !!validTokenAddress && (tokenInfo?.marketCap ?? 0) > 0,
+  );
+
+  const derivedRiskInfo = useMemo((): RiskInfo | null => {
+    if (!axiomQuery.data) return null;
+    const axiomData = axiomQuery.data.axiomData;
+    let organicScore = 100;
+    if (axiomData.insidersHoldPercent > 15) organicScore -= 25;
+    else if (axiomData.insidersHoldPercent > 8) organicScore -= 15;
+    if (axiomData.bundlersHoldPercent > 10) organicScore -= 20;
+    else if (axiomData.bundlersHoldPercent > 5) organicScore -= 10;
+    if (axiomData.snipersHoldPercent > 8) organicScore -= 15;
+    else if (axiomData.snipersHoldPercent > 4) organicScore -= 8;
+    if (axiomData.top10HoldersPercent > 60) organicScore -= 20;
+    else if (axiomData.top10HoldersPercent > 40) organicScore -= 10;
+    const overallRisk =
+      organicScore >= 70 ? "LOW" : organicScore >= 40 ? "MEDIUM" : "HIGH";
+    return {
+      overallRisk,
+      organicScore: Math.max(0, organicScore),
+      insidersHoldPercent: axiomData.insidersHoldPercent,
+      bundlersHoldPercent: axiomData.bundlersHoldPercent,
+      snipersHoldPercent: axiomData.snipersHoldPercent,
+      top10HoldersPercent: axiomData.top10HoldersPercent,
+    };
+  }, [axiomQuery.data]);
+
+  const effectiveRiskInfo = derivedRiskInfo ?? riskInfo;
+  const [showResultModal, setShowResultModal] = useState<boolean>(false);
   const [balanceBefore, setBalanceBefore] = useState<number>(0);
   const [balanceAfter, setBalanceAfter] = useState<number>(0);
-  const [walletBalance, setWalletBalance] = useState<number | null>(null);
 
   // OHLC chart state
   interface OHLCBar {
@@ -179,241 +263,6 @@ export default function ChartBuyModal({
   const gmgnChartUrl = tokenAddress
     ? `https://www.gmgn.cc/kline/sol/${tokenAddress}?interval=1H`
     : "";
-
-  // Load user tokens function
-  const loadUserTokens = useCallback(
-    async (showLoading = true, forceRefresh = false) => {
-      if (!connected || !publicKey || !tokenAddress) {
-        setCurrentPosition(null);
-        return;
-      }
-
-      if (showLoading) setIsLoadingPositions(true);
-      try {
-        const tokens = await fetchUserTokensEfficient(
-          connection,
-          publicKey,
-          false,
-          false,
-          () => {},
-          forceRefresh,
-        );
-
-        const significantTokens = tokens.filter(
-          (token) => token.uiAmount > 0.001 && !token.frozen && !token.isNFT,
-        );
-
-        const position = significantTokens.find(
-          (token) => token.mintAddress === tokenAddress,
-        );
-        setCurrentPosition(position || null);
-        lastUpdateRef.current = Date.now();
-      } catch (error) {
-        console.error("Error loading user tokens:", error);
-      } finally {
-        if (showLoading) setIsLoadingPositions(false);
-      }
-    },
-    [connected, publicKey, connection, tokenAddress],
-  );
-
-  const refreshBalances = useCallback(async () => {
-    if (connected && publicKey && connection) {
-      try {
-        const lamports = await connection.getBalance(publicKey);
-        setWalletBalance(lamports / LAMPORTS_PER_SOL);
-      } catch (error) {
-        console.error("Error fetching balance:", error);
-        setWalletBalance(null);
-      }
-    } else {
-      setWalletBalance(null);
-    }
-  }, [connected, publicKey, connection]);
-
-  // Setup periodic refresh
-  useEffect(() => {
-    if (!connected || !publicKey) {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-        refreshIntervalRef.current = null;
-      }
-      return;
-    }
-
-    loadUserTokens();
-
-    refreshIntervalRef.current = setInterval(() => {
-      loadUserTokens(false);
-    }, 30000);
-
-    return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-        refreshIntervalRef.current = null;
-      }
-    };
-  }, [connected, publicKey, loadUserTokens]);
-
-  useEffect(() => {
-    void refreshBalances();
-  }, [refreshBalances]);
-
-  useEffect(() => {
-    if (!tokenAddress || !isValidMintAddress(tokenAddress)) {
-      setError("Invalid token address");
-      setIsLoading(false);
-      return;
-    }
-
-    const fetchTokenData = async () => {
-      try {
-        setIsLoading(true);
-        setError("");
-
-        // Fetch token metadata from Jupiter
-        const jupiterResponse = await fetch(
-          `/api/jupiter/metadata?mint=${tokenAddress}`,
-        );
-        if (!jupiterResponse.ok) {
-          throw new Error("Failed to fetch token metadata");
-        }
-
-        const jupiterData = await jupiterResponse.json();
-        const tokenData = jupiterData.data;
-
-        if (!tokenData) {
-          throw new Error("Token not found");
-        }
-
-        // Try to get price and market cap from trending API
-        let price = 0;
-        let marketCap = 0;
-        try {
-          const trendingResponse = await fetch(
-            `/api/trending/search?query=${tokenAddress}`,
-          );
-          if (trendingResponse.ok) {
-            const trendingData = await trendingResponse.json();
-            const tokenTrending = Array.isArray(trendingData)
-              ? trendingData.find((t) => t.id === tokenAddress)
-              : null;
-            if (tokenTrending) {
-              price = tokenTrending.price || 0;
-              marketCap = tokenTrending.mcap || 0;
-            }
-          }
-        } catch (e) {
-          console.warn("Failed to fetch trending data:", e);
-        }
-
-        setTokenInfo({
-          symbol: tokenData.symbol || "UNKNOWN",
-          name: tokenData.name || "Unknown Token",
-          address: tokenAddress,
-          price,
-          logoURI: tokenData.logoURI,
-          decimals: tokenData.decimals || 6,
-          marketCap,
-        });
-
-        // Fetch risk analysis if we have market cap
-        if (marketCap > 0) {
-          try {
-            const axiomResponse = await fetch(
-              `/api/axiom/token-info?pairAddress=${tokenData.graduatedPool || tokenAddress}`,
-            );
-            if (axiomResponse.ok) {
-              const axiomResult = await axiomResponse.json();
-              if (axiomResult.success && axiomResult.data) {
-                const axiomData = axiomResult.data;
-                let organicScore = 100;
-                if (axiomData.insidersHoldPercent > 15) organicScore -= 25;
-                else if (axiomData.insidersHoldPercent > 8) organicScore -= 15;
-
-                if (axiomData.bundlersHoldPercent > 10) organicScore -= 20;
-                else if (axiomData.bundlersHoldPercent > 5) organicScore -= 10;
-
-                if (axiomData.snipersHoldPercent > 8) organicScore -= 15;
-                else if (axiomData.snipersHoldPercent > 4) organicScore -= 8;
-
-                if (axiomData.top10HoldersPercent > 60) organicScore -= 20;
-                else if (axiomData.top10HoldersPercent > 40) organicScore -= 10;
-
-                const overallRisk =
-                  organicScore >= 70
-                    ? "LOW"
-                    : organicScore >= 40
-                      ? "MEDIUM"
-                      : "HIGH";
-
-                setRiskInfo({
-                  overallRisk,
-                  organicScore: Math.max(0, organicScore),
-                  insidersHoldPercent: axiomData.insidersHoldPercent,
-                  bundlersHoldPercent: axiomData.bundlersHoldPercent,
-                  snipersHoldPercent: axiomData.snipersHoldPercent,
-                  top10HoldersPercent: axiomData.top10HoldersPercent,
-                });
-              }
-            }
-          } catch (e) {
-            console.warn("Failed to fetch risk data:", e);
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching token data:", error);
-        setError(
-          error instanceof Error ? error.message : "Failed to load token data",
-        );
-        setTokenInfo({
-          symbol: "UNKNOWN",
-          name: "Unknown Token",
-          address: tokenAddress,
-          price: 0,
-          decimals: 6,
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchTokenData();
-  }, [tokenAddress]);
-
-  /* OHLC Data Fetching - Excluded for now
-  useEffect(() => {
-    if (!tokenAddress || !isValidMintAddress(tokenAddress)) return;
-    setIsOhlcLoading(true);
-    setOhlcError("");
-    fetch(`/api/ohlc?mint=${tokenAddress}&interval=5m&limit=288`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (!data.success) {
-          setOhlcError(data.error || "Failed to load OHLC data");
-          setOhlcBars([]);
-          return;
-        }
-        const bars = (data.bars || []).map((b: any) => ({
-          token_address: b.token_address,
-          interval: b.interval,
-          open: typeof b.open === "string" ? parseFloat(b.open) : b.open,
-          high: typeof b.high === "string" ? parseFloat(b.high) : b.high,
-          low: typeof b.low === "string" ? parseFloat(b.low) : b.low,
-          close: typeof b.close === "string" ? parseFloat(b.close) : b.close,
-          timestamp: b.timestamp,
-        }));
-        setOhlcBars(bars);
-      })
-      .catch((err) => {
-        setOhlcError(
-          err instanceof Error ? err.message : "Failed to load OHLC data",
-        );
-        setOhlcBars([]);
-      })
-      .finally(() => setIsOhlcLoading(false));
-  }, [tokenAddress]);
-  */
 
   const handleBuy = useCallback(async () => {
     if (!connected || !publicKey || !signAllTransactions || !tokenAddress) {
@@ -556,8 +405,7 @@ export default function ChartBuyModal({
       if (buyResult.success) {
         setBuyAmount(initialBuyAmount);
         triggerPostBuyRefresh({
-          refreshWalletTokens: (forceRefresh) =>
-            loadUserTokens(false, forceRefresh),
+          refreshWalletTokens: (forceRefresh) => refetchTokens(forceRefresh),
           refreshBalances,
         });
       }
@@ -579,7 +427,7 @@ export default function ChartBuyModal({
     priorityFee,
     tokenInfo,
     trackOperation,
-    loadUserTokens,
+    refetchTokens,
     refreshBalances,
     triggerPostBuyRefresh,
     initialBuyAmount,
@@ -681,7 +529,7 @@ export default function ChartBuyModal({
         <div className="bg-gray-800 p-4 sticky top-0 z-10 flex justify-between items-center border-b border-gray-700">
           <div className="flex items-center space-x-3">
             {tokenInfo?.logoURI && (
-              <img
+              <OptimizedImage
                 src={tokenInfo.logoURI}
                 alt={tokenInfo.symbol}
                 className="w-8 h-8 rounded-full"
@@ -692,11 +540,11 @@ export default function ChartBuyModal({
                 {tokenInfo
                   ? `${tokenInfo.symbol} - ${tokenInfo.name}`
                   : "Loading..."}
-                {riskInfo && (
+                {effectiveRiskInfo && (
                   <span
-                    className={`px-2 py-0.5 rounded text-xs border ${getRiskBadgeColor(riskInfo.overallRisk)}`}
+                    className={`px-2 py-0.5 rounded text-xs border ${getRiskBadgeColor(effectiveRiskInfo.overallRisk)}`}
                   >
-                    {riskInfo.overallRisk} RISK
+                    {effectiveRiskInfo.overallRisk} RISK
                   </span>
                 )}
               </h2>

@@ -51,10 +51,16 @@ export default function DlmmDashboardPage() {
   const config = configData?.config;
   const dbStatus = configData?.dbStatus ?? positionsData?.dbStatus;
   const dbReady = dbStatus?.reachable && dbStatus?.schemaReady;
-  const positions = positionsData?.positions ?? [];
+  const positions = useMemo(
+    () => positionsData?.positions ?? [],
+    [positionsData?.positions],
+  );
   const lessons = positionsData?.lessons ?? [];
-  const candidates = candidatesData?.candidates ?? [];
-  const pools = poolsData?.pools ?? [];
+  const candidates = useMemo(
+    () => candidatesData?.candidates ?? [],
+    [candidatesData?.candidates],
+  );
+  const pools = useMemo(() => poolsData?.pools ?? [], [poolsData?.pools]);
 
   const openPositions = useMemo(
     () => positions.filter((p) => p.status !== "closed"),

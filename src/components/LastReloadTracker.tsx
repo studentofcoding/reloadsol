@@ -1,75 +1,31 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
-
-interface LastReloadData {
-  walletAddress: string;
-  totalSolRecovered: number;
-  lastOperationTime: string;
-  operationType: 'swap' | 'close';
-  shortWallet: string;
-}
+import React, { useEffect, useState } from 'react'
+import { useLastReload } from '@/hooks/useLastReload'
 
 interface LastReloadTrackerProps {
   className?: string;
-  refreshInterval?: number; // in milliseconds
+  refreshInterval?: number;
 }
 
 export default function LastReloadTracker({ 
   className = '', 
-  refreshInterval = 30000 // 30 seconds default
+  refreshInterval = 30000
 }: LastReloadTrackerProps) {
-  const [lastReloads, setLastReloads] = useState<LastReloadData[]>([])
+  const { data: lastReloads = [], isLoading: loading, error: queryError } = useLastReload(refreshInterval)
   const [currentIndex, setCurrentIndex] = useState<number>(0)
-  const [loading, setLoading] = useState<boolean>(true)
-  const [error, setError] = useState<string>('')
+  const [prevReloadKey, setPrevReloadKey] = useState<string>("")
   const [isTransitioning, setIsTransitioning] = useState<boolean>(false)
+  const error = queryError instanceof Error ? queryError.message : ''
 
-  const fetchLastReload = async () => {
-    try {
-      const response = await fetch('/api/operations/last-reload', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        if (response.status === 404 || response.status >= 500) {
-          setLastReloads([]);
-          setError('');
-          return;
-        }
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-      }
-
-      const result: LastReloadData[] = await response.json();
-      setLastReloads(result);
-      setCurrentIndex(0); // Reset to first item when new data arrives
-      setError('');
-    } catch (err) {
-      console.error('Failed to fetch last reload:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch data');
-    } finally {
-      setLoading(false);
+  const reloadKey = lastReloads.map((r) => r.lastOperationTime).join("|")
+  if (reloadKey !== prevReloadKey) {
+    setPrevReloadKey(reloadKey)
+    if (currentIndex !== 0) {
+      setCurrentIndex(0)
     }
-  };
+  }
 
-  // Initial fetch
-  useEffect(() => {
-    fetchLastReload();
-  }, []);
-
-  // Set up auto-refresh
-  useEffect(() => {
-    if (refreshInterval > 0) {
-      const interval = setInterval(fetchLastReload, refreshInterval);
-      return () => clearInterval(interval);
-    }
-  }, [refreshInterval]);
-
-  // Set up cycling through transactions every 2 seconds
   useEffect(() => {
     if (lastReloads.length > 1) {
       const cycleInterval = setInterval(() => {
@@ -77,12 +33,12 @@ export default function LastReloadTracker({
         setTimeout(() => {
           setCurrentIndex((prevIndex) => (prevIndex + 1) % lastReloads.length);
           setIsTransitioning(false);
-        }, 150); // Brief transition delay
-      }, 5000); // Change every 5 seconds
+        }, 150);
+      }, 5000);
 
       return () => clearInterval(cycleInterval);
     }
-  }, [lastReloads]);
+  }, [lastReloads.length]);
 
   if (loading) {
     return (
@@ -146,4 +102,4 @@ export default function LastReloadTracker({
       </div>
     </div>
   );
-} 
+}

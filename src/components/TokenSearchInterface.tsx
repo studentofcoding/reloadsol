@@ -1,5 +1,6 @@
 'use client'
 
+import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useCallback } from 'react'
 
 interface TokenStats {
@@ -604,7 +605,7 @@ const TokenSearchInterface: React.FC = () => {
     } finally {
       setIsLoading(false)
     }
-  }, [searchAddress])
+  }, [searchAddress, fetchTokenPrice])
 
   // Format large numbers
   const formatNumber = (num: number): string => {
@@ -721,7 +722,7 @@ const TokenSearchInterface: React.FC = () => {
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-3">
                       {token.logoURI ? (
-                        <img src={token.logoURI} alt={token.symbol} className="w-8 h-8 rounded-full" />
+                        <OptimizedImage src={token.logoURI} alt={token.symbol} className="w-8 h-8 rounded-full" />
                       ) : (
                         <div className="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center">
                           <span className="text-xs text-gray-300">🪙</span>
@@ -845,7 +846,7 @@ const TokenSearchInterface: React.FC = () => {
               <div className="flex items-start justify-between mb-6">
                 <div className="flex items-center gap-4">
                   {searchResult.basic.logoURI ? (
-                    <img src={searchResult.basic.logoURI} alt={searchResult.basic.symbol} className="w-16 h-16 rounded-full" />
+                    <OptimizedImage src={searchResult.basic.logoURI} alt={searchResult.basic.symbol} className="w-16 h-16 rounded-full" />
                   ) : (
                     <div className="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center">
                       <span className="text-2xl">🪙</span>

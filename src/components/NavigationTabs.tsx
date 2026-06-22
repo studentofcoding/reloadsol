@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import WalletBalance from "@/components/WalletBalance";
 import { useDevWalletAccess } from "@/components/WalletProvider";
+import { useIsClient } from "@/hooks/useIsClient";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 export default function NavigationTabs({
   activeOverlayTab,
@@ -15,16 +17,8 @@ export default function NavigationTabs({
 }) {
   const pathname = usePathname();
   const isDevUser = useDevWalletAccess();
-  const [mounted, setMounted] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    setMounted(true);
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
+  const mounted = useIsClient();
+  const isMobile = useIsMobile();
 
   const isActive = (path: string) => {
     // Check if it's an overlay tab (no leading slash)

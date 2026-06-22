@@ -1,3 +1,4 @@
+import { OptimizedImage } from "@/components/OptimizedImage";
 import React from 'react'
 import { UserToken } from '@/utils/jupiter'
 
@@ -63,9 +64,9 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
             {isLoading ? (
               <div className="w-3 h-3 sm:w-6 sm:h-6 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
             ) : hasLogo ? (
-              <img 
-                src={token.logoURI} 
-                alt={token.name} 
+              <OptimizedImage 
+                src={token.logoURI ?? ""} 
+                alt={token.name ?? token.symbol ?? "Token"} 
                 className="w-4 h-4 sm:w-8 sm:h-8 rounded-full"
                 onError={(e) => {
                   // Fallback to letter if image fails to load

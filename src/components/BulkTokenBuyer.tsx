@@ -1,8 +1,14 @@
 "use client";
 
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import { OptimizedImage } from "@/components/OptimizedImage";
+import React, { useState, useCallback, useEffect, useRef, useMemo, useDeferredValue } from "react";
 import { useSearchParams } from "next/navigation";
 import { useWallet, useConnection } from "../components/WalletProvider";
+import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
+import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useWalletBalances } from "@/hooks/useWalletBalances";
+import { useTrendingSearch } from "@/hooks/useTrendingSearch";
+import { useQuery } from "@tanstack/react-query";
 import PhantomWalletButton from "./PhantomWalletButton";
 import TrendingTokens from "./TrendingTokens";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
@@ -14,7 +20,6 @@ import {
   parseMintAddresses,
   isValidMintAddress,
   getAllFeeRates,
-  fetchUserTokensEfficient,
   setMetadataUpdateCallback,
   clearMetadataUpdateCallback,
   UserToken,
@@ -39,16 +44,34 @@ import {
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 
 export default function BulkTokenBuyer() {
-  const { publicKey, signAllTransactions, connected } = useWallet();
+  const { signAllTransactions, connected } = useWallet();
+  const { publicKey, walletAddress, isWalletReady } =
+    useResolvedWalletPublicKey();
   const { connection } = useConnection();
   const { trackOperation } = useTradingData();
   const triggerPostBuyRefresh = usePostBuyRefresh();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const searchParams = useSearchParams();
 
+  const getInitialSolAmount = () => {
+    const sol = searchParams.get("sol");
+    if (sol && !Number.isNaN(+sol) && +sol > 0) return sol;
+    return "0.1";
+  };
+
+  const getInitialTokenMints = () => {
+    const mints = searchParams.get("mints");
+    if (!mints) return "";
+    return mints
+      .split(",")
+      .slice(0, 10)
+      .filter(Boolean)
+      .join("\n");
+  };
+
   // Form state
-  const [solAmount, setSolAmount] = useState<string>("0.1");
-  const [tokenMints, setTokenMints] = useState<string>("");
+  const [solAmount, setSolAmount] = useState<string>(getInitialSolAmount);
+  const [tokenMints, setTokenMints] = useState<string>(getInitialTokenMints);
   const [slippage, setSlippage] = useState<number>(200); // 1%
   const [priorityFee, setPriorityFee] = useState<number>(30000); // 0.0003 SOL
   const [selectedCurrency, setSelectedCurrency] = useState<"SOL" | "USDC">(
@@ -56,7 +79,7 @@ export default function BulkTokenBuyer() {
   );
 
   // URL parameter initialization state
-  const [initialized, setInitialized] = useState<boolean>(false);
+  const [initialized] = useState<boolean>(true);
 
   // Token metadata state
   type TokenInfo = {
@@ -70,7 +93,6 @@ export default function BulkTokenBuyer() {
 
   // UI state
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isLoadingMetadata, setIsLoadingMetadata] = useState<boolean>(false);
   const [pointsEarned, setPointsEarned] = useState<number | null>(null);
   const [error, setError] = useState<string>("");
   const [selectedToken, setSelectedToken] = useState<string>("");
@@ -84,20 +106,49 @@ export default function BulkTokenBuyer() {
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0);
   const [balanceAfter, setBalanceAfter] = useState<number>(0);
-  const [walletBalance, setWalletBalance] = useState<number | null>(null);
-  const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
 
-  // User's current token holdings for search
-  const [userTokens, setUserTokens] = useState<UserToken[]>([]);
-  const [isLoadingUserTokens, setIsLoadingUserTokens] =
-    useState<boolean>(false);
+  const {
+    walletBalance,
+    usdcBalance,
+    refreshBalances,
+  } = useWalletBalances({
+    connection,
+    publicKey,
+    walletAddress,
+    enabled: isWalletReady,
+  });
+
+  const {
+    allTokens: rawUserTokens,
+    isFetching: isLoadingUserTokens,
+    refetchTokens,
+    patchTokens,
+  } = useWalletTokens({
+    connection,
+    publicKey,
+    walletAddress,
+    activeRpcUrl: connection.rpcEndpoint,
+    enabled: isWalletReady,
+  });
+
+  const userTokens = useMemo(
+    () =>
+      rawUserTokens.filter(
+        (token) => token.uiAmount > 0.000001 && !token.isNFT,
+      ),
+    [rawUserTokens],
+  );
 
   // Token search state
   const [searchTerm, setSearchTerm] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const deferredSearchTerm = useDeferredValue(searchTerm);
+  const searchQuery = useTrendingSearch(deferredSearchTerm);
+  const searchResults = useMemo(
+    () => (searchTerm ? (searchQuery.data ?? []) : []),
+    [searchTerm, searchQuery.data],
+  );
+  const isSearching = searchTerm !== deferredSearchTerm || searchQuery.isFetching;
   const [showResults, setShowResults] = useState(false);
-  const searchTimeout = useRef<NodeJS.Timeout | null>(null);
   const searchBoxRef = useRef<HTMLDivElement>(null);
 
   // Risk analysis state
@@ -119,56 +170,24 @@ export default function BulkTokenBuyer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialized, validMints]);
 
-  // Initialize from URL parameters (run once)
-  useEffect(() => {
-    if (initialized) return;
-
-    const sol = searchParams.get("sol");
-    const mints = searchParams.get("mints");
-
-    if (sol && !Number.isNaN(+sol) && +sol > 0) {
-      setSolAmount(sol);
-    }
-
-    if (mints) {
-      const tokenStr = mints
-        .split(",")
-        .slice(0, 10) // enforce limit
-        .filter(Boolean) // remove empty strings
-        .join("\n");
-      setTokenMints(tokenStr);
-    }
-
-    setInitialized(true);
-  }, [initialized, searchParams]);
-
-  // When tokenMints changes, update tokenList
-  useEffect(() => {
-    const fetchTokenMetadata = async (addresses: string[]) => {
-      // Filter for addresses we don't have metadata for yet
-      const existingAddresses = new Set(
-        tokenList.map((token) => token.address),
-      );
-      const addressesToFetch = addresses.filter(
+  const metadataQuery = useQuery({
+    queryKey: ["buy-token-metadata", validMints.join(",")],
+    queryFn: async () => {
+      const existingAddresses = new Set(tokenList.map((token) => token.address));
+      const addressesToFetch = validMints.filter(
         (addr) => !existingAddresses.has(addr) && isValidMintAddress(addr),
       );
+      if (addressesToFetch.length === 0) return [] as TokenInfo[];
 
-      if (addressesToFetch.length === 0) return;
-
-      setIsLoadingMetadata(true);
-
-      // Create promises for each address
       const fetchPromises = addressesToFetch.map(
         async (address): Promise<TokenInfo | null> => {
           try {
             const res = await fetch(`/api/trending/search?query=${address}`);
             if (!res.ok) return null;
-
             const data = await res.json();
             const tokenInfo = Array.isArray(data)
               ? data.find((t) => t.id === address)
               : null;
-
             if (tokenInfo) {
               return {
                 address,
@@ -177,15 +196,14 @@ export default function BulkTokenBuyer() {
                 icon: tokenInfo.icon || undefined,
                 mcap: tokenInfo.mcap || 0,
               };
-            } else {
-              return {
-                address,
-                name: "Unknown Token",
-                symbol: address.substring(0, 4) + "...",
-                icon: undefined,
-                mcap: 0,
-              };
             }
+            return {
+              address,
+              name: "Unknown Token",
+              symbol: address.substring(0, 4) + "...",
+              icon: undefined,
+              mcap: 0,
+            };
           } catch {
             return {
               address,
@@ -198,27 +216,25 @@ export default function BulkTokenBuyer() {
         },
       );
 
-      // Execute all fetches in parallel
       const results = await Promise.all(fetchPromises);
-      const validResults = results.filter(
-        (result): result is TokenInfo => result !== null,
-      );
+      return results.filter((result): result is TokenInfo => result !== null);
+    },
+    enabled: validMints.length > 0,
+    staleTime: 60_000,
+  });
 
-      if (validResults.length > 0) {
-        setTokenList((currentList) => [...currentList, ...validResults]);
+  const mergedTokenList = useMemo(() => {
+    const map = new Map(tokenList.map((t) => [t.address, t]));
+    for (const t of metadataQuery.data ?? []) {
+      if (!map.has(t.address)) {
+        map.set(t.address, t);
       }
-
-      setIsLoadingMetadata(false);
-    };
-
-    // Only update if there are valid mints that might not be in the list
-    if (validMints.length > 0) {
-      fetchTokenMetadata(validMints);
-    } else {
-      setIsLoadingMetadata(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tokenMints]);
+    return Array.from(map.values());
+  }, [tokenList, metadataQuery.data]);
+
+  const isLoadingMetadata =
+    metadataQuery.isFetching && validMints.length > 0;
 
   // Handle adding a token to the list
   const handleAddToken = useCallback(
@@ -341,44 +357,8 @@ export default function BulkTokenBuyer() {
     };
   }, [handleAddToken]);
 
-  // Debounced search
-  useEffect(() => {
-    if (!searchTerm) {
-      setSearchResults([]);
-      setShowResults(false); // Don't auto-show when search is empty
-      return;
-    }
-    setIsSearching(true);
-    if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    searchTimeout.current = setTimeout(async () => {
-      try {
-        const res = await fetch(
-          `/api/trending/search?query=${encodeURIComponent(searchTerm)}`,
-        );
-        if (res.ok) {
-          const data = await res.json();
-          setSearchResults(Array.isArray(data) ? data : []);
-          setShowResults(true);
-        } else {
-          setSearchResults([]);
-          setShowResults(false); // Don't show if search fails
-        }
-      } catch {
-        setSearchResults([]);
-        setShowResults(false); // Don't show if search fails
-      } finally {
-        setIsSearching(false);
-      }
-    }, 350);
-    // eslint-disable-next-line
-  }, [searchTerm, userTokens.length]);
-
-  // Clear outstanding timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    };
-  }, []);
+  const effectiveShowResults =
+    showResults || (searchTerm.length > 0 && searchResults.length > 0 && !isSearching);
 
   // Hide results on outside click
   useEffect(() => {
@@ -412,68 +392,11 @@ export default function BulkTokenBuyer() {
     setSelectedCurrency((prev) => (prev === "SOL" ? "USDC" : "SOL"));
   };
 
-  const refreshBalances = useCallback(async () => {
-    if (connected && publicKey && connection) {
-      const lamports = await connection.getBalance(publicKey);
-      setWalletBalance(lamports / LAMPORTS_PER_SOL);
+  const refreshBalancesRef = useRef(refreshBalances);
+  refreshBalancesRef.current = refreshBalances;
 
-      try {
-        const usdcMint = new PublicKey(TOKENS.USDC);
-        const { getAssociatedTokenAddress, getAccount } =
-          await import("@solana/spl-token");
-        const usdcTokenAccount = await getAssociatedTokenAddress(
-          usdcMint,
-          publicKey,
-        );
-
-        try {
-          const accountInfo = await getAccount(connection, usdcTokenAccount);
-          setUsdcBalance(Number(accountInfo.amount) / 1e6);
-        } catch {
-          setUsdcBalance(0);
-        }
-      } catch (error) {
-        console.error("Error fetching USDC balance:", error);
-        setUsdcBalance(0);
-      }
-    } else {
-      setWalletBalance(null);
-      setUsdcBalance(null);
-    }
-  }, [connected, publicKey, connection]);
-
-  const loadUserTokens = useCallback(
-    async (forceRefresh = false) => {
-      if (!connected || !publicKey) {
-        setUserTokens([]);
-        return;
-      }
-
-      setIsLoadingUserTokens(true);
-      try {
-        const tokens = await fetchUserTokensEfficient(
-          connection,
-          publicKey,
-          false,
-          false,
-          (progress) => {
-            console.log(`Token fetching progress: ${progress}%`);
-          },
-          forceRefresh,
-        );
-        const significantTokens = tokens.filter(
-          (token: UserToken) => token.uiAmount > 0.000001 && !token.isNFT,
-        );
-        setUserTokens(significantTokens);
-      } catch (error) {
-        console.error("Error fetching user tokens:", error);
-        setUserTokens([]);
-      } finally {
-        setIsLoadingUserTokens(false);
-      }
-    },
-    [connected, publicKey, connection],
-  );
+  const refetchTokensRef = useRef(refetchTokens);
+  refetchTokensRef.current = refetchTokens;
 
   // Handle form submission
   const handleBulkBuy = useCallback(async () => {
@@ -718,8 +641,9 @@ export default function BulkTokenBuyer() {
         setSolAmount("");
         setTokenMints("");
         triggerPostBuyRefresh({
-          refreshWalletTokens: (forceRefresh) => loadUserTokens(forceRefresh),
-          refreshBalances: refreshBalances,
+          refreshWalletTokens: (forceRefresh) =>
+            refetchTokensRef.current(forceRefresh),
+          refreshBalances: () => refreshBalancesRef.current(),
         });
       }
     } catch (err) {
@@ -749,39 +673,40 @@ export default function BulkTokenBuyer() {
     selectedCurrency,
     trackOperation,
     triggerPostBuyRefresh,
-    refreshBalances,
-    loadUserTokens,
+    usdcBalance,
   ]);
 
-  useEffect(() => {
-    void refreshBalances();
-  }, [refreshBalances]);
-
   // Handle metadata updates from background enrichment
-  const handleMetadataUpdate = useCallback((updatedTokens: UserToken[]) => {
-    console.log(
-      `Updating UI with enriched metadata for ${updatedTokens.length} tokens`,
-    );
+  const handleMetadataUpdate = useCallback(
+    (updatedTokens: UserToken[]) => {
+      console.log(
+        `Updating UI with enriched metadata for ${updatedTokens.length} tokens`,
+      );
 
-    // Update userTokens state
-    setUserTokens((prev) =>
-      prev.map((token) => {
-        const updated = updatedTokens.find(
-          (u) => u.mintAddress === token.mintAddress,
-        );
-        return updated || token;
-      }),
-    );
-  }, []);
-
-  // Fetch user tokens when wallet connects
-  useEffect(() => {
-    if (connected && publicKey) {
-      loadUserTokens();
-    } else {
-      setUserTokens([]);
-    }
-  }, [connected, publicKey, loadUserTokens]);
+      patchTokens((prev) => ({
+        ...prev,
+        allTokens: prev.allTokens.map((token) => {
+          const updated = updatedTokens.find(
+            (u) => u.mintAddress === token.mintAddress,
+          );
+          return updated || token;
+        }),
+        sellable: prev.sellable.map((token) => {
+          const updated = updatedTokens.find(
+            (u) => u.mintAddress === token.mintAddress,
+          );
+          return updated || token;
+        }),
+        closeOnly: prev.closeOnly.map((token) => {
+          const updated = updatedTokens.find(
+            (u) => u.mintAddress === token.mintAddress,
+          );
+          return updated || token;
+        }),
+      }));
+    },
+    [patchTokens],
+  );
 
   // Set up metadata update callback
   useEffect(() => {
@@ -1001,7 +926,7 @@ export default function BulkTokenBuyer() {
                                   "Token"}
                               </label>
                               {selectedTokenData.logoURI && (
-                                <img
+                                <OptimizedImage
                                   src={selectedTokenData.logoURI}
                                   alt={
                                     selectedTokenData.symbol ||
@@ -1040,7 +965,7 @@ export default function BulkTokenBuyer() {
                                   "Token"}
                               </label>
                               {selectedTokenInfo?.icon && (
-                                <img
+                                <OptimizedImage
                                   src={selectedTokenInfo.icon}
                                   alt={
                                     selectedTokenInfo.symbol ||
@@ -1243,7 +1168,7 @@ export default function BulkTokenBuyer() {
                       </svg>
                     </div>
                   </div>
-                  {showResults &&
+                  {effectiveShowResults &&
                     (searchResults.length > 0 || userTokens.length > 0) && (
                       <div className="absolute z-20 mt-2 w-full bg-gray-900/50 border border-gray-700 rounded-xl shadow-lg max-h-72 overflow-y-auto">
                         {/* Your Tokens Section */}
@@ -1287,9 +1212,9 @@ export default function BulkTokenBuyer() {
                                   )}
                                 >
                                   {token.logoURI && (
-                                    <img
+                                    <OptimizedImage
                                       src={token.logoURI}
-                                      alt={token.symbol}
+                                      alt={token.symbol ?? "Token"}
                                       className="w-6 h-6 mr-3 rounded-full"
                                     />
                                   )}
@@ -1332,9 +1257,9 @@ export default function BulkTokenBuyer() {
                                 onClick={() => handleAddFromSearch(token.id)}
                               >
                                 {token.icon && (
-                                  <img
+                                  <OptimizedImage
                                     src={token.icon}
-                                    alt={token.symbol}
+                                    alt={token.symbol ?? "Token"}
                                     className="w-6 h-6 mr-3 rounded-full"
                                   />
                                 )}
@@ -1355,7 +1280,7 @@ export default function BulkTokenBuyer() {
                         )}
                       </div>
                     )}
-                  {showResults &&
+                  {effectiveShowResults &&
                     !isSearching &&
                     searchResults.length === 0 &&
                     userTokens.length === 0 && (
@@ -1379,9 +1304,9 @@ export default function BulkTokenBuyer() {
                           className="flex items-center bg-gray-700 rounded-lg pl-2 pr-1 py-1 text-white"
                         >
                           {token.icon && (
-                            <img
+                            <OptimizedImage
                               src={token.icon}
-                              alt={token.symbol}
+                              alt={token.symbol ?? "Token"}
                               className="w-5 h-5 mr-1 rounded-full"
                             />
                           )}
@@ -1454,7 +1379,7 @@ export default function BulkTokenBuyer() {
                               <div className="flex items-center justify-between mb-2">
                                 <div className="flex items-center space-x-2">
                                   {tokenInfo?.icon && (
-                                    <img
+                                    <OptimizedImage
                                       src={tokenInfo.icon}
                                       alt={tokenInfo.symbol}
                                       className="w-5 h-5 rounded-full"

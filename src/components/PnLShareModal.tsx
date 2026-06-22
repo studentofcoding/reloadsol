@@ -1,5 +1,6 @@
 'use client'
 
+import { OptimizedImage } from "@/components/OptimizedImage";
 import React from 'react'
 import { ShareData, pnlShareService } from '@/utils/pnl-share-service'
 
@@ -58,7 +59,7 @@ export default function PnLShareModal({ isOpen, onClose, shareData, onCopySucces
           {/* Generated Image Preview */}
           {shareData.imageDataUrl && (
             <div className="mb-4">
-              <img 
+              <OptimizedImage 
                 src={shareData.imageDataUrl} 
                 alt="Trade result" 
                 className="w-full rounded-lg border border-gray-600"

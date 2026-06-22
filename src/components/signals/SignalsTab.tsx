@@ -1,6 +1,8 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { useWallet, useConnection } from "@/components/WalletProvider";
+import { useIsClient } from "@/hooks/useIsClient";
+import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import Draggable, { DraggableProps } from "react-draggable";
 
@@ -44,11 +46,44 @@ const percentFmt = (p?: number) => {
 
 const dateFmt = (iso?: string | null) => formatAppDateTime(iso);
 
+function loadChartsFromStorage(): FloatingChart[] {
+  try {
+    const saved = localStorage.getItem("tradingSignals_floatingCharts");
+    if (!saved) return [];
+
+    const parsedCharts = JSON.parse(saved);
+    return parsedCharts.map((chart: FloatingChart) => ({
+      ...chart,
+      isLoading: true,
+    }));
+  } catch (error) {
+    console.warn("Failed to load charts from localStorage:", error);
+    return [];
+  }
+}
+
+function getInitialChartsState(): {
+  charts: FloatingChart[];
+  nextZIndex: number;
+} {
+  if (typeof window === "undefined") {
+    return { charts: [], nextZIndex: 200 };
+  }
+  const savedCharts = loadChartsFromStorage();
+  if (savedCharts.length === 0) {
+    return { charts: [], nextZIndex: 200 };
+  }
+  const maxZIndex = Math.max(...savedCharts.map((chart) => chart.zIndex), 199);
+  return { charts: savedCharts, nextZIndex: maxZIndex + 1 };
+}
+
 export default function SignalsTab() {
   const queryClient = useQueryClient();
   const { connected, publicKey, signTransaction } = useWallet();
   const { connection } = useConnection();
-  const [isClient, setIsClient] = useState(false);
+  const isClient = useIsClient();
+  const walletAddress = connected && publicKey ? publicKey.toString() : null;
+  const initialCharts = getInitialChartsState();
   const [limit, setLimit] = useState(50);
   const [recencyMinutes, setRecencyMinutes] = useState(240);
   const [minGrowth, setMinGrowth] = useState(0);
@@ -77,20 +112,36 @@ export default function SignalsTab() {
   const stats = apiResponse?.stats || {};
 
   // Multiple floating charts state
-  const [floatingCharts, setFloatingCharts] = useState<FloatingChart[]>([]);
-  const [nextZIndex, setNextZIndex] = useState(200);
+  const [floatingCharts, setFloatingCharts] = useState<FloatingChart[]>(
+    initialCharts.charts,
+  );
+  const [nextZIndex, setNextZIndex] = useState(initialCharts.nextZIndex);
 
   // Buy configuration state
   const [buyConfig, setBuyConfig] = useState({
     solAmount: 0,
     fees: 0.001,
   });
-  const [walletBalanceSol, setWalletBalanceSol] = useState<number>(0);
   const [hasAutoSetSolAmount, setHasAutoSetSolAmount] =
     useState<boolean>(false);
   const [chartModalTokenAddress, setChartModalTokenAddress] = useState<
     string | null
   >(null);
+
+  const { walletBalance: walletBalanceSol } = useWalletBalances({
+    connection,
+    publicKey,
+    walletAddress,
+    enabled: connected && !!publicKey,
+  });
+
+  if (connected && walletBalanceSol && walletBalanceSol > 0 && !hasAutoSetSolAmount) {
+    const threePercent = Number((walletBalanceSol * 0.03).toFixed(4));
+    setBuyConfig((prev) =>
+      prev.solAmount === threePercent ? prev : { ...prev, solAmount: threePercent },
+    );
+    setHasAutoSetSolAmount(true);
+  }
 
   // localStorage helpers for chart persistence
   const saveChartsToStorage = (charts: FloatingChart[]) => {
@@ -115,42 +166,6 @@ export default function SignalsTab() {
     }
   };
 
-  const loadChartsFromStorage = (): FloatingChart[] => {
-    try {
-      const saved = localStorage.getItem("tradingSignals_floatingCharts");
-      if (!saved) return [];
-
-      const parsedCharts = JSON.parse(saved);
-      return parsedCharts.map((chart: any) => ({
-        ...chart,
-        isLoading: true, // Reset loading state on restore
-      }));
-    } catch (error) {
-      console.warn("Failed to load charts from localStorage:", error);
-      return [];
-    }
-  };
-
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
-
-  // Restore charts from localStorage on mount
-  useEffect(() => {
-    if (isClient) {
-      const savedCharts = loadChartsFromStorage();
-      if (savedCharts.length > 0) {
-        setFloatingCharts(savedCharts);
-        // Update nextZIndex to be higher than any restored chart
-        const maxZIndex = Math.max(
-          ...savedCharts.map((chart) => chart.zIndex),
-          199,
-        );
-        setNextZIndex(maxZIndex + 1);
-      }
-    }
-  }, [isClient]);
-
   // Persist charts to localStorage whenever floatingCharts changes
   useEffect(() => {
     if (isClient && floatingCharts.length >= 0) {
@@ -158,29 +173,7 @@ export default function SignalsTab() {
     }
   }, [floatingCharts, isClient]);
 
-  // Track wallet SOL balance for template buy amounts
-  useEffect(() => {
-    const fetchBalance = async () => {
-      try {
-        if (connected && publicKey && connection) {
-          const lamports = await connection.getBalance(publicKey);
-          setWalletBalanceSol(lamports / LAMPORTS_PER_SOL);
-        }
-      } catch (err) {
-        console.warn("Failed to fetch wallet balance:", err);
-      }
-    };
-    fetchBalance();
-  }, [connected, publicKey, connection]);
-
-  // Default Buy Amount: set to 3% of SOL balance once after fetching
-  useEffect(() => {
-    if (connected && walletBalanceSol > 0 && !hasAutoSetSolAmount) {
-      const threePercent = Number((walletBalanceSol * 0.03).toFixed(4));
-      setBuyConfig((prev) => ({ ...prev, solAmount: threePercent }));
-      setHasAutoSetSolAmount(true);
-    }
-  }, [connected, walletBalanceSol, hasAutoSetSolAmount]);
+  // Default Buy Amount handled during render via walletBalanceSol
 
   // Fetch signals handled by React Query hook
 
@@ -454,7 +447,7 @@ export default function SignalsTab() {
                   onClick={() =>
                     setBuyConfig((prev) => ({
                       ...prev,
-                      solAmount: Number((walletBalanceSol * 0.05).toFixed(4)),
+                      solAmount: Number(((walletBalanceSol ?? 0) * 0.05).toFixed(4)),
                     }))
                   }
                   className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
@@ -466,7 +459,7 @@ export default function SignalsTab() {
                   onClick={() =>
                     setBuyConfig((prev) => ({
                       ...prev,
-                      solAmount: Number((walletBalanceSol * 0.25).toFixed(4)),
+                      solAmount: Number(((walletBalanceSol ?? 0) * 0.25).toFixed(4)),
                     }))
                   }
                   className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
@@ -478,7 +471,7 @@ export default function SignalsTab() {
                   onClick={() =>
                     setBuyConfig((prev) => ({
                       ...prev,
-                      solAmount: Number((walletBalanceSol * 0.9).toFixed(4)),
+                      solAmount: Number(((walletBalanceSol ?? 0) * 0.9).toFixed(4)),
                     }))
                   }
                   className="px-2 py-1 rounded border border-gray-600 text-gray-200 hover:bg-gray-700"
@@ -488,7 +481,7 @@ export default function SignalsTab() {
               </div>
               {connected && (
                 <div className="mt-1 text-xs text-gray-400">
-                  Wallet: {walletBalanceSol.toFixed(4)} SOL
+                  Wallet: {(walletBalanceSol ?? 0).toFixed(4)} SOL
                 </div>
               )}
             </div>

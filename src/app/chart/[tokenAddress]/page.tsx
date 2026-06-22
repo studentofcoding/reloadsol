@@ -1,8 +1,14 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { OptimizedImage } from "@/components/OptimizedImage";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
+import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useWalletBalances } from "@/hooks/useWalletBalances";
+import { useChartTokenInfo } from "@/hooks/useChartTokenInfo";
+import { useAxiomRisk } from "@/hooks/useAxiomRisk";
+import { useOhlcData } from "@/hooks/useOhlcData";
 import PhantomWalletButton from "@/components/PhantomWalletButton";
 import RiskAnalysis from "@/components/RiskAnalysis";
 import TransactionResultModal from "@/components/TransactionResultModal";
@@ -10,7 +16,6 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
   executeBulkBuy,
   isValidMintAddress,
-  fetchUserTokensEfficient,
   UserToken,
 } from "@/utils/jupiter";
 import {
@@ -53,23 +58,130 @@ export default function ChartPage() {
   const { trackOperation } = useTradingData();
 
   const tokenAddress = params.tokenAddress as string;
+  const validTokenAddress =
+    tokenAddress && isValidMintAddress(tokenAddress) ? tokenAddress : null;
+  const walletAddress = connected && publicKey ? publicKey.toString() : null;
 
-  // Refs for tracking
   const lastUpdateRef = useRef<number>(Date.now());
-  const refreshIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const sseConnectionRef = useRef<EventSource | null>(null);
 
-  // Token and risk data state
-  const [isLoading, setIsLoading] = useState(true);
-  const [tokenInfo, setTokenInfo] = useState<TokenInfo | null>(null);
-  const [riskInfo, setRiskInfo] = useState<RiskInfo | null>(null);
+  const {
+    data: chartTokenInfo,
+    isLoading,
+    error: tokenQueryError,
+  } = useChartTokenInfo(validTokenAddress);
 
-  // Position tracking state
-  const [userTokens, setUserTokens] = useState<UserToken[]>([]);
-  const [isLoadingPositions, setIsLoadingPositions] = useState(false);
-  const [currentPosition, setCurrentPosition] = useState<UserToken | null>(
-    null,
+  const tokenInfo: TokenInfo | null = useMemo(
+    () =>
+      chartTokenInfo
+        ? {
+            symbol: chartTokenInfo.symbol,
+            name: chartTokenInfo.name,
+            price: chartTokenInfo.price,
+            address: chartTokenInfo.address,
+            logoURI: chartTokenInfo.logoURI,
+            decimals: chartTokenInfo.decimals,
+            marketCap: chartTokenInfo.marketCap,
+          }
+        : null,
+    [chartTokenInfo],
   );
+
+  const fetchError = !validTokenAddress
+    ? "Invalid token address"
+    : tokenQueryError instanceof Error
+      ? tokenQueryError.message
+      : "";
+
+  const { allTokens, refetchTokens } = useWalletTokens({
+    connection,
+    publicKey,
+    walletAddress,
+    activeRpcUrl: connection.rpcEndpoint,
+    enabled: connected && !!publicKey && !!validTokenAddress,
+    includeZeroBalance: false,
+    refetchInterval: connected && publicKey ? 30_000 : false,
+  });
+
+  const userTokens = useMemo(
+    () =>
+      allTokens.filter(
+        (token) => token.uiAmount > 0.001 && !token.frozen && !token.isNFT,
+      ),
+    [allTokens],
+  );
+
+  const currentPosition = useMemo(() => {
+    if (!validTokenAddress) return null;
+    return (
+      userTokens.find((token) => token.mintAddress === validTokenAddress) ??
+      null
+    );
+  }, [userTokens, validTokenAddress]);
+
+  const isLoadingPositions = false;
+
+  const { walletBalance, refreshBalances } = useWalletBalances({
+    connection,
+    publicKey,
+    walletAddress,
+    enabled: connected && !!publicKey,
+  });
+
+  const axiomQuery = useAxiomRisk(
+    validTokenAddress ?? "",
+    tokenInfo?.marketCap ?? 0,
+    !!validTokenAddress && (tokenInfo?.marketCap ?? 0) > 0,
+  );
+
+  const riskInfo = useMemo((): RiskInfo | null => {
+    if (!axiomQuery.data) return null;
+    const axiomData = axiomQuery.data.axiomData;
+    let organicScore = 100;
+    if (axiomData.insidersHoldPercent > 15) organicScore -= 25;
+    else if (axiomData.insidersHoldPercent > 8) organicScore -= 15;
+    if (axiomData.bundlersHoldPercent > 10) organicScore -= 20;
+    else if (axiomData.bundlersHoldPercent > 5) organicScore -= 10;
+    if (axiomData.snipersHoldPercent > 8) organicScore -= 15;
+    else if (axiomData.snipersHoldPercent > 4) organicScore -= 8;
+    if (axiomData.top10HoldersPercent > 60) organicScore -= 20;
+    else if (axiomData.top10HoldersPercent > 40) organicScore -= 10;
+    const overallRisk =
+      organicScore >= 70 ? "LOW" : organicScore >= 40 ? "MEDIUM" : "HIGH";
+    return {
+      overallRisk,
+      organicScore: Math.max(0, organicScore),
+      insidersHoldPercent: axiomData.insidersHoldPercent,
+      bundlersHoldPercent: axiomData.bundlersHoldPercent,
+      snipersHoldPercent: axiomData.snipersHoldPercent,
+      top10HoldersPercent: axiomData.top10HoldersPercent,
+    };
+  }, [axiomQuery.data]);
+
+  const ohlcQuery = useOhlcData(validTokenAddress);
+  interface OHLCBar {
+    token_address: string;
+    interval: "1m" | "5m" | "15m" | "1h";
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    timestamp: string;
+  }
+  const ohlcBars: OHLCBar[] = useMemo(() => {
+    if (!ohlcQuery.data) return [];
+    return ohlcQuery.data.map((b) => ({
+      token_address: validTokenAddress ?? "",
+      interval: "5m" as const,
+      open: b.open,
+      high: b.high,
+      low: b.low,
+      close: b.close,
+      timestamp: String(b.time),
+    }));
+  }, [ohlcQuery.data, validTokenAddress]);
+  const isOhlcLoading = ohlcQuery.isLoading;
+  const ohlcError =
+    ohlcQuery.error instanceof Error ? ohlcQuery.error.message : "";
 
   // Buy form state
   const [buyAmount, setBuyAmount] = useState("0.1");
@@ -84,76 +196,17 @@ export default function ChartPage() {
     undefined,
   );
   const [error, setError] = useState<string>("");
+  const displayError = error || fetchError;
   const [showResultModal, setShowResultModal] = useState<boolean>(false);
 
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0);
   const [balanceAfter, setBalanceAfter] = useState<number>(0);
-  const [walletBalance, setWalletBalance] = useState<number | null>(null);
 
-  // OHLC chart state
-  interface OHLCBar {
-    token_address: string;
-    interval: "1m" | "5m" | "15m" | "1h";
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    timestamp: string;
-  }
   const [chartMode, setChartMode] = useState("gmgn");
-  const [ohlcBars, setOhlcBars] = useState<OHLCBar[]>([]);
-  const [isOhlcLoading, setIsOhlcLoading] = useState(false);
-  const [ohlcError, setOhlcError] = useState("");
 
   // Create the GMGN chart URL with correct format
   const gmgnChartUrl = `https://www.gmgn.cc/kline/sol/${tokenAddress}?interval=5m`;
-
-  // Load user tokens function
-  const loadUserTokens = useCallback(
-    async (showLoading = true) => {
-      if (!connected || !publicKey) {
-        setUserTokens([]);
-        setCurrentPosition(null);
-        return;
-      }
-
-      if (showLoading) setIsLoadingPositions(true);
-      try {
-        const tokens = await fetchUserTokensEfficient(
-          connection,
-          publicKey,
-          false, // includeZeroBalance
-          false, // includeNFTs
-          (progress) => {
-            // Optional progress callback
-            console.log(`Token fetching progress: ${progress}%`);
-          },
-        );
-
-        // Filter for significant balances
-        const significantTokens = tokens.filter(
-          (token) => token.uiAmount > 0.001 && !token.frozen && !token.isNFT,
-        );
-
-        setUserTokens(significantTokens);
-
-        // Find current token position
-        const position = significantTokens.find(
-          (token) => token.mintAddress === tokenAddress,
-        );
-        setCurrentPosition(position || null);
-
-        // Update last refresh time
-        lastUpdateRef.current = Date.now();
-      } catch (error) {
-        console.error("Error loading user tokens:", error);
-      } finally {
-        if (showLoading) setIsLoadingPositions(false);
-      }
-    },
-    [connected, publicKey, connection, tokenAddress],
-  );
 
   // Setup SSE connection for real-time updates
   useEffect(() => {
@@ -163,13 +216,11 @@ export default function ChartPage() {
 
     console.log("📡 Setting up SSE connection in ChartPage");
 
-    // Subscribe to wallet updates using the singleton instance
     const unsubscribe = tradingTracker.subscribeToWallet(
       publicKey.toString(),
-      (records) => {
+      () => {
         console.log("📡 Received SSE update for wallet positions");
-        // Refresh positions when we get trading updates
-        loadUserTokens(false);
+        void refetchTokens(false);
       },
     );
 
@@ -177,208 +228,7 @@ export default function ChartPage() {
       console.log("🧹 Cleaning up SSE connection in ChartPage");
       unsubscribe();
     };
-  }, [connected, publicKey, loadUserTokens]);
-
-  // Setup periodic refresh every 30 seconds
-  useEffect(() => {
-    if (!connected || !publicKey) {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-        refreshIntervalRef.current = null;
-      }
-      return;
-    }
-
-    // Initial load
-    loadUserTokens();
-
-    // Setup 30-second refresh interval
-    refreshIntervalRef.current = setInterval(() => {
-      console.log("🔄 Auto-refreshing positions (30s interval)");
-      loadUserTokens(false); // Silent refresh
-    }, 30000);
-
-    return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-        refreshIntervalRef.current = null;
-      }
-    };
-  }, [connected, publicKey, loadUserTokens]);
-
-  // Fetch wallet balance
-  useEffect(() => {
-    async function fetchBalance() {
-      if (connected && publicKey && connection) {
-        try {
-          const lamports = await connection.getBalance(publicKey);
-          setWalletBalance(lamports / LAMPORTS_PER_SOL);
-        } catch (error) {
-          console.error("Error fetching balance:", error);
-          setWalletBalance(null);
-        }
-      } else {
-        setWalletBalance(null);
-      }
-    }
-    fetchBalance();
-  }, [connected, publicKey, connection]);
-
-  useEffect(() => {
-    if (!tokenAddress || !isValidMintAddress(tokenAddress)) {
-      setError("Invalid token address");
-      setIsLoading(false);
-      return;
-    }
-
-    const fetchTokenData = async () => {
-      try {
-        setIsLoading(true);
-        setError("");
-
-        // Fetch token metadata from Jupiter
-        const jupiterResponse = await fetch(
-          `/api/jupiter/metadata?mint=${tokenAddress}`,
-        );
-        if (!jupiterResponse.ok) {
-          throw new Error("Failed to fetch token metadata");
-        }
-
-        const jupiterData = await jupiterResponse.json();
-        const tokenData = jupiterData.data;
-
-        if (!tokenData) {
-          throw new Error("Token not found");
-        }
-
-        // Try to get price and market cap from trending API
-        let price = 0;
-        let marketCap = 0;
-        try {
-          const trendingResponse = await fetch(
-            `/api/trending/search?query=${tokenAddress}`,
-          );
-          if (trendingResponse.ok) {
-            const trendingData = await trendingResponse.json();
-            const tokenTrending = Array.isArray(trendingData)
-              ? trendingData.find((t) => t.id === tokenAddress)
-              : null;
-            if (tokenTrending) {
-              price = tokenTrending.price || 0;
-              marketCap = tokenTrending.mcap || 0;
-            }
-          }
-        } catch (e) {
-          console.warn("Failed to fetch trending data:", e);
-        }
-
-        setTokenInfo({
-          symbol: tokenData.symbol || "UNKNOWN",
-          name: tokenData.name || "Unknown Token",
-          address: tokenAddress,
-          price,
-          logoURI: tokenData.logoURI,
-          decimals: tokenData.decimals || 6,
-          marketCap,
-        });
-
-        // Fetch risk analysis if we have market cap
-        if (marketCap > 0) {
-          try {
-            const axiomResponse = await fetch(
-              `/api/axiom/token-info?pairAddress=${tokenData.graduatedPool || tokenAddress}`,
-            );
-            if (axiomResponse.ok) {
-              const axiomResult = await axiomResponse.json();
-              if (axiomResult.success && axiomResult.data) {
-                const axiomData = axiomResult.data;
-                // Calculate organic score similar to RiskAnalysis component
-                let organicScore = 100;
-                if (axiomData.insidersHoldPercent > 15) organicScore -= 25;
-                else if (axiomData.insidersHoldPercent > 8) organicScore -= 15;
-
-                if (axiomData.bundlersHoldPercent > 10) organicScore -= 20;
-                else if (axiomData.bundlersHoldPercent > 5) organicScore -= 10;
-
-                if (axiomData.snipersHoldPercent > 8) organicScore -= 15;
-                else if (axiomData.snipersHoldPercent > 4) organicScore -= 8;
-
-                if (axiomData.top10HoldersPercent > 60) organicScore -= 20;
-                else if (axiomData.top10HoldersPercent > 40) organicScore -= 10;
-
-                const overallRisk =
-                  organicScore >= 70
-                    ? "LOW"
-                    : organicScore >= 40
-                      ? "MEDIUM"
-                      : "HIGH";
-
-                setRiskInfo({
-                  overallRisk,
-                  organicScore: Math.max(0, organicScore),
-                  insidersHoldPercent: axiomData.insidersHoldPercent,
-                  bundlersHoldPercent: axiomData.bundlersHoldPercent,
-                  snipersHoldPercent: axiomData.snipersHoldPercent,
-                  top10HoldersPercent: axiomData.top10HoldersPercent,
-                });
-              }
-            }
-          } catch (e) {
-            console.warn("Failed to fetch risk data:", e);
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching token data:", error);
-        setError(
-          error instanceof Error ? error.message : "Failed to load token data",
-        );
-        setTokenInfo({
-          symbol: "UNKNOWN",
-          name: "Unknown Token",
-          address: tokenAddress,
-          price: 0,
-          decimals: 6,
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchTokenData();
-  }, [tokenAddress]);
-
-  useEffect(() => {
-    if (!tokenAddress || !isValidMintAddress(tokenAddress)) return;
-    setIsOhlcLoading(true);
-    setOhlcError("");
-    fetch(`/api/ohlc?mint=${tokenAddress}&interval=5m&limit=288`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (!data.success) {
-          setOhlcError(data.error || "Failed to load OHLC data");
-          setOhlcBars([]);
-          return;
-        }
-        const bars = (data.bars || []).map((b: any) => ({
-          token_address: b.token_address,
-          interval: b.interval,
-          open: typeof b.open === "string" ? parseFloat(b.open) : b.open,
-          high: typeof b.high === "string" ? parseFloat(b.high) : b.high,
-          low: typeof b.low === "string" ? parseFloat(b.low) : b.low,
-          close: typeof b.close === "string" ? parseFloat(b.close) : b.close,
-          timestamp: b.timestamp,
-        }));
-        setOhlcBars(bars);
-        // if (bars.length > 0) setChartMode("ohlc");
-      })
-      .catch((err) => {
-        setOhlcError(
-          err instanceof Error ? err.message : "Failed to load OHLC data",
-        );
-        setOhlcBars([]);
-      })
-      .finally(() => setIsOhlcLoading(false));
-  }, [tokenAddress]);
+  }, [connected, publicKey, refetchTokens]);
 
   const handleBuy = useCallback(async () => {
     if (!connected || !publicKey || !signAllTransactions) {
@@ -532,8 +382,9 @@ export default function ChartPage() {
         // Immediately refresh positions after successful buy
         console.log("✅ Buy successful, refreshing positions...");
         setTimeout(() => {
-          loadUserTokens(false);
-        }, 2000); // Small delay to allow blockchain to update
+          void refetchTokens(false);
+          void refreshBalances();
+        }, 2000);
       }
     } catch (err) {
       setError(
@@ -553,7 +404,8 @@ export default function ChartPage() {
     priorityFee,
     tokenInfo,
     trackOperation,
-    loadUserTokens,
+    refetchTokens,
+    refreshBalances,
   ]);
 
   const handleBackToHome = () => {
@@ -649,12 +501,12 @@ export default function ChartPage() {
     );
   };
 
-  if (error && !tokenInfo) {
+  if (displayError && !tokenInfo) {
     return (
       <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center">
         <div className="text-center">
           <h1 className="text-2xl font-bold text-red-400 mb-4">Error</h1>
-          <p className="text-gray-400 mb-4">{error}</p>
+          <p className="text-gray-400 mb-4">{displayError}</p>
           <button
             onClick={handleBackToHome}
             className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg"
@@ -692,7 +544,7 @@ export default function ChartPage() {
             </button>
             <div className="flex items-center space-x-3">
               {tokenInfo?.logoURI && (
-                <img
+                <OptimizedImage
                   src={tokenInfo.logoURI}
                   alt={tokenInfo.symbol}
                   className="w-8 h-8 rounded-full"
@@ -873,9 +725,9 @@ export default function ChartPage() {
         )}
 
         {/* Error Display */}
-        {error && (
+        {displayError && (
           <div className="max-w-7xl mx-auto mt-4 p-3 bg-red-900/20 border border-red-400/30 rounded-lg">
-            <p className="text-red-400 text-sm">{error}</p>
+            <p className="text-red-400 text-sm">{displayError}</p>
           </div>
         )}
       </div>
@@ -1024,7 +876,6 @@ export default function ChartPage() {
                 minHeight: "600px",
               }}
               title={`GMGN Chart - ${tokenInfo?.symbol || tokenAddress}`}
-              onLoad={() => setIsLoading(false)}
               allowFullScreen
               frameBorder="0"
             />

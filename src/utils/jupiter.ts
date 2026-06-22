@@ -935,6 +935,26 @@ async function processBatch(
   return processedTokens
 }
 
+const RPC_FETCH_TIMEOUT_MS = 25_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms / 1000}s. Try another RPC endpoint.`));
+    }, ms);
+
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
+}
+
 // Main efficient token fetching function based on reference
 export async function fetchUserTokens(
   connection: Connection,
@@ -945,6 +965,7 @@ export async function fetchUserTokens(
 ): Promise<UserToken[]> {
   if (forceRefresh) {
     tokenFetchPromise = null
+    clearAllCaches()
   }
 
   // If a fetch is already in progress, return the existing promise
@@ -974,9 +995,12 @@ export async function fetchUserTokens(
       startTimer('total-token-fetch')
 
       // Single RPC call to get all token accounts
-      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-        userPublicKey,
-        { programId: TOKEN_PROGRAM_ID }
+      const tokenAccounts = await withTimeout(
+        connection.getParsedTokenAccountsByOwner(userPublicKey, {
+          programId: TOKEN_PROGRAM_ID,
+        }),
+        RPC_FETCH_TIMEOUT_MS,
+        'Token account fetch',
       )
 
       // Get all accounts initially (we'll filter later)
@@ -1031,7 +1055,7 @@ export async function fetchUserTokens(
     })
   } catch (error) {
     console.error('Error fetching user tokens:', error)
-    return []
+    throw error instanceof Error ? error : new Error(String(error))
   }
 }
 

@@ -246,10 +246,12 @@ export async function validateMigration(): Promise<{
   }
 }
 
-export default {
+const jupiterMigration = {
   testMigration,
   migrateToV3,
   rollbackToV2,
   getMigrationStatus,
-  validateMigration
-}
+  validateMigration,
+};
+
+export default jupiterMigration;
