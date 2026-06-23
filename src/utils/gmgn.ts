@@ -28,3 +28,18 @@ export function getGmgnKlineUrl(
 export function getGmgnTokenUrl(tokenMint: string): string {
   return `https://gmgn.ai/sol/token/${tokenMint}`;
 }
+
+/** GMGN iframe interval param for a trade hold window. */
+export function pickGmgnIntervalForWindow(
+  entryAt: string | null | undefined,
+  exitAt: string | null | undefined,
+): string {
+  if (!entryAt || !exitAt) return '5';
+  const ms = new Date(exitAt).getTime() - new Date(entryAt).getTime();
+  if (Number.isNaN(ms) || ms <= 0) return '5';
+  const hours = ms / (1000 * 60 * 60);
+  if (hours < 2) return '1';
+  if (hours < 24) return '5';
+  if (hours < 24 * 7) return '60';
+  return '1D';
+}

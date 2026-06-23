@@ -9,6 +9,7 @@ import type {
   DlmmStrategy,
   ExecutionMode,
   TokenFilterConfig,
+  StrategyOutcomeRow,
 } from "@/strategies/types";
 import { formatAppDateTime } from "@/utils/datetime";
 import {
@@ -19,6 +20,9 @@ import {
   formatFilterSummary,
   parseOptionalFloat,
 } from "@/components/strategies/StrategyConfigFields";
+import OutcomeReviewModal, {
+  OutcomeMlBadge,
+} from "@/components/strategies/OutcomeReviewModal";
 
 const OUTCOMES_PAGE_SIZE = 100;
 
@@ -35,17 +39,7 @@ type StrategiesResponse = {
   dlmm?: { effective: DlmmStrategy };
 };
 
-type OutcomeRow = {
-  id: string;
-  strategy_id: string;
-  domain: string;
-  token_address: string | null;
-  entry_at: string | null;
-  exit_at: string | null;
-  pnl_pct: number | null;
-  status: string | null;
-  is_simulated: boolean;
-};
+type OutcomeRow = StrategyOutcomeRow;
 
 type ReportBreakdown = {
   strategy_id: string;
@@ -156,6 +150,9 @@ export default function StrategyAdminHub() {
   const [reportStrategyId, setReportStrategyId] = useState("");
   const [reportSimulated, setReportSimulated] = useState("");
   const [outcomesOffset, setOutcomesOffset] = useState(0);
+  const [selectedOutcomeIndex, setSelectedOutcomeIndex] = useState<number | null>(
+    null,
+  );
   const [triggeringWorker, setTriggeringWorker] = useState<string | null>(null);
   const [workerMessage, setWorkerMessage] = useState<string | null>(null);
 
@@ -226,6 +223,8 @@ export default function StrategyAdminHub() {
   const data = strategiesQuery.data?.data ?? null;
   const outcomes = strategiesQuery.data?.outcomes ?? [];
   const outcomesTotal = strategiesQuery.data?.outcomesTotal ?? 0;
+  const selectedOutcome =
+    selectedOutcomeIndex != null ? outcomes[selectedOutcomeIndex] ?? null : null;
   const reports = strategiesQuery.data?.reports ?? null;
   const coverage = reports?.coverage ?? [];
   const loading = strategiesQuery.isLoading;
@@ -617,6 +616,7 @@ export default function StrategyAdminHub() {
                 : reportStrategyId
                   ? "No closed positions for this filter — worker may be idle or no exits yet."
                   : "No closed positions recorded yet."}
+              {outcomes.length > 0 && " · Click a row to review and label."}
             </p>
             {outcomes.length === 0 ? (
               <p className="text-gray-500 text-sm">
@@ -638,11 +638,16 @@ export default function StrategyAdminHub() {
                         <th className="p-2">Exit</th>
                         <th className="p-2">PnL%</th>
                         <th className="p-2">Status</th>
+                        <th className="p-2">ML</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {outcomes.map((o) => (
-                        <tr key={o.id} className="border-b border-gray-800 text-gray-300">
+                      {outcomes.map((o, idx) => (
+                        <tr
+                          key={o.id}
+                          className="border-b border-gray-800 text-gray-300 cursor-pointer hover:bg-gray-800/50"
+                          onClick={() => setSelectedOutcomeIndex(idx)}
+                        >
                           <td className="p-2">{o.domain}</td>
                           <td className="p-2">{o.strategy_id}</td>
                           <td className="p-2">{o.is_simulated ? "SIM" : "LIVE"}</td>
@@ -653,6 +658,9 @@ export default function StrategyAdminHub() {
                             {o.pnl_pct != null ? `${Number(o.pnl_pct).toFixed(2)}%` : "—"}
                           </td>
                           <td className="p-2">{o.status ?? "—"}</td>
+                          <td className="p-2">
+                            <OutcomeMlBadge features={o.features} />
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -662,7 +670,10 @@ export default function StrategyAdminHub() {
                   <button
                     type="button"
                     disabled={outcomesOffset <= 0}
-                    onClick={() => setOutcomesOffset(Math.max(0, outcomesOffset - OUTCOMES_PAGE_SIZE))}
+                    onClick={() => {
+                      setOutcomesOffset(Math.max(0, outcomesOffset - OUTCOMES_PAGE_SIZE));
+                      setSelectedOutcomeIndex(null);
+                    }}
                     className="px-3 py-1.5 bg-gray-700 disabled:opacity-40 text-white text-xs rounded"
                   >
                     Previous
@@ -670,7 +681,10 @@ export default function StrategyAdminHub() {
                   <button
                     type="button"
                     disabled={outcomesOffset + OUTCOMES_PAGE_SIZE >= outcomesTotal}
-                    onClick={() => setOutcomesOffset(outcomesOffset + OUTCOMES_PAGE_SIZE)}
+                    onClick={() => {
+                      setOutcomesOffset(outcomesOffset + OUTCOMES_PAGE_SIZE);
+                      setSelectedOutcomeIndex(null);
+                    }}
                     className="px-3 py-1.5 bg-gray-700 disabled:opacity-40 text-white text-xs rounded"
                   >
                     Next
@@ -691,6 +705,48 @@ export default function StrategyAdminHub() {
           triggeringWorker={triggeringWorker}
           workerMessage={workerMessage}
           onRunNow={runWorkerNow}
+        />
+      )}
+
+      {selectedOutcome && (
+        <OutcomeReviewModal
+          outcome={selectedOutcome}
+          onClose={() => setSelectedOutcomeIndex(null)}
+          onSaved={(updated) => {
+            queryClient.setQueryData(
+              [
+                "strategy-admin",
+                reportFrom,
+                reportTo,
+                reportDomain,
+                reportStrategyId,
+                reportSimulated,
+                outcomesOffset,
+              ],
+              (old: typeof strategiesQuery.data) => {
+                if (!old) return old;
+                const nextOutcomes = old.outcomes.map((row, i) =>
+                  i === selectedOutcomeIndex ? updated : row,
+                );
+                return { ...old, outcomes: nextOutcomes };
+              },
+            );
+          }}
+          onNavigate={(direction) => {
+            if (selectedOutcomeIndex == null) return;
+            const next =
+              direction === "next"
+                ? selectedOutcomeIndex + 1
+                : selectedOutcomeIndex - 1;
+            if (next >= 0 && next < outcomes.length) {
+              setSelectedOutcomeIndex(next);
+            }
+          }}
+          hasPrev={selectedOutcomeIndex != null && selectedOutcomeIndex > 0}
+          hasNext={
+            selectedOutcomeIndex != null &&
+            selectedOutcomeIndex < outcomes.length - 1
+          }
         />
       )}
     </div>

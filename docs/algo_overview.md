@@ -52,6 +52,14 @@ Written **only when a position fully closes** (not on open/hold):
 
 Columns: `strategy_id`, `domain`, `token_address`, `entry_at`, `exit_at`, `pnl_pct`, `status`, `is_simulated`, `features`.
 
+**ML labeling (Reports → Outcomes):** click a row to open the review modal. Labels persist in `features`:
+
+- `ml_label`: `skip` | `interesting` | `anomaly`
+- `ml_note`: free text
+- `ml_labeled_at`: ISO timestamp
+
+API: `PATCH /api/strategies/outcomes/[id]` with `{ ml_label, ml_note }`. Trade-window chart: `GET /api/strategies/outcomes/[id]/chart` (clips `trending_token_tracker.price_history` to entry→exit when available). GMGN iframe shows full context; the Chart.js panel below is the clipped trade window.
+
 ### `trading_records`
 
 Sim wallet for signals: `SIGNALS_SIM_WALLET_ADDRESS` (default `signals-strategy-sim`). Open positions live here until closed.
@@ -141,7 +149,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | Tab | Purpose |
 |-----|---------|
 | **Config** | Edit strategy params, activation, execution mode |
-| **Reports** | Coverage table (all 7 strategies), filters, outcomes pagination, CSV export |
+| **Reports** | Coverage table (all 7 strategies), filters, outcomes pagination, ML review modal, CSV export |
 | **Workers** | Cron online/offline, worker table, domain heartbeat, **Run now** |
 
 ### API routes
@@ -149,6 +157,8 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 - `GET /api/strategies` — merged registry
 - `GET /api/strategies/reports` — breakdown + `coverage[]`
 - `GET /api/strategies/outcomes` — paginated outcomes
+- `PATCH /api/strategies/outcomes/[id]` — ML label + note (`features` merge)
+- `GET /api/strategies/outcomes/[id]/chart` — entry→exit price points
 - `GET /api/workers/status` — cron + DB heartbeat
 - `POST /api/workers/trigger` — run worker now (dev only)
 

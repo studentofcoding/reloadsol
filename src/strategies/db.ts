@@ -7,6 +7,7 @@ import type {
   StrategyCoverageRow,
   TrendingBotStrategyOverride,
   ExecutionMode,
+  OutcomeChartSource,
 } from './types'
 
 export async function loadStrategyDefinitionRows(
@@ -157,6 +158,167 @@ export async function listStrategyOutcomes(params: {
   }
 
   return { rows: (data ?? []) as StrategyOutcomeRow[], total: count ?? 0 }
+}
+
+export async function loadStrategyOutcomeById(
+  id: string,
+): Promise<StrategyOutcomeRow | null> {
+  const { data, error } = await supabase
+    .from('strategy_outcomes')
+    .select('*')
+    .eq('id', id)
+    .maybeSingle()
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return null
+    }
+    throw error
+  }
+
+  return (data as StrategyOutcomeRow) ?? null
+}
+
+export async function updateStrategyOutcomeFeatures(
+  id: string,
+  featurePatch: Record<string, unknown>,
+): Promise<{ ok: boolean; row?: StrategyOutcomeRow; error?: string }> {
+  const existing = await loadStrategyOutcomeById(id)
+  if (!existing) {
+    return { ok: false, error: 'Outcome not found' }
+  }
+
+  const mergedFeatures = {
+    ...(existing.features ?? {}),
+    ...featurePatch,
+  }
+
+  const { data, error } = await supabase
+    .from('strategy_outcomes')
+    .update({ features: mergedFeatures })
+    .eq('id', id)
+    .select('*')
+    .single()
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return { ok: false, error: 'Outcomes table unavailable' }
+    }
+    return { ok: false, error: error.message }
+  }
+
+  return { ok: true, row: data as StrategyOutcomeRow }
+}
+
+const TRACKER_TABLE =
+  process.env.NODE_ENV === 'development'
+    ? 'trending_token_tracker_dev'
+    : 'trending_token_tracker'
+
+type PriceHistoryPoint = { timestamp: string; price_usd: number }
+
+function parsePriceHistory(raw: unknown): PriceHistoryPoint[] {
+  if (!raw) return []
+  let data = raw
+  if (typeof data === 'string') {
+    try {
+      data = JSON.parse(data)
+    } catch {
+      return []
+    }
+  }
+  if (!Array.isArray(data)) return []
+  return data
+    .filter(
+      (p): p is PriceHistoryPoint =>
+        p != null &&
+        typeof p === 'object' &&
+        typeof (p as PriceHistoryPoint).timestamp === 'string' &&
+        typeof (p as PriceHistoryPoint).price_usd === 'number',
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+    )
+}
+
+function filterPointsToWindow(
+  points: PriceHistoryPoint[],
+  entryAt: string,
+  exitAt: string,
+): PriceHistoryPoint[] {
+  const start = new Date(entryAt).getTime()
+  const end = new Date(exitAt).getTime()
+  if (Number.isNaN(start) || Number.isNaN(end)) return []
+  return points.filter((p) => {
+    const t = new Date(p.timestamp).getTime()
+    return t >= start && t <= end
+  })
+}
+
+export async function loadOutcomeTradeWindowChart(params: {
+  outcome: StrategyOutcomeRow
+}): Promise<{ points: PriceHistoryPoint[]; source: OutcomeChartSource }> {
+  const { outcome } = params
+  const entryAt = outcome.entry_at
+  const exitAt = outcome.exit_at
+  const tokenAddress = outcome.token_address
+
+  if (!entryAt || !exitAt) {
+    return { points: [], source: 'empty' }
+  }
+
+  if (tokenAddress) {
+    const { data, error } = await supabase
+      .from(TRACKER_TABLE)
+      .select('price_history')
+      .eq('token_address', tokenAddress)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (!error && data?.price_history) {
+      const filtered = filterPointsToWindow(
+        parsePriceHistory(data.price_history),
+        entryAt,
+        exitAt,
+      )
+      if (filtered.length > 0) {
+        return { points: filtered, source: 'tracker' }
+      }
+    }
+  }
+
+  const features = outcome.features ?? {}
+  const initialPrice = features.initial_price_usd
+  const exitPrice = features.exit_price_usd
+
+  if (
+    typeof initialPrice === 'number' &&
+    typeof exitPrice === 'number' &&
+    !Number.isNaN(initialPrice) &&
+    !Number.isNaN(exitPrice)
+  ) {
+    return {
+      points: [
+        { timestamp: entryAt, price_usd: initialPrice },
+        { timestamp: exitAt, price_usd: exitPrice },
+      ],
+      source: 'outcome_features',
+    }
+  }
+
+  if (typeof exitPrice === 'number' && !Number.isNaN(exitPrice)) {
+    return {
+      points: [
+        { timestamp: entryAt, price_usd: exitPrice },
+        { timestamp: exitAt, price_usd: exitPrice },
+      ],
+      source: 'synthetic',
+    }
+  }
+
+  return { points: [], source: 'empty' }
 }
 
 function median(values: number[]): number {

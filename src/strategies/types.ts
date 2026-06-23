@@ -148,6 +148,21 @@ export interface StrategyOutcomeRow {
   created_at: string
 }
 
+export type OutcomeMlLabel = 'skip' | 'interesting' | 'anomaly'
+
+export interface OutcomeMlMetadata {
+  ml_label?: OutcomeMlLabel | null
+  ml_note?: string | null
+  ml_labeled_at?: string | null
+}
+
+export interface OutcomeChartPoint {
+  timestamp: string
+  price_usd: number
+}
+
+export type OutcomeChartSource = 'tracker' | 'outcome_features' | 'synthetic' | 'empty'
+
 export interface StrategyReportBreakdown {
   strategy_id: string
   domain: StrategyDomain
