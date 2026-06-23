@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
 import TradeWindowChart from "@/components/strategies/TradeWindowChart";
 import type {
   OutcomeChartPoint,
+  OutcomeMlCondition,
   OutcomeMlLabel,
   StrategyOutcomeRow,
 } from "@/strategies/types";
@@ -17,9 +19,33 @@ const LABELS: { id: OutcomeMlLabel; title: string; activeClass: string }[] = [
   { id: "anomaly", title: "Anomaly", activeClass: "bg-amber-700 ring-amber-400" },
 ];
 
+const CONDITIONS: {
+  id: OutcomeMlCondition;
+  title: string;
+  activeClass: string;
+}[] = [
+  { id: "old_chart", title: "Old Chart", activeClass: "bg-purple-700 ring-purple-400" },
+  { id: "price_topped", title: "Price Topped", activeClass: "bg-teal-700 ring-teal-400" },
+  { id: "new_chart", title: "New Chart", activeClass: "bg-indigo-700 ring-indigo-400" },
+];
+
+export const CONDITION_TITLES: Record<OutcomeMlCondition, string> = {
+  old_chart: "Old Chart",
+  price_topped: "Price Topped",
+  new_chart: "New Chart",
+};
+
 function readMlLabel(features: Record<string, unknown> | null): OutcomeMlLabel | null {
   const v = features?.ml_label;
   if (v === "skip" || v === "interesting" || v === "anomaly") return v;
+  return null;
+}
+
+function readMlCondition(
+  features: Record<string, unknown> | null,
+): OutcomeMlCondition | null {
+  const v = features?.ml_condition;
+  if (v === "old_chart" || v === "price_topped" || v === "new_chart") return v;
   return null;
 }
 
@@ -28,11 +54,35 @@ function readMlNote(features: Record<string, unknown> | null): string {
   return typeof v === "string" ? v : "";
 }
 
+function hasAnyMlData(
+  label: OutcomeMlLabel | null,
+  condition: OutcomeMlCondition | null,
+  note: string,
+): boolean {
+  return label != null || condition != null || note.trim().length > 0;
+}
+
+function hasSavedMlData(features: Record<string, unknown> | null | undefined): boolean {
+  if (!features) return false;
+  return (
+    readMlLabel(features) != null ||
+    readMlCondition(features) != null ||
+    readMlNote(features).trim().length > 0
+  );
+}
+
+type OutcomeNotify = (
+  kind: "success" | "error",
+  title: string,
+  detail?: string,
+) => void;
+
 type OutcomeReviewModalProps = {
   outcome: StrategyOutcomeRow;
   onClose: () => void;
   onSaved: (updated: StrategyOutcomeRow) => void;
   onNavigate?: (direction: "prev" | "next") => void;
+  onNotify?: OutcomeNotify;
   hasPrev?: boolean;
   hasNext?: boolean;
 };
@@ -42,55 +92,69 @@ export default function OutcomeReviewModal({
   onClose,
   onSaved,
   onNavigate,
+  onNotify,
   hasPrev = false,
   hasNext = false,
 }: OutcomeReviewModalProps) {
   const [mlLabel, setMlLabel] = useState<OutcomeMlLabel | null>(
     readMlLabel(outcome.features),
   );
+  const [mlCondition, setMlCondition] = useState<OutcomeMlCondition | null>(
+    readMlCondition(outcome.features),
+  );
   const [mlNote, setMlNote] = useState(readMlNote(outcome.features));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [savedFlash, setSavedFlash] = useState(false);
-  const [chartPoints, setChartPoints] = useState<OutcomeChartPoint[]>([]);
-  const [chartSource, setChartSource] = useState<string>("");
-  const [chartLoading, setChartLoading] = useState(true);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const {
+    data: chartData,
+    isFetching: chartLoading,
+  } = useQuery({
+    queryKey: ["outcome-chart", outcome.id],
+    queryFn: async () => {
+      const res = await fetch(`/api/strategies/outcomes/${outcome.id}/chart`, {
+        cache: "no-store",
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || "Chart load failed");
+      return {
+        points: (json.points ?? []) as OutcomeChartPoint[],
+        source: (json.source ?? "") as string,
+      };
+    },
+  });
+
+  const chartPoints = chartData?.points ?? [];
+  const chartSource = chartData?.source ?? "";
 
   const tokenAddress = outcome.token_address ?? "";
   const gmgnInterval = pickGmgnIntervalForWindow(outcome.entry_at, outcome.exit_at);
 
-  useEffect(() => {
-    setMlLabel(readMlLabel(outcome.features));
-    setMlNote(readMlNote(outcome.features));
-    setSaveError(null);
-    setSavedFlash(false);
-  }, [outcome.id, outcome.features]);
+  const showToast = useCallback(
+    (kind: "success" | "error", title: string, detail?: string) => {
+      if (onNotify) {
+        onNotify(kind, title, detail);
+        return;
+      }
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      setToastMessage(detail ? `${title} — ${detail}` : title);
+      toastTimerRef.current = setTimeout(() => {
+        setToastMessage(null);
+        toastTimerRef.current = null;
+      }, 2500);
+    },
+    [onNotify],
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    setChartLoading(true);
-    setChartPoints([]);
-
-    fetch(`/api/strategies/outcomes/${outcome.id}/chart`, { cache: "no-store" })
-      .then((res) => res.json())
-      .then((json) => {
-        if (cancelled) return;
-        if (json.success && Array.isArray(json.points)) {
-          setChartPoints(json.points);
-          setChartSource(json.source ?? "");
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setChartPoints([]);
-      })
-      .finally(() => {
-        if (!cancelled) setChartLoading(false);
-      });
-
     return () => {
-      cancelled = true;
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
     };
-  }, [outcome.id]);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -104,8 +168,10 @@ export default function OutcomeReviewModal({
   }, [onClose, onNavigate, hasPrev, hasNext]);
 
   const saveLabel = useCallback(async () => {
-    if (!mlLabel) {
-      setSaveError("Select skip, interesting, or anomaly");
+    if (!hasAnyMlData(mlLabel, mlCondition, mlNote)) {
+      const msg = "Select a label, condition, or add a note";
+      setSaveError(msg);
+      showToast("error", "Cannot save outcome", msg);
       return;
     }
     setSaving(true);
@@ -114,40 +180,91 @@ export default function OutcomeReviewModal({
       const res = await fetch(`/api/strategies/outcomes/${outcome.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ml_label: mlLabel, ml_note: mlNote || null }),
+        body: JSON.stringify({
+          ml_label: mlLabel,
+          ml_condition: mlCondition,
+          ml_note: mlNote || null,
+        }),
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error || "Save failed");
       onSaved(json.outcome as StrategyOutcomeRow);
-      setSavedFlash(true);
-      setTimeout(() => setSavedFlash(false), 2000);
+
+      const willAdvance = hasNext && onNavigate;
+      const detailParts = [
+        mlLabel ? `label: ${mlLabel}` : null,
+        mlCondition ? `condition: ${mlCondition}` : null,
+      ].filter(Boolean);
+      showToast(
+        "success",
+        willAdvance ? "Saved — next outcome" : "Outcome saved",
+        detailParts.length > 0
+          ? detailParts.join(" · ")
+          : outcome.token_address?.slice(0, 8),
+      );
+
+      if (willAdvance) {
+        if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+        advanceTimerRef.current = setTimeout(() => {
+          onNavigate("next");
+          advanceTimerRef.current = null;
+        }, 400);
+      }
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setSaveError(msg);
+      showToast("error", "Outcome save failed", msg);
     } finally {
       setSaving(false);
     }
-  }, [mlLabel, mlNote, outcome.id, onSaved]);
+  }, [
+    mlLabel,
+    mlCondition,
+    mlNote,
+    outcome.id,
+    outcome.token_address,
+    onSaved,
+    hasNext,
+    onNavigate,
+    showToast,
+  ]);
 
-  const clearLabel = useCallback(async () => {
+  const clearAll = useCallback(async () => {
     setSaving(true);
     setSaveError(null);
     try {
       const res = await fetch(`/api/strategies/outcomes/${outcome.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ml_label: null, ml_note: null }),
+        body: JSON.stringify({
+          ml_label: null,
+          ml_condition: null,
+          ml_note: null,
+        }),
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error || "Clear failed");
       setMlLabel(null);
+      setMlCondition(null);
       setMlNote("");
       onSaved(json.outcome as StrategyOutcomeRow);
+      showToast(
+        "success",
+        "ML data cleared",
+        outcome.token_address?.slice(0, 8) ?? outcome.id,
+      );
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setSaveError(msg);
+      showToast("error", "Clear failed", msg);
     } finally {
       setSaving(false);
     }
-  }, [outcome.id, onSaved]);
+  }, [outcome.id, outcome.token_address, onSaved, showToast]);
+
+  const toggleCondition = (id: OutcomeMlCondition) => {
+    setMlCondition((prev) => (prev === id ? null : id));
+  };
 
   return (
     <div
@@ -155,6 +272,15 @@ export default function OutcomeReviewModal({
       onClick={onClose}
       role="presentation"
     >
+      {toastMessage && !onNotify && (
+        <div
+          className="fixed bottom-4 right-4 z-[60] rounded-lg border border-green-700 bg-green-900/95 px-4 py-2 text-sm text-green-100 shadow-lg"
+          role="status"
+        >
+          {toastMessage}
+        </div>
+      )}
+
       <div
         className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-3xl max-h-[95vh] overflow-y-auto shadow-xl"
         onClick={(e) => e.stopPropagation()}
@@ -267,12 +393,12 @@ export default function OutcomeReviewModal({
 
           <div className="rounded-lg border border-gray-700 bg-gray-800/50 p-4">
             <h3 className="text-sm font-semibold text-white mb-3">ML label</h3>
-            <div className="flex flex-wrap gap-2 mb-3">
+            <div className="flex flex-wrap gap-2 mb-4">
               {LABELS.map(({ id, title, activeClass }) => (
                 <button
                   key={id}
                   type="button"
-                  onClick={() => setMlLabel(id)}
+                  onClick={() => setMlLabel((prev) => (prev === id ? null : id))}
                   className={`px-3 py-1.5 text-xs rounded border border-gray-600 text-white transition ${
                     mlLabel === id
                       ? `${activeClass} ring-2`
@@ -283,6 +409,27 @@ export default function OutcomeReviewModal({
                 </button>
               ))}
             </div>
+
+            <h3 className="text-sm font-semibold text-white mb-3">
+              Condition (optional)
+            </h3>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {CONDITIONS.map(({ id, title, activeClass }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => toggleCondition(id)}
+                  className={`px-3 py-1.5 text-xs rounded border border-gray-600 text-white transition ${
+                    mlCondition === id
+                      ? `${activeClass} ring-2`
+                      : "bg-gray-800 hover:bg-gray-700"
+                  }`}
+                >
+                  {title}
+                </button>
+              ))}
+            </div>
+
             <label className="block text-xs text-gray-400 mb-1">Note (optional)</label>
             <textarea
               value={mlNote}
@@ -292,9 +439,6 @@ export default function OutcomeReviewModal({
               className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 text-sm text-white resize-y min-h-[72px]"
             />
             {saveError && <p className="text-xs text-red-400 mt-2">{saveError}</p>}
-            {savedFlash && (
-              <p className="text-xs text-green-400 mt-2">Saved.</p>
-            )}
             <div className="flex flex-wrap gap-2 mt-3">
               <button
                 type="button"
@@ -306,11 +450,11 @@ export default function OutcomeReviewModal({
               </button>
               <button
                 type="button"
-                disabled={saving || !readMlLabel(outcome.features)}
-                onClick={() => void clearLabel()}
+                disabled={saving || !hasSavedMlData(outcome.features)}
+                onClick={() => void clearAll()}
                 className="px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-white text-xs rounded"
               >
-                Clear label
+                Clear all
               </button>
             </div>
           </div>
@@ -335,6 +479,25 @@ export function OutcomeMlBadge({
   return (
     <span className={`text-[10px] px-2 py-0.5 rounded uppercase ${styles[label]}`}>
       {label}
+    </span>
+  );
+}
+
+export function OutcomeMlConditionBadge({
+  features,
+}: {
+  features: Record<string, unknown> | null | undefined;
+}) {
+  const condition = readMlCondition(features ?? null);
+  if (!condition) return <span className="text-gray-600">—</span>;
+  const styles: Record<OutcomeMlCondition, string> = {
+    old_chart: "bg-purple-900/50 text-purple-300",
+    price_topped: "bg-teal-900/50 text-teal-300",
+    new_chart: "bg-indigo-900/50 text-indigo-300",
+  };
+  return (
+    <span className={`text-[10px] px-2 py-0.5 rounded ${styles[condition]}`}>
+      {CONDITION_TITLES[condition]}
     </span>
   );
 }

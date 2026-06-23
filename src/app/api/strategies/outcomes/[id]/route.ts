@@ -3,18 +3,31 @@ import {
   loadStrategyOutcomeById,
   updateStrategyOutcomeFeatures,
 } from '@/strategies/db'
-import type { OutcomeMlLabel } from '@/strategies/types'
+import type { OutcomeMlCondition, OutcomeMlLabel } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
 
 const VALID_LABELS: OutcomeMlLabel[] = ['skip', 'interesting', 'anomaly']
+const VALID_CONDITIONS: OutcomeMlCondition[] = [
+  'old_chart',
+  'price_topped',
+  'new_chart',
+]
 
 function isValidLabel(value: unknown): value is OutcomeMlLabel {
   return typeof value === 'string' && VALID_LABELS.includes(value as OutcomeMlLabel)
 }
 
+function isValidCondition(value: unknown): value is OutcomeMlCondition {
+  return (
+    typeof value === 'string' &&
+    VALID_CONDITIONS.includes(value as OutcomeMlCondition)
+  )
+}
+
 type PatchBody = {
   ml_label?: OutcomeMlLabel | null
+  ml_condition?: OutcomeMlCondition | null
   ml_note?: string | null
 }
 
@@ -46,6 +59,21 @@ export async function PATCH(
       } else {
         return NextResponse.json(
           { success: false, error: 'Invalid ml_label' },
+          { status: 400 },
+        )
+      }
+    }
+
+    if ('ml_condition' in body) {
+      if (body.ml_condition === null) {
+        featurePatch.ml_condition = null
+        featurePatch.ml_condition_at = null
+      } else if (isValidCondition(body.ml_condition)) {
+        featurePatch.ml_condition = body.ml_condition
+        featurePatch.ml_condition_at = new Date().toISOString()
+      } else {
+        return NextResponse.json(
+          { success: false, error: 'Invalid ml_condition' },
           { status: 400 },
         )
       }

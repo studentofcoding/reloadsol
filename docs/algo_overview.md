@@ -55,10 +55,11 @@ Columns: `strategy_id`, `domain`, `token_address`, `entry_at`, `exit_at`, `pnl_p
 **ML labeling (Reports → Outcomes):** click a row to open the review modal. Labels persist in `features`:
 
 - `ml_label`: `skip` | `interesting` | `anomaly`
+- `ml_condition`: `old_chart` | `price_topped` | `new_chart` (optional, single-select)
 - `ml_note`: free text
-- `ml_labeled_at`: ISO timestamp
+- `ml_labeled_at`, `ml_condition_at`: ISO timestamps
 
-API: `PATCH /api/strategies/outcomes/[id]` with `{ ml_label, ml_note }`. Trade-window chart: `GET /api/strategies/outcomes/[id]/chart` (clips `trending_token_tracker.price_history` to entry→exit when available). GMGN iframe shows full context; the Chart.js panel below is the clipped trade window.
+API: `PATCH /api/strategies/outcomes/[id]` with `{ ml_label, ml_condition, ml_note }`. List filters: `GET /api/strategies/outcomes?ml_label=interesting&ml_condition=old_chart` (use `unlabeled` / `none` for empty). Trade-window chart: `GET /api/strategies/outcomes/[id]/chart` (clips `trending_token_tracker.price_history` to entry→exit when available). GMGN iframe shows full context; the Chart.js panel below is the clipped trade window. Save shows a success toast and auto-advances to the next outcome when available.
 
 ### `trading_records`
 
@@ -156,8 +157,8 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 
 - `GET /api/strategies` — merged registry
 - `GET /api/strategies/reports` — breakdown + `coverage[]`
-- `GET /api/strategies/outcomes` — paginated outcomes
-- `PATCH /api/strategies/outcomes/[id]` — ML label + note (`features` merge)
+- `GET /api/strategies/outcomes` — paginated outcomes (`ml_label`, `ml_condition` filters)
+- `PATCH /api/strategies/outcomes/[id]` — ML label, condition, note (`features` merge)
 - `GET /api/strategies/outcomes/[id]/chart` — entry→exit price points
 - `GET /api/workers/status` — cron + DB heartbeat
 - `POST /api/workers/trigger` — run worker now (dev only)

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import type {
@@ -22,6 +22,7 @@ import {
 } from "@/components/strategies/StrategyConfigFields";
 import OutcomeReviewModal, {
   OutcomeMlBadge,
+  OutcomeMlConditionBadge,
 } from "@/components/strategies/OutcomeReviewModal";
 
 const OUTCOMES_PAGE_SIZE = 100;
@@ -93,6 +94,54 @@ type WorkersStatusResponse = {
 
 const EXECUTION_MODES: ExecutionMode[] = ["sim_only", "live_only", "ab_parallel"];
 
+type AdminToast = {
+  kind: "success" | "error";
+  title: string;
+  detail?: string;
+};
+
+function formatError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function AdminToastBanner({
+  toast,
+  onDismiss,
+}: {
+  toast: AdminToast | null;
+  onDismiss: () => void;
+}) {
+  if (!toast) return null;
+  const isSuccess = toast.kind === "success";
+  return (
+    <div
+      className={`fixed bottom-4 right-4 z-[60] max-w-sm rounded-lg border px-4 py-3 shadow-lg ${
+        isSuccess
+          ? "border-green-700 bg-green-900/95 text-green-100"
+          : "border-red-700 bg-red-900/95 text-red-100"
+      }`}
+      role="status"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium">{toast.title}</p>
+          {toast.detail && (
+            <p className="text-xs mt-1 opacity-90 break-words">{toast.detail}</p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="shrink-0 text-lg leading-none opacity-70 hover:opacity-100"
+          aria-label="Dismiss"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function parseTabParam(value: string | null): TabId {
   if (value === "reports" || value === "workers") return value;
   return "config";
@@ -104,6 +153,8 @@ function buildOutcomesQuery(params: {
   reportDomain: string;
   reportStrategyId: string;
   reportSimulated: string;
+  reportMlLabel: string;
+  reportMlCondition: string;
   outcomesOffset: number;
 }) {
   const q = new URLSearchParams();
@@ -114,6 +165,8 @@ function buildOutcomesQuery(params: {
   if (params.reportDomain) q.set("domain", params.reportDomain);
   if (params.reportStrategyId) q.set("strategyId", params.reportStrategyId);
   if (params.reportSimulated) q.set("is_simulated", params.reportSimulated);
+  if (params.reportMlLabel) q.set("ml_label", params.reportMlLabel);
+  if (params.reportMlCondition) q.set("ml_condition", params.reportMlCondition);
   return q.toString();
 }
 
@@ -123,6 +176,8 @@ function buildCsvHref(params: {
   reportDomain: string;
   reportStrategyId: string;
   reportSimulated: string;
+  reportMlLabel: string;
+  reportMlCondition: string;
 }) {
   const q = new URLSearchParams();
   q.set("format", "csv");
@@ -132,6 +187,8 @@ function buildCsvHref(params: {
   if (params.reportDomain) q.set("domain", params.reportDomain);
   if (params.reportStrategyId) q.set("strategyId", params.reportStrategyId);
   if (params.reportSimulated) q.set("is_simulated", params.reportSimulated);
+  if (params.reportMlLabel) q.set("ml_label", params.reportMlLabel);
+  if (params.reportMlCondition) q.set("ml_condition", params.reportMlCondition);
   return `/api/strategies/outcomes?${q.toString()}`;
 }
 
@@ -143,18 +200,46 @@ export default function StrategyAdminHub() {
     return parseTabParam(params.get("tab"));
   });
   const [saving, setSaving] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [toast, setToast] = useState<AdminToast | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
   const [reportDomain, setReportDomain] = useState("");
   const [reportStrategyId, setReportStrategyId] = useState("");
   const [reportSimulated, setReportSimulated] = useState("");
+  const [reportMlLabel, setReportMlLabel] = useState("");
+  const [reportMlCondition, setReportMlCondition] = useState("");
   const [outcomesOffset, setOutcomesOffset] = useState(0);
   const [selectedOutcomeIndex, setSelectedOutcomeIndex] = useState<number | null>(
     null,
   );
   const [triggeringWorker, setTriggeringWorker] = useState<string | null>(null);
-  const [workerMessage, setWorkerMessage] = useState<string | null>(null);
+
+  const dismissToast = useCallback(() => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
+    setToast(null);
+  }, []);
+
+  const showToast = useCallback(
+    (kind: AdminToast["kind"], title: string, detail?: string) => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      setToast({ kind, title, detail });
+      toastTimerRef.current = setTimeout(() => {
+        setToast(null);
+        toastTimerRef.current = null;
+      }, 4000);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
 
   const strategiesQuery = useQuery({
     queryKey: [
@@ -164,6 +249,8 @@ export default function StrategyAdminHub() {
       reportDomain,
       reportStrategyId,
       reportSimulated,
+      reportMlLabel,
+      reportMlCondition,
       outcomesOffset,
     ],
     queryFn: async () => {
@@ -180,6 +267,8 @@ export default function StrategyAdminHub() {
         reportDomain,
         reportStrategyId,
         reportSimulated,
+        reportMlLabel,
+        reportMlCondition,
         outcomesOffset,
       });
 
@@ -228,16 +317,37 @@ export default function StrategyAdminHub() {
   const reports = strategiesQuery.data?.reports ?? null;
   const coverage = reports?.coverage ?? [];
   const loading = strategiesQuery.isLoading;
-  const error = actionError ?? (strategiesQuery.error
+  const loadError = strategiesQuery.error
     ? strategiesQuery.error instanceof Error
       ? strategiesQuery.error.message
       : String(strategiesQuery.error)
-    : null);
+    : null;
 
-  const load = useCallback(async () => {
-    await strategiesQuery.refetch();
-    if (tab === "workers") await workersQuery.refetch();
-  }, [strategiesQuery, workersQuery, tab]);
+  const load = useCallback(async (options?: { silent?: boolean }) => {
+    try {
+      const result = await strategiesQuery.refetch();
+      if (result.error) throw result.error;
+      if (tab === "workers") {
+        const workersResult = await workersQuery.refetch();
+        if (workersResult.error) throw workersResult.error;
+      }
+      if (!options?.silent) {
+        showToast("success", "Data refreshed");
+      }
+    } catch (e) {
+      showToast("error", "Refresh failed", formatError(e));
+    }
+  }, [strategiesQuery, workersQuery, tab, showToast]);
+
+  const refreshWorkers = useCallback(async () => {
+    try {
+      const result = await workersQuery.refetch();
+      if (result.error) throw result.error;
+      showToast("success", "Workers refreshed");
+    } catch (e) {
+      showToast("error", "Workers refresh failed", formatError(e));
+    }
+  }, [workersQuery, showToast]);
 
   const switchTab = (next: TabId) => {
     setTab(next);
@@ -251,7 +361,6 @@ export default function StrategyAdminHub() {
 
   const runWorkerNow = async (workerId: string) => {
     setTriggeringWorker(workerId);
-    setWorkerMessage(null);
     try {
       const res = await fetch("/api/workers/trigger", {
         method: "POST",
@@ -260,12 +369,12 @@ export default function StrategyAdminHub() {
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error || "Trigger failed");
-      setWorkerMessage(`${workerId}: triggered`);
+      showToast("success", "Worker triggered", workerId);
       setTimeout(() => {
         void queryClient.invalidateQueries({ queryKey: ["workers-status"] });
       }, 2000);
     } catch (e) {
-      setWorkerMessage(e instanceof Error ? e.message : String(e));
+      showToast("error", "Worker trigger failed", `${workerId}: ${formatError(e)}`);
     } finally {
       setTriggeringWorker(null);
     }
@@ -288,9 +397,10 @@ export default function StrategyAdminHub() {
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error || "Save failed");
-      await load();
+      await load({ silent: true });
+      showToast("success", "Strategy saved", id);
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
+      showToast("error", "Strategy save failed", `${id}: ${formatError(e)}`);
     } finally {
       setSaving(null);
     }
@@ -306,10 +416,18 @@ export default function StrategyAdminHub() {
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error || "Promote failed");
-      alert(json.message ?? "Promoted");
-      await load();
+      await load({ silent: true });
+      showToast(
+        "success",
+        "Strategy promoted",
+        json.message ?? `${sourceId} → ${targetId}`,
+      );
     } catch (e) {
-      setActionError(e instanceof Error ? e.message : String(e));
+      showToast(
+        "error",
+        "Strategy promote failed",
+        `${sourceId} → ${targetId}: ${formatError(e)}`,
+      );
     } finally {
       setSaving(null);
     }
@@ -319,11 +437,11 @@ export default function StrategyAdminHub() {
     return <p className="text-gray-400 text-sm">Loading strategies...</p>;
   }
 
-  if (error) {
+  if (loadError && !data) {
     return (
       <div className="text-red-400 text-sm">
-        {error}
-        <button type="button" onClick={load} className="ml-3 underline text-red-300">
+        {loadError}
+        <button type="button" onClick={() => void load()} className="ml-3 underline text-red-300">
           Retry
         </button>
       </div>
@@ -337,6 +455,7 @@ export default function StrategyAdminHub() {
 
   return (
     <div className="space-y-6">
+      <AdminToastBanner toast={toast} onDismiss={dismissToast} />
       <div className="flex gap-2 border-b border-gray-700 pb-2">
         <button
           type="button"
@@ -494,9 +613,43 @@ export default function StrategyAdminHub() {
                   <option value="false">LIVE</option>
                 </select>
               </label>
+              <label className="text-gray-400">
+                ML label
+                <select
+                  className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white min-w-[120px]"
+                  value={reportMlLabel}
+                  onChange={(e) => {
+                    setReportMlLabel(e.target.value);
+                    setOutcomesOffset(0);
+                  }}
+                >
+                  <option value="">Any</option>
+                  <option value="unlabeled">Unlabeled</option>
+                  <option value="skip">Skip</option>
+                  <option value="interesting">Interesting</option>
+                  <option value="anomaly">Anomaly</option>
+                </select>
+              </label>
+              <label className="text-gray-400">
+                Condition
+                <select
+                  className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white min-w-[140px]"
+                  value={reportMlCondition}
+                  onChange={(e) => {
+                    setReportMlCondition(e.target.value);
+                    setOutcomesOffset(0);
+                  }}
+                >
+                  <option value="">Any</option>
+                  <option value="none">None</option>
+                  <option value="old_chart">Old Chart</option>
+                  <option value="price_topped">Price Topped</option>
+                  <option value="new_chart">New Chart</option>
+                </select>
+              </label>
               <button
                 type="button"
-                onClick={load}
+                onClick={() => void load()}
                 className="self-end px-3 py-1.5 bg-blue-600 rounded text-white text-xs"
               >
                 Refresh
@@ -508,6 +661,8 @@ export default function StrategyAdminHub() {
                   reportDomain,
                   reportStrategyId,
                   reportSimulated,
+                  reportMlLabel,
+                  reportMlCondition,
                 })}
                 className="self-end px-3 py-1.5 bg-gray-700 rounded text-white text-xs"
               >
@@ -639,6 +794,7 @@ export default function StrategyAdminHub() {
                         <th className="p-2">PnL%</th>
                         <th className="p-2">Status</th>
                         <th className="p-2">ML</th>
+                        <th className="p-2">Condition</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -660,6 +816,9 @@ export default function StrategyAdminHub() {
                           <td className="p-2">{o.status ?? "—"}</td>
                           <td className="p-2">
                             <OutcomeMlBadge features={o.features} />
+                          </td>
+                          <td className="p-2">
+                            <OutcomeMlConditionBadge features={o.features} />
                           </td>
                         </tr>
                       ))}
@@ -701,17 +860,18 @@ export default function StrategyAdminHub() {
           data={workersQuery.data}
           loading={workersQuery.isLoading}
           error={workersQuery.error}
-          onRefresh={() => void workersQuery.refetch()}
+          onRefresh={() => void refreshWorkers()}
           triggeringWorker={triggeringWorker}
-          workerMessage={workerMessage}
           onRunNow={runWorkerNow}
         />
       )}
 
       {selectedOutcome && (
         <OutcomeReviewModal
+          key={selectedOutcome.id}
           outcome={selectedOutcome}
           onClose={() => setSelectedOutcomeIndex(null)}
+          onNotify={(kind, title, detail) => showToast(kind, title, detail)}
           onSaved={(updated) => {
             queryClient.setQueryData(
               [
@@ -721,6 +881,8 @@ export default function StrategyAdminHub() {
                 reportDomain,
                 reportStrategyId,
                 reportSimulated,
+                reportMlLabel,
+                reportMlCondition,
                 outcomesOffset,
               ],
               (old: typeof strategiesQuery.data) => {
@@ -771,7 +933,6 @@ function WorkersTab({
   error,
   onRefresh,
   triggeringWorker,
-  workerMessage,
   onRunNow,
 }: {
   data: WorkersStatusResponse | undefined;
@@ -779,7 +940,6 @@ function WorkersTab({
   error: unknown;
   onRefresh: () => void;
   triggeringWorker: string | null;
-  workerMessage: string | null;
   onRunNow: (id: string) => void;
 }) {
   if (loading && !data) {
@@ -822,9 +982,6 @@ function WorkersTab({
             Refresh
           </button>
         </div>
-        {workerMessage && (
-          <p className="text-sm text-amber-300 mb-3">{workerMessage}</p>
-        )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
             <thead>

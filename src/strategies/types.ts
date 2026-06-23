@@ -150,10 +150,14 @@ export interface StrategyOutcomeRow {
 
 export type OutcomeMlLabel = 'skip' | 'interesting' | 'anomaly'
 
+export type OutcomeMlCondition = 'old_chart' | 'price_topped' | 'new_chart'
+
 export interface OutcomeMlMetadata {
   ml_label?: OutcomeMlLabel | null
+  ml_condition?: OutcomeMlCondition | null
   ml_note?: string | null
   ml_labeled_at?: string | null
+  ml_condition_at?: string | null
 }
 
 export interface OutcomeChartPoint {

@@ -120,6 +120,8 @@ export async function listStrategyOutcomes(params: {
   isSimulated?: boolean
   from?: string
   to?: string
+  mlLabel?: string
+  mlCondition?: string
   limit?: number
   offset?: number
 }): Promise<{ rows: StrategyOutcomeRow[]; total: number }> {
@@ -146,6 +148,16 @@ export async function listStrategyOutcomes(params: {
   }
   if (params.to) {
     query = query.lte('exit_at', params.to)
+  }
+  if (params.mlLabel === 'unlabeled') {
+    query = query.or('features->>ml_label.is.null,features->>ml_label.eq.')
+  } else if (params.mlLabel) {
+    query = query.eq('features->>ml_label', params.mlLabel)
+  }
+  if (params.mlCondition === 'none') {
+    query = query.or('features->>ml_condition.is.null,features->>ml_condition.eq.')
+  } else if (params.mlCondition) {
+    query = query.eq('features->>ml_condition', params.mlCondition)
   }
 
   const { data, error, count } = await query

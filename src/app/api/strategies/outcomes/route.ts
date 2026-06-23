@@ -1,10 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listStrategyOutcomes } from '@/strategies/db'
-import type { StrategyDomain } from '@/strategies/types'
+import type { StrategyDomain, StrategyOutcomeRow } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
 
-function toCsv(rows: Awaited<ReturnType<typeof listStrategyOutcomes>>['rows']): string {
+function readFeatureString(
+  features: Record<string, unknown> | null | undefined,
+  key: string,
+): string {
+  const v = features?.[key]
+  return typeof v === 'string' ? v : ''
+}
+
+function toCsv(rows: StrategyOutcomeRow[]): string {
   const headers = [
     'id',
     'strategy_id',
@@ -15,6 +23,9 @@ function toCsv(rows: Awaited<ReturnType<typeof listStrategyOutcomes>>['rows']): 
     'pnl_pct',
     'status',
     'is_simulated',
+    'ml_label',
+    'ml_condition',
+    'ml_note',
     'created_at',
   ]
   const lines = [headers.join(',')]
@@ -30,6 +41,9 @@ function toCsv(rows: Awaited<ReturnType<typeof listStrategyOutcomes>>['rows']): 
         r.pnl_pct ?? '',
         r.status ?? '',
         r.is_simulated,
+        readFeatureString(r.features, 'ml_label'),
+        readFeatureString(r.features, 'ml_condition'),
+        readFeatureString(r.features, 'ml_note'),
         r.created_at,
       ]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)
@@ -50,6 +64,8 @@ export async function GET(request: NextRequest) {
       isSimParam === 'true' ? true : isSimParam === 'false' ? false : undefined
     const from = searchParams.get('from') ?? undefined
     const to = searchParams.get('to') ?? undefined
+    const mlLabel = searchParams.get('ml_label') ?? undefined
+    const mlCondition = searchParams.get('ml_condition') ?? undefined
     const limit = parseInt(searchParams.get('limit') ?? '500', 10)
     const offset = parseInt(searchParams.get('offset') ?? '0', 10)
 
@@ -59,6 +75,8 @@ export async function GET(request: NextRequest) {
       isSimulated,
       from,
       to,
+      mlLabel,
+      mlCondition,
       limit: format === 'csv' ? Math.min(limit, 5000) : limit,
       offset,
     })
