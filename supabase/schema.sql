@@ -449,6 +449,23 @@ ALTER TABLE trending_token_tracker_dev
 ALTER TABLE trending_token_tracker_dev
   ADD COLUMN IF NOT EXISTS waiting_initial_price NUMERIC;
 
+ALTER TABLE trending_token_tracker
+  ADD COLUMN IF NOT EXISTS volume_5m NUMERIC;
+ALTER TABLE trending_token_tracker_dev
+  ADD COLUMN IF NOT EXISTS volume_5m NUMERIC;
+ALTER TABLE trending_token_tracker
+  ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ;
+ALTER TABLE trending_token_tracker_dev
+  ADD COLUMN IF NOT EXISTS status_changed_at TIMESTAMPTZ;
+ALTER TABLE trending_token_tracker
+  ADD COLUMN IF NOT EXISTS trading_simulation JSONB;
+ALTER TABLE trending_token_tracker_dev
+  ADD COLUMN IF NOT EXISTS trading_simulation JSONB;
+ALTER TABLE trending_token_tracker
+  ADD COLUMN IF NOT EXISTS price_history JSONB;
+ALTER TABLE trending_token_tracker_dev
+  ADD COLUMN IF NOT EXISTS price_history JSONB;
+
 CREATE INDEX IF NOT EXISTS idx_trending_tracker_waiting
   ON trending_token_tracker(status, waiting_started_at) WHERE status = 'waiting';
 CREATE INDEX IF NOT EXISTS idx_trending_tracker_dev_waiting
