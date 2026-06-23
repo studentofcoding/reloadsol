@@ -44,6 +44,7 @@ export function isServiceAuthorizedRequest(req: NextRequest): boolean {
     process.env.DLMM_SCREEN_SECRET,
     process.env.DLMM_MANAGE_SECRET,
     process.env.NOTIFICATION_SECRET_KEY,
+    process.env.PNL_UPDATE_SECRET,
     process.env.PNL_UPDATE_TOKEN,
     process.env.OHLC_UPDATE_TOKEN,
   ];

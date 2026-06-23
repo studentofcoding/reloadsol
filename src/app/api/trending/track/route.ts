@@ -1984,7 +1984,10 @@ async function runPnLUpdate(): Promise<void> {
     console.log('🔄 Running PnL update...')
 
     // Get the PnL update token from environment variables
-    const pnlToken = process.env.PNL_UPDATE_TOKEN || 'r3l0ads0l-pnl'
+    const pnlToken =
+      process.env.PNL_UPDATE_SECRET ||
+      process.env.PNL_UPDATE_TOKEN ||
+      'r3l0ads0l-pnl'
 
     // Call the PnL update API internally
     const pnlResponse = await fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/pnl/update`, {
@@ -4141,7 +4144,15 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     const { strategies: activeStrategies, configs: activeConfigs, allocation } = getActiveStrategiesSync()
 
     if (activeStrategies.length === 0) {
-      throw new Error('No active strategies available for trading')
+      console.warn('⏭️ No active strategies available for trading — skipping track cycle')
+      return NextResponse.json(
+        {
+          success: false,
+          skipped: true,
+          reason: 'No active strategies available for trading',
+        },
+        { status: 200 },
+      )
     }
 
     console.log(`🚀 Starting trading cycle with ${activeStrategies.length} active strategies`)
@@ -4227,7 +4238,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     // Fetch current trending tokens from Jupiter API with fallback & retry
     const TRENDING_URLS = [
       'https://datapi.jup.ag/v1/pools/toptrending/1h',
-      // 'https://api.jup.ag/v1/pools/toptrending/1h'
+      'https://api.jup.ag/v1/pools/toptrending/1h',
     ]
 
     let response: Response | null = null
@@ -4261,6 +4272,10 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     }
 
     const data = await response.json() as JupiterResponse
+
+    if (!Array.isArray(data?.pools)) {
+      throw new Error('Invalid Jupiter trending response: missing pools array')
+    }
 
     // Enhanced filtering with comprehensive tracking
     console.log(`🔍 Starting enhanced token filtering for ${data.pools.length} tokens...`)

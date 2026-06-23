@@ -1025,10 +1025,19 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("Content-Type", "application/json")
     req.Header.Set("User-Agent", "reloadsol-cron-service/1.0")
     if strings.Contains(url, "/api/ohlc") {
         if token := os.Getenv("OHLC_UPDATE_TOKEN"); token != "" {
+            req.Header.Set("Authorization", "Bearer "+token)
+        }
+    }
+    if strings.Contains(url, "/api/pnl/update") {
+        token := os.Getenv("PNL_UPDATE_SECRET")
+        if token == "" {
+            token = os.Getenv("PNL_UPDATE_TOKEN")
+        }
+        if token != "" {
             req.Header.Set("Authorization", "Bearer "+token)
         }
     }
@@ -1047,7 +1056,16 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
 	}
 
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("API error %d: %s", resp.StatusCode, string(body))
+		errMsg := string(body)
+		var parsed map[string]interface{}
+		if json.Unmarshal(body, &parsed) == nil {
+			if msg, ok := parsed["message"].(string); ok && msg != "" {
+				errMsg = msg
+			} else if errField, ok := parsed["error"].(string); ok && errField != "" {
+				errMsg = errField
+			}
+		}
+		return "", fmt.Errorf("API error %d: %s", resp.StatusCode, errMsg)
 	}
 
 	return string(body), nil

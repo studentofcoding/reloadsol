@@ -4,7 +4,10 @@
 // Usage: node scripts/update-pnl.js
 
 const SITE_URL = process.env.SITE_URL || 'http://localhost:3000'
-const PNL_TOKEN = process.env.PNL_UPDATE_TOKEN || 'simple-pnl-token'
+const PNL_TOKEN =
+  process.env.PNL_UPDATE_SECRET ||
+  process.env.PNL_UPDATE_TOKEN ||
+  'r3l0ads0l-pnl'
 
 async function updatePnL() {
   try {
