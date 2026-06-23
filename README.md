@@ -1,10 +1,10 @@
 # ReloadSOL
 
-Next.js + Go-cron Solana trading platform: bulk token buys, trending tracker, mcap analytics, SL/TP monitoring, and an autonomous Meteora DLMM agent. Uses Jupiter for swaps, Shyft for RPC, Supabase for persistence, and Jupiter [Wallet Kit](https://developers.jup.ag/docs/tool-kits/wallet-kit) for universal wallet connectivity.
+Next.js + Go-cron Solana trading platform: bulk token buys, trending tracker, mcap analytics, SL/TP monitoring, and an autonomous Meteora DLMM agent. Bulk buy/sell uses Solana Tracker Raptor; Jupiter Portfolio for wallet tokens; Shyft RPC via `/api/rpc`; Supabase for persistence; and Jupiter [Wallet Kit](https://developers.jup.ag/docs/tool-kits/wallet-kit) for universal wallet connectivity.
 
 ## Features
 
-- **Bulk token purchase** — buy up to 10 tokens in one flow via Jupiter
+- **Bulk token purchase** — buy up to 10 tokens in one flow via Raptor
 - **Universal wallet** — Phantom, Solflare, Backpack, Jupiter Wallet, mobile QR, and 20+ Wallet Standard wallets
 - **Trending tracker** — 24/7 monitoring, win/loss stats, Discord alerts
 - **MCap tracker** — growth thresholds, labels, OHLC bars
@@ -68,7 +68,7 @@ SUPABASE_SECRET_KEY=your-sb-secret-key
 
 # Shyft — https://shyft.to dashboard (server-side RPC via /api/rpc proxy)
 # Wallet tokens: Jupiter Portfolio via /api/jupiter/portfolio (both /buy and /sell)
-# Swaps: Solana Tracker Raptor (default on /sell and /buy), Jupiter fallback provider
+# Swaps: Solana Tracker Raptor (bulk /sell and /buy); GMGN charts only (no GMGN swap execution)
 # Browser RPC is proxied through /api/rpc — NEXT_PUBLIC_RPC_URL is optional
 SHYFT_API_KEY=your-shyft-api-key
 RPC_URL=https://rpc.shyft.to?api_key=your-shyft-api-key,https://api.mainnet-beta.solana.com

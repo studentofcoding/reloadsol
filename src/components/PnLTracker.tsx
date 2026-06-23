@@ -14,7 +14,6 @@ import TokenSkeleton from "./TokenSkeleton";
 import { getSolPriceUSD } from "@/utils/solana";
 import {
   fetchUserTokens,
-  executeBulkSell,
   executeBulkSellAlt,
   BulkSellRequest,
   UserToken,

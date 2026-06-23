@@ -17,11 +17,8 @@ import TokenSkeleton from "./TokenSkeleton";
 import ProgressiveTokenItem from "./ProgressiveTokenItem";
 import {
   LAMPORTS_PER_SOL,
-  VersionedTransaction,
-  Transaction,
 } from "@solana/web3.js";
 import {
-  executeBulkSell,
   executeBulkSellAlt,
   fetchUserTokens,
   fetchZeroBalanceTokens,
@@ -56,8 +53,6 @@ import PnLShareModal from "./PnLShareModal";
 import { pnlShareService } from "@/utils/pnl-share-service";
 import { mapRaptorQuoteToDisplay } from "@/utils/solanatracker-raptor";
 
-type SwapProvider = "solanatracker" | "jupiter" | "gmgn";
-
 function patchWalletTokenLists(
   data: WalletTokensData,
   patchList: (tokens: UserToken[]) => UserToken[],
@@ -73,9 +68,8 @@ function patchWalletTokenLists(
   };
 }
 
-// Quote data interface for different providers
 interface QuoteData {
-  provider: "jupiter" | "solanatracker" | "gmgn";
+  provider: "solanatracker";
   inputMint: string;
   outputMint: string;
   amount: string;
@@ -177,9 +171,7 @@ export default function BulkTokenSeller() {
   // SOL price in USD
   const [solPriceUsd, setSolPriceUsd] = useState<number>(145); // Default fallback
 
-  // Provider and Quote state
-  const [swapProvider, setSwapProvider] = useState<SwapProvider>("solanatracker");
-  // Auto-quote enabled by default (every 10s)
+  // Quote state (Raptor via /api/solanatracker/quote)
   const [autoQuote, setAutoQuote] = useState<boolean>(true);
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
   const [isGettingQuotes, setIsGettingQuotes] = useState<boolean>(false);
@@ -187,13 +179,6 @@ export default function BulkTokenSeller() {
   const [showSettings, setShowSettings] = useState<boolean>(false);
 
   const feeRates = getAllFeeRates();
-
-  // Provider options
-  const PROVIDER_OPTIONS = [
-    { value: "solanatracker" as const, label: "default", icon: "📊" },
-    { value: "jupiter" as const, label: "fallback", icon: "🚀" },
-    { value: "gmgn" as const, label: "gmgn", icon: "🔥" },
-  ] as const;
 
   // Quote utilities
   const getQuoteForToken = useCallback(
@@ -245,118 +230,15 @@ export default function BulkTokenSeller() {
     [slippage],
   );
 
-  const fetchJupiterQuote = useCallback(
-    async (inputMint: string, amount: string): Promise<QuoteData | null> => {
-      try {
-        const query = new URLSearchParams({
-          inputMint,
-          outputMint: "So11111111111111111111111111111111111111112",
-          amount,
-          slippageBps: slippage.toString(),
-        });
-        const response = await fetch(
-          `/api/providers/jupiter/quote?${query.toString()}`,
-        );
-        if (!response.ok) throw new Error("Jupiter quote failed");
-
-        const data = await response.json();
-        return {
-          provider: "jupiter",
-          inputMint,
-          outputMint: "So11111111111111111111111111111111111111112",
-          amount,
-          outAmount: data.outAmount,
-          priceImpact: parseFloat(data.priceImpactPct || "0"),
-          timestamp: Date.now(),
-          route: data,
-        };
-      } catch (error) {
-        console.error("Jupiter quote error:", error);
-        return null;
-      }
-    },
-    [slippage],
-  );
-
-  const fetchGMGNQuote = useCallback(
-    async (inputMint: string, amount: string): Promise<QuoteData | null> => {
-      try {
-        // Call backend proxy to avoid CORS and include required fee parameter (handled server-side)
-        const query = new URLSearchParams({
-          token_in_address: inputMint,
-          token_out_address: "So11111111111111111111111111111111111111112",
-          in_amount: amount,
-          from_address: publicKey?.toString() || "",
-          slippage: (slippage / 100).toString(),
-        });
-        const response = await fetch(
-          `/api/providers/gmgn/quote?${query.toString()}`,
-        );
-        if (!response.ok) throw new Error("GMGN quote failed");
-
-        const data = await response.json();
-
-        // Extract quote data from GMGN response structure (supports both legacy and new formats)
-        if (!data.data) {
-          throw new Error("Invalid GMGN response format");
-        }
-
-        const quoteInfo = data.data.quote || data.data; // some responses nest under data.quote
-
-        const gmgnOut =
-          quoteInfo.outputAmount ??
-          quoteInfo.output_amount ??
-          quoteInfo.outAmount ??
-          quoteInfo.out_amount;
-        if (!gmgnOut) {
-          throw new Error("Invalid GMGN response format");
-        }
-
-        return {
-          provider: "gmgn",
-          inputMint,
-          outputMint: "So11111111111111111111111111111111111111112",
-          amount,
-          outAmount: gmgnOut,
-          priceImpact: parseFloat(
-            quoteInfo.priceImpactPct ||
-              quoteInfo.priceImpact ||
-              quoteInfo.price_impact ||
-              "0",
-          ),
-          timestamp: Date.now(),
-          route: data,
-        };
-      } catch (error) {
-        console.error("GMGN quote error:", error);
-        return null;
-      }
-    },
-    [slippage, publicKey],
-  );
-
-  // Main quote fetching function
+  // Main quote fetching function (Raptor only)
   const fetchQuoteForToken = useCallback(
     async (token: TokenToSell): Promise<QuoteData | null> => {
-      const amount = token.sellAmount.toString();
-
-      // Helper to attempt provider then fallback to Jupiter
-      const tryProvider = async () => {
-        switch (swapProvider) {
-          case "solanatracker":
-            return fetchSolanaTrackerQuote(token.mintAddress, amount);
-          case "jupiter":
-            return fetchJupiterQuote(token.mintAddress, amount);
-          case "gmgn":
-            return fetchGMGNQuote(token.mintAddress, amount);
-          default:
-            return fetchSolanaTrackerQuote(token.mintAddress, amount);
-        }
-      };
-
-      return tryProvider();
+      return fetchSolanaTrackerQuote(
+        token.mintAddress,
+        token.sellAmount.toString(),
+      );
     },
-    [swapProvider, fetchSolanaTrackerQuote, fetchJupiterQuote, fetchGMGNQuote],
+    [fetchSolanaTrackerQuote],
   );
 
   // Batch quote fetching for all selected tokens
@@ -373,7 +255,7 @@ export default function BulkTokenSeller() {
 
     try {
       console.log(
-        `Fetching ${swapProvider} quotes for ${tokensToQuote.length} tokens`,
+        `Fetching Raptor quotes for ${tokensToQuote.length} tokens`,
       );
 
       // Fetch quotes for all selected tokens in parallel
@@ -397,13 +279,11 @@ export default function BulkTokenSeller() {
       setLastQuoteTime(Date.now());
 
       console.log(
-        `✅ Got ${successCount}/${tokensToQuote.length} quotes from ${swapProvider}`,
+        `✅ Got ${successCount}/${tokensToQuote.length} Raptor quotes`,
       );
 
       if (successCount === 0) {
-        setError(
-          `Failed to get quotes from ${swapProvider}. Try a different provider.`,
-        );
+        setError("Failed to get quotes from Raptor. Please try again.");
       }
     } catch (error) {
       console.error("Batch quote error:", error);
@@ -414,7 +294,6 @@ export default function BulkTokenSeller() {
   }, [
     selectedTokens,
     selectedZeroBalanceTokens,
-    swapProvider,
     fetchQuoteForToken,
     isGettingQuotes,
   ]);
@@ -452,12 +331,6 @@ export default function BulkTokenSeller() {
 
     return () => clearInterval(interval);
   }, [autoQuote, tokensHash, selectedTokens.length]);
-
-  const handleSwapProviderChange = (provider: SwapProvider) => {
-    setSwapProvider(provider);
-    setQuotes({});
-    setLastQuoteTime(0);
-  };
 
   // Fetch SOL price using robust multi-API system — handled by useSolPrice
 
@@ -753,187 +626,6 @@ export default function BulkTokenSeller() {
     [publicKey, walletAddress, connection, patchTokens],
   );
 
-  // Custom swap execution using provider-specific quotes
-  const executeCustomSwap = useCallback(
-    async (
-      tokens: TokenToSell[],
-      walletAddress: string,
-      connection: any,
-      signAllTransactions: any,
-    ): Promise<BulkSellResult> => {
-      // Collect GMGN transactions for batch processing
-      const gmgnTransactions: Array<{
-        token: TokenToSell;
-        quote: QuoteData;
-        transaction: VersionedTransaction;
-      }> = [];
-
-      const results: BulkSellResult = {
-        success: false,
-        successfulSwaps: [],
-        failedSwaps: [],
-        successfulCloses: [],
-        failedCloses: [],
-        signatures: [],
-        totalReceived: 0,
-        feeInfo: {
-          totalFees: 0,
-          devFee: 0,
-          referralFee: 0,
-          feePerOperation: 0,
-          totalOperations: 0,
-          operationType: "SELL",
-          sellFeeRate: 0.5,
-          closeFeeRate: 0.00203928,
-        },
-      };
-
-      // Process swaps using provider-specific quotes
-      for (const token of tokens) {
-        try {
-          const quote = getQuoteForToken(token.mintAddress);
-
-          if (!quote || !isQuoteValid(quote)) {
-            results.failedSwaps.push({
-              mintAddress: token.mintAddress,
-              error: "No valid quote available",
-            });
-            continue;
-          }
-
-          if (swapProvider !== "gmgn") {
-            results.failedSwaps.push({
-              mintAddress: token.mintAddress,
-              error: `${swapProvider} swaps use executeBulkSellAlt/executeBulkSell, not executeCustomSwap`,
-            });
-            continue;
-          }
-
-          if (!quote.route?.data?.raw_tx?.swapTransaction) {
-            throw new Error("No transaction data from GMGN");
-          }
-          gmgnTransactions.push({
-            token,
-            quote,
-            transaction: VersionedTransaction.deserialize(
-              Buffer.from(
-                quote.route.data.raw_tx.swapTransaction,
-                "base64",
-              ),
-            ),
-          });
-        } catch (error) {
-          results.failedSwaps.push({
-            mintAddress: token.mintAddress,
-            error: error instanceof Error ? error.message : "Unknown error",
-          });
-        }
-      }
-
-      if (swapProvider === "gmgn" && gmgnTransactions.length > 0) {
-        try {
-          // Sign all GMGN transactions at once
-          const transactions = gmgnTransactions.map((t) => t.transaction);
-          const signedTransactions = await signAllTransactions(transactions);
-
-          // Submit all signed transactions to GMGN
-          const submitPromises = signedTransactions.map(
-            async (signedTx: VersionedTransaction, index: number) => {
-              const signedBase64 = Buffer.from(signedTx.serialize()).toString(
-                "base64",
-              );
-              const submitResponse = await fetch("/api/providers/gmgn/submit", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ signed_tx: signedBase64 }),
-              });
-
-              if (submitResponse.ok) {
-                const submitData = await submitResponse.json();
-                return {
-                  success: true,
-                  signature: submitData.data?.hash || `gmgn-tx-${index}`,
-                  outAmount: gmgnTransactions[index].quote.outAmount,
-                };
-              } else {
-                return {
-                  success: false,
-                  error: `GMGN submit failed for ${gmgnTransactions[index].token.mintAddress}`,
-                };
-              }
-            },
-          );
-
-          const submitResults = await Promise.all(submitPromises);
-
-          // Process results
-          submitResults.forEach((result: any, index: number) => {
-            const token = gmgnTransactions[index].token;
-            if (result.success) {
-              results.successfulSwaps.push({
-                mintAddress: token.mintAddress,
-                solReceived: parseFloat(result.outAmount) / 1e9,
-              });
-              results.signatures.push(result.signature);
-              results.totalReceived += parseFloat(result.outAmount) / 1e9;
-            } else {
-              results.failedSwaps.push({
-                mintAddress: token.mintAddress,
-                error: result.error,
-              });
-            }
-          });
-
-          // === Auto-close tokens after GMGN swap (like Jupiter) ===
-          // Only close tokens when the full balance was sold
-          const tokensToClose = gmgnTransactions
-            .map((t) => t.token)
-            .filter((t) => t.sellAmount >= t.balance);
-
-          if (tokensToClose.length > 0) {
-            try {
-              const closeResult = await executeBulkSellAlt(
-                {
-                  tokens: [],
-                  unsellableTokens: tokensToClose,
-                  slippage: 0,
-                  priorityFee: 0,
-                },
-                walletAddress,
-                connection,
-                signAllTransactions,
-              );
-              results.successfulCloses = closeResult.successfulCloses;
-              results.failedCloses = closeResult.failedCloses;
-              results.signatures.push(...closeResult.signatures);
-            } catch (closeError) {
-              console.error(
-                "Failed to auto-close after GMGN swap:",
-                closeError,
-              );
-            }
-          }
-        } catch (error) {
-          console.error("GMGN batch processing error:", error);
-          gmgnTransactions.forEach((t: any) => {
-            results.failedSwaps.push({
-              mintAddress: t.token.mintAddress,
-              error: "GMGN batch processing failed",
-            });
-          });
-        }
-      }
-
-      results.success = results.successfulSwaps.length > 0;
-      return results;
-    },
-    [
-      swapProvider,
-      getQuoteForToken,
-      isQuoteValid,
-    ],
-  );
-
   // Handle bulk sell with better error handling
   const handleBulkSell = useCallback(async () => {
     if (!connected || !publicKey || !signAllTransactions) {
@@ -970,52 +662,12 @@ export default function BulkTokenSeller() {
         priorityFee,
       };
 
-      let sellResult: BulkSellResult;
-
-      if (swapProvider === "jupiter") {
-        sellResult = await executeBulkSell(
-          request,
-          publicKey.toString(),
-          connection,
-          signAllTransactions,
-        );
-      } else if (swapProvider === "gmgn") {
-        sellResult = await executeCustomSwap(
-          selectedTokens,
-          publicKey.toString(),
-          connection,
-          signAllTransactions,
-        );
-
-        if (selectedZeroBalanceTokens.length > 0) {
-          try {
-            const closeResult = await executeBulkSellAlt(
-              {
-                tokens: [],
-                unsellableTokens: selectedZeroBalanceTokens,
-                slippage,
-                priorityFee,
-              },
-              publicKey.toString(),
-              connection,
-              signAllTransactions,
-            );
-
-            sellResult.successfulCloses = closeResult.successfulCloses;
-            sellResult.failedCloses = closeResult.failedCloses;
-            sellResult.signatures.push(...closeResult.signatures);
-          } catch (error) {
-            console.error("Failed to close accounts:", error);
-          }
-        }
-      } else {
-        sellResult = await executeBulkSellAlt(
-          request,
-          publicKey.toString(),
-          connection,
-          signAllTransactions,
-        );
-      }
+      const sellResult = await executeBulkSellAlt(
+        request,
+        publicKey.toString(),
+        connection,
+        signAllTransactions,
+      );
 
       // Get balance after operation (non-blocking)
       try {
@@ -1329,8 +981,6 @@ export default function BulkTokenSeller() {
     slippage,
     priorityFee,
     fetchTokens,
-    swapProvider,
-    executeCustomSwap,
     autoTriggerShare,
     triggerPostTradeRefresh,
     showOutcome,
@@ -2193,38 +1843,7 @@ export default function BulkTokenSeller() {
               {showSettings && (
                 <div className="px-4 pb-4 space-y-6">
                   {/* Settings Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    {/* Swap Provider */}
-                    <div className="space-y-3">
-                      <label
-                        htmlFor="swapProvider"
-                        className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
-                      >
-                        Swap Provider
-                      </label>
-                      <select
-                        id="swapProvider"
-                        value={swapProvider}
-                        onChange={(e) =>
-                          handleSwapProviderChange(
-                            e.target.value as SwapProvider,
-                          )
-                        }
-                        className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-xl text-white focus:bg-gray-600 focus:border-gray-400 transition-all duration-200"
-                        disabled={isLoading}
-                      >
-                        {PROVIDER_OPTIONS.map((option) => (
-                          <option
-                            key={option.value}
-                            value={option.value}
-                            className="bg-gray-700"
-                          >
-                            {option.icon} {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Slippage */}
                     <div className="space-y-3">
                       <label
@@ -2285,9 +1904,7 @@ export default function BulkTokenSeller() {
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                       <div>
                         <h4 className="text-md font-semibold text-white mb-1">
-                          {swapProvider.charAt(0).toUpperCase() +
-                            swapProvider.slice(1)}{" "}
-                          Quotes
+                          Raptor Quotes
                         </h4>
                         <p className="text-gray-400 text-sm">
                           {Object.keys(quotes).length} quote

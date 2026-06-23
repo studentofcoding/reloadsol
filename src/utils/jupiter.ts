@@ -1465,340 +1465,13 @@ async function isFungibleTokenWithJupiter(mintAddress: string): Promise<boolean>
   return false
 }
 
-// Execute bulk token sales with account closing
-export async function executeBulkSell(
-  request: BulkSellRequest,
-  userPublicKey: string,
-  connection: Connection,
-  signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
-): Promise<BulkSellResult> {
-  const result: BulkSellResult = {
-    success: false,
-    successfulSwaps: [],
-    failedSwaps: [],
-    successfulCloses: [],
-    failedCloses: [],
-    totalReceived: 0,
-    signatures: [],
-    feeInfo: {
-      totalFees: 0,
-      devFee: 0,
-      referralFee: 0,
-      feePerOperation: 0, // Will be calculated based on actual amounts
-      totalOperations: 0,
-      operationType: 'SELL' as FeeOperationType,
-      sellFeeRate: 0, // Will be calculated as 1% of received SOL
-      closeFeeRate: getFeeForOperation('CLOSE')
-    }
-  }
-
-  try {
-    // Track start time for performance measurement
-    const start = Date.now()
-    const successfulSwaps: TokenToSell[] = []
-
-    // Only process swaps if there are tokens to sell
-    if (request.tokens && request.tokens.length > 0) {
-      // Filter out frozen tokens first
-      const nonFrozenTokens = request.tokens.filter(token => !token.frozen)
-      const frozenTokens = request.tokens.filter(token => token.frozen)
-
-      console.log(`Executing bulk sell: ${nonFrozenTokens.length} sellable tokens, ${frozenTokens.length} frozen tokens`)
-
-      // Add frozen tokens to failed sales immediately
-      frozenTokens.forEach(token => {
-        result.failedSwaps.push({
-          mintAddress: token.mintAddress,
-          error: 'Token account is frozen and cannot be traded'
-        })
-      })
-
-      if (nonFrozenTokens.length === 0) {
-        console.log('No non-frozen tokens to sell')
-      } else {
-        // Get latest blockhash for all transactions
-        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
-
-        // Batch quote fetching and transaction creation (similar to executeBulkBuy)
-        const transactions: VersionedTransaction[] = []
-        const transactionTokens: TokenToSell[] = []
-        const transactionQuotes: SwapQuote[] = []
-        const BATCH_SIZE = 10 // Process 10 tokens per batch for API calls
-        const batches: TokenToSell[][] = []
-
-        // Create batches
-        for (let i = 0; i < nonFrozenTokens.length; i += BATCH_SIZE) {
-          batches.push(nonFrozenTokens.slice(i, i + BATCH_SIZE))
-        }
-
-        // Process batches in parallel with timeout protection
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 45000) // 45 second total timeout
-
-        try {
-          await Promise.all(batches.map(async (batch, batchIndex) => {
-            const batchStart = batchIndex * BATCH_SIZE
-            console.log(`Processing sell batch ${batchStart}-${batchStart + batch.length} of ${nonFrozenTokens.length} tokens`)
-
-            // Process tokens in this batch in parallel
-            const batchPromises = batch.map(async (token) => {
-              try {
-                // Get quote for this token
-                const quote = await getSwapQuote(
-                  token.mintAddress,
-                  TOKENS.SOL,
-                  token.sellAmount,
-                  request.slippage
-                )
-
-                if (!quote) {
-                  return { success: false, token, error: new Error('No valid quote available') }
-                }
-
-                // Create transaction for this quote
-                const feeInstructions: any[] = []
-                const swapTransaction = await getSwapTransaction(
-                  quote,
-                  userPublicKey,
-                  request.priorityFee,
-                  feeInstructions
-                )
-
-                if (!swapTransaction) {
-                  return { success: false, token, error: new Error('Failed to create swap transaction') }
-                }
-
-                // Deserialize and update blockhash
-                const tx = VersionedTransaction.deserialize(
-                  Buffer.from(swapTransaction.swapTransaction, 'base64')
-                )
-                tx.message.recentBlockhash = blockhash
-
-                return { success: true, token, tx, quote }
-              } catch (error) {
-                console.error(`Failed to prepare sell for ${token.mintAddress}:`, error)
-                return { success: false, token, error }
-              }
-            })
-
-            // Wait for all transactions in this batch
-            const results = await Promise.all(batchPromises)
-
-            // Collect successful transactions and failed ones
-            results.forEach(batchResult => {
-              if (batchResult.success && batchResult.tx && batchResult.quote) {
-                transactions.push(batchResult.tx)
-                transactionTokens.push(batchResult.token)
-                transactionQuotes.push(batchResult.quote)
-              } else {
-                result.failedSwaps.push({
-                  mintAddress: batchResult.token.mintAddress,
-                  error: batchResult.error instanceof Error ? batchResult.error.message : 'Unknown error creating transaction'
-                })
-              }
-            })
-
-            console.log(`Sell batch ${batchStart}-${batchStart + batch.length} completed: ${results.filter(r => r.success).length} successful`)
-          }))
-        } finally {
-          clearTimeout(timeoutId)
-        }
-
-        if (transactions.length === 0) {
-          console.log('No valid sell transactions could be created')
-        } else {
-          console.log(`Signing ${transactions.length} sell transactions...`)
-
-          // Sign all transactions at once
-          const signedTransactions = await signAllTransactions(transactions)
-
-          // Send and confirm transactions using batched approach (like executeBulkBuy)
-          const SEND_BATCH_SIZE = 6 // Send 6 transactions at a time
-          const swapSignatures: string[] = []
-
-          for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
-            const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE)
-            const batchTokens = transactionTokens.slice(i, i + SEND_BATCH_SIZE)
-            const batchQuotes = transactionQuotes.slice(i, i + SEND_BATCH_SIZE)
-
-            // Send batch transactions in parallel
-            const sendPromises = batch.map(async (tx, idx) => {
-              try {
-                const signature = await connection.sendTransaction(tx, {
-                  skipPreflight: true,
-                  maxRetries: 2
-                })
-                return { success: true, signature, tokenIdx: i + idx }
-              } catch (error) {
-                console.error(`Failed to send sell transaction for token ${batchTokens[idx].mintAddress}:`, error)
-                return { success: false, tokenIdx: i + idx, error }
-              }
-            })
-
-            const sendResults = await Promise.all(sendPromises)
-
-            // Process confirmations for successful sends in parallel
-            const confirmPromises = sendResults.map(async (sendResult) => {
-              if (!sendResult.success) {
-                result.failedSwaps.push({
-                  mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                  error: sendResult.error instanceof Error ? sendResult.error.message : 'Failed to send transaction'
-                })
-                return
-              }
-
-              try {
-                const confirmation = await connection.confirmTransaction({
-                  signature: sendResult.signature!,
-                  lastValidBlockHeight,
-                  blockhash
-                }, 'confirmed')
-
-                if (confirmation.value.err) {
-                  console.error(`Sell transaction failed: ${sendResult.signature}`, confirmation.value.err)
-                  result.failedSwaps.push({
-                    mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                    error: `Transaction failed: ${confirmation.value.err}`
-                  })
-                } else {
-                  // Verify transaction success on chain
-                  const txInfo = await connection.getTransaction(sendResult.signature!, {
-                    commitment: 'confirmed',
-                    maxSupportedTransactionVersion: 0
-                  })
-
-                  if (txInfo?.meta?.err) {
-                    result.failedSwaps.push({
-                      mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                      error: 'Transaction failed on chain'
-                    })
-                  } else {
-                    swapSignatures.push(sendResult.signature!)
-                    successfulSwaps.push(transactionTokens[sendResult.tokenIdx])
-
-                    // Calculate actual SOL received from the quote
-                    const quote = batchQuotes[sendResult.tokenIdx - i]
-                    const solReceived = parseInt(quote.outAmount) / LAMPORTS_PER_SOL
-
-                    result.successfulSwaps.push({
-                      mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                      solReceived: solReceived
-                    })
-                    result.totalReceived += solReceived
-                    console.log(`✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress}`)
-                  }
-                }
-              } catch (error: any) {
-                console.error(`Confirmation failed for ${sendResult.signature}:`, error)
-                result.failedSwaps.push({
-                  mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                  error: error.message && error.message.includes('TransactionExpiredBlockheightExceededError')
-                    ? 'Transaction expired'
-                    : `Confirmation failed: ${error.message || 'Unknown error'}`
-                })
-              }
-            })
-
-            await Promise.all(confirmPromises)
-            console.log(`Processed sell batch ${i / SEND_BATCH_SIZE + 1}/${Math.ceil(signedTransactions.length / SEND_BATCH_SIZE)}`)
-          }
-
-          result.signatures.push(...swapSignatures)
-        }
-      }
-    }
-
-    // Step 4: Close token accounts for successful swaps ONLY if selling 100% AND selected unsellable tokens
-    // Only close accounts when selling 100% of the token
-    const tokensToCloseFromSwaps = successfulSwaps.filter(token => token.sellPercentage >= 100)
-    const tokensToClose: UserToken[] = [...tokensToCloseFromSwaps]
-
-    // Add unsellable tokens to the close list if provided (excluding frozen tokens)
-    if (request.unsellableTokens && request.unsellableTokens.length > 0) {
-      const nonFrozenUnsellableTokens = request.unsellableTokens.filter(token => !token.frozen)
-      const frozenUnsellableTokens = request.unsellableTokens.filter(token => token.frozen)
-
-      tokensToClose.push(...nonFrozenUnsellableTokens)
-      console.log(`Adding ${nonFrozenUnsellableTokens.length} unsellable tokens to close list`)
-
-      // Add frozen unsellable tokens to failed closes
-      frozenUnsellableTokens.forEach(token => {
-        result.failedCloses.push({
-          mintAddress: token.mintAddress,
-          error: 'Token account is frozen and cannot be closed'
-        })
-      })
-    }
-
-    if (tokensToClose.length > 0) {
-      try {
-        const closeResults = await closeTokenAccounts(
-          tokensToClose,
-          userPublicKey,
-          connection,
-          signAllTransactions,
-          { successfulSwapsCount: result.successfulSwaps.length, totalSolReceived: result.totalReceived }
-        )
-
-        result.successfulCloses = closeResults.successful
-        result.failedCloses = closeResults.failed
-        result.signatures.push(...closeResults.signatures)
-      } catch (error) {
-        console.error('Error closing accounts:', error)
-        // Mark all as failed to close
-        result.failedCloses = tokensToClose.map(token => ({
-          mintAddress: token.mintAddress,
-          error: 'Failed to close account'
-        }))
-      }
-    }
-
-    // Calculate and populate fee information (fees are now included inline in transactions)
-    if (result.successfulSwaps.length > 0 || result.successfulCloses.length > 0) {
-      // Calculate separate fees for sell and close operations
-      // For sell: 0.5% of total SOL received from sales
-      const sellFeeDistribution = calculateFeeDistribution('SELL', result.successfulSwaps.length, result.totalReceived)
-      // For close: fixed fee per account closed
-      const closeFeeDistribution = calculateFeeDistribution('CLOSE', result.successfulCloses.length)
-
-      // Combine fees
-      const totalFees = sellFeeDistribution.totalFee + closeFeeDistribution.totalFee
-      const totalDevFee = sellFeeDistribution.devFee + closeFeeDistribution.devFee
-      const totalReferralFee = sellFeeDistribution.referralFee + closeFeeDistribution.referralFee
-      const totalOperations = result.successfulSwaps.length + result.successfulCloses.length
-
-      result.feeInfo = {
-        totalFees,
-        devFee: totalDevFee,
-        referralFee: totalReferralFee,
-        feePerOperation: totalOperations > 0 ? totalFees / totalOperations : 0, // Average fee per operation
-        totalOperations,
-        operationType: 'SELL' as FeeOperationType, // Primary operation type
-        sellFeeRate: getFeeForOperation('SELL', result.totalReceived),
-        closeFeeRate: getFeeForOperation('CLOSE')
-      }
-
-      console.log(`🎉 Bulk sell completed: ${result.successfulSwaps.length} swaps, ${result.successfulCloses.length} closes`)
-      console.log(`⚡ Total processing time: ${Date.now() - start}ms`)
-      console.log(`💰 Total fees: ${totalFees} SOL (Sell: ${sellFeeDistribution.totalFee} from ${result.totalReceived} SOL received, Close: ${closeFeeDistribution.totalFee})`)
-    }
-
-    // Operation is successful if we have successful sales OR successful closes
-    result.success = result.successfulSwaps.length > 0 || result.successfulCloses.length > 0
-    return result
-  } catch (error) {
-    console.error('Bulk sell execution error:', error)
-
-    // Only mark tokens as failed to sell if we actually have tokens to sell
-    if (request.tokens && request.tokens.length > 0) {
-      result.failedSwaps = request.tokens.map(token => ({
-        mintAddress: token.mintAddress,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }))
-    }
-
-    return result
-  }
+function isRpcAccountNotFoundError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return (
+    message.includes('could not find account') ||
+    message.includes('Account does not exist') ||
+    message.includes('Invalid param')
+  )
 }
 
 // Close token accounts after successful sales with improved error handling
@@ -1816,15 +1489,15 @@ async function closeTokenAccounts(
     signatures: [] as string[]
   }
 
+  const alreadyClosed: string[] = []
+
   try {
     const burnInstructions = []
     const closeInstructions = []
     const tokensToProcess = []
 
-    // Create burn and close instructions for each token
     for (const token of tokens) {
       try {
-        // Skip frozen tokens
         if (token.frozen) {
           result.failed.push({
             mintAddress: token.mintAddress,
@@ -1833,53 +1506,18 @@ async function closeTokenAccounts(
           continue
         }
 
-        // Check if the token might be problematic (like pump.fun tokens)
-        if (isPumpFunToken(token.mintAddress)) {
-          console.warn(`Detected pump.fun token: ${token.mintAddress}`)
-
-          // For pump.fun tokens, we might need special handling
-          // Some pump.fun tokens may not allow standard account closing
-          try {
-            const tokenAccount = await getAssociatedTokenAddress(
-              new PublicKey(token.mintAddress),
-              new PublicKey(userPublicKey)
-            )
-
-            // Check account balance first for pump.fun tokens
-            const accountInfo = await connection.getTokenAccountBalance(tokenAccount)
-
-            if (accountInfo.value.uiAmount && accountInfo.value.uiAmount > 0) {
-              result.failed.push({
-                mintAddress: token.mintAddress,
-                error: 'Cannot close pump.fun token account with remaining balance'
-              })
-              continue
-            }
-          } catch (error) {
-            result.failed.push({
-              mintAddress: token.mintAddress,
-              error: `Pump.fun token account check failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-            })
-            continue
-          }
-        }
-
         const tokenAccount = await getAssociatedTokenAddress(
           new PublicKey(token.mintAddress),
           new PublicKey(userPublicKey)
         )
 
-        // Check if account exists
         const accountInfo = await connection.getAccountInfo(tokenAccount)
         if (!accountInfo) {
-          result.failed.push({
-            mintAddress: token.mintAddress,
-            error: 'Token account does not exist'
-          })
+          console.log(`Token account already closed: ${token.mintAddress}`)
+          alreadyClosed.push(token.mintAddress)
           continue
         }
 
-        // Additional check for account data validity
         if (accountInfo.data.length < 165) {
           result.failed.push({
             mintAddress: token.mintAddress,
@@ -1888,7 +1526,6 @@ async function closeTokenAccounts(
           continue
         }
 
-        // Double-check if account is frozen by examining the raw account data
         const accountFrozenState = isTokenAccountFrozen(accountInfo.data)
         if (accountFrozenState) {
           result.failed.push({
@@ -1898,35 +1535,42 @@ async function closeTokenAccounts(
           continue
         }
 
-        // Check current balance
-        const balanceInfo = await connection.getTokenAccountBalance(tokenAccount)
-        const currentBalance = balanceInfo.value.amount
-        const currentUiAmount = balanceInfo.value.uiAmount || 0
+        let currentBalance = '0'
+        let currentUiAmount = 0
+        try {
+          const balanceInfo = await connection.getTokenAccountBalance(tokenAccount)
+          currentBalance = balanceInfo.value.amount
+          currentUiAmount = balanceInfo.value.uiAmount || 0
+        } catch (balanceError) {
+          if (isRpcAccountNotFoundError(balanceError)) {
+            console.log(`Token account already closed (balance check): ${token.mintAddress}`)
+            alreadyClosed.push(token.mintAddress)
+            continue
+          }
+          throw balanceError
+        }
 
         console.log(`Token ${token.mintAddress}: balance=${currentBalance}, uiAmount=${currentUiAmount}`)
 
-        // If token has balance > 0, we need to burn it first
-        if (parseInt(currentBalance) > 0) {
+        if (parseInt(currentBalance, 10) > 0) {
           console.log(`Creating burn instruction for ${token.mintAddress} (${currentBalance} tokens)`)
-
-          const burnInstruction = createBurnInstruction(
-            tokenAccount,
-            new PublicKey(token.mintAddress),
-            new PublicKey(userPublicKey),
-            BigInt(currentBalance) // Burn the entire balance
+          burnInstructions.push(
+            createBurnInstruction(
+              tokenAccount,
+              new PublicKey(token.mintAddress),
+              new PublicKey(userPublicKey),
+              BigInt(currentBalance)
+            )
           )
-
-          burnInstructions.push(burnInstruction)
         }
 
-        // Always create close instruction (will execute after burn if needed)
-        const closeInstruction = createCloseAccountInstruction(
-          tokenAccount,
-          new PublicKey(userPublicKey),
-          new PublicKey(userPublicKey)
+        closeInstructions.push(
+          createCloseAccountInstruction(
+            tokenAccount,
+            new PublicKey(userPublicKey),
+            new PublicKey(userPublicKey)
+          )
         )
-
-        closeInstructions.push(closeInstruction)
         tokensToProcess.push(token)
       } catch (error) {
         console.error(`Failed to prepare burn/close for ${token.mintAddress}:`, error)
@@ -1939,14 +1583,12 @@ async function closeTokenAccounts(
 
     if (burnInstructions.length > 0 || closeInstructions.length > 0) {
       try {
-        // Add fee instructions for successful closes (fixed fee per account)
         const closeFeeInstructions = createFeeTransferInstructions(
           new PublicKey(userPublicKey),
           'CLOSE',
           tokensToProcess.length
         )
 
-        // Add sell fee instructions if sell data is provided (0.5% of total SOL received)
         const sellFeeInstructions = sellData ? createFeeTransferInstructions(
           new PublicKey(userPublicKey),
           'SELL',
@@ -1954,10 +1596,7 @@ async function closeTokenAccounts(
           sellData.totalSolReceived
         ) : []
 
-        // Combine burn, close, and fee instructions in the same transaction
         const allInstructions = [...burnInstructions, ...closeInstructions, ...closeFeeInstructions, ...sellFeeInstructions]
-
-        // Create transaction with burn + close + fee instructions
         const { blockhash } = await connection.getLatestBlockhash('confirmed')
 
         const messageV0 = new TransactionMessage({
@@ -1969,7 +1608,6 @@ async function closeTokenAccounts(
         const transaction = new VersionedTransaction(messageV0)
         const signedTransactions = await signAllTransactions([transaction])
 
-        // Send burn + close transaction with retry mechanism
         const signature = await retryWithBackoff(async () => {
           return await connection.sendTransaction(signedTransactions[0], {
             skipPreflight: false,
@@ -1991,14 +1629,11 @@ async function closeTokenAccounts(
           })
         } else {
           result.signatures.push(signature)
-          result.successful = tokensToProcess.map(token => token.mintAddress)
+          result.successful = [
+            ...alreadyClosed,
+            ...tokensToProcess.map(token => token.mintAddress),
+          ]
           console.log(`Successfully burned and closed ${tokensToProcess.length} token accounts`)
-
-          // Log details
-          if (burnInstructions.length > 0) {
-            console.log(`- Burned tokens in ${burnInstructions.length} accounts`)
-          }
-          console.log(`- Closed ${closeInstructions.length} accounts`)
         }
       } catch (transactionError) {
         console.error('Transaction creation/sending failed:', transactionError)
@@ -2008,9 +1643,13 @@ async function closeTokenAccounts(
             error: `Transaction failed: ${transactionError instanceof Error ? transactionError.message : 'Unknown transaction error'}`
           })
         })
+        result.successful = [...alreadyClosed]
       }
     } else {
-      console.log('No token accounts to burn/close')
+      result.successful = [...alreadyClosed]
+      if (alreadyClosed.length === 0) {
+        console.log('No token accounts to burn/close')
+      }
     }
 
     return result
@@ -2074,7 +1713,6 @@ export async function executeBulkBuy(
     // Batch transaction creation (similar to Swap function)
     const transactions: VersionedTransaction[] = []
     const transactionMints: string[] = []
-    const transactionProviders: Array<'raptor' | 'jupiter'> = []
     const BATCH_SIZE = 10 // Process 10 tokens per batch for API calls
     const batches: string[][] = []
 
@@ -2095,115 +1733,45 @@ export async function executeBulkBuy(
         // Process tokens in this batch in parallel
         const batchPromises = batch.map(async (mint) => {
           try {
-            // First, try Solana Tracker API
-            let tx: VersionedTransaction | null = null
-            let apiUsed = 'solana-tracker'
-
-            // Determine input mint based on inputCurrency (moved outside try blocks for scope)
             const inputMint = request.inputCurrency === 'USDC' ? TOKENS.USDC : NATIVE_MINT.toBase58()
-            const inputDecimals = request.inputCurrency === 'USDC' ? 6 : 9 // USDC has 6 decimals, SOL has 9
+            const inputDecimals = request.inputCurrency === 'USDC' ? 6 : 9
             const divisor = Math.pow(10, inputDecimals)
 
-            // Debug logging for input currency handling
-            console.log('🔍 ExecuteBulkBuy Debug:', {
-              requestInputCurrency: request.inputCurrency,
+            console.log(`🔍 Raptor quote-and-swap for ${mint}:`, {
               inputMint,
-              inputDecimals,
-              divisor,
-              amountPerToken,
-              adjustedAmount: amountPerToken / divisor,
-              targetMint: mint
+              outputMint: mint,
+              amount: amountPerToken,
+              inputCurrency: request.inputCurrency,
             })
 
-            try {
-              console.log(`🔍 Raptor quote-and-swap for ${mint}:`, {
-                inputMint,
-                outputMint: mint,
-                amount: amountPerToken,
-                inputCurrency: request.inputCurrency,
-              })
+            const swapResult = await fetchRaptorQuoteAndSwap({
+              userPublicKey,
+              inputMint,
+              outputMint: mint,
+              amount: amountPerToken,
+              slippageBps: request.slippage,
+              priorityFeeLamports: request.priorityFee,
+              feeAccount: FEE_CONFIG.DEV_WALLET,
+              feeBps: 50,
+            })
 
-              const swapResult = await fetchRaptorQuoteAndSwap({
-                userPublicKey,
-                inputMint,
-                outputMint: mint,
-                amount: amountPerToken,
-                slippageBps: request.slippage,
-                priorityFeeLamports: request.priorityFee,
-                feeAccount: FEE_CONFIG.DEV_WALLET,
-                feeBps: 50,
-              })
-
-              if (!swapResult.swapTransaction) {
-                throw new Error('No swapTransaction returned from Raptor API')
-              }
-
-              tx = VersionedTransaction.deserialize(
-                Buffer.from(swapResult.swapTransaction, 'base64'),
-              )
-
-              console.log(`✅ Raptor API successful for ${mint}`)
-
-            } catch (solanaTrackerError) {
-              console.warn(`Solana Tracker API failed for ${mint}:`, solanaTrackerError)
-              console.log(`Falling back to Jupiter API for ${mint}`)
-
-              try {
-                // Fallback to Jupiter API
-                apiUsed = 'jupiter'
-
-                // Get quote from Jupiter
-                console.log(`🔍 Jupiter API Request for ${mint}:`, {
-                  inputMint,
-                  outputMint: mint,
-                  amount: amountPerToken,
-                  inputCurrency: request.inputCurrency
-                })
-                const quote = await getSwapQuote(
-                  inputMint, // Input currency mint (SOL or USDC)
-                  mint,                   // Target token
-                  amountPerToken,         // Amount in smallest units
-                  request.slippage        // Slippage in basis points
-                )
-
-                if (!quote) {
-                  throw new Error('Jupiter API failed to provide quote')
-                }
-
-                // Get swap transaction from Jupiter
-                const swapTransaction = await getSwapTransaction(
-                  quote,
-                  userPublicKey,
-                  request.priorityFee
-                )
-
-                if (!swapTransaction || !swapTransaction.swapTransaction) {
-                  throw new Error('Jupiter API failed to provide transaction')
-                }
-
-                // Deserialize Jupiter transaction and update blockhash
-                tx = VersionedTransaction.deserialize(
-                  Buffer.from(swapTransaction.swapTransaction, 'base64')
-                )
-                const { blockhash } = await getBlockhash();
-                tx.message.recentBlockhash = blockhash
-
-                console.log(`✅ Jupiter API fallback successful for ${mint}`)
-
-              } catch (jupiterError) {
-                console.error(`Jupiter API fallback also failed for ${mint}:`, jupiterError)
-                throw new Error(`Both APIs failed - Solana Tracker: ${solanaTrackerError instanceof Error ? solanaTrackerError.message : 'Unknown error'}, Jupiter: ${jupiterError instanceof Error ? jupiterError.message : 'Unknown error'}`)
-              }
+            if (!swapResult.swapTransaction) {
+              throw new Error('No swapTransaction returned from Raptor API')
             }
 
-            if (!tx) {
-              throw new Error('No transaction could be created from either API')
-            }
+            const tx = VersionedTransaction.deserialize(
+              Buffer.from(swapResult.swapTransaction, 'base64'),
+            )
 
-            return { success: true, mint, tx, apiUsed: apiUsed as 'solana-tracker' | 'jupiter' }
+            console.log(`✅ Raptor API successful for ${mint}`)
+            return { success: true as const, mint, tx }
           } catch (error) {
             console.error(`Failed to prepare buy for ${mint}:`, error)
-            return { success: false, mint, error }
+            return {
+              success: false as const,
+              mint,
+              error: error instanceof Error ? error.message : 'Unknown error creating transaction',
+            }
           }
         })
 
@@ -2215,14 +1783,11 @@ export async function executeBulkBuy(
           if (batchResult.success && batchResult.tx) {
             transactions.push(batchResult.tx)
             transactionMints.push(batchResult.mint)
-            transactionProviders.push(
-              batchResult.apiUsed === 'jupiter' ? 'jupiter' : 'raptor',
-            )
-            console.log(`Transaction prepared for ${batchResult.mint} using ${batchResult.apiUsed} API`)
-          } else {
+            console.log(`Transaction prepared for ${batchResult.mint} using Raptor`)
+          } else if (!batchResult.success) {
             result.failedPurchases.push({
               mintAddress: batchResult.mint,
-              error: batchResult.error instanceof Error ? batchResult.error.message : 'Unknown error creating transaction'
+              error: batchResult.error,
             })
           }
         })
@@ -2253,18 +1818,15 @@ export async function executeBulkBuy(
       // Send batch transactions in parallel
       const sendPromises = batch.map(async (tx, idx) => {
         const globalIdx = i + idx
-        const provider = transactionProviders[globalIdx]
 
-        if (provider === 'raptor') {
-          try {
-            const signedBase64 = Buffer.from(tx.serialize()).toString('base64')
-            const sendResult = await sendRaptorTransaction(signedBase64)
-            if (sendResult.success && sendResult.signature) {
-              return { success: true, signature: sendResult.signature, mintIdx: globalIdx, via: 'raptor' as const }
-            }
-          } catch (raptorSendError) {
-            console.warn(`Raptor send failed for ${batchMints[idx]}, falling back to RPC:`, raptorSendError)
+        try {
+          const signedBase64 = Buffer.from(tx.serialize()).toString('base64')
+          const sendResult = await sendRaptorTransaction(signedBase64)
+          if (sendResult.success && sendResult.signature) {
+            return { success: true, signature: sendResult.signature, mintIdx: globalIdx, via: 'raptor' as const }
           }
+        } catch (raptorSendError) {
+          console.warn(`Raptor send failed for ${batchMints[idx]}, falling back to RPC:`, raptorSendError)
         }
 
         try {
@@ -2529,26 +2091,40 @@ export async function closeZeroBalanceTokens(
           new PublicKey(userPublicKey)
         )
 
-        // Check current account balance
-        const balanceInfo = await connection.getTokenAccountBalance(tokenAccount)
-        const currentBalance = balanceInfo.value.amount
-        const currentUiAmount = balanceInfo.value.uiAmount || 0
+        const accountInfo = await connection.getAccountInfo(tokenAccount)
+        if (!accountInfo) {
+          console.log(`Token account already closed: ${token.mintAddress}`)
+          result.successful.push(token.mintAddress)
+          continue
+        }
+
+        let currentBalance = '0'
+        let currentUiAmount = 0
+        try {
+          const balanceInfo = await connection.getTokenAccountBalance(tokenAccount)
+          currentBalance = balanceInfo.value.amount
+          currentUiAmount = balanceInfo.value.uiAmount || 0
+        } catch (balanceError) {
+          if (isRpcAccountNotFoundError(balanceError)) {
+            result.successful.push(token.mintAddress)
+            continue
+          }
+          throw balanceError
+        }
 
         console.log(`Token ${token.mintAddress}: balance=${currentBalance}, uiAmount=${currentUiAmount}, usdValue=${token.usdValue}`)
 
-        // For tokens with balance but low SOL value, we need to burn first
-        if (parseInt(currentBalance) > 0) {
+        if (parseInt(currentBalance, 10) > 0) {
           if (token.usdValue < 0.001) {
             console.log(`Creating burn instruction for unsellable token ${token.mintAddress} (${currentBalance} tokens, SOL value ${token.usdValue})`)
-
-            const burnInstruction = createBurnInstruction(
-              tokenAccount,
-              new PublicKey(token.mintAddress),
-              new PublicKey(userPublicKey),
-              BigInt(currentBalance) // Burn the entire balance
+            burnInstructions.push(
+              createBurnInstruction(
+                tokenAccount,
+                new PublicKey(token.mintAddress),
+                new PublicKey(userPublicKey),
+                BigInt(currentBalance)
+              )
             )
-
-            burnInstructions.push(burnInstruction)
           } else {
             result.failed.push({
               mintAddress: token.mintAddress,
@@ -2558,14 +2134,13 @@ export async function closeZeroBalanceTokens(
           }
         }
 
-        // Create close instruction (will execute after burn if needed)
-        const closeInstruction = createCloseAccountInstruction(
-          tokenAccount,
-          new PublicKey(userPublicKey),
-          new PublicKey(userPublicKey)
+        closeInstructions.push(
+          createCloseAccountInstruction(
+            tokenAccount,
+            new PublicKey(userPublicKey),
+            new PublicKey(userPublicKey)
+          )
         )
-
-        closeInstructions.push(closeInstruction)
         tokensToProcess.push(token)
       } catch (error) {
         console.error(`Failed to prepare burn/close for ${token.mintAddress}:`, error)
@@ -2615,7 +2190,7 @@ export async function closeZeroBalanceTokens(
           })
         } else {
           result.signatures.push(signature)
-          result.successful = tokensToProcess.map(token => token.mintAddress)
+          result.successful.push(...tokensToProcess.map(token => token.mintAddress))
           console.log(`Successfully burned and closed ${tokensToProcess.length} unsellable token accounts`)
 
           // Log details
