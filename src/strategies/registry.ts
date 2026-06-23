@@ -214,6 +214,11 @@ export const DLMM_STRATEGY_DEFAULTS: import('./types').DlmmStrategy = {
     max_sol_per_position: 1,
     max_sol_at_risk: 5,
     bin_range_interval: 10,
+    execution: {
+      simDeploySol: 0.05,
+      maxOpenPositions: 3,
+      minCandidateScore: 15,
+    },
   },
 }
 

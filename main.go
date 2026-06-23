@@ -227,6 +227,7 @@ type Config struct {
     SignalsSimInterval   int    // seconds
     StrategyReportInterval int  // seconds (0 = disabled)
     DLMMScreenInterval int    // seconds
+    DLMMSimTrackInterval int // seconds
     DLMMManageInterval int    // seconds
     DLMMSecret         string
 }
@@ -278,6 +279,14 @@ func NewCronService() *CronService {
         }(),
         DLMMScreenInterval: func() int {
             if v := os.Getenv("DLMM_SCREEN_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
+                    return iv
+                }
+            }
+            return 300 // 5m
+        }(),
+        DLMMSimTrackInterval: func() int {
+            if v := os.Getenv("DLMM_SIM_TRACK_INTERVAL"); v != "" {
                 if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
                     return iv
                 }
@@ -391,6 +400,14 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(dlmmScreenEntryID, "dlmm_screen")
 
+    dlmmSimTrackSpec := fmt.Sprintf("@every %ds", cs.config.DLMMSimTrackInterval)
+    dlmmSimTrackEntryID, err := cs.cron.AddFunc(dlmmSimTrackSpec, cs.runDLMMSimTrack)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("Failed to add DLMM sim track cron job: %v", err))
+        log.Fatal("Failed to add DLMM sim track cron job:", err)
+    }
+    cs.workers.BindEntry(dlmmSimTrackEntryID, "dlmm_sim_track")
+
     // DLMM manage – every M seconds (default 60)
     dlmmManageSpec := fmt.Sprintf("@every %ds", cs.config.DLMMManageInterval)
     dlmmManageEntryID, err := cs.cron.AddFunc(dlmmManageSpec, cs.runDLMMManage)
@@ -428,6 +445,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/signals-sim-track", cs.manualSignalsSimTrackTrigger)
     http.HandleFunc("/trigger/strategy-report", cs.manualStrategyReportTrigger)
     http.HandleFunc("/trigger/dlmm-screen", cs.manualDLMMScreenTrigger)
+    http.HandleFunc("/trigger/dlmm-sim-track", cs.manualDLMMSimTrackTrigger)
     http.HandleFunc("/trigger/dlmm-manage", cs.manualDLMMManageTrigger)
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
@@ -445,6 +463,7 @@ func (cs *CronService) Start() {
         cs.logger.Info("📊 Strategy report digest: disabled (STRATEGY_REPORT_INTERVAL=0)")
     }
     cs.logger.Info(fmt.Sprintf("🌊 DLMM screen: every %d seconds", cs.config.DLMMScreenInterval))
+    cs.logger.Info(fmt.Sprintf("🧪 DLMM sim track: every %d seconds", cs.config.DLMMSimTrackInterval))
     cs.logger.Info(fmt.Sprintf("🩺 DLMM manage: every %d seconds", cs.config.DLMMManageInterval))
 	cs.logger.Info("📋 Daily summary: daily at 00:00 UTC")
 	cs.logger.Info("💰 PnL update: daily at 02:00 UTC" )
@@ -837,6 +856,22 @@ func (cs *CronService) runDLMMScreen() {
     cs.workers.Success("dlmm_screen")
 }
 
+func (cs *CronService) runDLMMSimTrack() {
+    cs.workers.Begin("dlmm_sim_track")
+    cs.logger.Info("🧪 Running DLMM sim track...")
+    url := fmt.Sprintf("%s/api/dlmm/sim-track", cs.config.APIBaseURL)
+    resp, err := cs.makeRequest("POST", url, map[string]string{
+        "key": cs.config.DLMMSecret,
+    })
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ DLMM sim track failed: %v", err))
+        cs.workers.Fail("dlmm_sim_track", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ DLMM sim track completed: %s", resp))
+    cs.workers.Success("dlmm_sim_track")
+}
+
 func (cs *CronService) runDLMMManage() {
     cs.workers.Begin("dlmm_manage")
     cs.logger.Info("🩺 Running DLMM manage...")
@@ -863,6 +898,20 @@ func (cs *CronService) manualDLMMScreenTrigger(w http.ResponseWriter, r *http.Re
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]string{
         "message":   "DLMM screen triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualDLMMSimTrackTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual DLMM sim track trigger")
+    cs.runDLMMSimTrack()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "DLMM sim track triggered manually",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

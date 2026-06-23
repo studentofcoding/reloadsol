@@ -3,6 +3,7 @@ export type WorkerId =
   | 'signals_refresh'
   | 'trending_tracker'
   | 'dlmm_screen'
+  | 'dlmm_sim_track'
   | 'dlmm_manage'
   | 'strategy_report'
   | 'sltp_monitor'
@@ -14,6 +15,7 @@ export const WORKER_TRIGGER_PATHS: Record<WorkerId, string> = {
   signals_refresh: '/trigger/signals-refresh',
   trending_tracker: '/trigger/trending',
   dlmm_screen: '/trigger/dlmm-screen',
+  dlmm_sim_track: '/trigger/dlmm-sim-track',
   dlmm_manage: '/trigger/dlmm-manage',
   strategy_report: '/trigger/strategy-report',
   sltp_monitor: '/trigger/sltp',

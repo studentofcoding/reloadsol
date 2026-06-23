@@ -5,12 +5,17 @@ export function mergeDlmmStrategy(
   override?: DlmmStrategyOverride | null,
   isActiveOverride?: boolean | null,
 ): DlmmStrategy {
+  const o = override ?? {}
   return {
     ...base,
     is_active: isActiveOverride ?? base.is_active,
     config: {
       ...base.config,
-      ...(override ?? {}),
+      ...o,
+      execution: {
+        ...base.config.execution,
+        ...o.execution,
+      },
     },
   }
 }

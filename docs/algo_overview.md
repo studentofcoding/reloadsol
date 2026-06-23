@@ -91,9 +91,18 @@ Partial TP sells do not write outcomes until 100% closed.
 
 ### DLMM
 
-1. Cron `POST /api/dlmm/screen` — candidate pools.
-2. Cron `POST /api/dlmm/manage` — open/close LP positions.
-3. On close → `recordDlmmOutcome`.
+1. Cron `POST /api/dlmm/screen` — score pools into `dlmm_candidates` (start conditions: min TVL, fee/TVL, organic score, holders).
+2. Cron `POST /api/dlmm/sim-track` — auto-deploy top candidates in `dry_run` when `dlmm_default` is active + sim mode; each position gets the same end conditions (TP/SL/OOR) from strategy config.
+3. Cron `POST /api/dlmm/manage` — monitor open positions; close on end conditions.
+4. On close → `recordDlmmOutcome`.
+
+Requires `DLMM_AGENT_ENABLED=true` and strategy active in `/dev/strategies`. Sim-track skips when `dry_run=false`.
+
+**Strategy config (`dlmm_default`):**
+
+- Start: `min_tvl`, `min_fee_tvl`, `min_organic_score`, `min_holders`, `execution.minCandidateScore`
+- End (uniform per position): `take_profit_pct`, `stop_loss_pct`, `oor_timeout_min`
+- Execution: `execution.simDeploySol`, `execution.maxOpenPositions`
 
 ---
 
@@ -114,6 +123,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `SIGNALS_SIM_INTERVAL` | 120 | signals sim-track |
 | `SIGNAL_REFRESH_INTERVAL` | 60 | signals refresh |
 | `DLMM_SCREEN_INTERVAL` | 300 | dlmm screen |
+| `DLMM_SIM_TRACK_INTERVAL` | 300 | dlmm sim-track |
 | `DLMM_MANAGE_INTERVAL` | 60 | dlmm manage |
 | `STRATEGY_REPORT_INTERVAL` | 86400 (0=off) | report digest |
 | `CRON_SERVICE_URL` | `http://cron:8080` in Docker compose (web→cron); `http://127.0.0.1:8080` local | Next.js proxy to cron |
@@ -127,6 +137,8 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `GET /workers` | Full worker list with real `last_success_at` |
 | `POST /trigger/signals-sim-track` | Run signals sim now |
 | `POST /trigger/trending` | Run trending track now |
+| `POST /trigger/dlmm-screen` | Run DLMM screen now |
+| `POST /trigger/dlmm-sim-track` | Run DLMM sim-track now |
 | `POST /trigger/dlmm-manage` | Run DLMM manage now |
 | … | See `main.go` for all `/trigger/*` |
 

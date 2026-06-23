@@ -109,9 +109,18 @@ export interface DlmmStrategyConfig {
   max_sol_per_position: number
   max_sol_at_risk: number
   bin_range_interval: number
+  execution: {
+    simDeploySol: number
+    maxOpenPositions: number
+    minCandidateScore: number
+  }
 }
 
-export type DlmmStrategyOverride = Partial<DlmmStrategyConfig>
+export type DlmmStrategyOverride = Partial<
+  Omit<DlmmStrategyConfig, 'execution'>
+> & {
+  execution?: Partial<DlmmStrategyConfig['execution']>
+}
 
 export interface DlmmStrategy {
   id: string

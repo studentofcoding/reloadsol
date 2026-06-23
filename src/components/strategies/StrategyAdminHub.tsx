@@ -1444,6 +1444,11 @@ function DlmmCard({
   onSave: (id: string, patch: Record<string, unknown>) => void;
 }) {
   const c = strategy.config;
+  const exec = c.execution ?? {
+    simDeploySol: 0.05,
+    maxOpenPositions: 3,
+    minCandidateScore: 15,
+  };
   const [minTvl, setMinTvl] = useState(String(c.min_tvl));
   const [minFeeTvl, setMinFeeTvl] = useState(String(c.min_fee_tvl));
   const [minOrganic, setMinOrganic] = useState(String(c.min_organic_score));
@@ -1455,6 +1460,9 @@ function DlmmCard({
   const [maxSolRisk, setMaxSolRisk] = useState(String(c.max_sol_at_risk));
   const [binRange, setBinRange] = useState(String(c.bin_range_interval));
   const [execMode, setExecMode] = useState(strategy.execution_mode);
+  const [simDeploySol, setSimDeploySol] = useState(String(exec.simDeploySol));
+  const [maxOpen, setMaxOpen] = useState(String(exec.maxOpenPositions));
+  const [minScore, setMinScore] = useState(String(exec.minCandidateScore));
 
   return (
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800 max-w-xl">
@@ -1463,7 +1471,7 @@ function DlmmCard({
         Execution mode
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
-      <Section title="Screener">
+      <Section title="Start conditions">
         <FieldGrid>
           <NumberField label="min TVL" value={minTvl} onChange={setMinTvl} step="1" />
           <NumberField label="min fee/TVL" value={minFeeTvl} onChange={setMinFeeTvl} />
@@ -1471,11 +1479,18 @@ function DlmmCard({
           <NumberField label="min holders" value={minHolders} onChange={setMinHolders} step="1" />
         </FieldGrid>
       </Section>
-      <Section title="Risk">
+      <Section title="End conditions">
         <FieldGrid>
           <NumberField label="take profit %" value={tp} onChange={setTp} />
           <NumberField label="stop loss %" value={sl} onChange={setSl} />
           <NumberField label="OOR timeout (min)" value={oor} onChange={setOor} step="1" colSpan={2} />
+        </FieldGrid>
+      </Section>
+      <Section title="Execution">
+        <FieldGrid>
+          <NumberField label="sim deploy SOL" value={simDeploySol} onChange={setSimDeploySol} step="0.01" />
+          <NumberField label="max open positions" value={maxOpen} onChange={setMaxOpen} step="1" />
+          <NumberField label="min candidate score" value={minScore} onChange={setMinScore} step="1" colSpan={2} />
         </FieldGrid>
       </Section>
       <Section title="Capital">
@@ -1503,6 +1518,11 @@ function DlmmCard({
                 max_sol_per_position: parseFloat(maxSolPos),
                 max_sol_at_risk: parseFloat(maxSolRisk),
                 bin_range_interval: parseInt(binRange, 10),
+                execution: {
+                  simDeploySol: parseFloat(simDeploySol),
+                  maxOpenPositions: parseInt(maxOpen, 10),
+                  minCandidateScore: parseFloat(minScore),
+                },
               },
             })
           }

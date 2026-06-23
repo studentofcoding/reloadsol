@@ -135,7 +135,22 @@ export async function PATCH(
     }
 
     try {
-      await updateAgentConfig(dlmmConfigToAgentPatch(merged.config) as Parameters<typeof updateAgentConfig>[0])
+      const agentPatch: Parameters<typeof updateAgentConfig>[0] = {
+        ...dlmmConfigToAgentPatch(merged.config),
+      }
+      const mode =
+        body.execution_mode ?? existingRow?.execution_mode ?? merged.execution_mode
+      if (mode === 'sim_only' || mode === 'ab_parallel') {
+        agentPatch.dry_run = true
+      } else if (mode === 'live_only' && body.confirm_live) {
+        agentPatch.dry_run = false
+      }
+      if (body.is_active === true || (body.is_active == null && merged.is_active)) {
+        agentPatch.enabled = true
+      } else if (body.is_active === false) {
+        agentPatch.enabled = false
+      }
+      await updateAgentConfig(agentPatch)
     } catch (err) {
       console.warn('[strategies/patch] dlmm_agent_config sync failed:', err)
     }

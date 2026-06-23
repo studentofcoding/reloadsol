@@ -13,16 +13,12 @@ export function invalidateDlmmStrategyCache(): void {
   cacheLoadedAt = 0
 }
 
-export async function getMergedDlmmStrategy(): Promise<DlmmStrategy> {
-  const now = Date.now()
-  if (cached && now - cacheLoadedAt < CACHE_TTL_MS) {
-    return cached
-  }
-
+async function buildMergedDlmmStrategy(): Promise<DlmmStrategy> {
   const envDefaults = defaultAgentConfig()
   const base: DlmmStrategy = {
     ...DLMM_STRATEGY_DEFAULTS,
     config: {
+      ...DLMM_STRATEGY_DEFAULTS.config,
       min_tvl: envDefaults.min_tvl,
       min_fee_tvl: envDefaults.min_fee_tvl,
       min_organic_score: envDefaults.min_organic_score,
@@ -47,7 +43,28 @@ export async function getMergedDlmmStrategy(): Promise<DlmmStrategy> {
   if (row?.description) merged.description = row.description ?? base.description
   if (row?.execution_mode) merged.execution_mode = row.execution_mode
 
-  cached = merged
-  cacheLoadedAt = now
   return merged
+}
+
+export async function getMergedDlmmStrategy(): Promise<DlmmStrategy> {
+  const now = Date.now()
+  if (cached && now - cacheLoadedAt < CACHE_TTL_MS) {
+    return cached
+  }
+
+  cached = await buildMergedDlmmStrategy()
+  cacheLoadedAt = now
+  return cached
+}
+
+export async function getActiveDlmmForSim(): Promise<DlmmStrategy | null> {
+  const strategy = await getMergedDlmmStrategy()
+  if (!strategy.is_active) return null
+  if (
+    strategy.execution_mode !== 'sim_only' &&
+    strategy.execution_mode !== 'ab_parallel'
+  ) {
+    return null
+  }
+  return strategy
 }

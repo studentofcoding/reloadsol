@@ -185,6 +185,7 @@ func (cs *CronService) initWorkerRegistry() {
 		{ID: "filtered_trending", Name: "Filtered trending", Domain: "algo", Schedule: "every 2m", IntervalSec: 120, CanTrigger: false},
 		{ID: "unfiltered_trending", Name: "Unfiltered trending", Domain: "algo", Schedule: "every 2m", IntervalSec: 120, CanTrigger: false},
 		{ID: "dlmm_screen", Name: "DLMM screen", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.DLMMScreenInterval, TriggerPath: "/trigger/dlmm-screen", CanTrigger: true},
+		{ID: "dlmm_sim_track", Name: "DLMM sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.DLMMSimTrackInterval, TriggerPath: "/trigger/dlmm-sim-track", CanTrigger: true},
 		{ID: "dlmm_manage", Name: "DLMM manage", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.DLMMManageInterval, TriggerPath: "/trigger/dlmm-manage", CanTrigger: true},
 		{ID: "strategy_report", Name: "Strategy report digest", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.StrategyReportInterval, TriggerPath: "/trigger/strategy-report", CanTrigger: true, Disabled: cs.config.StrategyReportInterval <= 0},
 		{ID: "sltp_monitor", Name: "SL/TP monitor", Domain: "infra", Schedule: "every Ns", IntervalSec: cs.config.SLTPMonitorInterval, TriggerPath: "/trigger/sltp", CanTrigger: true},
