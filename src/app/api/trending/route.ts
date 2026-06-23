@@ -5,6 +5,10 @@ import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } 
 import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, bulkTrackTokenMcaps } from '@/utils/mcap-tracker'
 import { formatAppDateTimeWithZone } from '@/utils/datetime'
+import {
+  acquireTrendingListNotificationSlot,
+  trendingListDiscordViaCronOnly,
+} from '@/utils/trending-notification-dedup'
 
 // Environment variable for Discord webhook URL
 const DISCORD_WEBHOOK_URL =
@@ -13,8 +17,8 @@ const DISCORD_WEBHOOK_URL =
     : process.env.DISCORD_WEBHOOK_URL;
 const ENABLE_DISCORD_NOTIFICATIONS = process.env.ENABLE_DISCORD_NOTIFICATIONS === 'true';
 
-// Add auto-notification interval (default 10 minute = 600000ms)
-const AUTO_NOTIFICATION_INTERVAL_MS = parseInt(process.env.AUTO_NOTIFICATION_INTERVAL_MS || '600000');
+// Add auto-notification interval (default 2 min — matches cron + dedup cooldown)
+const AUTO_NOTIFICATION_INTERVAL_MS = parseInt(process.env.AUTO_NOTIFICATION_INTERVAL_MS || '120000');
 
 // Track last auto notification time
 let lastAutoNotificationTime = 0;
@@ -35,6 +39,10 @@ let globalTimers: {
 
 // Function to initialize the notification timer
 function initializeNotificationTimer() {
+  if (trendingListDiscordViaCronOnly()) {
+    console.log('Trending list Discord via Go cron — skipping route notification timer')
+    return
+  }
   if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !globalTimers.notificationTimer) {
     console.log('🔔 Initializing automatic notification timer...', {
       ENABLE_DISCORD_NOTIFICATIONS,
@@ -686,9 +694,6 @@ export async function POST(request: NextRequest) {
     // Force a full refresh and force notifications
     const tokenArray = await fetchAndUpdateCache(true, Date.now(), true);
 
-    // Update the last notification time
-    lastAutoNotificationTime = Date.now();
-
     return NextResponse.json({
       success: true,
       message: 'Notifications sent',
@@ -1218,13 +1223,8 @@ async function fetchAndUpdateCache(
       console.log('ℹ️ No tokens in MCap tracking range (30k-2M)');
     }
 
-    // Only send notification if this is a scheduled run or forced notification
-    // Regular frontend API calls will no longer trigger notifications
-    const shouldSendNotification =
-      (currentTime - lastAutoNotificationTime >= AUTO_NOTIFICATION_INTERVAL_MS) ||
-      forceSendNotification;
-
-    if (shouldSendNotification) {
+    // List Discord: cron POST or route timer passes forceSendNotification=true; dedup is single gate
+    if (forceSendNotification && acquireTrendingListNotificationSlot('trending_unfiltered')) {
       console.log('Sending scheduled Discord notification');
       lastAutoNotificationTime = currentTime;
       await sendDiscordNotification(
@@ -1235,8 +1235,8 @@ async function fetchAndUpdateCache(
         newlyAddedTokens,
         mcapTrackingResults
       );
-    } else {
-      console.log('Skipping Discord notification - not on schedule');
+    } else if (forceSendNotification) {
+      console.log('Skipping Discord notification — dedup cooldown active');
     }
 
     // Return all tokens (unfiltered) for API consumers

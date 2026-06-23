@@ -1,5 +1,4 @@
-// NOTE: This endpoint is no longer used as a Vercel cron job (moved to /api/trending/track)
-// It's kept for manual testing and potential future standalone use
+// Daily summary for the `daily_summary` Go cron worker (`POST /api/trending/summary`)
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'

@@ -464,7 +464,6 @@ func (cs *CronService) manualSignalsRefreshTrigger(w http.ResponseWriter, r *htt
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
         return
     }
-
     cs.logger.Info("🔧 Manual signals refresh trigger")
     cs.runSignalRefresh()
 
@@ -546,6 +545,10 @@ func (cs *CronService) runStrategyReportDigest() {
 }
 
 func (cs *CronService) manualSignalsSimTrackTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
     cs.logger.Info("🔧 Manual signals sim track trigger")
     go cs.runSignalsSimTrack()
     json.NewEncoder(w).Encode(map[string]interface{}{
@@ -556,6 +559,10 @@ func (cs *CronService) manualSignalsSimTrackTrigger(w http.ResponseWriter, r *ht
 }
 
 func (cs *CronService) manualStrategyReportTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
     cs.logger.Info("🔧 Manual strategy report trigger")
     go cs.runStrategyReportDigest()
     json.NewEncoder(w).Encode(map[string]interface{}{
@@ -804,7 +811,6 @@ func (cs *CronService) manualSLTPTrigger(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
 	cs.logger.Info("🔧 Manual SL/TP monitor trigger")
 	cs.runSLTPMonitor()
 
@@ -1106,7 +1112,6 @@ func (cs *CronService) manualTrendingTrigger(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
 	cs.logger.Info("🔧 Manual trending tracker trigger")
 	cs.runTrendingTracker()
 	
@@ -1122,7 +1127,6 @@ func (cs *CronService) manualSummaryTrigger(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
 	cs.logger.Info("🔧 Manual summary trigger")
 	cs.runDailySummary()
 	
@@ -1138,7 +1142,6 @@ func (cs *CronService) manualPnLTrigger(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
 	cs.logger.Info("🔧 Manual PnL update trigger")
 	cs.runPnLUpdate()
 	
@@ -1155,7 +1158,6 @@ func (cs *CronService) testDiscordLogs(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
 	cs.logger.Info("🧪 Testing Discord log integration...")
 	cs.logger.Success("✅ Success message test")
 	cs.logger.Warning("⚠️  Warning message test")

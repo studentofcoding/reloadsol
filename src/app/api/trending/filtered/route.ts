@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
 import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, bulkTrackTokenMcaps } from '@/utils/mcap-tracker'
+import {
+  acquireTrendingListNotificationSlot,
+  trendingListDiscordViaCronOnly,
+} from '@/utils/trending-notification-dedup'
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
@@ -32,6 +36,10 @@ let filteredGlobalTimers: {
 
 // Function to initialize the filtered notification timer
 function initializeFilteredNotificationTimer() {
+    if (trendingListDiscordViaCronOnly()) {
+        console.log('Filtered list Discord via Go cron — skipping route notification timer')
+        return
+    }
     if (typeof process !== 'undefined' && ENABLE_DISCORD_NOTIFICATIONS && !filteredGlobalTimers.notificationTimer) {
         console.log('Initializing automatic filtered notification timer...');
 
@@ -179,6 +187,11 @@ function truncateFieldValue(value: string, maxLength: number = DISCORD_FIELD_MAX
 async function sendFilteredTokensNotification() {
     if (!ENABLE_DISCORD_NOTIFICATIONS || !DISCORD_WEBHOOK_URL) {
         console.log('Discord notifications disabled or webhook URL not configured');
+        return;
+    }
+
+    if (!acquireTrendingListNotificationSlot('trending_filtered')) {
+        console.log('Skipping filtered Discord notification — dedup cooldown active');
         return;
     }
 

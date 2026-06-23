@@ -8,8 +8,17 @@ import type {
   SignalsStrategy,
   DlmmStrategy,
   ExecutionMode,
+  TokenFilterConfig,
 } from "@/strategies/types";
 import { formatAppDateTime } from "@/utils/datetime";
+import {
+  Section,
+  FieldGrid,
+  NumberField,
+  CheckboxField,
+  formatFilterSummary,
+  parseOptionalFloat,
+} from "@/components/strategies/StrategyConfigFields";
 
 const OUTCOMES_PAGE_SIZE = 100;
 
@@ -879,11 +888,55 @@ function TrendingBotCard({
   onPromote: (source: string, target: string, confirm: boolean) => void;
   promoteTargets: string[];
 }) {
+  const f = strategy.filtering ?? { enabled: true };
   const [tp1, setTp1] = useState(String(strategy.take_profit_levels.tp1_percentage));
   const [sl, setSl] = useState(String(strategy.stop_loss_percentage));
   const [buySol, setBuySol] = useState(String(strategy.buy_amount_sol));
   const [execMode, setExecMode] = useState<ExecutionMode>("sim_only");
   const [promoteTarget, setPromoteTarget] = useState(promoteTargets[0] ?? "");
+  const [filterEnabled, setFilterEnabled] = useState(f.enabled ?? true);
+  const [mcapMin, setMcapMin] = useState(f.mcap?.min != null ? String(f.mcap.min) : "");
+  const [mcapMax, setMcapMax] = useState(f.mcap?.max != null ? String(f.mcap.max) : "");
+  const [pc5mMin, setPc5mMin] = useState(
+    f.priceChange5m?.min != null ? String(f.priceChange5m.min) : "",
+  );
+  const [pc5mMax, setPc5mMax] = useState(
+    f.priceChange5m?.max != null ? String(f.priceChange5m.max) : "",
+  );
+  const [pc1hMin, setPc1hMin] = useState(
+    f.priceChange1h?.min != null ? String(f.priceChange1h.min) : "",
+  );
+  const [pc1hMax, setPc1hMax] = useState(
+    f.priceChange1h?.max != null ? String(f.priceChange1h.max) : "",
+  );
+  const [pc6hMin, setPc6hMin] = useState(
+    f.priceChange6h?.min != null ? String(f.priceChange6h.min) : "",
+  );
+  const [pc6hMax, setPc6hMax] = useState(
+    f.priceChange6h?.max != null ? String(f.priceChange6h.max) : "",
+  );
+  const [organicMin, setOrganicMin] = useState(
+    f.organicScore?.min != null ? String(f.organicScore.min) : "",
+  );
+  const [holdersMax, setHoldersMax] = useState(
+    f.topHoldersPercentage?.max != null ? String(f.topHoldersPercentage.max) : "",
+  );
+  const [requireCompleteData, setRequireCompleteData] = useState(f.requireCompleteData ?? true);
+  const [checkManualHistory, setCheckManualHistory] = useState(
+    f.checkManualTradingHistory ?? true,
+  );
+
+  const buildFiltering = (): TokenFilterConfig => ({
+    enabled: filterEnabled,
+    mcap: { min: parseOptionalFloat(mcapMin), max: parseOptionalFloat(mcapMax) },
+    priceChange5m: { min: parseOptionalFloat(pc5mMin), max: parseOptionalFloat(pc5mMax) },
+    priceChange1h: { min: parseOptionalFloat(pc1hMin), max: parseOptionalFloat(pc1hMax) },
+    priceChange6h: { min: parseOptionalFloat(pc6hMin), max: parseOptionalFloat(pc6hMax) },
+    organicScore: { min: parseOptionalFloat(organicMin) },
+    topHoldersPercentage: { max: parseOptionalFloat(holdersMax) },
+    requireCompleteData,
+    checkManualTradingHistory: checkManualHistory,
+  });
 
   return (
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
@@ -891,6 +944,7 @@ function TrendingBotCard({
         <div>
           <h3 className="font-semibold text-white">{strategy.name}</h3>
           <p className="text-xs text-gray-500">{strategy.id}</p>
+          <p className="text-xs text-gray-500 mt-1">{formatFilterSummary(strategy.filtering)}</p>
         </div>
         <span
           className={`text-xs px-2 py-1 rounded ${isRunning ? "bg-green-900/40 text-green-400" : "bg-gray-700 text-gray-400"}`}
@@ -905,20 +959,45 @@ function TrendingBotCard({
         Execution mode
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
-      <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-        <label className="text-gray-400">
-          TP1 %
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={tp1} onChange={(e) => setTp1(e.target.value)} />
-        </label>
-        <label className="text-gray-400">
-          SL %
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={sl} onChange={(e) => setSl(e.target.value)} />
-        </label>
-        <label className="text-gray-400 col-span-2">
-          Buy SOL
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={buySol} onChange={(e) => setBuySol(e.target.value)} />
-        </label>
-      </div>
+      <Section title="Execution">
+        <FieldGrid>
+          <NumberField label="TP1 %" value={tp1} onChange={setTp1} />
+          <NumberField label="SL %" value={sl} onChange={setSl} />
+          <NumberField label="Buy SOL" value={buySol} onChange={setBuySol} colSpan={2} step="0.001" />
+        </FieldGrid>
+      </Section>
+      <Section title="Filtering">
+        <FieldGrid>
+          <CheckboxField
+            label="Filtering enabled"
+            checked={filterEnabled}
+            onChange={setFilterEnabled}
+            colSpan={2}
+          />
+          <NumberField label="MCap min" value={mcapMin} onChange={setMcapMin} />
+          <NumberField label="MCap max" value={mcapMax} onChange={setMcapMax} />
+          <NumberField label="5m change min %" value={pc5mMin} onChange={setPc5mMin} />
+          <NumberField label="5m change max %" value={pc5mMax} onChange={setPc5mMax} />
+          <NumberField label="1h change min %" value={pc1hMin} onChange={setPc1hMin} />
+          <NumberField label="1h change max %" value={pc1hMax} onChange={setPc1hMax} />
+          <NumberField label="6h change min %" value={pc6hMin} onChange={setPc6hMin} />
+          <NumberField label="6h change max %" value={pc6hMax} onChange={setPc6hMax} />
+          <NumberField label="Organic score min" value={organicMin} onChange={setOrganicMin} />
+          <NumberField label="Top holders max %" value={holdersMax} onChange={setHoldersMax} />
+          <CheckboxField
+            label="Require complete data"
+            checked={requireCompleteData}
+            onChange={setRequireCompleteData}
+            colSpan={2}
+          />
+          <CheckboxField
+            label="Check manual trading history"
+            checked={checkManualHistory}
+            onChange={setCheckManualHistory}
+            colSpan={2}
+          />
+        </FieldGrid>
+      </Section>
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
@@ -930,6 +1009,7 @@ function TrendingBotCard({
                 take_profit_levels: { tp1_percentage: parseFloat(tp1) },
                 stop_loss_percentage: parseFloat(sl),
                 buy_amount_sol: parseFloat(buySol),
+                filtering: buildFiltering(),
               },
             })
           }
@@ -982,12 +1062,32 @@ function SignalsCard({
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
 }) {
-  const [minGrowth, setMinGrowth] = useState(String(strategy.config.query.minGrowth));
-  const [recency, setRecency] = useState(String(strategy.config.query.recencyMinutes));
+  const q = strategy.config.query;
+  const s = strategy.config.scoring;
+  const e = strategy.config.execution;
+  const [minGrowth, setMinGrowth] = useState(String(q.minGrowth));
+  const [recency, setRecency] = useState(String(q.recencyMinutes));
+  const [limit, setLimit] = useState(String(q.limit));
+  const [maxAge, setMaxAge] = useState(String(q.maxAgeMinutes));
+  const [includeStuck, setIncludeStuck] = useState(q.includeStuck);
   const [enterFloor, setEnterFloor] = useState(String(strategy.config.enterScoreFloor));
-  const [simBuy, setSimBuy] = useState(String(strategy.config.execution.simBuySol));
-  const [maxOpen, setMaxOpen] = useState(String(strategy.config.execution.maxOpenPositions));
+  const [simBuy, setSimBuy] = useState(String(e.simBuySol));
+  const [maxOpen, setMaxOpen] = useState(String(e.maxOpenPositions));
   const [execMode, setExecMode] = useState(strategy.execution_mode);
+  const [showAllScoring, setShowAllScoring] = useState(false);
+  const [recencyBoostMax, setRecencyBoostMax] = useState(String(s.recencyBoostMax));
+  const [milestone80, setMilestone80] = useState(String(s.milestone80));
+  const [milestone120, setMilestone120] = useState(String(s.milestone120));
+  const [milestone200, setMilestone200] = useState(String(s.milestone200));
+  const [speedFast, setSpeedFast] = useState(String(s.speedTo80Fast));
+  const [speedMedium, setSpeedMedium] = useState(String(s.speedTo80Medium));
+  const [speedSlow, setSpeedSlow] = useState(String(s.speedTo80Slow));
+  const [inTrackingRange, setInTrackingRange] = useState(String(s.inTrackingRange));
+  const [stuckPenalty, setStuckPenalty] = useState(String(s.stuckPenalty));
+  const [stopLossPenalty, setStopLossPenalty] = useState(String(s.stopLossPenalty));
+  const [sellOver100LatePenalty, setSellOver100LatePenalty] = useState(
+    String(s.sellOver100LatePenalty),
+  );
 
   return (
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
@@ -997,28 +1097,77 @@ function SignalsCard({
         Execution mode
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
-      <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-        <label className="text-gray-400">
-          minGrowth
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={minGrowth} onChange={(e) => setMinGrowth(e.target.value)} />
-        </label>
-        <label className="text-gray-400">
-          recency (min)
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={recency} onChange={(e) => setRecency(e.target.value)} />
-        </label>
-        <label className="text-gray-400">
-          enter score ≥
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={enterFloor} onChange={(e) => setEnterFloor(e.target.value)} />
-        </label>
-        <label className="text-gray-400">
-          sim buy SOL
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={simBuy} onChange={(e) => setSimBuy(e.target.value)} />
-        </label>
-        <label className="text-gray-400 col-span-2">
-          max open positions
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={maxOpen} onChange={(e) => setMaxOpen(e.target.value)} />
-        </label>
-      </div>
+      <Section title="Query">
+        <FieldGrid>
+          <NumberField label="limit" value={limit} onChange={setLimit} step="1" />
+          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" />
+          <NumberField label="minGrowth" value={minGrowth} onChange={setMinGrowth} />
+          <NumberField label="maxAge (min)" value={maxAge} onChange={setMaxAge} step="1" />
+          <CheckboxField
+            label="includeStuck"
+            checked={includeStuck}
+            onChange={setIncludeStuck}
+            colSpan={2}
+          />
+        </FieldGrid>
+      </Section>
+      <Section title="Entry">
+        <FieldGrid>
+          <NumberField label="enter score ≥" value={enterFloor} onChange={setEnterFloor} colSpan={2} />
+        </FieldGrid>
+      </Section>
+      <Section title="Execution">
+        <FieldGrid>
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" />
+          <NumberField label="max open positions" value={maxOpen} onChange={setMaxOpen} step="1" />
+        </FieldGrid>
+      </Section>
+      <Section title="Scoring">
+        <FieldGrid>
+          <NumberField label="milestone80" value={milestone80} onChange={setMilestone80} step="1" />
+          <NumberField label="milestone120" value={milestone120} onChange={setMilestone120} step="1" />
+          <NumberField label="milestone200" value={milestone200} onChange={setMilestone200} step="1" />
+          <NumberField label="stuckPenalty" value={stuckPenalty} onChange={setStuckPenalty} step="1" />
+          <NumberField label="stopLossPenalty" value={stopLossPenalty} onChange={setStopLossPenalty} step="1" />
+          <NumberField
+            label="sellOver100LatePenalty"
+            value={sellOver100LatePenalty}
+            onChange={setSellOver100LatePenalty}
+            step="1"
+          />
+        </FieldGrid>
+        <button
+          type="button"
+          className="text-xs text-blue-400 underline mt-1"
+          onClick={() => setShowAllScoring((v) => !v)}
+        >
+          {showAllScoring ? "Hide all scoring weights" : "Show all scoring weights"}
+        </button>
+        {showAllScoring && (
+          <FieldGrid>
+            <NumberField
+              label="recencyBoostMax"
+              value={recencyBoostMax}
+              onChange={setRecencyBoostMax}
+              step="1"
+            />
+            <NumberField label="speedTo80Fast" value={speedFast} onChange={setSpeedFast} step="1" />
+            <NumberField
+              label="speedTo80Medium"
+              value={speedMedium}
+              onChange={setSpeedMedium}
+              step="1"
+            />
+            <NumberField label="speedTo80Slow" value={speedSlow} onChange={setSpeedSlow} step="1" />
+            <NumberField
+              label="inTrackingRange"
+              value={inTrackingRange}
+              onChange={setInTrackingRange}
+              step="1"
+            />
+          </FieldGrid>
+        )}
+      </Section>
       <div className="flex gap-2">
         <button
           type="button"
@@ -1029,12 +1178,28 @@ function SignalsCard({
               config: {
                 enterScoreFloor: parseFloat(enterFloor),
                 query: {
-                  minGrowth: parseFloat(minGrowth),
+                  limit: parseInt(limit, 10),
                   recencyMinutes: parseInt(recency, 10),
+                  minGrowth: parseFloat(minGrowth),
+                  maxAgeMinutes: parseInt(maxAge, 10),
+                  includeStuck,
                 },
                 execution: {
                   simBuySol: parseFloat(simBuy),
                   maxOpenPositions: parseInt(maxOpen, 10),
+                },
+                scoring: {
+                  recencyBoostMax: parseFloat(recencyBoostMax),
+                  milestone80: parseFloat(milestone80),
+                  milestone120: parseFloat(milestone120),
+                  milestone200: parseFloat(milestone200),
+                  speedTo80Fast: parseFloat(speedFast),
+                  speedTo80Medium: parseFloat(speedMedium),
+                  speedTo80Slow: parseFloat(speedSlow),
+                  inTrackingRange: parseFloat(inTrackingRange),
+                  stuckPenalty: parseFloat(stuckPenalty),
+                  stopLossPenalty: parseFloat(stopLossPenalty),
+                  sellOver100LatePenalty: parseFloat(sellOver100LatePenalty),
                 },
               },
             })
@@ -1065,10 +1230,17 @@ function DlmmCard({
   saving: boolean;
   onSave: (id: string, patch: Record<string, unknown>) => void;
 }) {
-  const [minTvl, setMinTvl] = useState(String(strategy.config.min_tvl));
-  const [tp, setTp] = useState(String(strategy.config.take_profit_pct));
-  const [sl, setSl] = useState(String(strategy.config.stop_loss_pct));
-  const [oor, setOor] = useState(String(strategy.config.oor_timeout_min));
+  const c = strategy.config;
+  const [minTvl, setMinTvl] = useState(String(c.min_tvl));
+  const [minFeeTvl, setMinFeeTvl] = useState(String(c.min_fee_tvl));
+  const [minOrganic, setMinOrganic] = useState(String(c.min_organic_score));
+  const [minHolders, setMinHolders] = useState(String(c.min_holders));
+  const [tp, setTp] = useState(String(c.take_profit_pct));
+  const [sl, setSl] = useState(String(c.stop_loss_pct));
+  const [oor, setOor] = useState(String(c.oor_timeout_min));
+  const [maxSolPos, setMaxSolPos] = useState(String(c.max_sol_per_position));
+  const [maxSolRisk, setMaxSolRisk] = useState(String(c.max_sol_at_risk));
+  const [binRange, setBinRange] = useState(String(c.bin_range_interval));
   const [execMode, setExecMode] = useState(strategy.execution_mode);
 
   return (
@@ -1078,42 +1250,62 @@ function DlmmCard({
         Execution mode
         <ExecutionModeSelect value={execMode} onChange={setExecMode} />
       </label>
-      <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-        <label className="text-gray-400">
-          min TVL
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={minTvl} onChange={(e) => setMinTvl(e.target.value)} />
-        </label>
-        <label className="text-gray-400">
-          take profit %
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={tp} onChange={(e) => setTp(e.target.value)} />
-        </label>
-        <label className="text-gray-400">
-          stop loss %
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={sl} onChange={(e) => setSl(e.target.value)} />
-        </label>
-        <label className="text-gray-400">
-          OOR timeout (min)
-          <input className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white" value={oor} onChange={(e) => setOor(e.target.value)} />
-        </label>
+      <Section title="Screener">
+        <FieldGrid>
+          <NumberField label="min TVL" value={minTvl} onChange={setMinTvl} step="1" />
+          <NumberField label="min fee/TVL" value={minFeeTvl} onChange={setMinFeeTvl} />
+          <NumberField label="min organic score" value={minOrganic} onChange={setMinOrganic} step="1" />
+          <NumberField label="min holders" value={minHolders} onChange={setMinHolders} step="1" />
+        </FieldGrid>
+      </Section>
+      <Section title="Risk">
+        <FieldGrid>
+          <NumberField label="take profit %" value={tp} onChange={setTp} />
+          <NumberField label="stop loss %" value={sl} onChange={setSl} />
+          <NumberField label="OOR timeout (min)" value={oor} onChange={setOor} step="1" colSpan={2} />
+        </FieldGrid>
+      </Section>
+      <Section title="Capital">
+        <FieldGrid>
+          <NumberField label="max SOL / position" value={maxSolPos} onChange={setMaxSolPos} step="0.1" />
+          <NumberField label="max SOL at risk" value={maxSolRisk} onChange={setMaxSolRisk} step="0.1" />
+          <NumberField label="bin range interval" value={binRange} onChange={setBinRange} step="1" colSpan={2} />
+        </FieldGrid>
+      </Section>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() =>
+            onSave(strategy.id, {
+              execution_mode: execMode,
+              config: {
+                min_tvl: parseFloat(minTvl),
+                min_fee_tvl: parseFloat(minFeeTvl),
+                min_organic_score: parseFloat(minOrganic),
+                min_holders: parseInt(minHolders, 10),
+                take_profit_pct: parseFloat(tp),
+                stop_loss_pct: parseFloat(sl),
+                oor_timeout_min: parseInt(oor, 10),
+                max_sol_per_position: parseFloat(maxSolPos),
+                max_sol_at_risk: parseFloat(maxSolRisk),
+                bin_range_interval: parseInt(binRange, 10),
+              },
+            })
+          }
+          className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded"
+        >
+          Save thresholds
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => onSave(strategy.id, { is_active: !strategy.is_active })}
+          className="px-3 py-1.5 bg-gray-700 text-white text-xs rounded"
+        >
+          {strategy.is_active ? "Deactivate" : "Activate"}
+        </button>
       </div>
-      <button
-        type="button"
-        disabled={saving}
-        onClick={() =>
-          onSave(strategy.id, {
-            execution_mode: execMode,
-            config: {
-              min_tvl: parseFloat(minTvl),
-              take_profit_pct: parseFloat(tp),
-              stop_loss_pct: parseFloat(sl),
-              oor_timeout_min: parseInt(oor, 10),
-            },
-          })
-        }
-        className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded"
-      >
-        Save thresholds
-      </button>
     </div>
   );
 }

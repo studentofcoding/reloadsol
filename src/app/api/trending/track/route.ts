@@ -13,6 +13,7 @@ import { assessTokenRisk, formatDetailedRiskForDiscord } from '@/utils/risk-asse
 import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 import { calculateGainPercentage } from '@/utils/trading-math'
 import { createRpcConnection } from '@/utils/rpc-urls'
+import { trendingListDiscordViaCronOnly } from '@/utils/trending-notification-dedup'
 import {
   formatAppDateTime,
   formatAppNowWithZone,
@@ -82,7 +83,6 @@ const DISCORD_SAFE_LENGTH = 1900 // Leave some buffer
 
 // === Table selection (use alternate tables in local development to avoid prod collisions) ===
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
-const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
 
 // Add PriceRecord interface for price history
 interface PriceRecord {
@@ -116,19 +116,6 @@ interface TrackedToken {
   // New fields for waiting system
   waiting_started_at?: string | null
   waiting_initial_price?: number | null
-}
-
-// Add TopWinner interface for summary functionality
-interface TopWinner {
-  token_address: string
-  token_symbol: string | null
-  token_name: string | null
-  logo_url: string | null
-  initial_price_usd: number
-  peak_price_usd: number
-  peak_gain_percentage: number
-  tracking_duration_hours: number
-  status_changed_at: string
 }
 
 // Add TradingSimulation interfaces
@@ -1933,161 +1920,6 @@ function parseCustomFilterConfig(): Partial<TokenFilterConfig> | null {
   } catch (error) {
     console.error('Error parsing custom filter configuration:', error)
     return null
-  }
-}
-
-// Helper function to check when last summary was run
-async function checkLastSummaryTime(): Promise<Date | null> {
-  try {
-    const { data, error } = await supabase
-      .from(SUMMARY_TABLE)
-      .select('created_at')
-      .order('created_at', { ascending: false })
-      .limit(1)
-
-    if (error || !data || data.length === 0) {
-      return null
-    }
-
-    return new Date(data[0].created_at)
-  } catch (error) {
-    console.error('Error checking last summary time:', error)
-    return null
-  }
-}
-
-// Helper function to determine if daily summary should run
-function shouldRunDailySummary(currentTime: Date, lastSummaryTime: Date | null): boolean {
-  if (!lastSummaryTime) {
-    return true // No previous summary, run it
-  }
-
-  // Check if it's been more than 23 hours since last summary
-  const hoursSinceLastSummary = (currentTime.getTime() - lastSummaryTime.getTime()) / (1000 * 60 * 60)
-
-  // Run daily summary once per day (allow 23+ hours gap to avoid missing due to slight timing differences)
-  return hoursSinceLastSummary >= 23
-}
-
-// Helper function to run daily summary
-async function runDailySummary(currentTime: Date): Promise<void> {
-  try {
-    const periodStart = new Date(currentTime.getTime() - 24 * 60 * 60 * 1000) // 24 hours ago
-
-    // Get all tokens that were tracked in the last 24 hours
-    const { data: allTokens, error: fetchError } = await supabase
-      .from(TRACKER_TABLE)
-      .select(`id, token_address, token_symbol, token_name, logo_url, initial_price_usd, peak_price_usd, peak_gain_percentage, current_gain_percentage, status, tracking_started_at`)
-      .gte('tracking_started_at', periodStart.toISOString())
-
-    if (fetchError) {
-      throw new Error(`Failed to fetch tracked tokens: ${fetchError.message}`)
-    }
-
-    if (!allTokens || allTokens.length === 0) {
-      console.log('📭 No tokens tracked in the last 24 hours for summary')
-      return
-    }
-
-    const tokens = allTokens as TrackedToken[]
-    console.log(`🔍 Found ${tokens.length} tokens tracked in the last 24 hours for summary`)
-
-    // Categorize tokens
-    const trackingTokens = tokens.filter(t => t.status === 'tracking')
-    const lostTokens = tokens.filter(t => t.status === 'lost')
-    const wonTokens = tokens.filter(t => t.status === 'won')
-
-    // Identify top 5 performers among tracking tokens
-    const topPerformers = trackingTokens
-      .filter(token => token.peak_gain_percentage > 0) // Only consider profitable tokens
-      .sort((a, b) => b.peak_gain_percentage - a.peak_gain_percentage)
-      .slice(0, 5)
-
-    console.log(`🏆 Found ${topPerformers.length} top performers to mark as winners`)
-
-    // Mark top performers as "won"
-    const updatePromises: Promise<any>[] = []
-    topPerformers.forEach(token => {
-      updatePromises.push(
-        (async () => {
-          const { error } = await supabase
-            .from(TRACKER_TABLE)
-            .update({
-              status: 'won',
-              status_changed_at: currentTime.toISOString()
-            })
-            .eq('id', token.id)
-          if (error) throw error
-        })()
-      )
-    })
-
-    // Execute all updates
-    const results = await Promise.allSettled(updatePromises)
-    const failedUpdates = results.filter(result => result.status === 'rejected')
-
-    if (failedUpdates.length > 0) {
-      console.error(`⚠️ ${failedUpdates.length} winner updates failed:`, failedUpdates)
-    }
-
-    // Calculate statistics
-    const totalCompleted = lostTokens.length + topPerformers.length + wonTokens.length
-    const totalWon = topPerformers.length + wonTokens.length
-    const winRate = totalCompleted > 0 ? (totalWon / totalCompleted) * 100 : 0
-
-    // Calculate summary statistics
-    const allGains = [...topPerformers, ...wonTokens].map(t => t.peak_gain_percentage)
-    const allLosses = lostTokens.map(t => Math.abs(t.current_gain_percentage))
-
-    const avgPeakGain = allGains.length > 0 ? allGains.reduce((a, b) => a + b, 0) / allGains.length : 0
-    const maxPeakGain = allGains.length > 0 ? Math.max(...allGains) : 0
-    const avgLoss = allLosses.length > 0 ? allLosses.reduce((a, b) => a + b, 0) / allLosses.length : 0
-
-    // Prepare top winners data for storage
-    const topWinnersData: TopWinner[] = topPerformers.map(token => {
-      const trackingStart = new Date(token.tracking_started_at)
-      const trackingDuration = (currentTime.getTime() - trackingStart.getTime()) / (1000 * 60 * 60)
-
-      return {
-        token_address: token.token_address,
-        token_symbol: token.token_symbol,
-        token_name: token.token_name,
-        logo_url: token.logo_url,
-        initial_price_usd: token.initial_price_usd,
-        peak_price_usd: token.peak_price_usd,
-        peak_gain_percentage: token.peak_gain_percentage,
-        tracking_duration_hours: Math.round(trackingDuration * 100) / 100,
-        status_changed_at: currentTime.toISOString()
-      }
-    })
-
-    // Create summary record
-    const summaryId = `summary_${Date.now()}`
-    const { error: summaryError } = await supabase
-      .from(SUMMARY_TABLE)
-      .insert({
-        id: summaryId,
-        period_start: periodStart.toISOString(),
-        period_end: currentTime.toISOString(),
-        total_tokens_tracked: tokens.length,
-        won_tokens: totalWon,
-        lost_tokens: lostTokens.length,
-        still_tracking: trackingTokens.length - topPerformers.length,
-        win_rate: Math.round(winRate * 100) / 100,
-        top_winners: topWinnersData,
-        avg_peak_gain: Math.round(avgPeakGain * 100) / 100,
-        max_peak_gain: Math.round(maxPeakGain * 100) / 100,
-        avg_loss: Math.round(avgLoss * 100) / 100
-      })
-
-    if (summaryError) {
-      throw new Error(`Failed to save summary: ${summaryError.message}`)
-    }
-
-    console.log(`✅ Daily summary completed: ${tokens.length} tokens tracked, ${totalWon} won, ${lostTokens.length} lost, win rate: ${winRate.toFixed(1)}%`)
-  } catch (error) {
-    console.error('❌ Error running daily summary:', error)
-    // Don't throw - let tracking continue even if summary fails
   }
 }
 
@@ -4175,16 +4007,6 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
     console.log(`✅ Trading allowed at ${timeCheck.currentTime}`)
 
-    // Determine if we should run daily summary (runs once per day at ~midnight)
-    const currentTime = new Date()
-    const lastSummaryCheck = await checkLastSummaryTime()
-    const shouldRunSummary = shouldRunDailySummary(currentTime, lastSummaryCheck)
-
-    if (shouldRunSummary) {
-      console.log('📊 Running daily summary before tracking update...')
-      await runDailySummary(currentTime)
-    }
-
     console.log('🔍 Starting 5-minute trending token tracking...')
 
     // Fetch current trending tokens from Jupiter API with fallback & retry
@@ -4261,6 +4083,9 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     const isRealTrading = hasKeypair && hasWebhook
 
     try {
+      if (trendingListDiscordViaCronOnly()) {
+        log.info('discord_notification', 'Skipping track filtering Discord — list alerts owned by cron workers')
+      } else {
       log.info('discord_notification', 'Starting Discord filtering notifications', {
         totalTokens: filteringSummary.totalTokens,
         acceptedTokens: filteringSummary.acceptedTokens,
@@ -4284,6 +4109,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
       }
 
       log.info('discord_notification', 'All Discord filtering notifications completed successfully')
+      }
     } catch (discordError) {
       log.error('discord_notification', 'Error sending Discord filtering notifications', discordError as Error, {
         message: discordError instanceof Error ? discordError.message : String(discordError),

@@ -181,7 +181,7 @@ sequenceDiagram
 
 **Trading hours:** 16:00–04:00 GMT+7 (returns 403 outside window).
 
-**Inline jobs inside track cycle:** daily summary (~midnight gate). PnL runs via dedicated `pnl_update` cron only (02:00 UTC).
+**Inline jobs inside track cycle:** none (daily summary and PnL run via dedicated cron workers only).
 
 ---
 
@@ -291,6 +291,18 @@ Env: see [`.env.docker.example`](../.env.docker.example) and README environment 
 | **Strategy reports** | Coverage table, pagination, all 7 strategies in Reports tab |
 | **Next.js** | Migrated to 16.x; dev nav focused on Signals, Algo Tester, DLMM |
 
+Trade alerts on `DISCORD_WEBHOOK_AUTO_TRADE` (buys/sells) are separate from list alerts.
+
+**List notification env (Docker `.env`):**
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `TRENDING_LIST_DISCORD_VIA_CRON` | `true` | Cron POST only; disables route timers + track filtering summary |
+| `AUTO_NOTIFICATION_INTERVAL_MS` | `120000` | Unfiltered list dedup cooldown |
+| `FILTERED_AUTO_NOTIFICATION_INTERVAL_MS` | `120000` | Filtered list dedup cooldown |
+
+Set `TRENDING_LIST_DISCORD_VIA_CRON=false` for local dev without cron (re-enables route timers).
+
 ---
 
 ## 10. Recommended next improvements
@@ -299,9 +311,9 @@ Env: see [`.env.docker.example`](../.env.docker.example) and README environment 
 |----------|------|-----|
 | **High** | Set `CRON_SERVICE_URL=http://cron:8080` in compose for web | Done — default in `docker-compose.yml` |
 | **High** | Consolidate duplicate PnL paths | Done — removed inline PnL from track; `pnl_update` cron only |
-| **Medium** | Consolidate daily summary | Standalone cron + inline summary in track overlap |
-| **Medium** | Auth on Go `/trigger/*` | Currently unauthenticated; mitigated by dev-only Next proxy |
-| **Medium** | Discord notification dedup | `filtered_trending` / route timers / track may triple-notify |
+| **Medium** | Consolidate daily summary | Done — `daily_summary` cron only; inline track logic removed |
+| **Medium** | Auth on Go `/trigger/*` | Not used — `/trigger/*` open on cron port; rely on network/firewall |
+| **Medium** | Discord notification dedup | Done — cron-only list alerts + cooldown dedup; track filtering summary skipped when `TRENDING_LIST_DISCORD_VIA_CRON=true` |
 | **Low** | Drop `token_ohlc_bars` table | Orphaned after OHLC removal |
 | **Low** | Refresh [Overview.md](./Overview.md) | Still references removed pages (mcap-tracker nav, catch-the-coin) |
 

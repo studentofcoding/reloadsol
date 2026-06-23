@@ -121,7 +121,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `POST /trigger/dlmm-manage` | Run DLMM manage now |
 | … | See `main.go` for all `/trigger/*` |
 
-**Note:** Go `/trigger/*` endpoints currently have no auth. The app proxies triggers via `POST /api/workers/trigger` (dev-gated) so the browser never hits cron directly.
+**Note:** Go `/trigger/*` endpoints have no auth. The app proxies triggers via `POST /api/workers/trigger` so the browser never hits cron directly. Restrict cron port exposure in production.
 
 ### Worker status values
 
