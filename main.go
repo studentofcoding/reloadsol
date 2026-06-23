@@ -236,9 +236,10 @@ type Config struct {
 }
 
 type CronService struct {
-	config *Config
-	cron   *cron.Cron
-	logger *DiscordLogger
+	config  *Config
+	cron    *cron.Cron
+	logger  *DiscordLogger
+	workers *WorkerTracker
 }
 
 func NewCronService() *CronService {
@@ -334,14 +335,16 @@ func NewCronService() *CronService {
 	logger := NewDiscordLogger(config.DiscordWebhook, "ReloadSol Cron Service")
 	
 	return &CronService{
-		config: config,
-		cron:   c,
-		logger: logger,
+		config:  config,
+		cron:    c,
+		logger:  logger,
+		workers: NewWorkerTracker(),
 	}
 }
 
 func (cs *CronService) Start() {
 	cs.logger.Info("🚀 Starting Cron Service for reloadsol...")
+	cs.initWorkerRegistry()
 	
 	// Send startup notification
 	if cs.config.DiscordWebhook != "" {
@@ -353,108 +356,122 @@ func (cs *CronService) Start() {
 	}
 
 	// Trending tracker - every 5 minutes
-	_, err := cs.cron.AddFunc("0 */5 * * * *", cs.runTrendingTracker)
+	trendingEntryID, err := cs.cron.AddFunc("0 */5 * * * *", cs.runTrendingTracker)
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("Failed to add trending tracker cron job: %v", err))
 		log.Fatal("Failed to add trending tracker cron job:", err)
 	}
+	cs.workers.BindEntry(trendingEntryID, "trending_tracker")
 
 	// Filtered trending tracker - every 2 minutes
-	_, err = cs.cron.AddFunc("0 */2 * * * *", cs.runFilteredTrendingTracker)
+	filteredEntryID, err := cs.cron.AddFunc("0 */2 * * * *", cs.runFilteredTrendingTracker)
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("Failed to add filtered trending tracker cron job: %v", err))
 		log.Fatal("Failed to add filtered trending tracker cron job:", err)
 	}
+	cs.workers.BindEntry(filteredEntryID, "filtered_trending")
 
 	// Trending tracker unfiltered - every 2 minutes
-	_, err = cs.cron.AddFunc("0 */2 * * * *", cs.runUnfilteredTrendingTracker)
+	unfilteredEntryID, err := cs.cron.AddFunc("0 */2 * * * *", cs.runUnfilteredTrendingTracker)
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("Failed to add unfiltered trending tracker cron job: %v", err))
 		log.Fatal("Failed to add unfiltered trending tracker cron job:", err)
 	}
+	cs.workers.BindEntry(unfilteredEntryID, "unfiltered_trending")
 
 	// Price monitor – every N seconds (default 180)
 	spec := fmt.Sprintf("@every %ds", cs.config.PriceMonitorInterval)
-	_, err = cs.cron.AddFunc(spec, cs.runPriceMonitor)
+	priceEntryID, err := cs.cron.AddFunc(spec, cs.runPriceMonitor)
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("Failed to add price monitor cron job: %v", err))
 		log.Fatal("Failed to add price monitor cron job:", err)
 	}
+	cs.workers.BindEntry(priceEntryID, "price_monitor")
 
     // SL/TP monitor – every M seconds (default 60)
     sltpSpec := fmt.Sprintf("@every %ds", cs.config.SLTPMonitorInterval)
-    _, err = cs.cron.AddFunc(sltpSpec, cs.runSLTPMonitor)
+    sltpEntryID, err := cs.cron.AddFunc(sltpSpec, cs.runSLTPMonitor)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add SL/TP monitor cron job: %v", err))
         log.Fatal("Failed to add SL/TP monitor cron job:", err)
     }
+    cs.workers.BindEntry(sltpEntryID, "sltp_monitor")
 
     // Signals refresh – every K seconds (default 60)
     sigSpec := fmt.Sprintf("@every %ds", cs.config.SignalRefreshInterval)
-    _, err = cs.cron.AddFunc(sigSpec, cs.runSignalRefresh)
+    sigRefreshEntryID, err := cs.cron.AddFunc(sigSpec, cs.runSignalRefresh)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add signals refresh cron job: %v", err))
         log.Fatal("Failed to add signals refresh cron job:", err)
     }
+    cs.workers.BindEntry(sigRefreshEntryID, "signals_refresh")
 
     // Signals sim track – every N seconds (default 120)
     signalsSimSpec := fmt.Sprintf("@every %ds", cs.config.SignalsSimInterval)
-    _, err = cs.cron.AddFunc(signalsSimSpec, cs.runSignalsSimTrack)
+    signalsSimEntryID, err := cs.cron.AddFunc(signalsSimSpec, cs.runSignalsSimTrack)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add signals sim track cron job: %v", err))
         log.Fatal("Failed to add signals sim track cron job:", err)
     }
+    cs.workers.BindEntry(signalsSimEntryID, "signals_sim_track")
 
     if cs.config.StrategyReportInterval > 0 {
         reportSpec := fmt.Sprintf("@every %ds", cs.config.StrategyReportInterval)
-        _, err = cs.cron.AddFunc(reportSpec, cs.runStrategyReportDigest)
+        reportEntryID, err := cs.cron.AddFunc(reportSpec, cs.runStrategyReportDigest)
         if err != nil {
             cs.logger.Error(fmt.Sprintf("Failed to add strategy report digest cron job: %v", err))
             log.Fatal("Failed to add strategy report digest cron job:", err)
         }
+        cs.workers.BindEntry(reportEntryID, "strategy_report")
     }
 
     // OHLC update – every N seconds (default 300)
     ohlcSpec := fmt.Sprintf("@every %ds", cs.config.OHLCUpdateInterval)
-    _, err = cs.cron.AddFunc(ohlcSpec, cs.runOHLCUpdate)
+    ohlcEntryID, err := cs.cron.AddFunc(ohlcSpec, cs.runOHLCUpdate)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add OHLC update cron job: %v", err))
         log.Fatal("Failed to add OHLC update cron job:", err)
     }
+    cs.workers.BindEntry(ohlcEntryID, "ohlc_update")
 
     // DLMM screen – every N seconds (default 300)
     dlmmScreenSpec := fmt.Sprintf("@every %ds", cs.config.DLMMScreenInterval)
-    _, err = cs.cron.AddFunc(dlmmScreenSpec, cs.runDLMMScreen)
+    dlmmScreenEntryID, err := cs.cron.AddFunc(dlmmScreenSpec, cs.runDLMMScreen)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add DLMM screen cron job: %v", err))
         log.Fatal("Failed to add DLMM screen cron job:", err)
     }
+    cs.workers.BindEntry(dlmmScreenEntryID, "dlmm_screen")
 
     // DLMM manage – every M seconds (default 60)
     dlmmManageSpec := fmt.Sprintf("@every %ds", cs.config.DLMMManageInterval)
-    _, err = cs.cron.AddFunc(dlmmManageSpec, cs.runDLMMManage)
+    dlmmManageEntryID, err := cs.cron.AddFunc(dlmmManageSpec, cs.runDLMMManage)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add DLMM manage cron job: %v", err))
         log.Fatal("Failed to add DLMM manage cron job:", err)
     }
+    cs.workers.BindEntry(dlmmManageEntryID, "dlmm_manage")
 
     // Daily summary - once per day at midnight UTC
-    _, err = cs.cron.AddFunc("0 0 0 * * *", cs.runDailySummary)
+    summaryEntryID, err := cs.cron.AddFunc("0 0 0 * * *", cs.runDailySummary)
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("Failed to add daily summary cron job: %v", err))
 		log.Fatal("Failed to add daily summary cron job:", err)
 	}
+	cs.workers.BindEntry(summaryEntryID, "daily_summary")
 
 	// PnL update - daily at 2 AM UTC
-	_, err = cs.cron.AddFunc("0 0 2 * * *", cs.runPnLUpdate)
+	pnlEntryID, err := cs.cron.AddFunc("0 0 2 * * *", cs.runPnLUpdate)
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("Failed to add PnL update cron job: %v", err))
 		log.Fatal("Failed to add PnL update cron job:", err)
 	}
+	cs.workers.BindEntry(pnlEntryID, "pnl_update")
 
 	// Health check endpoint
 	http.HandleFunc("/health", cs.healthCheck)
 	http.HandleFunc("/status", cs.statusCheck)
+	http.HandleFunc("/workers", cs.workersCheck)
 	http.HandleFunc("/trigger/trending", cs.manualTrendingTrigger)
 	http.HandleFunc("/trigger/summary", cs.manualSummaryTrigger)
 	http.HandleFunc("/trigger/pnl", cs.manualPnLTrigger)
@@ -516,6 +533,7 @@ func (cs *CronService) manualSignalsRefreshTrigger(w http.ResponseWriter, r *htt
 
 // Signals refresh: warm the signals endpoint to keep UI fresh
 func (cs *CronService) runSignalRefresh() {
+    cs.workers.Begin("signals_refresh")
     cs.logger.Info("📡 Running signals refresh...")
 
     url := fmt.Sprintf("%s/api/trading/signals", cs.config.APIBaseURL)
@@ -532,6 +550,7 @@ func (cs *CronService) runSignalRefresh() {
     resp, err := cs.makeRequest("GET", url, params)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Signals refresh failed: %v", err))
+        cs.workers.Fail("signals_refresh", err.Error())
         return
     }
 
@@ -551,28 +570,35 @@ func (cs *CronService) runSignalRefresh() {
         // Fallback: log raw length to avoid spam
         cs.logger.Success(fmt.Sprintf("✅ Signals refresh completed (response %d bytes)", len(resp)))
     }
+    cs.workers.Success("signals_refresh")
 }
 
 func (cs *CronService) runSignalsSimTrack() {
+    cs.workers.Begin("signals_sim_track")
     cs.logger.Info("🧪 Running signals sim track...")
     url := fmt.Sprintf("%s/api/signals/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
     resp, err := cs.makeRequest("POST", url, nil)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Signals sim track failed: %v", err))
+        cs.workers.Fail("signals_sim_track", err.Error())
         return
     }
     cs.logger.Success(fmt.Sprintf("✅ Signals sim track completed (%d bytes)", len(resp)))
+    cs.workers.Success("signals_sim_track")
 }
 
 func (cs *CronService) runStrategyReportDigest() {
+    cs.workers.Begin("strategy_report")
     cs.logger.Info("📊 Running strategy report digest...")
     url := fmt.Sprintf("%s/api/strategies/report-digest?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
     resp, err := cs.makeRequest("POST", url, nil)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Strategy report digest failed: %v", err))
+        cs.workers.Fail("strategy_report", err.Error())
         return
     }
     cs.logger.Success(fmt.Sprintf("✅ Strategy report digest completed (%d bytes)", len(resp)))
+    cs.workers.Success("strategy_report")
 }
 
 func (cs *CronService) manualSignalsSimTrackTrigger(w http.ResponseWriter, r *http.Request) {
@@ -596,6 +622,7 @@ func (cs *CronService) manualStrategyReportTrigger(w http.ResponseWriter, r *htt
 }
 
 func (cs *CronService) runTrendingTracker() {
+	cs.workers.Begin("trending_tracker")
 	cs.logger.Info("🔍 Running trending tracker...")
 	
 	url := fmt.Sprintf("%s/api/trending/track", cs.config.APIBaseURL)
@@ -611,13 +638,16 @@ func (cs *CronService) runTrendingTracker() {
 			fmt.Sprintf("Error: %v", err),
 			15158332, // Red
 		)
+		cs.workers.Fail("trending_tracker", err.Error())
 		return
 	}
 	
 	cs.logger.Success(fmt.Sprintf("✅ Trending tracker completed: %s", resp))
+	cs.workers.Success("trending_tracker")
 }
 
 func (cs *CronService) runFilteredTrendingTracker() {
+    cs.workers.Begin("filtered_trending")
     cs.logger.Info("🔍 Running filtered trending tracker...")
     
     url := fmt.Sprintf("%s/api/trending/filtered", cs.config.APIBaseURL)
@@ -633,13 +663,16 @@ func (cs *CronService) runFilteredTrendingTracker() {
             fmt.Sprintf("Error: %v", err),
             15158332, // Red
         )
+        cs.workers.Fail("filtered_trending", err.Error())
         return
     }
     
     cs.logger.Success(fmt.Sprintf("✅ Filtered trending tracker completed: %s", resp))
+    cs.workers.Success("filtered_trending")
 }
 
 func (cs *CronService) runUnfilteredTrendingTracker() {
+    cs.workers.Begin("unfiltered_trending")
     cs.logger.Info("🔍 Running unfiltered trending tracker...")
     
     url := fmt.Sprintf("%s/api/trending", cs.config.APIBaseURL)
@@ -655,14 +688,17 @@ func (cs *CronService) runUnfilteredTrendingTracker() {
             fmt.Sprintf("Error: %v", err),
             15158332, // Red
         )
+        cs.workers.Fail("unfiltered_trending", err.Error())
         return
     }
     
     cs.logger.Success(fmt.Sprintf("✅ Unfiltered trending tracker completed: %s", resp))
+    cs.workers.Success("unfiltered_trending")
 }
 
 
 func (cs *CronService) runDailySummary() {
+	cs.workers.Begin("daily_summary")
 	cs.logger.Info("📊 Running daily summary...")
 	
 	url := fmt.Sprintf("%s/api/trending/summary", cs.config.APIBaseURL)
@@ -678,13 +714,16 @@ func (cs *CronService) runDailySummary() {
 			fmt.Sprintf("Error: %v", err),
 			15158332, // Red
 		)
+		cs.workers.Fail("daily_summary", err.Error())
 		return
 	}
 	
 	cs.logger.Success(fmt.Sprintf("✅ Daily summary completed: %s", resp))
+	cs.workers.Success("daily_summary")
 }
 
 func (cs *CronService) runPnLUpdate() {
+	cs.workers.Begin("pnl_update")
 	cs.logger.Info("💰 Running PnL update...")
 	
 	url := fmt.Sprintf("%s/api/pnl/update", cs.config.APIBaseURL)
@@ -700,13 +739,16 @@ func (cs *CronService) runPnLUpdate() {
 			fmt.Sprintf("Error: %v", err),
 			15158332, // Red
 		)
+		cs.workers.Fail("pnl_update", err.Error())
 		return
 	}
 	
 	cs.logger.Success(fmt.Sprintf("✅ PnL update completed: %s", resp))
+	cs.workers.Success("pnl_update")
 }
 
 func (cs *CronService) runPriceMonitor() {
+	cs.workers.Begin("price_monitor")
 	cs.logger.Info("📉 Running price monitor...")
 
 	// Endpoint that returns tokens in real trading mode (server handles logic)
@@ -718,10 +760,12 @@ func (cs *CronService) runPriceMonitor() {
 	})
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("❌ Price monitor failed: %v", err))
+		cs.workers.Fail("price_monitor", err.Error())
 		return
 	}
 
 	cs.logger.Success(fmt.Sprintf("✅ Price monitor completed: %s", resp))
+	cs.workers.Success("price_monitor")
 }
 
 // SL/TP Monitor Response structure
@@ -755,6 +799,7 @@ type SLTPMonitorResponse struct {
 }
 
 func (cs *CronService) runSLTPMonitor() {
+	cs.workers.Begin("sltp_monitor")
 	cs.logger.Info("🛡️ Running SL/TP monitor...")
 
 	url := fmt.Sprintf("%s/api/sl-tp-monitor", cs.config.APIBaseURL)
@@ -764,6 +809,7 @@ func (cs *CronService) runSLTPMonitor() {
 	}, 120)
 	if err != nil {
 		cs.logger.Error(fmt.Sprintf("❌ SL/TP monitor failed: %v", err))
+		cs.workers.Fail("sltp_monitor", err.Error())
 		return
 	}
 
@@ -772,11 +818,13 @@ func (cs *CronService) runSLTPMonitor() {
 	if err := json.Unmarshal([]byte(resp), &monitorResp); err != nil {
 		cs.logger.Error(fmt.Sprintf("❌ Failed to parse SL/TP monitor response: %v", err))
 		cs.logger.Info(fmt.Sprintf("Raw response: %s", resp))
+		cs.workers.Fail("sltp_monitor", err.Error())
 		return
 	}
 
 	if !monitorResp.Success {
 		cs.logger.Error(fmt.Sprintf("❌ SL/TP monitor API returned error: %s", monitorResp.Message))
+		cs.workers.Fail("sltp_monitor", monitorResp.Message)
 		return
 	}
 
@@ -825,6 +873,7 @@ func (cs *CronService) runSLTPMonitor() {
 			15844367, // Orange color for alerts
 		)
 	}
+	cs.workers.Success("sltp_monitor")
 }
 
 // Manual trigger endpoints for testing
@@ -861,6 +910,7 @@ func (cs *CronService) manualSLTPTrigger(w http.ResponseWriter, r *http.Request)
 }
 
 func (cs *CronService) runDLMMScreen() {
+    cs.workers.Begin("dlmm_screen")
     cs.logger.Info("🌊 Running DLMM screen...")
     url := fmt.Sprintf("%s/api/dlmm/screen", cs.config.APIBaseURL)
     resp, err := cs.makeRequest("POST", url, map[string]string{
@@ -868,12 +918,15 @@ func (cs *CronService) runDLMMScreen() {
     })
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ DLMM screen failed: %v", err))
+        cs.workers.Fail("dlmm_screen", err.Error())
         return
     }
     cs.logger.Success(fmt.Sprintf("✅ DLMM screen completed: %s", resp))
+    cs.workers.Success("dlmm_screen")
 }
 
 func (cs *CronService) runDLMMManage() {
+    cs.workers.Begin("dlmm_manage")
     cs.logger.Info("🩺 Running DLMM manage...")
     url := fmt.Sprintf("%s/api/dlmm/manage", cs.config.APIBaseURL)
     resp, err := cs.makeRequest("POST", url, map[string]string{
@@ -881,9 +934,11 @@ func (cs *CronService) runDLMMManage() {
     })
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ DLMM manage failed: %v", err))
+        cs.workers.Fail("dlmm_manage", err.Error())
         return
     }
     cs.logger.Success(fmt.Sprintf("✅ DLMM manage completed: %s", resp))
+    cs.workers.Success("dlmm_manage")
 }
 
 func (cs *CronService) manualDLMMScreenTrigger(w http.ResponseWriter, r *http.Request) {
@@ -915,6 +970,7 @@ func (cs *CronService) manualDLMMManageTrigger(w http.ResponseWriter, r *http.Re
 }
 
 func (cs *CronService) runOHLCUpdate() {
+    cs.workers.Begin("ohlc_update")
     cs.logger.Info("🕯️ Running OHLC update...")
     url := fmt.Sprintf("%s/api/ohlc", cs.config.APIBaseURL)
     params := map[string]string{
@@ -924,9 +980,11 @@ func (cs *CronService) runOHLCUpdate() {
     resp, err := cs.makeRequest("POST", url, params)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ OHLC update failed: %v", err))
+        cs.workers.Fail("ohlc_update", err.Error())
         return
     }
     cs.logger.Success(fmt.Sprintf("✅ OHLC update completed: %s", resp))
+    cs.workers.Success("ohlc_update")
 }
 
 func (cs *CronService) manualOHLCTrigger(w http.ResponseWriter, r *http.Request) {
@@ -1006,18 +1064,8 @@ func (cs *CronService) healthCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	
 	// Get cron entries for next execution times
-	entries := cs.cron.Entries()
-	nextRuns := make(map[string]string)
-	for _, entry := range entries {
-		timeUntil := time.Until(entry.Next)
-		var timeStr string
-		if timeUntil.Hours() < 1 {
-			timeStr = fmt.Sprintf("in %.0f minutes", timeUntil.Minutes())
-		} else {
-			timeStr = fmt.Sprintf("in %.1f hours", timeUntil.Hours())
-		}
-		nextRuns[fmt.Sprintf("%p", entry.Job)] = timeStr
-	}
+	cs.workers.SyncNextRuns(cs.cron.Entries())
+	workerSnapshot := cs.workers.Snapshot()
 
 	// Gather real system metrics
 	var m runtime.MemStats
@@ -1082,33 +1130,8 @@ func (cs *CronService) healthCheck(w http.ResponseWriter, r *http.Request) {
 				"health_score": healthScore,
 			},
 		},
-		"cron_jobs": map[string]interface{}{
-			"trending_tracker": map[string]interface{}{
-				"schedule": "every 5 minutes",
-				"next_run": nextRuns[fmt.Sprintf("%p", cs.runTrendingTracker)],
-				"last_execution_time_ms": 500 + rand.Float64()*1000, // Random between 500-1500ms
-			},
-			"daily_summary": map[string]interface{}{
-				"schedule": "daily at 00:00 UTC",
-				"next_run": nextRuns[fmt.Sprintf("%p", cs.runDailySummary)],
-				"last_execution_time_ms": 800 + rand.Float64()*1200, // Random between 800-2000ms
-			},
-			"pnl_update": map[string]interface{}{
-				"schedule": "daily at 02:00 UTC",
-				"next_run": nextRuns[fmt.Sprintf("%p", cs.runPnLUpdate)],
-				"last_execution_time_ms": 300 + rand.Float64()*700, // Random between 300-1000ms
-			},
-			"price_monitor": map[string]interface{}{
-				"schedule": fmt.Sprintf("every %d seconds", cs.config.PriceMonitorInterval),
-				"next_run": nextRuns[fmt.Sprintf("%p", cs.runPriceMonitor)],
-				"last_execution_time_ms": 400 + rand.Float64()*800, // Random between 400-1200ms
-			},
-			"sltp_monitor": map[string]interface{}{
-				"schedule": fmt.Sprintf("every %d seconds", cs.config.SLTPMonitorInterval),
-				"next_run": nextRuns[fmt.Sprintf("%p", cs.runSLTPMonitor)],
-				"last_execution_time_ms": 450 + rand.Float64()*750, // Random between 450-1200ms
-			},
-		},
+		"cron_jobs": workerSnapshot,
+		"workers_endpoint": "/workers",
 	}
 	
 	// Log enhanced health check info with random variations
@@ -1126,6 +1149,12 @@ func (cs *CronService) healthCheck(w http.ResponseWriter, r *http.Request) {
 	// Send to Discord with more details every 5 minutes
 	currentMinute := time.Now().Minute()
 	if currentMinute%5 == 0 {
+		staleCount := 0
+		for _, w := range workerSnapshot {
+			if status, ok := w["status"].(string); ok && (status == "stale" || status == "error") {
+				staleCount++
+			}
+		}
 		detailedInfo := fmt.Sprintf(`🏥 Health Check Report
 Status: %s
 Uptime: %s
@@ -1134,13 +1163,8 @@ Goroutines: %d
 CPU Load: %.1f%%
 Network Latency: %.0fms
 Health Score: %.1f%%
-
-Next Scheduled Jobs:
-• 📊 Trending: %s (Last: %.0fms)
-• 📈 Summary: %s (Last: %.0fms)
-• 💰 PnL Update: %s (Last: %.0fms)
-• 📉 Price Monitor: %s (Last: %.0fms)
-• 🛡️ SL/TP Monitor: %s (Last: %.0fms)
+Workers tracked: %d (stale/error: %d)
+See /workers for full job status
 
 Discord Integration: %v`,
 			response["status"],
@@ -1150,16 +1174,8 @@ Discord Integration: %v`,
 			cpuLoad,
 			networkLatency,
 			healthScore,
-			nextRuns[fmt.Sprintf("%p", cs.runTrendingTracker)],
-			response["cron_jobs"].(map[string]interface{})["trending_tracker"].(map[string]interface{})["last_execution_time_ms"].(float64),
-			nextRuns[fmt.Sprintf("%p", cs.runDailySummary)],
-			response["cron_jobs"].(map[string]interface{})["daily_summary"].(map[string]interface{})["last_execution_time_ms"].(float64),
-			nextRuns[fmt.Sprintf("%p", cs.runPnLUpdate)],
-			response["cron_jobs"].(map[string]interface{})["pnl_update"].(map[string]interface{})["last_execution_time_ms"].(float64),
-			nextRuns[fmt.Sprintf("%p", cs.runPriceMonitor)],
-			response["cron_jobs"].(map[string]interface{})["price_monitor"].(map[string]interface{})["last_execution_time_ms"].(float64),
-			nextRuns[fmt.Sprintf("%p", cs.runSLTPMonitor)],
-			response["cron_jobs"].(map[string]interface{})["sltp_monitor"].(map[string]interface{})["last_execution_time_ms"].(float64),
+			len(workerSnapshot),
+			staleCount,
 			cs.config.DiscordWebhook != "",
 		)
 		

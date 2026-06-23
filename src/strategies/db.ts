@@ -4,6 +4,7 @@ import type {
   StrategyDomain,
   StrategyOutcomeRow,
   StrategyReportBreakdown,
+  StrategyCoverageRow,
   TrendingBotStrategyOverride,
   ExecutionMode,
 } from './types'
@@ -176,6 +177,7 @@ export async function aggregateStrategyReports(params: {
   abPairs: import('./types').StrategyAbPair[]
   topTrades: StrategyOutcomeRow[]
   worstTrades: StrategyOutcomeRow[]
+  coverage: StrategyCoverageRow[]
 }> {
   let query = supabase.from('strategy_outcomes').select('*')
 
@@ -189,7 +191,7 @@ export async function aggregateStrategyReports(params: {
 
   if (error) {
     if (error.code === '42P01' || error.message?.includes('does not exist')) {
-      return { breakdown: [], abPairs: [], topTrades: [], worstTrades: [] }
+      return { breakdown: [], abPairs: [], topTrades: [], worstTrades: [], coverage: [] }
     }
     throw error
   }
@@ -213,6 +215,11 @@ export async function aggregateStrategyReports(params: {
       .filter((v: number | null): v is number => v != null)
     const wins = pnls.filter((p: number) => p >= 0).length
     const losses = pnls.filter((p: number) => p < 0).length
+    const exitTimes = groupRows
+      .map((r) => r.exit_at)
+      .filter((v): v is string => !!v)
+      .sort()
+    const lastExitAt = exitTimes.length ? exitTimes[exitTimes.length - 1] : null
 
     breakdown.push({
       strategy_id,
@@ -225,12 +232,70 @@ export async function aggregateStrategyReports(params: {
       avg_pnl_pct: pnls.length ? pnls.reduce((a: number, b: number) => a + b, 0) / pnls.length : 0,
       median_pnl_pct: median(pnls),
       total_pnl_pct: pnls.reduce((a: number, b: number) => a + b, 0),
+      last_exit_at: lastExitAt,
     })
   }
 
   breakdown.sort((a, b) => b.win_rate - a.win_rate)
 
   const defRows = await loadStrategyDefinitionRows()
+  const breakdownByKey = new Map(
+    breakdown.map((b) => [`${b.domain}|${b.strategy_id}|${b.is_simulated}`, b]),
+  )
+
+  for (const def of defRows) {
+    for (const isSim of [true, false] as const) {
+      const key = `${def.domain}|${def.id}|${isSim}`
+      if (breakdownByKey.has(key)) continue
+      breakdown.push({
+        strategy_id: def.id,
+        domain: def.domain,
+        is_simulated: isSim,
+        trade_count: 0,
+        win_count: 0,
+        loss_count: 0,
+        win_rate: 0,
+        avg_pnl_pct: 0,
+        median_pnl_pct: 0,
+        total_pnl_pct: 0,
+        last_exit_at: null,
+      })
+    }
+  }
+
+  breakdown.sort((a, b) => {
+    if (a.trade_count !== b.trade_count) return b.trade_count - a.trade_count
+    return a.strategy_id.localeCompare(b.strategy_id)
+  })
+
+  const coverage: StrategyCoverageRow[] = defRows.map((def) => {
+    const sim = breakdown.find(
+      (b) => b.strategy_id === def.id && b.domain === def.domain && b.is_simulated,
+    )
+    const live = breakdown.find(
+      (b) => b.strategy_id === def.id && b.domain === def.domain && !b.is_simulated,
+    )
+    const simLast = sim?.last_exit_at ?? null
+    const liveLast = live?.last_exit_at ?? null
+    const lastExitAt =
+      simLast && liveLast
+        ? simLast > liveLast
+          ? simLast
+          : liveLast
+        : simLast ?? liveLast
+
+    return {
+      strategy_id: def.id,
+      domain: def.domain,
+      name: def.name,
+      is_active: def.is_active,
+      execution_mode: def.execution_mode,
+      sim_trade_count: sim?.trade_count ?? 0,
+      live_trade_count: live?.trade_count ?? 0,
+      last_exit_at: lastExitAt,
+      avg_pnl_pct: sim?.trade_count ? sim.avg_pnl_pct : null,
+    }
+  })
   const abParallelIds = defRows
     .filter((d) => d.execution_mode === 'ab_parallel')
     .map((d) => d.id)
@@ -254,7 +319,42 @@ export async function aggregateStrategyReports(params: {
     .sort((a, b) => Number(a.pnl_pct) - Number(b.pnl_pct))
     .slice(0, 5)
 
-  return { breakdown, abPairs, topTrades, worstTrades }
+  return { breakdown, abPairs, topTrades, worstTrades, coverage }
+}
+
+export async function getStrategyDomainHeartbeats(): Promise<
+  Array<{ domain: StrategyDomain; last_outcome_at: string | null }>
+> {
+  const domains: StrategyDomain[] = ['signals', 'trending_bot', 'dlmm']
+  const results: Array<{ domain: StrategyDomain; last_outcome_at: string | null }> = []
+
+  for (const domain of domains) {
+    const { data, error } = await supabase
+      .from('strategy_outcomes')
+      .select('exit_at, created_at')
+      .eq('domain', domain)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (error) {
+      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        results.push({ domain, last_outcome_at: null })
+        continue
+      }
+      console.warn('[strategies/db] domain heartbeat failed:', error.message)
+      results.push({ domain, last_outcome_at: null })
+      continue
+    }
+
+    const row = data as { exit_at?: string | null; created_at?: string | null } | null
+    results.push({
+      domain,
+      last_outcome_at: row?.exit_at ?? row?.created_at ?? null,
+    })
+  }
+
+  return results
 }
 
 export async function fetchTradingRecordsForWallet(

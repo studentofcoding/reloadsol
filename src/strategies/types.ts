@@ -159,6 +159,19 @@ export interface StrategyReportBreakdown {
   avg_pnl_pct: number
   median_pnl_pct: number
   total_pnl_pct: number
+  last_exit_at?: string | null
+}
+
+export interface StrategyCoverageRow {
+  strategy_id: string
+  domain: StrategyDomain
+  name: string
+  is_active: boolean
+  execution_mode: ExecutionMode
+  sim_trade_count: number
+  live_trade_count: number
+  last_exit_at: string | null
+  avg_pnl_pct: number | null
 }
 
 export interface StrategyAbPair {

@@ -26,6 +26,8 @@ Three dev surfaces share data but historically used separate strategy config. v1
 
 Run new tables from `supabase/schema.sql` (`strategy_definitions`, `strategy_outcomes`).
 
+**Full algo reference:** [algo_overview.md](./algo_overview.md) — domains, cron workers, outcome recording, gap diagnosis, Workers tab.
+
 ## Phase 2
 
 - Editable Signals + DLMM strategies in `/dev/strategies` (Config tab).

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import type {
   TrendingBotStrategy,
@@ -10,6 +10,10 @@ import type {
   ExecutionMode,
 } from "@/strategies/types";
 import { formatAppDateTime } from "@/utils/datetime";
+
+const OUTCOMES_PAGE_SIZE = 100;
+
+type TabId = "config" | "reports" | "workers";
 
 type StrategiesResponse = {
   success: boolean;
@@ -41,6 +45,19 @@ type ReportBreakdown = {
   trade_count: number;
   win_rate: number;
   avg_pnl_pct: number;
+  last_exit_at?: string | null;
+};
+
+type CoverageRow = {
+  strategy_id: string;
+  domain: string;
+  name: string;
+  is_active: boolean;
+  execution_mode: ExecutionMode;
+  sim_trade_count: number;
+  live_trade_count: number;
+  last_exit_at: string | null;
+  avg_pnl_pct: number | null;
 };
 
 type AbPair = {
@@ -50,31 +67,119 @@ type AbPair = {
   live: ReportBreakdown | null;
 };
 
+type WorkerRow = {
+  id: string;
+  name: string;
+  domain: string;
+  schedule: string;
+  status: string;
+  last_success_at: string;
+  next_run_at: string;
+  can_trigger: boolean;
+  disabled: boolean;
+  last_error_msg: string;
+};
+
+type WorkersStatusResponse = {
+  success: boolean;
+  cron_reachable: boolean;
+  cron_uptime: string | null;
+  workers: WorkerRow[];
+  domain_heartbeat: Array<{ domain: string; last_outcome_at: string | null }>;
+};
+
 const EXECUTION_MODES: ExecutionMode[] = ["sim_only", "live_only", "ab_parallel"];
 
+function parseTabParam(value: string | null): TabId {
+  if (value === "reports" || value === "workers") return value;
+  return "config";
+}
+
+function buildOutcomesQuery(params: {
+  reportFrom: string;
+  reportTo: string;
+  reportDomain: string;
+  reportStrategyId: string;
+  reportSimulated: string;
+  outcomesOffset: number;
+}) {
+  const q = new URLSearchParams();
+  q.set("limit", String(OUTCOMES_PAGE_SIZE));
+  q.set("offset", String(params.outcomesOffset));
+  if (params.reportFrom) q.set("from", params.reportFrom);
+  if (params.reportTo) q.set("to", params.reportTo);
+  if (params.reportDomain) q.set("domain", params.reportDomain);
+  if (params.reportStrategyId) q.set("strategyId", params.reportStrategyId);
+  if (params.reportSimulated) q.set("is_simulated", params.reportSimulated);
+  return q.toString();
+}
+
+function buildCsvHref(params: {
+  reportFrom: string;
+  reportTo: string;
+  reportDomain: string;
+  reportStrategyId: string;
+  reportSimulated: string;
+}) {
+  const q = new URLSearchParams();
+  q.set("format", "csv");
+  q.set("limit", "5000");
+  if (params.reportFrom) q.set("from", params.reportFrom);
+  if (params.reportTo) q.set("to", params.reportTo);
+  if (params.reportDomain) q.set("domain", params.reportDomain);
+  if (params.reportStrategyId) q.set("strategyId", params.reportStrategyId);
+  if (params.reportSimulated) q.set("is_simulated", params.reportSimulated);
+  return `/api/strategies/outcomes?${q.toString()}`;
+}
+
 export default function StrategyAdminHub() {
-  const [tab, setTab] = useState<"config" | "reports">(() => {
+  const queryClient = useQueryClient();
+  const [tab, setTab] = useState<TabId>(() => {
     if (typeof window === "undefined") return "config";
     const params = new URLSearchParams(window.location.search);
-    return params.get("tab") === "reports" ? "reports" : "config";
+    return parseTabParam(params.get("tab"));
   });
   const [saving, setSaving] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
   const [reportDomain, setReportDomain] = useState("");
+  const [reportStrategyId, setReportStrategyId] = useState("");
+  const [reportSimulated, setReportSimulated] = useState("");
+  const [outcomesOffset, setOutcomesOffset] = useState(0);
+  const [triggeringWorker, setTriggeringWorker] = useState<string | null>(null);
+  const [workerMessage, setWorkerMessage] = useState<string | null>(null);
 
   const strategiesQuery = useQuery({
-    queryKey: ["strategy-admin", reportFrom, reportTo, reportDomain],
+    queryKey: [
+      "strategy-admin",
+      reportFrom,
+      reportTo,
+      reportDomain,
+      reportStrategyId,
+      reportSimulated,
+      outcomesOffset,
+    ],
     queryFn: async () => {
       const reportParams = new URLSearchParams();
       if (reportFrom) reportParams.set("from", reportFrom);
       if (reportTo) reportParams.set("to", reportTo);
       if (reportDomain) reportParams.set("domain", reportDomain);
+      if (reportStrategyId) reportParams.set("strategy_id", reportStrategyId);
+      if (reportSimulated) reportParams.set("is_simulated", reportSimulated);
+
+      const outcomesQuery = buildOutcomesQuery({
+        reportFrom,
+        reportTo,
+        reportDomain,
+        reportStrategyId,
+        reportSimulated,
+        outcomesOffset,
+      });
 
       const [strRes, outRes, repRes] = await Promise.all([
         fetch("/api/strategies"),
-        fetch("/api/strategies/outcomes?limit=50"),
+        fetch(`/api/strategies/outcomes?${outcomesQuery}`),
         fetch(`/api/strategies/reports?${reportParams.toString()}`),
       ]);
       const strJson = await strRes.json();
@@ -84,9 +189,11 @@ export default function StrategyAdminHub() {
       return {
         data: strJson as StrategiesResponse,
         outcomes: (outJson.outcomes ?? []) as OutcomeRow[],
+        outcomesTotal: (outJson.total ?? 0) as number,
         reports: repJson.success
           ? {
               breakdown: repJson.breakdown ?? [],
+              coverage: (repJson.coverage ?? []) as CoverageRow[],
               ab_pairs: repJson.ab_pairs ?? [],
               ranking: repJson.ranking ?? [],
             }
@@ -95,9 +202,23 @@ export default function StrategyAdminHub() {
     },
   });
 
+  const workersQuery = useQuery({
+    queryKey: ["workers-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/workers/status");
+      const json = (await res.json()) as WorkersStatusResponse;
+      if (!json.success) throw new Error("Failed to load workers");
+      return json;
+    },
+    refetchInterval: tab === "workers" ? 30_000 : false,
+    enabled: tab === "workers",
+  });
+
   const data = strategiesQuery.data?.data ?? null;
   const outcomes = strategiesQuery.data?.outcomes ?? [];
+  const outcomesTotal = strategiesQuery.data?.outcomesTotal ?? 0;
   const reports = strategiesQuery.data?.reports ?? null;
+  const coverage = reports?.coverage ?? [];
   const loading = strategiesQuery.isLoading;
   const error = actionError ?? (strategiesQuery.error
     ? strategiesQuery.error instanceof Error
@@ -107,7 +228,40 @@ export default function StrategyAdminHub() {
 
   const load = useCallback(async () => {
     await strategiesQuery.refetch();
-  }, [strategiesQuery]);
+    if (tab === "workers") await workersQuery.refetch();
+  }, [strategiesQuery, workersQuery, tab]);
+
+  const switchTab = (next: TabId) => {
+    setTab(next);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (next === "config") url.searchParams.delete("tab");
+      else url.searchParams.set("tab", next);
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
+
+  const runWorkerNow = async (workerId: string) => {
+    setTriggeringWorker(workerId);
+    setWorkerMessage(null);
+    try {
+      const res = await fetch("/api/workers/trigger", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workerId }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || "Trigger failed");
+      setWorkerMessage(`${workerId}: triggered`);
+      setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: ["workers-status"] });
+      }, 2000);
+    } catch (e) {
+      setWorkerMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setTriggeringWorker(null);
+    }
+  };
 
   const saveStrategy = async (
     id: string,
@@ -178,17 +332,24 @@ export default function StrategyAdminHub() {
       <div className="flex gap-2 border-b border-gray-700 pb-2">
         <button
           type="button"
-          onClick={() => setTab("config")}
+          onClick={() => switchTab("config")}
           className={`px-4 py-2 text-sm rounded-t ${tab === "config" ? "bg-gray-800 text-white" : "text-gray-400"}`}
         >
           Config
         </button>
         <button
           type="button"
-          onClick={() => setTab("reports")}
+          onClick={() => switchTab("reports")}
           className={`px-4 py-2 text-sm rounded-t ${tab === "reports" ? "bg-gray-800 text-white" : "text-gray-400"}`}
         >
           Reports (A/B)
+        </button>
+        <button
+          type="button"
+          onClick={() => switchTab("workers")}
+          className={`px-4 py-2 text-sm rounded-t ${tab === "workers" ? "bg-gray-800 text-white" : "text-gray-400"}`}
+        >
+          Workers
         </button>
       </div>
 
@@ -258,7 +419,10 @@ export default function StrategyAdminHub() {
                   type="date"
                   className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
                   value={reportFrom}
-                  onChange={(e) => setReportFrom(e.target.value)}
+                  onChange={(e) => {
+                    setReportFrom(e.target.value);
+                    setOutcomesOffset(0);
+                  }}
                 />
               </label>
               <label className="text-gray-400">
@@ -267,7 +431,10 @@ export default function StrategyAdminHub() {
                   type="date"
                   className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
                   value={reportTo}
-                  onChange={(e) => setReportTo(e.target.value)}
+                  onChange={(e) => {
+                    setReportTo(e.target.value);
+                    setOutcomesOffset(0);
+                  }}
                 />
               </label>
               <label className="text-gray-400">
@@ -275,12 +442,48 @@ export default function StrategyAdminHub() {
                 <select
                   className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
                   value={reportDomain}
-                  onChange={(e) => setReportDomain(e.target.value)}
+                  onChange={(e) => {
+                    setReportDomain(e.target.value);
+                    setOutcomesOffset(0);
+                  }}
                 >
                   <option value="">All</option>
                   <option value="trending_bot">Trending bot</option>
                   <option value="signals">Signals</option>
                   <option value="dlmm">DLMM</option>
+                </select>
+              </label>
+              <label className="text-gray-400">
+                Strategy
+                <select
+                  className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white min-w-[160px]"
+                  value={reportStrategyId}
+                  onChange={(e) => {
+                    setReportStrategyId(e.target.value);
+                    setOutcomesOffset(0);
+                  }}
+                >
+                  <option value="">All</option>
+                  {coverage.map((c) => (
+                    <option key={c.strategy_id} value={c.strategy_id}>
+                      {c.strategy_id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-gray-400">
+                Mode
+                <select
+                  className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
+                  value={reportSimulated}
+                  onChange={(e) => {
+                    setReportSimulated(e.target.value);
+                    setOutcomesOffset(0);
+                  }}
+                >
+                  <option value="">All</option>
+                  <option value="true">SIM</option>
+                  <option value="false">LIVE</option>
                 </select>
               </label>
               <button
@@ -291,11 +494,63 @@ export default function StrategyAdminHub() {
                 Refresh
               </button>
               <a
-                href={`/api/strategies/outcomes?format=csv&limit=5000${reportDomain ? `&domain=${reportDomain}` : ""}`}
+                href={buildCsvHref({
+                  reportFrom,
+                  reportTo,
+                  reportDomain,
+                  reportStrategyId,
+                  reportSimulated,
+                })}
                 className="self-end px-3 py-1.5 bg-gray-700 rounded text-white text-xs"
               >
                 Export CSV
               </a>
+            </div>
+
+            <h3 className="text-lg font-semibold text-white mb-2">Strategy coverage</h3>
+            <p className="text-gray-500 text-xs mb-3">
+              All registered strategies. Click a row to filter outcomes below.
+            </p>
+            <div className="overflow-x-auto mb-6">
+              <table className="w-full text-sm text-left">
+                <thead>
+                  <tr className="text-gray-400 border-b border-gray-700">
+                    <th className="p-2">Domain</th>
+                    <th className="p-2">Strategy</th>
+                    <th className="p-2">Active</th>
+                    <th className="p-2">Mode</th>
+                    <th className="p-2">SIM trades</th>
+                    <th className="p-2">Last exit</th>
+                    <th className="p-2">Avg PnL (SIM)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {coverage.map((c) => (
+                    <tr
+                      key={c.strategy_id}
+                      className={`border-b border-gray-800 text-gray-300 cursor-pointer hover:bg-gray-800/60 ${
+                        reportStrategyId === c.strategy_id ? "bg-gray-800/80" : ""
+                      }`}
+                      onClick={() => {
+                        setReportStrategyId(
+                          reportStrategyId === c.strategy_id ? "" : c.strategy_id,
+                        );
+                        setOutcomesOffset(0);
+                      }}
+                    >
+                      <td className="p-2">{c.domain}</td>
+                      <td className="p-2">{c.strategy_id}</td>
+                      <td className="p-2">{c.is_active ? "yes" : "no"}</td>
+                      <td className="p-2 text-xs">{c.execution_mode}</td>
+                      <td className="p-2">{c.sim_trade_count}</td>
+                      <td className="p-2">{formatAppDateTime(c.last_exit_at) || "—"}</td>
+                      <td className="p-2">
+                        {c.avg_pnl_pct != null ? `${c.avg_pnl_pct.toFixed(2)}%` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
             <h3 className="text-lg font-semibold text-white mb-2">A/B comparison</h3>
@@ -346,46 +601,241 @@ export default function StrategyAdminHub() {
           </section>
 
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-4">Outcomes (ML feed)</h2>
+            <h2 className="text-xl font-bold text-white mb-2">Outcomes (ML feed)</h2>
+            <p className="text-gray-500 text-xs mb-4">
+              {outcomesTotal > 0
+                ? `Showing ${outcomesOffset + 1}–${Math.min(outcomesOffset + OUTCOMES_PAGE_SIZE, outcomesTotal)} of ${outcomesTotal}`
+                : reportStrategyId
+                  ? "No closed positions for this filter — worker may be idle or no exits yet."
+                  : "No closed positions recorded yet."}
+            </p>
             {outcomes.length === 0 ? (
-              <p className="text-gray-500 text-sm">No closed positions recorded yet.</p>
+              <p className="text-gray-500 text-sm">
+                {reportStrategyId
+                  ? "Try Workers tab to confirm cron is running, or Run now on signals_sim_track."
+                  : "No closed positions recorded yet."}
+              </p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                  <thead>
-                    <tr className="text-gray-400 border-b border-gray-700">
-                      <th className="p-2">Domain</th>
-                      <th className="p-2">Strategy</th>
-                      <th className="p-2">Mode</th>
-                      <th className="p-2">Token</th>
-                      <th className="p-2">Entry</th>
-                      <th className="p-2">Exit</th>
-                      <th className="p-2">PnL%</th>
-                      <th className="p-2">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {outcomes.map((o) => (
-                      <tr key={o.id} className="border-b border-gray-800 text-gray-300">
-                        <td className="p-2">{o.domain}</td>
-                        <td className="p-2">{o.strategy_id}</td>
-                        <td className="p-2">{o.is_simulated ? "SIM" : "LIVE"}</td>
-                        <td className="p-2 font-mono text-xs">{o.token_address?.slice(0, 8)}…</td>
-                        <td className="p-2">{formatAppDateTime(o.entry_at)}</td>
-                        <td className="p-2">{formatAppDateTime(o.exit_at)}</td>
-                        <td className="p-2">
-                          {o.pnl_pct != null ? `${Number(o.pnl_pct).toFixed(2)}%` : "—"}
-                        </td>
-                        <td className="p-2">{o.status ?? "—"}</td>
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead>
+                      <tr className="text-gray-400 border-b border-gray-700">
+                        <th className="p-2">Domain</th>
+                        <th className="p-2">Strategy</th>
+                        <th className="p-2">Mode</th>
+                        <th className="p-2">Token</th>
+                        <th className="p-2">Entry</th>
+                        <th className="p-2">Exit</th>
+                        <th className="p-2">PnL%</th>
+                        <th className="p-2">Status</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {outcomes.map((o) => (
+                        <tr key={o.id} className="border-b border-gray-800 text-gray-300">
+                          <td className="p-2">{o.domain}</td>
+                          <td className="p-2">{o.strategy_id}</td>
+                          <td className="p-2">{o.is_simulated ? "SIM" : "LIVE"}</td>
+                          <td className="p-2 font-mono text-xs">{o.token_address?.slice(0, 8)}…</td>
+                          <td className="p-2">{formatAppDateTime(o.entry_at)}</td>
+                          <td className="p-2">{formatAppDateTime(o.exit_at)}</td>
+                          <td className="p-2">
+                            {o.pnl_pct != null ? `${Number(o.pnl_pct).toFixed(2)}%` : "—"}
+                          </td>
+                          <td className="p-2">{o.status ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex gap-2 mt-4">
+                  <button
+                    type="button"
+                    disabled={outcomesOffset <= 0}
+                    onClick={() => setOutcomesOffset(Math.max(0, outcomesOffset - OUTCOMES_PAGE_SIZE))}
+                    className="px-3 py-1.5 bg-gray-700 disabled:opacity-40 text-white text-xs rounded"
+                  >
+                    Previous
+                  </button>
+                  <button
+                    type="button"
+                    disabled={outcomesOffset + OUTCOMES_PAGE_SIZE >= outcomesTotal}
+                    onClick={() => setOutcomesOffset(outcomesOffset + OUTCOMES_PAGE_SIZE)}
+                    className="px-3 py-1.5 bg-gray-700 disabled:opacity-40 text-white text-xs rounded"
+                  >
+                    Next
+                  </button>
+                </div>
+              </>
             )}
           </section>
         </>
       )}
+
+      {tab === "workers" && (
+        <WorkersTab
+          data={workersQuery.data}
+          loading={workersQuery.isLoading}
+          error={workersQuery.error}
+          onRefresh={() => void workersQuery.refetch()}
+          triggeringWorker={triggeringWorker}
+          workerMessage={workerMessage}
+          onRunNow={runWorkerNow}
+        />
+      )}
+    </div>
+  );
+}
+
+function workerStatusBadge(status: string) {
+  const styles: Record<string, string> = {
+    ok: "bg-green-900/40 text-green-400",
+    stale: "bg-yellow-900/40 text-yellow-400",
+    error: "bg-red-900/40 text-red-400",
+    never_run: "bg-gray-700 text-gray-400",
+    disabled: "bg-gray-800 text-gray-500",
+    offline: "bg-red-900/40 text-red-400",
+  };
+  return styles[status] ?? "bg-gray-700 text-gray-400";
+}
+
+function WorkersTab({
+  data,
+  loading,
+  error,
+  onRefresh,
+  triggeringWorker,
+  workerMessage,
+  onRunNow,
+}: {
+  data: WorkersStatusResponse | undefined;
+  loading: boolean;
+  error: unknown;
+  onRefresh: () => void;
+  triggeringWorker: string | null;
+  workerMessage: string | null;
+  onRunNow: (id: string) => void;
+}) {
+  if (loading && !data) {
+    return <p className="text-gray-400 text-sm">Loading workers...</p>;
+  }
+
+  if (error) {
+    return (
+      <p className="text-red-400 text-sm">
+        {error instanceof Error ? error.message : String(error)}
+      </p>
+    );
+  }
+
+  const reachable = data?.cron_reachable ?? false;
+  const workers = data?.workers ?? [];
+
+  return (
+    <div className="space-y-6">
+      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <div>
+            <h2 className="text-xl font-bold text-white">Cron service</h2>
+            <p className="text-sm text-gray-400 mt-1">
+              <span
+                className={`inline-block px-2 py-0.5 rounded text-xs mr-2 ${
+                  reachable ? "bg-green-900/40 text-green-400" : "bg-red-900/40 text-red-400"
+                }`}
+              >
+                {reachable ? "Online" : "Offline"}
+              </span>
+              {reachable && data?.cron_uptime ? `Uptime: ${data.cron_uptime}` : "Start reloadsol-cron (port 8080)"}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="px-3 py-1.5 bg-blue-600 rounded text-white text-xs"
+          >
+            Refresh
+          </button>
+        </div>
+        {workerMessage && (
+          <p className="text-sm text-amber-300 mb-3">{workerMessage}</p>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead>
+              <tr className="text-gray-400 border-b border-gray-700">
+                <th className="p-2">Worker</th>
+                <th className="p-2">Domain</th>
+                <th className="p-2">Schedule</th>
+                <th className="p-2">Last success</th>
+                <th className="p-2">Next run</th>
+                <th className="p-2">Status</th>
+                <th className="p-2">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {workers.length === 0 && !reachable && (
+                <tr>
+                  <td colSpan={7} className="p-4 text-gray-500">
+                    Cron unreachable — worker list unavailable. See docs/algo_overview.md.
+                  </td>
+                </tr>
+              )}
+              {workers.map((w) => (
+                <tr key={w.id} className="border-b border-gray-800 text-gray-300">
+                  <td className="p-2">
+                    <div className="font-medium text-white">{w.name}</div>
+                    <div className="text-xs text-gray-500">{w.id}</div>
+                  </td>
+                  <td className="p-2">{w.domain}</td>
+                  <td className="p-2 text-xs">{w.schedule}</td>
+                  <td className="p-2">{formatAppDateTime(w.last_success_at) || "—"}</td>
+                  <td className="p-2">{formatAppDateTime(w.next_run_at) || "—"}</td>
+                  <td className="p-2">
+                    <span className={`text-xs px-2 py-0.5 rounded ${workerStatusBadge(w.status)}`}>
+                      {w.status}
+                    </span>
+                    {w.last_error_msg ? (
+                      <div className="text-xs text-red-400 mt-1 max-w-xs truncate" title={w.last_error_msg}>
+                        {w.last_error_msg}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className="p-2">
+                    {w.can_trigger ? (
+                      <button
+                        type="button"
+                        disabled={!reachable || w.disabled || triggeringWorker === w.id}
+                        onClick={() => onRunNow(w.id)}
+                        className="px-2 py-1 bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white text-xs rounded"
+                      >
+                        {triggeringWorker === w.id ? "Running…" : "Run now"}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-gray-600">—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+        <h3 className="text-lg font-semibold text-white mb-3">Domain heartbeat</h3>
+        <p className="text-gray-500 text-xs mb-3">
+          Last closed outcome in Supabase per domain (cross-check vs worker status).
+        </p>
+        <ul className="text-sm text-gray-300 space-y-1">
+          {(data?.domain_heartbeat ?? []).map((h) => (
+            <li key={h.domain}>
+              <span className="text-gray-400">{h.domain}:</span>{" "}
+              {formatAppDateTime(h.last_outcome_at) || "no outcomes yet"}
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }

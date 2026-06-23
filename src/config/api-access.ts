@@ -40,6 +40,7 @@ export const DEV_API_PREFIXES = [
   '/api/capture',
   '/api/pnl/update',
   '/api/strategies',
+  '/api/workers',
 ] as const;
 
 /** Cron / webhook / bearer routes that bypass wallet sessions. */
