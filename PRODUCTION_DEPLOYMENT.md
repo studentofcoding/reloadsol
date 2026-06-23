@@ -23,14 +23,34 @@ cp .env.docker.example .env
 # Run supabase/schema.sql in Supabase SQL Editor (includes bot_* lock tables)
 
 npm run docker:deploy
-# or: bash scripts/docker-deploy.sh
+# Auto-detects web vs cron from git diff (scripts/docker-scope.sh)
+# Manual: --web-only | --cron-only | --all
 ```
 
 Production with host port 80:
 
 ```bash
-WEB_PORT=80 ./scripts/docker-deploy.sh
+WEB_PORT=80 npm run docker:deploy
 ```
+
+## Selective deploy
+
+Deploy only what changed (default `--auto`):
+
+| Change | Typical scope | Command |
+|--------|---------------|---------|
+| `src/**`, frontend config | web | `npm run docker:deploy:web` |
+| `main.go`, `worker_tracker.go` | cron | `npm run docker:deploy:cron` |
+| `docker-compose*.yml`, docker scripts | both | `npm run docker:deploy:all` |
+
+Inspect scope without deploying:
+
+```bash
+bash scripts/docker-scope.sh detect
+bash scripts/docker-scope.sh detect-working
+```
+
+Frontend-only deploys use `docker compose up -d --no-deps web` so **reloadsol-cron keeps running** without rebuild.
 
 ## CI / GitHub Actions
 

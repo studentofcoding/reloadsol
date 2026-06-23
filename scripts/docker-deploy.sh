@@ -3,13 +3,16 @@
 # Production deploy for Docker stack (web + cron).
 #
 # Key idea: build while the old container is still serving traffic.
-# Only recreate containers after the new build succeeds (~5–15s swap gap).
+# Only rebuild/recreate services that changed (or --web-only / --cron-only / --all).
 #
 # Usage:
-#   ./scripts/docker-deploy.sh              # pull + build + up
-#   ./scripts/docker-deploy.sh --skip-pull    # build + up only (git hook / CI)
-#   ./scripts/docker-deploy.sh --clean        # wipe node_modules/.next first
-#   ./scripts/docker-deploy.sh --full-down      # old behaviour: down before build
+#   ./scripts/docker-deploy.sh              # pull + auto scope + up
+#   ./scripts/docker-deploy.sh --skip-pull  # auto scope + up only (git hook / CI)
+#   ./scripts/docker-deploy.sh --web-only   # web only
+#   ./scripts/docker-deploy.sh --cron-only  # cron only
+#   ./scripts/docker-deploy.sh --all        # force both (legacy)
+#   ./scripts/docker-deploy.sh --clean      # wipe node_modules/.next first
+#   ./scripts/docker-deploy.sh --full-down  # stop stack before build
 #
 # Env:
 #   DEPLOY_BRANCH=main
@@ -26,6 +29,9 @@ BRANCH="${DEPLOY_BRANCH:-main}"
 SKIP_PULL=false
 CLEAN=false
 FULL_DOWN=false
+SCOPE_MODE="auto"
+DEPLOY_WEB=false
+DEPLOY_CRON=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,6 +45,28 @@ while [[ $# -gt 0 ]]; do
       ;;
     --full-down)
       FULL_DOWN=true
+      shift
+      ;;
+    --auto)
+      SCOPE_MODE="auto"
+      shift
+      ;;
+    --web-only)
+      SCOPE_MODE="manual"
+      DEPLOY_WEB=true
+      DEPLOY_CRON=false
+      shift
+      ;;
+    --cron-only)
+      SCOPE_MODE="manual"
+      DEPLOY_WEB=false
+      DEPLOY_CRON=true
+      shift
+      ;;
+    --all)
+      SCOPE_MODE="manual"
+      DEPLOY_WEB=true
+      DEPLOY_CRON=true
       shift
       ;;
     *)
@@ -76,6 +104,19 @@ resolve_web_host_port() {
   fi
 
   echo "${WEB_PORT:-3000}"
+}
+
+resolve_scope() {
+  if [[ "$SCOPE_MODE" == "manual" ]]; then
+    return
+  fi
+  local detected
+  detected="$(bash scripts/docker-scope.sh detect)"
+  log "Auto-detected deploy scope: ${detected}"
+  DEPLOY_WEB=false
+  DEPLOY_CRON=false
+  if [[ "$detected" == *web* ]]; then DEPLOY_WEB=true; fi
+  if [[ "$detected" == *cron* ]]; then DEPLOY_CRON=true; fi
 }
 
 verify_standalone_build() {
@@ -133,6 +174,24 @@ wait_for_health() {
   return 1
 }
 
+wait_for_cron_health() {
+  local port attempts delay
+  port="$(read_env_var CRON_PORT 2>/dev/null || echo "${CRON_PORT:-8080}")"
+  attempts="${1:-30}"
+  delay="${2:-3}"
+  log "Waiting for reloadsol-cron health on port ${port} ..."
+  for ((i = 1; i <= attempts; i++)); do
+    if curl -fsS "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then
+      log "Cron health OK"
+      return 0
+    fi
+    sleep "$delay"
+  done
+  log "Cron health check failed"
+  "${COMPOSE[@]}" logs --tail=40 cron || true
+  return 1
+}
+
 if [[ ! -f .env ]]; then
   log "Missing .env — copy from .env.docker.example and fill secrets."
   exit 1
@@ -144,10 +203,18 @@ log "Configured WEB_PORT=${WEB_PORT} (host mapping to container :3000)"
 if [[ "$SKIP_PULL" == false ]]; then
   log "Fetching origin/${BRANCH} ..."
   git fetch origin "$BRANCH"
-  # Drop accidental server-side lockfile edits before pull
   git checkout -- package-lock.json 2>/dev/null || true
   git pull origin "$BRANCH"
 fi
+
+resolve_scope
+
+if [[ "$DEPLOY_WEB" == false && "$DEPLOY_CRON" == false ]]; then
+  log "Nothing to deploy (empty scope)."
+  exit 0
+fi
+
+log "Deploy plan: web=${DEPLOY_WEB} cron=${DEPLOY_CRON}"
 
 if [[ "$FULL_DOWN" == true ]]; then
   log "Stopping stack (--full-down) ..."
@@ -159,23 +226,48 @@ if [[ "$CLEAN" == true ]]; then
   rm -rf .next node_modules
 fi
 
-log "Installing dependencies (npm ci) ..."
-bash scripts/npm-ci-sync.sh
+if [[ "$DEPLOY_WEB" == true ]]; then
+  log "Installing dependencies (npm ci) ..."
+  bash scripts/npm-ci-sync.sh
 
-log "Building Next.js on host (old container still running) ..."
-export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
-export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
-npm run build
-verify_standalone_build
+  log "Building Next.js on host (old container still running) ..."
+  export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
+  export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
+  npm run build
+  verify_standalone_build
 
-log "Rebuilding and recreating containers ..."
-"${COMPOSE[@]}" up --build -d --force-recreate
+  log "Building web image ..."
+  "${COMPOSE[@]}" build web
+fi
 
-WEB_HOST_PORT="$(resolve_web_host_port)"
-HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/api/health"
-log "Host health URL: ${HEALTH_URL}"
+if [[ "$DEPLOY_CRON" == true ]]; then
+  log "Building cron image ..."
+  "${COMPOSE[@]}" build cron
+fi
 
-wait_for_health "$HEALTH_URL" 60 5
+UP_SERVICES=()
+if [[ "$DEPLOY_WEB" == true ]]; then UP_SERVICES+=(web); fi
+if [[ "$DEPLOY_CRON" == true ]]; then UP_SERVICES+=(cron); fi
 
-log "Deploy complete"
+log "Recreating services: ${UP_SERVICES[*]} ..."
+if [[ "$DEPLOY_WEB" == true && "$DEPLOY_CRON" == false ]]; then
+  "${COMPOSE[@]}" up -d --no-deps web
+elif [[ "$DEPLOY_CRON" == true && "$DEPLOY_WEB" == false ]]; then
+  "${COMPOSE[@]}" up -d cron
+else
+  "${COMPOSE[@]}" up -d "${UP_SERVICES[@]}"
+fi
+
+if [[ "$DEPLOY_WEB" == true ]]; then
+  WEB_HOST_PORT="$(resolve_web_host_port)"
+  HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/api/health"
+  log "Host health URL: ${HEALTH_URL}"
+  wait_for_health "$HEALTH_URL" 60 5
+fi
+
+if [[ "$DEPLOY_CRON" == true ]]; then
+  wait_for_cron_health 30 3 || true
+fi
+
+log "Deploy complete (web=${DEPLOY_WEB} cron=${DEPLOY_CRON})"
 "${COMPOSE[@]}" ps

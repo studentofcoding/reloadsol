@@ -94,6 +94,8 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 
 `npm run dev` alone does **not** run cron. History gaps usually mean cron is stopped.
 
+**Docker deploy:** frontend-only changes should use `npm run docker:deploy:web` — cron container is not rebuilt or restarted. Start cron with `npm run docker:up:cron` or `npm run docker:dev:full` when testing Workers tab locally.
+
 ### Env vars (common)
 
 | Variable | Default | Worker |

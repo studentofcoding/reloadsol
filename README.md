@@ -97,14 +97,20 @@ Docker runs two services:
 | **cron** | `reloadsol-cron` | 8080 | Go scheduler (trending, SL/TP, DLMM) |
 
 ```bash
-npm run docker:up        # prod-like, foreground (builds Next.js on host first)
-npm run docker:dev       # hot-reload dev mode
-npm run docker:prod      # detached production (restart: always)
-npm run docker:down      # stop containers
-npm run docker:logs      # tail logs
+npm run docker:up           # prod-like: web + cron (foreground)
+npm run docker:up:web       # web only
+npm run docker:up:cron      # cron only (web should already be running)
+npm run docker:dev          # hot-reload web only (no cron)
+npm run docker:dev:full     # hot-reload web + cron
+npm run docker:prod         # detached production (restart: always)
+npm run docker:deploy       # production deploy — auto-detect changed services
+npm run docker:deploy:web   # deploy web only (frontend changes)
+npm run docker:deploy:cron  # deploy cron only (Go changes)
+npm run docker:down         # stop containers
+npm run docker:logs         # tail logs
 ```
 
-**How it works:** `scripts/docker-up.sh` always runs `npm ci` first (`scripts/docker-install.sh`), then builds Next.js on the host (`npm run build` → `.next/standalone`) to avoid OOM inside the container, and packages it via `Dockerfile.web`. Dev mode re-runs `npm ci` on every container start. Cron calls the web service at `API_HOST=http://web:3000`.
+**How it works:** `scripts/docker-up.sh` runs `npm ci` first, then builds Next.js on the host for prod (`npm run build` → `.next/standalone`) and packages via `Dockerfile.web`. **`docker:deploy`** uses `scripts/docker-scope.sh` to rebuild only web or cron when possible (frontend-only changes do not restart cron). Dev default is **web only**; use `docker:dev:full` when you need cron locally. Cron calls the web service at `API_HOST=http://web:3000`.
 
 First run may take several minutes while dependencies install and Next.js builds.
 
@@ -273,9 +279,15 @@ node scripts/test-trending-tracker.js all
 | `npm run dev` | Next.js dev server (no cron) |
 | `npm run build` | Production build |
 | `npm run type-check` | TypeScript check |
-| `npm run docker:up` | Docker stack (foreground) |
-| `npm run docker:dev` | Docker with hot reload |
+| `npm run docker:up` | Docker web + cron (foreground) |
+| `npm run docker:up:web` | Docker web only |
+| `npm run docker:up:cron` | Docker cron only |
+| `npm run docker:dev` | Docker web hot reload (no cron) |
+| `npm run docker:dev:full` | Docker web + cron hot reload |
 | `npm run docker:prod` | Docker detached production |
+| `npm run docker:deploy` | Auto deploy changed services |
+| `npm run docker:deploy:web` | Deploy web only |
+| `npm run docker:deploy:cron` | Deploy cron only |
 | `npm run dlmm:telegram-webhook` | Register Telegram webhook URL |
 | `npm run logs:follow` | Tail app logs |
 | `npm run logs:trending` | Filter trending API logs |
@@ -313,7 +325,9 @@ See [CHANGELOG.md](./CHANGELOG.md) for complete release notes.
 
 - Confirm `SUPABASE_URL` resolves (correct project ref from dashboard)
 - Run [`supabase/schema.sql`](supabase/schema.sql) in SQL Editor
-- Rebuild Docker: `npm run docker:down && npm run docker:up`
+- Rebuild Docker web only: `npm run docker:deploy:web`
+- Rebuild cron only: `npm run docker:deploy:cron`
+- Full stack: `npm run docker:down && npm run docker:up`
 
 ### DLMM manage returns `skipped`
 

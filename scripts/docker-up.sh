@@ -17,6 +17,8 @@ fi
 bash scripts/docker-install.sh
 
 MODE="${1:-prod}"
+SERVICES="${2:-all}"
+
 COMPOSE_FILES=(-f docker-compose.yml)
 
 build_next_if_needed() {
@@ -29,22 +31,57 @@ build_next_if_needed() {
   fi
 }
 
+resolve_up_services() {
+  case "$SERVICES" in
+    web) echo "web" ;;
+    cron) echo "cron" ;;
+    all|"") echo "web cron" ;;
+    *) echo "Unknown service target: $SERVICES (use web, cron, or all)" >&2; exit 1 ;;
+  esac
+}
+
 if [[ "$MODE" == "dev" ]]; then
-  echo "Starting reloadSOL in DEV mode (hot reload)..."
+  echo "Starting reloadSOL in DEV mode (web only, hot reload)..."
   COMPOSE_FILES+=(-f docker-compose.dev.yml)
-  docker compose "${COMPOSE_FILES[@]}" up --build
+  docker compose "${COMPOSE_FILES[@]}" up --build web
   exit 0
 fi
+
+if [[ "$MODE" == "dev-full" ]]; then
+  echo "Starting reloadSOL in DEV mode (web + cron)..."
+  COMPOSE_FILES+=(-f docker-compose.dev.yml)
+  docker compose "${COMPOSE_FILES[@]}" up --build web cron
+  exit 0
+fi
+
+UP="$(resolve_up_services)"
 
 if [[ "$MODE" == "prod-daemon" ]]; then
-  echo "Starting reloadSOL in PROD mode (detached)..."
+  echo "Starting reloadSOL in PROD mode (detached): ${UP}"
   COMPOSE_FILES+=(-f docker-compose.prod.yml)
-  build_next_if_needed
-  docker compose "${COMPOSE_FILES[@]}" up --build -d
+  if [[ "$SERVICES" == "all" || "$SERVICES" == "web" || -z "$SERVICES" ]]; then
+    build_next_if_needed
+  fi
+  if [[ "$SERVICES" == "web" ]]; then
+    docker compose "${COMPOSE_FILES[@]}" up --build -d --no-deps web
+  elif [[ "$SERVICES" == "cron" ]]; then
+    docker compose "${COMPOSE_FILES[@]}" up --build -d cron
+  else
+    docker compose "${COMPOSE_FILES[@]}" up --build -d web cron
+  fi
   exit 0
 fi
 
-# Default prod (foreground): build on host, package with Dockerfile.web
-echo "Starting reloadSOL in PROD mode..."
-build_next_if_needed
-docker compose "${COMPOSE_FILES[@]}" up --build
+# Default prod (foreground)
+echo "Starting reloadSOL in PROD mode: ${UP}"
+if [[ "$SERVICES" == "all" || "$SERVICES" == "web" || -z "$SERVICES" ]]; then
+  build_next_if_needed
+fi
+
+if [[ "$SERVICES" == "web" ]]; then
+  docker compose "${COMPOSE_FILES[@]}" up --build web
+elif [[ "$SERVICES" == "cron" ]]; then
+  docker compose "${COMPOSE_FILES[@]}" up --build cron
+else
+  docker compose "${COMPOSE_FILES[@]}" up --build web cron
+fi

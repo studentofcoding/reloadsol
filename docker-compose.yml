@@ -6,7 +6,8 @@
 # Manual (install + build + up):
 #   bash scripts/docker-install.sh && npm run build && docker compose up --build
 #
-# Dev hot-reload:  npm run docker:dev
+# Dev hot-reload:  npm run docker:dev        (web only)
+# Dev + cron:      npm run docker:dev:full
 # Production:      npm run docker:prod
 
 services:
