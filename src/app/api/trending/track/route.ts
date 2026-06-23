@@ -1969,47 +1969,6 @@ function shouldRunDailySummary(currentTime: Date, lastSummaryTime: Date | null):
   return hoursSinceLastSummary >= 23
 }
 
-// Helper function to check if PnL update should run (once daily at 2 AM UTC)
-function shouldRunPnLUpdate(currentTime: Date): boolean {
-  const hour = currentTime.getUTCHours()
-  const minute = currentTime.getUTCMinutes()
-
-  // Run PnL update at 2 AM UTC (allow 5-minute window: 2:00-2:05)
-  return hour === 2 && minute < 5
-}
-
-// Helper function to run PnL update
-async function runPnLUpdate(): Promise<void> {
-  try {
-    console.log('🔄 Running PnL update...')
-
-    // Get the PnL update token from environment variables
-    const pnlToken =
-      process.env.PNL_UPDATE_SECRET ||
-      process.env.PNL_UPDATE_TOKEN ||
-      'r3l0ads0l-pnl'
-
-    // Call the PnL update API internally
-    const pnlResponse = await fetch(`${process.env.VERCEL_URL || 'http://localhost:3000'}/api/pnl/update`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${pnlToken}`,
-      }
-    })
-
-    if (pnlResponse.ok) {
-      const pnlResult = await pnlResponse.json()
-      console.log('✅ PnL update completed:', pnlResult)
-    } else {
-      console.error('❌ PnL update failed:', pnlResponse.status, await pnlResponse.text())
-    }
-  } catch (error) {
-    console.error('❌ Error running PnL update:', error)
-    // Don't throw - let tracking continue even if PnL update fails
-  }
-}
-
 // Helper function to run daily summary
 async function runDailySummary(currentTime: Date): Promise<void> {
   try {
@@ -4224,13 +4183,6 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     if (shouldRunSummary) {
       console.log('📊 Running daily summary before tracking update...')
       await runDailySummary(currentTime)
-    }
-
-    // Also check if we should run PnL update (once daily at 2 AM UTC)
-    const shouldRunPnL = shouldRunPnLUpdate(currentTime)
-    if (shouldRunPnL) {
-      console.log('💰 Running daily PnL update...')
-      await runPnLUpdate()
     }
 
     console.log('🔍 Starting 5-minute trending token tracking...')

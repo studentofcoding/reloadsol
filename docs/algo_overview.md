@@ -2,7 +2,7 @@
 
 Central reference for the three strategy domains (trending bot, signals, DLMM), how outcomes are recorded, cron workers, and how to diagnose gaps in history.
 
-See also: [STRATEGY_ARCHITECTURE.md](./STRATEGY_ARCHITECTURE.md), [whole_process.md](./whole_process.md).
+See also: [STRATEGY_ARCHITECTURE.md](./STRATEGY_ARCHITECTURE.md), [architecture.md](./architecture.md), [whole_process.md](./whole_process.md).
 
 ---
 
@@ -107,7 +107,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `DLMM_SCREEN_INTERVAL` | 300 | dlmm screen |
 | `DLMM_MANAGE_INTERVAL` | 60 | dlmm manage |
 | `STRATEGY_REPORT_INTERVAL` | 86400 (0=off) | report digest |
-| `CRON_SERVICE_URL` | `http://127.0.0.1:8080` | Next.js proxy to cron |
+| `CRON_SERVICE_URL` | `http://cron:8080` in Docker compose (web→cron); `http://127.0.0.1:8080` local | Next.js proxy to cron |
 
 ### Endpoints
 
