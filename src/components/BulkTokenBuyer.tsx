@@ -4,6 +4,7 @@ import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useCallback, useEffect, useRef, useMemo, useDeferredValue } from "react";
 import { useSearchParams } from "next/navigation";
 import { useWallet, useConnection } from "../components/WalletProvider";
+import { useRpc } from "@/contexts/RpcContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
@@ -23,6 +24,7 @@ import {
   setMetadataUpdateCallback,
   clearMetadataUpdateCallback,
   UserToken,
+  MIN_BALANCE_UI,
 } from "@/utils/jupiter";
 import {
   SLIPPAGE_OPTIONS,
@@ -48,6 +50,7 @@ export default function BulkTokenBuyer() {
   const { publicKey, walletAddress, isWalletReady } =
     useResolvedWalletPublicKey();
   const { connection } = useConnection();
+  const { activeRpcUrl } = useRpc();
   const { trackOperation } = useTradingData();
   const triggerPostBuyRefresh = usePostBuyRefresh();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
@@ -119,25 +122,70 @@ export default function BulkTokenBuyer() {
   });
 
   const {
-    allTokens: rawUserTokens,
+    valuable: valuableTokens,
+    dust: dustTokens,
+    zeroValue: zeroValueTokens,
+    closeOnly: zeroBalanceTokens,
+    allTokens,
     isFetching: isLoadingUserTokens,
+    isPending: isInitialLoadTokens,
+    error: tokensQueryError,
     refetchTokens,
     patchTokens,
   } = useWalletTokens({
     connection,
     publicKey,
     walletAddress,
-    activeRpcUrl: connection.rpcEndpoint,
+    activeRpcUrl,
     enabled: isWalletReady,
   });
 
-  const userTokens = useMemo(
-    () =>
-      rawUserTokens.filter(
-        (token) => token.uiAmount > 0.000001 && !token.isNFT,
-      ),
-    [rawUserTokens],
+  const [showDustOnly, setShowDustOnly] = useState(false);
+  const [showZeroBalance, setShowZeroBalance] = useState(false);
+
+  const dustTokenList = useMemo(
+    () => [...dustTokens, ...zeroValueTokens],
+    [dustTokens, zeroValueTokens],
   );
+
+  const emptyAccountTokens = useMemo(
+    () =>
+      zeroBalanceTokens.filter((token) => token.uiAmount <= MIN_BALANCE_UI),
+    [zeroBalanceTokens],
+  );
+
+  const allBalancedTokens = useMemo(
+    () =>
+      [...valuableTokens, ...dustTokens, ...zeroValueTokens].filter(
+        (token) => !token.isNFT && token.uiAmount > MIN_BALANCE_UI,
+      ),
+    [valuableTokens, dustTokens, zeroValueTokens],
+  );
+
+  const displayUserTokens = useMemo(() => {
+    if (showDustOnly) {
+      return dustTokenList.filter((token) => !token.isNFT);
+    }
+    if (showZeroBalance) {
+      return [...allBalancedTokens, ...emptyAccountTokens];
+    }
+    return allBalancedTokens;
+  }, [
+    showDustOnly,
+    showZeroBalance,
+    dustTokenList,
+    allBalancedTokens,
+    emptyAccountTokens,
+  ]);
+
+  const userTokens = displayUserTokens;
+
+  const tokensFetchError =
+    tokensQueryError instanceof Error
+      ? tokensQueryError.message
+      : tokensQueryError
+        ? String(tokensQueryError)
+        : "";
 
   // Token search state
   const [searchTerm, setSearchTerm] = useState("");
@@ -1106,6 +1154,166 @@ export default function BulkTokenBuyer() {
                 </p>
               </div>
 
+              {/* Your Tokens */}
+              <div className="space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <h3 className="text-md font-semibold text-white">
+                    Your Tokens
+                    {!isLoadingUserTokens && displayUserTokens.length > 0 && (
+                      <span className="ml-2 text-xs font-normal text-gray-400">
+                        ({displayUserTokens.length})
+                      </span>
+                    )}
+                  </h3>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowZeroBalance((prev) => !prev)}
+                      className={`px-3 py-1.5 rounded-lg transition-colors text-xs ${
+                        showZeroBalance
+                          ? "bg-blue-600 hover:bg-blue-500 text-white"
+                          : "bg-gray-600 hover:bg-gray-500 text-white"
+                      }`}
+                    >
+                      {showZeroBalance ? "Hide zero balance" : "Show zero balance"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowDustOnly((prev) => !prev)}
+                      className={`px-3 py-1.5 rounded-lg transition-colors text-xs ${
+                        showDustOnly
+                          ? "bg-gray-600 hover:bg-gray-500 text-white"
+                          : "bg-yellow-600 hover:bg-yellow-500 text-white"
+                      }`}
+                    >
+                      {showDustOnly ? "Show all" : "Dust only"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => refetchTokens(true)}
+                      disabled={isLoadingUserTokens}
+                      className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors text-xs disabled:opacity-50"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+
+                {isInitialLoadTokens && isWalletReady ? (
+                  <TokenSkeleton count={3} variant="progressive" />
+                ) : isLoadingUserTokens ? (
+                  <TokenSkeleton count={2} variant="progressive" />
+                ) : tokensFetchError ? (
+                  <div className="text-center py-8 border border-gray-600 rounded-xl">
+                    <p className="text-gray-400 mb-3">{tokensFetchError}</p>
+                    <button
+                      type="button"
+                      onClick={() => refetchTokens(true)}
+                      className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg text-sm"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : displayUserTokens.length === 0 ? (
+                  <div className="text-center py-8 border border-gray-600 rounded-xl">
+                    <p className="text-gray-400 mb-3">
+                      {showDustOnly
+                        ? "No dust tokens found"
+                        : showZeroBalance
+                          ? "No tokens in wallet"
+                          : allBalancedTokens.length === 0 && dustTokenList.length > 0
+                            ? "No tokens worth $1+ — try Dust only"
+                            : "No tokens found"}
+                    </p>
+                    {allBalancedTokens.length === 0 && dustTokenList.length > 0 && !showDustOnly && (
+                      <button
+                        type="button"
+                        onClick={() => setShowDustOnly(true)}
+                        className="px-4 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg text-sm"
+                      >
+                        Show dust tokens
+                      </button>
+                    )}
+                    {allBalancedTokens.length === 0 &&
+                      emptyAccountTokens.length > 0 &&
+                      !showZeroBalance && (
+                        <button
+                          type="button"
+                          onClick={() => setShowZeroBalance(true)}
+                          className="ml-2 px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg text-sm"
+                        >
+                          Show zero balance
+                        </button>
+                      )}
+                  </div>
+                ) : (
+                  <div className="grid max-h-72 overflow-y-auto border border-gray-600 rounded-xl divide-y divide-gray-700">
+                    {displayUserTokens.map((token) => {
+                      const isAdded = parsedMints.includes(token.mintAddress);
+                      const isEmptyAccount = token.uiAmount <= MIN_BALANCE_UI;
+                      return (
+                        <button
+                          key={token.mintAddress}
+                          type="button"
+                          disabled={isAdded || isEmptyAccount}
+                          onClick={() => handleAddFromSearch(token.mintAddress)}
+                          className={`flex items-center w-full px-4 py-3 text-left transition-all ${
+                            isAdded
+                              ? "bg-gray-800 text-gray-500 cursor-not-allowed"
+                              : isEmptyAccount
+                                ? "bg-gray-900 text-gray-500 cursor-not-allowed"
+                                : "hover:bg-gray-800 text-white"
+                          }`}
+                        >
+                          {token.logoURI && (
+                            <OptimizedImage
+                              src={token.logoURI}
+                              alt={token.symbol ?? "Token"}
+                              className="w-8 h-8 mr-3 rounded-full shrink-0"
+                            />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold flex items-center gap-2">
+                              <span>{token.name || token.symbol || "Unknown"}</span>
+                              {token.symbol && (
+                                <span className="text-xs text-gray-400">
+                                  ({token.symbol})
+                                </span>
+                              )}
+                              {isAdded && (
+                                <span className="text-xs bg-gray-600 text-gray-300 px-2 py-0.5 rounded">
+                                  Added
+                                </span>
+                              )}
+                              {isEmptyAccount && (
+                                <span className="text-xs text-gray-500">Empty</span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-400 flex justify-between gap-2 mt-0.5">
+                              <span className="truncate font-mono">
+                                {token.mintAddress}
+                              </span>
+                              {!isEmptyAccount && (
+                                <span className="shrink-0">
+                                  {token.uiAmount.toLocaleString(undefined, {
+                                    maximumFractionDigits: 6,
+                                  })}
+                                  {token.usdValue > 0 && (
+                                    <span className="ml-1 text-green-400">
+                                      ${token.usdValue.toFixed(2)}
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
               {/* Token Mint Addresses */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -1230,8 +1438,18 @@ export default function BulkTokenBuyer() {
                                         </span>
                                       )}
                                     </div>
-                                    <div className="text-xs text-gray-400 font-mono truncate flex justify-between">
-                                      <span>{token.mintAddress}</span>
+                                    <div className="text-xs text-gray-400 font-mono truncate flex justify-between gap-2">
+                                      <span className="truncate">{token.mintAddress}</span>
+                                      <span className="shrink-0 text-gray-300">
+                                        {token.uiAmount.toLocaleString(undefined, {
+                                          maximumFractionDigits: 6,
+                                        })}
+                                        {token.usdValue > 0 && (
+                                          <span className="ml-1 text-green-400">
+                                            (${token.usdValue.toFixed(2)})
+                                          </span>
+                                        )}
+                                      </span>
                                     </div>
                                   </div>
                                 </button>

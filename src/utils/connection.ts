@@ -31,6 +31,14 @@ export const makeRpcRequest = async (body: unknown): Promise<unknown> => {
   return response.json()
 }
 
+/** Same-origin RPC proxy for browser clients (avoids CSP and hides API keys). */
+export function getBrowserConnectionEndpoint(): string {
+  if (typeof window === 'undefined') {
+    return getPrimaryRpcUrl()
+  }
+  return `${window.location.origin}/api/rpc`
+}
+
 export const RPC_ENDPOINTS = {
   mainnet: getBestRpcUrl(),
   devnet: clusterApiUrl('devnet'),
@@ -38,7 +46,11 @@ export const RPC_ENDPOINTS = {
 }
 
 export const createConnection = (network: 'mainnet' | 'devnet' | 'testnet' = 'mainnet') => {
-  return new Connection(RPC_ENDPOINTS[network], 'confirmed')
+  const endpoint =
+    network === 'mainnet' && !isServer
+      ? getBrowserConnectionEndpoint()
+      : RPC_ENDPOINTS[network]
+  return new Connection(endpoint, 'confirmed')
 }
 
 export const connection = createConnection('mainnet')

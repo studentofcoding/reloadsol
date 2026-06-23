@@ -89,9 +89,20 @@ async function fetchPortfolioFromUrl(
       );
     }
 
-    const data = (await response.json()) as JupiterPortfolioResponse;
+    const raw = (await response.json()) as JupiterPortfolioResponse & {
+      status?: string;
+      error?: string;
+    };
+
+    if (raw.status === "error") {
+      throw new Error(raw.error ?? "Jupiter portfolio fetch failed");
+    }
+
     return {
-      ...data,
+      totalValue: raw.totalValue ?? 0,
+      tokens: raw.tokens ?? [],
+      reclaimableCount: raw.reclaimableCount,
+      reclaimableLamports: raw.reclaimableLamports,
       latencyMs: Date.now() - start,
     };
   } finally {

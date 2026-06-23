@@ -123,6 +123,7 @@ export interface ProviderQuote {
       timeTaken?: number
       executionPrice?: number
       currentPrice?: number
+      quote?: unknown
     }
     gmgn?: {
       routeData?: any

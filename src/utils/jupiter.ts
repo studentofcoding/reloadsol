@@ -5,6 +5,11 @@ import { publicKey } from "@metaplex-foundation/umi"
 import { fetchAllDigitalAssetWithTokenByOwner } from "@metaplex-foundation/mpl-token-metadata"
 import { JUPITER_API, TOKENS } from './solana'
 import jupiterApiUtils from './jupiter-api'
+import {
+  fetchRaptorQuoteAndSwap,
+  pollRaptorTransaction,
+  sendRaptorTransaction,
+} from './solanatracker-raptor'
 import { SwapQuote, SwapTransaction, BulkBuyRequest, BulkBuyResult, TokenPurchase } from '@/types'
 
 // Add BigInt JSON serialization support
@@ -2058,12 +2063,18 @@ export async function executeBulkBuy(
 
     console.log(`Executing bulk buy: ${request.tokenMints.length} tokens, ${amountPerToken} ${request.inputCurrency} units per token`)
 
-    // Get latest blockhash for all transactions
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
+    let blockhashInfo: { blockhash: string; lastValidBlockHeight: number } | null = null;
+    const getBlockhash = async () => {
+      if (!blockhashInfo) {
+        blockhashInfo = await connection.getLatestBlockhash('confirmed');
+      }
+      return blockhashInfo;
+    };
 
     // Batch transaction creation (similar to Swap function)
     const transactions: VersionedTransaction[] = []
     const transactionMints: string[] = []
+    const transactionProviders: Array<'raptor' | 'jupiter'> = []
     const BATCH_SIZE = 10 // Process 10 tokens per batch for API calls
     const batches: string[][] = []
 
@@ -2105,55 +2116,33 @@ export async function executeBulkBuy(
             })
 
             try {
-
-              // Prepare swap API body for BUY (inputCurrency -> Token)
-              const swapApiBody = {
-                from: inputMint, // Input currency mint (SOL or USDC)
-                to: mint,                     // Target token
-                amount: amountPerToken / divisor,       // Amount in input currency units
-                slippage: request.slippage / 100,   // Slippage tolerance
-                payer: userPublicKey,         // User's wallet
-                priorityFee: request.priorityFee / 1000000000, // Priority fee in SOL
-                fee: `${FEE_CONFIG.DEV_WALLET}:0.5` // Dev wallet with 0.5% fee
-              }
-
-              console.log(`🔍 Solana Tracker API Request for ${mint}:`, {
-                from: swapApiBody.from,
-                to: swapApiBody.to,
-                amount: swapApiBody.amount,
-                inputCurrency: request.inputCurrency
-              })
-              console.log(`Trying Solana Tracker API for ${mint}`)
-
-              // Call Solana Tracker swap API with timeout
-              const response = await fetch("https://swap-v2.solanatracker.io/swap", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "Connection": "keep-alive"
-                },
-                body: JSON.stringify(swapApiBody),
-                signal: controller.signal,
-                keepalive: true
+              console.log(`🔍 Raptor quote-and-swap for ${mint}:`, {
+                inputMint,
+                outputMint: mint,
+                amount: amountPerToken,
+                inputCurrency: request.inputCurrency,
               })
 
-              if (!response.ok) {
-                throw new Error(`Solana Tracker API failed: ${response.status} ${response.statusText}`)
+              const swapResult = await fetchRaptorQuoteAndSwap({
+                userPublicKey,
+                inputMint,
+                outputMint: mint,
+                amount: amountPerToken,
+                slippageBps: request.slippage,
+                priorityFeeLamports: request.priorityFee,
+                feeAccount: FEE_CONFIG.DEV_WALLET,
+                feeBps: 50,
+              })
+
+              if (!swapResult.swapTransaction) {
+                throw new Error('No swapTransaction returned from Raptor API')
               }
 
-              const swapResult = await response.json()
-
-              if (!swapResult.txn) {
-                throw new Error('No transaction returned from Solana Tracker API')
-              }
-
-              // Deserialize and update blockhash
               tx = VersionedTransaction.deserialize(
-                Buffer.from(swapResult.txn, 'base64')
+                Buffer.from(swapResult.swapTransaction, 'base64'),
               )
-              tx.message.recentBlockhash = blockhash
 
-              console.log(`✅ Solana Tracker API successful for ${mint}`)
+              console.log(`✅ Raptor API successful for ${mint}`)
 
             } catch (solanaTrackerError) {
               console.warn(`Solana Tracker API failed for ${mint}:`, solanaTrackerError)
@@ -2196,6 +2185,7 @@ export async function executeBulkBuy(
                 tx = VersionedTransaction.deserialize(
                   Buffer.from(swapTransaction.swapTransaction, 'base64')
                 )
+                const { blockhash } = await getBlockhash();
                 tx.message.recentBlockhash = blockhash
 
                 console.log(`✅ Jupiter API fallback successful for ${mint}`)
@@ -2210,7 +2200,7 @@ export async function executeBulkBuy(
               throw new Error('No transaction could be created from either API')
             }
 
-            return { success: true, mint, tx, apiUsed }
+            return { success: true, mint, tx, apiUsed: apiUsed as 'solana-tracker' | 'jupiter' }
           } catch (error) {
             console.error(`Failed to prepare buy for ${mint}:`, error)
             return { success: false, mint, error }
@@ -2225,6 +2215,9 @@ export async function executeBulkBuy(
           if (batchResult.success && batchResult.tx) {
             transactions.push(batchResult.tx)
             transactionMints.push(batchResult.mint)
+            transactionProviders.push(
+              batchResult.apiUsed === 'jupiter' ? 'jupiter' : 'raptor',
+            )
             console.log(`Transaction prepared for ${batchResult.mint} using ${batchResult.apiUsed} API`)
           } else {
             result.failedPurchases.push({
@@ -2259,15 +2252,30 @@ export async function executeBulkBuy(
 
       // Send batch transactions in parallel
       const sendPromises = batch.map(async (tx, idx) => {
+        const globalIdx = i + idx
+        const provider = transactionProviders[globalIdx]
+
+        if (provider === 'raptor') {
+          try {
+            const signedBase64 = Buffer.from(tx.serialize()).toString('base64')
+            const sendResult = await sendRaptorTransaction(signedBase64)
+            if (sendResult.success && sendResult.signature) {
+              return { success: true, signature: sendResult.signature, mintIdx: globalIdx, via: 'raptor' as const }
+            }
+          } catch (raptorSendError) {
+            console.warn(`Raptor send failed for ${batchMints[idx]}, falling back to RPC:`, raptorSendError)
+          }
+        }
+
         try {
           const signature = await connection.sendTransaction(tx, {
             skipPreflight: true,
             maxRetries: 2
           })
-          return { success: true, signature, mintIdx: i + idx }
+          return { success: true, signature, mintIdx: globalIdx, via: 'rpc' as const }
         } catch (error) {
           console.error(`Failed to send transaction for token ${batchMints[idx]}:`, error)
-          return { success: false, mintIdx: i + idx, error }
+          return { success: false, mintIdx: globalIdx, error }
         }
       })
 
@@ -2284,6 +2292,26 @@ export async function executeBulkBuy(
         }
 
         try {
+          if (sendResult.via === 'raptor') {
+            const raptorStatus = await pollRaptorTransaction(sendResult.signature!, {
+              maxAttempts: 30,
+              intervalMs: 2000,
+            })
+            if (raptorStatus.status === 'failed' || raptorStatus.status === 'expired') {
+              throw new Error(`Raptor transaction ${raptorStatus.status}`)
+            }
+
+            signatures.push(sendResult.signature!)
+            result.successfulPurchases.push({
+              mintAddress: transactionMints[sendResult.mintIdx],
+              amount: amountPerToken,
+            })
+            console.log(`✅ Successfully bought ${transactionMints[sendResult.mintIdx]} via Raptor`)
+            return
+          }
+
+          const { blockhash, lastValidBlockHeight } = await getBlockhash();
+
           const confirmation = await connection.confirmTransaction({
             signature: sendResult.signature!,
             lastValidBlockHeight,
@@ -2994,9 +3022,17 @@ export async function executeBulkSellAlt(
       });
 
       if (nonFrozenTokens.length > 0) {
-        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
         const transactions: VersionedTransaction[] = [];
         const transactionTokens: TokenToSell[] = [];
+        const transactionAmountOut: string[] = [];
+
+        let blockhashInfo: { blockhash: string; lastValidBlockHeight: number } | null = null;
+        const getBlockhash = async () => {
+          if (!blockhashInfo) {
+            blockhashInfo = await connection.getLatestBlockhash('confirmed');
+          }
+          return blockhashInfo;
+        };
 
         const BATCH_SIZE = 10;
         const batches: TokenToSell[][] = [];
@@ -3011,43 +3047,35 @@ export async function executeBulkSellAlt(
           await Promise.all(batches.map(async (batch) => {
             const batchPromises = batch.map(async (token) => {
               try {
-                if (!token.decimals) {
-                  throw new Error(`Decimals missing for token ${token.mintAddress}`);
+                if (token.sellAmount <= 0) {
+                  throw new Error(`Invalid sell amount for token ${token.mintAddress}`);
                 }
-                const sellAmountInBase = token.sellAmount / Math.pow(10, token.decimals);
 
-                const swapApiBody = {
-                  from: token.mintAddress,
-                  to: NATIVE_MINT.toBase58(),
-                  amount: sellAmountInBase,
-                  slippage: request.slippage / 100,
-                  payer: userPublicKey,
-                  priorityFee: request.priorityFee / 1000000000,
-                  // Assuming the same fee structure as buy
-                  fee: `${FEE_CONFIG.DEV_WALLET}:0.5`
-                };
-
-                const response = await fetch("https://swap-v2.solanatracker.io/swap", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json", "Connection": "keep-alive" },
-                  body: JSON.stringify(swapApiBody),
-                  signal: controller.signal,
-                  keepalive: true
+                const swapResult = await fetchRaptorQuoteAndSwap({
+                  userPublicKey,
+                  inputMint: token.mintAddress,
+                  outputMint: NATIVE_MINT.toBase58(),
+                  amount: token.sellAmount,
+                  slippageBps: request.slippage,
+                  priorityFeeLamports: request.priorityFee,
+                  feeAccount: FEE_CONFIG.DEV_WALLET,
+                  feeBps: 50,
                 });
 
-                if (!response.ok) {
-                  throw new Error(`Swap API failed: ${response.status} ${response.statusText}`);
+                if (!swapResult.swapTransaction) {
+                  throw new Error('No swapTransaction returned from Raptor API');
                 }
 
-                const swapResult = await response.json();
-                if (!swapResult.txn) {
-                  throw new Error('No transaction returned from swap API');
-                }
+                const tx = VersionedTransaction.deserialize(
+                  Buffer.from(swapResult.swapTransaction, 'base64'),
+                );
 
-                const tx = VersionedTransaction.deserialize(Buffer.from(swapResult.txn, 'base64'));
-                tx.message.recentBlockhash = blockhash;
-
-                return { success: true, token, tx };
+                return {
+                  success: true,
+                  token,
+                  tx,
+                  amountOut: swapResult.quote.amountOut,
+                };
               } catch (error) {
                 console.error(`Failed to prepare sell for ${token.mintAddress}:`, error);
                 return { success: false, token, error };
@@ -3059,6 +3087,7 @@ export async function executeBulkSellAlt(
               if (batchResult.success && batchResult.tx) {
                 transactions.push(batchResult.tx);
                 transactionTokens.push(batchResult.token);
+                transactionAmountOut.push(batchResult.amountOut ?? '0');
               } else {
                 result.failedSwaps.push({
                   mintAddress: batchResult.token.mintAddress,
@@ -3083,8 +3112,18 @@ export async function executeBulkSellAlt(
 
             const sendPromises = batch.map(async (tx, idx) => {
               try {
+                const signedBase64 = Buffer.from(tx.serialize()).toString('base64');
+                try {
+                  const sendResult = await sendRaptorTransaction(signedBase64);
+                  if (sendResult.success && sendResult.signature) {
+                    return { success: true, signature: sendResult.signature, tokenIdx: i + idx, via: 'raptor' as const };
+                  }
+                } catch (raptorSendError) {
+                  console.warn('Raptor send failed, falling back to RPC:', raptorSendError);
+                }
+
                 const signature = await connection.sendTransaction(tx, { skipPreflight: true, maxRetries: 2 });
-                return { success: true, signature, tokenIdx: i + idx };
+                return { success: true, signature, tokenIdx: i + idx, via: 'rpc' as const };
               } catch (error) {
                 return { success: false, tokenIdx: i + idx, error };
               }
@@ -3099,6 +3138,36 @@ export async function executeBulkSellAlt(
               }
 
               try {
+                if (sendResult.via === 'raptor') {
+                  const raptorStatus = await pollRaptorTransaction(sendResult.signature!, {
+                    maxAttempts: 30,
+                    intervalMs: 2000,
+                  });
+                  if (raptorStatus.status === 'failed' || raptorStatus.status === 'expired') {
+                    throw new Error(`Raptor transaction ${raptorStatus.status}`);
+                  }
+
+                  const amountOutLamports = Number.parseInt(
+                    transactionAmountOut[sendResult.tokenIdx] ?? '0',
+                    10,
+                  );
+                  const solReceived = Number.isFinite(amountOutLamports)
+                    ? amountOutLamports / LAMPORTS_PER_SOL
+                    : 0;
+
+                  swapSignatures.push(sendResult.signature!);
+                  successfulSwaps.push(transactionTokens[sendResult.tokenIdx]);
+                  result.successfulSwaps.push({
+                    mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
+                    solReceived,
+                  });
+                  result.totalReceived += solReceived;
+                  console.log(`✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress} via Raptor`);
+                  return;
+                }
+
+                const { blockhash, lastValidBlockHeight } = await getBlockhash();
+
                 const confirmation = await connection.confirmTransaction({
                   signature: sendResult.signature!,
                   lastValidBlockHeight,

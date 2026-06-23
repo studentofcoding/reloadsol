@@ -2,15 +2,10 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Connection, PublicKey } from "@solana/web3.js";
-import {
-  categorizeUserTokens,
-  fetchZeroBalanceTokens,
-  type UserToken,
-} from "@/utils/jupiter";
+import { categorizeUserTokens, type UserToken } from "@/utils/jupiter";
 import {
   fetchJupiterPortfolio,
   mapPortfolioToUserTokens,
-  mergePortfolioWithEmptyAccounts,
 } from "@/utils/jupiter-portfolio";
 import type { TokenFetchMeta } from "@/contexts/RpcContext";
 
@@ -39,40 +34,34 @@ export function walletTokensQueryKey(
 }
 
 async function fetchWalletTokens(
-  connection: Connection,
-  publicKey: PublicKey,
+  _connection: Connection,
+  _publicKey: PublicKey,
   walletAddress: string,
   _forceRefresh: boolean,
 ): Promise<WalletTokensData> {
   const start = Date.now();
 
   const portfolio = await fetchJupiterPortfolio(walletAddress);
-  const portfolioTokens = mapPortfolioToUserTokens(portfolio);
-
-  let allTokens = portfolioTokens;
-  try {
-    const emptyAccounts = await fetchZeroBalanceTokens(connection, publicKey);
-    allTokens = mergePortfolioWithEmptyAccounts(portfolioTokens, emptyAccounts);
-  } catch (error) {
-    console.warn("Optional RPC empty-account merge failed:", error);
-  }
+  const tokens = mapPortfolioToUserTokens(portfolio);
+  const totalPortfolioUsd = portfolio.totalValue;
+  const sourceLabel = "Jupiter Portfolio";
 
   const { valuable, dust, zeroValue, sellable, zeroBalance, frozen } =
-    categorizeUserTokens(allTokens);
+    categorizeUserTokens(tokens);
   const closeOnly = [...zeroValue, ...zeroBalance, ...frozen];
 
   return {
-    allTokens,
+    allTokens: tokens,
     valuable,
     dust,
     zeroValue,
     sellable,
     closeOnly,
     meta: {
-      rawAccountCount: portfolioTokens.length,
+      rawAccountCount: tokens.length,
       latencyMs: Date.now() - start,
-      rpcLabel: "Jupiter Portfolio",
-      totalPortfolioUsd: portfolio.totalValue,
+      rpcLabel: sourceLabel,
+      totalPortfolioUsd,
     },
   };
 }

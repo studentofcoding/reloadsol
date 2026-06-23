@@ -20,7 +20,7 @@ const PROVIDER_CONFIG: ProviderConfig = {
     timeout: 15000
   },
   solanaTracker: {
-    apiUrl: 'https://swap-v2.solanatracker.io',
+    apiUrl: 'https://raptor-beta.solanatracker.io',
     maxRetries: 3,
     timeout: 12000
   },
@@ -198,76 +198,55 @@ async function getDflowQuote(request: TradeQuoteRequest): Promise<ProviderQuote>
   }
 }
 
-// Solana Tracker quote fetcher
+// Solana Tracker Raptor quote fetcher
 async function getSolanaTrackerQuote(request: TradeQuoteRequest): Promise<ProviderQuote> {
   try {
     const { result: quote, time } = await measureTime(async () => {
-      // Use Solana Tracker swap API with GET request
       const queryParams = new URLSearchParams()
-      queryParams.append('from', request.inputMint)
-      queryParams.append('to', request.outputMint)
-
-      // Convert amount from lamports to proper decimal format
-      const amountInSol = parseFloat(request.amount) / 1_000_000_000 // Convert lamports to SOL
-      queryParams.append('fromAmount', amountInSol.toString())
-
-      // Convert slippageBps to percentage (1000 bps = 10%)
-      const slippagePercentage = request.slippageBps / 100
-      queryParams.append('slippage', slippagePercentage.toString())
-      queryParams.append('payer', request.userPublicKey || '')
+      queryParams.append('inputMint', request.inputMint)
+      queryParams.append('outputMint', request.outputMint)
+      queryParams.append('amount', request.amount)
+      queryParams.append('slippageBps', request.slippageBps.toString())
 
       const response = await fetch(
-        `${PROVIDER_CONFIG.solanaTracker.apiUrl}/swap?${queryParams.toString()}`,
+        `${PROVIDER_CONFIG.solanaTracker.apiUrl}/quote?${queryParams.toString()}`,
         {
           headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
+            Accept: 'application/json',
           },
           signal: AbortSignal.timeout(PROVIDER_CONFIG.solanaTracker.timeout)
         }
       )
 
       if (!response.ok) {
-        throw new Error(`Solana Tracker API error: ${response.status} ${response.statusText}`)
+        throw new Error(`Solana Tracker Raptor API error: ${response.status} ${response.statusText}`)
       }
 
       const data = await response.json()
 
-      // Validate response structure
-      if (!data.rate || typeof data.rate.amountOut !== 'number') {
-        throw new Error('Invalid Solana Tracker response format')
+      if (!data.amountOut) {
+        throw new Error('Invalid Raptor response format')
       }
 
       return data
     })
-
-    // Convert amounts back to token units (considering decimals)
-    const outputAmount = quote.rate.amountOut * Math.pow(10, quote.rate.quoteCurrency?.decimals || 6)
-    const minAmountOut = quote.rate.minAmountOut * Math.pow(10, quote.rate.quoteCurrency?.decimals || 6)
 
     return {
       provider: 'solana-tracker',
       inputMint: request.inputMint,
       outputMint: request.outputMint,
       inAmount: request.amount,
-      outAmount: Math.floor(outputAmount).toString(),
-      otherAmountThreshold: Math.floor(minAmountOut).toString(),
+      outAmount: String(quote.amountOut),
+      otherAmountThreshold: String(quote.minAmountOut ?? quote.amountOut),
       slippageBps: request.slippageBps,
-      priceImpactPct: (quote.rate.priceImpact * 100).toString(), // Convert to percentage
+      priceImpactPct: ((quote.priceImpact ?? 0) * 100).toString(),
       responseTime: time,
       success: true,
-      route: [],
-      fees: quote.rate.platformFeeUI ? {
-        totalFeeLamports: Math.floor(quote.rate.platformFee || 0),
-        feePercentage: quote.rate.platformFeeUI * 100 // Convert to percentage
-      } : undefined,
+      route: quote.routePlan ?? [],
       providerData: {
         solanaTracker: {
-          txn: quote.txn,
-          type: quote.type,
+          quote,
           timeTaken: quote.timeTaken,
-          executionPrice: quote.rate.executionPrice,
-          currentPrice: quote.rate.currentPrice
         }
       }
     }
@@ -702,9 +681,16 @@ async function checkDflowHealth(): Promise<boolean> {
 
 async function checkSolanaTrackerHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${PROVIDER_CONFIG.solanaTracker.apiUrl}/health`, {
-      signal: AbortSignal.timeout(5000)
+    const params = new URLSearchParams({
+      inputMint: 'So11111111111111111111111111111111111111112',
+      outputMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+      amount: '1000000',
+      slippageBps: '200',
     })
+    const response = await fetch(
+      `${PROVIDER_CONFIG.solanaTracker.apiUrl}/quote?${params.toString()}`,
+      { signal: AbortSignal.timeout(5000) },
+    )
     return response.ok
   } catch {
     return false

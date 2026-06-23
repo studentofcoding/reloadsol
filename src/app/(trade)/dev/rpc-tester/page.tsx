@@ -12,6 +12,11 @@ import {
   fetchJupiterPortfolio,
   mapPortfolioToUserTokens,
 } from "@/utils/jupiter-portfolio";
+import {
+  fetchShyftAllTokens,
+  mapShyftTokensToUserTokens,
+} from "@/utils/shyft-wallet";
+import { TOKENS } from "@/utils/solana";
 
 type FilterStage = {
   label: string;
@@ -70,6 +75,14 @@ export default function RpcTesterPage() {
       const dustTokenList = [...dust, ...zeroValue];
       const dustFiltered = showDustOnly ? dustTokenList : valuable;
 
+      let shyftSplCount = 0;
+      try {
+        const shyft = await fetchShyftAllTokens(publicKey.toString());
+        shyftSplCount = mapShyftTokensToUserTokens(shyft.tokens).length;
+      } catch (shyftError) {
+        console.warn("Shyft all_tokens fetch failed in pipeline:", shyftError);
+      }
+
       let jupiterSplCount = 0;
       try {
         const portfolio = await fetchJupiterPortfolio(publicKey.toString());
@@ -78,14 +91,46 @@ export default function RpcTesterPage() {
         console.warn("Jupiter portfolio fetch failed in pipeline:", portfolioError);
       }
 
+      let raptorQuoteOk = 0;
+      const sampleToken = dust[0] ?? valuable[0];
+      if (sampleToken && sampleToken.balance > 0) {
+        try {
+          const params = new URLSearchParams({
+            inputMint: sampleToken.mintAddress,
+            outputMint: TOKENS.SOL,
+            amount: String(Math.max(1, Math.floor(sampleToken.balance * 0.01))),
+            slippageBps: "200",
+          });
+          const response = await fetch(
+            `/api/solanatracker/quote?${params.toString()}`,
+          );
+          if (response.ok) {
+            const data = await response.json();
+            if (data.amountOut) raptorQuoteOk = 1;
+          }
+        } catch (raptorError) {
+          console.warn("Raptor quote fetch failed in pipeline:", raptorError);
+        }
+      }
+
       const rpcRow = diagnostics.find((d) => d.index === selectedEndpointIndex);
       const rawRpcCount = rpcRow?.rawAccountCount ?? allTokens.length;
 
       setPipelineStages([
         {
+          label: "Shyft all_tokens (SPL)",
+          count: shyftSplCount,
+          lost: Math.max(0, allTokens.length - shyftSplCount),
+        },
+        {
           label: "Jupiter portfolio (SPL)",
           count: jupiterSplCount,
           lost: Math.max(0, allTokens.length - jupiterSplCount),
+        },
+        {
+          label: "Raptor quote (sample SPL→SOL)",
+          count: raptorQuoteOk,
+          lost: sampleToken ? Math.max(0, 1 - raptorQuoteOk) : 0,
         },
         {
           label: "RPC token accounts",

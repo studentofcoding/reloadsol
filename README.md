@@ -66,12 +66,13 @@ Edit `.env` with your secrets. Minimum required for a working stack:
 SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 SUPABASE_SECRET_KEY=your-sb-secret-key
 
-# Shyft RPC — https://shyft.to dashboard (up to 5 comma-separated URLs in RPC_URL)
-# Shyft free plan blocks index RPC; add an index-capable fallback as second URL:
-# RPC_URL=https://rpc.shyft.to?api_key=KEY,https://api.mainnet-beta.solana.com
+# Shyft — https://shyft.to dashboard (server-side RPC via /api/rpc proxy)
+# Wallet tokens: Jupiter Portfolio via /api/jupiter/portfolio (both /buy and /sell)
+# Swaps: Solana Tracker Raptor (default on /sell and /buy), Jupiter fallback provider
+# Browser RPC is proxied through /api/rpc — NEXT_PUBLIC_RPC_URL is optional
 SHYFT_API_KEY=your-shyft-api-key
 RPC_URL=https://rpc.shyft.to?api_key=your-shyft-api-key,https://api.mainnet-beta.solana.com
-NEXT_PUBLIC_RPC_URL=https://api.mainnet-beta.solana.com
+# NEXT_PUBLIC_RPC_URL=https://api.mainnet-beta.solana.com
 ```
 
 See [Environment variables](#environment-variables) for the full list.
@@ -128,9 +129,10 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 |----------|-------------|
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SECRET_KEY` | Server secret key (`sb_secret_...`) |
-| `SHYFT_API_KEY` | Shyft dashboard API key |
-| `RPC_URL` | Comma-separated RPC URLs (max 5). App switches between them on `/sell`. |
-| `NEXT_PUBLIC_RPC_URL` | Browser/Jupiter fallback — use an index-capable URL if Shyft free plan blocks token indexing. |
+| `SHYFT_API_KEY` | Shyft dashboard API key — powers server-side RPC via `/api/rpc` proxy |
+| `RPC_URL` | Comma-separated RPC URLs (max 5). Server `/api/rpc` proxy with failover. |
+| `NEXT_PUBLIC_RPC_URL` | Optional — browser uses `/api/rpc` proxy by default; set only for legacy direct-RPC paths. |
+| `RAPTOR_API_BASE` | Optional override for Solana Tracker Raptor swap API (default `https://raptor-beta.solanatracker.io`) |
 | `WALLET_SESSION_SECRET` | httpOnly wallet session cookie signing |
 
 ### Cron secrets

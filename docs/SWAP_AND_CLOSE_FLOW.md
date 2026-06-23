@@ -4,18 +4,22 @@ This document summarizes how bulk swaps and token account closures work across t
 
 ## Providers and Flow
 
-- **Jupiter (default)**
+- **Solana Tracker Raptor (default on `/sell` and bulk buy)**
+  - Quote: `GET /api/solanatracker/quote` → Raptor `GET /quote` (amount in smallest units, `slippageBps`)
+  - Swap: `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`
+  - Send: `POST /api/solanatracker/send` → Raptor `POST /send-transaction` (RPC fallback if send fails)
+  - Implementation: `executeBulkSellAlt`, `executeBulkBuy` primary path in `src/utils/jupiter.ts`
+  - Close: Still uses Jupiter’s `closeTokenAccounts` after swaps or close-only operations
+
+- **Jupiter (fallback provider on `/sell`)**
   - Quote/Swap: `getSwapQuote`, `getSwapTransaction`, `executeBulkSell`.
   - Close: Centralized via `closeTokenAccounts` and `closeZeroBalanceTokens`.
-  - Fees: Percentage-based for `SELL`, fixed per-close for `CLOSE` using `createJupiterFeeInstructions` / `createFeeTransferInstructions` and `getFeeForOperation('CLOSE')`.
+  - Fees: Percentage-based for `SELL`, fixed per-close for `CLOSE`.
 
-- **Solana-Tracker (alt path)**
-  - Swap: `executeBulkSellAlt` posting to `https://swap-v2.solanatracker.io/swap`.
-  - Close: Still uses Jupiter’s `closeTokenAccounts` for closures after swaps or close-only operations.
-
-- **GMGN (custom provider)**
+- **GMGN (optional provider on `/sell`)**
   - Swap: Provider-specific quote and submission handled in `BulkTokenSeller.tsx`.
-  - Close: After GMGN swaps, tokens sold 100% are auto-closed via Jupiter’s `closeTokenAccounts`. Unsellable selections are closed through the same Jupiter close path.
+  - Requires approved Cooperation API key (`x-route-key` on server proxy).
+  - Close: After GMGN swaps, tokens sold 100% are auto-closed via Jupiter’s `closeTokenAccounts`.
 
 - **Single-token UI**
   - `CatchTheCoinClient.tsx` sells via Jupiter utilities (quote + swap) but does not auto-close the token account after selling. Closing is handled in bulk flows.

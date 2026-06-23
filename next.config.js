@@ -80,8 +80,7 @@ const nextConfig = {
               style-src 'self' 'unsafe-inline' fonts.googleapis.com;
               font-src 'self' fonts.gstatic.com;
               img-src 'self' data: blob: https:;
-              /* connect-src includes https: for user RPC_URL hosts; add explicit host if CSP blocks a provider */
-              connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com wss: https:;
+              connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.solanatracker.io *.helius-rpc.com https://mainnet.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com wss: https:;
               frame-src 'self' https://auth.privy.io https://www.gmgn.cc https://gmgn.cc https://terminal.jup.ag/;
               object-src 'none';
               base-uri 'self';

@@ -10,6 +10,7 @@ import React, {
   useState,
 } from "react";
 import { Connection } from "@solana/web3.js";
+import { getBrowserConnectionEndpoint } from "@/utils/connection";
 import type { RpcDiagnosticRow } from "@/app/api/rpc/diagnostics/route";
 
 const STORAGE_KEY = "reloadsol:rpc-endpoint";
@@ -125,9 +126,14 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
   selectedEndpointIndexRef.current = selectedEndpointIndex;
   endpointsRef.current = endpoints;
 
+  const connectionEndpoint = useMemo(() => {
+    if (typeof window === "undefined") return activeRpcUrl;
+    return getBrowserConnectionEndpoint();
+  }, [activeRpcUrl]);
+
   const connection = useMemo(
-    () => new Connection(activeRpcUrl, "confirmed"),
-    [activeRpcUrl],
+    () => new Connection(connectionEndpoint, "confirmed"),
+    [connectionEndpoint],
   );
 
   const refreshHealth = useCallback(async () => {
