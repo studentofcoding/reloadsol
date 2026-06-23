@@ -37,6 +37,9 @@ export type RpcEndpoint = {
   sanitizedUrl: string;
   url: string;
   responseTime?: number;
+  slotHealthy?: boolean;
+  indexHealthy?: boolean;
+  indexError?: string;
   healthy?: boolean;
 };
 
@@ -44,6 +47,7 @@ export type TokenFetchMeta = {
   rawAccountCount: number;
   latencyMs: number;
   rpcLabel: string;
+  totalPortfolioUsd?: number;
   error?: string;
 };
 
@@ -61,7 +65,7 @@ type RpcContextValue = {
   setAutoSelectBest: (enabled: boolean) => void;
   runDiagnostics: (walletAddress: string) => Promise<RpcDiagnosticRow[]>;
   refreshHealth: () => Promise<void>;
-  autoSelectBestEndpoint: (walletAddress: string) => Promise<void>;
+  autoSelectBestEndpoint: (walletAddress: string, force?: boolean) => Promise<void>;
 };
 
 const RpcContext = createContext<RpcContextValue | null>(null);
@@ -86,6 +90,24 @@ function resolveUrlForIndex(
 ): string {
   const match = endpoints.find((ep) => ep.index === index);
   return match?.url ?? endpoints[0]?.url ?? DEFAULT_FALLBACK_RPC_URL;
+}
+
+function mergeDiagnosticsIntoEndpoints(
+  endpoints: RpcEndpoint[],
+  results: RpcDiagnosticRow[],
+): RpcEndpoint[] {
+  return endpoints.map((ep) => {
+    const row = results.find((r) => r.index === ep.index);
+    if (!row) return ep;
+    return {
+      ...ep,
+      slotHealthy: row.slotHealthy,
+      indexHealthy: row.indexHealthy,
+      indexError: row.indexError,
+      healthy: row.healthy,
+      responseTime: row.getSlotMs || ep.responseTime,
+    };
+  });
 }
 
 export function RpcProvider({ children }: { children: React.ReactNode }) {
@@ -121,13 +143,23 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
             (row: { url: string; healthy: boolean; responseTime: number }) =>
               row.url === ep.url,
           );
-          return match
-            ? {
-                ...ep,
-                healthy: match.healthy,
-                responseTime: match.responseTime,
-              }
-            : ep;
+          if (!match) return ep;
+
+          const slotHealthy = match.healthy;
+          const indexHealthy = ep.indexHealthy;
+          const healthy =
+            indexHealthy === true
+              ? slotHealthy && indexHealthy
+              : indexHealthy === false
+                ? false
+                : slotHealthy;
+
+          return {
+            ...ep,
+            slotHealthy,
+            responseTime: match.responseTime,
+            healthy,
+          };
         }),
       );
     } catch {
@@ -206,6 +238,9 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
   const setAutoSelectBest = useCallback((enabled: boolean) => {
     setAutoSelectBestState(enabled);
     localStorage.setItem(AUTO_STORAGE_KEY, enabled ? "true" : "false");
+    if (enabled) {
+      autoSelectRanRef.current = false;
+    }
   }, []);
 
   const runDiagnostics = useCallback(async (walletAddress: string) => {
@@ -222,6 +257,11 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
       const data = await response.json();
       const results: RpcDiagnosticRow[] = data.results ?? [];
       setDiagnostics(results);
+      setEndpoints((prev) => {
+        const merged = mergeDiagnosticsIntoEndpoints(prev, results);
+        endpointsRef.current = merged;
+        return merged;
+      });
       return results;
     } finally {
       setIsRunningDiagnostics(false);
@@ -229,23 +269,15 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const autoSelectBestEndpoint = useCallback(
-    async (walletAddress: string) => {
-      if (!autoSelectBest) return;
+    async (walletAddress: string, force = false) => {
+      if (!autoSelectBest && !force) return;
 
       const now = Date.now();
       if (
+        !force &&
         autoSelectRanRef.current &&
         now - lastAutoCheckRef.current < AUTO_RECHECK_MS
       ) {
-        return;
-      }
-
-      const currentIndex = selectedEndpointIndexRef.current;
-      const currentEndpoints = endpointsRef.current;
-      const currentEndpoint = currentEndpoints.find(
-        (ep) => ep.index === currentIndex,
-      );
-      if (currentEndpoint?.healthy && autoSelectRanRef.current) {
         return;
       }
 
@@ -253,8 +285,12 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
       lastAutoCheckRef.current = now;
       autoSelectRanRef.current = true;
 
+      const currentIndex = selectedEndpointIndexRef.current;
+      const currentEndpoints = endpointsRef.current;
+      const currentRow = results.find((r) => r.index === currentIndex);
+
       const best = [...results]
-        .filter((r) => r.healthy)
+        .filter((r) => r.indexHealthy)
         .sort((a, b) => {
           if (b.rawAccountCount !== a.rawAccountCount) {
             return b.rawAccountCount - a.rawAccountCount;
@@ -263,10 +299,12 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
         })[0];
 
       if (best && best.index !== currentIndex) {
-        setSelectedEndpointIndexState(best.index);
-        const next = resolveUrlForIndex(currentEndpoints, best.index);
-        setActiveRpcUrl((prev) => (prev === next ? prev : next));
-        localStorage.setItem(STORAGE_KEY, String(best.index));
+        if (!currentRow?.indexHealthy || best.rawAccountCount > currentRow.rawAccountCount) {
+          setSelectedEndpointIndexState(best.index);
+          const next = resolveUrlForIndex(currentEndpoints, best.index);
+          setActiveRpcUrl((prev) => (prev === next ? prev : next));
+          localStorage.setItem(STORAGE_KEY, String(best.index));
+        }
       }
     },
     [autoSelectBest, runDiagnostics],

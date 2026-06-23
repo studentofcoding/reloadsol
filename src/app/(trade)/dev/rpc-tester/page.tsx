@@ -8,6 +8,10 @@ import {
   categorizeUserTokens,
   fetchUserTokensEfficient,
 } from "@/utils/jupiter";
+import {
+  fetchJupiterPortfolio,
+  mapPortfolioToUserTokens,
+} from "@/utils/jupiter-portfolio";
 
 type FilterStage = {
   label: string;
@@ -66,10 +70,23 @@ export default function RpcTesterPage() {
       const dustTokenList = [...dust, ...zeroValue];
       const dustFiltered = showDustOnly ? dustTokenList : valuable;
 
+      let jupiterSplCount = 0;
+      try {
+        const portfolio = await fetchJupiterPortfolio(publicKey.toString());
+        jupiterSplCount = mapPortfolioToUserTokens(portfolio).length;
+      } catch (portfolioError) {
+        console.warn("Jupiter portfolio fetch failed in pipeline:", portfolioError);
+      }
+
       const rpcRow = diagnostics.find((d) => d.index === selectedEndpointIndex);
       const rawRpcCount = rpcRow?.rawAccountCount ?? allTokens.length;
 
       setPipelineStages([
+        {
+          label: "Jupiter portfolio (SPL)",
+          count: jupiterSplCount,
+          lost: Math.max(0, allTokens.length - jupiterSplCount),
+        },
         {
           label: "RPC token accounts",
           count: rawRpcCount,
@@ -132,7 +149,7 @@ export default function RpcTesterPage() {
 
   const bestDiagnostic = useMemo(() => {
     return [...diagnostics]
-      .filter((d) => d.healthy)
+      .filter((d) => d.indexHealthy)
       .sort((a, b) => {
         if (b.rawAccountCount !== a.rawAccountCount) {
           return b.rawAccountCount - a.rawAccountCount;
@@ -239,6 +256,8 @@ export default function RpcTesterPage() {
                     <tr className="border-b border-gray-700 text-gray-400">
                       <th className="py-2 pr-3">Provider</th>
                       <th className="py-2 pr-3">URL</th>
+                      <th className="py-2 pr-3">Slot</th>
+                      <th className="py-2 pr-3">Index</th>
                       <th className="py-2 pr-3">Slot ms</th>
                       <th className="py-2 pr-3">Accounts ms</th>
                       <th className="py-2 pr-3">Accounts</th>
@@ -251,6 +270,24 @@ export default function RpcTesterPage() {
                         <td className="py-2 pr-3">{row.provider}</td>
                         <td className="py-2 pr-3 font-mono text-xs">
                           {row.sanitizedUrl}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {row.slotHealthy ? (
+                            <span className="text-green-400">OK</span>
+                          ) : (
+                            <span className="text-red-400" title={row.slotError}>
+                              Error
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {row.indexHealthy ? (
+                            <span className="text-green-400">OK</span>
+                          ) : (
+                            <span className="text-red-400" title={row.indexError}>
+                              Error
+                            </span>
+                          )}
                         </td>
                         <td className="py-2 pr-3">{row.getSlotMs}</td>
                         <td className="py-2 pr-3">

@@ -4,9 +4,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Connection, PublicKey } from "@solana/web3.js";
 import {
   categorizeUserTokens,
-  fetchUserTokensEfficient,
+  fetchZeroBalanceTokens,
   type UserToken,
 } from "@/utils/jupiter";
+import {
+  fetchJupiterPortfolio,
+  mapPortfolioToUserTokens,
+  mergePortfolioWithEmptyAccounts,
+} from "@/utils/jupiter-portfolio";
 import type { TokenFetchMeta } from "@/contexts/RpcContext";
 
 export type WalletTokensData = {
@@ -19,29 +24,38 @@ export type WalletTokensData = {
   meta: TokenFetchMeta;
 };
 
+export const WALLET_TOKENS_SOURCE = "jupiter-portfolio" as const;
+
 export function walletTokensQueryKey(
   walletAddress: string | null,
-  activeRpcUrl: string,
   includeZeroBalance: boolean,
 ) {
-  return ["wallet-tokens", walletAddress, activeRpcUrl, includeZeroBalance] as const;
+  return [
+    "wallet-tokens",
+    walletAddress,
+    includeZeroBalance,
+    WALLET_TOKENS_SOURCE,
+  ] as const;
 }
 
 async function fetchWalletTokens(
   connection: Connection,
   publicKey: PublicKey,
-  rpcLabel: string,
-  forceRefresh: boolean,
+  walletAddress: string,
+  _forceRefresh: boolean,
 ): Promise<WalletTokensData> {
   const start = Date.now();
-  const allTokens = await fetchUserTokensEfficient(
-    connection,
-    publicKey,
-    true,
-    false,
-    undefined,
-    forceRefresh,
-  );
+
+  const portfolio = await fetchJupiterPortfolio(walletAddress);
+  const portfolioTokens = mapPortfolioToUserTokens(portfolio);
+
+  let allTokens = portfolioTokens;
+  try {
+    const emptyAccounts = await fetchZeroBalanceTokens(connection, publicKey);
+    allTokens = mergePortfolioWithEmptyAccounts(portfolioTokens, emptyAccounts);
+  } catch (error) {
+    console.warn("Optional RPC empty-account merge failed:", error);
+  }
 
   const { valuable, dust, zeroValue, sellable, zeroBalance, frozen } =
     categorizeUserTokens(allTokens);
@@ -55,18 +69,27 @@ async function fetchWalletTokens(
     sellable,
     closeOnly,
     meta: {
-      rawAccountCount: allTokens.length,
+      rawAccountCount: portfolioTokens.length,
       latencyMs: Date.now() - start,
-      rpcLabel,
+      rpcLabel: "Jupiter Portfolio",
+      totalPortfolioUsd: portfolio.totalValue,
     },
   };
+}
+
+export async function refreshWalletTokensData(
+  connection: Connection,
+  publicKey: PublicKey,
+  walletAddress: string,
+): Promise<WalletTokensData> {
+  return fetchWalletTokens(connection, publicKey, walletAddress, true);
 }
 
 type UseWalletTokensOptions = {
   connection: Connection;
   publicKey: PublicKey | null;
   walletAddress: string | null;
-  activeRpcUrl: string;
+  activeRpcUrl?: string;
   rpcLabel?: string;
   enabled?: boolean;
   includeZeroBalance?: boolean;
@@ -77,24 +100,20 @@ export function useWalletTokens({
   connection,
   publicKey,
   walletAddress,
-  activeRpcUrl,
-  rpcLabel = "RPC",
   enabled = true,
   includeZeroBalance = true,
   refetchInterval = false,
 }: UseWalletTokensOptions) {
   const queryClient = useQueryClient();
-  const queryKey = walletTokensQueryKey(
-    walletAddress,
-    activeRpcUrl,
-    includeZeroBalance,
-  );
+  const queryKey = walletTokensQueryKey(walletAddress, includeZeroBalance);
 
   const query = useQuery({
     queryKey,
     queryFn: () => {
-      if (!publicKey) throw new Error("Wallet not connected");
-      return fetchWalletTokens(connection, publicKey, rpcLabel, false);
+      if (!publicKey || !walletAddress) {
+        throw new Error("Wallet not connected");
+      }
+      return fetchWalletTokens(connection, publicKey, walletAddress, false);
     },
     enabled: enabled && !!publicKey && !!walletAddress,
     staleTime: 30_000,
@@ -103,7 +122,7 @@ export function useWalletTokens({
   });
 
   const refetchTokens = async (forceRefresh = false): Promise<void> => {
-    if (!publicKey) {
+    if (!publicKey || !walletAddress) {
       await query.refetch();
       return;
     }
@@ -111,7 +130,7 @@ export function useWalletTokens({
       await queryClient.fetchQuery({
         queryKey,
         queryFn: () =>
-          fetchWalletTokens(connection, publicKey, rpcLabel, true),
+          fetchWalletTokens(connection, publicKey, walletAddress, true),
         staleTime: 0,
       });
       return;

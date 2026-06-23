@@ -9,7 +9,7 @@ import React, {
 } from "react";
 import { useWallet, useConnection } from "../components/WalletProvider";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
-import { useWalletTokens, type WalletTokensData } from "@/hooks/useWalletTokens";
+import { useWalletTokens, refreshWalletTokensData, type WalletTokensData } from "@/hooks/useWalletTokens";
 import { useSolPrice } from "@/hooks/useSolPrice";
 import PhantomWalletButton from "./PhantomWalletButton";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
@@ -24,7 +24,6 @@ import {
   executeBulkSell,
   executeBulkSellAlt,
   fetchUserTokens,
-  refreshTokenPricesBatch,
   fetchZeroBalanceTokens,
   closeZeroBalanceTokens,
   getTokenUsdValue,
@@ -601,9 +600,9 @@ export default function BulkTokenSeller() {
     setSelectedZeroBalanceTokens([]);
   };
 
-  // Refresh all token prices efficiently
+  // Refresh all token prices from Jupiter portfolio
   const refreshAllPrices = useCallback(async () => {
-    if (!publicKey || swappableTokens.length === 0) return;
+    if (!publicKey || !walletAddress || swappableTokens.length === 0) return;
 
     patchTokens((data) =>
       patchWalletTokenLists(data, (tokens) =>
@@ -612,23 +611,17 @@ export default function BulkTokenSeller() {
     );
 
     try {
-      console.log("Starting efficient batch price refresh...");
-      const updatedTokens = await refreshTokenPricesBatch(swappableTokens);
-
-      patchTokens((data) =>
-        patchWalletTokenLists(data, (tokens) =>
-          tokens.map((token) => {
-            const updated = updatedTokens.find(
-              (t) => t.mintAddress === token.mintAddress,
-            );
-            return updated ?? { ...token, isLoadingPrice: false };
-          }),
-        ),
+      console.log("Refreshing token prices from Jupiter portfolio...");
+      const refreshed = await refreshWalletTokensData(
+        connection,
+        publicKey,
+        walletAddress,
       );
+      patchTokens(() => refreshed);
 
       setSelectedTokens((prev) =>
         prev.map((selectedToken) => {
-          const updatedToken = updatedTokens.find(
+          const updatedToken = refreshed.sellable.find(
             (t) => t.mintAddress === selectedToken.mintAddress,
           );
           if (updatedToken) {
@@ -642,9 +635,9 @@ export default function BulkTokenSeller() {
         }),
       );
 
-      console.log("Efficient batch price refresh completed");
+      console.log("Jupiter portfolio price refresh completed");
     } catch (error) {
-      console.error("Error refreshing all prices:", error);
+      console.error("Error refreshing portfolio prices:", error);
       setError("Failed to refresh token prices");
 
       patchTokens((data) =>
@@ -653,12 +646,18 @@ export default function BulkTokenSeller() {
         ),
       );
     }
-  }, [publicKey, swappableTokens, patchTokens]);
+  }, [
+    publicKey,
+    walletAddress,
+    connection,
+    swappableTokens.length,
+    patchTokens,
+  ]);
 
-  // Refresh individual token price efficiently
+  // Refresh individual token price from Jupiter portfolio
   const refreshTokenPrice = useCallback(
     async (token: UserToken) => {
-      if (!publicKey) return;
+      if (!publicKey || !walletAddress) return;
 
       patchTokens((data) =>
         patchWalletTokenLists(data, (tokens) =>
@@ -671,26 +670,25 @@ export default function BulkTokenSeller() {
       );
 
       try {
-        const updatedTokens = await refreshTokenPricesBatch([token]);
-        const updatedToken = updatedTokens[0];
+        const refreshed = await refreshWalletTokensData(
+          connection,
+          publicKey,
+          walletAddress,
+        );
+        patchTokens(() => refreshed);
+
+        const updatedToken = refreshed.allTokens.find(
+          (t) => t.mintAddress === token.mintAddress,
+        );
 
         if (updatedToken) {
-          patchTokens((data) =>
-            patchWalletTokenLists(data, (tokens) =>
-              tokens.map((t) =>
-                t.mintAddress === token.mintAddress
-                  ? { ...updatedToken, isLoadingPrice: false }
-                  : t,
-              ),
-            ),
-          );
-
           setSelectedTokens((prev) =>
             prev.map((t) =>
               t.mintAddress === token.mintAddress
                 ? {
                     ...t,
                     usdValue: updatedToken.usdValue,
+                    uiAmount: updatedToken.uiAmount,
                     isLoadingPrice: false,
                   }
                 : t,
@@ -710,7 +708,7 @@ export default function BulkTokenSeller() {
         );
       }
     },
-    [publicKey, patchTokens],
+    [publicKey, walletAddress, connection, patchTokens],
   );
 
   // Custom swap execution using provider-specific quotes
@@ -1493,13 +1491,11 @@ export default function BulkTokenSeller() {
   }, [walletAddress]);
 
   useEffect(() => {
-    if (
-      !autoSelectBest ||
-      !walletAddress ||
-      !isWalletReady ||
-      isInitialLoad ||
-      autoSelectRanAfterFetchRef.current
-    ) {
+    if (!autoSelectBest || !walletAddress || !isWalletReady) {
+      return;
+    }
+
+    if (autoSelectRanAfterFetchRef.current) {
       return;
     }
 
@@ -1509,9 +1505,16 @@ export default function BulkTokenSeller() {
     autoSelectBest,
     walletAddress,
     isWalletReady,
-    isInitialLoad,
     autoSelectBestEndpoint,
   ]);
+
+  const lastFetchErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!fetchError || !walletAddress || !autoSelectBest) return;
+    if (lastFetchErrorRef.current === fetchError) return;
+    lastFetchErrorRef.current = fetchError;
+    void autoSelectBestEndpoint(walletAddress, true);
+  }, [fetchError, walletAddress, autoSelectBest, autoSelectBestEndpoint]);
 
   if (
     !isWalletReady &&
@@ -1607,8 +1610,19 @@ export default function BulkTokenSeller() {
     if (diagnostics.length === 0 || !selectedEndpoint) return null;
     const current = diagnostics.find((d) => d.index === selectedEndpointIndex);
     const best = [...diagnostics]
-      .filter((d) => d.healthy)
+      .filter((d) => d.indexHealthy)
       .sort((a, b) => b.rawAccountCount - a.rawAccountCount)[0];
+
+    if (current && !current.indexHealthy) {
+      const hint = current.indexError
+        ? current.indexError
+        : "Current RPC cannot index token accounts";
+      if (best) {
+        return `${hint} — switch to ${best.provider} (${best.rawAccountCount} accounts).`;
+      }
+      return `${hint} — add an index-capable RPC to RPC_URL in .env.`;
+    }
+
     if (
       current &&
       best &&
