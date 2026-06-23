@@ -1,5 +1,8 @@
-import { Connection, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey, TransactionMessage, SystemProgram } from '@solana/web3.js'
+import { Connection, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey, TransactionMessage, SystemProgram, TransactionInstruction } from '@solana/web3.js'
 import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, createCloseAccountInstruction, createBurnInstruction, NATIVE_MINT } from '@solana/spl-token'
+
+/** Token-2022 program (used for ATA fallback when mint-scoped RPC lookup returns nothing). */
+const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
 import { createUmi } from "@metaplex-foundation/umi-bundle-defaults"
 import { publicKey } from "@metaplex-foundation/umi"
 import { fetchAllDigitalAssetWithTokenByOwner } from "@metaplex-foundation/mpl-token-metadata"
@@ -10,6 +13,11 @@ import {
   pollRaptorTransaction,
   sendRaptorTransaction,
 } from './solanatracker-raptor'
+import {
+  craftReclaimTransaction,
+  extractReclaimTransactionBase64,
+  injectInstructionsIntoVersionedTransaction,
+} from './jupiter-reclaim'
 import { SwapQuote, SwapTransaction, BulkBuyRequest, BulkBuyResult, TokenPurchase } from '@/types'
 
 // Add BigInt JSON serialization support
@@ -1474,188 +1482,352 @@ function isRpcAccountNotFoundError(error: unknown): boolean {
   )
 }
 
+type CloseAccountsResult = {
+  successful: string[]
+  failed: Array<{ mintAddress: string; error: string }>
+  signatures: string[]
+}
+
+function buildCloseFeeInstructions(
+  userPublicKey: string,
+  closableCount: number,
+  sellData?: { successfulSwapsCount: number; totalSolReceived: number }
+) {
+  const owner = new PublicKey(userPublicKey)
+  const closeFeeInstructions = createFeeTransferInstructions(owner, 'CLOSE', closableCount)
+  const sellFeeInstructions = sellData
+    ? createFeeTransferInstructions(
+        owner,
+        'SELL',
+        sellData.successfulSwapsCount,
+        sellData.totalSolReceived
+      )
+    : []
+  return [...closeFeeInstructions, ...sellFeeInstructions]
+}
+
+type ManualCloseTokenAccount = {
+  account: PublicKey
+  mint: PublicKey
+  programId: PublicKey
+  balance: bigint
+}
+
+/**
+ * Resolve on-chain token accounts to close (Solana close-account flow).
+ * Uses mint-scoped parsed lookup first, then SPL / Token-2022 ATA fallbacks.
+ */
+async function resolveTokenAccountsForManualClose(
+  connection: Connection,
+  owner: PublicKey,
+  mintAddresses: string[],
+): Promise<ManualCloseTokenAccount[]> {
+  const resolved: ManualCloseTokenAccount[] = []
+
+  for (const mintAddress of mintAddresses) {
+    const mint = new PublicKey(mintAddress)
+
+    const parsed = await connection.getParsedTokenAccountsByOwner(owner, { mint })
+    if (parsed.value.length > 0) {
+      for (const entry of parsed.value) {
+        const info = entry.account.data.parsed.info as {
+          mint: string
+          tokenAmount: { amount: string }
+        }
+        resolved.push({
+          account: entry.pubkey,
+          mint: new PublicKey(info.mint),
+          programId: entry.account.owner,
+          balance: BigInt(info.tokenAmount.amount),
+        })
+      }
+      continue
+    }
+
+    const ataCandidates: Array<{ programId: PublicKey; account: PublicKey }> = [
+      {
+        programId: TOKEN_PROGRAM_ID,
+        account: await getAssociatedTokenAddress(mint, owner, false, TOKEN_PROGRAM_ID),
+      },
+      {
+        programId: TOKEN_2022_PROGRAM_ID,
+        account: await getAssociatedTokenAddress(mint, owner, false, TOKEN_2022_PROGRAM_ID),
+      },
+    ]
+
+    let found = false
+    for (const candidate of ataCandidates) {
+      const accountInfo = await connection.getAccountInfo(candidate.account)
+      if (!accountInfo) {
+        continue
+      }
+
+      try {
+        const balanceInfo = await connection.getTokenAccountBalance(candidate.account)
+        resolved.push({
+          account: candidate.account,
+          mint,
+          programId: candidate.programId,
+          balance: BigInt(balanceInfo.value.amount),
+        })
+        found = true
+        break
+      } catch (balanceError) {
+        if (isRpcAccountNotFoundError(balanceError)) {
+          continue
+        }
+        throw balanceError
+      }
+    }
+
+    if (!found) {
+      console.log(`No on-chain token account found for manual close: ${mintAddress}`)
+    }
+  }
+
+  return resolved
+}
+
+function buildManualCloseInstructions(
+  accounts: ManualCloseTokenAccount[],
+  owner: PublicKey,
+): TransactionInstruction[] {
+  const instructions = []
+
+  for (const tokenAccount of accounts) {
+    // Solana docs: balance must be zero before close — burn remaining tokens first.
+    if (tokenAccount.balance > BigInt(0)) {
+      instructions.push(
+        createBurnInstruction(
+          tokenAccount.account,
+          tokenAccount.mint,
+          owner,
+          tokenAccount.balance,
+          [],
+          tokenAccount.programId,
+        ),
+      )
+    }
+
+    // CloseAccount: reclaim rent to destination (wallet owner).
+    instructions.push(
+      createCloseAccountInstruction(
+        tokenAccount.account,
+        owner,
+        owner,
+        [],
+        tokenAccount.programId,
+      ),
+    )
+  }
+
+  return instructions
+}
+
+async function sendSignedCloseTransaction(
+  transaction: VersionedTransaction,
+  connection: Connection,
+  signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
+): Promise<string> {
+  const signedTransactions = await signAllTransactions([transaction])
+  const signature = await retryWithBackoff(async () => {
+    return await connection.sendTransaction(signedTransactions[0], {
+      skipPreflight: false,
+      preflightCommitment: 'confirmed',
+      maxRetries: 3
+    })
+  })
+
+  const confirmation = await connection.confirmTransaction(signature, 'confirmed')
+  if (confirmation.value.err) {
+    throw new Error(`Burn/Close transaction failed: ${JSON.stringify(confirmation.value.err)}`)
+  }
+
+  return signature
+}
+
+async function executeManualCloseTransaction(
+  closableTokens: UserToken[],
+  userPublicKey: string,
+  connection: Connection,
+  signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>,
+  sellData?: { successfulSwapsCount: number; totalSolReceived: number }
+): Promise<string> {
+  const owner = new PublicKey(userPublicKey)
+  const mintAddresses = closableTokens.map((token) => token.mintAddress)
+  const tokenAccounts = await resolveTokenAccountsForManualClose(connection, owner, mintAddresses)
+
+  if (tokenAccounts.length === 0) {
+    throw new Error('No closable token accounts remain for manual close')
+  }
+
+  const closeInstructions = buildManualCloseInstructions(tokenAccounts, owner)
+  const feeInstructions = buildCloseFeeInstructions(
+    userPublicKey,
+    tokenAccounts.length,
+    sellData,
+  )
+
+  const { blockhash } = await connection.getLatestBlockhash('confirmed')
+  const messageV0 = new TransactionMessage({
+    payerKey: owner,
+    recentBlockhash: blockhash,
+    instructions: [...closeInstructions, ...feeInstructions],
+  }).compileToV0Message()
+
+  return sendSignedCloseTransaction(
+    new VersionedTransaction(messageV0),
+    connection,
+    signAllTransactions,
+  )
+}
+
+async function tryJupiterReclaimClose(
+  closableTokens: UserToken[],
+  userPublicKey: string,
+  connection: Connection,
+  signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>,
+  sellData?: { successfulSwapsCount: number; totalSolReceived: number }
+): Promise<string> {
+  const mints = closableTokens.map((token) => token.mintAddress)
+  const craftResponse = await craftReclaimTransaction(userPublicKey, mints)
+  const transactionBase64 = extractReclaimTransactionBase64(craftResponse)
+
+  if (!transactionBase64) {
+    throw new Error('Jupiter reclaim craft returned no transaction')
+  }
+
+  const feeInstructions = buildCloseFeeInstructions(
+    userPublicKey,
+    closableTokens.length,
+    sellData
+  )
+
+  const transaction = await injectInstructionsIntoVersionedTransaction(
+    connection,
+    transactionBase64,
+    feeInstructions,
+    new PublicKey(userPublicKey)
+  )
+
+  return sendSignedCloseTransaction(transaction, connection, signAllTransactions)
+}
+
+function filterClosableTokens(
+  tokens: UserToken[],
+): {
+  closableTokens: UserToken[]
+  failed: Array<{ mintAddress: string; error: string }>
+} {
+  const closableTokens: UserToken[] = []
+  const failed: Array<{ mintAddress: string; error: string }> = []
+
+  for (const token of tokens) {
+    if (token.frozen) {
+      failed.push({
+        mintAddress: token.mintAddress,
+        error: 'Token account is frozen and cannot be closed'
+      })
+      continue
+    }
+
+    closableTokens.push(token)
+  }
+
+  return { closableTokens, failed }
+}
+
+async function executeCloseForTokens(
+  closableTokens: UserToken[],
+  userPublicKey: string,
+  connection: Connection,
+  signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>,
+  sellData?: { successfulSwapsCount: number; totalSolReceived: number }
+): Promise<{ signature: string; method: 'jupiter-reclaim' | 'manual' }> {
+  if (closableTokens.length === 0) {
+    throw new Error('No closable token accounts to process')
+  }
+
+  try {
+    const signature = await tryJupiterReclaimClose(
+      closableTokens,
+      userPublicKey,
+      connection,
+      signAllTransactions,
+      sellData
+    )
+    console.log(`Successfully reclaimed ${closableTokens.length} token accounts via Jupiter`)
+    return { signature, method: 'jupiter-reclaim' }
+  } catch (reclaimError) {
+    console.warn(
+      'Jupiter reclaim close failed, falling back to manual burn+close:',
+      reclaimError instanceof Error ? reclaimError.message : reclaimError
+    )
+  }
+
+  const signature = await executeManualCloseTransaction(
+    closableTokens,
+    userPublicKey,
+    connection,
+    signAllTransactions,
+    sellData
+  )
+  console.log(`Successfully burned and closed ${closableTokens.length} token accounts via manual path`)
+  return { signature, method: 'manual' }
+}
+
 // Close token accounts after successful sales with improved error handling
-// Intelligently burns tokens first if balance > 0, then closes accounts
+// Primary path: Jupiter /reclaim/craft; fallback: manual burn + close
 async function closeTokenAccounts(
   tokens: UserToken[],
   userPublicKey: string,
   connection: Connection,
   signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>,
   sellData?: { successfulSwapsCount: number; totalSolReceived: number }
-): Promise<{ successful: string[]; failed: Array<{ mintAddress: string; error: string }>; signatures: string[] }> {
-  const result = {
-    successful: [] as string[],
-    failed: [] as Array<{ mintAddress: string; error: string }>,
-    signatures: [] as string[]
+): Promise<CloseAccountsResult> {
+  const result: CloseAccountsResult = {
+    successful: [],
+    failed: [],
+    signatures: []
   }
 
-  const alreadyClosed: string[] = []
-
   try {
-    const burnInstructions = []
-    const closeInstructions = []
-    const tokensToProcess = []
+    const { closableTokens, failed } = filterClosableTokens(tokens)
 
-    for (const token of tokens) {
-      try {
-        if (token.frozen) {
-          result.failed.push({
-            mintAddress: token.mintAddress,
-            error: 'Token account is frozen and cannot be closed'
-          })
-          continue
-        }
+    result.failed.push(...failed)
 
-        const tokenAccount = await getAssociatedTokenAddress(
-          new PublicKey(token.mintAddress),
-          new PublicKey(userPublicKey)
-        )
-
-        const accountInfo = await connection.getAccountInfo(tokenAccount)
-        if (!accountInfo) {
-          console.log(`Token account already closed: ${token.mintAddress}`)
-          alreadyClosed.push(token.mintAddress)
-          continue
-        }
-
-        if (accountInfo.data.length < 165) {
-          result.failed.push({
-            mintAddress: token.mintAddress,
-            error: 'Invalid token account data length'
-          })
-          continue
-        }
-
-        const accountFrozenState = isTokenAccountFrozen(accountInfo.data)
-        if (accountFrozenState) {
-          result.failed.push({
-            mintAddress: token.mintAddress,
-            error: 'Token account is frozen (detected during account validation)'
-          })
-          continue
-        }
-
-        let currentBalance = '0'
-        let currentUiAmount = 0
-        try {
-          const balanceInfo = await connection.getTokenAccountBalance(tokenAccount)
-          currentBalance = balanceInfo.value.amount
-          currentUiAmount = balanceInfo.value.uiAmount || 0
-        } catch (balanceError) {
-          if (isRpcAccountNotFoundError(balanceError)) {
-            console.log(`Token account already closed (balance check): ${token.mintAddress}`)
-            alreadyClosed.push(token.mintAddress)
-            continue
-          }
-          throw balanceError
-        }
-
-        console.log(`Token ${token.mintAddress}: balance=${currentBalance}, uiAmount=${currentUiAmount}`)
-
-        if (parseInt(currentBalance, 10) > 0) {
-          console.log(`Creating burn instruction for ${token.mintAddress} (${currentBalance} tokens)`)
-          burnInstructions.push(
-            createBurnInstruction(
-              tokenAccount,
-              new PublicKey(token.mintAddress),
-              new PublicKey(userPublicKey),
-              BigInt(currentBalance)
-            )
-          )
-        }
-
-        closeInstructions.push(
-          createCloseAccountInstruction(
-            tokenAccount,
-            new PublicKey(userPublicKey),
-            new PublicKey(userPublicKey)
-          )
-        )
-        tokensToProcess.push(token)
-      } catch (error) {
-        console.error(`Failed to prepare burn/close for ${token.mintAddress}:`, error)
-        result.failed.push({
-          mintAddress: token.mintAddress,
-          error: `Failed to create burn/close instruction: ${error instanceof Error ? error.message : 'Unknown error'}`
-        })
-      }
+    if (closableTokens.length === 0) {
+      console.log('No token accounts to burn/close')
+      return result
     }
 
-    if (burnInstructions.length > 0 || closeInstructions.length > 0) {
-      try {
-        const closeFeeInstructions = createFeeTransferInstructions(
-          new PublicKey(userPublicKey),
-          'CLOSE',
-          tokensToProcess.length
-        )
-
-        const sellFeeInstructions = sellData ? createFeeTransferInstructions(
-          new PublicKey(userPublicKey),
-          'SELL',
-          sellData.successfulSwapsCount,
-          sellData.totalSolReceived
-        ) : []
-
-        const allInstructions = [...burnInstructions, ...closeInstructions, ...closeFeeInstructions, ...sellFeeInstructions]
-        const { blockhash } = await connection.getLatestBlockhash('confirmed')
-
-        const messageV0 = new TransactionMessage({
-          payerKey: new PublicKey(userPublicKey),
-          recentBlockhash: blockhash,
-          instructions: allInstructions
-        }).compileToV0Message()
-
-        const transaction = new VersionedTransaction(messageV0)
-        const signedTransactions = await signAllTransactions([transaction])
-
-        const signature = await retryWithBackoff(async () => {
-          return await connection.sendTransaction(signedTransactions[0], {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-            maxRetries: 3
-          })
+    try {
+      const { signature } = await executeCloseForTokens(
+        closableTokens,
+        userPublicKey,
+        connection,
+        signAllTransactions,
+        sellData
+      )
+      result.signatures.push(signature)
+      result.successful = closableTokens.map((token) => token.mintAddress)
+    } catch (transactionError) {
+      console.error('Close transaction failed:', transactionError)
+      const errorMessage = transactionError instanceof Error
+        ? transactionError.message
+        : 'Unknown transaction error'
+      closableTokens.forEach((token) => {
+        result.failed.push({
+          mintAddress: token.mintAddress,
+          error: `Transaction failed: ${errorMessage}`
         })
-
-        const confirmation = await connection.confirmTransaction(signature, 'confirmed')
-
-        if (confirmation.value.err) {
-          const errorMsg = `Burn/Close transaction failed: ${JSON.stringify(confirmation.value.err)}`
-          console.error(errorMsg)
-          tokensToProcess.forEach(token => {
-            result.failed.push({
-              mintAddress: token.mintAddress,
-              error: errorMsg
-            })
-          })
-        } else {
-          result.signatures.push(signature)
-          result.successful = [
-            ...alreadyClosed,
-            ...tokensToProcess.map(token => token.mintAddress),
-          ]
-          console.log(`Successfully burned and closed ${tokensToProcess.length} token accounts`)
-        }
-      } catch (transactionError) {
-        console.error('Transaction creation/sending failed:', transactionError)
-        tokensToProcess.forEach(token => {
-          result.failed.push({
-            mintAddress: token.mintAddress,
-            error: `Transaction failed: ${transactionError instanceof Error ? transactionError.message : 'Unknown transaction error'}`
-          })
-        })
-        result.successful = [...alreadyClosed]
-      }
-    } else {
-      result.successful = [...alreadyClosed]
-      if (alreadyClosed.length === 0) {
-        console.log('No token accounts to burn/close')
-      }
+      })
     }
 
     return result
   } catch (error) {
     console.error('Burn/Close accounts function failed:', error)
-    tokens.forEach(token => {
+    tokens.forEach((token) => {
       result.failed.push({
         mintAddress: token.mintAddress,
         error: `Close account error: ${error instanceof Error ? error.message : 'Unknown error'}`
@@ -2056,20 +2228,19 @@ export function categorizeUserTokens(tokens: UserToken[]): {
 }
 
 // New function to close only zero-balance token accounts
-// Intelligently burns tokens first if balance > 0, then closes accounts
+// Primary path: Jupiter /reclaim/craft; fallback: manual burn + close
 export async function closeZeroBalanceTokens(
   userPublicKey: string,
   connection: Connection,
   signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
-): Promise<{ successful: string[]; failed: Array<{ mintAddress: string; error: string }>; signatures: string[] }> {
-  const result = {
-    successful: [] as string[],
-    failed: [] as Array<{ mintAddress: string; error: string }>,
-    signatures: [] as string[]
+): Promise<CloseAccountsResult> {
+  const result: CloseAccountsResult = {
+    successful: [],
+    failed: [],
+    signatures: []
   }
 
   try {
-    // Fetch tokens that are either zero-balance or have no SOL value (unsellable)
     const unsellableTokens = await fetchZeroBalanceTokens(connection, new PublicKey(userPublicKey))
 
     if (unsellableTokens.length === 0) {
@@ -2079,69 +2250,27 @@ export async function closeZeroBalanceTokens(
 
     console.log(`Found ${unsellableTokens.length} unsellable tokens to close`)
 
-    const burnInstructions = []
-    const closeInstructions = []
-    const tokensToProcess = []
+    const closableTokens: UserToken[] = []
 
-    // Create burn and close instructions for each unsellable token
     for (const token of unsellableTokens) {
       try {
-        const tokenAccount = await getAssociatedTokenAddress(
-          new PublicKey(token.mintAddress),
-          new PublicKey(userPublicKey)
-        )
-
-        const accountInfo = await connection.getAccountInfo(tokenAccount)
-        if (!accountInfo) {
-          console.log(`Token account already closed: ${token.mintAddress}`)
-          result.successful.push(token.mintAddress)
+        if (token.frozen) {
+          result.failed.push({
+            mintAddress: token.mintAddress,
+            error: 'Token account is frozen and cannot be closed'
+          })
           continue
         }
 
-        let currentBalance = '0'
-        let currentUiAmount = 0
-        try {
-          const balanceInfo = await connection.getTokenAccountBalance(tokenAccount)
-          currentBalance = balanceInfo.value.amount
-          currentUiAmount = balanceInfo.value.uiAmount || 0
-        } catch (balanceError) {
-          if (isRpcAccountNotFoundError(balanceError)) {
-            result.successful.push(token.mintAddress)
-            continue
-          }
-          throw balanceError
+        if (token.usdValue >= 0.001 && token.uiAmount > MIN_BALANCE_UI) {
+          result.failed.push({
+            mintAddress: token.mintAddress,
+            error: `Account has balance and SOL value >= 0.001 (may be sellable)`
+          })
+          continue
         }
 
-        console.log(`Token ${token.mintAddress}: balance=${currentBalance}, uiAmount=${currentUiAmount}, usdValue=${token.usdValue}`)
-
-        if (parseInt(currentBalance, 10) > 0) {
-          if (token.usdValue < 0.001) {
-            console.log(`Creating burn instruction for unsellable token ${token.mintAddress} (${currentBalance} tokens, SOL value ${token.usdValue})`)
-            burnInstructions.push(
-              createBurnInstruction(
-                tokenAccount,
-                new PublicKey(token.mintAddress),
-                new PublicKey(userPublicKey),
-                BigInt(currentBalance)
-              )
-            )
-          } else {
-            result.failed.push({
-              mintAddress: token.mintAddress,
-              error: `Account has balance: ${currentUiAmount} and SOL value >= 0.001 (may be sellable)`
-            })
-            continue
-          }
-        }
-
-        closeInstructions.push(
-          createCloseAccountInstruction(
-            tokenAccount,
-            new PublicKey(userPublicKey),
-            new PublicKey(userPublicKey)
-          )
-        )
-        tokensToProcess.push(token)
+        closableTokens.push(token)
       } catch (error) {
         console.error(`Failed to prepare burn/close for ${token.mintAddress}:`, error)
         result.failed.push({
@@ -2151,69 +2280,34 @@ export async function closeZeroBalanceTokens(
       }
     }
 
-    if (burnInstructions.length > 0 || closeInstructions.length > 0) {
-      try {
-        // Combine burn and close instructions in the same transaction
-        const allInstructions = [...burnInstructions, ...closeInstructions]
-
-        // Create transaction with burn + close instructions
-        const { blockhash } = await connection.getLatestBlockhash('confirmed')
-
-        const messageV0 = new TransactionMessage({
-          payerKey: new PublicKey(userPublicKey),
-          recentBlockhash: blockhash,
-          instructions: allInstructions
-        }).compileToV0Message()
-
-        const transaction = new VersionedTransaction(messageV0)
-        const signedTransactions = await signAllTransactions([transaction])
-
-        // Send burn + close transaction
-        const signature = await retryWithBackoff(async () => {
-          return await connection.sendTransaction(signedTransactions[0], {
-            skipPreflight: false,
-            preflightCommitment: 'confirmed',
-            maxRetries: 3
-          })
-        })
-
-        const confirmation = await connection.confirmTransaction(signature, 'confirmed')
-
-        if (confirmation.value.err) {
-          const errorMsg = `Burn/Close transaction failed: ${JSON.stringify(confirmation.value.err)}`
-          console.error(errorMsg)
-          tokensToProcess.forEach(token => {
-            result.failed.push({
-              mintAddress: token.mintAddress,
-              error: errorMsg
-            })
-          })
-        } else {
-          result.signatures.push(signature)
-          result.successful.push(...tokensToProcess.map(token => token.mintAddress))
-          console.log(`Successfully burned and closed ${tokensToProcess.length} unsellable token accounts`)
-
-          // Log details
-          if (burnInstructions.length > 0) {
-            console.log(`- Burned tokens in ${burnInstructions.length} accounts`)
-          }
-          console.log(`- Closed ${closeInstructions.length} accounts`)
-
-          // Log fee summary (fees are now included in the transaction)
-          const feeDistribution = calculateFeeDistribution('CLOSE', tokensToProcess.length)
-          console.log(`Fees processed inline: ${feeDistribution.totalFee} SOL total (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
-        }
-      } catch (transactionError) {
-        console.error('Transaction creation/sending failed:', transactionError)
-        tokensToProcess.forEach(token => {
-          result.failed.push({
-            mintAddress: token.mintAddress,
-            error: `Transaction failed: ${transactionError instanceof Error ? transactionError.message : 'Unknown transaction error'}`
-          })
-        })
-      }
-    } else {
+    if (closableTokens.length === 0) {
       console.log('No valid unsellable token accounts to burn/close')
+      return result
+    }
+
+    try {
+      const { signature } = await executeCloseForTokens(
+        closableTokens,
+        userPublicKey,
+        connection,
+        signAllTransactions
+      )
+      result.signatures.push(signature)
+      result.successful.push(...closableTokens.map((token) => token.mintAddress))
+
+      const feeDistribution = calculateFeeDistribution('CLOSE', closableTokens.length)
+      console.log(`Fees processed inline: ${feeDistribution.totalFee} SOL total (Dev: ${feeDistribution.devFee}, Referral: ${feeDistribution.referralFee})`)
+    } catch (transactionError) {
+      console.error('Transaction creation/sending failed:', transactionError)
+      const errorMessage = transactionError instanceof Error
+        ? transactionError.message
+        : 'Unknown transaction error'
+      closableTokens.forEach((token) => {
+        result.failed.push({
+          mintAddress: token.mintAddress,
+          error: `Transaction failed: ${errorMessage}`
+        })
+      })
     }
 
     return result

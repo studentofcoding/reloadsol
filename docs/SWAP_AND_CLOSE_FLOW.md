@@ -11,7 +11,7 @@ This document summarizes how bulk swaps and token account closures work across t
 | RPC | Same-origin `/api/rpc` proxy | `RpcContext.tsx`, `/api/rpc/route.ts` |
 | Prices/metadata | Jupiter APIs (UI support, not swap execution) | `/api/tokens/prices`, `/api/jupiter/metadata` |
 | Charts | GMGN iframe embeds only (`gmgn.cc`) | `BulkTokenBuyer.tsx`, `BulkTokenSeller.tsx`, chart pages |
-| Close accounts | On-chain burn + close via wallet | `closeTokenAccounts`, `closeZeroBalanceTokens` |
+| Close accounts | Jupiter `/reclaim/craft` + fixed fee (manual fallback) | `jupiter-reclaim.ts`, `/api/jupiter/reclaim/craft`, `closeTokenAccounts` |
 
 ## Providers and Flow
 
@@ -25,6 +25,12 @@ This document summarizes how bulk swaps and token account closures work across t
 - **GMGN (charts only)**
   - Embedded `gmgn.cc` iframes on `/buy` and `/sell` for price charts
   - No GMGN swap execution in bulk flows
+
+- **Jupiter Reclaim (bulk close)**
+  - Craft: `POST /api/jupiter/reclaim/craft` → `https://ultra-api.jup.ag/reclaim/craft` with `{ owner, mints }`
+  - Returns a base64 transaction; appends fixed **0.001 SOL × account** close fee (+ sell fee when post-swap)
+  - User signs once; transaction sent via `/api/rpc`
+  - Fallback: manual burn + close in `closeTokenAccounts` if craft fails
 
 - **Jupiter swap API (other features only)**
   - `getSwapQuote` / `getSwapTransaction` remain for signals, SL/TP, trending tracker, and legacy single-token paths
@@ -58,15 +64,15 @@ Implemented in `enrichTokenMetadataAsync` (`src/utils/jupiter.ts`), the system e
 
 - Entry points: `handleCloseOnly` in `BulkTokenSeller.tsx` and `closeZeroBalanceTokens` in `src/utils/jupiter.ts`.
 - Behavior:
-  - If a token account has a positive balance but `usdValue < 0.001`, the flow creates a burn instruction first (burn entire balance), then closes the account.
+  - Primary: Jupiter `/reclaim/craft` batches burn + close for selected mints
+  - Fallback: manual burn + close if Jupiter craft fails
   - Frozen tokens are skipped and recorded as failed closes.
   - Missing token accounts (already closed) are treated as success.
-  - Fees: Applies the fixed per-close fee via `getFeeForOperation('CLOSE')`.
+  - Fees: **0.001 SOL × account count** via `createFeeTransferInstructions('CLOSE')` in the same signed transaction.
 
 ## Post-Swap Closures
 
-- After swaps: If a token is sold 100%, `closeTokenAccounts` is invoked to close the account. If a residual balance is detected, a burn instruction is added first.
-- Closures use on-chain burn + close via the wallet and `/api/rpc`, regardless of which swap path was used.
+- After swaps: If a token is sold 100%, `closeTokenAccounts` is invoked via Jupiter reclaim (manual fallback on failure).
 
 ## Fees
 
@@ -121,8 +127,10 @@ The system implements a centralized fee configuration in `src/utils/jupiter.ts`:
   - `src/components/CatchTheCoinClient.tsx` — `handleSellToken`: `signAllTransactions`, `sendRawTransaction`, `confirmTransaction`.
 
 - Post-Swap Account Closure
-  - `src/utils/jupiter.ts` — `closeTokenAccounts`: `getAccountInfo` first; missing ATA → success; burn if balance > 0, then close.
-  - `src/utils/jupiter.ts` — `closeZeroBalanceTokens`: same missing-account handling; burns tiny balances then closes.
+  - `src/utils/jupiter-reclaim.ts` — `craftReclaimTransaction`, `injectInstructionsIntoVersionedTransaction`.
+  - `src/app/api/jupiter/reclaim/craft/route.ts` — server proxy to Jupiter Ultra reclaim API.
+  - `src/utils/jupiter.ts` — `closeTokenAccounts`: Jupiter reclaim primary; manual fallback; missing ATA → success.
+  - `src/utils/jupiter.ts` — `closeZeroBalanceTokens`: same Jupiter-first pattern for unsellable tokens.
   - `src/components/BulkTokenSeller.tsx` — Auto-close after 100% sells via `executeBulkSellAlt` close path.
 
 - Close-Only Operations

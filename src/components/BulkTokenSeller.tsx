@@ -1024,7 +1024,9 @@ export default function BulkTokenSeller() {
         signatures: closeOnlyResult.signatures,
       };
 
-      if (closeData.successful.length > 0 || closeData.failed.length > 0) {
+      const closeConfirmed = closeData.signatures.length > 0;
+
+      if (closeConfirmed) {
         showOutcome({
           success: closeData.failed.length === 0,
           operation: "close",
@@ -1038,72 +1040,85 @@ export default function BulkTokenSeller() {
               ? closeData.failed[0]?.error || "Close failed"
               : undefined,
         });
+      } else if (closeData.failed.length > 0) {
+        showOutcome({
+          success: false,
+          operation: "close",
+          isSimulation: false,
+          error: closeData.failed[0]?.error || "Close failed",
+        });
+      } else {
+        setError("No accounts to close");
       }
 
       // Points tracking
-      try {
-        const trackResult = await trackClose(
-          publicKey.toString(),
-          closeData.successful.length,
-          {
-            failureCount: closeData.failed.length,
-            tokenMints: closeData.successful,
-            signatures: closeData.signatures,
-          },
-        );
-        console.log(
-          `🎉 Earned ${trackResult.pointsEarned} points from close operation!`,
-        );
-        setClosePointsEarned(trackResult.pointsEarned);
-      } catch (trackError) {
-        console.error(
-          "Failed to track close operation for points:",
-          trackError,
-        );
+      if (closeConfirmed) {
+        try {
+          const trackResult = await trackClose(
+            publicKey.toString(),
+            closeData.successful.length,
+            {
+              failureCount: closeData.failed.length,
+              tokenMints: closeData.successful,
+              signatures: closeData.signatures,
+            },
+          );
+          console.log(
+            `🎉 Earned ${trackResult.pointsEarned} points from close operation!`,
+          );
+          setClosePointsEarned(trackResult.pointsEarned);
+        } catch (trackError) {
+          console.error(
+            "Failed to track close operation for points:",
+            trackError,
+          );
+        }
       }
 
       // History / PnL tracking
-      try {
-        const currentSolPrice = await getSolPriceUSD();
-        const closeTokenData = [
-          ...selectedTokens,
-          ...selectedZeroBalanceTokens,
-        ].map((token) => ({
-          mintAddress: token.mintAddress,
-          symbol: token.symbol,
-          name: token.name,
-          logoURI: token.logoURI,
-        }));
+      if (closeConfirmed) {
+        try {
+          const currentSolPrice = await getSolPriceUSD();
+          const closeTokenData = [
+            ...selectedTokens,
+            ...selectedZeroBalanceTokens,
+          ].map((token) => ({
+            mintAddress: token.mintAddress,
+            symbol: token.symbol,
+            name: token.name,
+            logoURI: token.logoURI,
+          }));
 
-        const closeErrors =
-          closeData.failed.length > 0
-            ? closeData.failed.map((f) => f.error)
-            : undefined;
+          const closeErrors =
+            closeData.failed.length > 0
+              ? closeData.failed.map((f) => f.error)
+              : undefined;
 
-        await trackOperation({
-          walletAddress: publicKey.toString(),
-          operationType: "close",
-          tokens: closeTokenData.map((t) => ({
-            ...t,
-            solPrice: currentSolPrice,
-          })),
-          successCount: closeData.successful.length,
-          failureCount: closeData.failed.length,
-          totalTokens: closeData.successful.length + closeData.failed.length,
-          feesPaid: 0,
-          solPriceUsd: currentSolPrice,
-          signatures: closeData.signatures,
-          errors: closeErrors,
-        });
-      } catch (trackError) {
-        console.error(
-          "Failed to track close operation for history/PnL:",
-          trackError,
-        );
+          await trackOperation({
+            walletAddress: publicKey.toString(),
+            operationType: "close",
+            tokens: closeTokenData.map((t) => ({
+              ...t,
+              solPrice: currentSolPrice,
+            })),
+            successCount: closeData.successful.length,
+            failureCount: closeData.failed.length,
+            totalTokens: closeData.successful.length + closeData.failed.length,
+            feesPaid: 0,
+            solPriceUsd: currentSolPrice,
+            signatures: closeData.signatures,
+            errors: closeErrors,
+          });
+        } catch (trackError) {
+          console.error(
+            "Failed to track close operation for history/PnL:",
+            trackError,
+          );
+        }
       }
 
       // Refresh token list and clear selection
-      if (closeData.successful.length > 0) {
+      if (closeConfirmed && closeData.successful.length > 0) {
         setSelectedTokens([]);
         setSelectedZeroBalanceTokens([]);
         triggerPostTradeRefresh({
