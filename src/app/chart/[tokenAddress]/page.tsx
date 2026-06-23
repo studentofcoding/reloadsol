@@ -8,7 +8,6 @@ import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { useChartTokenInfo } from "@/hooks/useChartTokenInfo";
 import { useAxiomRisk } from "@/hooks/useAxiomRisk";
-import { useOhlcData } from "@/hooks/useOhlcData";
 import PhantomWalletButton from "@/components/PhantomWalletButton";
 import RiskAnalysis from "@/components/RiskAnalysis";
 import TransactionResultModal from "@/components/TransactionResultModal";
@@ -157,31 +156,7 @@ export default function ChartPage() {
     };
   }, [axiomQuery.data]);
 
-  const ohlcQuery = useOhlcData(validTokenAddress);
-  interface OHLCBar {
-    token_address: string;
-    interval: "1m" | "5m" | "15m" | "1h";
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    timestamp: string;
-  }
-  const ohlcBars: OHLCBar[] = useMemo(() => {
-    if (!ohlcQuery.data) return [];
-    return ohlcQuery.data.map((b) => ({
-      token_address: validTokenAddress ?? "",
-      interval: "5m" as const,
-      open: b.open,
-      high: b.high,
-      low: b.low,
-      close: b.close,
-      timestamp: String(b.time),
-    }));
-  }, [ohlcQuery.data, validTokenAddress]);
-  const isOhlcLoading = ohlcQuery.isLoading;
-  const ohlcError =
-    ohlcQuery.error instanceof Error ? ohlcQuery.error.message : "";
+  const gmgnChartUrl = `https://www.gmgn.cc/kline/sol/${tokenAddress}?interval=5m`;
 
   // Buy form state
   const [buyAmount, setBuyAmount] = useState("0.1");
@@ -202,11 +177,6 @@ export default function ChartPage() {
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0);
   const [balanceAfter, setBalanceAfter] = useState<number>(0);
-
-  const [chartMode, setChartMode] = useState("gmgn");
-
-  // Create the GMGN chart URL with correct format
-  const gmgnChartUrl = `https://www.gmgn.cc/kline/sol/${tokenAddress}?interval=5m`;
 
   // Setup SSE connection for real-time updates
   useEffect(() => {
@@ -435,70 +405,6 @@ export default function ChartPage() {
       const newAmount = ((walletBalance * value) / 100).toFixed(4);
       setBuyAmount(newAmount);
     }
-  };
-
-  const OHLCChart = ({
-    bars,
-    height = 600,
-  }: {
-    bars: OHLCBar[];
-    height?: number;
-  }) => {
-    const width =
-      typeof window !== "undefined"
-        ? Math.min(1200, window.innerWidth - 64)
-        : 800;
-    const padding = 40;
-    const w = width - padding * 2;
-    const h = height - padding * 2;
-    if (!bars || bars.length === 0)
-      return (
-        <div className="flex items-center justify-center h-[600px] text-gray-400">
-          No OHLC data
-        </div>
-      );
-    const highs = bars.map((b) => b.high);
-    const lows = bars.map((b) => b.low);
-    const maxY = Math.max(...highs);
-    const minY = Math.min(...lows);
-    const scaleY = (v: number) => h - ((v - minY) / (maxY - minY)) * h;
-    const candleWidth = Math.max(2, Math.floor(w / bars.length) - 4);
-    return (
-      <svg width={width} height={height} className="bg-gray-900">
-        <g transform={`translate(${padding},${padding})`}>
-          {bars.map((b, i) => {
-            const x = (i / bars.length) * w;
-            const yH = scaleY(b.high);
-            const yL = scaleY(b.low);
-            const yO = scaleY(b.open);
-            const yC = scaleY(b.close);
-            const up = b.close >= b.open;
-            const color = up ? "#22c55e" : "#ef4444";
-            const top = Math.min(yO, yC);
-            const bodyH = Math.max(2, Math.abs(yC - yO));
-            return (
-              <g key={i} transform={`translate(${x},0)`}>
-                <line
-                  x1={Math.floor(candleWidth / 2)}
-                  y1={yH}
-                  x2={Math.floor(candleWidth / 2)}
-                  y2={yL}
-                  stroke={color}
-                  strokeWidth={1}
-                />
-                <rect
-                  x={0}
-                  y={top}
-                  width={candleWidth}
-                  height={bodyH}
-                  fill={color}
-                />
-              </g>
-            );
-          })}
-        </g>
-      </svg>
-    );
   };
 
   if (displayError && !tokenInfo) {
@@ -827,60 +733,22 @@ export default function ChartPage() {
 
       {/* Chart Container */}
       <div className="relative max-w-7xl mx-auto" style={{ height: "70vh" }}>
-        <div className="flex items-center justify-between px-2 py-2">
-          <div className="text-sm text-gray-400">Chart Mode</div>
-          <div className="space-x-2">
-            <button
-              className={`px-3 py-1 rounded ${chartMode === "ohlc" ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300"}`}
-              onClick={() => setChartMode("ohlc")}
-            >
-              OHLC (local)
-            </button>
-            <button
-              className={`px-3 py-1 rounded ${chartMode === "gmgn" ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300"}`}
-              onClick={() => setChartMode("gmgn")}
-            >
-              GMGN
-            </button>
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+            <div className="w-12 h-12 border-4 border-gray-400 border-t-white rounded-full animate-spin"></div>
           </div>
-        </div>
-
-        {chartMode === "ohlc" ? (
-          <>
-            {isOhlcLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-                <div className="w-12 h-12 border-4 border-gray-400 border-t-white rounded-full animate-spin"></div>
-              </div>
-            )}
-            {ohlcError && (
-              <div className="p-3 text-red-400 text-sm">{ohlcError}</div>
-            )}
-            {!isOhlcLoading && !ohlcError && (
-              <div className="w-full h-full overflow-x-auto">
-                <OHLCChart bars={ohlcBars} height={600} />
-              </div>
-            )}
-          </>
-        ) : (
-          <>
-            {isLoading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
-                <div className="w-12 h-12 border-4 border-gray-400 border-t-white rounded-full animate-spin"></div>
-              </div>
-            )}
-            <iframe
-              src={gmgnChartUrl}
-              className="w-full h-full"
-              style={{
-                border: "none",
-                minHeight: "600px",
-              }}
-              title={`GMGN Chart - ${tokenInfo?.symbol || tokenAddress}`}
-              allowFullScreen
-              frameBorder="0"
-            />
-          </>
         )}
+        <iframe
+          src={gmgnChartUrl}
+          className="w-full h-full"
+          style={{
+            border: "none",
+            minHeight: "600px",
+          }}
+          title={`GMGN Chart - ${tokenInfo?.symbol || tokenAddress}`}
+          allowFullScreen
+          frameBorder="0"
+        />
       </div>
 
       {/* Footer */}

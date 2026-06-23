@@ -65,14 +65,6 @@ export function matchesApiPrefix(
   );
 }
 
-/** GET /api/ohlc is used by public chart pages; POST uses OHLC_UPDATE_TOKEN in-route. */
-export function isPublicOhlcRead(pathname: string, method: string): boolean {
-  return (
-    (pathname === '/api/ohlc' || pathname.startsWith('/api/ohlc/')) &&
-    method === 'GET'
-  );
-}
-
 /** GET trending lists for marketing preview (wallet gate, landing). */
 export function isPublicTrendingRead(pathname: string, method: string): boolean {
   if (method !== 'GET') return false;
@@ -84,10 +76,6 @@ export function isPublicTrendingRead(pathname: string, method: string): boolean 
 
 export function getApiAccessTier(pathname: string, method: string): ApiAccessTier {
   if (matchesApiPrefix(pathname, PUBLIC_API_PREFIXES)) {
-    return 'public';
-  }
-
-  if (isPublicOhlcRead(pathname, method)) {
     return 'public';
   }
 

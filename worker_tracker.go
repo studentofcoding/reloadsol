@@ -187,8 +187,6 @@ func (cs *CronService) initWorkerRegistry() {
 		{ID: "dlmm_screen", Name: "DLMM screen", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.DLMMScreenInterval, TriggerPath: "/trigger/dlmm-screen", CanTrigger: true},
 		{ID: "dlmm_manage", Name: "DLMM manage", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.DLMMManageInterval, TriggerPath: "/trigger/dlmm-manage", CanTrigger: true},
 		{ID: "strategy_report", Name: "Strategy report digest", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.StrategyReportInterval, TriggerPath: "/trigger/strategy-report", CanTrigger: true, Disabled: cs.config.StrategyReportInterval <= 0},
-		{ID: "ohlc_update", Name: "OHLC update", Domain: "infra", Schedule: "every Ns", IntervalSec: cs.config.OHLCUpdateInterval, TriggerPath: "/trigger/ohlc", CanTrigger: true},
-		{ID: "price_monitor", Name: "Price monitor", Domain: "infra", Schedule: "every Ns", IntervalSec: cs.config.PriceMonitorInterval, TriggerPath: "/trigger/price-monitor", CanTrigger: true},
 		{ID: "sltp_monitor", Name: "SL/TP monitor", Domain: "infra", Schedule: "every Ns", IntervalSec: cs.config.SLTPMonitorInterval, TriggerPath: "/trigger/sltp", CanTrigger: true},
 		{ID: "daily_summary", Name: "Daily summary", Domain: "infra", Schedule: "daily 00:00 UTC", IntervalSec: 86400, TriggerPath: "/trigger/summary", CanTrigger: true},
 		{ID: "pnl_update", Name: "PnL update", Domain: "infra", Schedule: "daily 02:00 UTC", IntervalSec: 86400, TriggerPath: "/trigger/pnl", CanTrigger: true},

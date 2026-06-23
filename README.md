@@ -7,7 +7,7 @@ Next.js + Go-cron Solana trading platform: bulk token buys, trending tracker, mc
 - **Bulk token purchase** — buy up to 10 tokens in one flow via Raptor
 - **Universal wallet** — Phantom, Solflare, Backpack, Jupiter Wallet, mobile QR, and 20+ Wallet Standard wallets
 - **Trending tracker** — 24/7 monitoring, win/loss stats, Discord alerts
-- **MCap tracker** — growth thresholds, labels, OHLC bars
+- **MCap tracker** — growth thresholds, labels
 - **SL/TP monitor** — automated stop-loss / take-profit positions
 - **DLMM agent** — Hunter screener + Healer manager for Meteora pools (`/dev/dlmm`)
 - **Docker stack** — one command runs Next.js web + Go cron locally or in production
@@ -253,7 +253,6 @@ Automated monitoring of Jupiter trending tokens with 24h win/loss summaries.
 | `/api/trending/summary` | POST | 24-hour summaries (cron) |
 | `/api/trending/stats` | GET | Frontend stats feed |
 | `/api/trending/mode` | PUT | Toggle simulation ↔ live trading |
-| `/api/trending/price-monitor` | POST | 1-minute price monitor (Go cron) |
 
 ### Switch simulation → live trading
 

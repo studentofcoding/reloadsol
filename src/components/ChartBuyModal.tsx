@@ -27,31 +27,6 @@ import { trackBuy } from "@/utils/operations-api";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { useTradingData } from "@/components/TradingDataProvider";
 import { usePostBuyRefresh } from "@/hooks/usePostBuyRefresh";
-import { Line } from "react-chartjs-2";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-} from "chart.js";
-import "chartjs-adapter-date-fns";
-
-// Register Chart.js components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-);
 
 interface TokenInfo {
   symbol: string;
@@ -208,21 +183,6 @@ export default function ChartBuyModal({
   const [showResultModal, setShowResultModal] = useState<boolean>(false);
   const [balanceBefore, setBalanceBefore] = useState<number>(0);
   const [balanceAfter, setBalanceAfter] = useState<number>(0);
-
-  // OHLC chart state
-  interface OHLCBar {
-    token_address: string;
-    interval: "1m" | "5m" | "15m" | "1h";
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    timestamp: string;
-  }
-  const [chartMode, setChartMode] = useState<"gmgn" | "ohlc">("gmgn");
-  const [ohlcBars, setOhlcBars] = useState<OHLCBar[]>([]);
-  const [isOhlcLoading, setIsOhlcLoading] = useState(false);
-  const [ohlcError, setOhlcError] = useState("");
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -444,82 +404,6 @@ export default function ChartBuyModal({
     }
   };
 
-  const OHLCChart = ({
-    bars,
-    height = 400,
-  }: {
-    bars: OHLCBar[];
-    height?: number;
-  }) => {
-    const data = {
-      labels: bars.map((b) => new Date(b.timestamp)),
-      datasets: [
-        {
-          label: "Price",
-          data: bars.map((b) => b.close),
-          borderColor: "#22c55e",
-          backgroundColor: "rgba(34, 197, 94, 0.1)",
-          borderWidth: 2,
-          tension: 0.1,
-          pointRadius: 0,
-          pointHoverRadius: 4,
-        },
-      ],
-    };
-
-    const options = {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          mode: "index" as const,
-          intersect: false,
-          callbacks: {
-            label: (context: any) => `Price: $${context.raw.toFixed(6)}`,
-          },
-        },
-      },
-      scales: {
-        x: {
-          type: "time" as const,
-          time: {
-            unit: "minute" as const,
-            displayFormats: {
-              minute: "HH:mm",
-            },
-          },
-          grid: {
-            color: "rgba(255, 255, 255, 0.1)",
-          },
-          ticks: {
-            color: "#9ca3af",
-          },
-        },
-        y: {
-          grid: {
-            color: "rgba(255, 255, 255, 0.1)",
-          },
-          ticks: {
-            color: "#9ca3af",
-            callback: (value: any) => "$" + value.toFixed(6),
-          },
-        },
-      },
-      interaction: {
-        mode: "nearest" as const,
-        axis: "x" as const,
-        intersect: false,
-      },
-    };
-
-    return (
-      <div style={{ height }}>
-        <Line data={data} options={options} />
-      </div>
-    );
-  };
-
   if (!tokenAddress) return null;
 
   return (
@@ -615,48 +499,14 @@ export default function ChartBuyModal({
                 <span className="text-xs text-gray-400">
                   Price Chart (GMGN)
                 </span>
-                {/* OHLC Toggle Excluded
-                <div className="space-x-2">
-                  <button
-                    className={`px-2 py-0.5 text-xs rounded ${chartMode === "ohlc" ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300"}`}
-                    onClick={() => setChartMode("ohlc")}
-                  >
-                    Local
-                  </button>
-                  <button
-                    className={`px-2 py-0.5 text-xs rounded ${chartMode === "gmgn" ? "bg-blue-600 text-white" : "bg-gray-700 text-gray-300"}`}
-                    onClick={() => setChartMode("gmgn")}
-                  >
-                    GMGN
-                  </button>
-                </div>
-                */}
               </div>
               <div className="flex-1 relative">
-                {chartMode === "ohlc" ? (
-                  <>
-                    {isOhlcLoading && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-gray-900/50">
-                        <div className="w-8 h-8 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
-                      </div>
-                    )}
-                    {!isOhlcLoading && !ohlcError && (
-                      <OHLCChart bars={ohlcBars} height={500} />
-                    )}
-                    {ohlcError && (
-                      <div className="flex items-center justify-center h-full text-red-400">
-                        {ohlcError}
-                      </div>
-                    )}
-                  </>
-                ) : (
-                  <iframe
-                    src={gmgnChartUrl}
-                    className="w-full h-full min-h-[500px]"
-                    title="Chart"
-                    frameBorder="0"
-                  />
-                )}
+                <iframe
+                  src={gmgnChartUrl}
+                  className="w-full h-full min-h-[500px]"
+                  title="Chart"
+                  frameBorder="0"
+                />
               </div>
             </div>
 

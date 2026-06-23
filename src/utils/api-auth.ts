@@ -46,7 +46,6 @@ export function isServiceAuthorizedRequest(req: NextRequest): boolean {
     process.env.NOTIFICATION_SECRET_KEY,
     process.env.PNL_UPDATE_SECRET,
     process.env.PNL_UPDATE_TOKEN,
-    process.env.OHLC_UPDATE_TOKEN,
   ];
 
   if (secrets.some((secret) => hasMatchingSecret(req, secret))) {

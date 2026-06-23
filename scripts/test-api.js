@@ -191,18 +191,6 @@ async function runTests() {
   // === DISCORD WEBHOOK TESTS ===
   log.info('\n🔔 Testing Discord Webhook Endpoints...');
 
-  // Test Price Monitor Discord Test
-  await testEndpoint('Price Monitor Discord Test', '/api/trending/price-monitor', {
-    method: 'GET',
-    params: { key: 'r3l0ads0l-trending' }, // Add required secret key
-    validator: (data) => {
-      // Handle both success and error responses
-      return (data.success === true || data.success === false) &&
-        data.message &&
-        typeof data.message === 'string'
-    }
-  });
-
   // Test Trending Discord Test
   await testEndpoint('Trending Discord Test', '/api/trending', {
     method: 'PUT',

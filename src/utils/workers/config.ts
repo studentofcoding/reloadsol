@@ -5,8 +5,6 @@ export type WorkerId =
   | 'dlmm_screen'
   | 'dlmm_manage'
   | 'strategy_report'
-  | 'ohlc_update'
-  | 'price_monitor'
   | 'sltp_monitor'
   | 'daily_summary'
   | 'pnl_update'
@@ -18,8 +16,6 @@ export const WORKER_TRIGGER_PATHS: Record<WorkerId, string> = {
   dlmm_screen: '/trigger/dlmm-screen',
   dlmm_manage: '/trigger/dlmm-manage',
   strategy_report: '/trigger/strategy-report',
-  ohlc_update: '/trigger/ohlc',
-  price_monitor: '/trigger/price-monitor',
   sltp_monitor: '/trigger/sltp',
   daily_summary: '/trigger/summary',
   pnl_update: '/trigger/pnl',

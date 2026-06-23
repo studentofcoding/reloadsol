@@ -11,7 +11,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
-	"strconv" // Added for PriceMonitorInterval
+	"strconv"
 	"sync"
 	"time"
 
@@ -222,14 +222,10 @@ type Config struct {
     TrendingSecret string
     PnLSecret      string
     DiscordWebhook string
-    PriceMonitorInterval int    // seconds
-    PriceAlertThreshold  float64
     SLTPMonitorInterval  int    // seconds
     SignalRefreshInterval int   // seconds
     SignalsSimInterval   int    // seconds
     StrategyReportInterval int  // seconds (0 = disabled)
-    OHLCUpdateInterval int    // seconds
-    OHLCBarInterval string    // e.g., "5m"
     DLMMScreenInterval int    // seconds
     DLMMManageInterval int    // seconds
     DLMMSecret         string
@@ -248,22 +244,6 @@ func NewCronService() *CronService {
         TrendingSecret: getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending"),
         PnLSecret:      getEnv("PNL_UPDATE_SECRET", "r3l0ads0l-pnl"),
         DiscordWebhook: getEnv("DISCORD_WEBHOOK_URL", ""),
-        PriceMonitorInterval: func() int {
-            if v := os.Getenv("PRICE_MONITOR_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 180 // default 180s
-        }(),
-        PriceAlertThreshold: func() float64 {
-            if v := os.Getenv("PRICE_ALERT_THRESHOLD"); v != "" {
-                if fv, err := strconv.ParseFloat(v, 64); err == nil {
-                    return fv
-                }
-            }
-            return 0.5 // default 0.5%%
-        }(),
         SLTPMonitorInterval: func() int {
             if v := os.Getenv("SLTP_MONITOR_INTERVAL"); v != "" {
                 if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
@@ -295,20 +275,6 @@ func NewCronService() *CronService {
                 }
             }
             return 86400 // default daily (86400s); set 0 to disable
-        }(),
-        OHLCUpdateInterval: func() int {
-            if v := os.Getenv("OHLC_UPDATE_INTERVAL"); v != "" {
-                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
-                    return iv
-                }
-            }
-            return 300 // default 300s (5m)
-        }(),
-        OHLCBarInterval: func() string {
-            if v := os.Getenv("OHLC_BAR_INTERVAL"); v != "" {
-                return v
-            }
-            return "5m"
         }(),
         DLMMScreenInterval: func() int {
             if v := os.Getenv("DLMM_SCREEN_INTERVAL"); v != "" {
@@ -379,15 +345,6 @@ func (cs *CronService) Start() {
 	}
 	cs.workers.BindEntry(unfilteredEntryID, "unfiltered_trending")
 
-	// Price monitor – every N seconds (default 180)
-	spec := fmt.Sprintf("@every %ds", cs.config.PriceMonitorInterval)
-	priceEntryID, err := cs.cron.AddFunc(spec, cs.runPriceMonitor)
-	if err != nil {
-		cs.logger.Error(fmt.Sprintf("Failed to add price monitor cron job: %v", err))
-		log.Fatal("Failed to add price monitor cron job:", err)
-	}
-	cs.workers.BindEntry(priceEntryID, "price_monitor")
-
     // SL/TP monitor – every M seconds (default 60)
     sltpSpec := fmt.Sprintf("@every %ds", cs.config.SLTPMonitorInterval)
     sltpEntryID, err := cs.cron.AddFunc(sltpSpec, cs.runSLTPMonitor)
@@ -424,15 +381,6 @@ func (cs *CronService) Start() {
         }
         cs.workers.BindEntry(reportEntryID, "strategy_report")
     }
-
-    // OHLC update – every N seconds (default 300)
-    ohlcSpec := fmt.Sprintf("@every %ds", cs.config.OHLCUpdateInterval)
-    ohlcEntryID, err := cs.cron.AddFunc(ohlcSpec, cs.runOHLCUpdate)
-    if err != nil {
-        cs.logger.Error(fmt.Sprintf("Failed to add OHLC update cron job: %v", err))
-        log.Fatal("Failed to add OHLC update cron job:", err)
-    }
-    cs.workers.BindEntry(ohlcEntryID, "ohlc_update")
 
     // DLMM screen – every N seconds (default 300)
     dlmmScreenSpec := fmt.Sprintf("@every %ds", cs.config.DLMMScreenInterval)
@@ -475,12 +423,10 @@ func (cs *CronService) Start() {
 	http.HandleFunc("/trigger/trending", cs.manualTrendingTrigger)
 	http.HandleFunc("/trigger/summary", cs.manualSummaryTrigger)
 	http.HandleFunc("/trigger/pnl", cs.manualPnLTrigger)
-	http.HandleFunc("/trigger/price-monitor", cs.manualPriceMonitorTrigger)
 	http.HandleFunc("/trigger/sltp", cs.manualSLTPTrigger)
 	http.HandleFunc("/trigger/signals-refresh", cs.manualSignalsRefreshTrigger)
     http.HandleFunc("/trigger/signals-sim-track", cs.manualSignalsSimTrackTrigger)
     http.HandleFunc("/trigger/strategy-report", cs.manualStrategyReportTrigger)
-    http.HandleFunc("/trigger/ohlc", cs.manualOHLCTrigger)
     http.HandleFunc("/trigger/dlmm-screen", cs.manualDLMMScreenTrigger)
     http.HandleFunc("/trigger/dlmm-manage", cs.manualDLMMManageTrigger)
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
@@ -490,7 +436,6 @@ func (cs *CronService) Start() {
     cs.logger.Info("📊 Trending tracker: every 5 minutes")
     cs.logger.Info("📊 Filtered trending tracker: every 2 minutes")
     cs.logger.Info("📊 Unfiltered trending tracker: every 2 minutes")
-    cs.logger.Info(fmt.Sprintf("📉 Price monitor: every %d seconds", cs.config.PriceMonitorInterval))
     cs.logger.Info(fmt.Sprintf("🛡️ SL/TP monitor: every %d seconds", cs.config.SLTPMonitorInterval))
     cs.logger.Info(fmt.Sprintf("📡 Signals refresh: every %d seconds", cs.config.SignalRefreshInterval))
     cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
@@ -499,7 +444,6 @@ func (cs *CronService) Start() {
     } else {
         cs.logger.Info("📊 Strategy report digest: disabled (STRATEGY_REPORT_INTERVAL=0)")
     }
-    cs.logger.Info(fmt.Sprintf("🕯️ OHLC update: every %d seconds (bar %s)", cs.config.OHLCUpdateInterval, cs.config.OHLCBarInterval))
     cs.logger.Info(fmt.Sprintf("🌊 DLMM screen: every %d seconds", cs.config.DLMMScreenInterval))
     cs.logger.Info(fmt.Sprintf("🩺 DLMM manage: every %d seconds", cs.config.DLMMManageInterval))
 	cs.logger.Info("📋 Daily summary: daily at 00:00 UTC")
@@ -747,27 +691,6 @@ func (cs *CronService) runPnLUpdate() {
 	cs.workers.Success("pnl_update")
 }
 
-func (cs *CronService) runPriceMonitor() {
-	cs.workers.Begin("price_monitor")
-	cs.logger.Info("📉 Running price monitor...")
-
-	// Endpoint that returns tokens in real trading mode (server handles logic)
-	url := fmt.Sprintf("%s/api/trending/price-monitor", cs.config.APIBaseURL)
-
-	resp, err := cs.makeRequest("POST", url, map[string]string{
-		"key": cs.config.TrendingSecret,
-		"threshold": fmt.Sprintf("%f", cs.config.PriceAlertThreshold),
-	})
-	if err != nil {
-		cs.logger.Error(fmt.Sprintf("❌ Price monitor failed: %v", err))
-		cs.workers.Fail("price_monitor", err.Error())
-		return
-	}
-
-	cs.logger.Success(fmt.Sprintf("✅ Price monitor completed: %s", resp))
-	cs.workers.Success("price_monitor")
-}
-
 // SL/TP Monitor Response structure
 type SLTPMonitorResponse struct {
 	Success bool   `json:"success"`
@@ -876,23 +799,6 @@ func (cs *CronService) runSLTPMonitor() {
 	cs.workers.Success("sltp_monitor")
 }
 
-// Manual trigger endpoints for testing
-func (cs *CronService) manualPriceMonitorTrigger(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "POST" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	cs.logger.Info("🔧 Manual price monitor trigger")
-	cs.runPriceMonitor()
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message":   "Price monitor triggered manually",
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-	})
-}
-
 func (cs *CronService) manualSLTPTrigger(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -969,40 +875,6 @@ func (cs *CronService) manualDLMMManageTrigger(w http.ResponseWriter, r *http.Re
     })
 }
 
-func (cs *CronService) runOHLCUpdate() {
-    cs.workers.Begin("ohlc_update")
-    cs.logger.Info("🕯️ Running OHLC update...")
-    url := fmt.Sprintf("%s/api/ohlc", cs.config.APIBaseURL)
-    params := map[string]string{
-        "interval": cs.config.OHLCBarInterval,
-        "store":    "true",
-    }
-    resp, err := cs.makeRequest("POST", url, params)
-    if err != nil {
-        cs.logger.Error(fmt.Sprintf("❌ OHLC update failed: %v", err))
-        cs.workers.Fail("ohlc_update", err.Error())
-        return
-    }
-    cs.logger.Success(fmt.Sprintf("✅ OHLC update completed: %s", resp))
-    cs.workers.Success("ohlc_update")
-}
-
-func (cs *CronService) manualOHLCTrigger(w http.ResponseWriter, r *http.Request) {
-    if r.Method != "POST" {
-        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-        return
-    }
-
-    cs.logger.Info("🔧 Manual OHLC update trigger")
-    cs.runOHLCUpdate()
-
-    w.Header().Set("Content-Type", "application/json")
-    json.NewEncoder(w).Encode(map[string]string{
-        "message":   "OHLC update triggered manually",
-        "timestamp": time.Now().UTC().Format(time.RFC3339),
-    })
-}
-
 func (cs *CronService) makeRequest(method, url string, params map[string]string, timeoutSec ...int) (string, error) {
 	// Add query parameters
 	if len(params) > 0 {
@@ -1027,11 +899,6 @@ func (cs *CronService) makeRequest(method, url string, params map[string]string,
 
     req.Header.Set("Content-Type", "application/json")
     req.Header.Set("User-Agent", "reloadsol-cron-service/1.0")
-    if strings.Contains(url, "/api/ohlc") {
-        if token := os.Getenv("OHLC_UPDATE_TOKEN"); token != "" {
-            req.Header.Set("Authorization", "Bearer "+token)
-        }
-    }
     if strings.Contains(url, "/api/pnl/update") {
         token := os.Getenv("PNL_UPDATE_SECRET")
         if token == "" {
@@ -1222,7 +1089,6 @@ func (cs *CronService) statusCheck(w http.ResponseWriter, r *http.Request) {
 			"trending_tracker": "every 5 minutes",
 			"daily_summary":    "daily at 00:00 UTC", 
 			"pnl_update":       "daily at 02:00 UTC",
-			"price_monitor":    fmt.Sprintf("every %d seconds", cs.config.PriceMonitorInterval),
 			"sltp_monitor":     fmt.Sprintf("every %d seconds", cs.config.SLTPMonitorInterval),
 		},
 		"config": map[string]string{
