@@ -109,6 +109,7 @@ export interface SimBuyMeta {
   priceUsd?: number
   botStrategy?: string
   simulationType?: 'manual' | 'strategy'
+  entryFeatures?: Record<string, unknown>
 }
 
 export async function trackSimBuy(
@@ -121,12 +122,23 @@ export async function trackSimBuy(
     priceUsd = (meta.solAmount * solPrice) / meta.tokenAmount
   }
 
+  const entryAt = new Date().toISOString()
+  const tradingSimulation =
+    meta.botStrategy || meta.entryFeatures
+      ? {
+          strategy_id: meta.botStrategy,
+          entry_at: entryAt,
+          entry_features: meta.entryFeatures ?? {},
+        }
+      : undefined
+
   await trackOperation({
     walletAddress: meta.walletAddress,
     operationType: 'buy',
     is_simulation: true,
     simulation_type: meta.simulationType ?? 'manual',
     bot_strategy: meta.botStrategy,
+    trading_simulation: tradingSimulation,
     tokens: [
       {
         mintAddress: meta.mintAddress,

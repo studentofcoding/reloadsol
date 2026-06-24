@@ -18,7 +18,7 @@ See also: [STRATEGY_ARCHITECTURE.md](./STRATEGY_ARCHITECTURE.md), [architecture.
 
 - `sim_only` — paper trades only; included in sim-track / trending sim paths
 - `live_only` — real wallet execution; skipped by sim workers
-- `ab_parallel` — both sim and live; Reports tab shows A/B pairs
+- `ab_parallel` — both sim and live; Reports tab shows A/B pairs for signals/DLMM only (trending bot excluded — no dual-buy)
 
 ---
 
@@ -46,7 +46,8 @@ Per-strategy overrides: `is_active`, `execution_mode`, JSON `config`, domain.
 
 Written **only when a position fully closes** (not on open/hold):
 
-- Signals sim: on sim sell in `POST /api/signals/sim-track`
+- Signals sim (cron): on sim sell in `POST /api/signals/sim-track`
+- Signals sim/live (manual UI): on full close via `maybeRecordSignalsOutcome` in `POST /api/trading/records`
 - Trending bot: on full close via `finalizeBotPositionClose` (`isFullClose === true`)
 - DLMM: on position close in `dlmm/actions`
 
@@ -78,7 +79,9 @@ Sim wallet for signals: `SIGNALS_SIM_WALLET_ADDRESS` (default `signals-strategy-
    - Opens sim buys / closes on `decision === 'exit'`
 3. On close → `recordSignalsOutcome` → `strategy_outcomes`
 
-**`signals_sell_over_100` template:** exits when growth ≥ 100%, stop-loss, or stuck. PnL at close uses live token price (`fetchTokenPricesForTracking`), not mcap growth — rugs can show ~-97% even when mcap scoring still triggers exit.
+**Manual UI (Live / Board tabs):** sim and live buys set `bot_strategy` to the selected signals strategy (`signals_default` or `signals_sell_over_100`, synced via localStorage). Sim buys store `trading_simulation.entry_features` (entry mcap band, organic score, etc.). On full close, `POST /api/trading/records` calls `maybeRecordSignalsOutcome` for both sim and live wallet closes.
+
+**`signals_sell_over_100` template:** exits when growth ≥ 100%, stop-loss, or stuck. PnL at close uses live token price (`fetchTokenPricesForTracking`), not mcap growth — rugs can show ~-97% even when mcap growth still triggers exit.
 
 ### Trending bot
 

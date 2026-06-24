@@ -202,6 +202,8 @@ export interface StrategyCoverageRow {
   last_exit_at: string | null
   avg_pnl_pct: number | null
   open_tracker_count?: number | null
+  ml_unlabeled?: number
+  ml_labeled?: number
 }
 
 export interface MlLabelStats {

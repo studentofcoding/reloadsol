@@ -2,6 +2,7 @@ import type { TrackingRecord } from '@/utils/trading-tracker'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { recordSignalsOutcome } from '@/strategies/outcomes'
 import { computeOpenTradeCycle } from '@/utils/simulation-trades'
+import { isSignalsStrategyId } from '@/utils/signals-strategy-id'
 
 function readEntryFeatures(
   record: TrackingRecord | undefined,
@@ -24,10 +25,27 @@ function readEntryAt(record: TrackingRecord | undefined): string | null {
   return null
 }
 
-function computeLiveClosePnl(
+function findSignalsBuyRecord(
+  records: TrackingRecord[],
+  mintAddress: string,
+  isSimulation: boolean,
+): TrackingRecord | undefined {
+  return [...records]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .find(
+      (r) =>
+        r.operationType === 'buy' &&
+        r.is_simulation === isSimulation &&
+        isSignalsStrategyId(r.bot_strategy) &&
+        r.tokens?.some((t) => t.mintAddress === mintAddress),
+    )
+}
+
+function computeClosePnl(
   records: TrackingRecord[],
   mintAddress: string,
   closingRecord: TrackingRecord,
+  mode: 'sim' | 'live',
 ): { pnlPct: number; solSpent: number; solReceived: number; sellPriceUsd: number } | null {
   const sorted = [...records].sort((a, b) => a.timestamp - b.timestamp)
   let totalSolBought = 0
@@ -35,7 +53,9 @@ function computeLiveClosePnl(
   let sellPriceUsd = closingRecord.tokens?.[0]?.priceUsd ?? 0
 
   for (const op of sorted) {
-    if (op.is_simulation) continue
+    const isSim = op.is_simulation === true
+    if (mode === 'sim' && !isSim) continue
+    if (mode === 'live' && isSim) continue
     if (op.successCount === 0 || !op.solAmount) continue
 
     for (const tkn of op.tokens ?? []) {
@@ -63,38 +83,24 @@ function computeLiveClosePnl(
   return { pnlPct, solSpent: totalSolBought, solReceived, sellPriceUsd }
 }
 
-/**
- * When a live wallet sell fully closes a signals-attributed position, write strategy_outcomes.
- */
-export async function maybeRecordLiveSignalsOutcome(
-  record: TrackingRecord,
-): Promise<void> {
-  if (record.is_simulation) return
-  if (record.operationType !== 'sell' && record.operationType !== 'close') return
-  if ((record.successCount ?? 0) === 0) return
+async function recordOutcomeForClose(params: {
+  record: TrackingRecord
+  records: TrackingRecord[]
+  mintAddress: string
+  isSimulation: boolean
+}): Promise<void> {
+  const { record, records, mintAddress, isSimulation } = params
+  const mode = isSimulation ? 'sim' : 'live'
 
-  const mintAddress = record.tokens?.[0]?.mintAddress
-  if (!mintAddress || !record.walletAddress) return
-
-  const records = await fetchTradingRecordsForWallet(record.walletAddress)
-  if (computeOpenTradeCycle(records, mintAddress, 'live')) {
+  if (computeOpenTradeCycle(records, mintAddress, mode)) {
     return
   }
 
-  const buyRecord = [...records]
-    .sort((a, b) => b.timestamp - a.timestamp)
-    .find(
-      (r) =>
-        r.operationType === 'buy' &&
-        !r.is_simulation &&
-        r.bot_strategy &&
-        r.tokens?.some((t) => t.mintAddress === mintAddress),
-    )
-
+  const buyRecord = findSignalsBuyRecord(records, mintAddress, isSimulation)
   const strategyId = record.bot_strategy ?? buyRecord?.bot_strategy ?? null
-  if (!strategyId) return
+  if (!isSignalsStrategyId(strategyId)) return
 
-  const pnl = computeLiveClosePnl(records, mintAddress, record)
+  const pnl = computeClosePnl(records, mintAddress, record, mode)
   if (!pnl) return
 
   const symbol =
@@ -103,20 +109,44 @@ export async function maybeRecordLiveSignalsOutcome(
     mintAddress.slice(0, 8)
 
   await recordSignalsOutcome({
-    strategyId,
+    strategyId: strategyId!,
     tokenAddress: mintAddress,
     entryAt: readEntryAt(buyRecord),
     exitAt: new Date(record.timestamp).toISOString(),
     pnlPct: pnl.pnlPct,
     status: pnl.pnlPct >= 0 ? 'won' : 'lost',
-    isSimulated: false,
+    isSimulated: isSimulation,
     features: {
       ...readEntryFeatures(buyRecord),
       token_symbol: symbol,
       exit_price_usd: pnl.sellPriceUsd,
       sol_spent: pnl.solSpent,
       sol_received: pnl.solReceived,
-      close_source: 'live_wallet',
+      close_source: isSimulation ? 'manual_sim_ui' : 'live_wallet',
     },
   })
 }
+
+/**
+ * When a signals-attributed position fully closes (sim or live), write strategy_outcomes.
+ */
+export async function maybeRecordSignalsOutcome(
+  record: TrackingRecord,
+): Promise<void> {
+  if (record.operationType !== 'sell' && record.operationType !== 'close') return
+  if ((record.successCount ?? 0) === 0) return
+
+  const mintAddress = record.tokens?.[0]?.mintAddress
+  if (!mintAddress || !record.walletAddress) return
+
+  const records = await fetchTradingRecordsForWallet(record.walletAddress)
+  await recordOutcomeForClose({
+    record,
+    records,
+    mintAddress,
+    isSimulation: record.is_simulation === true,
+  })
+}
+
+/** @deprecated Use maybeRecordSignalsOutcome */
+export const maybeRecordLiveSignalsOutcome = maybeRecordSignalsOutcome

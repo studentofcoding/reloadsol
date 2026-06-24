@@ -938,6 +938,10 @@ export default function AlgoDashboardTab() {
                     ? "Testing trading strategies without real transactions"
                     : "Live trading with real transactions"}
                 </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Local manual config only — cron workers use Strategy Admin execution_mode,
+                  not this banner.
+                </p>
               </div>
             </div>
             {tradingConfig.notifyOnTrigger && tradingConfig.discordWebhook && (

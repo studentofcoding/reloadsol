@@ -123,6 +123,16 @@ export async function closeSimulationPosition({
     throw new Error('No open simulation position found for this token')
   }
 
+  const buyRecord = [...records]
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .find(
+      (r) =>
+        r.operationType === 'buy' &&
+        r.is_simulation &&
+        r.tokens?.some((t) => t.mintAddress === mintAddress),
+    )
+  const botStrategy = buyRecord?.bot_strategy
+
   const solPrice = await getSolPriceUSD()
   let priceUsd = sellPriceUsd
 
@@ -142,6 +152,7 @@ export async function closeSimulationPosition({
     operationType: 'sell',
     is_simulation: true,
     simulation_type: cycle.simulationType || 'manual',
+    bot_strategy: botStrategy,
     close_position: true,
     tokens: [
       {

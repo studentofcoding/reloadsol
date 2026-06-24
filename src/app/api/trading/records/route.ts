@@ -5,7 +5,7 @@ import {
   insertTradingRecord,
   shouldSkipTradingRecord,
 } from '@/utils/trading-records-db'
-import { maybeRecordLiveSignalsOutcome } from '@/utils/signals-outcome-capture'
+import { maybeRecordSignalsOutcome } from '@/utils/signals-outcome-capture'
 import {
   generateRecordsCacheKey,
   getCachedRecords,
@@ -192,9 +192,9 @@ export async function POST(request: NextRequest) {
     await insertTradingRecord(record)
 
     try {
-      await maybeRecordLiveSignalsOutcome(record)
+      await maybeRecordSignalsOutcome(record)
     } catch (outcomeErr) {
-      console.warn('[trading/records] live signals outcome capture failed:', outcomeErr)
+      console.warn('[trading/records] signals outcome capture failed:', outcomeErr)
     }
 
     const allowedOrigin = resolveAllowedOrigin(request)

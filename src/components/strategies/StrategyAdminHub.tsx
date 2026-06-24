@@ -69,6 +69,8 @@ type CoverageRow = {
   last_exit_at: string | null;
   avg_pnl_pct: number | null;
   open_tracker_count?: number | null;
+  ml_unlabeled?: number;
+  ml_labeled?: number;
 };
 
 type AbPair = {
@@ -790,6 +792,8 @@ export default function StrategyAdminHub() {
                     <th className="p-2">Open (tracker)</th>
                     <th className="p-2">Last exit</th>
                     <th className="p-2">Avg PnL (SIM)</th>
+                    <th className="p-2">ML unlabeled</th>
+                    <th className="p-2">ML labeled</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -820,6 +824,8 @@ export default function StrategyAdminHub() {
                       <td className="p-2">
                         {c.avg_pnl_pct != null ? `${c.avg_pnl_pct.toFixed(2)}%` : "—"}
                       </td>
+                      <td className="p-2">{c.ml_unlabeled ?? 0}</td>
+                      <td className="p-2">{c.ml_labeled ?? 0}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -857,7 +863,8 @@ export default function StrategyAdminHub() {
             <h3 className="text-lg font-semibold text-white mb-2">A/B comparison</h3>
             <p className="text-gray-500 text-xs mb-2">
               Signals and DLMM honor per-strategy execution_mode. Trending bot uses global
-              keypair for live; ab_parallel does not dual-buy on trending.
+              keypair for live; ab_parallel does not dual-buy on trending. Only signals/DLMM
+              strategies appear below.
             </p>
             {reports?.ab_pairs?.length ? (
               <table className="w-full text-sm mb-6">

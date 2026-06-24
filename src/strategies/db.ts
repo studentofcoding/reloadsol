@@ -538,6 +538,18 @@ export async function aggregateStrategyReports(params: {
     return a.strategy_id.localeCompare(b.strategy_id)
   })
 
+  const mlByStrategy = new Map<string, { unlabeled: number; labeled: number }>()
+  for (const row of rows) {
+    const cur = mlByStrategy.get(row.strategy_id) ?? { unlabeled: 0, labeled: 0 }
+    const label = row.features?.ml_label
+    if (typeof label === 'string' && label.trim()) {
+      cur.labeled++
+    } else {
+      cur.unlabeled++
+    }
+    mlByStrategy.set(row.strategy_id, cur)
+  }
+
   const openByStrategy = new Map<string, number>()
   const trackerTable =
     process.env.NODE_ENV === 'development'
@@ -584,10 +596,15 @@ export async function aggregateStrategyReports(params: {
       avg_pnl_pct: sim?.trade_count ? sim.avg_pnl_pct : null,
       open_tracker_count:
         def.domain === 'trending_bot' ? openByStrategy.get(def.id) ?? 0 : null,
+      ml_unlabeled: mlByStrategy.get(def.id)?.unlabeled ?? 0,
+      ml_labeled: mlByStrategy.get(def.id)?.labeled ?? 0,
     }
   })
   const abParallelIds = defRows
-    .filter((d) => d.execution_mode === 'ab_parallel')
+    .filter(
+      (d) =>
+        d.execution_mode === 'ab_parallel' && d.domain !== 'trending_bot',
+    )
     .map((d) => d.id)
 
   const abPairs: import('./types').StrategyAbPair[] = abParallelIds.map((id) => {

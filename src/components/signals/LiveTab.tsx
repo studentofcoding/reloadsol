@@ -14,6 +14,8 @@ import { useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useTradingData } from "@/components/TradingDataProvider";
 import { trackRealBuy, trackRealSell, trackSimBuy, trackSimClose } from "@/utils/trade-tracking";
+import { buildEntryMcapFeatures } from "@/strategies/outcome-features";
+import { useSignalsStrategy } from "@/hooks/useSignalsStrategy";
 import { computeOpenSimCycle } from "@/utils/simulation-trades";
 import { PublicKey, VersionedTransaction } from "@solana/web3.js";
 import { formatNumber, formatCurrency } from "@/utils/formatters";
@@ -100,6 +102,7 @@ async function fetchOwnedTokenPrices(
 }
 
 export default function LiveTab() {
+  const { strategyId, template, setTemplate } = useSignalsStrategy();
   const router = useRouter();
   const { connected, publicKey, signTransaction, signAllTransactions } =
     useWallet();
@@ -817,6 +820,7 @@ export default function LiveTab() {
         feesPaid: 0,
         slippage: 300,
         priorityFee: 30000,
+        bot_strategy: strategyId,
       });
 
       showOutcome({
@@ -886,6 +890,17 @@ export default function LiveTab() {
           currentSolPrice && estimatedTokenAmount > 0
             ? (solAmount * currentSolPrice) / estimatedTokenAmount
             : 0,
+        botStrategy: strategyId,
+        simulationType: "manual",
+        entryFeatures: {
+          token_symbol: token.token_symbol,
+          organic_score: token.organic_score,
+          change_1h: token.change_1h,
+          change_5m: token.change_5m,
+          ...buildEntryMcapFeatures(token.mcap),
+          close_source: "manual_ui",
+          ui_tab: "live",
+        },
       });
 
       showOutcome({
@@ -2098,7 +2113,7 @@ export default function LiveTab() {
           </div>
 
           {/* Buy Amount Selector */}
-          <div className="flex items-center justify-center space-x-4 mb-6">
+          <div className="flex flex-wrap items-center justify-center gap-4 mb-6">
             <label className="text-gray-300">Buy Amount (SOL):</label>
             <select
               value={buyAmount}
@@ -2112,6 +2127,17 @@ export default function LiveTab() {
               <option value={1}>1 SOL</option>
               <option value={2}>2 SOL</option>
               <option value={5}>5 SOL</option>
+            </select>
+            <label className="text-gray-300">Strategy:</label>
+            <select
+              value={template}
+              onChange={(e) =>
+                setTemplate(e.target.value as "default" | "sell_over_100")
+              }
+              className="bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-600 focus:border-blue-500 focus:outline-none"
+            >
+              <option value="default">Default</option>
+              <option value="sell_over_100">Sell over 100%</option>
             </select>
           </div>
         </div>

@@ -18,6 +18,10 @@ import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTradingSignals, SignalItem } from "@/hooks/useTradingSignals";
 import { formatAppDateTime } from "@/utils/datetime";
+import {
+  readSignalsStrategyTemplate,
+  writeSignalsStrategyTemplate,
+} from "@/utils/signals-strategy-id";
 
 // Removed local types SignalItem and SignalsResponse as they are now imported
 
@@ -90,8 +94,12 @@ export default function SignalsTab() {
   const [includeStuck, setIncludeStuck] = useState(false);
   const [maxAgeMinutes, setMaxAgeMinutes] = useState(48 * 60);
   const [strategy, setStrategy] = useState<"default" | "sell_over_100">(
-    "sell_over_100",
+    readSignalsStrategyTemplate,
   );
+
+  useEffect(() => {
+    writeSignalsStrategyTemplate(strategy);
+  }, [strategy]);
 
   const {
     data: apiResponse,

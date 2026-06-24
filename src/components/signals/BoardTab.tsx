@@ -27,6 +27,8 @@ import { useTradingData } from "@/components/TradingDataProvider";
 import { getSolPriceUSD } from "@/utils/solana";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { trackSimBuy, trackSimClose } from "@/utils/trade-tracking";
+import { buildEntryMcapFeatures } from "@/strategies/outcome-features";
+import { useSignalsStrategy } from "@/hooks/useSignalsStrategy";
 import TradeOutcomeModal, { useTradeOutcome } from "@/components/TradeOutcomeModal";
 import { BulkBuyRequest } from "@/types";
 import {
@@ -418,6 +420,7 @@ function ChartsContent() {
   const { connection } = useConnection();
   const { trackOperation, records } = useTradingData();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
+  const { strategyId, template, setTemplate } = useSignalsStrategy();
   const [buyAmount, setBuyAmount] = useState("0.1");
   const [buyStates, setBuyStates] = useState<
     Record<string, { loading: boolean; status?: string; error?: string }>
@@ -779,6 +782,15 @@ function ChartsContent() {
         solAmount: amountSol,
         tokenAmount,
         priceUsd: tokenPrice,
+        botStrategy: strategyId,
+        simulationType: "manual",
+        entryFeatures: {
+          token_symbol: signal?.token_symbol,
+          board_label: signal?.label,
+          ...buildEntryMcapFeatures(signal?.market_cap),
+          close_source: "manual_ui",
+          ui_tab: "board",
+        },
       });
 
       showOutcome({
@@ -803,7 +815,7 @@ function ChartsContent() {
       setStatus("");
     }
   },
-    [publicKey, buyAmount, signals, trackOperation, showOutcome],
+    [publicKey, buyAmount, signals, trackOperation, showOutcome, strategyId],
   );
 
   const handleSimulateSell = useCallback(
@@ -1301,6 +1313,20 @@ function ChartsContent() {
           <h2 className="text-xl font-semibold">Chart board</h2>
 
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 bg-gray-800 p-2 rounded-lg border border-gray-700">
+              <span className="text-sm text-gray-400">Strategy:</span>
+              <select
+                className="bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white text-sm"
+                value={template}
+                onChange={(e) =>
+                  setTemplate(e.target.value as "default" | "sell_over_100")
+                }
+              >
+                <option value="default">Default</option>
+                <option value="sell_over_100">Sell over 100%</option>
+              </select>
+            </div>
+
             <div className="flex items-center gap-2 bg-gray-800 p-2 rounded-lg border border-gray-700">
               <span className="text-sm text-gray-400">Instant Buy:</span>
               <input
