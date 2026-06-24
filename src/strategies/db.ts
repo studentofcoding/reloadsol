@@ -10,6 +10,7 @@ import type {
   TrendingBotStrategyOverride,
   ExecutionMode,
   OutcomeChartSource,
+  MlLabelStats,
 } from './types'
 
 export async function loadStrategyDefinitionRows(
@@ -405,6 +406,28 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
+function computeMlLabelStats(rows: StrategyOutcomeRow[]): MlLabelStats {
+  const stats: MlLabelStats = {
+    total: rows.length,
+    unlabeled: 0,
+    by_label: {},
+    by_condition: {},
+  }
+  for (const row of rows) {
+    const label = row.features?.ml_label
+    if (typeof label === 'string' && label.trim()) {
+      stats.by_label[label] = (stats.by_label[label] ?? 0) + 1
+    } else {
+      stats.unlabeled++
+    }
+    const condition = row.features?.ml_condition
+    if (typeof condition === 'string' && condition.trim()) {
+      stats.by_condition[condition] = (stats.by_condition[condition] ?? 0) + 1
+    }
+  }
+  return stats
+}
+
 export async function aggregateStrategyReports(params: {
   domain?: StrategyDomain
   strategyId?: string
@@ -417,6 +440,7 @@ export async function aggregateStrategyReports(params: {
   topTrades: StrategyOutcomeRow[]
   worstTrades: StrategyOutcomeRow[]
   coverage: StrategyCoverageRow[]
+  mlStats: MlLabelStats
 }> {
   let query = supabase.from('strategy_outcomes').select('*')
 
@@ -430,7 +454,14 @@ export async function aggregateStrategyReports(params: {
 
   if (error) {
     if (error.code === '42P01' || error.message?.includes('does not exist')) {
-      return { breakdown: [], abPairs: [], topTrades: [], worstTrades: [], coverage: [] }
+      return {
+        breakdown: [],
+        abPairs: [],
+        topTrades: [],
+        worstTrades: [],
+        coverage: [],
+        mlStats: { total: 0, unlabeled: 0, by_label: {}, by_condition: {} },
+      }
     }
     throw error
   }
@@ -578,7 +609,9 @@ export async function aggregateStrategyReports(params: {
     .sort((a, b) => Number(a.pnl_pct) - Number(b.pnl_pct))
     .slice(0, 5)
 
-  return { breakdown, abPairs, topTrades, worstTrades, coverage }
+  const mlStats = computeMlLabelStats(rows)
+
+  return { breakdown, abPairs, topTrades, worstTrades, coverage, mlStats }
 }
 
 export async function getStrategyDomainHeartbeats(): Promise<

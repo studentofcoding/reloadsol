@@ -4,6 +4,7 @@ import { mergeFiltersUnion, mergeStrategyOverride } from './merge'
 import { TRENDING_BOT_STRATEGIES } from './registry'
 import type {
   ActiveStrategiesResult,
+  ExecutionMode,
   TokenFilterConfig,
   TrendingBotStrategy,
 } from './types'
@@ -67,6 +68,7 @@ export async function getMergedTrendingBotRegistry(): Promise<
     )
     if (row?.name) merged[id].name = row.name
     if (row?.description) merged[id].description = row.description ?? base.description
+    if (row?.execution_mode) merged[id].execution_mode = row.execution_mode
   }
 
   cachedRegistry = merged
@@ -192,10 +194,21 @@ export async function getActiveStrategiesWithState(): Promise<ActiveStrategiesRe
     })
   }
 
+  const defRows = await loadStrategyDefinitionRows('trending_bot')
+  const defById = new Map(defRows.map((r) => [r.id, r]))
+  const executionModes: Record<string, ExecutionMode> = {}
+  for (const strategyId of finalActiveStrategies) {
+    executionModes[strategyId] =
+      defById.get(strategyId)?.execution_mode ??
+      registry[strategyId]?.execution_mode ??
+      'sim_only'
+  }
+
   return {
     strategies: finalActiveStrategies,
     configs: activeConfigs,
     allocation,
+    executionModes,
   }
 }
 
@@ -302,7 +315,10 @@ export function getActiveStrategiesSync(): ActiveStrategiesResult {
   })
   const equal = 1 / ids.length
   const allocation = Object.fromEntries(ids.map((id) => [id, equal]))
-  return { strategies: ids, configs, allocation }
+  const executionModes = Object.fromEntries(
+    ids.map((id) => [id, syncRegistry[id]?.execution_mode ?? 'sim_only']),
+  ) as Record<string, ExecutionMode>
+  return { strategies: ids, configs, allocation, executionModes }
 }
 
 export function getCurrentBotStrategySync(): string {

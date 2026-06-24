@@ -18,11 +18,23 @@ export function computeOpenSimCycle(
   records: TrackingRecord[],
   mintAddress: string,
 ): OpenSimCycle | null {
+  return computeOpenTradeCycle(records, mintAddress, 'sim')
+}
+
+/** Compute open trade cycle for sim or live wallet records. */
+export function computeOpenTradeCycle(
+  records: TrackingRecord[],
+  mintAddress: string,
+  mode: 'sim' | 'live' = 'sim',
+): OpenSimCycle | null {
   const sorted = [...records].sort((a, b) => a.timestamp - b.timestamp)
   let cycle: OpenSimCycle | null = null
 
   for (const op of sorted) {
-    if (!op.is_simulation || op.successCount === 0 || !op.solAmount) continue
+    const isSim = op.is_simulation === true
+    if (mode === 'sim' && !isSim) continue
+    if (mode === 'live' && isSim) continue
+    if (op.successCount === 0 || !op.solAmount) continue
 
     const tokensInOp = op.tokens || []
     const solPerToken = op.solAmount / op.successCount

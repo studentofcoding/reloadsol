@@ -176,11 +176,10 @@ export default function LiveTab() {
   const autoUpdateProgressRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (!hoveredChartToken) {
-      setDebouncedChartToken(null);
-      return;
-    }
-    const timer = setTimeout(() => setDebouncedChartToken(hoveredChartToken), 150);
+    const delay = hoveredChartToken ? 150 : 0;
+    const timer = setTimeout(() => {
+      setDebouncedChartToken(hoveredChartToken);
+    }, delay);
     return () => clearTimeout(timer);
   }, [hoveredChartToken]);
 

@@ -78,6 +78,13 @@ type AbPair = {
   live: ReportBreakdown | null;
 };
 
+type MlLabelStats = {
+  total: number;
+  unlabeled: number;
+  by_label: Record<string, number>;
+  by_condition: Record<string, number>;
+};
+
 type WorkerRow = {
   id: string;
   name: string;
@@ -319,6 +326,12 @@ export default function StrategyAdminHub() {
               coverage: (repJson.coverage ?? []) as CoverageRow[],
               ab_pairs: repJson.ab_pairs ?? [],
               ranking: repJson.ranking ?? [],
+              ml_stats: (repJson.ml_stats ?? {
+                total: 0,
+                unlabeled: 0,
+                by_label: {},
+                by_condition: {},
+              }) as MlLabelStats,
             }
           : null,
       };
@@ -813,7 +826,39 @@ export default function StrategyAdminHub() {
               </table>
             </div>
 
+            {reports?.ml_stats && reports.ml_stats.total > 0 && (
+              <>
+                <h3 className="text-lg font-semibold text-white mb-2">ML labeling</h3>
+                <p className="text-gray-400 text-xs mb-2">
+                  Filter-scoped closed outcomes. Unlabeled: {reports.ml_stats.unlabeled} of{" "}
+                  {reports.ml_stats.total}
+                  {Object.keys(reports.ml_stats.by_label).length > 0 && (
+                    <>
+                      {" "}
+                      · Labels:{" "}
+                      {Object.entries(reports.ml_stats.by_label)
+                        .map(([k, v]) => `${k} ${v}`)
+                        .join(", ")}
+                    </>
+                  )}
+                  {Object.keys(reports.ml_stats.by_condition).length > 0 && (
+                    <>
+                      {" "}
+                      · Conditions:{" "}
+                      {Object.entries(reports.ml_stats.by_condition)
+                        .map(([k, v]) => `${k} ${v}`)
+                        .join(", ")}
+                    </>
+                  )}
+                </p>
+              </>
+            )}
+
             <h3 className="text-lg font-semibold text-white mb-2">A/B comparison</h3>
+            <p className="text-gray-500 text-xs mb-2">
+              Signals and DLMM honor per-strategy execution_mode. Trending bot uses global
+              keypair for live; ab_parallel does not dual-buy on trending.
+            </p>
             {reports?.ab_pairs?.length ? (
               <table className="w-full text-sm mb-6">
                 <thead>
@@ -827,8 +872,10 @@ export default function StrategyAdminHub() {
                 </thead>
                 <tbody>
                   {reports.ab_pairs.map((p: AbPair) => (
-                    <tr key={p.strategy_id} className="border-b border-gray-800 text-gray-300">
-                      <td className="p-2">{p.strategy_id}</td>
+                    <tr key={`${p.domain}-${p.strategy_id}`} className="border-b border-gray-800 text-gray-300">
+                      <td className="p-2">
+                        {p.domain}/{p.strategy_id}
+                      </td>
                       <td className="p-2 text-center">
                         {p.sim ? `${(p.sim.win_rate * 100).toFixed(1)}% (${p.sim.trade_count})` : "—"}
                       </td>
@@ -1220,7 +1267,9 @@ function TrendingBotCard({
   const [tp1, setTp1] = useState(String(strategy.take_profit_levels.tp1_percentage));
   const [sl, setSl] = useState(String(strategy.stop_loss_percentage));
   const [buySol, setBuySol] = useState(String(strategy.buy_amount_sol));
-  const [execMode, setExecMode] = useState<ExecutionMode>("sim_only");
+  const [execMode, setExecMode] = useState<ExecutionMode>(
+    strategy.execution_mode ?? "sim_only",
+  );
   const [promoteTarget, setPromoteTarget] = useState(promoteTargets[0] ?? "");
   const [filterEnabled, setFilterEnabled] = useState(f.enabled ?? true);
   const [mcapMin, setMcapMin] = useState(f.mcap?.min != null ? String(f.mcap.min) : "");

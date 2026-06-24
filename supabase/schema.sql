@@ -437,6 +437,8 @@ ALTER TABLE trending_token_tracker
 ALTER TABLE trending_token_tracker_dev
   DROP CONSTRAINT IF EXISTS trending_token_tracker_dev_status_check;
 ALTER TABLE trending_token_tracker_dev
+  DROP CONSTRAINT IF EXISTS trending_token_tracker_status_check;
+ALTER TABLE trending_token_tracker_dev
   ADD CONSTRAINT trending_token_tracker_dev_status_check
   CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'skipped', 'stopped'));
 
@@ -595,4 +597,40 @@ ALTER TABLE dlmm_positions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dlmm_lessons ENABLE ROW LEVEL SECURITY;
 ALTER TABLE strategy_definitions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE strategy_outcomes ENABLE ROW LEVEL SECURITY;
+
+-- Ensure status check allows 'stopped' before ghost cleanup (dev mirror may use prod constraint name).
+ALTER TABLE trending_token_tracker
+  DROP CONSTRAINT IF EXISTS trending_token_tracker_status_check;
+ALTER TABLE trending_token_tracker
+  ADD CONSTRAINT trending_token_tracker_status_check
+  CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'skipped', 'stopped'));
+
+ALTER TABLE trending_token_tracker_dev
+  DROP CONSTRAINT IF EXISTS trending_token_tracker_dev_status_check;
+ALTER TABLE trending_token_tracker_dev
+  DROP CONSTRAINT IF EXISTS trending_token_tracker_status_check;
+ALTER TABLE trending_token_tracker_dev
+  ADD CONSTRAINT trending_token_tracker_dev_status_check
+  CHECK (status IN ('waiting', 'tracking', 'won', 'lost', 'skipped', 'stopped'));
+
+-- One-time idempotent cleanup: stop ghost "tracking" rows with no active holding simulation.
+UPDATE trending_token_tracker
+SET status = 'stopped', updated_at = NOW()
+WHERE status = 'tracking'
+  AND (
+    trading_simulation IS NULL
+    OR COALESCE(trading_simulation->>'current_status', '') <> 'holding'
+    OR COALESCE(trading_simulation->'buy_operation'->>'bot_strategy', '') = ''
+    OR COALESCE((trading_simulation->>'remaining_token_amount')::numeric, 0) < 0.000001
+  );
+
+UPDATE trending_token_tracker_dev
+SET status = 'stopped', updated_at = NOW()
+WHERE status = 'tracking'
+  AND (
+    trading_simulation IS NULL
+    OR COALESCE(trading_simulation->>'current_status', '') <> 'holding'
+    OR COALESCE(trading_simulation->'buy_operation'->>'bot_strategy', '') = ''
+    OR COALESCE((trading_simulation->>'remaining_token_amount')::numeric, 0) < 0.000001
+  );
 

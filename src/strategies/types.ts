@@ -21,6 +21,7 @@ export interface TrendingBotStrategy {
   name: string
   description: string
   is_active: boolean
+  execution_mode?: ExecutionMode
   take_profit_levels: {
     tp1_percentage: number
     tp1_sell_percentage: number
@@ -203,6 +204,13 @@ export interface StrategyCoverageRow {
   open_tracker_count?: number | null
 }
 
+export interface MlLabelStats {
+  total: number
+  unlabeled: number
+  by_label: Record<string, number>
+  by_condition: Record<string, number>
+}
+
 export interface StrategyAbPair {
   strategy_id: string
   domain: StrategyDomain
@@ -225,4 +233,5 @@ export interface ActiveStrategiesResult {
   strategies: string[]
   configs: Record<string, TrendingBotStrategy>
   allocation: Record<string, number>
+  executionModes: Record<string, ExecutionMode>
 }

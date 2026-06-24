@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const from = searchParams.get('from') ?? undefined
     const to = searchParams.get('to') ?? undefined
 
-    const { breakdown, abPairs, topTrades, worstTrades, coverage } = await aggregateStrategyReports({
+    const { breakdown, abPairs, topTrades, worstTrades, coverage, mlStats } = await aggregateStrategyReports({
       domain: domain ?? undefined,
       strategyId,
       isSimulated,
@@ -48,6 +48,7 @@ export async function GET(request: NextRequest) {
       ranking,
       top_trades: topTrades,
       worst_trades: worstTrades,
+      ml_stats: mlStats,
       filters: { domain, strategy_id: strategyId, is_simulated: isSimulated, from, to },
     })
   } catch (error) {

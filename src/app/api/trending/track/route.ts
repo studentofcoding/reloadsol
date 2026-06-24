@@ -34,6 +34,7 @@ import {
   getStrategyStatusSummary,
   getUnionFilterForActiveStrategies,
 } from '@/strategies/load-strategy'
+import { resolveTrendingSimMode } from '@/utils/trending-execution-mode'
 
 export const runtime = 'nodejs'
 
@@ -4436,11 +4437,23 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               }
             }
 
+            const { executionModes } = getActiveStrategiesSync()
+            const simMode = resolveTrendingSimMode(
+              executionModes[assignedStrategy],
+              isRealTradingActive,
+            )
+            if (simMode.skipBuy) {
+              console.warn(
+                `⏭️ Skipping buy for ${token.token_symbol} (${assignedStrategy}): ${simMode.reason}`,
+              )
+            } else {
+            const useRealTrading = !simMode.isSimulated
+
             // Create initial simulation configuration (use detected trading mode)
             const initialSimulation = createTradingSimulation(
               token,
               assignedStrategy, // Use assigned strategy instead of environment variable
-              isRealTradingActive,
+              useRealTrading,
               keypairPath,
               new Date().toISOString()
             )
@@ -4449,7 +4462,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             const buyOperation = await executeBuyOperationWithStrategy(
               token,
               assignedStrategy,
-              isRealTradingActive ? 'real' : 'simulation',
+              useRealTrading ? 'real' : 'simulation',
               initialSimulation
             )
 
@@ -4492,6 +4505,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               }
             } else {
               console.warn(`❌ Buy operation failed for ${token.token_symbol}`)
+            }
             }
           } catch (error) {
             console.error(`❌ Buy operation error for ${token.token_symbol}:`, error)
@@ -4722,11 +4736,23 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 }
               }
 
+              const { executionModes: dipExecutionModes } = getActiveStrategiesSync()
+              const dipSimMode = resolveTrendingSimMode(
+                dipExecutionModes[assignedStrategy],
+                isRealTradingActive,
+              )
+              if (dipSimMode.skipBuy) {
+                console.warn(
+                  `⏭️ Skipping dip buy for ${token.token_symbol} (${assignedStrategy}): ${dipSimMode.reason}`,
+                )
+              } else {
+              const useRealTrading = !dipSimMode.isSimulated
+
               // Create initial simulation configuration (use detected trading mode)
               const initialSimulation = createTradingSimulation(
                 token,
                 assignedStrategy, // Use assigned strategy instead of environment variable
-                isRealTradingActive,
+                useRealTrading,
                 keypairPath,
                 currentTime.toISOString()
               )
@@ -4738,7 +4764,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               const buyOperation = await executeBuyOperationWithStrategy(
                 token,
                 assignedStrategy,
-                isRealTradingActive ? 'real' : 'simulation',
+                useRealTrading ? 'real' : 'simulation',
                 initialSimulation
               )
 
@@ -4833,6 +4859,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                     if (error) throw error
                   })()
                 )
+              }
               }
             } catch (error) {
               console.error(`❌ Error converting waiting token ${token.token_symbol} to tracking:`, error)
