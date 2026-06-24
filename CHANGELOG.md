@@ -8,6 +8,57 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — ML outcomes feed & capture
+
+- **[`src/strategies/outcome-features.ts`](src/strategies/outcome-features.ts)** — shared helpers: `entry_mcap` / `entry_mcap_band` buckets, `formatEntryMcap`, `readTokenSymbol`, `buildEntryMcapFeatures`.
+- **Outcome write paths** — signals sim-track, trending bot close ([`bot-position-close.ts`](src/utils/bot-position-close.ts)), and DLMM close store `token_symbol`, entry mcap, and band in `strategy_outcomes.features` JSONB.
+- **Outcomes API filters** — `GET /api/strategies/outcomes` supports `status`, `pnl_filter` / `pnl_min` / `pnl_max`, and `entry_mcap_band`; CSV export adds `token_symbol`, `entry_mcap`, `entry_mcap_band`.
+- **Legacy symbol enrichment** — `listStrategyOutcomes()` backfills missing `features.token_symbol` from `trending_token_tracker` / `trading_signals` at read time.
+- **Strategy Admin Reports** — Status, PnL preset, and Entry mcap band filters; **Entry MCap** column; token column shows symbol + truncated address (algo-tester style).
+- **ML labeling stats** — reports API returns `ml_stats` (total, unlabeled, by label/condition); Reports tab shows filter-scoped summary.
+- **Coverage table** — **Open (tracker)** column for trending bot strategies (holding-only count via [`isOpenTrackerPosition`](src/utils/trading-simulation.ts)).
+
+### Added — Pipeline alignment (algo-tester vs Strategy Admin)
+
+- **[`src/utils/trading-simulation.ts`](src/utils/trading-simulation.ts)** — `resolveTrackerStrategyId()`, `isOpenTrackerPosition()`, `isSimulatedTrackerPosition()` shared by stats API and coverage reports.
+- **[`src/utils/trending-execution-mode.ts`](src/utils/trending-execution-mode.ts)** — per-strategy `sim_only` / `live_only` / `ab_parallel` resolution for trending track buys.
+- **[`src/utils/signals-outcome-capture.ts`](src/utils/signals-outcome-capture.ts)** — `maybeRecordLiveSignalsOutcome()` on full live wallet closes with `bot_strategy` (hooked into `POST /api/trading/records`).
+- **[`src/utils/simulation-trades.ts`](src/utils/simulation-trades.ts)** — `computeOpenTradeCycle()` for sim or live record cycles.
+- **UI copy** — Strategy Admin and Algo Tester explain closed outcomes vs open tracker positions; A/B section notes trending `ab_parallel` does not dual-buy.
+
+### Changed — GMGN chart embeds
+
+- **[`getGmgnKlineUrl`](src/utils/gmgn.ts)** — single URL builder; default interval `5` (TradingView numeric).
+- **[`GmgnChartEmbed`](src/components/signals/shared/GmgnChartEmbed.tsx)** — uses shared helper; removed iframe `sandbox`; `key` remount on token/interval change; `loading="lazy"`.
+- **Inline iframes migrated** — chart page, `ChartBuyModal`, `BulkTokenBuyer`/`Seller`, `PnLTracker`, dev pools page.
+- **LiveTab hover chart** — 150ms debounced iframe mount to reduce GMGN TradingView remount noise.
+
+### Changed — Algo Tester accuracy & filters
+
+- **`GET /api/trending/stats`** — open list filtered to holding positions only; strategy filter reads `buy_operation.bot_strategy` / persisted `strategy_id`; sim filter fixed for null sim; exposes `watching_tokens_count`.
+- **Algo Tester** — strategy dropdown lists all trending strategies (including inactive); labels **Open (holding)**; shows waiting-queue count.
+- **Track route** — persists `strategy_id` and `entry_market_cap` on successful buy; immediate-buy path only upserts `tracking` when buy succeeds; respects per-strategy `execution_mode` via `resolveTrendingSimMode`.
+
+### Changed — Strategy Admin config
+
+- **Trending bot cards** — `execution_mode` merged from DB into registry; TrendingBotCard initializes dropdown from saved mode (not hardcoded `sim_only`).
+
+### Fixed — CSP & third-party embeds
+
+- **[`next.config.js`](next.config.js)** — allow Cloudflare Insights beacon (`static.cloudflareinsights.com` in `script-src`, `cloudflareinsights.com` in `connect-src`).
+- **[`src/utils/axiom.ts`](src/utils/axiom.ts)** — browser calls use relative `/api/axiom/...` via `getApiBaseUrl()` (fixes CSP block on raw IP host).
+
+### Fixed — Algo Tester / tracker data quality
+
+- **Strategy filter showing 0 tracking** — stats route now resolves strategy from `trading_simulation.buy_operation.bot_strategy`.
+- **Ghost “open” rows** — failed buys no longer upsert `status: tracking` without a holding simulation.
+- **Ghost tracker cleanup SQL** — idempotent `UPDATE` in [`supabase/schema.sql`](supabase/schema.sql) sets non-holding `tracking` rows to `stopped`; dev table constraint patch drops misnamed `trending_token_tracker_status_check` before re-adding allowed statuses.
+
+### Fixed — React / UI
+
+- **LiveTab** — debounced chart hover uses deferred `setTimeout` for clear/set (fixes `react-hooks/set-state-in-effect` lint).
+- **OutcomeReviewModal** — shows token symbol subtitle and entry mcap in metadata row.
+
 ### Added — Strategy admin hub
 
 - **[`/dev/strategies`](src/app/(trade)/dev/strategies/page.tsx)** — central admin for trending bot strategies (editable TP/SL, buy size, mcap band, active toggle); read-only Signals templates and DLMM config; outcomes table for ML feed.
