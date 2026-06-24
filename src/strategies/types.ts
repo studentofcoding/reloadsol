@@ -200,6 +200,7 @@ export interface StrategyCoverageRow {
   live_trade_count: number
   last_exit_at: string | null
   avg_pnl_pct: number | null
+  open_tracker_count?: number | null
 }
 
 export interface StrategyAbPair {

@@ -15,7 +15,7 @@ export default function GmgnKlineChart({
   tokenMint,
   symbol,
   height = 280,
-  interval = "5m",
+  interval = "5",
   className = "",
 }: GmgnKlineChartProps) {
   const [loading, setLoading] = useState(true);

@@ -4458,6 +4458,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               initialSimulation.current_status = 'holding'
               initialSimulation.remaining_token_amount = buyOperation.token_amount_received
               initialSimulation.initial_token_amount = buyOperation.token_amount_received
+              ;(initialSimulation as unknown as Record<string, unknown>).strategy_id = assignedStrategy
+              ;(initialSimulation as unknown as Record<string, unknown>).entry_market_cap = token.market_cap
               tradingSimulation = initialSimulation
 
               console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
@@ -4502,6 +4504,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             volume: token.volume_1h
           }
 
+          if (tradingSimulation) {
           updatesPromises.push(
             (async () => {
               try {
@@ -4572,6 +4575,9 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
           newTokensAdded++
           console.log(`✅ Adding new token to immediate tracking: ${token.token_symbol} (${token.token_address})`)
+          } else {
+            console.warn(`⏭️ Skipping tracker upsert for ${token.token_symbol} — buy did not complete`)
+          }
         }
       } else {
         // Validate prices
@@ -4741,6 +4747,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 initialSimulation.current_status = 'holding'
                 initialSimulation.remaining_token_amount = buyOperation.token_amount_received
                 initialSimulation.initial_token_amount = buyOperation.token_amount_received
+                ;(initialSimulation as unknown as Record<string, unknown>).strategy_id = assignedStrategy
+                ;(initialSimulation as unknown as Record<string, unknown>).entry_market_cap = token.market_cap
 
                 console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
 

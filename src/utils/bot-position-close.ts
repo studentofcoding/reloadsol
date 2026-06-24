@@ -6,6 +6,7 @@ import {
 } from '@/utils/trading-records-db'
 import { calculateGainPercentage } from '@/utils/trading-math'
 import { recordTrendingBotOutcome } from '@/strategies/outcomes'
+import { buildEntryMcapFeatures } from '@/strategies/outcome-features'
 
 const TRACKER_TABLE =
   process.env.NODE_ENV === 'development'
@@ -146,7 +147,7 @@ export async function finalizeBotPositionClose(
 
   const { data: tracker } = await supabase
     .from(TRACKER_TABLE)
-    .select('id, trading_simulation')
+    .select('id, trading_simulation, market_cap')
     .eq('token_address', params.tokenAddress)
     .in('status', ['tracking', 'waiting'])
     .maybeSingle()
@@ -176,6 +177,9 @@ export async function finalizeBotPositionClose(
 
   const entryAt =
     typeof sim.simulation_started_at === 'string' ? sim.simulation_started_at : null
+  const entryMcap =
+    (typeof sim.entry_market_cap === 'number' ? sim.entry_market_cap : null) ??
+    (typeof tracker.market_cap === 'number' ? tracker.market_cap : null)
 
   await recordTrendingBotOutcome({
     strategyId: params.strategyId,
@@ -191,6 +195,8 @@ export async function finalizeBotPositionClose(
       sell_percentage: params.sellPercentage,
       initial_price_usd: params.initialPriceUsd,
       exit_price_usd: params.currentPriceUsd,
+      token_symbol: params.tokenSymbol,
+      ...buildEntryMcapFeatures(entryMcap),
     },
   })
 }

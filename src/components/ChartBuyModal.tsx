@@ -24,6 +24,7 @@ import {
 } from "@/utils/solana";
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
+import { getGmgnKlineUrl } from "@/utils/gmgn";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { useTradingData } from "@/components/TradingDataProvider";
 import { usePostBuyRefresh } from "@/hooks/usePostBuyRefresh";
@@ -221,7 +222,7 @@ export default function ChartBuyModal({
 
   // Create the GMGN chart URL with correct format
   const gmgnChartUrl = tokenAddress
-    ? `https://www.gmgn.cc/kline/sol/${tokenAddress}?interval=1H`
+    ? getGmgnKlineUrl(tokenAddress, { interval: "60", theme: "dark" })
     : "";
 
   const handleBuy = useCallback(async () => {

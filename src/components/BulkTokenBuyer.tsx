@@ -44,6 +44,7 @@ import {
   calculateFeeToMarketCapRatio,
 } from "@/utils/axiom";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
+import { getGmgnKlineUrl } from "@/utils/gmgn";
 
 export default function BulkTokenBuyer() {
   const { signAllTransactions, connected } = useWallet();
@@ -1039,7 +1040,7 @@ export default function BulkTokenBuyer() {
                       </div>
                     )}
                     <iframe
-                      src={`https://www.gmgn.cc/kline/sol/${selectedToken}?interval=1D`}
+                      src={getGmgnKlineUrl(selectedToken, { interval: "1D", theme: "dark" })}
                       height="400"
                       className="w-full"
                       style={{ border: "none" }}

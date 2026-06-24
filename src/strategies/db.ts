@@ -1,4 +1,6 @@
 import { supabase } from '@/utils/supabase'
+import { readTokenSymbol } from './outcome-features'
+import { isOpenTrackerPosition, resolveTrackerStrategyId } from '@/utils/trading-simulation'
 import type {
   StrategyDefinitionRow,
   StrategyDomain,
@@ -122,6 +124,10 @@ export async function listStrategyOutcomes(params: {
   to?: string
   mlLabel?: string
   mlCondition?: string
+  status?: string
+  pnlMin?: number
+  pnlMax?: number
+  entryMcapBand?: string
   limit?: number
   offset?: number
 }): Promise<{ rows: StrategyOutcomeRow[]; total: number }> {
@@ -159,6 +165,18 @@ export async function listStrategyOutcomes(params: {
   } else if (params.mlCondition) {
     query = query.eq('features->>ml_condition', params.mlCondition)
   }
+  if (params.status) {
+    query = query.eq('status', params.status)
+  }
+  if (params.pnlMin !== undefined) {
+    query = query.gte('pnl_pct', params.pnlMin)
+  }
+  if (params.pnlMax !== undefined) {
+    query = query.lte('pnl_pct', params.pnlMax)
+  }
+  if (params.entryMcapBand) {
+    query = query.eq('features->>entry_mcap_band', params.entryMcapBand)
+  }
 
   const { data, error, count } = await query
 
@@ -169,7 +187,54 @@ export async function listStrategyOutcomes(params: {
     throw error
   }
 
-  return { rows: (data ?? []) as StrategyOutcomeRow[], total: count ?? 0 }
+  const rows = await enrichOutcomeSymbols((data ?? []) as StrategyOutcomeRow[])
+  return { rows, total: count ?? 0 }
+}
+
+async function enrichOutcomeSymbols(
+  rows: StrategyOutcomeRow[],
+): Promise<StrategyOutcomeRow[]> {
+  const needLookup = rows.filter(
+    (r) => !readTokenSymbol(r.features) && r.token_address,
+  )
+  if (needLookup.length === 0) return rows
+
+  const addresses = Array.from(new Set(needLookup.map((r) => r.token_address!)))
+  const trackerTable =
+    process.env.NODE_ENV === 'development'
+      ? 'trending_token_tracker_dev'
+      : 'trending_token_tracker'
+
+  const [trackerRes, signalsRes] = await Promise.all([
+    supabase
+      .from(trackerTable)
+      .select('token_address, token_symbol')
+      .in('token_address', addresses),
+    supabase
+      .from('trading_signals')
+      .select('token_address, token_symbol')
+      .in('token_address', addresses),
+  ])
+
+  const symbolMap = new Map<string, string>()
+  for (const row of trackerRes.data ?? []) {
+    if (row.token_symbol) symbolMap.set(row.token_address, row.token_symbol)
+  }
+  for (const row of signalsRes.data ?? []) {
+    if (row.token_symbol && !symbolMap.has(row.token_address)) {
+      symbolMap.set(row.token_address, row.token_symbol)
+    }
+  }
+
+  return rows.map((r) => {
+    if (readTokenSymbol(r.features) || !r.token_address) return r
+    const sym = symbolMap.get(r.token_address)
+    if (!sym) return r
+    return {
+      ...r,
+      features: { ...(r.features ?? {}), token_symbol: sym },
+    }
+  })
 }
 
 export async function loadStrategyOutcomeById(
@@ -442,6 +507,24 @@ export async function aggregateStrategyReports(params: {
     return a.strategy_id.localeCompare(b.strategy_id)
   })
 
+  const openByStrategy = new Map<string, number>()
+  const trackerTable =
+    process.env.NODE_ENV === 'development'
+      ? 'trending_token_tracker_dev'
+      : 'trending_token_tracker'
+  const { data: trackerRows } = await supabase
+    .from(trackerTable)
+    .select('status, trading_simulation')
+    .eq('status', 'tracking')
+  for (const row of trackerRows ?? []) {
+    if (!isOpenTrackerPosition(row)) continue
+    const sid = resolveTrackerStrategyId(
+      row.trading_simulation as Record<string, unknown> | null | undefined,
+    )
+    if (!sid) continue
+    openByStrategy.set(sid, (openByStrategy.get(sid) ?? 0) + 1)
+  }
+
   const coverage: StrategyCoverageRow[] = defRows.map((def) => {
     const sim = breakdown.find(
       (b) => b.strategy_id === def.id && b.domain === def.domain && b.is_simulated,
@@ -468,6 +551,8 @@ export async function aggregateStrategyReports(params: {
       live_trade_count: live?.trade_count ?? 0,
       last_exit_at: lastExitAt,
       avg_pnl_pct: sim?.trade_count ? sim.avg_pnl_pct : null,
+      open_tracker_count:
+        def.domain === 'trending_bot' ? openByStrategy.get(def.id) ?? 0 : null,
     }
   })
   const abParallelIds = defRows

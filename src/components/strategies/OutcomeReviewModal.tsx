@@ -12,6 +12,11 @@ import type {
 } from "@/strategies/types";
 import { formatAppDateTime } from "@/utils/datetime";
 import { getGmgnTokenUrl, pickGmgnIntervalForWindow } from "@/utils/gmgn";
+import {
+  formatEntryMcap,
+  readEntryMcap,
+  readTokenSymbol,
+} from "@/strategies/outcome-features";
 
 const LABELS: { id: OutcomeMlLabel; title: string; activeClass: string }[] = [
   { id: "skip", title: "Skip", activeClass: "bg-gray-600 ring-gray-400" },
@@ -131,6 +136,8 @@ export default function OutcomeReviewModal({
   const chartSource = chartData?.source ?? "";
 
   const tokenAddress = outcome.token_address ?? "";
+  const tokenSymbol = readTokenSymbol(outcome.features);
+  const entryMcap = readEntryMcap(outcome.features);
   const gmgnInterval = pickGmgnIntervalForWindow(outcome.entry_at, outcome.exit_at);
 
   const showToast = useCallback(
@@ -293,6 +300,9 @@ export default function OutcomeReviewModal({
             <h2 id="outcome-review-title" className="text-lg font-bold text-white">
               Outcome review
             </h2>
+            {tokenSymbol && (
+              <p className="text-sm font-semibold text-white mt-1">{tokenSymbol}</p>
+            )}
             <p className="text-xs text-gray-400 mt-1">
               {outcome.domain} / {outcome.strategy_id} ·{" "}
               {outcome.is_simulated ? "SIM" : "LIVE"}
@@ -313,6 +323,12 @@ export default function OutcomeReviewModal({
             <p className="text-[10px] text-gray-500">
               Entry {formatAppDateTime(outcome.entry_at)} → Exit{" "}
               {formatAppDateTime(outcome.exit_at)}
+              {entryMcap != null && (
+                <>
+                  {" "}
+                  · Entry mcap {formatEntryMcap(entryMcap)}
+                </>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">

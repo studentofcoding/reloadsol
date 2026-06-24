@@ -7,6 +7,7 @@ import {
   type TrendingToken,
   type TrendingResponse,
 } from "@/hooks/useTrendingPools";
+import { getGmgnKlineUrl } from "@/utils/gmgn";
 
 interface MarketCapCategory {
   name: string;
@@ -553,7 +554,7 @@ export default function TrendingPoolsPage() {
             {/* Chart */}
             <div className="bg-gray-800 rounded-lg overflow-hidden mb-4">
               <iframe
-                src={`https://www.gmgn.cc/kline/sol/${selectedToken.token_address}?interval=1D`}
+                src={getGmgnKlineUrl(selectedToken.token_address, { interval: "1D", theme: "dark" })}
                 width="100%"
                 height="300"
                 frameBorder="0"
@@ -569,7 +570,7 @@ export default function TrendingPoolsPage() {
               <button
                 onClick={() =>
                   window.open(
-                    `https://www.gmgn.cc/kline/sol/${selectedToken.token_address}?interval=1D`,
+                    getGmgnKlineUrl(selectedToken.token_address, { interval: "1D", theme: "dark" }),
                     "_blank",
                   )
                 }
@@ -580,7 +581,7 @@ export default function TrendingPoolsPage() {
               <button
                 onClick={() =>
                   window.open(
-                    `https://www.gmgn.cc/kline/sol/${selectedToken.token_address}?interval=1D`,
+                    getGmgnKlineUrl(selectedToken.token_address, { interval: "1D", theme: "dark" }),
                     "_blank",
                   )
                 }

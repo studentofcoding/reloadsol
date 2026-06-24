@@ -163,6 +163,9 @@ export default function LiveTab() {
   const [hoveredChartToken, setHoveredChartToken] = useState<string | null>(
     null,
   );
+  const [debouncedChartToken, setDebouncedChartToken] = useState<string | null>(
+    null,
+  );
   const [quoteErrors, setQuoteErrors] = useState<Map<string, string>>(
     new Map(),
   );
@@ -171,6 +174,15 @@ export default function LiveTab() {
   const [isAnyTokenHovered, setIsAnyTokenHovered] = useState(false);
   const autoUpdateIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const autoUpdateProgressRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!hoveredChartToken) {
+      setDebouncedChartToken(null);
+      return;
+    }
+    const timer = setTimeout(() => setDebouncedChartToken(hoveredChartToken), 150);
+    return () => clearTimeout(timer);
+  }, [hoveredChartToken]);
 
   // Add sidebar state for owned token prices, sell quotes, and loading
   const [sidebarSellQuotes, setSidebarSellQuotes] = useState<
@@ -1523,7 +1535,7 @@ export default function LiveTab() {
             </button>
 
             {/* Floating Chart Popup */}
-            {hoveredChartToken === token.token_address && (
+            {debouncedChartToken === token.token_address && (
               <div
                 className="absolute bottom-full left-0 right-0 mb-2 bg-gray-900 rounded-lg shadow-2xl border border-gray-600 overflow-hidden z-50"
                 style={{ height: "250px" }}

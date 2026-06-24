@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getActiveSignalsForSim } from '@/strategies/load-signals'
 import { scoreSignalsForStrategy } from '@/strategies/signals-pipeline'
 import { recordSignalsOutcome } from '@/strategies/outcomes'
+import { buildEntryMcapFeatures } from '@/strategies/outcome-features'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
@@ -258,6 +259,8 @@ export async function POST(request: NextRequest) {
             growth: signal.mcap_growth_percent,
             recency_minutes: signal.trend_age_minutes,
             rationale: signal.rationale,
+            token_symbol: signal.token_symbol,
+            ...buildEntryMcapFeatures(signal.current_mcap),
           },
         })
         opened++

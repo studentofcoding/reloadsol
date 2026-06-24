@@ -76,11 +76,11 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: `
               default-src 'self';
-              script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com *.jup.ag *.simpleanalyticscdn.com;
+              script-src 'self' 'unsafe-eval' 'unsafe-inline' *.vercel-analytics.com *.jup.ag *.simpleanalyticscdn.com static.cloudflareinsights.com;
               style-src 'self' 'unsafe-inline' fonts.googleapis.com;
               font-src 'self' fonts.gstatic.com;
               img-src 'self' data: blob: https:;
-              connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.solanatracker.io *.helius-rpc.com https://mainnet.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com wss: https:;
+              connect-src 'self' *.supabase.co *.supabase.in *.shyft.to *.solanatracker.io *.helius-rpc.com https://mainnet.helius-rpc.com *.solana.com *.jup.ag *.jupiter-swap.com cloudflareinsights.com *.cloudflareinsights.com wss: https:;
               frame-src 'self' https://auth.privy.io https://www.gmgn.cc https://gmgn.cc https://terminal.jup.ag/;
               object-src 'none';
               base-uri 'self';

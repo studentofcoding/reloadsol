@@ -206,6 +206,7 @@ export async function removePosition(id: string): Promise<DlmmActionResult> {
       position_id: id,
       amount_sol: position.amount_sol,
       close_reason: execResult.message,
+      token_symbol: position.pool_name ?? position.token_x_symbol ?? position.token_y_symbol,
     },
   });
 

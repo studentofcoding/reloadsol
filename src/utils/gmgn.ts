@@ -19,10 +19,10 @@ export function getGmgnKlineUrl(
   tokenMint: string,
   options?: { interval?: string; theme?: 'dark' | 'light' },
 ): string {
-  const interval = options?.interval ?? '5m';
-  const theme = options?.theme ?? 'dark';
-  const params = new URLSearchParams({ interval, theme });
-  return `https://www.gmgn.cc/kline/sol/${tokenMint}?${params.toString()}`;
+  const interval = options?.interval ?? '5'
+  const params = new URLSearchParams({ interval })
+  if (options?.theme) params.set('theme', options.theme)
+  return `https://www.gmgn.cc/kline/sol/${tokenMint}?${params.toString()}`
 }
 
 export function getGmgnTokenUrl(tokenMint: string): string {

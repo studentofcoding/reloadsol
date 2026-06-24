@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
+import {
+  isOpenTrackerPosition,
+  isSimulatedTrackerPosition,
+  resolveTrackerStrategyId,
+} from '@/utils/trading-simulation'
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
@@ -19,15 +24,15 @@ export async function GET(request: NextRequest) {
 
     const filterBySim = (token: { trading_simulation?: unknown }) => {
       if (isSimParam === null || isSimParam === '') return true
-      const sim = token.trading_simulation as { is_simulated?: boolean } | null | undefined
-      const isSim = sim?.is_simulated !== false
+      const isSim = isSimulatedTrackerPosition(token)
       return isSimParam === 'true' ? isSim : !isSim
     }
 
     const filterByStrategy = (token: { trading_simulation?: unknown }) => {
       if (!strategyFilter) return true
-      const sim = token.trading_simulation as { strategy?: string; strategy_id?: string } | null | undefined
-      const sid = sim?.strategy_id ?? sim?.strategy
+      const sid = resolveTrackerStrategyId(
+        token.trading_simulation as Record<string, unknown> | null | undefined,
+      )
       return sid === strategyFilter
     }
 
@@ -81,9 +86,14 @@ export async function GET(request: NextRequest) {
     if (historicalResult.error) throw new Error(`Failed to fetch historical summaries: ${historicalResult.error.message}`)
 
     const summaries = summaryResult.data
-    let trackingTokens = trackingResult.data
+    let trackingTokens = (trackingResult.data ?? []).filter(isOpenTrackerPosition)
     let recentCompleted = completedResult.data
     const historicalSummaries = historicalResult.data
+
+    const { count: watchingCount } = await supabase
+      .from(TRACKER_TABLE)
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'waiting')
 
     if (isSimParam !== null && isSimParam !== '') {
       trackingTokens = trackingTokens?.filter(filterBySim) ?? []
@@ -214,6 +224,7 @@ export async function GET(request: NextRequest) {
       // Metadata
       data_freshness: {
         tracking_tokens_count: trackingTokens?.length || 0,
+        watching_tokens_count: watchingCount ?? 0,
         latest_summary_age_hours: summaries && summaries.length > 0
           ? Math.round((Date.now() - new Date(summaries[0].created_at).getTime()) / (1000 * 60 * 60) * 100) / 100
           : null,

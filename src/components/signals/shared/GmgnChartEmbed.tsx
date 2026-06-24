@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { getGmgnKlineUrl } from "@/utils/gmgn";
 
 type GmgnChartEmbedProps = {
   tokenAddress: string;
@@ -20,17 +21,17 @@ export default function GmgnChartEmbed({
   height = "100%",
   title,
 }: GmgnChartEmbedProps) {
-  const themeParam = theme ? `&theme=${theme}` : "";
-  const src = `https://www.gmgn.cc/kline/sol/${tokenAddress}?interval=${interval}${themeParam}`;
+  const src = getGmgnKlineUrl(tokenAddress, { interval, theme });
 
   return (
     <iframe
+      key={`${tokenAddress}-${interval}-${theme ?? "default"}`}
       src={src}
       className={className}
       style={{ border: "none", height }}
       title={title ?? `GMGN Chart - ${tokenAddress.slice(0, 8)}`}
       allowFullScreen
-      sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+      loading="lazy"
     />
   );
 }

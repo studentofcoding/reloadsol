@@ -28,6 +28,7 @@ import {
 } from "@/utils/solana";
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
+import { getGmgnKlineUrl } from "@/utils/gmgn";
 import { useTradingData } from "@/components/TradingDataProvider";
 
 interface TokenInfo {
@@ -156,7 +157,7 @@ export default function ChartPage() {
     };
   }, [axiomQuery.data]);
 
-  const gmgnChartUrl = `https://www.gmgn.cc/kline/sol/${tokenAddress}?interval=5m`;
+  const gmgnChartUrl = getGmgnKlineUrl(tokenAddress, { interval: "5", theme: "dark" });
 
   // Buy form state
   const [buyAmount, setBuyAmount] = useState("0.1");

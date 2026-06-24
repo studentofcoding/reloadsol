@@ -43,6 +43,7 @@ import {
 } from "@/utils/solana";
 import { trackSell, trackClose } from "@/utils/operations-api";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
+import { getGmgnKlineUrl } from "@/utils/gmgn";
 import { useTradingData } from "./TradingDataProvider";
 // ✅ NEW: Import PnL sharing system
 import { usePnLShare } from "@/hooks/usePnLShare";
@@ -1364,7 +1365,7 @@ export default function BulkTokenSeller() {
                 </div>
               )}
               <iframe
-                src={`https://www.gmgn.cc/kline/sol/${selectedToken}?interval=1D`}
+                src={getGmgnKlineUrl(selectedToken, { interval: "1D", theme: "dark" })}
                 height="400"
                 className="w-full"
                 style={{ border: "none" }}

@@ -10,6 +10,7 @@ import ChartBuyModal from "@/components/ChartBuyModal";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import TokenDetailsModal from "@/components/TokenDetailsModal";
 import { useTrendingStats } from "@/hooks/useTrendingStats";
+import { isSimulatedTrackerPosition } from "@/utils/trading-simulation";
 import { useTokenHistory } from "@/hooks/useTokenHistory";
 import { formatAppDateTime, formatAppNow } from "@/utils/datetime";
 
@@ -106,6 +107,7 @@ interface TrendingStats {
   };
   data_freshness: {
     tracking_tokens_count: number;
+    watching_tokens_count?: number;
     latest_summary_age_hours: number | null;
     last_updated: string;
   };
@@ -148,6 +150,7 @@ export default function AlgoDashboardTab() {
   const [strategyMeta, setStrategyMeta] = useState<{
     active: string[];
     allocation: Record<string, number>;
+    allIds: string[];
   } | null>(null);
 
   const {
@@ -169,9 +172,11 @@ export default function AlgoDashboardTab() {
       .then((r) => r.json())
       .then((j) => {
         if (j.success && j.trending_bot) {
+          const effective = j.trending_bot.effective ?? {};
           setStrategyMeta({
             active: j.trending_bot.active ?? [],
             allocation: j.trending_bot.allocation ?? {},
+            allIds: Object.keys(effective),
           });
         }
       })
@@ -780,9 +785,8 @@ export default function AlgoDashboardTab() {
   );
 
   const getTokenMode = (token: TrackedToken): "real" | "sim" => {
-    if (token.trading_simulation && !token.trading_simulation.is_simulated)
-      return "real";
-    return "sim";
+    if (isSimulatedTrackerPosition(token)) return "sim";
+    return "real";
   };
 
   if (loading) {
@@ -872,6 +876,12 @@ export default function AlgoDashboardTab() {
           >
             Strategy reports (A/B)
           </Link>
+          <span className="text-gray-500 text-xs max-w-xl">
+            Open positions from{" "}
+            <code className="text-[10px]">trending_token_tracker</code> (holding
+            only). Closed trades and ML labels live in Strategy Admin — counts
+            differ until a position fully closes.
+          </span>
           {strategyMeta && (
             <span className="text-gray-400">
               Active: {strategyMeta.active.join(", ") || "none"}
@@ -888,9 +898,10 @@ export default function AlgoDashboardTab() {
             className="bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
           >
             <option value="">All strategies</option>
-            {(strategyMeta?.active ?? []).map((id) => (
+            {(strategyMeta?.allIds ?? strategyMeta?.active ?? []).map((id) => (
               <option key={id} value={id}>
                 {id}
+                {strategyMeta?.active.includes(id) ? "" : " (inactive)"}
               </option>
             ))}
           </select>
@@ -1024,9 +1035,9 @@ export default function AlgoDashboardTab() {
             )}
           </div>
 
-          {/* Currently Tracking */}
+          {/* Open positions (holding) */}
           <div className="bg-gray-800 rounded-xl p-3 md:p-6">
-            <h3 className="text-sm md:text-lg font-semibold mb-2">Tracking</h3>
+            <h3 className="text-sm md:text-lg font-semibold mb-2">Open (holding)</h3>
             <p className="text-xl md:text-3xl font-bold text-blue-400">
               {stats.current_tracking.statistics.total_tracking}
             </p>
@@ -1036,6 +1047,13 @@ export default function AlgoDashboardTab() {
                 {" "}
                 • {stats.current_tracking.statistics.at_risk} at risk
               </span>
+              {(stats.data_freshness.watching_tokens_count ?? 0) > 0 && (
+                <span className="block md:inline">
+                  {" "}
+                  • {stats.data_freshness.watching_tokens_count} waiting (not
+                  bought)
+                </span>
+              )}
             </p>
           </div>
 
@@ -1109,7 +1127,7 @@ export default function AlgoDashboardTab() {
             },
             {
               key: "tracking",
-              label: `Tracking (${stats.current_tracking.statistics.total_tracking})`,
+              label: `Open (${stats.current_tracking.statistics.total_tracking})`,
               icon: (
                 <svg
                   className="w-5 h-5"
@@ -1689,7 +1707,7 @@ export default function AlgoDashboardTab() {
           <div className="bg-gray-800 rounded-xl p-6">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6">
               <h3 className="text-xl font-semibold mb-4 md:mb-0">
-                Currently Tracking ({stats.current_tracking.tokens.length})
+                Open positions (holding) ({stats.current_tracking.tokens.length})
               </h3>
 
               {/* Search and Controls */}

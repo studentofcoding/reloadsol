@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listStrategyOutcomes } from '@/strategies/db'
 import type { StrategyDomain, StrategyOutcomeRow } from '@/strategies/types'
+import {
+  formatEntryMcap,
+  readEntryMcap,
+  readTokenSymbol,
+} from '@/strategies/outcome-features'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,12 +17,39 @@ function readFeatureString(
   return typeof v === 'string' ? v : ''
 }
 
+function parseOptionalNumber(value: string | null): number | undefined {
+  if (value == null || value === '') return undefined
+  const n = Number(value)
+  return Number.isFinite(n) ? n : undefined
+}
+
+function resolvePnlFilter(pnlFilter: string | null): {
+  pnlMin?: number
+  pnlMax?: number
+} {
+  switch (pnlFilter) {
+    case 'win':
+      return { pnlMin: 0 }
+    case 'loss':
+      return { pnlMax: -0.000001 }
+    case 'strong_win':
+      return { pnlMin: 50 }
+    case 'heavy_loss':
+      return { pnlMax: -30 }
+    default:
+      return {}
+  }
+}
+
 function toCsv(rows: StrategyOutcomeRow[]): string {
   const headers = [
     'id',
     'strategy_id',
     'domain',
+    'token_symbol',
     'token_address',
+    'entry_mcap',
+    'entry_mcap_band',
     'entry_at',
     'exit_at',
     'pnl_pct',
@@ -35,7 +67,10 @@ function toCsv(rows: StrategyOutcomeRow[]): string {
         r.id,
         r.strategy_id,
         r.domain,
+        readTokenSymbol(r.features) ?? '',
         r.token_address ?? '',
+        readEntryMcap(r.features) ?? '',
+        readFeatureString(r.features, 'entry_mcap_band'),
         r.entry_at ?? '',
         r.exit_at ?? '',
         r.pnl_pct ?? '',
@@ -66,6 +101,15 @@ export async function GET(request: NextRequest) {
     const to = searchParams.get('to') ?? undefined
     const mlLabel = searchParams.get('ml_label') ?? undefined
     const mlCondition = searchParams.get('ml_condition') ?? undefined
+    const status = searchParams.get('status') ?? undefined
+    const entryMcapBand = searchParams.get('entry_mcap_band') ?? undefined
+    const pnlFilter = searchParams.get('pnl_filter')
+    const pnlMin =
+      parseOptionalNumber(searchParams.get('pnl_min')) ??
+      resolvePnlFilter(pnlFilter).pnlMin
+    const pnlMax =
+      parseOptionalNumber(searchParams.get('pnl_max')) ??
+      resolvePnlFilter(pnlFilter).pnlMax
     const limit = parseInt(searchParams.get('limit') ?? '500', 10)
     const offset = parseInt(searchParams.get('offset') ?? '0', 10)
 
@@ -77,6 +121,10 @@ export async function GET(request: NextRequest) {
       to,
       mlLabel,
       mlCondition,
+      status,
+      pnlMin,
+      pnlMax,
+      entryMcapBand,
       limit: format === 'csv' ? Math.min(limit, 5000) : limit,
       offset,
     })

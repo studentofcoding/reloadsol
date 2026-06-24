@@ -24,6 +24,12 @@ import OutcomeReviewModal, {
   OutcomeMlBadge,
   OutcomeMlConditionBadge,
 } from "@/components/strategies/OutcomeReviewModal";
+import {
+  ENTRY_MCAP_BAND_OPTIONS,
+  formatEntryMcap,
+  readEntryMcap,
+  readTokenSymbol,
+} from "@/strategies/outcome-features";
 
 const OUTCOMES_PAGE_SIZE = 100;
 
@@ -62,6 +68,7 @@ type CoverageRow = {
   live_trade_count: number;
   last_exit_at: string | null;
   avg_pnl_pct: number | null;
+  open_tracker_count?: number | null;
 };
 
 type AbPair = {
@@ -155,6 +162,9 @@ function buildOutcomesQuery(params: {
   reportSimulated: string;
   reportMlLabel: string;
   reportMlCondition: string;
+  reportStatus: string;
+  reportPnlFilter: string;
+  reportEntryMcapBand: string;
   outcomesOffset: number;
 }) {
   const q = new URLSearchParams();
@@ -167,6 +177,9 @@ function buildOutcomesQuery(params: {
   if (params.reportSimulated) q.set("is_simulated", params.reportSimulated);
   if (params.reportMlLabel) q.set("ml_label", params.reportMlLabel);
   if (params.reportMlCondition) q.set("ml_condition", params.reportMlCondition);
+  if (params.reportStatus) q.set("status", params.reportStatus);
+  if (params.reportPnlFilter) q.set("pnl_filter", params.reportPnlFilter);
+  if (params.reportEntryMcapBand) q.set("entry_mcap_band", params.reportEntryMcapBand);
   return q.toString();
 }
 
@@ -178,6 +191,9 @@ function buildCsvHref(params: {
   reportSimulated: string;
   reportMlLabel: string;
   reportMlCondition: string;
+  reportStatus: string;
+  reportPnlFilter: string;
+  reportEntryMcapBand: string;
 }) {
   const q = new URLSearchParams();
   q.set("format", "csv");
@@ -189,6 +205,9 @@ function buildCsvHref(params: {
   if (params.reportSimulated) q.set("is_simulated", params.reportSimulated);
   if (params.reportMlLabel) q.set("ml_label", params.reportMlLabel);
   if (params.reportMlCondition) q.set("ml_condition", params.reportMlCondition);
+  if (params.reportStatus) q.set("status", params.reportStatus);
+  if (params.reportPnlFilter) q.set("pnl_filter", params.reportPnlFilter);
+  if (params.reportEntryMcapBand) q.set("entry_mcap_band", params.reportEntryMcapBand);
   return `/api/strategies/outcomes?${q.toString()}`;
 }
 
@@ -209,6 +228,9 @@ export default function StrategyAdminHub() {
   const [reportSimulated, setReportSimulated] = useState("");
   const [reportMlLabel, setReportMlLabel] = useState("");
   const [reportMlCondition, setReportMlCondition] = useState("");
+  const [reportStatus, setReportStatus] = useState("");
+  const [reportPnlFilter, setReportPnlFilter] = useState("");
+  const [reportEntryMcapBand, setReportEntryMcapBand] = useState("");
   const [outcomesOffset, setOutcomesOffset] = useState(0);
   const [selectedOutcomeIndex, setSelectedOutcomeIndex] = useState<number | null>(
     null,
@@ -251,6 +273,9 @@ export default function StrategyAdminHub() {
       reportSimulated,
       reportMlLabel,
       reportMlCondition,
+      reportStatus,
+      reportPnlFilter,
+      reportEntryMcapBand,
       outcomesOffset,
     ],
     queryFn: async () => {
@@ -269,6 +294,9 @@ export default function StrategyAdminHub() {
         reportSimulated,
         reportMlLabel,
         reportMlCondition,
+        reportStatus,
+        reportPnlFilter,
+        reportEntryMcapBand,
         outcomesOffset,
       });
 
@@ -538,6 +566,16 @@ export default function StrategyAdminHub() {
 
       {tab === "reports" && (
         <>
+          <p className="text-gray-400 text-sm mb-4">
+            Reports and the ML feed below show{" "}
+            <span className="text-white">closed trades</span> from{" "}
+            <code className="text-xs">strategy_outcomes</code>. Open positions
+            (still holding) appear in{" "}
+            <Link href="/dev/algo-tester" className="text-blue-400 underline">
+              Algo tester
+            </Link>{" "}
+            until fully closed — counts will not match 1:1.
+          </p>
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
             <div className="flex flex-wrap gap-3 mb-4 text-sm">
               <label className="text-gray-400">
@@ -647,6 +685,56 @@ export default function StrategyAdminHub() {
                   <option value="new_chart">New Chart</option>
                 </select>
               </label>
+              <label className="text-gray-400">
+                Status
+                <select
+                  className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white min-w-[100px]"
+                  value={reportStatus}
+                  onChange={(e) => {
+                    setReportStatus(e.target.value);
+                    setOutcomesOffset(0);
+                  }}
+                >
+                  <option value="">Any</option>
+                  <option value="won">Won</option>
+                  <option value="lost">Lost</option>
+                </select>
+              </label>
+              <label className="text-gray-400">
+                PnL
+                <select
+                  className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white min-w-[140px]"
+                  value={reportPnlFilter}
+                  onChange={(e) => {
+                    setReportPnlFilter(e.target.value);
+                    setOutcomesOffset(0);
+                  }}
+                >
+                  <option value="">Any</option>
+                  <option value="win">Win (≥0%)</option>
+                  <option value="loss">Loss (&lt;0%)</option>
+                  <option value="strong_win">Strong win (≥50%)</option>
+                  <option value="heavy_loss">Heavy loss (≤-30%)</option>
+                </select>
+              </label>
+              <label className="text-gray-400">
+                Entry mcap
+                <select
+                  className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white min-w-[140px]"
+                  value={reportEntryMcapBand}
+                  onChange={(e) => {
+                    setReportEntryMcapBand(e.target.value);
+                    setOutcomesOffset(0);
+                  }}
+                >
+                  <option value="">Any</option>
+                  {ENTRY_MCAP_BAND_OPTIONS.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <button
                 type="button"
                 onClick={() => void load()}
@@ -663,6 +751,9 @@ export default function StrategyAdminHub() {
                   reportSimulated,
                   reportMlLabel,
                   reportMlCondition,
+                  reportStatus,
+                  reportPnlFilter,
+                  reportEntryMcapBand,
                 })}
                 className="self-end px-3 py-1.5 bg-gray-700 rounded text-white text-xs"
               >
@@ -683,6 +774,7 @@ export default function StrategyAdminHub() {
                     <th className="p-2">Active</th>
                     <th className="p-2">Mode</th>
                     <th className="p-2">SIM trades</th>
+                    <th className="p-2">Open (tracker)</th>
                     <th className="p-2">Last exit</th>
                     <th className="p-2">Avg PnL (SIM)</th>
                   </tr>
@@ -706,6 +798,11 @@ export default function StrategyAdminHub() {
                       <td className="p-2">{c.is_active ? "yes" : "no"}</td>
                       <td className="p-2 text-xs">{c.execution_mode}</td>
                       <td className="p-2">{c.sim_trade_count}</td>
+                      <td className="p-2">
+                        {c.domain === "trending_bot"
+                          ? c.open_tracker_count ?? 0
+                          : "—"}
+                      </td>
                       <td className="p-2">{formatAppDateTime(c.last_exit_at) || "—"}</td>
                       <td className="p-2">
                         {c.avg_pnl_pct != null ? `${c.avg_pnl_pct.toFixed(2)}%` : "—"}
@@ -766,6 +863,8 @@ export default function StrategyAdminHub() {
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
             <h2 className="text-xl font-bold text-white mb-2">Outcomes (ML feed)</h2>
             <p className="text-gray-500 text-xs mb-4">
+              Closed trades only — partial TP sells stay open in Algo tester until 100% sold.
+              {" "}
               {outcomesTotal > 0
                 ? `Showing ${outcomesOffset + 1}–${Math.min(outcomesOffset + OUTCOMES_PAGE_SIZE, outcomesTotal)} of ${outcomesTotal}`
                 : reportStrategyId
@@ -789,6 +888,7 @@ export default function StrategyAdminHub() {
                         <th className="p-2">Strategy</th>
                         <th className="p-2">Mode</th>
                         <th className="p-2">Token</th>
+                        <th className="p-2">Entry MCap</th>
                         <th className="p-2">Entry</th>
                         <th className="p-2">Exit</th>
                         <th className="p-2">PnL%</th>
@@ -807,7 +907,19 @@ export default function StrategyAdminHub() {
                           <td className="p-2">{o.domain}</td>
                           <td className="p-2">{o.strategy_id}</td>
                           <td className="p-2">{o.is_simulated ? "SIM" : "LIVE"}</td>
-                          <td className="p-2 font-mono text-xs">{o.token_address?.slice(0, 8)}…</td>
+                          <td className="p-2">
+                            <div className="font-semibold text-white">
+                              {readTokenSymbol(o.features) || "Unknown"}
+                            </div>
+                            <div className="text-xs text-gray-400 font-mono">
+                              {o.token_address
+                                ? `${o.token_address.slice(0, 8)}…`
+                                : "—"}
+                            </div>
+                          </td>
+                          <td className="p-2">
+                            {formatEntryMcap(readEntryMcap(o.features))}
+                          </td>
                           <td className="p-2">{formatAppDateTime(o.entry_at)}</td>
                           <td className="p-2">{formatAppDateTime(o.exit_at)}</td>
                           <td className="p-2">
@@ -883,6 +995,9 @@ export default function StrategyAdminHub() {
                 reportSimulated,
                 reportMlLabel,
                 reportMlCondition,
+                reportStatus,
+                reportPnlFilter,
+                reportEntryMcapBand,
                 outcomesOffset,
               ],
               (old: typeof strategiesQuery.data) => {

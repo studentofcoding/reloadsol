@@ -6,6 +6,7 @@ import {
   TrackingRecord,
   fetchTokenPricesForTracking,
 } from "@/utils/trading-tracker";
+import { getGmgnKlineUrl } from "@/utils/gmgn";
 import { useWallet, useConnection, useWalletAddress } from "./WalletProvider";
 import { useTradingData } from "./TradingDataProvider";
 import { useWalletSession } from "./WalletSessionContext";
@@ -2095,7 +2096,7 @@ export default function PnLTracker() {
               </div>
             )}
             <iframe
-              src={`https://www.gmgn.cc/kline/sol/${selectedToken}?interval=1D&theme=dark`}
+              src={getGmgnKlineUrl(selectedToken, { interval: "1D", theme: "dark" })}
               height="400"
               className="w-full rounded-lg"
               style={{
