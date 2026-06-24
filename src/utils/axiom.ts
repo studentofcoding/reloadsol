@@ -33,6 +33,11 @@ interface AxiomResponse {
 const axiomCache = new Map<string, { data: AxiomTokenInfo; timestamp: number }>()
 const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes cache
 
+function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') return ''
+  return process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
+}
+
 export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomResponse> {
   try {
     // Check cache first
@@ -60,12 +65,8 @@ export async function fetchAxiomTokenInfo(mintAddress: string): Promise<AxiomRes
       console.log(`🎯 Using graduated pool: ${graduatedPool} for mint: ${mintAddress}`)
 
       // Fetch from our proxy API endpoint using the graduated pool
-      // Construct absolute URL for the Axiom API call
-      const baseUrl = process.env.API_HOST
-        ? process.env.API_HOST
-        : process.env.NEXT_PUBLIC_API_HOST || 'http://localhost:3000'
-
-      const response = await fetch(`${baseUrl}/api/axiom/token-info?pairAddress=${graduatedPool}`, {
+      const baseUrl = getApiBaseUrl()
+      const response = await fetch(`${baseUrl}/api/axiom/token-info?pairAddress=${encodeURIComponent(graduatedPool)}`, {
         method: 'GET',
         headers: {
           'Accept': 'application/json'
