@@ -478,6 +478,10 @@ export default function PnLTracker() {
       return;
     }
 
+    if (!connection) {
+      return;
+    }
+
     setIsLoading(true);
     setError("");
 
@@ -949,14 +953,15 @@ export default function PnLTracker() {
       return;
     }
 
+    if (hasRealPositions && !connection) {
+      setBulkSellError("RPC connection not ready");
+      return;
+    }
+
     setIsBulkSelling(true);
     setBulkSellError("");
 
     try {
-      // Get balance before operation for better tracking
-      const balanceBeforeOp = await connection.getBalance(publicKey);
-      const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL;
-
       // Get selected positions
       const positionsToSell = openPositions.filter((pos) =>
         selectedTokens.has(pos.id),
@@ -1003,6 +1008,13 @@ export default function PnLTracker() {
         });
         return;
       }
+
+      if (!connection) {
+        throw new Error("RPC connection not ready");
+      }
+
+      const balanceBeforeOp = await connection.getBalance(publicKey);
+      const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL;
 
       // Prepare tokens for bulk sell (real positions only)
       const tokensToSell: TokenToSell[] = [];
@@ -1413,7 +1425,7 @@ export default function PnLTracker() {
 
   // Function to refresh wallet balances for open positions
   const refreshWalletBalances = React.useCallback(async () => {
-    if (openPositions.length === 0) return;
+    if (openPositions.length === 0 || !connection) return;
 
     try {
       const walletTokens = await fetchUserTokens(
@@ -1699,6 +1711,11 @@ export default function PnLTracker() {
         return;
       }
 
+      if (!position.isSimulation && !connection) {
+        setSellError("RPC connection not ready");
+        return;
+      }
+
       setIsSelling(true);
       setSellingTokenId(position.id);
       setSellError("");
@@ -1731,6 +1748,11 @@ export default function PnLTracker() {
             mintAddress: position.mintAddress,
             solAmount: solReceived,
           });
+          return;
+        }
+
+        if (!connection) {
+          setSellError("RPC connection not ready");
           return;
         }
 
@@ -2450,21 +2472,9 @@ export default function PnLTracker() {
                                       record.symbol || record.name || "Token"
                                     }
                                     className="w-full h-full object-cover"
-                                    onError={(e) => {
-                                      e.currentTarget.onerror = null;
-                                      e.currentTarget.src = "";
-                                      const parent = e.currentTarget
-                                        .parentElement as HTMLElement | null;
-                                      if (parent) {
-                                        parent.textContent = (
-                                          record.symbol ||
-                                          record.name ||
-                                          "?"
-                                        )
-                                          .charAt(0)
-                                          .toUpperCase();
-                                      }
-                                    }}
+                                    fallback={(record.symbol || record.name || "?")
+                                      .charAt(0)
+                                      .toUpperCase()}
                                   />
                                 ) : (
                                   (record.symbol || record.name || "?")
@@ -2775,21 +2785,9 @@ export default function PnLTracker() {
                                           "Token"
                                         }
                                         className="w-full h-full object-cover"
-                                        onError={(e) => {
-                                          e.currentTarget.onerror = null;
-                                          e.currentTarget.src = "";
-                                          const parent = e.currentTarget
-                                            .parentElement as HTMLElement | null;
-                                          if (parent) {
-                                            parent.textContent = (
-                                              position.symbol ||
-                                              position.name ||
-                                              "?"
-                                            )
-                                              .charAt(0)
-                                              .toUpperCase();
-                                          }
-                                        }}
+                                        fallback={(position.symbol || position.name || "?")
+                                          .charAt(0)
+                                          .toUpperCase()}
                                       />
                                     ) : (
                                       (position.symbol || position.name || "?")

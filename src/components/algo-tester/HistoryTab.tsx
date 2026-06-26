@@ -534,9 +534,11 @@ export default function HistoryTab() {
                         src={token.logo_url}
                         alt={token.token_symbol || "Token"}
                         className="w-10 h-10 rounded-full"
-                        onError={(e) => {
-                          e.currentTarget.style.display = "none";
-                        }}
+                        fallback={
+                          <div className="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-white font-bold">
+                            {(token.token_symbol || "?")[0]}
+                          </div>
+                        }
                       />
                     ) : (
                       <div className="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-white font-bold">

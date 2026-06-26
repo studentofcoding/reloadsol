@@ -75,7 +75,7 @@ export async function refreshWalletTokensData(
 }
 
 type UseWalletTokensOptions = {
-  connection: Connection;
+  connection: Connection | null;
   publicKey: PublicKey | null;
   walletAddress: string | null;
   activeRpcUrl?: string;
@@ -95,23 +95,24 @@ export function useWalletTokens({
 }: UseWalletTokensOptions) {
   const queryClient = useQueryClient();
   const queryKey = walletTokensQueryKey(walletAddress, includeZeroBalance);
+  const isEnabled = enabled && !!connection && !!publicKey && !!walletAddress;
 
   const query = useQuery({
     queryKey,
     queryFn: () => {
-      if (!publicKey || !walletAddress) {
+      if (!connection || !publicKey || !walletAddress) {
         throw new Error("Wallet not connected");
       }
       return fetchWalletTokens(connection, publicKey, walletAddress, false);
     },
-    enabled: enabled && !!publicKey && !!walletAddress,
+    enabled: isEnabled,
     staleTime: 30_000,
     refetchInterval,
     retry: 1,
   });
 
   const refetchTokens = async (forceRefresh = false): Promise<void> => {
-    if (!publicKey || !walletAddress) {
+    if (!connection || !publicKey || !walletAddress) {
       await query.refetch();
       return;
     }

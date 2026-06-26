@@ -57,7 +57,7 @@ type RpcContextValue = {
   selectedEndpointIndex: number;
   selectedEndpoint: RpcEndpoint | null;
   activeRpcUrl: string;
-  connection: Connection;
+  connection: Connection | null;
   autoSelectBest: boolean;
   isLoadingEndpoints: boolean;
   diagnostics: RpcDiagnosticRow[];
@@ -131,10 +131,13 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
     return getBrowserConnectionEndpoint();
   }, [activeRpcUrl]);
 
-  const connection = useMemo(
-    () => new Connection(connectionEndpoint, "confirmed"),
-    [connectionEndpoint],
-  );
+  const [connection, setConnection] = useState<Connection | null>(null);
+
+  useEffect(() => {
+    // Client-only: Turbopack cannot construct Connection during SSR render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- external Solana RPC client
+    setConnection(new Connection(connectionEndpoint, "confirmed"));
+  }, [connectionEndpoint]);
 
   const refreshHealth = useCallback(async () => {
     const currentEndpoints = endpointsRef.current;

@@ -9,7 +9,7 @@ export async function acquireJobLock(
 ): Promise<{ acquired: boolean; reason?: string }> {
   const now = new Date()
   const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString()
-  const lockedBy = `pid-${process.pid}-${Date.now()}`
+  const lockedBy = `worker-${crypto.randomUUID()}`
 
   await supabase
     .from('bot_job_locks')

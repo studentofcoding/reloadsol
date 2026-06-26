@@ -11,6 +11,8 @@ export default function ConnectionStatus() {
   const [slot, setSlot] = useState<number | null>(null)
 
   useEffect(() => {
+    if (!connection) return;
+
     const checkConnection = async () => {
       try {
         setStatus('checking')

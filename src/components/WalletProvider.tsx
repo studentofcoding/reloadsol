@@ -107,26 +107,26 @@ export function useWallet(): WalletContextState {
   return context;
 }
 
-const ConnectionContext = createContext<ReturnType<typeof useRpc>["connection"] | null>(
-  null,
-);
+const ConnectionContext = createContext<
+  { connection: import("@solana/web3.js").Connection | null } | undefined
+>(undefined);
 
 function ConnectionProvider({ children }: { children: React.ReactNode }) {
   const { connection } = useRpc();
 
   return (
-    <ConnectionContext.Provider value={connection}>
+    <ConnectionContext.Provider value={{ connection }}>
       {children}
     </ConnectionContext.Provider>
   );
 }
 
 export function useConnection() {
-  const connection = useContext(ConnectionContext);
-  if (!connection) {
+  const ctx = useContext(ConnectionContext);
+  if (ctx === undefined) {
     throw new Error("useConnection must be used within a WalletProvider");
   }
-  return { connection };
+  return ctx;
 }
 
 /** Resolved base58 address from Jupiter wallet state (all known shapes). */

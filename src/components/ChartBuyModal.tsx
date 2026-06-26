@@ -3,6 +3,7 @@
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useWallet, useConnection } from "@/components/WalletProvider";
+import { useRpc } from "@/contexts/RpcContext";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { useChartTokenInfo } from "@/hooks/useChartTokenInfo";
@@ -68,6 +69,7 @@ export default function ChartBuyModal({
 }: ChartBuyModalProps) {
   const { publicKey, signAllTransactions, connected } = useWallet();
   const { connection } = useConnection();
+  const { activeRpcUrl } = useRpc();
   const { trackOperation } = useTradingData();
   const triggerPostBuyRefresh = usePostBuyRefresh();
   const walletAddress = connected && publicKey ? publicKey.toString() : null;
@@ -108,7 +110,7 @@ export default function ChartBuyModal({
     connection,
     publicKey,
     walletAddress,
-    activeRpcUrl: connection.rpcEndpoint,
+    activeRpcUrl,
     enabled: connected && !!publicKey && !!validTokenAddress,
   });
 
@@ -238,6 +240,11 @@ export default function ChartBuyModal({
 
     if (!tokenInfo) {
       setError("Token information not loaded");
+      return;
+    }
+
+    if (!connection) {
+      setError("RPC connection not ready");
       return;
     }
 

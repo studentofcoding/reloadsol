@@ -518,7 +518,7 @@ export default function BulkTokenSeller() {
 
   // Refresh all token prices from Jupiter portfolio
   const refreshAllPrices = useCallback(async () => {
-    if (!publicKey || !walletAddress || swappableTokens.length === 0) return;
+    if (!publicKey || !walletAddress || !connection || swappableTokens.length === 0) return;
 
     patchTokens((data) =>
       patchWalletTokenLists(data, (tokens) =>
@@ -573,7 +573,7 @@ export default function BulkTokenSeller() {
   // Refresh individual token price from Jupiter portfolio
   const refreshTokenPrice = useCallback(
     async (token: UserToken) => {
-      if (!publicKey || !walletAddress) return;
+      if (!publicKey || !walletAddress || !connection) return;
 
       patchTokens((data) =>
         patchWalletTokenLists(data, (tokens) =>
@@ -636,6 +636,11 @@ export default function BulkTokenSeller() {
 
     if (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0) {
       setError("Please select at least one token");
+      return;
+    }
+
+    if (!connection) {
+      setError("RPC connection not ready");
       return;
     }
 
@@ -997,6 +1002,11 @@ export default function BulkTokenSeller() {
 
     if (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0) {
       setError("Please select at least one token");
+      return;
+    }
+
+    if (!connection) {
+      setError("RPC connection not ready");
       return;
     }
 

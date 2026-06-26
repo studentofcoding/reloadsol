@@ -759,16 +759,11 @@ export default function AlgoDashboardTab() {
           src={token.logo_url}
           alt={token.token_symbol || "Token"}
           className="w-full h-full object-cover"
-          onError={(e) => {
-            e.currentTarget.onerror = null;
-            e.currentTarget.src = "";
-            const parent = e.currentTarget.parentElement as HTMLElement | null;
-            if (parent) {
-              parent.textContent = (token.token_symbol || "?")
-                .charAt(0)
-                .toUpperCase();
-            }
-          }}
+          fallback={
+            <span className="text-white text-sm font-bold">
+              {(token.token_symbol || "?").charAt(0).toUpperCase()}
+            </span>
+          }
         />
       ) : (
         <span className="text-white text-sm font-bold">

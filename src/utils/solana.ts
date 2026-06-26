@@ -1,11 +1,7 @@
-import { Connection, clusterApiUrl } from '@solana/web3.js'
-import { createConnection, connection as defaultConnection } from './connection'
+import { createConnection, getConnection } from './connection'
 
 // Re-export the connection utilities
-export { createConnection, RPC_ENDPOINTS } from './connection'
-
-// Default connection (re-exported)
-export const connection = defaultConnection
+export { createConnection, getConnection, RPC_ENDPOINTS } from './connection'
 
 // Jupiter API endpoints
 export const JUPITER_API = {

@@ -39,7 +39,7 @@ export default function WalletBalance({ onBalanceChange }: WalletBalanceProps) {
   }, [balance, onBalanceChange]);
 
   const fetchTotalPortfolioValue = useCallback(async () => {
-    if (!publicKey || !connected || !balance || balance <= 0 || solPrice <= 0) {
+    if (!publicKey || !connected || !connection || !balance || balance <= 0 || solPrice <= 0) {
       return;
     }
 
@@ -97,6 +97,16 @@ export default function WalletBalance({ onBalanceChange }: WalletBalanceProps) {
     return (
       <div className="flex items-center space-x-2 text-sm">
         <span className="text-gray-400">Not connected</span>
+      </div>
+    );
+  }
+
+  if (!connection) {
+    return (
+      <div className="flex items-center space-x-2 text-sm">
+        <div className="flex items-center space-x-1">
+          <div className="w-3 h-3 border border-gray-400 border-t-white rounded-full animate-spin"></div>
+        </div>
       </div>
     );
   }

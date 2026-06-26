@@ -26,8 +26,8 @@ export default function GlobalWatchlistBar() {
   }
 
   return (
-    <div className="w-full bg-gray-800/80 border-b border-gray-700 min-h-[40px] mb-2">
-      <div className="flex items-center gap-2 overflow-x-auto px-2 py-1.5 flex-nowrap scrollbar-thin">
+    <div className="w-full min-h-[40px] mb-2">
+      <div className="flex max-w-6xl mx-auto items-center gap-2 overflow-x-auto px-2 py-1.5 flex-nowrap scrollbar-thin">
         {entries.map((entry) => {
           const symbol =
             entry.token_symbol ?? entry.token_address.slice(0, 6);

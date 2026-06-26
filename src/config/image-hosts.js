@@ -13,7 +13,6 @@ const IMAGE_REMOTE_HOSTS = [
   "arweave.net",
   "cdn.jsdelivr.net",
   "i.degencdn.com",
-  "static-create.jup.ag",
   "proxy.duckduckgo.com",
   "ipfs.filebase.io",
   "image-cdn.solana.fm",
@@ -21,4 +20,7 @@ const IMAGE_REMOTE_HOSTS = [
   "kuji44lsf4frvko7srm7jdj6nqy2jzvdl5hy5dsodi7nva75rbtq.arweave.net",
 ];
 
-module.exports = { IMAGE_REMOTE_HOSTS };
+/** Hosts with flaky/missing assets — load directly in browser, skip /_next/image upstream fetch. */
+const UNOPTIMIZED_IMAGE_HOSTS = ["static-create.jup.ag"];
+
+module.exports = { IMAGE_REMOTE_HOSTS, UNOPTIMIZED_IMAGE_HOSTS };

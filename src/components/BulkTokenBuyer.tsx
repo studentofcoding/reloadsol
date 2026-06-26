@@ -36,7 +36,6 @@ import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
 import { useTradingData } from "./TradingDataProvider";
 import { usePostBuyRefresh } from "@/hooks/usePostBuyRefresh";
-import { connection } from "../utils/connection";
 import {
   fetchAxiomTokenInfo,
   getRiskIndicators,
@@ -466,6 +465,11 @@ export default function BulkTokenBuyer() {
 
     if (validMints.length > 10) {
       setError("Maximum 10 token addresses allowed");
+      return;
+    }
+
+    if (!connection) {
+      setError("RPC connection not ready");
       return;
     }
 

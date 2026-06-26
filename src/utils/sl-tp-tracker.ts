@@ -3,7 +3,7 @@ import { log } from '@/utils/unified-logger'
 import { Connection, PublicKey, Keypair, VersionedTransaction } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 import { notifySlTpTrigger } from './trading-notifications'
-import { connection } from '@/utils/solana'
+import { getConnection } from '@/utils/solana'
 import { fetchUserTokens } from '@/utils/jupiter'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 
@@ -80,7 +80,7 @@ async function initializeTradingConnection(): Promise<void> {
 
     try {
         // Use the existing connection from solana utils
-        tradingConnection = connection
+        tradingConnection = getConnection()
 
         const keypairJson = process.env.TRADING_KEYPAIR_JSON
         if (keypairJson) {
@@ -238,7 +238,7 @@ async function getExistingOpenPositions(walletAddress: string): Promise<OpenPosi
         if (openCycles.size > 0) {
             try {
                 const publicKey = new PublicKey(walletAddress)
-                const walletTokens = await fetchUserTokens(connection, publicKey, false, false)
+                const walletTokens = await fetchUserTokens(getConnection(), publicKey, false, false)
 
                 openCycles.forEach((cycle) => {
                     const walletTok = walletTokens.find((wt) => wt.mintAddress === cycle.mintAddress)
@@ -584,7 +584,7 @@ function checkSLTPTriggers(position: SLTPPosition, currentPrice: number): SLTPTr
 async function getWalletTokenMap(walletAddress: string): Promise<Map<string, { uiAmount: number; decimals: number }>> {
     try {
         const pubkey = new PublicKey(walletAddress)
-        const tokens = await fetchUserTokens(connection, pubkey, false, false)
+        const tokens = await fetchUserTokens(getConnection(), pubkey, false, false)
         const map = new Map<string, { uiAmount: number; decimals: number }>()
         for (const t of tokens) {
             map.set(t.mintAddress, { uiAmount: t.uiAmount, decimals: t.decimals })
@@ -669,7 +669,7 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
         let walletUiAmount = 0
         try {
             const pubkey = new PublicKey(position.wallet_address)
-            const walletTokens = await fetchUserTokens(connection, pubkey, false, false)
+            const walletTokens = await fetchUserTokens(getConnection(), pubkey, false, false)
             const t = walletTokens.find(tok => tok.mintAddress === position.token_address)
             if (t) {
                 decimals = t.decimals

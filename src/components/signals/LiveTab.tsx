@@ -13,6 +13,7 @@ import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { useRugList } from "@/hooks/useRugList";
 import { useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
+import { useRpc } from "@/contexts/RpcContext";
 import { useTradingData } from "@/components/TradingDataProvider";
 import { trackRealBuy, trackRealSell, trackSimBuy, trackSimClose } from "@/utils/trade-tracking";
 import { buildEntryMcapFeatures } from "@/strategies/outcome-features";
@@ -108,6 +109,7 @@ export default function LiveTab() {
   const { connected, publicKey, signTransaction, signAllTransactions } =
     useWallet();
   const { connection } = useConnection();
+  const { activeRpcUrl } = useRpc();
   const { records, solPrice: currentSolPrice, trackOperation } = useTradingData();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const { isRugged: isTokenRugged, markRug, unmarkRug } = useRugList();
@@ -123,7 +125,7 @@ export default function LiveTab() {
     connection,
     publicKey,
     walletAddress,
-    activeRpcUrl: connection.rpcEndpoint,
+    activeRpcUrl,
     enabled: connected && !!publicKey,
     includeZeroBalance: false,
   });
@@ -760,6 +762,11 @@ export default function LiveTab() {
       return;
     }
 
+    if (!connection) {
+      alert("RPC connection not ready");
+      return;
+    }
+
     setBuyingTokens((prev) => new Set(prev).add(token.token_address));
 
     try {
@@ -976,6 +983,11 @@ export default function LiveTab() {
 
     if (!sellQuote || !ownedInfo) {
       alert("No sell quote available for this token");
+      return;
+    }
+
+    if (!connection) {
+      alert("RPC connection not ready");
       return;
     }
 
@@ -1234,7 +1246,7 @@ export default function LiveTab() {
   // Sell handler for sidebar
   const handleSidebarSell = async (token: UserToken) => {
     const quote = sidebarSellQuotes[token.mintAddress];
-    if (!quote || !connected || !publicKey || !signAllTransactions) return;
+    if (!quote || !connected || !publicKey || !signAllTransactions || !connection) return;
     setSidebarSelling((prev) => ({ ...prev, [token.mintAddress]: true }));
     try {
       const expectedSol = parseInt(quote.outAmount) / 1e9;
@@ -1436,9 +1448,11 @@ export default function LiveTab() {
                   objectFit: "cover",
                   borderRadius: "50%",
                 }}
-                onError={(e) => {
-                  e.currentTarget.style.display = "none";
-                }}
+                fallback={
+                  <span className="text-white font-bold text-lg">
+                    {token.token_symbol?.charAt(0) || "?"}
+                  </span>
+                }
               />
             ) : (
               <span className="text-white font-bold text-lg">

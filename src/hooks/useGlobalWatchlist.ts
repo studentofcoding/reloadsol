@@ -64,7 +64,7 @@ export function useGlobalWatchlist() {
       walletAddress ? readWatchlistCache(walletAddress) : [],
   });
 
-  const entries = listQuery.data ?? [];
+  const entries = useMemo(() => listQuery.data ?? [], [listQuery.data]);
   const tokenAddresses = entries.map((e) => e.token_address);
   const mintsKey = tokenAddresses.join(',');
 
@@ -76,7 +76,10 @@ export function useGlobalWatchlist() {
     refetchInterval: 60_000,
   });
 
-  const currentPrices = pricesQuery.data ?? {};
+  const currentPrices = useMemo(
+    () => pricesQuery.data ?? {},
+    [pricesQuery.data],
+  );
 
   const priceChangePct = useMemo(() => {
     const result: Record<string, number | null> = {};

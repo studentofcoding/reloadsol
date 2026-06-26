@@ -12,6 +12,11 @@ export default function RpcTest() {
   const [error, setError] = useState<string>('')
 
   const testConnection = async () => {
+    if (!connection) {
+      setError('❌ RPC connection not ready')
+      return
+    }
+
     setIsLoading(true)
     setError('')
     setResult('')
@@ -141,7 +146,7 @@ export default function RpcTest() {
       )}
       
       <div className="text-xs text-gray-400 border-t border-gray-600 pt-3">
-        <div>Current Connection: {connection.rpcEndpoint}</div>
+        <div>Current Connection: {connection?.rpcEndpoint ?? 'Not ready'}</div>
         <div className="mt-1">
           HTTP requests are automatically proxied through /api/rpc for CORS bypass.
         </div>

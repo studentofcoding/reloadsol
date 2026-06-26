@@ -39,7 +39,7 @@ async function fetchUsdcBalance(
 }
 
 type UseWalletBalancesOptions = {
-  connection: Connection;
+  connection: Connection | null;
   publicKey: PublicKey | null;
   walletAddress: string | null;
   enabled?: boolean;
@@ -54,11 +54,11 @@ export function useWalletBalances({
   refetchInterval = 30_000,
 }: UseWalletBalancesOptions) {
   const queryClient = useQueryClient();
-  const isEnabled = enabled && !!publicKey && !!walletAddress;
+  const isEnabled = enabled && !!connection && !!publicKey && !!walletAddress;
 
   const solQuery = useQuery({
     queryKey: walletBalanceQueryKey(walletAddress),
-    queryFn: () => fetchSolBalance(connection, publicKey!),
+    queryFn: () => fetchSolBalance(connection!, publicKey!),
     enabled: isEnabled,
     staleTime: 15_000,
     refetchInterval: isEnabled ? refetchInterval : false,
@@ -66,7 +66,7 @@ export function useWalletBalances({
 
   const usdcQuery = useQuery({
     queryKey: walletUsdcBalanceQueryKey(walletAddress),
-    queryFn: () => fetchUsdcBalance(connection, publicKey!),
+    queryFn: () => fetchUsdcBalance(connection!, publicKey!),
     enabled: isEnabled,
     staleTime: 15_000,
     refetchInterval: isEnabled ? refetchInterval : false,

@@ -68,16 +68,11 @@ const ProgressiveTokenItem: React.FC<ProgressiveTokenItemProps> = ({
                 src={token.logoURI ?? ""} 
                 alt={token.name ?? token.symbol ?? "Token"} 
                 className="w-4 h-4 sm:w-8 sm:h-8 rounded-full"
-                onError={(e) => {
-                  // Fallback to letter if image fails to load
-                  const target = e.target as HTMLImageElement
-                  target.onerror = null
-                  target.style.display = 'none'
-                  const parent = target.parentElement as HTMLElement | null
-                  if (parent) {
-                    parent.textContent = (token.symbol || 'T').charAt(0)
-                  }
-                }}
+                fallback={
+                  <span className={hasBasicData ? '' : 'animate-pulse'}>
+                    {(token.symbol || 'T').charAt(0)}
+                  </span>
+                }
               />
             ) : (
               <span className={hasBasicData ? '' : 'animate-pulse'}>

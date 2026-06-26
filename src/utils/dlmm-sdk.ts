@@ -1,13 +1,13 @@
 import DLMM, { StrategyType } from '@meteora-ag/dlmm';
 import { Connection, Keypair, PublicKey, sendAndConfirmTransaction } from '@solana/web3.js';
 import BN from 'bn.js';
-import { connection } from '@/utils/connection';
+import { getConnection } from '@/utils/connection';
 import type { DlmmStrategyType } from '@/types/dlmm';
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 export function getDlmmConnection(): Connection {
-  return connection;
+  return getConnection();
 }
 
 export async function createDlmmPool(poolAddress: string) {

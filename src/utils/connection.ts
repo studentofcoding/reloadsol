@@ -53,6 +53,14 @@ export const createConnection = (network: 'mainnet' | 'devnet' | 'testnet' = 'ma
   return new Connection(endpoint, 'confirmed')
 }
 
-export const connection = createConnection('mainnet')
+let cachedConnection: Connection | null = null
+
+/** Lazily created — avoids instantiating Connection during SSR module load (Turbopack). */
+export function getConnection(): Connection {
+  if (!cachedConnection) {
+    cachedConnection = createConnection('mainnet')
+  }
+  return cachedConnection
+}
 
 export { resolveRpcUrls, getPrimaryRpcUrl, getPublicRpcUrl }

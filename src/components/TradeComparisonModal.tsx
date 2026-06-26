@@ -148,9 +148,11 @@ export default function TradeComparisonModal({
                   src={logoUrl} 
                   alt={tokenSymbol || 'Token'} 
                   className="w-8 h-8 rounded-full"
-                  onError={(e) => {
-                    e.currentTarget.style.display = 'none'
-                  }}
+                  fallback={
+                    <div className="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center text-white text-sm font-bold">
+                      {(tokenSymbol || '?').charAt(0).toUpperCase()}
+                    </div>
+                  }
                 />
               )}
               <div>

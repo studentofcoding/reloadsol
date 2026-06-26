@@ -57,7 +57,7 @@ export default function RpcTesterPage() {
   }, [password]);
 
   const runPipelineBreakdown = useCallback(async () => {
-    if (!publicKey) return;
+    if (!publicKey || !connection) return;
     setPipelineLoading(true);
     setPipelineError(null);
     try {

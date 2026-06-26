@@ -1,5 +1,8 @@
 /** @type {import('next').NextConfig} */
-const { IMAGE_REMOTE_HOSTS: imageHosts } = require('./src/config/image-hosts.js')
+const { IMAGE_REMOTE_HOSTS: imageHosts, UNOPTIMIZED_IMAGE_HOSTS } = require('./src/config/image-hosts.js')
+const optimizedImageHosts = imageHosts.filter(
+  (hostname) => !UNOPTIMIZED_IMAGE_HOSTS.includes(hostname),
+)
 
 const nextConfig = {
   // ===== CORE CONFIGURATION =====
@@ -13,6 +16,19 @@ const nextConfig = {
   transpilePackages: ['@jup-ag/wallet-adapter'],
   serverExternalPackages: ['puppeteer'],
 
+  // Faster dev compiles: tree-shake heavy package entrypoints (Turbopack + webpack)
+  experimental: {
+    optimizePackageImports: [
+      '@solana/web3.js',
+      '@solana/spl-token',
+      '@tanstack/react-query',
+      'react-icons',
+      'chart.js',
+      'react-chartjs-2',
+      'date-fns',
+    ],
+  },
+
   // ===== COMPRESSION & PERFORMANCE =====
   compress: true,
 
@@ -23,15 +39,16 @@ const nextConfig = {
       fs: { browser: './empty-module.js' },
       net: { browser: './empty-module.js' },
       tls: { browser: './empty-module.js' },
-      crypto: './node_modules/crypto-browserify/index.js',
-      stream: './node_modules/stream-browserify/index.js',
-      url: './node_modules/url/url.js',
-      zlib: './node_modules/browserify-zlib/lib/index.js',
-      http: './node_modules/stream-http/index.js',
-      https: './node_modules/https-browserify/index.js',
-      assert: './node_modules/assert/build/assert.js',
-      os: './node_modules/os-browserify/browser.js',
-      path: './node_modules/path-browserify/index.js',
+      crypto: { browser: './node_modules/crypto-browserify/index.js' },
+      stream: { browser: './node_modules/stream-browserify/index.js' },
+      url: { browser: './node_modules/url/url.js' },
+      zlib: { browser: './node_modules/browserify-zlib/lib/index.js' },
+      http: { browser: './node_modules/stream-http/index.js' },
+      https: { browser: './node_modules/https-browserify/index.js' },
+      assert: { browser: './node_modules/assert/build/assert.js' },
+      os: { browser: './node_modules/os-browserify/browser.js' },
+      path: { browser: './node_modules/path-browserify/index.js' },
+      events: { browser: 'events' },
       'pino-pretty': { browser: './empty-module.js' },
     },
   },
@@ -44,7 +61,7 @@ const nextConfig = {
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     dangerouslyAllowSVG: true,
     contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
-    remotePatterns: imageHosts.map((hostname) => ({
+    remotePatterns: optimizedImageHosts.map((hostname) => ({
       protocol: 'https',
       hostname,
     })),
@@ -134,6 +151,7 @@ const nextConfig = {
       assert: require.resolve('assert'),
       os: require.resolve('os-browserify'),
       path: require.resolve('path-browserify'),
+      events: require.resolve('events/'),
       'pino-pretty': false,
     }
 

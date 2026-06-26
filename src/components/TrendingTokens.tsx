@@ -436,14 +436,7 @@ export default function TrendingTokens({
                             src={token.logo_url} 
                             alt={token.token_symbol} 
                             className="w-full h-full object-cover"
-                            onError={(e) => {
-                              e.currentTarget.onerror = null
-                              e.currentTarget.src = ''
-                              const parent = e.currentTarget.parentElement as HTMLElement | null
-                              if (parent) {
-                                parent.textContent = token.token_symbol.charAt(0)
-                              }
-                            }}
+                            fallback={token.token_symbol.charAt(0)}
                           />
                         ) : (
                           token.token_symbol.charAt(0)

@@ -4,6 +4,7 @@ import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
+import { useRpc } from "@/contexts/RpcContext";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { useChartTokenInfo } from "@/hooks/useChartTokenInfo";
@@ -55,6 +56,7 @@ export default function ChartPage() {
   const router = useRouter();
   const { publicKey, signAllTransactions, connected } = useWallet();
   const { connection } = useConnection();
+  const { activeRpcUrl } = useRpc();
   const { trackOperation } = useTradingData();
 
   const tokenAddress = params.tokenAddress as string;
@@ -96,7 +98,7 @@ export default function ChartPage() {
     connection,
     publicKey,
     walletAddress,
-    activeRpcUrl: connection.rpcEndpoint,
+    activeRpcUrl,
     enabled: connected && !!publicKey && !!validTokenAddress,
     includeZeroBalance: false,
     refetchInterval: connected && publicKey ? 30_000 : false,
@@ -214,6 +216,11 @@ export default function ChartPage() {
 
     if (!tokenInfo) {
       setError("Token information not loaded");
+      return;
+    }
+
+    if (!connection) {
+      setError("RPC connection not ready");
       return;
     }
 
@@ -455,9 +462,11 @@ export default function ChartPage() {
                   src={tokenInfo.logoURI}
                   alt={tokenInfo.symbol}
                   className="w-8 h-8 rounded-full"
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
-                  }}
+                  fallback={
+                    <div className="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center text-white text-sm font-bold">
+                      {(tokenInfo.symbol || "?").charAt(0).toUpperCase()}
+                    </div>
+                  }
                 />
               )}
               <div>

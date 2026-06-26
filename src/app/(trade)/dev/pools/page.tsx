@@ -319,9 +319,11 @@ export default function TrendingPoolsPage() {
                                   src={token.logo_url}
                                   alt={token.token_symbol}
                                   className="w-10 h-10 rounded-full"
-                                  onError={(e) => {
-                                    e.currentTarget.style.display = "none";
-                                  }}
+                                  fallback={
+                                    <div className="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-white font-bold">
+                                      {(token.token_symbol || "?")[0]}
+                                    </div>
+                                  }
                                 />
                               )}
                               <div className="flex-1">
@@ -522,9 +524,11 @@ export default function TrendingPoolsPage() {
                     src={selectedToken.logo_url}
                     alt={selectedToken.token_symbol}
                     className="w-8 h-8 rounded-full"
-                    onError={(e) => {
-                      e.currentTarget.style.display = "none";
-                    }}
+                    fallback={
+                      <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-white text-xs font-bold">
+                        {(selectedToken.token_symbol || "?")[0]}
+                      </div>
+                    }
                   />
                 )}
                 <div>

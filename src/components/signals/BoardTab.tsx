@@ -538,6 +538,11 @@ function ChartsContent() {
       return;
     }
 
+    if (!connection) {
+      alert("RPC connection not ready");
+      return;
+    }
+
     setIsBuyingPotential(true);
     setStatus("Calculating weighted distribution...");
 
@@ -882,6 +887,11 @@ function ChartsContent() {
       return;
     }
 
+    if (!connection) {
+      setStatus("RPC connection not ready");
+      return;
+    }
+
     setStatus(`Selling ${tokenAddress.slice(0, 8)}...`);
 
     try {
@@ -1022,6 +1032,14 @@ function ChartsContent() {
         setBuyStates((prev) => ({
           ...prev,
           [tokenAddress]: { loading: false, error: "Invalid amount" },
+        }));
+        return;
+      }
+
+      if (!connection) {
+        setBuyStates((prev) => ({
+          ...prev,
+          [tokenAddress]: { loading: false, error: "RPC connection not ready" },
         }));
         return;
       }
