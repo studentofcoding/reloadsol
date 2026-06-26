@@ -112,29 +112,100 @@ function parseIsoMs(iso: string | null | undefined): number | null {
   return Number.isFinite(ms) ? ms : null
 }
 
-/** Ensure first_seen_at is not later than any milestone timestamp. Returns true if repaired. */
+/** True when first_seen_at is still after any milestone (post-normalize check). */
+export function isTrackingTimelineInconsistent(record: McapSnapshot): boolean {
+  const firstMs = parseIsoMs(record.first_seen_at)
+  if (firstMs == null) return false
+  for (const threshold of GROWTH_THRESHOLDS) {
+    const col = getThresholdColumnName(threshold)
+    const milestoneMs = parseIsoMs(record[col])
+    if (milestoneMs != null && firstMs > milestoneMs) return true
+  }
+  return false
+}
+
+/**
+ * Bidirectional timeline repair:
+ * 1) null milestones before first_seen (stale session)
+ * 2) null milestones inconsistent with current growth
+ * 3) clamp first_seen to earliest remaining milestone if still late
+ */
 export function normalizeTrackingTimeline(record: McapSnapshot): boolean {
   const firstMs = parseIsoMs(record.first_seen_at)
   if (firstMs == null) return false
 
-  const milestoneTimes = [
-    parseIsoMs(record.when_reach_80mc),
-    parseIsoMs(record.when_reach_120mc),
-    parseIsoMs(record.when_reach_200mc),
-  ].filter((v): v is number => v != null)
+  let changed = false
+  const growth = record.mcap_growth_percent ?? 0
 
-  if (milestoneTimes.length === 0) return false
+  for (const threshold of GROWTH_THRESHOLDS) {
+    const columnName = getThresholdColumnName(threshold)
+    const milestoneMs = parseIsoMs(record[columnName])
+    if (milestoneMs != null && milestoneMs < firstMs) {
+      record[columnName] = null
+      changed = true
+    }
+  }
 
-  const earliest = Math.min(firstMs, ...milestoneTimes)
-  if (earliest >= firstMs) return false
+  for (const threshold of GROWTH_THRESHOLDS) {
+    const columnName = getThresholdColumnName(threshold)
+    if (record[columnName] && growth < threshold) {
+      record[columnName] = null
+      changed = true
+    }
+  }
 
-  record.first_seen_at = new Date(earliest).toISOString()
-  log.warn('price_tracking', 'Repaired first_seen_at to earliest milestone', {
+  const remainingFirstMs = parseIsoMs(record.first_seen_at)
+  if (remainingFirstMs == null) return changed
+
+  const milestoneTimes = GROWTH_THRESHOLDS.map((threshold) =>
+    parseIsoMs(record[getThresholdColumnName(threshold)]),
+  ).filter((v): v is number => v != null)
+
+  if (milestoneTimes.length > 0) {
+    const earliest = Math.min(remainingFirstMs, ...milestoneTimes)
+    if (earliest < remainingFirstMs) {
+      record.first_seen_at = new Date(earliest).toISOString()
+      changed = true
+      log.warn('price_tracking', 'Repaired first_seen_at to earliest milestone', {
+        tokenAddress: record.token_address,
+        tokenSymbol: record.token_symbol,
+        firstSeenAt: record.first_seen_at,
+      })
+    }
+  }
+
+  return changed
+}
+
+/** Start a fresh tracking session (new baseline, clear milestones). */
+export function resetTrackingSession(
+  record: McapSnapshot,
+  currentMcap: number,
+  nowIso: string,
+): McapSnapshot {
+  const normalizedMcap = normalizeMarketCap(currentMcap)
+  record.first_mcap = normalizedMcap
+  record.current_mcap = normalizedMcap
+  record.first_seen_at = nowIso
+  record.last_updated_at = nowIso
+  record.mcap_growth_percent = 0
+  record.when_reach_80mc = null
+  record.when_reach_120mc = null
+  record.when_reach_200mc = null
+  record.is_tracking_stuck = false
+  log.info('price_tracking', 'Reset tracking session', {
     tokenAddress: record.token_address,
     tokenSymbol: record.token_symbol,
-    firstSeenAt: record.first_seen_at,
+    firstMcap: normalizedMcap,
+    firstSeenAt: nowIso,
   })
-  return true
+  return record
+}
+
+function shouldResetTrackingSession(record: McapSnapshot, nowMs: number): boolean {
+  const firstMs = parseIsoMs(record.first_seen_at)
+  if (firstMs == null) return false
+  return nowMs - firstMs >= MAX_TRACKING_AGE_MS
 }
 
 /** Normalize timeline in-place; optionally persist when a repair was needed. */
@@ -143,7 +214,12 @@ export function fixTrackingTimeline(record: McapSnapshot, persist = false): Mcap
   if (repaired && persist) {
     void supabase
       .from('token_mcap_tracking')
-      .update({ first_seen_at: record.first_seen_at })
+      .update({
+        first_seen_at: record.first_seen_at,
+        when_reach_80mc: record.when_reach_80mc,
+        when_reach_120mc: record.when_reach_120mc,
+        when_reach_200mc: record.when_reach_200mc,
+      })
       .eq('token_address', record.token_address)
       .then(({ error }) => {
         if (error) {
@@ -428,23 +504,9 @@ export async function trackTokenMcap(
 
     // If we have cached data, check max tracking age first
     if (cached) {
-      const ageMs = now - new Date(cached.first_seen_at).getTime()
-      if (ageMs >= MAX_TRACKING_AGE_MS) {
-        log.info('price_tracking', 'Max tracking age reached - finishing (cached path)', {
-          tokenAddress,
-          tokenSymbol,
-          ageHours: Math.round(ageMs / (1000 * 60 * 60)),
-        })
-        // Stop tracking: remove from cache and return current snapshot without DB writes
-        mcapCache.delete(tokenAddress)
-        return {
-          isFirstTime: false,
-          firstMcap: cached.first_mcap,
-          currentMcap: cached.current_mcap,
-          growthPercent: cached.mcap_growth_percent,
-          formattedGrowth: formatGrowthPercent(cached.mcap_growth_percent),
-          firstSeenAt: cached.first_seen_at
-        }
+      if (shouldResetTrackingSession(cached, now)) {
+        resetTrackingSession(cached, normalizedCurrentMcap, new Date().toISOString())
+        void updateMcapInDatabase(cached, true).catch(console.error)
       }
     }
 
@@ -606,23 +668,17 @@ export async function trackTokenMcap(
       const timeSinceLastUpdate = new Date().getTime() - new Date(existingRecord.last_updated_at).getTime()
       const minUpdateInterval = 60000 // 1 minute minimum
 
-      // Check max tracking age on DB path before any updates
-      const ageMsDb = Date.now() - new Date(existingRecord.first_seen_at).getTime()
-      if (ageMsDb >= MAX_TRACKING_AGE_MS) {
-        log.info('price_tracking', 'Max tracking age reached - finishing (db path)', {
-          tokenAddress,
-          tokenSymbol,
-          ageHours: Math.round(ageMsDb / (1000 * 60 * 60)),
-        })
-        // Ensure no further tracking; clear any cache entry
-        mcapCache.delete(tokenAddress)
+      if (shouldResetTrackingSession(existingRecord, Date.now())) {
+        resetTrackingSession(existingRecord, normalizedCurrentMcap, currentTime)
+        mcapCache.set(tokenAddress, existingRecord)
+        void updateMcapInDatabase(existingRecord, true).catch(console.error)
         return {
-          isFirstTime: false,
+          isFirstTime: true,
           firstMcap: existingRecord.first_mcap,
-          currentMcap: existingRecord.current_mcap,
-          growthPercent: existingRecord.mcap_growth_percent,
-          formattedGrowth: formatGrowthPercent(existingRecord.mcap_growth_percent),
-          firstSeenAt: existingRecord.first_seen_at
+          currentMcap: normalizedCurrentMcap,
+          growthPercent: 0,
+          formattedGrowth: formatGrowthPercent(0),
+          firstSeenAt: existingRecord.first_seen_at,
         }
       }
 
@@ -932,13 +988,12 @@ async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boo
       is_tracking_stuck: record.is_tracking_stuck === true,
     }
 
-    // Never overwrite first_seen_at on routine updates — only persist when repairing inconsistency
     if (repairedTimeline) {
       updateData.first_seen_at = record.first_seen_at
-    }
-
-    // Only include threshold columns if they were updated
-    if (includeThresholds) {
+      updateData.when_reach_80mc = record.when_reach_80mc
+      updateData.when_reach_120mc = record.when_reach_120mc
+      updateData.when_reach_200mc = record.when_reach_200mc
+    } else if (includeThresholds) {
       updateData.when_reach_80mc = record.when_reach_80mc
       updateData.when_reach_120mc = record.when_reach_120mc
       updateData.when_reach_200mc = record.when_reach_200mc
@@ -1179,12 +1234,9 @@ export async function getTrackingHealthStats(): Promise<{
     const zeroGrowthTokens = data.filter((t) => Math.abs(t.mcap_growth_percent || 0) < 0.01).length
     const recentlyUpdated = data.filter((t) => new Date(t.last_updated_at).getTime() > oneHourAgo).length
 
-    const timelineInconsistentCount = data.filter((t) => {
-      if (!t.when_reach_80mc) return false
-      const firstMs = parseIsoMs(t.first_seen_at)
-      const m80 = parseIsoMs(t.when_reach_80mc)
-      return firstMs != null && m80 != null && firstMs > m80
-    }).length
+    const timelineInconsistentCount = data.filter((t) =>
+      isTrackingTimelineInconsistent(t as McapSnapshot),
+    ).length
 
     const avgTrackingAge =
       data.reduce((sum, t) => sum + (now - new Date(t.first_seen_at).getTime()), 0) /

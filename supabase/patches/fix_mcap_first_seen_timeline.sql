@@ -1,6 +1,16 @@
--- One-time repair: first_seen_at must not be later than milestone timestamps.
--- Run after deploying mcap-tracker timeline fix.
+-- MCap timeline repair v2 — run once on Supabase after deploying normalizeTrackingTimeline v2.
+-- Step 1 clears stale milestones that predate first_seen_at (wrong session data).
+-- Step 2 only then clamps first_seen when still after valid milestones.
 
+-- Step 1: null milestones that predate first_seen (stale session data)
+UPDATE token_mcap_tracking
+SET
+  when_reach_80mc = CASE WHEN when_reach_80mc IS NOT NULL AND when_reach_80mc < first_seen_at THEN NULL ELSE when_reach_80mc END,
+  when_reach_120mc = CASE WHEN when_reach_120mc IS NOT NULL AND when_reach_120mc < first_seen_at THEN NULL ELSE when_reach_120mc END,
+  when_reach_200mc = CASE WHEN when_reach_200mc IS NOT NULL AND when_reach_200mc < first_seen_at THEN NULL ELSE when_reach_200mc END
+WHERE when_reach_80mc IS NOT NULL OR when_reach_120mc IS NOT NULL OR when_reach_200mc IS NOT NULL;
+
+-- Step 2: clamp first_seen when still after remaining milestones
 UPDATE token_mcap_tracking
 SET first_seen_at = LEAST(
   first_seen_at,
@@ -11,7 +21,7 @@ SET first_seen_at = LEAST(
 WHERE when_reach_80mc IS NOT NULL
   AND first_seen_at > when_reach_80mc;
 
--- Extend strategy domain enum for mcap_tracker sim outcomes (idempotent via drop/recreate check)
+-- Strategy domain seeds (idempotent)
 ALTER TABLE strategy_definitions DROP CONSTRAINT IF EXISTS strategy_definitions_domain_check;
 ALTER TABLE strategy_definitions ADD CONSTRAINT strategy_definitions_domain_check
   CHECK (domain IN ('trending_bot', 'signals', 'dlmm', 'mcap_tracker'));

@@ -296,6 +296,40 @@ async function enrichTokenData(
     const enrichedTokens: EnrichedTokenData[] = [];
     const errors: string[] = [];
 
+    let zScoreResults = new Map<
+        string,
+        { zScore: number | null; anomalyType: 'positive' | 'negative' | 'neutral'; zScoreAvailable: boolean }
+    >();
+    try {
+        const cohortMetrics = mcapData
+            .filter((token) => token && typeof token === 'object')
+            .map((token) => {
+                const price = priceData[token.token_address];
+                const volume24h = price?.volume24h;
+                const priceChange24h =
+                    price?.price && token.current_mcap > 0
+                        ? ((price.price * token.current_mcap) / 1_000_000 - token.first_mcap) /
+                          token.first_mcap *
+                          100
+                        : 0;
+                return {
+                    address: token.token_address,
+                    marketCap: token.current_mcap || 0,
+                    volume24h: volume24h || 0,
+                    timestamp: new Date(token.last_updated_at).getTime(),
+                    priceChange24h,
+                    mcapGrowthPercent: token.mcap_growth_percent || 0,
+                };
+            });
+        zScoreResults = await zScoreDetector.detectAnomalies(cohortMetrics, {
+            mode: 'crossSection',
+        });
+    } catch (zScoreError) {
+        logger.warn('api_request', 'Cohort Z-score analysis failed', {
+            error: getErrorMessage(zScoreError),
+        });
+    }
+
     for (const token of mcapData) {
         try {
             if (!token || typeof token !== 'object') {
@@ -307,30 +341,10 @@ async function enrichTokenData(
             const currentPriceUsd = price?.price || 0;
             const volume24h = price?.volume24h;
 
-            // Calculate price change (simplified - would need historical data for accurate calculation)
             const priceChange24h = currentPriceUsd > 0 && token.current_mcap > 0 ?
                 ((currentPriceUsd * token.current_mcap / 1000000) - token.first_mcap) / token.first_mcap * 100 : 0;
 
-            // Z-Score analysis with error handling
-            let zScoreData;
-            try {
-                const tokenMetrics = {
-                    address: token.token_address,
-                    marketCap: token.current_mcap || 0,
-                    volume24h: volume24h || 0,
-                    timestamp: new Date(token.last_updated_at).getTime(),
-                    priceChange24h
-                };
-
-                const zScoreResults = await zScoreDetector.detectAnomalies([tokenMetrics]);
-                zScoreData = zScoreResults.get(token.token_address);
-            } catch (zScoreError) {
-                logger.warn('api_request', 'Z-score analysis failed for token', {
-                    tokenAddress: token.token_address,
-                    error: getErrorMessage(zScoreError)
-                });
-                zScoreData = undefined;
-            }
+            const zScoreData = zScoreResults.get(token.token_address);
 
             // Momentum analysis with error handling
             let momentumSignal;
@@ -362,7 +376,8 @@ async function enrichTokenData(
                 volume_24h: volume24h,
 
                 // Analytics data
-                z_score: zScoreData?.zScore,
+                z_score: zScoreData?.zScoreAvailable ? zScoreData.zScore ?? undefined : undefined,
+                z_score_available: zScoreData?.zScoreAvailable ?? false,
                 anomaly_type: zScoreData?.anomalyType as 'positive' | 'negative' | 'neutral' | undefined,
                 momentum_signal: momentumSignal ? {
                     type: momentumSignal.signal_type as 'bullish_breakout' | 'bearish_breakout' | 'neutral',

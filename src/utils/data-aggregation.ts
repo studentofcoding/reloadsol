@@ -1,6 +1,6 @@
 import { supabase } from '@/utils/supabase'
 import { McapSnapshot } from '@/utils/mcap-tracker'
-import { ZScoreAnomalyDetector, TokenMetrics } from '@/utils/algo/anomaly-detection'
+import { ZScoreAnomalyDetector, TokenMetrics, type AnomalyResult } from '@/utils/algo/anomaly-detection'
 import { EnhancedMomentumAnalyzer } from '@/utils/algo/momentum-analysis'
 
 // Import Jupiter price utilities with better error handling
@@ -30,7 +30,8 @@ export interface EnrichedTokenData {
     volume_24h?: number
 
     // Analytics data
-    z_score?: number
+    z_score?: number | null
+    z_score_available?: boolean
     anomaly_type?: 'positive' | 'negative' | 'neutral'
     momentum_signal?: {
         type: 'bullish_breakout' | 'bearish_breakout' | 'neutral'
@@ -201,7 +202,7 @@ class DataAggregationService {
         const enrichedTokens: EnrichedTokenData[] = []
 
         // Prepare analytics if requested
-        let zScoreResults: Map<string, { zScore: number; anomalyType: 'positive' | 'negative' | 'neutral' }> | undefined
+        let zScoreResults: Map<string, AnomalyResult> | undefined
         let momentumResults: Map<string, any> | undefined
 
         if (options.includeAnalytics) {
@@ -212,11 +213,14 @@ class DataAggregationService {
                     marketCap: token.current_mcap,
                     volume24h: priceData[token.token_address]?.volume24h || 0,
                     timestamp: new Date(token.last_updated_at).getTime(),
-                    priceChange24h: 0 // Would need historical data
+                    priceChange24h: 0, // Would need historical data
+                    mcapGrowthPercent: token.mcap_growth_percent,
                 }))
 
                 // Run analytics
-                zScoreResults = await this.zScoreDetector.detectAnomalies(analyticsData);
+                zScoreResults = await this.zScoreDetector.detectAnomalies(analyticsData, {
+                    mode: 'crossSection',
+                });
                 const momentumAnalysis = await this.momentumAnalyzer.analyzeMcapMomentum(mcapData);
 
                 // Convert momentum analysis to Map format
@@ -254,6 +258,7 @@ class DataAggregationService {
 
                 // Analytics data
                 z_score: zScore?.zScore,
+                z_score_available: zScore?.zScoreAvailable,
                 anomaly_type: zScore?.anomalyType,
                 momentum_signal: momentum?.signal,
                 momentum_category: momentum?.category,
@@ -354,7 +359,7 @@ class DataAggregationService {
      */
     private calculateRiskScore(
         token: McapSnapshot,
-        zScore?: { zScore: number; anomalyType: string },
+        zScore?: AnomalyResult,
         momentum?: any
     ): number {
         let riskScore = 50 // Base risk score
@@ -366,7 +371,7 @@ class DataAggregationService {
         else if (token.mcap_growth_percent < 0) riskScore += 15 // Negative growth = risk
 
         // Adjust based on Z-score anomalies
-        if (zScore) {
+        if (zScore?.zScoreAvailable && typeof zScore.zScore === 'number') {
             if (Math.abs(zScore.zScore) > 3) riskScore += 25 // Extreme anomaly
             else if (Math.abs(zScore.zScore) > 2) riskScore += 15
         }

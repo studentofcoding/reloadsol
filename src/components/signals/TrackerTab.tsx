@@ -1,11 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { formatDistanceToNow } from "date-fns";
-import {
-  getTokenWithAnalytics,
-  EnrichedTokenData,
-} from "@/utils/data-aggregation";
+import { formatAppDateTime } from "@/utils/datetime";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
@@ -16,6 +13,12 @@ import {
   McapTrackingData,
 } from "@/hooks/useMCapTracker";
 import { useTokenAnalytics } from "@/hooks/useTokenAnalytics";
+import type { EnrichedTokenData } from "@/utils/data-aggregation";
+import {
+  deriveTrackerTokenInsights,
+  formatScore0To100,
+  formatTrackingAge,
+} from "@/components/signals/tracker-insights";
 
 // Interfaces imported from hook
 
@@ -244,10 +247,16 @@ export default function TrackerTab() {
     }));
   };
 
+  const dateFmt = (iso?: string | null) => formatAppDateTime(iso);
+
+  const handleOpenChart = (tokenAddress: string) => {
+    setModalTokenAddress(tokenAddress);
+  };
+
   const getAnomalyColor = (anomalyType?: string) => {
     if (!anomalyType) return "text-gray-400";
-    if (anomalyType === "high") return "text-red-400";
-    if (anomalyType === "low") return "text-blue-400";
+    if (anomalyType === "positive") return "text-red-400";
+    if (anomalyType === "negative") return "text-blue-400";
     return "text-yellow-400";
   };
 
@@ -277,9 +286,10 @@ export default function TrackerTab() {
   };
 
   const getRiskColor = (riskScore?: number) => {
-    if (riskScore === undefined || riskScore === null) return "text-gray-400";
-    if (riskScore > 0.7) return "text-red-400";
-    if (riskScore > 0.4) return "text-yellow-400";
+    if (riskScore === undefined || riskScore === null || !Number.isFinite(riskScore))
+      return "text-gray-400";
+    if (riskScore >= 70) return "text-red-400";
+    if (riskScore >= 45) return "text-yellow-400";
     return "text-green-400";
   };
 
@@ -316,12 +326,14 @@ export default function TrackerTab() {
   };
 
   const formatSolAmount = (solAmount: number): string => {
+    if (!Number.isFinite(solAmount)) return "—";
     if (solAmount >= 1000) return `${(solAmount / 1000).toFixed(2)}K SOL`;
     if (solAmount >= 1) return `${solAmount.toFixed(2)} SOL`;
     return `${solAmount.toFixed(4)} SOL`;
   };
 
   const formatPercentage = (percent: number): string => {
+    if (!Number.isFinite(percent)) return "—";
     return `${percent >= 0 ? "+" : ""}${percent.toFixed(2)}%`;
   };
 
@@ -437,6 +449,9 @@ export default function TrackerTab() {
       "SOL Growth %",
       "First Seen",
       "Last Updated",
+      "80%",
+      "120%",
+      "200%",
     ];
 
     const csvData = tokens.map((token) => [
@@ -448,8 +463,11 @@ export default function TrackerTab() {
       token.solPerToken.first,
       token.solPerToken.current,
       token.solPerToken.growth,
-      token.first_seen_at,
-      token.last_updated_at,
+      dateFmt(token.first_seen_at),
+      dateFmt(token.last_updated_at),
+      dateFmt(token.when_reach_80mc),
+      dateFmt(token.when_reach_120mc),
+      dateFmt(token.when_reach_200mc),
     ]);
 
     const csvContent = [headers, ...csvData]
@@ -2014,7 +2032,13 @@ export default function TrackerTab() {
           </div>
         )}
 
-        {tokens.map((token) => (
+        {tokens.map((token) => {
+          const analytics = analyticsData[token.token_address] as
+            | EnrichedTokenData
+            | undefined;
+          const insights = deriveTrackerTokenInsights(token, analytics);
+
+          return (
           <div
             key={token.token_address}
             className="bg-gray-800 rounded-lg p-6 hover:bg-gray-750 transition-colors"
@@ -2038,39 +2062,42 @@ export default function TrackerTab() {
                       {getGrowthIcon(token.mcap_growth_percent)}
                     </span>
                     <button
-                      onClick={() => refetchTokenMcap(token.token_address)}
-                      disabled={
-                        refetchingTokens.has(token.token_address) ||
-                        token.is_finished
-                      }
-                      className={`px-2 py-1 text-white text-xs rounded transition-colors ${
-                        token.is_finished
-                          ? "bg-gray-600 cursor-not-allowed"
-                          : refetchingTokens.has(token.token_address)
-                            ? "bg-yellow-600 hover:bg-yellow-700"
-                            : "bg-green-600 hover:bg-green-700"
-                      }`}
-                      title={
-                        token.is_finished
-                          ? "Tracking finished (4 days). Refetch disabled."
-                          : refetchingTokens.has(token.token_address)
-                            ? "Refetching MCap..."
-                            : "Toggle Chart & Refetch MCap"
-                      }
+                      onClick={() => {
+                        handleOpenChart(token.token_address);
+                        if (!token.is_finished) {
+                          void refetchTokenMcap(token.token_address);
+                        }
+                      }}
+                      className="px-2 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors"
+                      title="Open chart (refreshes mcap when tracking active)"
                     >
-                      {token.is_finished
-                        ? "✅"
-                        : refetchingTokens.has(token.token_address)
-                          ? "🔄"
-                          : "📈"}
+                      Chart
                     </button>
                     <button
-                      onClick={() => setModalTokenAddress(token.token_address)}
+                      onClick={() => handleOpenChart(token.token_address)}
                       className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors"
                       title="Open Chart & Buy"
                     >
                       Buy
                     </button>
+                    {!token.is_finished && (
+                      <button
+                        onClick={() => refetchTokenMcap(token.token_address)}
+                        disabled={refetchingTokens.has(token.token_address)}
+                        className={`px-2 py-1 text-white text-xs rounded transition-colors ${
+                          refetchingTokens.has(token.token_address)
+                            ? "bg-yellow-600 hover:bg-yellow-700"
+                            : "bg-gray-600 hover:bg-gray-500"
+                        }`}
+                        title={
+                          refetchingTokens.has(token.token_address)
+                            ? "Refetching MCap..."
+                            : "Refetch MCap only"
+                        }
+                      >
+                        {refetchingTokens.has(token.token_address) ? "🔄" : "↻"}
+                      </button>
+                    )}
                     <DlmmChartActions
                       tokenAddress={token.token_address}
                       tokenSymbol={token.token_symbol}
@@ -2153,15 +2180,42 @@ export default function TrackerTab() {
               </div>
             </div>
 
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <span className="rounded bg-gray-700 px-2 py-1 text-gray-200">
+                Risk: {formatScore0To100(insights.riskScore)} {insights.riskLabel}
+              </span>
+              <span className="rounded bg-gray-700 px-2 py-1 text-gray-200 capitalize">
+                Momentum: {insights.momentumLabel}
+              </span>
+              <span className="rounded bg-gray-700 px-2 py-1 text-gray-200">
+                Milestones: {insights.milestonesReached}/3
+              </span>
+              <span className="rounded bg-gray-700 px-2 py-1 text-gray-200">
+                Age: {formatTrackingAge(insights.trackingAgeHours)}
+              </span>
+              <span className="rounded bg-gray-700 px-2 py-1 text-gray-200">
+                Liquidity:{" "}
+                {insights.volToMcapPct != null
+                  ? `Vol/MCap ${insights.volToMcapPct.toFixed(1)}% (${insights.liquidityLabel})`
+                  : insights.liquidityLabel}
+              </span>
+              {insights.timelineInconsistent && (
+                <span className="rounded bg-amber-900/60 border border-amber-600 px-2 py-1 text-amber-200">
+                  Timeline inconsistent
+                </span>
+              )}
+            </div>
+
             {/* Additional Information */}
             <div className="mt-4 pt-4 border-t border-gray-700">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                 <div>
                   <span className="text-gray-400">First Seen:</span>
-                  <span className="ml-2 text-white">
-                    {formatDistanceToNow(new Date(token.first_seen_at), {
-                      addSuffix: true,
-                    })}
+                  <span className="ml-2 text-white" suppressHydrationWarning>
+                    {dateFmt(token.first_seen_at)}
+                  </span>
+                  <span className="ml-2 text-xs text-gray-500" suppressHydrationWarning>
+                    ({formatDistanceToNow(new Date(token.first_seen_at), { addSuffix: true })})
                   </span>
                 </div>
 
@@ -2184,71 +2238,51 @@ export default function TrackerTab() {
                 {token.is_finished && token.finished_at && (
                   <div>
                     <span className="text-gray-400">Finished At:</span>
-                    <span
-                      className="ml-2 text-gray-300"
-                      suppressHydrationWarning
-                    >
-                      {formatDistanceToNow(new Date(token.finished_at), {
-                        addSuffix: true,
-                      })}
+                    <span className="ml-2 text-gray-300" suppressHydrationWarning>
+                      {dateFmt(token.finished_at)}
                     </span>
                   </div>
                 )}
 
                 {token.when_reach_80mc && (
                   <div>
-                    <span className="text-gray-400">Reached 80M:</span>
-                    <span
-                      className="ml-2 text-green-400"
-                      suppressHydrationWarning
-                    >
-                      {formatDistanceToNow(new Date(token.when_reach_80mc), {
-                        addSuffix: true,
-                      })}
+                    <span className="text-gray-400">Reached +80%:</span>
+                    <span className="ml-2 text-green-400" suppressHydrationWarning>
+                      {dateFmt(token.when_reach_80mc)}
                     </span>
                   </div>
                 )}
 
                 {token.when_reach_120mc && (
                   <div>
-                    <span className="text-gray-400">Reached 120M:</span>
-                    <span
-                      className="ml-2 text-green-400"
-                      suppressHydrationWarning
-                    >
-                      {formatDistanceToNow(new Date(token.when_reach_120mc), {
-                        addSuffix: true,
-                      })}
+                    <span className="text-gray-400">Reached +120%:</span>
+                    <span className="ml-2 text-green-400" suppressHydrationWarning>
+                      {dateFmt(token.when_reach_120mc)}
                     </span>
                   </div>
                 )}
 
                 {token.when_reach_200mc && (
                   <div>
-                    <span className="text-gray-400">Reached 200M:</span>
-                    <span
-                      className="ml-2 text-green-400"
-                      suppressHydrationWarning
-                    >
-                      {formatDistanceToNow(new Date(token.when_reach_200mc), {
-                        addSuffix: true,
-                      })}
+                    <span className="text-gray-400">Reached +200%:</span>
+                    <span className="ml-2 text-green-400" suppressHydrationWarning>
+                      {dateFmt(token.when_reach_200mc)}
                     </span>
                   </div>
                 )}
 
-                <div className="flex justify-end">
+                <div>
                   <span className="text-gray-400">Last Updated:</span>
-                  <span className="ml-2 text-white">
-                    {formatDistanceToNow(new Date(token.last_updated_at), {
-                      addSuffix: true,
-                    })}
+                  <span className="ml-2 text-white" suppressHydrationWarning>
+                    {dateFmt(token.last_updated_at)}
+                  </span>
+                  <span className="ml-2 text-xs text-gray-500" suppressHydrationWarning>
+                    ({formatDistanceToNow(new Date(token.last_updated_at), { addSuffix: true })})
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* Analytics Section - Add this after the existing token information */}
             <div className="mt-4 pt-4 border-t border-gray-700">
               <button
                 onClick={() => toggleAnalytics(token.token_address)}
@@ -2278,35 +2312,28 @@ export default function TrackerTab() {
               </button>
 
               {expandedAnalytics[token.token_address] && (
-                <div className="mt-4 space-y-4 bg-gray-750 rounded-lg p-4">
-                  {analyticsData[token.token_address] ? (
+                <div className="mt-4 space-y-3 bg-gray-750 rounded-lg p-4">
+                  {analytics ? (
                     <>
-                      {/* Z-Score Anomaly Detection */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                         <div className="bg-gray-800 rounded-lg p-3">
                           <div className="text-xs text-gray-400 mb-1">
                             Z-Score
                           </div>
                           <div
                             className={`text-lg font-semibold ${
-                              analyticsData[token.token_address]?.z_score !==
-                              undefined
-                                ? Math.abs(
-                                    analyticsData[token.token_address].z_score!,
-                                  ) > 2
+                              insights.zScoreAvailable && insights.zScore != null
+                                ? Math.abs(insights.zScore) > 2.5
                                   ? "text-red-400"
-                                  : Math.abs(
-                                        analyticsData[token.token_address]
-                                          .z_score!,
-                                      ) > 1
+                                  : Math.abs(insights.zScore) > 1.5
                                     ? "text-yellow-400"
                                     : "text-green-400"
                                 : "text-gray-400"
                             }`}
                           >
-                            {analyticsData[
-                              token.token_address
-                            ]?.z_score?.toFixed(2) ?? "N/A"}
+                            {insights.zScoreAvailable && insights.zScore != null
+                              ? insights.zScore.toFixed(2)
+                              : "—"}
                           </div>
                         </div>
 
@@ -2315,10 +2342,9 @@ export default function TrackerTab() {
                             Anomaly Type
                           </div>
                           <div
-                            className={`text-sm font-medium capitalize ${getAnomalyColor(analyticsData[token.token_address]?.anomaly_type)}`}
+                            className={`text-sm font-medium capitalize ${getAnomalyColor(analytics.anomaly_type)}`}
                           >
-                            {analyticsData[token.token_address]?.anomaly_type ||
-                              "neutral"}
+                            {analytics.anomaly_type || "neutral"}
                           </div>
                         </div>
 
@@ -2327,10 +2353,9 @@ export default function TrackerTab() {
                             Momentum
                           </div>
                           <div
-                            className={`text-sm font-medium capitalize ${getMomentumCategoryColor(analyticsData[token.token_address]?.momentum_category)}`}
+                            className={`text-sm font-medium capitalize ${getMomentumCategoryColor(analytics.momentum_category)}`}
                           >
-                            {analyticsData[token.token_address]
-                              ?.momentum_category || "N/A"}
+                            {analytics.momentum_category || insights.momentumLabel}
                           </div>
                         </div>
 
@@ -2339,34 +2364,29 @@ export default function TrackerTab() {
                             Risk Score
                           </div>
                           <div
-                            className={`text-lg font-semibold ${getRiskColor(analyticsData[token.token_address]?.risk_score)}`}
+                            className={`text-lg font-semibold ${getRiskColor(insights.riskScore)}`}
                           >
-                            {analyticsData[token.token_address]?.risk_score
-                              ? `${(analyticsData[token.token_address].risk_score! * 100).toFixed(0)}%`
-                              : "N/A"}
+                            {formatScore0To100(insights.riskScore)} ·{" "}
+                            {insights.riskLabel}
                           </div>
                         </div>
                       </div>
 
-                      {/* Momentum Signal Details */}
-                      {analyticsData[token.token_address]?.momentum_signal && (
+                      {analytics.momentum_signal && (
                         <div className="bg-gray-800 rounded-lg p-3">
                           <div className="text-xs text-gray-400 mb-1">
                             Signal
                           </div>
                           <div className="text-sm">
                             <span
-                              className={`capitalize ${getMomentumSignalColor(analyticsData[token.token_address]?.momentum_signal?.type)}`}
+                              className={`capitalize ${getMomentumSignalColor(analytics.momentum_signal.type)}`}
                             >
-                              {analyticsData[
-                                token.token_address
-                              ]?.momentum_signal?.type?.replace("_", " ")}
+                              {analytics.momentum_signal.type?.replace("_", " ")}
                             </span>
                             <div className="text-xs text-gray-400 mt-1">
                               Strength:{" "}
                               {(
-                                analyticsData[token.token_address]
-                                  ?.momentum_signal?.strength ?? 0 * 100
+                                (analytics.momentum_signal.strength ?? 0) * 100
                               ).toFixed(0)}
                               %
                             </div>
@@ -2374,50 +2394,36 @@ export default function TrackerTab() {
                         </div>
                       )}
 
-                      {/* Additional Metrics */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        {analyticsData[token.token_address]
-                          ?.current_price_usd && (
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {analytics.current_price_usd != null && (
                           <div className="bg-gray-800 rounded-lg p-3">
                             <div className="text-xs text-gray-400 mb-1">
                               Current Price
                             </div>
                             <div className="text-sm text-white">
-                              $
-                              {analyticsData[
-                                token.token_address
-                              ].current_price_usd!.toFixed(6)}
+                              ${analytics.current_price_usd.toFixed(6)}
                             </div>
                           </div>
                         )}
 
-                        {analyticsData[token.token_address]?.liquidity_score !==
-                          undefined && (
-                          <div className="bg-gray-800 rounded-lg p-3">
-                            <div className="text-xs text-gray-400 mb-1">
-                              Liquidity Score
-                            </div>
-                            <div className="text-sm text-white">
-                              {(
-                                analyticsData[token.token_address]!
-                                  .liquidity_score! * 100
-                              ).toFixed(0)}
-                              %
-                            </div>
+                        <div className="bg-gray-800 rounded-lg p-3">
+                          <div className="text-xs text-gray-400 mb-1">
+                            Liquidity
                           </div>
-                        )}
+                          <div className="text-sm text-white">
+                            {insights.volToMcapPct != null
+                              ? `Vol/MCap ${insights.volToMcapPct.toFixed(1)}% (${insights.liquidityLabel})`
+                              : insights.liquidityLabel}
+                          </div>
+                        </div>
 
-                        {analyticsData[token.token_address]?.volume_24h !==
-                          undefined && (
+                        {analytics.volume_24h != null && (
                           <div className="bg-gray-800 rounded-lg p-3">
                             <div className="text-xs text-gray-400 mb-1">
                               24h Volume
                             </div>
                             <div className="text-sm text-white">
-                              $
-                              {analyticsData[
-                                token.token_address
-                              ]!.volume_24h!.toLocaleString()}
+                              ${analytics.volume_24h.toLocaleString()}
                             </div>
                           </div>
                         )}
@@ -2429,9 +2435,7 @@ export default function TrackerTab() {
                       >
                         Analytics updated:{" "}
                         {formatDistanceToNow(
-                          new Date(
-                            analyticsData[token.token_address].last_updated_at,
-                          ),
+                          new Date(analytics.last_updated_at),
                           { addSuffix: true },
                         )}
                       </div>
@@ -2442,9 +2446,7 @@ export default function TrackerTab() {
                         Analytics data not available
                       </div>
                       <button
-                        onClick={() =>
-                          void analyticsQuery.refetch()
-                        }
+                        onClick={() => void analyticsQuery.refetch()}
                         className="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors"
                       >
                         Retry Analytics
@@ -2455,7 +2457,8 @@ export default function TrackerTab() {
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
 
         {tokens.length === 0 && !loading && (
           <div className="text-center py-12">

@@ -31,6 +31,8 @@ export interface McapTrackingData {
   };
   is_finished?: boolean;
   finished_at?: string | null;
+  is_tracking_stuck?: boolean;
+  _live_refresh?: boolean;
 }
 
 export interface McapTrackerResponse {
