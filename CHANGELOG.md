@@ -8,6 +8,57 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — MCap tracker sim strategies
+
+- **`mcap_enter_first_seen` / `mcap_enter_at_80`** — paper-trade strategies for tokens entering mcap tracking or crossing the +80% milestone; registry + DB seeds in [`src/strategies/registry.ts`](src/strategies/registry.ts).
+- **[`POST /api/mcap-tracking/sim-track`](src/app/api/mcap-tracking/sim-track/route.ts)** — opens/closes sim positions in wallet `mcap-tracker-sim`, writes `strategy_outcomes` on close via `recordMcapTrackerOutcome()`.
+- **Go cron worker `mcap_tracker_sim_track`** — every `MCAP_TRACKER_SIM_INTERVAL` (default 120s); manual trigger `POST /trigger/mcap-tracker-sim-track` ([`main.go`](main.go)).
+- **[`src/utils/mcap-sim-track.ts`](src/utils/mcap-sim-track.ts)** — shared entry/exit helpers: `resolveMcapSimEntry`, `getMcapSimOpenSkipReason`, `getOpenMcapSimPositions`, `countOpenMcapSimPositions`.
+- **[`src/strategies/load-mcap-tracker.ts`](src/strategies/load-mcap-tracker.ts)** — DB merge loader for active mcap tracker strategies.
+- **Strategy Admin** — MCap tracker strategy cards and report stats (`mcap_tracker_stats`, milestone buckets) on [`/dev/strategies`](src/app/(trade)/dev/strategies/page.tsx).
+
+### Added — Tracker insights & tests
+
+- **[`src/components/signals/tracker-insights.ts`](src/components/signals/tracker-insights.ts)** — per-row chips: Risk (0–100), Momentum, Milestones, Age, Liquidity (Vol/MCap), timeline inconsistency badge.
+- **Vitest** — [`signals-scoring.test.ts`](src/strategies/signals-scoring.test.ts), [`mcap-tracker-timeline.test.ts`](src/utils/mcap-tracker-timeline.test.ts), [`mcap-sim-track.test.ts`](src/utils/mcap-sim-track.test.ts), [`anomaly-detection.test.ts`](src/utils/algo/anomaly-detection.test.ts), [`tracker-insights.test.ts`](src/components/signals/tracker-insights.test.ts); `npm test` script in [`package.json`](package.json).
+
+### Fixed — MCap timeline (First Seen ~8h bug)
+
+- **[`normalizeTrackingTimeline()` v2](src/utils/mcap-tracker.ts)** — nulls stale milestones before `first_seen_at`, reconciles growth vs milestones, clamps `first_seen` only when valid milestones remain (fixes ALONE case where stale session milestones aged First Seen backward).
+- **`reconcileMilestonesFromGrowth()`** — backfills `when_reach_*` from current growth after timeline repair; called from track, list fetch, and `fixTrackingTimeline()`.
+- **`resetTrackingSession()`** — fresh baseline when max tracking age exceeded; clears milestones on session reset.
+- **`persistMilestoneBackfillIfNeeded()`** — runs before small-change gating early return so milestones are not permanently null after DB repair.
+- **SQL patch v2** — [`supabase/patches/fix_mcap_first_seen_timeline.sql`](supabase/patches/fix_mcap_first_seen_timeline.sql): null stale milestones first, then safe `LEAST` clamp (run once on Supabase after deploy).
+- **`is_finished`** — list API computes age from post-normalize `first_seen_at` ([`mcap-tracking/route.ts`](src/app/api/mcap-tracking/route.ts)).
+
+### Fixed — MCap sim trading & strategy reports
+
+- **`mcap_enter_at_80` never opening** — sim entry accepts `mcap_growth_percent >= 80` when milestone column was nulled by timeline v2; entry mcap falls back to `first_mcap * 1.8`.
+- **Sim close reasons** — `getMcapSimCloseReason()` adds `take_profit_200` (growth ≥ 200%) and `tracking_stopped` (`stop_reason` set) so closed trades write to `strategy_outcomes` and appear in reports.
+- **Reports coverage** — `open_tracker_count` populated for `mcap_tracker` strategies from `mcap-tracker-sim` wallet (was `null` / invisible while `sim_trade_count` stayed 0 for open-only positions).
+- **Sim-track skip reasons** — response `skipped` array includes `no_milestone`, `out_of_range`, `rugged`, `no_entry_mcap` for debugging.
+
+### Fixed — TrackerTab display & analytics
+
+- **Timestamps** — First Seen, milestones (+80% / +120% / +200% labels), Last Updated, Finished At use `formatAppDateTime` (absolute + relative subtitle).
+- **Analytics accordion** — risk on 0–100 scale (fixes 8000% display bug); Z-Score shows `—` when cohort too small; liquidity via Vol/MCap; momentum strength `(strength ?? 0) * 100`.
+- **Chart button** — opens `ChartBuyModal` (works on finished tokens); separate mcap refetch button.
+- **CSV export** — milestone columns + formatted dates.
+- **Timeline badge** — warns when `first_seen_at` is still after a milestone post-normalize.
+
+### Fixed — Z-Score & analytics API
+
+- **[`ZScoreAnomalyDetector`](src/utils/algo/anomaly-detection.ts)** — `crossSection` mode (min cohort 3, leave-one-out peers) for TrackerTab batch analytics; `z_score_available` on response.
+- **[`POST /api/analytics/token`](src/app/api/analytics/token/route.ts)** — single cohort Z-score pass over page tokens before per-token enrichment.
+- **[`data-aggregation.ts`](src/utils/data-aggregation.ts)** — cross-section mode + nullable `z_score` types.
+
+### Fixed — Signals scoring pipeline
+
+- **[`signals-scoring.ts`](src/strategies/signals-scoring.ts)** — milestone gating for enter/hold decisions; `holdGrowthFloor`; timeline speed bonus via `computeTimeTo80Minutes`.
+- **[`signals-pipeline.ts`](src/strategies/signals-pipeline.ts)** — `rescoreScoredSignal()` after rug validation; re-sort by score.
+- **`GET /api/trading/signals`** — default `minGrowth` changed to `0` (was filtering out low-growth tokens incorrectly).
+- **[`mcap-tracker-constants.ts`](src/utils/mcap-tracker-constants.ts)** — `STOP_LOSS_THRESHOLD` extracted for tests.
+
 ### Added — ML outcomes feed & capture
 
 - **[`src/strategies/outcome-features.ts`](src/strategies/outcome-features.ts)** — shared helpers: `entry_mcap` / `entry_mcap_band` buckets, `formatEntryMcap`, `readTokenSymbol`, `buildEntryMcapFeatures`.
