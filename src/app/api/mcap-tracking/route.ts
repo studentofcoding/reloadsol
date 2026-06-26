@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats, STOP_LOSS_THRESHOLD, MAX_TRACKING_AGE_MS, TokenLabel } from '@/utils/mcap-tracker'
+import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats, STOP_LOSS_THRESHOLD, MAX_TRACKING_AGE_MS, TokenLabel, fixTrackingTimeline, type McapSnapshot } from '@/utils/mcap-tracker'
 import { supabase } from '@/utils/supabase'
 import { getSolPriceUSD } from '@/utils/solana'
 import { log } from '@/utils/unified-logger'
@@ -664,6 +664,10 @@ export async function GET(request: NextRequest) {
       }
 
       // Add SOL per token calculations to the data (prefer live mcap if available)
+      for (const token of data || []) {
+        fixTrackingTimeline(token as McapSnapshot, true)
+      }
+
       const enhancedData = (data || []).map(token => {
         const live = liveTrendingMap.get(token.token_address)
         const currentMcap = typeof live?.mcap === 'number' && live.mcap > 0 ? live.mcap : token.current_mcap

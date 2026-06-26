@@ -138,6 +138,26 @@ export function normalizeTrackingTimeline(record: McapSnapshot): boolean {
   return true
 }
 
+/** Normalize timeline in-place; optionally persist when a repair was needed. */
+export function fixTrackingTimeline(record: McapSnapshot, persist = false): McapSnapshot {
+  const repaired = normalizeTrackingTimeline(record)
+  if (repaired && persist) {
+    void supabase
+      .from('token_mcap_tracking')
+      .update({ first_seen_at: record.first_seen_at })
+      .eq('token_address', record.token_address)
+      .then(({ error }) => {
+        if (error) {
+          log.warn('price_tracking', 'Failed to persist timeline repair', {
+            tokenAddress: record.token_address,
+            error: error.message,
+          })
+        }
+      })
+  }
+  return record
+}
+
 export function minutesBetween(
   startIso: string | null | undefined,
   endIso: string | null | undefined,
@@ -905,13 +925,17 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
 // Helper function to update MCap record
 async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boolean = true): Promise<void> {
   try {
-    normalizeTrackingTimeline(record)
+    const repairedTimeline = normalizeTrackingTimeline(record)
     const updateData: Record<string, unknown> = {
       current_mcap: record.current_mcap,
       last_updated_at: record.last_updated_at,
       mcap_growth_percent: record.mcap_growth_percent,
       is_tracking_stuck: record.is_tracking_stuck === true,
-      first_seen_at: record.first_seen_at,
+    }
+
+    // Never overwrite first_seen_at on routine updates — only persist when repairing inconsistency
+    if (repairedTimeline) {
+      updateData.first_seen_at = record.first_seen_at
     }
 
     // Only include threshold columns if they were updated
