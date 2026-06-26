@@ -71,6 +71,8 @@ export interface SignalsStrategyConfig {
     limit: number
     recencyMinutes: number
     minGrowth: number
+    /** Minimum growth % for hold when minGrowth is 0 (default applied in scoring) */
+    holdGrowthFloor?: number
     includeStuck: boolean
     maxAgeMinutes: number
   }

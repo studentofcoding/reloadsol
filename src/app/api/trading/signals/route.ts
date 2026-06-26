@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const limit = Math.min(parseInt(searchParams.get('limit') || '30', 10), 100)
     const recencyMinutes = Math.max(parseInt(searchParams.get('recencyMinutes') || '90', 10), 1)
-    const minGrowth = parseFloat(searchParams.get('minGrowth') || '25')
+    const minGrowth = parseFloat(searchParams.get('minGrowth') || '0')
     const includeStuck = searchParams.get('includeStuck') === 'true'
     const maxAgeMinutes = Math.max(parseInt(searchParams.get('maxAgeMinutes') || '60', 10), 1)
     const strategyTemplate = (searchParams.get('strategy') || 'default') as
@@ -25,6 +25,7 @@ export async function GET(request: NextRequest) {
         limit,
         recencyMinutes,
         minGrowth,
+        holdGrowthFloor: 10,
         includeStuck,
         maxAgeMinutes,
       },

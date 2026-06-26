@@ -3,8 +3,8 @@ import { fixTrackingTimeline, isInTrackingRange, type McapSnapshot } from '@/uti
 import { getRugAddressSet } from '@/utils/rug-list/db'
 import { log } from '@/utils/unified-logger'
 import {
-  computeScoreAndDecision,
-  minutesBetween,
+  applyScoreToItem,
+  buildSignalScoringItem,
   type SignalScoringItem,
 } from './signals-scoring'
 import type { SignalsStrategy, SignalsStrategyConfig } from './types'
@@ -15,8 +15,72 @@ export type ScoredSignal = SignalScoringItem & {
   rationale: string
 }
 
+type McapTrackingRow = {
+  token_address: string
+  token_symbol: string
+  first_mcap: number
+  current_mcap: number
+  mcap_growth_percent: number
+  first_seen_at: string
+  last_updated_at: string
+  when_reach_80mc?: string | null
+  when_reach_120mc?: string | null
+  when_reach_200mc?: string | null
+  is_tracking_stuck?: boolean
+}
+
+function rowToScoredSignal(
+  row: McapTrackingRow,
+  strategyConfig: SignalsStrategyConfig,
+): ScoredSignal {
+  const base = buildSignalScoringItem({
+    token_address: row.token_address,
+    token_symbol: row.token_symbol,
+    first_mcap: row.first_mcap,
+    current_mcap: row.current_mcap,
+    mcap_growth_percent: row.mcap_growth_percent,
+    first_seen_at: row.first_seen_at,
+    last_updated_at: row.last_updated_at,
+    when_reach_80mc: row.when_reach_80mc,
+    when_reach_120mc: row.when_reach_120mc,
+    when_reach_200mc: row.when_reach_200mc,
+    is_tracking_stuck: row.is_tracking_stuck,
+    in_tracking_range: isInTrackingRange(row.current_mcap),
+  })
+  return applyScoreToItem(base, strategyConfig) as ScoredSignal
+}
+
+export function rescoreScoredSignal(
+  signal: ScoredSignal,
+  strategyConfig: SignalsStrategyConfig,
+): ScoredSignal {
+  const base = buildSignalScoringItem({
+    token_address: signal.token_address,
+    token_symbol: signal.token_symbol,
+    first_mcap: signal.first_mcap,
+    current_mcap: signal.current_mcap,
+    mcap_growth_percent: signal.mcap_growth_percent,
+    first_seen_at: signal.first_seen_at,
+    last_updated_at: signal.last_updated_at,
+    when_reach_80mc: signal.when_reach_80mc,
+    when_reach_120mc: signal.when_reach_120mc,
+    when_reach_200mc: signal.when_reach_200mc,
+    is_tracking_stuck: signal.is_tracking_stuck,
+    in_tracking_range: isInTrackingRange(signal.current_mcap),
+  })
+  return applyScoreToItem(base, strategyConfig) as ScoredSignal
+}
+
+function sortScoredSignals(signals: ScoredSignal[]): ScoredSignal[] {
+  return [...signals].sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score
+    return (b.mcap_growth_percent || 0) - (a.mcap_growth_percent || 0)
+  })
+}
+
 async function validateTokensAgainstRugPulls(
   signals: ScoredSignal[],
+  strategyConfig: SignalsStrategyConfig,
 ): Promise<ScoredSignal[]> {
   if (signals.length === 0) return signals
 
@@ -69,12 +133,18 @@ async function validateTokensAgainstRugPulls(
         tokenAddress: signal.token_address,
       })
     } else {
-      validatedSignals.push({
-        ...signal,
-        current_mcap: currentMcap,
-        mcap_growth_percent:
-          ((currentMcap - signal.first_mcap) / signal.first_mcap) * 100,
-      })
+      const refreshedGrowth =
+        ((currentMcap - signal.first_mcap) / signal.first_mcap) * 100
+      validatedSignals.push(
+        rescoreScoredSignal(
+          {
+            ...signal,
+            current_mcap: currentMcap,
+            mcap_growth_percent: refreshedGrowth,
+          },
+          strategyConfig,
+        ),
+      )
     }
   }
 
@@ -121,61 +191,22 @@ export async function fetchAndScoreSignals(
   const { data, error } = await dbQuery
   if (error) throw error
 
-  const items = (data ?? []) as Array<{
-    token_address: string
-    token_symbol: string
-    first_mcap: number
-    current_mcap: number
-    mcap_growth_percent: number
-    first_seen_at: string
-    last_updated_at: string
-    when_reach_80mc?: string | null
-    when_reach_120mc?: string | null
-    when_reach_200mc?: string | null
-    is_tracking_stuck?: boolean
-  }>
+  const items = (data ?? []) as McapTrackingRow[]
 
   for (const row of items) {
     fixTrackingTimeline(row as McapSnapshot, true)
   }
 
-  let signals: ScoredSignal[] = items.map((row) => {
-    const base: SignalScoringItem = {
-      token_address: row.token_address,
-      token_symbol: row.token_symbol,
-      first_mcap: row.first_mcap,
-      current_mcap: row.current_mcap,
-      mcap_growth_percent: row.mcap_growth_percent,
-      first_seen_at: row.first_seen_at,
-      last_updated_at: row.last_updated_at,
-      when_reach_80mc: row.when_reach_80mc,
-      when_reach_120mc: row.when_reach_120mc,
-      when_reach_200mc: row.when_reach_200mc,
-      is_tracking_stuck: row.is_tracking_stuck,
-      in_tracking_range: isInTrackingRange(row.current_mcap),
-      trend_age_minutes: minutesBetween(row.first_seen_at, new Date().toISOString()) || 0,
-      time_to_80_minutes: (() => {
-        const t = minutesBetween(row.first_seen_at, row.when_reach_80mc)
-        return typeof t === 'number' ? t : null
-      })(),
-    }
-    const { score, decision, rationale } = computeScoreAndDecision(base, strategyConfig)
-    return { ...base, score, decision, rationale }
-  })
+  let signals: ScoredSignal[] = items.map((row) => rowToScoredSignal(row, strategyConfig))
 
   if (!options?.skipRugValidation) {
-    signals = await validateTokensAgainstRugPulls(signals)
+    signals = await validateTokensAgainstRugPulls(signals, strategyConfig)
   }
 
   const manualRugSet = await getRugAddressSet()
   signals = signals.filter((s) => !manualRugSet.has(s.token_address))
 
-  signals.sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score
-    return (b.mcap_growth_percent || 0) - (a.mcap_growth_percent || 0)
-  })
-
-  return signals.slice(0, limit)
+  return sortScoredSignals(signals).slice(0, limit)
 }
 
 export async function scoreSignalsForStrategy(

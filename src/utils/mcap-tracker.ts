@@ -1,6 +1,9 @@
 import { supabase } from '@/utils/supabase'
 import { log } from '@/utils/unified-logger'
 import { formatAppTimeWithZone } from '@/utils/datetime'
+import { STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker-constants'
+
+export { STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker-constants'
 
 export type TokenLabel = 'valid' | 'traded_live' | 'potential' | 'rugged' | 'watching'
 
@@ -35,10 +38,6 @@ const CACHE_TTL_MS = 2 * 60 * 1000 // 2 minutes cache
 // Update stuck detection defaults to 6 hours (env override still applies)
 const STUCK_MIN_AGE_MS = parseInt(process.env.MCAP_STUCK_MIN_AGE_MS || '21600000') // 6 hours
 const STUCK_EPSILON_PERCENT = parseFloat(process.env.MCAP_STUCK_EPSILON_PERCENT || '0.01') // 0.01%
-
-export const STOP_LOSS_THRESHOLD = parseFloat(
-  process.env.MCAP_STOP_LOSS_THRESHOLD || process.env.NEXT_PUBLIC_MCAP_STOP_LOSS_THRESHOLD || '-50'
-) // -50%
 
 // New: maximum tracking age (default 4 days)
 export const MAX_TRACKING_AGE_MS = parseInt(process.env.MCAP_MAX_TRACKING_AGE_MS || '345600000')

@@ -13,6 +13,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "verify:no-raw-useeffect": "node scripts/verify-no-raw-useeffect.js",
     "logs": "node scripts/tail-logs.js",
     "logs:follow": "node scripts/tail-logs.js -f",
@@ -106,7 +108,8 @@
     "@typescript-eslint/parser": "^8.61.1",
     "eslint": "^9.39.4",
     "eslint-config-next": "16.1.7",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "vitest": "^3.2.6"
   },
   "engines": {
     "node": ">=20.9.0",
