@@ -187,3 +187,26 @@ export function getAppLocalDayName(date: Date = new Date()): string {
     weekday: 'long',
   }).format(date)
 }
+
+/** Calendar date in Asia/Bangkok, e.g. `2026-06-20`. */
+export function getAppLocalDateString(date: Date = new Date()): string {
+  const parts = getAppLocalParts(date)
+  const mm = String(parts.month).padStart(2, '0')
+  const dd = String(parts.day).padStart(2, '0')
+  return `${parts.year}-${mm}-${dd}`
+}
+
+/** Start/end instants for a Bangkok calendar day (YYYY-MM-DD). */
+export function getAppDayBounds(dateStr: string): { start: Date; end: Date } {
+  return {
+    start: new Date(`${dateStr}T00:00:00+07:00`),
+    end: new Date(`${dateStr}T23:59:59.999+07:00`),
+  }
+}
+
+/** Previous calendar day string in Asia/Bangkok. */
+export function getPreviousAppLocalDateString(dateStr: string): string {
+  const { start } = getAppDayBounds(dateStr)
+  const prev = new Date(start.getTime() - 24 * 60 * 60 * 1000)
+  return getAppLocalDateString(prev)
+}

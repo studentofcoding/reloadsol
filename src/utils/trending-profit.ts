@@ -1,0 +1,38 @@
+export type SummaryToken = {
+  peak_gain_percentage?: number | null
+  current_gain_percentage?: number | null
+  status?: string | null
+}
+
+/** Per-token gain % for 24h summary cohort (matches algo-tester leaderboard display). */
+export function getSummaryTokenGainPct(token: SummaryToken): number {
+  const currentGain =
+    token.current_gain_percentage ?? token.peak_gain_percentage ?? 0
+  const isLoser =
+    currentGain < -50 || token.status === 'lost'
+  if (isLoser) {
+    return currentGain
+  }
+  return token.peak_gain_percentage ?? currentGain
+}
+
+export function sumSummaryTokenProfitPct(tokens: SummaryToken[]): {
+  totalProfitPct: number
+  averageProfitPct: number
+  tokenCount: number
+} {
+  if (!tokens.length) {
+    return { totalProfitPct: 0, averageProfitPct: 0, tokenCount: 0 }
+  }
+
+  let totalProfitPct = 0
+  for (const token of tokens) {
+    totalProfitPct += getSummaryTokenGainPct(token)
+  }
+
+  return {
+    totalProfitPct: Math.round(totalProfitPct * 100) / 100,
+    averageProfitPct: Math.round((totalProfitPct / tokens.length) * 100) / 100,
+    tokenCount: tokens.length,
+  }
+}

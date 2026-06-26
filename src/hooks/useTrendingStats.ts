@@ -23,6 +23,7 @@ export interface TrendingStatsResponse {
 export interface TrendingStatsFilters {
   isSimulated?: boolean;
   strategyId?: string;
+  date?: string;
 }
 
 export function useTrendingStats(
@@ -36,9 +37,12 @@ export function useTrendingStats(
   if (filters?.strategyId) {
     params.set('strategy_id', filters.strategyId);
   }
+  if (filters?.date) {
+    params.set('date', filters.date);
+  }
 
   return useQuery({
-    queryKey: ['trending-stats', filters?.isSimulated, filters?.strategyId],
+    queryKey: ['trending-stats', filters?.isSimulated, filters?.strategyId, filters?.date],
     queryFn: async () => {
       const res = await fetch(`/api/trending/stats?${params.toString()}`);
       if (!res.ok) {

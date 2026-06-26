@@ -2,10 +2,16 @@ import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
 import {
+  getAppDayBounds,
+  getAppLocalDateString,
+  getPreviousAppLocalDateString,
+} from '@/utils/datetime'
+import {
   isOpenTrackerPosition,
   isSimulatedTrackerPosition,
   resolveTrackerStrategyId,
 } from '@/utils/trading-simulation'
+import { sumSummaryTokenProfitPct } from '@/utils/trending-profit'
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
@@ -14,6 +20,156 @@ export const dynamic = 'force-dynamic'
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
 
+type SummaryRow = Record<string, unknown> & {
+  period_start: string
+  period_end: string
+  created_at: string
+  top_winners?: unknown
+  win_rate?: number
+}
+
+type TrackerRow = Record<string, unknown> & {
+  token_address: string
+  token_symbol: string | null
+  token_name: string | null
+  logo_url: string | null
+  initial_price_usd: number
+  peak_price_usd: number
+  last_price_usd: number
+  peak_gain_percentage: number
+  current_gain_percentage: number
+  status: string
+  tracking_started_at: string
+  status_changed_at: string | null
+  market_cap: number | null
+  trading_simulation: unknown
+  price_history: unknown
+}
+
+function mapPeriodTokens(summary: SummaryRow, tokens: TrackerRow[]) {
+  const periodEnd = new Date(summary.period_end)
+  return tokens.map((token) => {
+    const trackingStart = new Date(token.tracking_started_at)
+    const trackingDuration =
+      (periodEnd.getTime() - trackingStart.getTime()) / (1000 * 60 * 60)
+
+    return {
+      token_address: token.token_address,
+      token_symbol: token.token_symbol,
+      token_name: token.token_name,
+      logo_url: token.logo_url,
+      initial_price_usd: token.initial_price_usd,
+      peak_price_usd: token.peak_price_usd,
+      last_price_usd: token.last_price_usd,
+      peak_gain_percentage: token.peak_gain_percentage,
+      tracking_duration_hours: Math.round(trackingDuration * 100) / 100,
+      tracking_started_at: token.tracking_started_at,
+      status_changed_at: token.status_changed_at || summary.period_end,
+      status: token.status,
+      current_gain_percentage: token.current_gain_percentage,
+      market_cap: token.market_cap,
+      trading_simulation: token.trading_simulation,
+      price_history: token.price_history,
+    }
+  })
+}
+
+async function fetchPeriodTokens(summary: SummaryRow): Promise<ReturnType<typeof mapPeriodTokens>> {
+  const { data: summaryPeriodTokens, error } = await supabase
+    .from(TRACKER_TABLE)
+    .select('*')
+    .gte('tracking_started_at', summary.period_start)
+    .lte('tracking_started_at', summary.period_end)
+    .order('peak_gain_percentage', { ascending: false })
+
+  if (error || !summaryPeriodTokens) {
+    return mapPeriodTokens(summary, (summary.top_winners as TrackerRow[]) ?? [])
+  }
+
+  return mapPeriodTokens(summary, summaryPeriodTokens as TrackerRow[])
+}
+
+function buildEnhancedSummary(
+  summary: SummaryRow,
+  periodTokens: ReturnType<typeof mapPeriodTokens>,
+) {
+  const profitStats = sumSummaryTokenProfitPct(periodTokens)
+  return {
+    ...summary,
+    top_winners: periodTokens,
+    total_profit_pct: profitStats.totalProfitPct,
+    average_profit_pct: profitStats.averageProfitPct,
+    profit_token_count: profitStats.tokenCount,
+  }
+}
+
+function computeCohortStats(tokens: TrackerRow[]) {
+  const holding = tokens.filter((t) => t.status === 'tracking')
+  const sortedByPeak = [...tokens].sort(
+    (a, b) => (b.peak_gain_percentage ?? 0) - (a.peak_gain_percentage ?? 0),
+  )
+  const top = sortedByPeak[0]
+
+  const avgCurrentGain =
+    holding.length > 0
+      ? holding.reduce((sum, t) => sum + (t.current_gain_percentage || 0), 0) /
+        holding.length
+      : tokens.length > 0
+        ? tokens.reduce((sum, t) => sum + (t.current_gain_percentage || 0), 0) /
+          tokens.length
+        : 0
+
+  const avgPeakGain =
+    tokens.length > 0
+      ? tokens.reduce((sum, t) => sum + (t.peak_gain_percentage || 0), 0) /
+        tokens.length
+      : 0
+
+  return {
+    statistics: {
+      total_tracking: holding.length,
+      positive_performers:
+        tokens.filter((t) => (t.current_gain_percentage ?? 0) > 0).length || 0,
+      negative_performers:
+        tokens.filter((t) => (t.current_gain_percentage ?? 0) < 0).length || 0,
+      at_risk:
+        tokens.filter((t) => (t.current_gain_percentage ?? 0) <= -40).length ||
+        0,
+      top_performer: top
+        ? {
+            token_symbol: top.token_symbol,
+            token_name: top.token_name,
+            current_gain_percentage: top.current_gain_percentage,
+            peak_gain_percentage: top.peak_gain_percentage,
+          }
+        : null,
+    },
+    averages: {
+      current_gain: Math.round(avgCurrentGain * 100) / 100,
+      peak_gain: Math.round(avgPeakGain * 100) / 100,
+    },
+    tokens: holding,
+  }
+}
+
+async function findSummaryForDate(dateStr: string): Promise<SummaryRow | null> {
+  const { start, end } = getAppDayBounds(dateStr)
+  const { data, error } = await supabase
+    .from(SUMMARY_TABLE)
+    .select('*')
+    .gte('period_end', start.toISOString())
+    .lte('period_end', end.toISOString())
+    .order('period_end', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    console.warn('[trending/stats] summary lookup failed:', error.message)
+    return null
+  }
+  return (data as SummaryRow | null) ?? null
+}
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
@@ -21,6 +177,7 @@ export async function GET(request: NextRequest) {
     const nocache = searchParams.get('nocache') === 'true'
     const isSimParam = searchParams.get('is_simulated')
     const strategyFilter = searchParams.get('strategy_id')
+    const dateParam = searchParams.get('date')
 
     const filterBySim = (token: { trading_simulation?: unknown }) => {
       if (isSimParam === null || isSimParam === '') return true
@@ -36,32 +193,44 @@ export async function GET(request: NextRequest) {
       return sid === strategyFilter
     }
 
-    console.log(`📊 Fetching trending token statistics... ${refresh ? '(forced refresh)' : ''}${nocache ? '(no cache)' : ''}`)
+    const applyFilters = <T extends { trading_simulation?: unknown }>(
+      tokens: T[],
+    ): T[] => {
+      let filtered = tokens
+      if (isSimParam !== null && isSimParam !== '') {
+        filtered = filtered.filter(filterBySim)
+      }
+      if (strategyFilter) {
+        filtered = filtered.filter(filterByStrategy)
+      }
+      return filtered
+    }
 
-    // Parallelize independent queries
+    console.log(
+      `📊 Fetching trending token statistics... ${refresh ? '(forced refresh)' : ''}${nocache ? '(no cache)' : ''}${dateParam ? ` date=${dateParam}` : ''}`,
+    )
+
     const last7Days = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+    const todayStr = getAppLocalDateString()
+    const selectedDate =
+      dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : null
 
     const [
       summaryResult,
       trackingResult,
       completedResult,
-      historicalResult
+      historicalResult,
     ] = await Promise.all([
-      // 1. Get the most recent summary
       supabase
         .from(SUMMARY_TABLE)
         .select('*')
         .order('created_at', { ascending: false })
         .limit(1),
-
-      // 2. Get currently tracked tokens
       supabase
         .from(TRACKER_TABLE)
         .select('*')
         .eq('status', 'tracking')
         .order('peak_gain_percentage', { ascending: false }),
-
-      // 3. Get recent winners and losers
       supabase
         .from(TRACKER_TABLE)
         .select('*')
@@ -69,205 +238,244 @@ export async function GET(request: NextRequest) {
         .gte('status_changed_at', last7Days)
         .order('status_changed_at', { ascending: false })
         .limit(20),
-
-      // 4. Get historical summaries
       supabase
         .from(SUMMARY_TABLE)
         .select('*')
         .gte('created_at', last7Days)
         .order('created_at', { ascending: false })
-        .limit(7)
+        .limit(7),
     ])
 
-    // Check for errors
-    if (summaryResult.error) throw new Error(`Failed to fetch summaries: ${summaryResult.error.message}`)
-    if (trackingResult.error) throw new Error(`Failed to fetch tracking tokens: ${trackingResult.error.message}`)
-    if (completedResult.error) throw new Error(`Failed to fetch completed tokens: ${completedResult.error.message}`)
-    if (historicalResult.error) throw new Error(`Failed to fetch historical summaries: ${historicalResult.error.message}`)
+    if (summaryResult.error) {
+      throw new Error(`Failed to fetch summaries: ${summaryResult.error.message}`)
+    }
+    if (trackingResult.error) {
+      throw new Error(
+        `Failed to fetch tracking tokens: ${trackingResult.error.message}`,
+      )
+    }
+    if (completedResult.error) {
+      throw new Error(
+        `Failed to fetch completed tokens: ${completedResult.error.message}`,
+      )
+    }
+    if (historicalResult.error) {
+      throw new Error(
+        `Failed to fetch historical summaries: ${historicalResult.error.message}`,
+      )
+    }
 
     const summaries = summaryResult.data
     let trackingTokens = (trackingResult.data ?? []).filter(isOpenTrackerPosition)
     let recentCompleted = completedResult.data
     const historicalSummaries = historicalResult.data
 
-    const { count: watchingCount } = await supabase
+    let watchingCountQuery = supabase
       .from(TRACKER_TABLE)
       .select('*', { count: 'exact', head: true })
       .eq('status', 'waiting')
 
-    if (isSimParam !== null && isSimParam !== '') {
-      trackingTokens = trackingTokens?.filter(filterBySim) ?? []
-      recentCompleted = recentCompleted?.filter(filterBySim) ?? []
-    }
-    if (strategyFilter) {
-      trackingTokens = trackingTokens?.filter(filterByStrategy) ?? []
-      recentCompleted = recentCompleted?.filter(filterByStrategy) ?? []
+    if (selectedDate) {
+      const { start, end } = getAppDayBounds(selectedDate)
+      watchingCountQuery = watchingCountQuery
+        .gte('waiting_started_at', start.toISOString())
+        .lte('waiting_started_at', end.toISOString())
     }
 
-    // If we have a recent summary, get ALL tokens from that period (dependent query)
-    let allSummaryTokens = null
+    const { count: watchingCount } = await watchingCountQuery
+
+    trackingTokens = applyFilters(trackingTokens ?? [])
+    recentCompleted = applyFilters(recentCompleted ?? [])
+
+    let enhancedLatestSummary = null
     if (summaries && summaries.length > 0) {
-      const latestSummary = summaries[0]
-
-      // Fetch all tokens that were tracked during the summary period
-      const { data: summaryPeriodTokens, error: summaryTokensError } = await supabase
-        .from(TRACKER_TABLE)
-        .select('*')
-        .gte('tracking_started_at', latestSummary.period_start)
-        .lte('tracking_started_at', latestSummary.period_end)
-        .order('peak_gain_percentage', { ascending: false })
-
-      if (!summaryTokensError && summaryPeriodTokens) {
-        // Convert to TopWinner format for consistency
-        allSummaryTokens = summaryPeriodTokens.map(token => {
-          const trackingStart = new Date(token.tracking_started_at)
-          const periodEnd = new Date(latestSummary.period_end)
-          const trackingDuration = (periodEnd.getTime() - trackingStart.getTime()) / (1000 * 60 * 60)
-
-          return {
-            token_address: token.token_address,
-            token_symbol: token.token_symbol,
-            token_name: token.token_name,
-            logo_url: token.logo_url,
-            initial_price_usd: token.initial_price_usd,
-            peak_price_usd: token.peak_price_usd,
-            last_price_usd: token.last_price_usd, // Ensure last_price_usd is included
-            peak_gain_percentage: token.peak_gain_percentage,
-            tracking_duration_hours: Math.round(trackingDuration * 100) / 100,
-            status_changed_at: token.status_changed_at || latestSummary.period_end,
-            status: token.status,
-            current_gain_percentage: token.current_gain_percentage,
-            price_history: token.price_history // Pass price_history for charts
-          }
-        })
-
-        console.log(`📊 Fetched ${allSummaryTokens.length} tokens from summary period (${latestSummary.period_start} to ${latestSummary.period_end})`)
-      }
+      const periodTokens = await fetchPeriodTokens(summaries[0] as SummaryRow)
+      enhancedLatestSummary = buildEnhancedSummary(
+        summaries[0] as SummaryRow,
+        periodTokens,
+      )
     }
 
-    // Calculate current tracking statistics
-    const currentStats = {
-      total_tracking: trackingTokens?.length || 0,
-      positive_performers: trackingTokens?.filter(t => t.current_gain_percentage > 0).length || 0,
-      negative_performers: trackingTokens?.filter(t => t.current_gain_percentage < 0).length || 0,
-      at_risk: trackingTokens?.filter(t => t.current_gain_percentage <= -40).length || 0, // Close to -50% loss threshold
-      top_performer: trackingTokens && trackingTokens.length > 0
-        ? {
-          token_symbol: trackingTokens[0].token_symbol,
-          token_name: trackingTokens[0].token_name,
-          current_gain_percentage: trackingTokens[0].current_gain_percentage,
-          peak_gain_percentage: trackingTokens[0].peak_gain_percentage
-        }
-        : null
+    let selectedSummary: typeof enhancedLatestSummary = null
+    let summaryMode: 'dated' | 'live_fallback' | null = null
+    let dateScopedTracking = {
+      tokens: trackingTokens || [],
+      statistics: {
+        total_tracking: trackingTokens?.length || 0,
+        positive_performers:
+          trackingTokens?.filter((t) => t.current_gain_percentage > 0).length ||
+          0,
+        negative_performers:
+          trackingTokens?.filter((t) => t.current_gain_percentage < 0).length ||
+          0,
+        at_risk:
+          trackingTokens?.filter((t) => t.current_gain_percentage <= -40)
+            .length || 0,
+        top_performer:
+          trackingTokens && trackingTokens.length > 0
+            ? {
+                token_symbol: trackingTokens[0].token_symbol,
+                token_name: trackingTokens[0].token_name,
+                current_gain_percentage: trackingTokens[0].current_gain_percentage,
+                peak_gain_percentage: trackingTokens[0].peak_gain_percentage,
+              }
+            : null,
+      },
+      averages: {
+        current_gain:
+          trackingTokens && trackingTokens.length > 0
+            ? Math.round(
+                (trackingTokens.reduce(
+                  (sum, t) => sum + (t.current_gain_percentage || 0),
+                  0,
+                ) /
+                  trackingTokens.length) *
+                  100,
+              ) / 100
+            : 0,
+        peak_gain:
+          trackingTokens && trackingTokens.length > 0
+            ? Math.round(
+                (trackingTokens.reduce(
+                  (sum, t) => sum + (t.peak_gain_percentage || 0),
+                  0,
+                ) /
+                  trackingTokens.length) *
+                  100,
+              ) / 100
+            : 0,
+      },
     }
 
-    // Separate recent winners and losers
-    const recentWinners = recentCompleted?.filter(t => t.status === 'won') || []
-    const recentLosers = recentCompleted?.filter(t => t.status === 'lost') || []
-
-    // Calculate average performance metrics
-    const avgCurrentGain = trackingTokens && trackingTokens.length > 0
-      ? trackingTokens.reduce((sum, token) => sum + (token.current_gain_percentage || 0), 0) / trackingTokens.length
-      : 0
-
-    const avgPeakGain = trackingTokens && trackingTokens.length > 0
-      ? trackingTokens.reduce((sum, token) => sum + (token.peak_gain_percentage || 0), 0) / trackingTokens.length
-      : 0
-
-    // Calculate trends from historical data
     let winRateTrend = 0
-    if (historicalSummaries && historicalSummaries.length >= 2) {
+
+    if (selectedDate) {
+      let summaryForDate = await findSummaryForDate(selectedDate)
+
+      if (!summaryForDate && selectedDate === todayStr && summaries?.[0]) {
+        summaryForDate = summaries[0] as SummaryRow
+        summaryMode = 'live_fallback'
+      } else if (summaryForDate) {
+        summaryMode = 'dated'
+      }
+
+      if (summaryForDate) {
+        const rawPeriodTokens = await fetchPeriodTokens(summaryForDate)
+        const filteredPeriodTokens = applyFilters(rawPeriodTokens)
+        selectedSummary = buildEnhancedSummary(
+          summaryForDate,
+          filteredPeriodTokens,
+        )
+
+        const cohortStats = computeCohortStats(
+          filteredPeriodTokens as unknown as TrackerRow[],
+        )
+        dateScopedTracking = {
+          tokens: cohortStats.tokens as typeof trackingTokens,
+          statistics: cohortStats.statistics,
+          averages: cohortStats.averages,
+        }
+
+        const prevDate = getPreviousAppLocalDateString(selectedDate)
+        const prevSummary = await findSummaryForDate(prevDate)
+        if (prevSummary) {
+          winRateTrend =
+            Number(summaryForDate.win_rate ?? 0) -
+            Number(prevSummary.win_rate ?? 0)
+        }
+      } else {
+        summaryMode = 'dated'
+        winRateTrend = 0
+      }
+    } else if (historicalSummaries && historicalSummaries.length >= 2) {
       const latestWinRate = historicalSummaries[0]?.win_rate || 0
       const previousWinRate = historicalSummaries[1]?.win_rate || 0
       winRateTrend = latestWinRate - previousWinRate
     }
 
-    // Enhance the latest summary with all tokens data
-    let enhancedLatestSummary = null
-    if (summaries && summaries.length > 0) {
-      enhancedLatestSummary = {
-        ...summaries[0],
-        // Replace the limited top_winners with all tokens from the period
-        top_winners: allSummaryTokens || summaries[0].top_winners
-      }
+    const activeSummary = selectedDate ? selectedSummary : enhancedLatestSummary
+    const activeTracking = selectedDate ? dateScopedTracking : {
+      tokens: trackingTokens || [],
+      statistics: dateScopedTracking.statistics,
+      averages: dateScopedTracking.averages,
     }
+
+    const recentWinners =
+      recentCompleted?.filter((t) => t.status === 'won') || []
+    const recentLosers = recentCompleted?.filter((t) => t.status === 'lost') || []
 
     const response = {
       success: true,
       timestamp: new Date().toISOString(),
-
-      // Latest 24-hour summary (enhanced with all tokens)
+      selected_date: selectedDate,
+      summary_mode: summaryMode,
       latest_summary: enhancedLatestSummary,
-
-      // Current tracking status
-      current_tracking: {
-        tokens: trackingTokens || [],
-        statistics: currentStats,
-        averages: {
-          current_gain: Math.round(avgCurrentGain * 100) / 100,
-          peak_gain: Math.round(avgPeakGain * 100) / 100
-        }
-      },
-
-      // Recent performance
+      selected_summary: selectedSummary,
+      active_summary: activeSummary,
+      current_tracking: activeTracking,
       recent_completed: {
-        winners: recentWinners.slice(0, 10), // Top 10 recent winners
-        losers: recentLosers.slice(0, 10)    // Top 10 recent losers
+        winners: recentWinners.slice(0, 10),
+        losers: recentLosers.slice(0, 10),
       },
-
-      // Historical trends
       trends: {
         win_rate_change: Math.round(winRateTrend * 100) / 100,
-        historical_summaries: historicalSummaries || []
+        historical_summaries: historicalSummaries || [],
       },
-
-      // Metadata
       data_freshness: {
-        tracking_tokens_count: trackingTokens?.length || 0,
+        tracking_tokens_count: activeTracking.statistics.total_tracking,
         watching_tokens_count: watchingCount ?? 0,
-        latest_summary_age_hours: summaries && summaries.length > 0
-          ? Math.round((Date.now() - new Date(summaries[0].created_at).getTime()) / (1000 * 60 * 60) * 100) / 100
-          : null,
-        last_updated: new Date().toISOString()
-      }
+        latest_summary_age_hours:
+          activeSummary?.created_at
+            ? Math.round(
+                ((Date.now() -
+                  new Date(activeSummary.created_at as string).getTime()) /
+                  (1000 * 60 * 60)) *
+                  100,
+              ) / 100
+            : null,
+        last_updated: new Date().toISOString(),
+      },
     }
 
-    console.log(`✅ Stats fetched: ${currentStats.total_tracking} tracking, ${recentWinners.length} recent winners, ${recentLosers.length} recent losers`)
+    console.log(
+      `✅ Stats fetched: ${activeTracking.statistics.total_tracking} holding, ${recentWinners.length} recent winners${selectedDate ? ` (date=${selectedDate}, mode=${summaryMode})` : ''}`,
+    )
 
-    // Add cache metadata to response
     const enhancedResponse = {
       ...response,
-      cached: false, // Always false for fresh data
-      cache_age: 0,  // Fresh data
-      expires_in: nocache ? 0 : 300 // 5 minutes unless nocache is requested
+      cached: false,
+      cache_age: 0,
+      expires_in: nocache ? 0 : 300,
     }
 
-    // Determine cache headers based on parameters
     const cacheHeaders: Record<string, string> = nocache
       ? {
-        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-        'Pragma': 'no-cache',
-        'Expires': '0'
-      }
+          'Cache-Control':
+            'no-store, no-cache, must-revalidate, proxy-revalidate',
+          Pragma: 'no-cache',
+          Expires: '0',
+        }
       : refresh
         ? {
-          'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30' // Shorter cache for refresh
-        }
+            'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30',
+          }
         : {
-          'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60' // 5-minute cache
-        }
+            'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=60',
+          }
 
     return NextResponse.json(enhancedResponse, {
       status: 200,
-      headers: cacheHeaders
+      headers: cacheHeaders,
     })
-
   } catch (error) {
     console.error('❌ Error fetching trending token stats:', error)
-    return NextResponse.json({
-      error: 'Failed to fetch trending token statistics',
-      message: error instanceof Error ? error.message : 'Unknown error',
-      timestamp: new Date().toISOString()
-    }, { status: 500 })
+    return NextResponse.json(
+      {
+        error: 'Failed to fetch trending token statistics',
+        message: error instanceof Error ? error.message : 'Unknown error',
+        timestamp: new Date().toISOString(),
+      },
+      { status: 500 },
+    )
   }
 }

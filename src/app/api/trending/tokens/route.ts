@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { supabase } from '@/utils/supabase'
+import { getAppDayBounds } from '@/utils/datetime'
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic'
@@ -21,19 +22,12 @@ export async function GET(request: NextRequest) {
       .from(TRACKER_TABLE)
       .select('*', { count: 'exact' })
 
-    // Date filter (created_at)
+    // Date filter (tracking_started_at, Asia/Bangkok calendar day)
     if (date) {
-      // Start of day
-      const startDate = new Date(date)
-      startDate.setHours(0, 0, 0, 0)
-
-      // End of day
-      const endDate = new Date(date)
-      endDate.setHours(23, 59, 59, 999)
-
+      const { start, end } = getAppDayBounds(date)
       query = query
-        .gte('created_at', startDate.toISOString())
-        .lte('created_at', endDate.toISOString())
+        .gte('tracking_started_at', start.toISOString())
+        .lte('tracking_started_at', end.toISOString())
     }
 
     // Search filter

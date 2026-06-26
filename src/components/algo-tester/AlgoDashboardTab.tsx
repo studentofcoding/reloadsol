@@ -12,7 +12,8 @@ import TokenDetailsModal from "@/components/TokenDetailsModal";
 import { useTrendingStats } from "@/hooks/useTrendingStats";
 import { isSimulatedTrackerPosition } from "@/utils/trading-simulation";
 import { useTokenHistory } from "@/hooks/useTokenHistory";
-import { formatAppDateTime, formatAppNow } from "@/utils/datetime";
+import { formatAppDate, formatAppDateTime, formatAppNow, getAppLocalDateString } from "@/utils/datetime";
+import { getSummaryTokenGainPct } from "@/utils/trending-profit";
 
 // Use alternate tables in local development to avoid prod collisions
 const TRACKER_TABLE =
@@ -27,11 +28,16 @@ interface TopWinner {
   logo_url: string | null;
   initial_price_usd: number;
   peak_price_usd: number;
+  last_price_usd?: number;
   peak_gain_percentage: number;
   tracking_duration_hours: number;
+  tracking_started_at?: string;
   status_changed_at: string;
   status?: "tracking" | "won" | "lost" | "manual_sell";
   current_gain_percentage?: number;
+  market_cap?: number | null;
+  trading_simulation?: Record<string, unknown> | null;
+  price_history?: unknown[] | null;
 }
 
 interface TrackedToken {
@@ -72,12 +78,19 @@ interface Summary {
   max_peak_gain: number;
   avg_loss: number;
   created_at: string;
+  total_profit_pct?: number;
+  average_profit_pct?: number;
+  profit_token_count?: number;
 }
 
 interface TrendingStats {
   success: boolean;
   timestamp: string;
+  selected_date?: string | null;
+  summary_mode?: "dated" | "live_fallback" | null;
   latest_summary: Summary | null;
+  selected_summary?: Summary | null;
+  active_summary?: Summary | null;
   current_tracking: {
     tokens: TrackedToken[];
     statistics: {
@@ -153,9 +166,15 @@ export default function AlgoDashboardTab() {
     allIds: string[];
   } | null>(null);
 
+  const [historyDate, setHistoryDate] = useState<string>(() =>
+    getAppLocalDateString(),
+  );
+  const [historyPage, setHistoryPage] = useState<number>(1);
+
   const {
     data: stats,
     isLoading: loading,
+    isFetching: statsFetching,
     error: queryError,
     refetch,
   } = useTrendingStats(30000, {
@@ -164,8 +183,23 @@ export default function AlgoDashboardTab() {
         ? undefined
         : statsSimFilter === "sim",
     strategyId: strategyFilter || undefined,
+    date: historyDate,
   });
   const error = queryError ? queryError.message : "";
+  const typedStats = stats as TrendingStats | undefined;
+  const activeSummary =
+    typedStats?.active_summary ??
+    typedStats?.selected_summary ??
+    typedStats?.latest_summary ??
+    null;
+  const summaryMode = typedStats?.summary_mode ?? null;
+  const todayStr = getAppLocalDateString();
+
+  const { data: historyData, isLoading: historyLoading } = useTokenHistory({
+    page: historyPage,
+    limit: 12,
+    date: historyDate,
+  });
 
   useEffect(() => {
     fetch("/api/strategies")
@@ -186,17 +220,6 @@ export default function AlgoDashboardTab() {
   const [activeTab, setActiveTab] = useState<
     "overview" | "tracking" | "winners" | "losers"
   >("overview");
-
-  // History state
-  const [historyDate, setHistoryDate] = useState<string>(
-    new Date().toISOString().split("T")[0],
-  );
-  const [historyPage, setHistoryPage] = useState<number>(1);
-  const { data: historyData, isLoading: historyLoading } = useTokenHistory({
-    page: historyPage,
-    limit: 12,
-    date: historyDate,
-  });
 
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [debugMode, setDebugMode] = useState(false);
@@ -240,7 +263,9 @@ export default function AlgoDashboardTab() {
   }>({ isOpen: false, modalType: "trading" });
 
   // Latest 24h Summary state
-  const [showAllSummaryTokens, setShowAllSummaryTokens] = useState(false);
+  type SummaryTokensView = "leaderboard" | "table";
+  const [summaryTokensView, setSummaryTokensView] =
+    useState<SummaryTokensView>("leaderboard");
 
   // Trading config state
   const [tradingConfig, setTradingConfig] = useState<TradingConfig>(readTradingConfig);
@@ -677,49 +702,18 @@ export default function AlgoDashboardTab() {
   };
 
   // Calculate total and average PnL percentage from all tokens in summary
-  const calculatePnL = (
-    summary: Summary | null,
-  ): { totalPnL: number; averagePnL: number } => {
-    if (!summary) {
-      return { totalPnL: 0, averagePnL: 0 };
-    }
+  const formatSummaryProfit = (value: number | undefined | null) => {
+    if (value == null) return "—";
+    return formatPercentage(value);
+  };
 
-    let totalPnL = 0;
-    let totalTokens = 0;
-
-    // Process all tokens in top_winners array
-    if (summary.top_winners && summary.top_winners.length > 0) {
-      summary.top_winners.forEach((winner) => {
-        // Use current_gain_percentage if available, otherwise use peak_gain_percentage
-        const gainPercentage =
-          typeof winner.current_gain_percentage !== "undefined"
-            ? winner.current_gain_percentage
-            : winner.peak_gain_percentage;
-
-        totalPnL += gainPercentage;
-        totalTokens++;
-      });
-    }
-
-    // Add remaining lost tokens that aren't in top_winners
-    // Only count lost tokens that aren't already counted in top_winners
-    const lostTokensNotInTopWinners =
-      summary.lost_tokens -
-      (summary.top_winners?.filter(
-        (w) =>
-          w.current_gain_percentage !== undefined &&
-          w.current_gain_percentage < -50,
-      ).length || 0);
-
-    if (lostTokensNotInTopWinners > 0 && summary.avg_loss) {
-      totalPnL += summary.avg_loss * lostTokensNotInTopWinners;
-      totalTokens += lostTokensNotInTopWinners;
-    }
-
-    return {
-      totalPnL,
-      averagePnL: totalTokens > 0 ? totalPnL / totalTokens : 0,
-    };
+  const shiftHistoryDate = (deltaDays: number) => {
+    const date = new Date(`${historyDate}T12:00:00+07:00`);
+    date.setDate(date.getDate() + deltaDays);
+    const next = getAppLocalDateString(date);
+    if (deltaDays > 0 && next > todayStr) return;
+    setHistoryDate(next);
+    setHistoryPage(1);
   };
 
   const formatTime = (dateString: string) => formatAppDateTime(dateString);
@@ -1024,19 +1018,104 @@ export default function AlgoDashboardTab() {
           </div>
         )}
 
+        {/* Date selector — drives overview stats + daily history */}
+        <div className="bg-gray-800 rounded-xl p-4 mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Summary date</h3>
+            <p className="text-xs text-gray-400 mt-1">
+              24h summary ending on this date (Asia/Bangkok)
+              {summaryMode === "live_fallback" && historyDate === todayStr
+                ? " · latest available"
+                : ""}
+            </p>
+          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              type="button"
+              onClick={() => shiftHistoryDate(-1)}
+              className="p-1 hover:bg-gray-700 rounded transition-colors"
+              title="Previous Day"
+            >
+              <svg
+                className="w-5 h-5 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15 19l-7-7 7-7"
+                />
+              </svg>
+            </button>
+            <input
+              type="date"
+              value={historyDate}
+              max={todayStr}
+              onChange={(e) => {
+                setHistoryDate(e.target.value);
+                setHistoryPage(1);
+              }}
+              className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+            <button
+              type="button"
+              onClick={() => shiftHistoryDate(1)}
+              disabled={historyDate >= todayStr}
+              className="p-1 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Next Day"
+            >
+              <svg
+                className="w-5 h-5 text-gray-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+
         {/* Stats Overview */}
-        <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-6 mb-8">
+        <div className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 md:gap-6 mb-8 ${statsFetching ? "opacity-70" : ""}`}>
           {/* Win Rate */}
           <div className="bg-gray-800 rounded-xl p-3 md:p-6">
             <h3 className="text-sm md:text-lg font-semibold mb-2">Win Rate</h3>
             <p className="text-xl md:text-3xl font-bold text-green-400">
-              {stats.latest_summary?.win_rate?.toFixed(1) || "0.0"}%
+              {activeSummary?.win_rate != null
+                ? `${activeSummary.win_rate.toFixed(1)}%`
+                : "—"}
             </p>
-            {stats.trends.win_rate_change !== 0 && (
+            {activeSummary && stats.trends.win_rate_change !== 0 && (
               <p className="text-xs md:text-sm mt-1">
                 {formatPercentage(stats.trends.win_rate_change)} vs yesterday
               </p>
             )}
+          </div>
+
+          {/* Sum of Profit (24h summary) */}
+          <div className="bg-gray-800 rounded-xl p-3 md:p-6">
+            <h3 className="text-sm md:text-lg font-semibold mb-2">
+              Sum of Profit
+            </h3>
+            <p className="text-xl md:text-3xl font-bold">
+              {activeSummary
+                ? formatSummaryProfit(activeSummary.total_profit_pct)
+                : "—"}
+            </p>
+            <p className="text-xs md:text-sm text-gray-400 mt-1">
+              {activeSummary?.profit_token_count != null
+                ? `${formatAppDate(historyDate)} · ${activeSummary.profit_token_count} tokens`
+                : "No summary for this date"}
+            </p>
           </div>
 
           {/* Open positions (holding) */}
@@ -1091,16 +1170,20 @@ export default function AlgoDashboardTab() {
               Last Summary
             </h3>
             <p className="text-sm md:text-lg font-bold text-white">
-              {stats.data_freshness.latest_summary_age_hours !== null
-                ? `${stats.data_freshness.latest_summary_age_hours.toFixed(1)}h ago`
-                : "Never"}
+              {activeSummary?.period_end
+                ? formatAppDate(activeSummary.period_end)
+                : "No summary"}
             </p>
-            {stats.latest_summary && (
+            {activeSummary && (
               <p className="text-xs md:text-sm text-gray-400 mt-1">
-                {stats.latest_summary.won_tokens} wins
+                {historyDate === todayStr &&
+                stats.data_freshness.latest_summary_age_hours != null
+                  ? `${stats.data_freshness.latest_summary_age_hours.toFixed(1)}h ago · `
+                  : ""}
+                {activeSummary.won_tokens} wins
                 <span className="hidden md:inline">
                   {" "}
-                  • {stats.latest_summary.lost_tokens} losses
+                  • {activeSummary.lost_tokens} losses
                 </span>
               </p>
             )}
@@ -1235,76 +1318,11 @@ export default function AlgoDashboardTab() {
           <div className="space-y-6">
             {/* Daily History */}
             <div className="bg-gray-800 rounded-xl p-6">
-              <div className="flex items-center justify-between mb-6">
+              <div className="mb-6">
                 <h3 className="text-xl font-semibold">Daily Token History</h3>
-                <div className="flex items-center space-x-4">
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => {
-                        const date = new Date(historyDate);
-                        date.setDate(date.getDate() - 1);
-                        setHistoryDate(date.toISOString().split("T")[0]);
-                        setHistoryPage(1);
-                      }}
-                      className="p-1 hover:bg-gray-700 rounded transition-colors"
-                      title="Previous Day"
-                    >
-                      <svg
-                        className="w-5 h-5 text-gray-400"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M15 19l-7-7 7-7"
-                        />
-                      </svg>
-                    </button>
-                    <input
-                      type="date"
-                      value={historyDate}
-                      onChange={(e) => {
-                        setHistoryDate(e.target.value);
-                        setHistoryPage(1);
-                      }}
-                      className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
-                    <button
-                      onClick={() => {
-                        const date = new Date(historyDate);
-                        date.setDate(date.getDate() + 1);
-                        const today = new Date().toISOString().split("T")[0];
-                        const newDate = date.toISOString().split("T")[0];
-                        if (newDate <= today) {
-                          setHistoryDate(newDate);
-                          setHistoryPage(1);
-                        }
-                      }}
-                      disabled={
-                        historyDate >= new Date().toISOString().split("T")[0]
-                      }
-                      className="p-1 hover:bg-gray-700 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="Next Day"
-                    >
-                      <svg
-                        className="w-5 h-5 text-gray-400"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M9 5l7 7-7 7"
-                        />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
+                <p className="text-sm text-gray-400 mt-1">
+                  Tokens that started tracking on {formatAppDate(historyDate)}
+                </p>
               </div>
 
               {historyLoading ? (
@@ -1457,51 +1475,45 @@ export default function AlgoDashboardTab() {
               )}
             </div>
 
-            {/* Latest Summary */}
-            {stats.latest_summary && (
+            {/* 24h Summary for selected date */}
+            {activeSummary ? (
               <div className="bg-gray-800 rounded-xl p-6">
                 <h3 className="text-xl font-semibold mb-4">
-                  Latest 24h Summary
+                  24h Summary — {formatAppDate(historyDate)}
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                   <div>
                     <p className="text-sm text-gray-400">Period</p>
                     <p className="text-white">
-                      {formatTime(stats.latest_summary.period_start)} -{" "}
-                      {formatTime(stats.latest_summary.period_end)}
+                      {formatTime(activeSummary.period_start)} -{" "}
+                      {formatTime(activeSummary.period_end)}
                     </p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-400">Total Tracked</p>
                     <p className="text-white font-semibold">
-                      {stats.latest_summary.total_tokens_tracked}
+                      {activeSummary.total_tokens_tracked}
                     </p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-400">Win Rate</p>
                     <p className="text-green-400 font-semibold">
-                      {stats.latest_summary.win_rate}%
+                      {activeSummary.win_rate}%
                     </p>
                   </div>
                   <div>
                     <div className="space-y-2">
                       <div>
                         <p className="text-sm text-gray-400">Total PnL</p>
-                        <p
-                          className={`font-semibold ${calculatePnL(stats.latest_summary).totalPnL >= 0 ? "text-green-400" : "text-red-400"}`}
-                        >
-                          {formatPercentage(
-                            calculatePnL(stats.latest_summary).totalPnL,
-                          )}
+                        <p className="font-semibold">
+                          {formatSummaryProfit(activeSummary.total_profit_pct)}
                         </p>
                       </div>
                       <div>
                         <p className="text-sm text-gray-400">Average PnL</p>
-                        <p
-                          className={`font-semibold ${calculatePnL(stats.latest_summary).averagePnL >= 0 ? "text-green-400" : "text-red-400"}`}
-                        >
-                          {formatPercentage(
-                            calculatePnL(stats.latest_summary).averagePnL,
+                        <p className="font-semibold">
+                          {formatSummaryProfit(
+                            activeSummary.average_profit_pct,
                           )}
                         </p>
                       </div>
@@ -1510,31 +1522,131 @@ export default function AlgoDashboardTab() {
                 </div>
 
                 {/* All Tracked Tokens from Summary */}
-                {stats.latest_summary.top_winners &&
-                  stats.latest_summary.top_winners.length > 0 && (
+                {activeSummary.top_winners &&
+                  activeSummary.top_winners.length > 0 && (
                     <div>
-                      <div className="flex items-center justify-between mb-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
                         <h4 className="text-lg font-semibold">
-                          📊 Tracked Tokens
+                          Tracked Tokens
                         </h4>
-                        <button
-                          onClick={() =>
-                            setShowAllSummaryTokens(!showAllSummaryTokens)
-                          }
-                          className="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors"
-                        >
-                          {showAllSummaryTokens
-                            ? "Show Top 5"
-                            : `Show All (${stats?.latest_summary?.top_winners?.length || 0})`}
-                        </button>
+                        <div className="flex rounded-lg bg-gray-900 p-1 border border-gray-700">
+                          <button
+                            type="button"
+                            onClick={() => setSummaryTokensView("leaderboard")}
+                            className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                              summaryTokensView === "leaderboard"
+                                ? "bg-gray-700 text-white"
+                                : "text-gray-400 hover:text-white"
+                            }`}
+                          >
+                            Leaderboard
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSummaryTokensView("table")}
+                            className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                              summaryTokensView === "table"
+                                ? "bg-gray-700 text-white"
+                                : "text-gray-400 hover:text-white"
+                            }`}
+                          >
+                            Table
+                          </button>
+                        </div>
                       </div>
-                      <div className="space-y-2">
-                        {(showAllSummaryTokens
-                          ? stats?.latest_summary?.top_winners || []
-                          : (stats?.latest_summary?.top_winners || [])
-                              .filter((w: any) => w.peak_gain_percentage > 0)
-                              .slice(0, 5)
-                        ).map((token: any, index: number, arr: any[]) => {
+
+                      {summaryTokensView === "table" ? (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm text-left">
+                            <thead>
+                              <tr className="text-gray-400 border-b border-gray-700">
+                                <th className="p-2">Token</th>
+                                <th className="p-2">Status</th>
+                                <th className="p-2">PnL %</th>
+                                <th className="p-2">Peak %</th>
+                                <th className="p-2">Current %</th>
+                                <th className="p-2">Duration</th>
+                                <th className="p-2">Started</th>
+                                <th className="p-2">Closed</th>
+                                <th className="p-2">Strategy</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {[...(activeSummary.top_winners || [])]
+                                .sort(
+                                  (a, b) =>
+                                    getSummaryTokenGainPct(b) -
+                                    getSummaryTokenGainPct(a),
+                                )
+                                .map((token, index, arr) => {
+                                  const displayGain =
+                                    getSummaryTokenGainPct(token);
+                                  const sim = token.trading_simulation as
+                                    | Record<string, unknown>
+                                    | null
+                                    | undefined;
+                                  const strategyId =
+                                    typeof sim?.strategy_id === "string"
+                                      ? sim.strategy_id
+                                      : "—";
+
+                                  return (
+                                    <tr
+                                      key={token.token_address}
+                                      className="border-b border-gray-800 text-gray-300 cursor-pointer hover:bg-gray-700/50"
+                                      onClick={() =>
+                                        handleSummaryTokenClick(token, arr)
+                                      }
+                                    >
+                                      <td className="p-2">
+                                        <div className="font-semibold text-white">
+                                          {token.token_symbol || "Unknown"}
+                                        </div>
+                                        <div className="text-xs text-gray-400 font-mono">
+                                          {token.token_address.slice(0, 8)}…
+                                        </div>
+                                      </td>
+                                      <td className="p-2">
+                                        {token.status ?? "—"}
+                                      </td>
+                                      <td className="p-2">
+                                        {formatPercentage(displayGain)}
+                                      </td>
+                                      <td className="p-2">
+                                        {token.peak_gain_percentage.toFixed(2)}%
+                                      </td>
+                                      <td className="p-2">
+                                        {token.current_gain_percentage != null
+                                          ? `${token.current_gain_percentage.toFixed(2)}%`
+                                          : "—"}
+                                      </td>
+                                      <td className="p-2">
+                                        {token.tracking_duration_hours.toFixed(1)}h
+                                      </td>
+                                      <td className="p-2">
+                                        {token.tracking_started_at
+                                          ? formatTime(token.tracking_started_at)
+                                          : "—"}
+                                      </td>
+                                      <td className="p-2">
+                                        {token.status !== "tracking" &&
+                                        token.status_changed_at
+                                          ? formatTime(token.status_changed_at)
+                                          : "—"}
+                                      </td>
+                                      <td className="p-2">{strategyId}</td>
+                                    </tr>
+                                  );
+                                })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {(activeSummary.top_winners || [])
+                            .filter((w: TopWinner) => w.peak_gain_percentage > 0)
+                            .slice(0, 5)
+                            .map((token: TopWinner, index: number, arr: TopWinner[]) => {
                           const isWinner = token.peak_gain_percentage > 0;
                           const currentGain =
                             token.current_gain_percentage ??
@@ -1543,9 +1655,7 @@ export default function AlgoDashboardTab() {
                             currentGain < -50 ||
                             (token.status && token.status === "lost");
                           const isManualSell = token.status === "manual_sell";
-                          const displayGain = isLoser
-                            ? currentGain
-                            : token.peak_gain_percentage;
+                          const displayGain = getSummaryTokenGainPct(token);
 
                           return (
                             <div
@@ -1642,9 +1752,11 @@ export default function AlgoDashboardTab() {
                                 <div className="text-[10px] text-gray-500 mt-1">
                                   <div>
                                     Bought:{" "}
-                                    {formatRelativeTime(
-                                      token.tracking_started_at,
-                                    )}
+                                    {token.tracking_started_at
+                                      ? formatRelativeTime(
+                                          token.tracking_started_at,
+                                        )
+                                      : "—"}
                                   </div>
                                   {token.status !== "tracking" &&
                                     token.status_changed_at && (
@@ -1670,9 +1782,14 @@ export default function AlgoDashboardTab() {
                             </div>
                           );
                         })}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   )}
+              </div>
+            ) : (
+              <div className="bg-gray-800 rounded-xl p-6 text-center text-gray-400">
+                No summary recorded for {formatAppDate(historyDate)}
               </div>
             )}
 
