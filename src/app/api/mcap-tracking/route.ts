@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats, STOP_LOSS_THRESHOLD, MAX_TRACKING_AGE_MS, TokenLabel, fixTrackingTimeline, type McapSnapshot } from '@/utils/mcap-tracker'
 import { supabase } from '@/utils/supabase'
 import { getSolPriceUSD } from '@/utils/solana'
+import { getAppLocalParts } from '@/utils/datetime'
 import { log } from '@/utils/unified-logger'
 
 // Server-side toast deduplication to reduce duplicate notifications across quick successive calls.
@@ -293,6 +294,15 @@ export async function GET(request: NextRequest) {
       const avgGrowthExcludingZero = nonZeroTokens.length > 0 ?
         nonZeroTokens.reduce((sum, item) => sum + item.mcap_growth_percent, 0) / nonZeroTokens.length : 0
 
+      const highestGrowth = allData.length > 0
+        ? Math.max(...allData.map((item) => item.mcap_growth_percent))
+        : 0
+
+      const bucketHourBangkok = (iso: string): string => {
+        const { hour } = getAppLocalParts(new Date(iso))
+        return hour.toString().padStart(2, '0')
+      }
+
       // PnL Time Window Analysis
       const pnlThresholds = [50, 100, 200, 500, 1000, 2000, 5000]
       const pnlTimeWindows: Record<string, {
@@ -319,9 +329,9 @@ export async function GET(request: NextRequest) {
           const firstSeenDate = new Date(token.first_seen_at)
           const lastUpdatedDate = new Date(token.last_updated_at)
 
-          // Use last_updated_at as the time when threshold was reached
-          const reachedHour = lastUpdatedDate.getHours()
-          hourlyDistribution[reachedHour.toString().padStart(2, '0')]++
+          // Use last_updated_at hour in Asia/Bangkok as sell/exit bucket
+          const reachedHour = bucketHourBangkok(token.last_updated_at)
+          hourlyDistribution[reachedHour]++
 
           // Calculate time to reach threshold (in hours)
           const timeDiff = (lastUpdatedDate.getTime() - firstSeenDate.getTime()) / (1000 * 60 * 60)
@@ -369,9 +379,9 @@ export async function GET(request: NextRequest) {
           const firstSeenDate = new Date(token.first_seen_at)
           const lastUpdatedDate = new Date(token.last_updated_at)
 
-          // Use UTC hour of when the token was first_seen as the ENTRY bucket
-          const startHourUTC = firstSeenDate.getUTCHours()
-          hourlyDistribution[startHourUTC.toString().padStart(2, '0')]++
+          // Use first_seen_at hour in Asia/Bangkok as the ENTRY bucket
+          const startHour = bucketHourBangkok(token.first_seen_at)
+          hourlyDistribution[startHour]++
 
           // Keep the same average time-to-target calculation for comparability
           const timeDiff = (lastUpdatedDate.getTime() - firstSeenDate.getTime()) / (1000 * 60 * 60)
@@ -397,14 +407,14 @@ export async function GET(request: NextRequest) {
 
       // Optional: single info-level log to document bases/timezones (no noisy per-token logs)
       log.info('mcap_tracker', 'Computed PnL time windows', {
-        sellPeaks: 'last_updated_at (server local time)',
-        buyPeaks: 'first_seen_at (UTC)',
+        sellPeaks: 'last_updated_at (Asia/Bangkok)',
+        buyPeaks: 'first_seen_at (Asia/Bangkok)',
         thresholds: pnlThresholds
       })
 
       // MCap-based analysis with debugging
       const under50k = validData.filter(item => item.first_mcap < 50000)
-      const from51to100k = validData.filter(item => item.first_mcap >= 50001 && item.first_mcap <= 100000)
+      const from51to100k = validData.filter(item => item.first_mcap >= 50000 && item.first_mcap <= 100000)
       const from101to200k = validData.filter(item => item.first_mcap >= 100001 && item.first_mcap <= 200000)
       const from201to500k = validData.filter(item => item.first_mcap >= 200001 && item.first_mcap <= 500000)
       const from501kto1M = validData.filter(item => item.first_mcap >= 500001 && item.first_mcap <= 1000000)
@@ -700,7 +710,7 @@ export async function GET(request: NextRequest) {
       })
 
       const stats = {
-        total: count || 0,
+        total: totalTokens,
         gainers,
         losers,
         zeroPercent: zeroPercentTokens,
@@ -708,15 +718,16 @@ export async function GET(request: NextRequest) {
         avgGrowth: excludeZeroPnl ? avgGrowthExcludingZero : avgGrowthAll,
         avgGrowthAll,
         avgGrowthExcludingZero,
+        highestGrowth,
         totalMcap: allData.reduce((sum, item) => sum + item.current_mcap, 0),
         solPriceUSD,
-        pnlTimeWindows, // Sell/exit timing (by last_updated_at, server local time)
-        pnlBuyTimeWindows, // Buy/entry timing (by first_seen_at, UTC)
+        pnlTimeWindows,
+        pnlBuyTimeWindows,
         timeWindowMeta: {
           sellPeakHourBasis: 'last_updated_at',
-          sellPeakHourTimezone: 'server_local',
+          sellPeakHourTimezone: 'Asia/Bangkok',
           buyPeakHourBasis: 'first_seen_at',
-          buyPeakHourTimezone: 'UTC'
+          buyPeakHourTimezone: 'Asia/Bangkok'
         },
         mcapRangeAnalysis,
         thirtyDaysSummary: {

@@ -115,6 +115,10 @@ function PnlDistributionChart({
   );
 }
 
+function parsePnlThresholdKey(key: string): number {
+  const match = key.match(/(\d+)/);
+  return match ? parseInt(match[1], 10) : 0;
+}
 
 export default function TrackerTab() {
   const queryClient = useQueryClient();
@@ -127,9 +131,9 @@ export default function TrackerTab() {
   // const [isPnlTimeWindowsExpanded, setIsPnlTimeWindowsExpanded] = useState(true)
   const [activeMcapFilter, setActiveMcapFilter] = useState<string | null>(null);
   // Desired display GMT offset (GMT+X), integer hours from -12 to +14
-  const [displayGmtOffset, setDisplayGmtOffset] = useState<number>(0);
-  // Base offset for Sell section (server local timezone; unknown => default 0)
-  const [sellServerBaseOffset, setSellServerBaseOffset] = useState<number>(0);
+  const [displayGmtOffset, setDisplayGmtOffset] = useState<number>(7);
+
+  const APP_TZ_OFFSET = 7;
 
   const [expandedAnalytics, setExpandedAnalytics] = useState<
     Record<string, boolean>
@@ -239,6 +243,24 @@ export default function TrackerTab() {
       .map(([hour]) => `${hour}:00`);
 
   const gmtOptions = Array.from({ length: 27 }, (_, idx) => idx - 12);
+
+  const renderBucketHistogram = (bucketKey: string) => {
+    if (!stats?.mcapRangeAnalysis) return null;
+    const bucket =
+      stats.mcapRangeAnalysis[
+        bucketKey as keyof typeof stats.mcapRangeAnalysis
+      ];
+    if (!bucket || typeof bucket !== "object") return null;
+    return (
+      <PnlDistributionChart
+        counts={
+          (bucket as { growthHistogram?: number[] | Array<{ count: number; range?: string }> })
+            .growthHistogram ?? []
+        }
+        negativeSplitIndex={3}
+      />
+    );
+  };
 
   const toggleAnalytics = (tokenAddress: string) => {
     setExpandedAnalytics((prev) => ({
@@ -545,7 +567,7 @@ export default function TrackerTab() {
       {stats && (
         <>
           {/* Main Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-7 gap-4 mb-8">
             <div className="bg-gray-800 rounded-lg p-4">
               <div className="text-2xl font-bold text-blue-400">
                 {stats.total.toLocaleString()}
@@ -581,6 +603,14 @@ export default function TrackerTab() {
               <div className="text-sm text-gray-400">Avg Growth</div>
             </div>
             <div className="bg-gray-800 rounded-lg p-4">
+              <div
+                className={`text-2xl font-bold ${getGrowthColor(stats.highestGrowth ?? 0)}`}
+              >
+                {formatPercentage(stats.highestGrowth ?? 0)}
+              </div>
+              <div className="text-sm text-gray-400">Highest %</div>
+            </div>
+            <div className="bg-gray-800 rounded-lg p-4">
               <div className="text-2xl font-bold text-purple-400">
                 {formatNumber(stats.totalMcap)}
               </div>
@@ -612,22 +642,6 @@ export default function TrackerTab() {
                       ))}
                     </select>
                   </label>
-                  <label className="text-sm text-gray-300 flex items-center gap-2">
-                    Server base offset (Sell):
-                    <select
-                      className="bg-gray-700 rounded px-2 py-1 text-sm"
-                      value={sellServerBaseOffset}
-                      onChange={(e) =>
-                        setSellServerBaseOffset(parseInt(e.target.value, 10))
-                      }
-                    >
-                      {gmtOptions.map((off) => (
-                        <option key={off} value={off}>
-                          {off >= 0 ? `GMT+${off}` : `GMT${off}`}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
                 </div>
               </div>
 
@@ -647,20 +661,13 @@ export default function TrackerTab() {
               <div className="text-xs text-gray-400 mb-4">
                 Buy basis:{" "}
                 {stats.timeWindowMeta?.buyPeakHourBasis ?? "first_seen_at"} |
-                Source TZ: {stats.timeWindowMeta?.buyPeakHourTimezone ?? "UTC"}{" "}
-                | Display TZ:{" "}
-                {displayGmtOffset >= 0
-                  ? `GMT+${displayGmtOffset}`
-                  : `GMT${displayGmtOffset}`}{" "}
-                <br />
                 Sell basis:{" "}
                 {stats.timeWindowMeta?.sellPeakHourBasis ?? "last_updated_at"} |
-                Source TZ:{" "}
-                {stats.timeWindowMeta?.sellPeakHourTimezone ?? "server_local"} |
-                Display TZ:{" "}
+                Source TZ: Asia/Bangkok (GMT+7) | Display TZ:{" "}
                 {displayGmtOffset >= 0
                   ? `GMT+${displayGmtOffset}`
                   : `GMT${displayGmtOffset}`}
+                {displayGmtOffset === APP_TZ_OFFSET ? " (Bangkok)" : ""}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -672,8 +679,7 @@ export default function TrackerTab() {
                 )
                   .sort(
                     (a, b) =>
-                      parseFloat(a.replace("%", "")) -
-                      parseFloat(b.replace("%", "")),
+                      parsePnlThresholdKey(a) - parsePnlThresholdKey(b),
                   )
                   .map((threshold) => {
                     const sell = stats.pnlTimeWindows[threshold];
@@ -681,15 +687,14 @@ export default function TrackerTab() {
                       ? stats.pnlBuyTimeWindows[threshold]
                       : undefined;
 
-                    // Shift distributions to display TZ
-                    const sellShift = displayGmtOffset - sellServerBaseOffset;
+                    const displayShift = displayGmtOffset - APP_TZ_OFFSET;
                     const adjustedSellDist = sell
-                      ? shiftDistribution(sell.timeDistribution, sellShift)
+                      ? shiftDistribution(sell.timeDistribution, displayShift)
                       : {};
                     const adjustedBuyDist = buy
                       ? shiftDistribution(
                           buy.timeDistribution,
-                          displayGmtOffset,
+                          displayShift,
                         )
                       : {};
 
@@ -725,7 +730,7 @@ export default function TrackerTab() {
                     };
 
                     // Threshold color for heading only
-                    const thresholdNum = parseFloat(threshold.replace("%", ""));
+                    const thresholdNum = parsePnlThresholdKey(threshold);
                     const headingColor = (() => {
                       if (thresholdNum >= 1000) return "text-purple-400";
                       if (thresholdNum >= 500) return "text-pink-400";
@@ -860,6 +865,7 @@ export default function TrackerTab() {
           )}
 
           {/* MCap Range Analysis */}
+          {stats.mcapRangeAnalysis && (
           <div className="bg-gray-800 rounded-lg p-6 mb-8">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-xl font-bold">MCap Range Analysis</h3>
@@ -1027,6 +1033,7 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
+                        {renderBucketHistogram("under50k")}
                       </div>
                     </div>
                   )}
@@ -1185,6 +1192,7 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
+                        {renderBucketHistogram("from51to100k")}
                       </div>
                     </div>
                   )}
@@ -1343,6 +1351,7 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
+                        {renderBucketHistogram("from101to200k")}
                       </div>
                     </div>
                   )}
@@ -1501,6 +1510,7 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
+                        {renderBucketHistogram("from201to500k")}
                       </div>
                     </div>
                   )}
@@ -1659,6 +1669,7 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
+                        {renderBucketHistogram("from501kto1M")}
                       </div>
                     </div>
                   )}
@@ -1809,6 +1820,7 @@ export default function TrackerTab() {
                         <div className="text-gray-300 text-xs mb-1">
                           PnL distribution
                         </div>
+                        {renderBucketHistogram("over1M")}
                       </div>
                     </div>
                   )}
@@ -1816,6 +1828,7 @@ export default function TrackerTab() {
               </button>
             </div>
           </div>
+          )}
         </>
       )}
 
