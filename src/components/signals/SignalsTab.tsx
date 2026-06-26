@@ -14,6 +14,7 @@ import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
+import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
 import { useQueryClient } from "@tanstack/react-query";
 import { useTradingSignals, SignalItem } from "@/hooks/useTradingSignals";
@@ -638,6 +639,10 @@ export default function SignalsTab() {
                             >
                               Buy
                             </button>
+                            <GlobalWatchlistButton
+                              tokenAddress={chart.tokenAddress}
+                              tokenSymbol={chart.tokenSymbol}
+                            />
                           </div>
                         </div>
                         <button
@@ -854,6 +859,10 @@ export default function SignalsTab() {
                     >
                       Buy
                     </button>
+                    <GlobalWatchlistButton
+                      tokenAddress={chart.tokenAddress}
+                      tokenSymbol={chart.tokenSymbol}
+                    />
                   </div>
                 </div>
                 <button

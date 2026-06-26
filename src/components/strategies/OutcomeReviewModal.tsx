@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
+import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import TradeWindowChart from "@/components/strategies/TradeWindowChart";
 import type {
   OutcomeChartPoint,
@@ -366,18 +367,24 @@ export default function OutcomeReviewModal({
         <div className="p-4 space-y-4">
           {tokenAddress ? (
             <div className="rounded-lg border border-gray-700 overflow-hidden bg-black">
-              <div className="px-3 py-2 border-b border-gray-800 flex justify-between items-center">
+              <div className="px-3 py-2 border-b border-gray-800 flex justify-between items-center gap-2">
                 <span className="text-xs text-gray-400">
                   GMGN chart (interval {gmgnInterval})
                 </span>
-                <a
-                  href={getGmgnTokenUrl(tokenAddress)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-400 hover:underline"
-                >
-                  Open on GMGN ↗
-                </a>
+                <div className="flex items-center gap-2">
+                  <GlobalWatchlistButton
+                    tokenAddress={tokenAddress}
+                    tokenSymbol={tokenSymbol}
+                  />
+                  <a
+                    href={getGmgnTokenUrl(tokenAddress)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-400 hover:underline"
+                  >
+                    Open on GMGN ↗
+                  </a>
+                </div>
               </div>
               <GmgnChartEmbed
                 tokenAddress={tokenAddress}

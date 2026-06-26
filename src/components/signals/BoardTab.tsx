@@ -45,6 +45,7 @@ import { calculateWeightedDistribution } from "@/utils/position-sizing";
 import { useMCapTracker, FilterOptions } from "@/hooks/useMCapTracker";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
+import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { useRugList } from "@/hooks/useRugList";
 import { parseAddresses } from "@/components/signals/shared/parseAddresses";
 
@@ -247,6 +248,8 @@ const ChartItem = React.memo(
   ({
     addr,
     symbol,
+    initialPrice,
+    logoUrl,
     interval,
     isDraggingGlobal,
     buyState,
@@ -275,14 +278,22 @@ const ChartItem = React.memo(
                 </span>
               )}
             </div>
-            <a
-              href={`/chart/${addr}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-2 text-xs text-blue-400 hover:underline"
-            >
-              Open
-            </a>
+            <div className="flex items-center gap-2">
+              <GlobalWatchlistButton
+                tokenAddress={addr}
+                tokenSymbol={symbol}
+                initialPrice={initialPrice}
+                logoUrl={logoUrl}
+              />
+              <a
+                href={`/chart/${addr}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-400 hover:underline"
+              >
+                Open
+              </a>
+            </div>
           </div>
 
           <div className="relative h-[200px] w-full bg-black">
@@ -1270,6 +1281,7 @@ function ChartsContent() {
           key={addr}
           addr={addr}
           symbol={symbols[addr] || signal?.token_symbol}
+          initialPrice={signal?.price}
           interval={interval}
           isDraggingGlobal={isDraggingGlobal}
           buyState={buyStates[addr]}

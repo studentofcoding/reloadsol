@@ -598,6 +598,24 @@ ALTER TABLE dlmm_lessons ENABLE ROW LEVEL SECURITY;
 ALTER TABLE strategy_definitions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE strategy_outcomes ENABLE ROW LEVEL SECURITY;
 
+-- Per-wallet global watchlist (GMGN charts, nav bar)
+CREATE TABLE IF NOT EXISTS wallet_watchlist (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  wallet_address TEXT NOT NULL,
+  token_address TEXT NOT NULL,
+  token_symbol TEXT,
+  logo_url TEXT,
+  initial_price_usd NUMERIC,
+  added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (wallet_address, token_address)
+);
+
+ALTER TABLE wallet_watchlist ADD COLUMN IF NOT EXISTS initial_price_usd NUMERIC;
+
+CREATE INDEX IF NOT EXISTS idx_wallet_watchlist_wallet ON wallet_watchlist(wallet_address, added_at DESC);
+
+ALTER TABLE wallet_watchlist ENABLE ROW LEVEL SECURITY;
+
 -- Ensure status check allows 'stopped' before ghost cleanup (dev mirror may use prod constraint name).
 ALTER TABLE trending_token_tracker
   DROP CONSTRAINT IF EXISTS trending_token_tracker_status_check;

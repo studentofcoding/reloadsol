@@ -9,6 +9,7 @@ import { useOwnedTokenPrices } from "@/hooks/useOwnedTokenPrices";
 import { boardTabUrl } from "@/components/signals/shared/parseAddresses";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
+import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { useRugList } from "@/hooks/useRugList";
 import { useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
@@ -1552,18 +1553,31 @@ export default function LiveTab() {
             {debouncedChartToken === token.token_address && (
               <div
                 className="absolute bottom-full left-0 right-0 mb-2 bg-gray-900 rounded-lg shadow-2xl border border-gray-600 overflow-hidden z-50"
-                style={{ height: "250px" }}
+                style={{ height: "280px" }}
               >
-                <div className="absolute inset-0 bg-gray-800 flex items-center justify-center -z-10">
-                  <div className="w-6 h-6 border-2 border-gray-500 border-t-white rounded-full animate-spin"></div>
+                <div className="flex items-center justify-between px-2 py-1 border-b border-gray-700 bg-gray-800">
+                  <span className="text-xs text-gray-300 truncate">
+                    {token.token_symbol || token.token_address.slice(0, 8)}
+                  </span>
+                  <GlobalWatchlistButton
+                    tokenAddress={token.token_address}
+                    tokenSymbol={token.token_symbol}
+                    initialPrice={token.price}
+                    logoUrl={token.logo_url}
+                  />
                 </div>
-                <GmgnChartEmbed
-                  tokenAddress={token.token_address}
-                  interval="5"
-                  className="w-full h-full"
-                  height="250px"
-                  title={`Chart - ${token.token_symbol}`}
-                />
+                <div className="relative h-[250px] w-full">
+                  <div className="absolute inset-0 bg-gray-800 flex items-center justify-center -z-10">
+                    <div className="w-6 h-6 border-2 border-gray-500 border-t-white rounded-full animate-spin"></div>
+                  </div>
+                  <GmgnChartEmbed
+                    tokenAddress={token.token_address}
+                    interval="5"
+                    className="w-full h-full"
+                    height="250px"
+                    title={`Chart - ${token.token_symbol}`}
+                  />
+                </div>
               </div>
             )}
           </div>

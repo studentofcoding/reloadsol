@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { usePathname } from "next/navigation";
 import Footer from "@/components/Footer";
 import NavigationTabs from "@/components/NavigationTabs";
+import GlobalWatchlistBar from "@/components/GlobalWatchlistBar";
 import TradingHistory from "@/components/TradingHistory";
 import PnLTracker from "@/components/PnLTracker";
 import WalletConnectGate from "@/components/WalletConnectGate";
@@ -43,6 +44,8 @@ export default function TradeLayout({
           activeOverlayTab={activeOverlayTab}
           onTabSelect={setActiveOverlayTab}
         />
+
+        <GlobalWatchlistBar />
 
         <div className="max-w-8xl mx-auto min-h-[300px] mt-4 relative">
           {activeOverlayTab === "history" && (
