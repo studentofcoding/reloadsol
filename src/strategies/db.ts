@@ -1,4 +1,5 @@
 import { supabase } from '@/utils/supabase'
+import { getTrackingHealthStats } from '@/utils/mcap-tracker'
 import { readTokenSymbol } from './outcome-features'
 import { isOpenTrackerPosition, resolveTrackerStrategyId } from '@/utils/trading-simulation'
 import type {
@@ -11,6 +12,8 @@ import type {
   ExecutionMode,
   OutcomeChartSource,
   MlLabelStats,
+  McapTrackerMilestoneBucket,
+  McapTrackerReportStats,
 } from './types'
 
 export async function loadStrategyDefinitionRows(
@@ -428,6 +431,69 @@ function computeMlLabelStats(rows: StrategyOutcomeRow[]): MlLabelStats {
   return stats
 }
 
+function bucketMcapOutcomeStats(
+  rows: StrategyOutcomeRow[],
+): Pick<McapTrackerMilestoneBucket, 'trade_count' | 'win_count' | 'win_rate' | 'avg_pnl_pct'> {
+  const pnls = rows
+    .map((r) => (r.pnl_pct != null ? Number(r.pnl_pct) : null))
+    .filter((v): v is number => v != null && Number.isFinite(v))
+  const wins = pnls.filter((p) => p >= 0).length
+  return {
+    trade_count: rows.length,
+    win_count: wins,
+    win_rate: rows.length ? wins / rows.length : 0,
+    avg_pnl_pct: pnls.length ? pnls.reduce((a, b) => a + b, 0) / pnls.length : 0,
+  }
+}
+
+export async function buildMcapTrackerReportStats(
+  rows: StrategyOutcomeRow[],
+  breakdown: StrategyReportBreakdown[],
+): Promise<McapTrackerReportStats> {
+  const mcapRows = rows.filter((r) => r.domain === 'mcap_tracker' && r.is_simulated)
+  const health = await getTrackingHealthStats()
+
+  const strategies = breakdown.filter(
+    (b) => b.domain === 'mcap_tracker' && b.is_simulated && b.trade_count > 0,
+  )
+
+  const milestone_buckets: McapTrackerMilestoneBucket[] = [
+    {
+      bucket: 'all',
+      label: 'All closed sim trades',
+      ...bucketMcapOutcomeStats(mcapRows),
+    },
+    {
+      bucket: 'reached_80',
+      label: 'Reached 80%',
+      ...bucketMcapOutcomeStats(
+        mcapRows.filter((r) => r.features?.reached_80 === true),
+      ),
+    },
+    {
+      bucket: 'reached_120',
+      label: 'Reached 120%',
+      ...bucketMcapOutcomeStats(
+        mcapRows.filter((r) => r.features?.reached_120 === true),
+      ),
+    },
+    {
+      bucket: 'reached_200',
+      label: 'Reached 200%',
+      ...bucketMcapOutcomeStats(
+        mcapRows.filter((r) => r.features?.reached_200 === true),
+      ),
+    },
+  ]
+
+  return {
+    strategies,
+    milestone_buckets,
+    timeline_inconsistent_count: health.timelineInconsistentCount,
+    total_tracked_tokens: health.totalTokens,
+  }
+}
+
 export async function aggregateStrategyReports(params: {
   domain?: StrategyDomain
   strategyId?: string
@@ -441,6 +507,7 @@ export async function aggregateStrategyReports(params: {
   worstTrades: StrategyOutcomeRow[]
   coverage: StrategyCoverageRow[]
   mlStats: MlLabelStats
+  mcapTrackerStats: McapTrackerReportStats
 }> {
   let query = supabase.from('strategy_outcomes').select('*')
 
@@ -461,6 +528,12 @@ export async function aggregateStrategyReports(params: {
         worstTrades: [],
         coverage: [],
         mlStats: { total: 0, unlabeled: 0, by_label: {}, by_condition: {} },
+        mcapTrackerStats: {
+          strategies: [],
+          milestone_buckets: [],
+          timeline_inconsistent_count: 0,
+          total_tracked_tokens: 0,
+        },
       }
     }
     throw error
@@ -627,14 +700,15 @@ export async function aggregateStrategyReports(params: {
     .slice(0, 5)
 
   const mlStats = computeMlLabelStats(rows)
+  const mcapTrackerStats = await buildMcapTrackerReportStats(rows, breakdown)
 
-  return { breakdown, abPairs, topTrades, worstTrades, coverage, mlStats }
+  return { breakdown, abPairs, topTrades, worstTrades, coverage, mlStats, mcapTrackerStats }
 }
 
 export async function getStrategyDomainHeartbeats(): Promise<
   Array<{ domain: StrategyDomain; last_outcome_at: string | null }>
 > {
-  const domains: StrategyDomain[] = ['signals', 'trending_bot', 'dlmm']
+  const domains: StrategyDomain[] = ['signals', 'trending_bot', 'dlmm', 'mcap_tracker']
   const results: Array<{ domain: StrategyDomain; last_outcome_at: string | null }> = []
 
   for (const domain of domains) {

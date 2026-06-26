@@ -197,6 +197,33 @@ export const SIGNALS_STRATEGIES: Record<string, import('./types').SignalsStrateg
   },
 }
 
+export const MCAP_TRACKER_STRATEGIES: Record<string, import('./types').McapTrackerStrategy> = {
+  mcap_enter_first_seen: {
+    id: 'mcap_enter_first_seen',
+    name: 'Enter at first seen',
+    description: 'Paper trade when token enters mcap tracking (first_mcap baseline)',
+    is_active: true,
+    execution_mode: 'sim_only',
+    config: {
+      entryTemplate: 'first_seen',
+      query: { recencyMinutes: 240 },
+      execution: { simBuySol: 0.01, maxOpenPositions: 10 },
+    },
+  },
+  mcap_enter_at_80: {
+    id: 'mcap_enter_at_80',
+    name: 'Enter at 80% milestone',
+    description: 'Paper trade when token reaches 80% mcap growth milestone',
+    is_active: true,
+    execution_mode: 'sim_only',
+    config: {
+      entryTemplate: 'milestone_80',
+      query: { recencyMinutes: 240 },
+      execution: { simBuySol: 0.01, maxOpenPositions: 10 },
+    },
+  },
+}
+
 export const DLMM_STRATEGY_DEFAULTS: import('./types').DlmmStrategy = {
   id: 'dlmm_default',
   name: 'DLMM Hunter/Healer',

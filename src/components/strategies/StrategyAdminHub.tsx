@@ -87,6 +87,22 @@ type MlLabelStats = {
   by_condition: Record<string, number>;
 };
 
+type McapTrackerMilestoneBucket = {
+  bucket: string;
+  label: string;
+  trade_count: number;
+  win_count: number;
+  win_rate: number;
+  avg_pnl_pct: number;
+};
+
+type McapTrackerReportStats = {
+  strategies: ReportBreakdown[];
+  milestone_buckets: McapTrackerMilestoneBucket[];
+  timeline_inconsistent_count: number;
+  total_tracked_tokens: number;
+};
+
 type WorkerRow = {
   id: string;
   name: string;
@@ -334,6 +350,7 @@ export default function StrategyAdminHub() {
                 by_label: {},
                 by_condition: {},
               }) as MlLabelStats,
+              mcap_tracker_stats: repJson.mcap_tracker_stats ?? null,
             }
           : null,
       };
@@ -630,6 +647,7 @@ export default function StrategyAdminHub() {
                   <option value="">All</option>
                   <option value="trending_bot">Trending bot</option>
                   <option value="signals">Signals</option>
+                  <option value="mcap_tracker">MCap tracker</option>
                   <option value="dlmm">DLMM</option>
                 </select>
               </label>
@@ -858,6 +876,85 @@ export default function StrategyAdminHub() {
                   )}
                 </p>
               </>
+            )}
+
+            <h3 className="text-lg font-semibold text-white mb-2">MCap tracker sim outcomes</h3>
+            <p className="text-gray-500 text-xs mb-2">
+              Paper trades from{" "}
+              <Link href="/dev/signals?tab=tracker" className="text-blue-400 underline">
+                mcap tracking
+              </Link>
+              , enriched with 80/120/200% milestone reach. PnL uses mcap growth at close.
+              {reports?.mcap_tracker_stats?.timeline_inconsistent_count != null &&
+              reports.mcap_tracker_stats.timeline_inconsistent_count > 0 ? (
+                <>
+                  {" "}
+                  Timeline inconsistencies in DB:{" "}
+                  {reports.mcap_tracker_stats.timeline_inconsistent_count} row(s) — run SQL repair
+                  patch.
+                </>
+              ) : null}
+            </p>
+            {reports?.mcap_tracker_stats ? (
+              <>
+                <p className="text-gray-400 text-xs mb-3">
+                  Tracked tokens: {reports.mcap_tracker_stats.total_tracked_tokens}
+                </p>
+                {reports.mcap_tracker_stats.strategies.length > 0 && (
+                  <table className="w-full text-sm mb-4">
+                    <thead>
+                      <tr className="text-gray-400 border-b border-gray-700">
+                        <th className="p-2 text-left">Strategy</th>
+                        <th className="p-2">Trades</th>
+                        <th className="p-2">WR</th>
+                        <th className="p-2">Avg PnL</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reports.mcap_tracker_stats.strategies.map((s: ReportBreakdown) => (
+                        <tr
+                          key={s.strategy_id}
+                          className="border-b border-gray-800 text-gray-300"
+                        >
+                          <td className="p-2">{s.strategy_id}</td>
+                          <td className="p-2 text-center">{s.trade_count}</td>
+                          <td className="p-2 text-center">
+                            {(s.win_rate * 100).toFixed(1)}%
+                          </td>
+                          <td className="p-2 text-center">{s.avg_pnl_pct.toFixed(2)}%</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                <table className="w-full text-sm mb-6">
+                  <thead>
+                    <tr className="text-gray-400 border-b border-gray-700">
+                      <th className="p-2 text-left">Milestone bucket</th>
+                      <th className="p-2">Trades</th>
+                      <th className="p-2">WR</th>
+                      <th className="p-2">Avg PnL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reports.mcap_tracker_stats.milestone_buckets.map((b: McapTrackerMilestoneBucket) => (
+                      <tr
+                        key={b.bucket}
+                        className="border-b border-gray-800 text-gray-300"
+                      >
+                        <td className="p-2">{b.label}</td>
+                        <td className="p-2 text-center">{b.trade_count}</td>
+                        <td className="p-2 text-center">
+                          {(b.win_rate * 100).toFixed(1)}%
+                        </td>
+                        <td className="p-2 text-center">{b.avg_pnl_pct.toFixed(2)}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </>
+            ) : (
+              <p className="text-gray-500 text-sm mb-6">No mcap tracker stats yet.</p>
             )}
 
             <h3 className="text-lg font-semibold text-white mb-2">A/B comparison</h3>

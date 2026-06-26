@@ -107,8 +107,56 @@ function wasThresholdNotified(record: McapSnapshot, threshold: number): boolean 
   return hoursSinceNotification < 24
 }
 
+function parseIsoMs(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const ms = new Date(iso).getTime()
+  return Number.isFinite(ms) ? ms : null
+}
+
+/** Ensure first_seen_at is not later than any milestone timestamp. Returns true if repaired. */
+export function normalizeTrackingTimeline(record: McapSnapshot): boolean {
+  const firstMs = parseIsoMs(record.first_seen_at)
+  if (firstMs == null) return false
+
+  const milestoneTimes = [
+    parseIsoMs(record.when_reach_80mc),
+    parseIsoMs(record.when_reach_120mc),
+    parseIsoMs(record.when_reach_200mc),
+  ].filter((v): v is number => v != null)
+
+  if (milestoneTimes.length === 0) return false
+
+  const earliest = Math.min(firstMs, ...milestoneTimes)
+  if (earliest >= firstMs) return false
+
+  record.first_seen_at = new Date(earliest).toISOString()
+  log.warn('price_tracking', 'Repaired first_seen_at to earliest milestone', {
+    tokenAddress: record.token_address,
+    tokenSymbol: record.token_symbol,
+    firstSeenAt: record.first_seen_at,
+  })
+  return true
+}
+
+export function minutesBetween(
+  startIso: string | null | undefined,
+  endIso: string | null | undefined,
+): number | null {
+  const startMs = parseIsoMs(startIso)
+  const endMs = parseIsoMs(endIso)
+  if (startMs == null || endMs == null) return null
+  return (endMs - startMs) / (1000 * 60)
+}
+
 // Helper: update threshold timestamp fields when growth crosses thresholds
 function updateThresholdTimestamps(record: McapSnapshot, growthPercent: number, nowIso: string): boolean {
+  normalizeTrackingTimeline(record)
+  const firstMs = parseIsoMs(record.first_seen_at) ?? 0
+  const nowMs = parseIsoMs(nowIso) ?? Date.now()
+  if (nowMs < firstMs) {
+    return false
+  }
+
   let changed = false
   for (const threshold of GROWTH_THRESHOLDS) {
     const columnName = getThresholdColumnName(threshold)
@@ -501,7 +549,10 @@ export async function trackTokenMcap(
       if (error) {
         throw error
       }
-      existingRecord = (data as any) ?? null
+      existingRecord = (data as McapSnapshot) ?? null
+      if (existingRecord) {
+        normalizeTrackingTimeline(existingRecord)
+      }
     } catch (fetchErr: any) {
       // Only degrade on transient fetch/network failures
       const message = String(fetchErr?.message ?? '').toLowerCase()
@@ -596,6 +647,34 @@ export async function trackTokenMcap(
           firstSeenAt: existingRecord.first_seen_at
         }
       }
+    }
+
+    if (!existingRecord) {
+      const newRecord: McapSnapshot = {
+        token_address: tokenAddress,
+        token_symbol: tokenSymbol,
+        first_mcap: normalizedCurrentMcap,
+        current_mcap: normalizedCurrentMcap,
+        first_seen_at: currentTime,
+        last_updated_at: currentTime,
+        mcap_growth_percent: 0,
+        when_reach_80mc: null,
+        when_reach_120mc: null,
+        when_reach_200mc: null,
+        is_tracking_stuck: false,
+      }
+
+      const insertResult = await insertMcapRecord(newRecord)
+      if (insertResult.status === 'inserted') {
+        mcapCache.set(tokenAddress, newRecord)
+        return {
+          isFirstTime: true,
+          currentMcap: normalizedCurrentMcap,
+          firstSeenAt: currentTime,
+        }
+      }
+      existingRecord = insertResult.existing
+      normalizeTrackingTimeline(existingRecord)
     }
 
     if (existingRecord) {
@@ -734,34 +813,9 @@ export async function trackTokenMcap(
         formattedGrowth: formatGrowthPercent(growthPercent),
         firstSeenAt: existingRecord.first_seen_at
       }
-    } else {
-      // First time seeing this token
-      const newRecord: McapSnapshot = {
-        token_address: tokenAddress,
-        token_symbol: tokenSymbol,
-        first_mcap: normalizedCurrentMcap,
-        current_mcap: normalizedCurrentMcap,
-        first_seen_at: currentTime,
-        last_updated_at: currentTime,
-        mcap_growth_percent: 0,
-        when_reach_80mc: null,
-        when_reach_120mc: null,
-        when_reach_200mc: null,
-        is_tracking_stuck: false
-      }
-
-      // Add to cache
-      mcapCache.set(tokenAddress, newRecord)
-
-      // Insert into database asynchronously
-      insertMcapRecord(newRecord).catch(console.error)
-
-      return {
-        isFirstTime: true,
-        currentMcap: normalizedCurrentMcap,
-        firstSeenAt: currentTime
-      }
     }
+
+    return { isFirstTime: true, currentMcap: normalizedCurrentMcap }
   } catch (error) {
     log.error('price_tracking', 'Error in trackTokenMcap', error as Error, {
       tokenAddress,
@@ -772,52 +826,92 @@ export async function trackTokenMcap(
   }
 }
 
-// Helper function to insert new MCap record
-async function insertMcapRecord(record: McapSnapshot): Promise<void> {
+type InsertMcapResult =
+  | { status: 'inserted' }
+  | { status: 'conflict'; existing: McapSnapshot }
+
+async function fetchMcapRecordByAddress(tokenAddress: string): Promise<McapSnapshot | null> {
   try {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('token_mcap_tracking')
-      .upsert({
-        token_address: record.token_address,
-        token_symbol: record.token_symbol,
-        first_mcap: record.first_mcap,
-        current_mcap: record.current_mcap,
-        first_seen_at: record.first_seen_at,
-        last_updated_at: record.last_updated_at,
-        mcap_growth_percent: record.mcap_growth_percent,
-        when_reach_80mc: record.when_reach_80mc,
-        when_reach_120mc: record.when_reach_120mc,
-        when_reach_200mc: record.when_reach_200mc,
-        is_tracking_stuck: record.is_tracking_stuck === true
-      }, { onConflict: 'token_address' })
+      .select('*')
+      .eq('token_address', tokenAddress)
+      .maybeSingle()
+    if (error || !data) return null
+    const record = data as McapSnapshot
+    normalizeTrackingTimeline(record)
+    return record
+  } catch {
+    return null
+  }
+}
+
+// Helper function to insert new MCap record (insert-only; never overwrite first_seen on conflict)
+async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult> {
+  try {
+    normalizeTrackingTimeline(record)
+    const { error } = await supabase.from('token_mcap_tracking').insert({
+      token_address: record.token_address,
+      token_symbol: record.token_symbol,
+      first_mcap: record.first_mcap,
+      current_mcap: record.current_mcap,
+      first_seen_at: record.first_seen_at,
+      last_updated_at: record.last_updated_at,
+      mcap_growth_percent: record.mcap_growth_percent,
+      when_reach_80mc: record.when_reach_80mc,
+      when_reach_120mc: record.when_reach_120mc,
+      when_reach_200mc: record.when_reach_200mc,
+      is_tracking_stuck: record.is_tracking_stuck === true,
+    })
+
+    if (error?.code === '23505') {
+      const existing = await fetchMcapRecordByAddress(record.token_address)
+      if (existing) {
+        log.info('price_tracking', 'Insert conflict — using existing MCap record', {
+          tokenAddress: record.token_address,
+          tokenSymbol: record.token_symbol,
+          firstSeenAt: existing.first_seen_at,
+        })
+        return { status: 'conflict', existing }
+      }
+    }
 
     if (error) {
       log.error('price_tracking', 'Error inserting MCap record', error as Error, {
         tokenAddress: record.token_address,
-        tokenSymbol: record.token_symbol
+        tokenSymbol: record.token_symbol,
       })
-      return
+      const existing = await fetchMcapRecordByAddress(record.token_address)
+      if (existing) return { status: 'conflict', existing }
+      return { status: 'inserted' }
     }
+
     log.debug('price_tracking', 'Inserted MCap record', {
       tokenAddress: record.token_address,
-      tokenSymbol: record.token_symbol
+      tokenSymbol: record.token_symbol,
     })
+    return { status: 'inserted' }
   } catch (error) {
     log.error('price_tracking', 'Error in insertMcapRecord', error as Error, {
       tokenAddress: record.token_address,
-      tokenSymbol: record.token_symbol
+      tokenSymbol: record.token_symbol,
     })
+    const existing = await fetchMcapRecordByAddress(record.token_address)
+    if (existing) return { status: 'conflict', existing }
+    return { status: 'inserted' }
   }
 }
 
 // Helper function to update MCap record
 async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boolean = true): Promise<void> {
   try {
-    const updateData: any = {
+    normalizeTrackingTimeline(record)
+    const updateData: Record<string, unknown> = {
       current_mcap: record.current_mcap,
       last_updated_at: record.last_updated_at,
       mcap_growth_percent: record.mcap_growth_percent,
-      is_tracking_stuck: record.is_tracking_stuck === true
+      is_tracking_stuck: record.is_tracking_stuck === true,
+      first_seen_at: record.first_seen_at,
     }
 
     // Only include threshold columns if they were updated
@@ -957,6 +1051,84 @@ export async function bulkTrackTokenMcaps(
 // Export threshold constants for external use
 export { GROWTH_THRESHOLDS }
 
+export type McapSimCloseReason = 'stop_loss' | 'stuck' | 'max_age' | 'label_rugged'
+
+export function getMcapSimCloseReason(snapshot: McapSnapshot): McapSimCloseReason | null {
+  if (snapshot.label === 'rugged') return 'label_rugged'
+  const growth = snapshot.mcap_growth_percent ?? 0
+  if (growth <= STOP_LOSS_THRESHOLD) return 'stop_loss'
+  const ageMs = Date.now() - (parseIsoMs(snapshot.first_seen_at) ?? Date.now())
+  if (ageMs >= MAX_TRACKING_AGE_MS) return 'max_age'
+  if (snapshot.is_tracking_stuck) return 'stuck'
+  return null
+}
+
+export function computeMcapSimPnlPct(entryMcap: number, exitMcap: number): number {
+  if (!entryMcap || entryMcap <= 0) return 0
+  return ((exitMcap - entryMcap) / entryMcap) * 100
+}
+
+export function buildMcapOutcomeFeatures(params: {
+  snapshot: McapSnapshot
+  entryTemplate: 'first_seen' | 'milestone_80'
+  entryMcap: number
+  exitMcap: number
+  closeReason?: McapSimCloseReason | null
+}): Record<string, unknown> {
+  const { snapshot, entryTemplate, entryMcap, exitMcap } = params
+  normalizeTrackingTimeline(snapshot)
+  const reached80 = !!snapshot.when_reach_80mc
+  const reached120 = !!snapshot.when_reach_120mc
+  const reached200 = !!snapshot.when_reach_200mc
+
+  return {
+    token_symbol: snapshot.token_symbol,
+    entry_template: entryTemplate,
+    first_seen_at: snapshot.first_seen_at,
+    when_reach_80mc: snapshot.when_reach_80mc ?? null,
+    when_reach_120mc: snapshot.when_reach_120mc ?? null,
+    when_reach_200mc: snapshot.when_reach_200mc ?? null,
+    reached_80: reached80,
+    reached_120: reached120,
+    reached_200: reached200,
+    time_to_80_minutes: minutesBetween(snapshot.first_seen_at, snapshot.when_reach_80mc),
+    time_to_120_minutes: minutesBetween(snapshot.first_seen_at, snapshot.when_reach_120mc),
+    time_to_200_minutes: minutesBetween(snapshot.first_seen_at, snapshot.when_reach_200mc),
+    entry_mcap: entryMcap,
+    exit_mcap: exitMcap,
+    mcap_growth_at_exit: computeMcapSimPnlPct(entryMcap, exitMcap),
+    is_tracking_stuck: snapshot.is_tracking_stuck === true,
+    close_reason: params.closeReason ?? null,
+  }
+}
+
+export async function fetchMcapTrackingRow(tokenAddress: string): Promise<McapSnapshot | null> {
+  return fetchMcapRecordByAddress(tokenAddress)
+}
+
+export async function fetchRecentMcapTrackingRows(params: {
+  recencyMinutes?: number
+  limit?: number
+}): Promise<McapSnapshot[]> {
+  const recencyMinutes = params.recencyMinutes ?? 240
+  const limit = params.limit ?? 200
+  const cutoff = new Date(Date.now() - recencyMinutes * 60 * 1000).toISOString()
+
+  const { data, error } = await supabase
+    .from('token_mcap_tracking')
+    .select('*')
+    .gte('last_updated_at', cutoff)
+    .order('last_updated_at', { ascending: false })
+    .limit(limit)
+
+  if (error || !data) return []
+
+  return (data as McapSnapshot[]).map((row) => {
+    normalizeTrackingTimeline(row)
+    return row
+  })
+}
+
 // Add this new function for monitoring tracking health
 export async function getTrackingHealthStats(): Promise<{
   totalTokens: number
@@ -965,35 +1137,47 @@ export async function getTrackingHealthStats(): Promise<{
   healthPercentage: number
   avgTrackingAge: number
   recentlyUpdated: number
+  timelineInconsistentCount: number
 }> {
   try {
     const { data, error } = await supabase
       .from('token_mcap_tracking')
-      .select('mcap_growth_percent, first_seen_at, last_updated_at, is_tracking_stuck')
+      .select(
+        'mcap_growth_percent, first_seen_at, last_updated_at, is_tracking_stuck, when_reach_80mc, when_reach_120mc, when_reach_200mc',
+      )
 
     if (error) throw error
 
     const now = Date.now()
-    const oneHourAgo = now - (60 * 60 * 1000)
+    const oneHourAgo = now - 60 * 60 * 1000
 
     const totalTokens = data.length
-    const stuckTokens = data.filter(t => t.is_tracking_stuck).length
-    const zeroGrowthTokens = data.filter(t => Math.abs(t.mcap_growth_percent || 0) < 0.01).length
-    const recentlyUpdated = data.filter(t => new Date(t.last_updated_at).getTime() > oneHourAgo).length
+    const stuckTokens = data.filter((t) => t.is_tracking_stuck).length
+    const zeroGrowthTokens = data.filter((t) => Math.abs(t.mcap_growth_percent || 0) < 0.01).length
+    const recentlyUpdated = data.filter((t) => new Date(t.last_updated_at).getTime() > oneHourAgo).length
 
-    const avgTrackingAge = data.reduce((sum, t) => {
-      return sum + (now - new Date(t.first_seen_at).getTime())
-    }, 0) / (data.length || 1)
+    const timelineInconsistentCount = data.filter((t) => {
+      if (!t.when_reach_80mc) return false
+      const firstMs = parseIsoMs(t.first_seen_at)
+      const m80 = parseIsoMs(t.when_reach_80mc)
+      return firstMs != null && m80 != null && firstMs > m80
+    }).length
 
-    const healthPercentage = totalTokens > 0 ? ((totalTokens - stuckTokens) / totalTokens) * 100 : 100
+    const avgTrackingAge =
+      data.reduce((sum, t) => sum + (now - new Date(t.first_seen_at).getTime()), 0) /
+      (data.length || 1)
+
+    const healthPercentage =
+      totalTokens > 0 ? ((totalTokens - stuckTokens) / totalTokens) * 100 : 100
 
     return {
       totalTokens,
       stuckTokens,
       zeroGrowthTokens,
       healthPercentage,
-      avgTrackingAge: avgTrackingAge / (1000 * 60 * 60), // in hours
-      recentlyUpdated
+      avgTrackingAge: avgTrackingAge / (1000 * 60 * 60),
+      recentlyUpdated,
+      timelineInconsistentCount,
     }
   } catch (error) {
     log.error('price_tracking', 'Failed to get tracking health stats', error as Error)
@@ -1003,7 +1187,8 @@ export async function getTrackingHealthStats(): Promise<{
       zeroGrowthTokens: 0,
       healthPercentage: 0,
       avgTrackingAge: 0,
-      recentlyUpdated: 0
+      recentlyUpdated: 0,
+      timelineInconsistentCount: 0,
     }
   }
 }

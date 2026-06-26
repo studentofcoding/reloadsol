@@ -51,6 +51,7 @@ export const SERVICE_AUTH_API_PREFIXES = [
   '/api/dlmm/telegram',
   '/api/sl-tp-monitor',
   '/api/signals/sim-track',
+  '/api/mcap-tracking/sim-track',
   '/api/strategies/report-digest',
 ] as const;
 

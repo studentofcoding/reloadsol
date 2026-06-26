@@ -524,7 +524,7 @@ INSERT INTO bot_trading_state (id) VALUES ('global') ON CONFLICT (id) DO NOTHING
 
 CREATE TABLE IF NOT EXISTS strategy_definitions (
   id TEXT PRIMARY KEY,
-  domain TEXT NOT NULL CHECK (domain IN ('trending_bot', 'signals', 'dlmm')),
+  domain TEXT NOT NULL CHECK (domain IN ('trending_bot', 'signals', 'dlmm', 'mcap_tracker')),
   name TEXT NOT NULL,
   description TEXT,
   config JSONB NOT NULL DEFAULT '{}',
@@ -537,7 +537,7 @@ CREATE TABLE IF NOT EXISTS strategy_definitions (
 CREATE TABLE IF NOT EXISTS strategy_outcomes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   strategy_id TEXT NOT NULL,
-  domain TEXT NOT NULL CHECK (domain IN ('trending_bot', 'signals', 'dlmm')),
+  domain TEXT NOT NULL CHECK (domain IN ('trending_bot', 'signals', 'dlmm', 'mcap_tracker')),
   token_address TEXT,
   entry_at TIMESTAMPTZ,
   exit_at TIMESTAMPTZ,
@@ -570,7 +570,9 @@ VALUES
   ('hodl', 'trending_bot', 'HODL Strategy', 'Long-term holding', '{}', false, 'sim_only'),
   ('signals_default', 'signals', 'Default momentum', 'Enter on strong growth + score floor', '{}', true, 'sim_only'),
   ('signals_sell_over_100', 'signals', 'Sell over 100%', 'Favor exit above 100% growth', '{}', true, 'sim_only'),
-  ('dlmm_default', 'dlmm', 'DLMM Hunter/Healer', 'Meteora LP screener + reasoner thresholds', '{}', true, 'sim_only')
+  ('dlmm_default', 'dlmm', 'DLMM Hunter/Healer', 'Meteora LP screener + reasoner thresholds', '{}', true, 'sim_only'),
+  ('mcap_enter_first_seen', 'mcap_tracker', 'Enter at first seen', 'Paper trade at mcap tracking start', '{}', true, 'sim_only'),
+  ('mcap_enter_at_80', 'mcap_tracker', 'Enter at 80% milestone', 'Paper trade when 80% growth milestone hit', '{}', true, 'sim_only')
 ON CONFLICT (id) DO NOTHING;
 
 ALTER TABLE bot_job_locks ENABLE ROW LEVEL SECURITY;

@@ -1,4 +1,4 @@
-export type StrategyDomain = 'trending_bot' | 'signals' | 'dlmm'
+export type StrategyDomain = 'trending_bot' | 'signals' | 'dlmm' | 'mcap_tracker'
 
 export type ExecutionMode = 'sim_only' | 'live_only' | 'ab_parallel'
 
@@ -130,6 +130,51 @@ export interface DlmmStrategy {
   is_active: boolean
   execution_mode: ExecutionMode
   config: DlmmStrategyConfig
+}
+
+export type McapTrackerEntryTemplate = 'first_seen' | 'milestone_80'
+
+export interface McapTrackerStrategyConfig {
+  entryTemplate: McapTrackerEntryTemplate
+  query: {
+    recencyMinutes: number
+  }
+  execution: {
+    simBuySol: number
+    maxOpenPositions: number
+  }
+}
+
+export type McapTrackerStrategyOverride = Partial<
+  Omit<McapTrackerStrategyConfig, 'query' | 'execution'>
+> & {
+  query?: Partial<McapTrackerStrategyConfig['query']>
+  execution?: Partial<McapTrackerStrategyConfig['execution']>
+}
+
+export interface McapTrackerStrategy {
+  id: string
+  name: string
+  description: string
+  is_active: boolean
+  execution_mode: ExecutionMode
+  config: McapTrackerStrategyConfig
+}
+
+export interface McapTrackerMilestoneBucket {
+  bucket: 'all' | 'reached_80' | 'reached_120' | 'reached_200'
+  label: string
+  trade_count: number
+  win_count: number
+  win_rate: number
+  avg_pnl_pct: number
+}
+
+export interface McapTrackerReportStats {
+  strategies: StrategyReportBreakdown[]
+  milestone_buckets: McapTrackerMilestoneBucket[]
+  timeline_inconsistent_count: number
+  total_tracked_tokens: number
 }
 
 export interface StrategyDefinitionRow {
