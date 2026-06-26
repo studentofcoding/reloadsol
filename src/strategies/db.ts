@@ -2,6 +2,10 @@ import { supabase } from '@/utils/supabase'
 import { getTrackingHealthStats } from '@/utils/mcap-tracker'
 import { countOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol } from './outcome-features'
+import {
+  dedupeStrategyOutcomeRows,
+  mcapSimClosedOutcomeKey,
+} from './outcome-dedupe'
 import { isOpenTrackerPosition, resolveTrackerStrategyId } from '@/utils/trading-simulation'
 import type {
   StrategyDefinitionRow,
@@ -90,6 +94,68 @@ export async function upsertStrategyDefinition(params: {
   return { ok: true }
 }
 
+export { dedupeStrategyOutcomeRows, mcapSimClosedOutcomeKey } from './outcome-dedupe'
+
+export async function loadMcapSimClosedOutcomeKeys(
+  strategyId: string,
+  tokenAddresses: string[],
+): Promise<Set<string>> {
+  if (tokenAddresses.length === 0) return new Set()
+
+  const { data, error } = await supabase
+    .from('strategy_outcomes')
+    .select('token_address, entry_at')
+    .eq('strategy_id', strategyId)
+    .eq('domain', 'mcap_tracker')
+    .in('token_address', tokenAddresses)
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return new Set()
+    }
+    console.warn(
+      '[strategies/db] loadMcapSimClosedOutcomeKeys failed:',
+      error.message,
+    )
+    return new Set()
+  }
+
+  const keys = new Set<string>()
+  for (const row of data ?? []) {
+    if (row.token_address && row.entry_at) {
+      keys.add(mcapSimClosedOutcomeKey(row.token_address, row.entry_at))
+    }
+  }
+  return keys
+}
+
+async function strategyOutcomeExists(params: {
+  strategy_id: string
+  domain: StrategyDomain
+  token_address: string
+  entry_at: string
+}): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('strategy_outcomes')
+    .select('id')
+    .eq('strategy_id', params.strategy_id)
+    .eq('domain', params.domain)
+    .eq('token_address', params.token_address)
+    .eq('entry_at', params.entry_at)
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return false
+    }
+    console.warn('[strategies/db] strategyOutcomeExists failed:', error.message)
+    return false
+  }
+
+  return !!data
+}
+
 export async function insertStrategyOutcome(params: {
   strategy_id: string
   domain: StrategyDomain
@@ -101,6 +167,20 @@ export async function insertStrategyOutcome(params: {
   is_simulated?: boolean
   features?: Record<string, unknown> | null
 }): Promise<void> {
+  if (
+    params.domain === 'mcap_tracker' &&
+    params.token_address &&
+    params.entry_at
+  ) {
+    const exists = await strategyOutcomeExists({
+      strategy_id: params.strategy_id,
+      domain: params.domain,
+      token_address: params.token_address,
+      entry_at: params.entry_at,
+    })
+    if (exists) return
+  }
+
   const { error } = await supabase.from('strategy_outcomes').insert({
     strategy_id: params.strategy_id,
     domain: params.domain,
@@ -141,9 +221,8 @@ export async function listStrategyOutcomes(params: {
 
   let query = supabase
     .from('strategy_outcomes')
-    .select('*', { count: 'exact' })
+    .select('*')
     .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1)
 
   if (params.strategyId) {
     query = query.eq('strategy_id', params.strategyId)
@@ -183,7 +262,7 @@ export async function listStrategyOutcomes(params: {
     query = query.eq('features->>entry_mcap_band', params.entryMcapBand)
   }
 
-  const { data, error, count } = await query
+  const { data, error } = await query
 
   if (error) {
     if (error.code === '42P01' || error.message?.includes('does not exist')) {
@@ -192,8 +271,14 @@ export async function listStrategyOutcomes(params: {
     throw error
   }
 
-  const rows = await enrichOutcomeSymbols((data ?? []) as StrategyOutcomeRow[])
-  return { rows, total: count ?? 0 }
+  const deduped = dedupeStrategyOutcomeRows((data ?? []) as StrategyOutcomeRow[])
+  deduped.sort((a, b) =>
+    (b.created_at ?? '').localeCompare(a.created_at ?? ''),
+  )
+  const total = deduped.length
+  const page = deduped.slice(offset, offset + limit)
+  const rows = await enrichOutcomeSymbols(page)
+  return { rows, total }
 }
 
 async function enrichOutcomeSymbols(
@@ -540,7 +625,7 @@ export async function aggregateStrategyReports(params: {
     throw error
   }
 
-  const rows = (data ?? []) as StrategyOutcomeRow[]
+  const rows = dedupeStrategyOutcomeRows((data ?? []) as StrategyOutcomeRow[])
   const groups = new Map<string, StrategyOutcomeRow[]>()
 
   for (const row of rows) {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getActiveMcapTrackerForSim } from '@/strategies/load-mcap-tracker'
 import { recordMcapTrackerOutcome } from '@/strategies/outcomes'
 import { buildEntryMcapFeatures } from '@/strategies/outcome-features'
-import { fetchTradingRecordsForWallet } from '@/strategies/db'
+import { fetchTradingRecordsForWallet, loadMcapSimClosedOutcomeKeys, mcapSimClosedOutcomeKey } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { getSolPriceUSD } from '@/utils/solana'
@@ -219,6 +219,11 @@ export async function POST(request: NextRequest) {
       let closed = 0
       const skipped: string[] = []
 
+      const closedOutcomeKeys = await loadMcapSimClosedOutcomeKeys(
+        strategy.id,
+        trackingRows.map((row) => row.token_address),
+      )
+
       for (const pos of openPositions) {
         const snapshot =
           trackingByMint.get(pos.mintAddress) ??
@@ -240,6 +245,11 @@ export async function POST(request: NextRequest) {
         })
         closed++
         openMintSet.delete(pos.mintAddress)
+        if (pos.entryAt) {
+          closedOutcomeKeys.add(
+            mcapSimClosedOutcomeKey(pos.mintAddress, pos.entryAt),
+          )
+        }
       }
 
       const refreshedRecords = await fetchTradingRecordsForWallet(MCAP_TRACKER_SIM_WALLET)
@@ -247,17 +257,25 @@ export async function POST(request: NextRequest) {
       const maxOpen = strategy.config.execution.maxOpenPositions
 
       for (const snapshot of trackingRows) {
-        const skipReason = getMcapSimOpenSkipReason(strategy, snapshot, openMintSet)
+        const skipReason = getMcapSimOpenSkipReason(
+          strategy,
+          snapshot,
+          openMintSet,
+          closedOutcomeKeys,
+        )
         if (skipReason) {
           if (
             skipReason !== 'already_open' &&
-            skipReason !== 'first_seen_too_old'
+            skipReason !== 'first_seen_too_old' &&
+            skipReason !== 'already_closed'
           ) {
             skipped.push(`${snapshot.token_symbol}: ${skipReason}`)
           }
           continue
         }
-        if (!shouldOpenMcapSim(strategy, snapshot, openMintSet)) continue
+        if (!shouldOpenMcapSim(strategy, snapshot, openMintSet, closedOutcomeKeys)) {
+          continue
+        }
         if (currentOpen + opened >= maxOpen) {
           skipped.push(`${snapshot.token_symbol}: max positions`)
           break

@@ -72,6 +72,7 @@ export function countOpenMcapSimPositions(
 
 export type McapSimOpenSkipReason =
   | 'already_open'
+  | 'already_closed'
   | 'rugged'
   | 'out_of_range'
   | 'first_seen_too_old'
@@ -103,6 +104,7 @@ export function getMcapSimOpenSkipReason(
   strategy: McapTrackerStrategy,
   snapshot: McapSnapshot,
   openMintSet: Set<string>,
+  closedOutcomeKeys: Set<string> = new Set(),
 ): McapSimOpenSkipReason | null {
   if (openMintSet.has(snapshot.token_address)) return 'already_open'
   if (snapshot.label === 'rugged') return 'rugged'
@@ -113,11 +115,19 @@ export function getMcapSimOpenSkipReason(
     if (ageMs > strategy.config.query.recencyMinutes * 60 * 1000) {
       return 'first_seen_too_old'
     }
-    return null
+  } else {
+    const growth = snapshot.mcap_growth_percent ?? 0
+    if (!snapshot.when_reach_80mc && growth < 80) return 'no_milestone'
   }
 
-  const growth = snapshot.mcap_growth_percent ?? 0
-  if (!snapshot.when_reach_80mc && growth < 80) return 'no_milestone'
+  const entry = resolveMcapSimEntry(strategy, snapshot)
+  if (
+    entry &&
+    closedOutcomeKeys.has(`${snapshot.token_address}|${entry.entryAt}`)
+  ) {
+    return 'already_closed'
+  }
+
   return null
 }
 
@@ -125,6 +135,14 @@ export function shouldOpenMcapSim(
   strategy: McapTrackerStrategy,
   snapshot: McapSnapshot,
   openMintSet: Set<string>,
+  closedOutcomeKeys: Set<string> = new Set(),
 ): boolean {
-  return getMcapSimOpenSkipReason(strategy, snapshot, openMintSet) === null
+  return (
+    getMcapSimOpenSkipReason(
+      strategy,
+      snapshot,
+      openMintSet,
+      closedOutcomeKeys,
+    ) === null
+  )
 }

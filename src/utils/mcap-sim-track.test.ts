@@ -68,4 +68,16 @@ describe('mcap sim entry helpers', () => {
     const snapshot = row({ current_mcap: 5_000 })
     expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBe('out_of_range')
   })
+
+  it('skips when a closed outcome already exists for token+entryAt', () => {
+    const entryAt = new Date(Date.now() - 30 * 60_000).toISOString()
+    const snapshot = row({
+      when_reach_80mc: entryAt,
+      mcap_growth_percent: 292,
+    })
+    const closedKeys = new Set([`mint1|${entryAt}`])
+    expect(
+      getMcapSimOpenSkipReason(at80, snapshot, new Set(), closedKeys),
+    ).toBe('already_closed')
+  })
 })
