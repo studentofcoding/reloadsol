@@ -20,6 +20,7 @@ export interface McapSnapshot {
   when_reach_200mc?: string | null
   is_tracking_stuck?: boolean
   label?: TokenLabel | null
+  stop_reason?: string | null
 }
 
 export interface McapTrackingResult {
@@ -177,6 +178,25 @@ export function normalizeTrackingTimeline(record: McapSnapshot): boolean {
   return changed
 }
 
+/** Backfill milestone timestamps when growth already exceeds thresholds. */
+export function reconcileMilestonesFromGrowth(
+  record: McapSnapshot,
+  nowIso?: string,
+): boolean {
+  const growth = record.mcap_growth_percent ?? 0
+  const milestoneIso =
+    nowIso ?? record.last_updated_at ?? new Date().toISOString()
+  let changed = false
+  for (const threshold of GROWTH_THRESHOLDS) {
+    const columnName = getThresholdColumnName(threshold)
+    if (growth >= threshold && !record[columnName]) {
+      record[columnName] = milestoneIso
+      changed = true
+    }
+  }
+  return changed
+}
+
 /** Start a fresh tracking session (new baseline, clear milestones). */
 export function resetTrackingSession(
   record: McapSnapshot,
@@ -211,7 +231,8 @@ function shouldResetTrackingSession(record: McapSnapshot, nowMs: number): boolea
 /** Normalize timeline in-place; optionally persist when a repair was needed. */
 export function fixTrackingTimeline(record: McapSnapshot, persist = false): McapSnapshot {
   const repaired = normalizeTrackingTimeline(record)
-  if (repaired && persist) {
+  const backfilled = reconcileMilestonesFromGrowth(record)
+  if ((repaired || backfilled) && persist) {
     void supabase
       .from('token_mcap_tracking')
       .update({
@@ -233,6 +254,16 @@ export function fixTrackingTimeline(record: McapSnapshot, persist = false): Mcap
   return record
 }
 
+/** Reconcile milestones on a record and persist when backfilled (e.g. small-change skip path). */
+export function persistMilestoneBackfillIfNeeded(record: McapSnapshot): boolean {
+  normalizeTrackingTimeline(record)
+  const backfilled = reconcileMilestonesFromGrowth(record)
+  if (!backfilled) return false
+  void updateMcapInDatabase(record, true).catch(console.error)
+  mcapCache.set(record.token_address, record)
+  return true
+}
+
 export function minutesBetween(
   startIso: string | null | undefined,
   endIso: string | null | undefined,
@@ -246,6 +277,7 @@ export function minutesBetween(
 // Helper: update threshold timestamp fields when growth crosses thresholds
 function updateThresholdTimestamps(record: McapSnapshot, growthPercent: number, nowIso: string): boolean {
   normalizeTrackingTimeline(record)
+  reconcileMilestonesFromGrowth(record, nowIso)
   const firstMs = parseIsoMs(record.first_seen_at) ?? 0
   const nowMs = parseIsoMs(nowIso) ?? Date.now()
   if (nowMs < firstMs) {
@@ -706,6 +738,7 @@ export async function trackTokenMcap(
       const changeThreshold = existingRecord.current_mcap * (MIN_CHANGE_PERCENT / 100) // e.g. 0.1%
 
       if (mcapDifference < changeThreshold) {
+        persistMilestoneBackfillIfNeeded(existingRecord)
         log.info('price_tracking', 'Skip: small-change gating', {
           tokenAddress,
           tokenSymbol,
@@ -915,6 +948,7 @@ async function fetchMcapRecordByAddress(tokenAddress: string): Promise<McapSnaps
     if (error || !data) return null
     const record = data as McapSnapshot
     normalizeTrackingTimeline(record)
+    reconcileMilestonesFromGrowth(record)
     return record
   } catch {
     return null
@@ -1129,11 +1163,20 @@ export async function bulkTrackTokenMcaps(
 // Export threshold constants for external use
 export { GROWTH_THRESHOLDS }
 
-export type McapSimCloseReason = 'stop_loss' | 'stuck' | 'max_age' | 'label_rugged'
+export type McapSimCloseReason =
+  | 'stop_loss'
+  | 'stuck'
+  | 'max_age'
+  | 'label_rugged'
+  | 'tracking_stopped'
+  | 'take_profit_200'
 
 export function getMcapSimCloseReason(snapshot: McapSnapshot): McapSimCloseReason | null {
   if (snapshot.label === 'rugged') return 'label_rugged'
+  const stopReason = (snapshot.stop_reason ?? '').trim()
+  if (stopReason.length > 0) return 'tracking_stopped'
   const growth = snapshot.mcap_growth_percent ?? 0
+  if (growth >= 200) return 'take_profit_200'
   if (growth <= STOP_LOSS_THRESHOLD) return 'stop_loss'
   const ageMs = Date.now() - (parseIsoMs(snapshot.first_seen_at) ?? Date.now())
   if (ageMs >= MAX_TRACKING_AGE_MS) return 'max_age'
@@ -1203,6 +1246,7 @@ export async function fetchRecentMcapTrackingRows(params: {
 
   return (data as McapSnapshot[]).map((row) => {
     normalizeTrackingTimeline(row)
+    reconcileMilestonesFromGrowth(row)
     return row
   })
 }

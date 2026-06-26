@@ -14,8 +14,10 @@ vi.mock('@/utils/unified-logger', () => ({
 }))
 
 import {
+  getMcapSimCloseReason,
   isTrackingTimelineInconsistent,
   normalizeTrackingTimeline,
+  reconcileMilestonesFromGrowth,
   resetTrackingSession,
   type McapSnapshot,
 } from './mcap-tracker'
@@ -75,6 +77,33 @@ describe('normalizeTrackingTimeline v2', () => {
     })
     normalizeTrackingTimeline(record)
     expect(record.when_reach_80mc).toBeNull()
+  })
+})
+
+describe('reconcileMilestonesFromGrowth', () => {
+  it('restores when_reach_80mc after normalize clears stale milestone', () => {
+    const record = row()
+    normalizeTrackingTimeline(record)
+    expect(record.when_reach_80mc).toBeNull()
+    const now = new Date().toISOString()
+    expect(reconcileMilestonesFromGrowth(record, now)).toBe(true)
+    expect(record.when_reach_80mc).toBe(now)
+    expect(record.when_reach_120mc).toBe(now)
+    expect(record.when_reach_200mc).toBe(now)
+  })
+})
+
+describe('getMcapSimCloseReason', () => {
+  it('returns take_profit_200 when growth >= 200', () => {
+    expect(getMcapSimCloseReason(row({ mcap_growth_percent: 250 }))).toBe(
+      'take_profit_200',
+    )
+  })
+
+  it('returns tracking_stopped when stop_reason is set', () => {
+    expect(getMcapSimCloseReason(row({ stop_reason: 'loss' }))).toBe(
+      'tracking_stopped',
+    )
   })
 })
 

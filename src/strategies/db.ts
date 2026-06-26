@@ -1,5 +1,6 @@
 import { supabase } from '@/utils/supabase'
 import { getTrackingHealthStats } from '@/utils/mcap-tracker'
+import { countOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol } from './outcome-features'
 import { isOpenTrackerPosition, resolveTrackerStrategyId } from '@/utils/trading-simulation'
 import type {
@@ -641,6 +642,18 @@ export async function aggregateStrategyReports(params: {
     openByStrategy.set(sid, (openByStrategy.get(sid) ?? 0) + 1)
   }
 
+  const mcapOpenByStrategy = new Map<string, number>()
+  const mcapSimWallet =
+    process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim'
+  const mcapSimRecords = await fetchTradingRecordsForWallet(mcapSimWallet)
+  for (const def of defRows) {
+    if (def.domain !== 'mcap_tracker') continue
+    mcapOpenByStrategy.set(
+      def.id,
+      countOpenMcapSimPositions(mcapSimRecords, def.id),
+    )
+  }
+
   const coverage: StrategyCoverageRow[] = defRows.map((def) => {
     const sim = breakdown.find(
       (b) => b.strategy_id === def.id && b.domain === def.domain && b.is_simulated,
@@ -668,7 +681,11 @@ export async function aggregateStrategyReports(params: {
       last_exit_at: lastExitAt,
       avg_pnl_pct: sim?.trade_count ? sim.avg_pnl_pct : null,
       open_tracker_count:
-        def.domain === 'trending_bot' ? openByStrategy.get(def.id) ?? 0 : null,
+        def.domain === 'trending_bot'
+          ? openByStrategy.get(def.id) ?? 0
+          : def.domain === 'mcap_tracker'
+            ? mcapOpenByStrategy.get(def.id) ?? 0
+            : null,
       ml_unlabeled: mlByStrategy.get(def.id)?.unlabeled ?? 0,
       ml_labeled: mlByStrategy.get(def.id)?.labeled ?? 0,
     }

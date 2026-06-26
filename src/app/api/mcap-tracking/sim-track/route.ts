@@ -8,16 +8,21 @@ import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records
 import { getSolPriceUSD } from '@/utils/solana'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
-import type { McapTrackerStrategy } from '@/strategies/types'
 import {
   buildMcapOutcomeFeatures,
   computeMcapSimPnlPct,
   fetchMcapTrackingRow,
   fetchRecentMcapTrackingRows,
   getMcapSimCloseReason,
-  isInTrackingRange,
   type McapSnapshot,
 } from '@/utils/mcap-tracker'
+import {
+  getMcapSimOpenSkipReason,
+  getOpenMcapSimPositions,
+  resolveMcapSimEntry,
+  shouldOpenMcapSim,
+  type McapSimOpenPosition,
+} from '@/utils/mcap-sim-track'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -34,63 +39,13 @@ function getSimTrackSecret(): string {
   )
 }
 
-type OpenPosition = {
-  mintAddress: string
-  symbol: string
-  entryAt: string | null
-  entryMcap: number
-  entryTemplate: 'first_seen' | 'milestone_80'
-  entryFeatures: Record<string, unknown>
-}
-
-function readEntryMcap(features: Record<string, unknown>): number {
-  const v = features.entry_mcap
-  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0
-}
-
-function readEntryTemplate(
-  features: Record<string, unknown>,
-): 'first_seen' | 'milestone_80' {
-  return features.entry_template === 'milestone_80' ? 'milestone_80' : 'first_seen'
-}
+type OpenPosition = McapSimOpenPosition
 
 function getOpenPositionsForStrategy(
   records: Awaited<ReturnType<typeof fetchTradingRecordsForWallet>>,
   strategyId: string,
 ): OpenPosition[] {
-  const seen = new Set<string>()
-  const open: OpenPosition[] = []
-
-  for (const r of records) {
-    if (!r.is_simulation || r.bot_strategy !== strategyId) continue
-    for (const t of r.tokens ?? []) {
-      if (seen.has(t.mintAddress)) continue
-      const cycle = computeOpenSimCycle(records, t.mintAddress)
-      if (!cycle || cycle.simulationType !== 'strategy') continue
-      seen.add(t.mintAddress)
-      const buyRecord = records.find(
-        (rec) =>
-          rec.operationType === 'buy' &&
-          rec.bot_strategy === strategyId &&
-          rec.tokens?.some((tk) => tk.mintAddress === t.mintAddress),
-      )
-      const sim = (buyRecord?.trading_simulation ?? {}) as Record<string, unknown>
-      const entryFeatures =
-        sim.entry_features && typeof sim.entry_features === 'object'
-          ? (sim.entry_features as Record<string, unknown>)
-          : {}
-      open.push({
-        mintAddress: t.mintAddress,
-        symbol: t.symbol ?? t.mintAddress.slice(0, 8),
-        entryAt: typeof sim.entry_at === 'string' ? sim.entry_at : null,
-        entryMcap: readEntryMcap(entryFeatures),
-        entryTemplate: readEntryTemplate(entryFeatures),
-        entryFeatures,
-      })
-    }
-  }
-
-  return open
+  return getOpenMcapSimPositions(records, strategyId)
 }
 
 async function openSimPosition(params: {
@@ -231,37 +186,6 @@ async function closeSimPosition(params: {
   return pnlPct
 }
 
-function resolveEntryMcap(
-  strategy: McapTrackerStrategy,
-  snapshot: McapSnapshot,
-): { entryMcap: number; entryAt: string } | null {
-  if (strategy.config.entryTemplate === 'first_seen') {
-    if (!snapshot.first_mcap || snapshot.first_mcap <= 0) return null
-    return { entryMcap: snapshot.first_mcap, entryAt: snapshot.first_seen_at }
-  }
-
-  if (!snapshot.when_reach_80mc || !snapshot.first_mcap) return null
-  const entryMcap = Math.round(snapshot.first_mcap * 1.8)
-  return { entryMcap, entryAt: snapshot.when_reach_80mc }
-}
-
-function shouldOpenForStrategy(
-  strategy: McapTrackerStrategy,
-  snapshot: McapSnapshot,
-  openMintSet: Set<string>,
-): boolean {
-  if (openMintSet.has(snapshot.token_address)) return false
-  if (snapshot.label === 'rugged') return false
-  if (!isInTrackingRange(snapshot.current_mcap)) return false
-
-  if (strategy.config.entryTemplate === 'first_seen') {
-    const ageMs = Date.now() - new Date(snapshot.first_seen_at).getTime()
-    return ageMs <= strategy.config.query.recencyMinutes * 60 * 1000
-  }
-
-  return !!snapshot.when_reach_80mc
-}
-
 export async function POST(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key')
   if (!isAuthorizedRequest(key, getSimTrackSecret())) {
@@ -323,15 +247,25 @@ export async function POST(request: NextRequest) {
       const maxOpen = strategy.config.execution.maxOpenPositions
 
       for (const snapshot of trackingRows) {
-        if (!shouldOpenForStrategy(strategy, snapshot, openMintSet)) continue
+        const skipReason = getMcapSimOpenSkipReason(strategy, snapshot, openMintSet)
+        if (skipReason) {
+          if (
+            skipReason !== 'already_open' &&
+            skipReason !== 'first_seen_too_old'
+          ) {
+            skipped.push(`${snapshot.token_symbol}: ${skipReason}`)
+          }
+          continue
+        }
+        if (!shouldOpenMcapSim(strategy, snapshot, openMintSet)) continue
         if (currentOpen + opened >= maxOpen) {
           skipped.push(`${snapshot.token_symbol}: max positions`)
           break
         }
 
-        const entry = resolveEntryMcap(strategy, snapshot)
+        const entry = resolveMcapSimEntry(strategy, snapshot)
         if (!entry) {
-          skipped.push(`${snapshot.token_symbol}: no entry mcap`)
+          skipped.push(`${snapshot.token_symbol}: no_entry_mcap`)
           continue
         }
 
