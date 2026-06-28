@@ -187,6 +187,18 @@ function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function formatRelativeTime(date: Date | null, nowMs: number): string {
+  if (!date) return "";
+  const secs = Math.floor((nowMs - date.getTime()) / 1000);
+  if (secs < 5) return "just now";
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.floor(mins / 60)}h ago`;
+}
+
+const REPORTS_POLL_INTERVAL_MS = 15_000;
+
 function AdminToastBanner({
   toast,
   onDismiss,
@@ -321,6 +333,16 @@ export default function StrategyAdminHub() {
   const [showEntryFeatureColumns, setShowEntryFeatureColumns] = useState(false);
   const [backfillPhase, setBackfillPhase] = useState<BackfillPhase>("idle");
   const [patchingClassId, setPatchingClassId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  const reportsPollingActive =
+    tab === "reports" && backfillPhase !== "running";
+
+  useEffect(() => {
+    if (tab !== "reports") return;
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, [tab]);
 
   const dismissToast = useCallback(() => {
     if (toastTimerRef.current) {
@@ -433,6 +455,11 @@ export default function StrategyAdminHub() {
           : null,
       };
     },
+    refetchInterval:
+      tab === "reports" && backfillPhase !== "running"
+        ? REPORTS_POLL_INTERVAL_MS
+        : false,
+    refetchIntervalInBackground: false,
   });
 
   const workersQuery = useQuery({
@@ -854,6 +881,21 @@ export default function StrategyAdminHub() {
           </p>
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
             <div className="flex flex-wrap gap-3 mb-4 text-sm">
+              {reportsPollingActive ? (
+                <span className="inline-flex items-center gap-1.5 self-end rounded-full border border-emerald-800/60 bg-emerald-950/40 px-2 py-1 text-xs text-emerald-400">
+                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+                  Live
+                </span>
+              ) : null}
+              {strategiesQuery.dataUpdatedAt ? (
+                <span className="self-end pb-1.5 text-xs text-gray-500">
+                  Updated{" "}
+                  {formatRelativeTime(
+                    new Date(strategiesQuery.dataUpdatedAt),
+                    now,
+                  )}
+                </span>
+              ) : null}
               <label className="text-gray-400">
                 From
                 <input
