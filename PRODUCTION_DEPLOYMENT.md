@@ -223,6 +223,8 @@ npx tsx scripts/seed-tracked-wallets.ts
 # Remove stale truncated rows in Supabase if duplicates remain (addresses missing suffix)
 ```
 
+**Social wallet poll: stale / Client.Timeout exceeded:** cron default HTTP timeout is 30s but wallet poll can run up to 300s (Shyft rate limit + many wallets). `main.go` uses a 300s client timeout for `/api/social/wallet-poll` — redeploy **cron** after updating: `npm run docker:deploy:cron`.
+
 **Telegram channel activity:** UI at `/dev/social` → **Recent channel activity** (from `social_token_events`, Telegram sources only). Live sidecar logs:
 
 ```bash

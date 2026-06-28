@@ -604,7 +604,7 @@ func (cs *CronService) runSocialRollup() {
     cs.workers.Begin("social_rollup")
     cs.logger.Info("📣 Running social rollup...")
     url := fmt.Sprintf("%s/api/social/rollup?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
+    resp, err := cs.makeRequest("POST", url, nil, 120)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Social rollup failed: %v", err))
         cs.workers.Fail("social_rollup", err.Error())
@@ -618,7 +618,7 @@ func (cs *CronService) runSocialWalletPoll() {
     cs.workers.Begin("social_wallet_poll")
     cs.logger.Info("👛 Running social wallet poll...")
     url := fmt.Sprintf("%s/api/social/wallet-poll?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
-    resp, err := cs.makeRequest("POST", url, nil)
+    resp, err := cs.makeRequest("POST", url, nil, 300)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ Social wallet poll failed: %v", err))
         cs.workers.Fail("social_wallet_poll", err.Error())

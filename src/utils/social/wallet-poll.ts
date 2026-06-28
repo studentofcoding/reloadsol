@@ -8,6 +8,7 @@ import {
   markWalletPolled,
   upsertWalletHolding,
 } from '@/strategies/social/db'
+import type { SocialIngestEvent } from '@/strategies/social/types'
 import { isValidSolanaAddress } from '@/utils/solana-address'
 
 const STABLE_MINTS = new Set([
@@ -36,6 +37,7 @@ export async function pollTrackedWallets(): Promise<{
     try {
       const { tokens } = await fetchShyftAllTokensDirect(wallet.address)
       const seenAt = new Date().toISOString()
+      const newEvents: SocialIngestEvent[] = []
 
       for (const token of tokens) {
         if (STABLE_MINTS.has(token.address)) continue
@@ -44,28 +46,30 @@ export async function pollTrackedWallets(): Promise<{
         const status = await upsertWalletHolding(wallet.address, token.address, seenAt)
         if (status !== 'inserted') continue
 
-        await insertSocialEvents([
-          {
-            token_address: token.address,
-            event_type: 'wallet_buy',
-            source: 'tracked_wallet_poll',
-            wallet_address: wallet.address,
-            wallet_label: wallet.label,
-            external_message_id: `${wallet.address}:${token.address}:${seenAt}`,
-            occurred_at: seenAt,
-            raw_metadata: {
-              from_tracked_wallet: true,
-              tier: wallet.tier,
-              tags: wallet.tags,
-              token_symbol: token.info?.symbol ?? null,
-              ui_balance: token.balance,
-            },
+        newEvents.push({
+          token_address: token.address,
+          event_type: 'wallet_buy',
+          source: 'tracked_wallet_poll',
+          wallet_address: wallet.address,
+          wallet_label: wallet.label,
+          external_message_id: `${wallet.address}:${token.address}:${seenAt}`,
+          occurred_at: seenAt,
+          raw_metadata: {
+            from_tracked_wallet: true,
+            tier: wallet.tier,
+            tags: wallet.tags,
+            token_symbol: token.info?.symbol ?? null,
+            ui_balance: token.balance,
           },
-        ])
-        newBuys += 1
-        console.info('[social/wallet-poll] new holding', {
+        })
+      }
+
+      if (newEvents.length > 0) {
+        await insertSocialEvents(newEvents)
+        newBuys += newEvents.length
+        console.info('[social/wallet-poll] new holdings', {
           wallet: wallet.label,
-          token: token.address,
+          count: newEvents.length,
         })
       }
 
