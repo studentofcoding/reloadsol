@@ -23,6 +23,18 @@ Next.js + Go-cron Solana trading platform: bulk token buys, trending tracker, mc
 
 Optional: Discord webhook, Telegram bot token (DLMM alerts), trading keypair for live bot trading.
 
+### Native deps (Solana / bigint-buffer)
+
+`@solana/web3.js` uses native `bigint-buffer` bindings for performance. If you see `bigint: Failed to load bindings`, install build tools and rebuild:
+
+| OS | Install |
+|----|---------|
+| macOS | `xcode-select --install` |
+| Debian/Ubuntu | `sudo apt install -y build-essential python3` |
+| Alpine (Docker) | `python3 make g++` (included in project `Dockerfile`) |
+
+Then run `npm run rebuild:native` (also runs automatically on `npm install` / `npm ci` when tools are present).
+
 ---
 
 ## Quick start (Docker — recommended)

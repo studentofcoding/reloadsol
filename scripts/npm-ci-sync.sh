@@ -66,6 +66,7 @@ set -e
 
 if [[ $npm_status -eq 0 ]]; then
   printf '%s\n' "$npm_output"
+  bash scripts/rebuild-native-deps.sh
   exit 0
 fi
 
@@ -80,3 +81,4 @@ sync_lockfile
 
 log "Retrying npm ci ..."
 npm ci "${NPM_CI_ARGS[@]}"
+bash scripts/rebuild-native-deps.sh

@@ -14,7 +14,12 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   transpilePackages: ['@jup-ag/wallet-adapter'],
-  serverExternalPackages: ['puppeteer'],
+  serverExternalPackages: [
+    'puppeteer',
+    '@solana/web3.js',
+    '@solana/spl-token',
+    'bigint-buffer',
+  ],
 
   // Faster dev compiles: tree-shake heavy package entrypoints (Turbopack + webpack)
   experimental: {
@@ -50,6 +55,7 @@ const nextConfig = {
       path: { browser: './node_modules/path-browserify/index.js' },
       events: { browser: 'events' },
       'pino-pretty': { browser: './empty-module.js' },
+      'bigint-buffer': { browser: './node_modules/bigint-buffer/dist/browser.js' },
     },
   },
 
@@ -153,6 +159,13 @@ const nextConfig = {
       path: require.resolve('path-browserify'),
       events: require.resolve('events/'),
       'pino-pretty': false,
+    }
+
+    if (!isServer) {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        'bigint-buffer': require.resolve('bigint-buffer/dist/browser'),
+      }
     }
 
     if (!dev) {

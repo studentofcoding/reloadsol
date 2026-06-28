@@ -45,7 +45,9 @@
     "docker:deploy:all": "bash scripts/docker-deploy.sh --all",
     "docker:deploy:hook": "bash scripts/install-docker-deploy-hook.sh",
     "lockfile:sync": "bash scripts/npm-ci-sync.sh --fix-lockfile",
-    "install:ci": "bash scripts/npm-ci-sync.sh"
+    "install:ci": "bash scripts/npm-ci-sync.sh",
+    "rebuild:native": "bash scripts/rebuild-native-deps.sh",
+    "postinstall": "bash scripts/rebuild-native-deps.sh"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
