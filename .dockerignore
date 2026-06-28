@@ -40,6 +40,9 @@ strategies
 agent-transcripts
 terminals
 
+# ML training (host-side only — not in web/cron images)
+ml
+
 # Test artifacts
 coverage
 .nyc_output

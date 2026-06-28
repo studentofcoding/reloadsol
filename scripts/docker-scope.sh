@@ -3,7 +3,7 @@
 # Usage:
 #   docker-scope.sh detect [--base REF]     # git diff vs REF (default HEAD~1)
 #   docker-scope.sh detect-working          # staged + unstaged vs HEAD
-# Output: "web", "cron", or "web,cron"
+# Output: "web", "cron", "web,cron", or empty (nothing to deploy)
 
 set -euo pipefail
 
@@ -22,6 +22,9 @@ classify_path() {
       ;;
     src/*|public/*|package.json|package-lock.json|.npmrc|next.config.*|tsconfig.json|tsconfig.*.json|tailwind.config.*|postcss.config.*|middleware.ts|Dockerfile.web|Dockerfile|components.json|eslint.config.*|.eslintrc*)
       echo "web"
+      ;;
+    ml/*)
+      echo "skip"
       ;;
     *)
       echo ""
@@ -65,6 +68,7 @@ detect_from_files() {
         ;;
       web) has_web=true ;;
       cron) has_cron=true ;;
+      skip) ;;
     esac
   done <<< "$files"
 
@@ -75,8 +79,7 @@ detect_from_files() {
   elif [[ "$has_cron" == true ]]; then
     echo "cron"
   else
-    # Unclassified paths (docs only, etc.) — rebuild both to stay safe
-    echo "web,cron"
+    echo ""
   fi
 }
 
