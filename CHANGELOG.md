@@ -12,7 +12,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **[`scripts/rebuild-native-deps.sh`](scripts/rebuild-native-deps.sh)** — postinstall rebuild of `bigint-buffer` when python3/make/C++ compiler are available; skips gracefully otherwise.
 - **[`Dockerfile`](Dockerfile)** — removed `npm ci --ignore-scripts`; explicit `npm rebuild bigint-buffer` in deps/dev stages.
-- **[`next.config.js`](next.config.js)** — externalize Solana packages on server; browser alias to `bigint-buffer/dist/browser` to avoid native load warnings client-side.
+- **[`next.config.js`](next.config.js)** — externalize `bigint-buffer` on server; browser alias to `bigint-buffer/dist/browser` (Solana packages stay transpiled — avoids Turbopack conflict with `serverExternalPackages`).
 
 ### Added — MCap tracker sim strategies
 

@@ -14,12 +14,7 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   transpilePackages: ['@jup-ag/wallet-adapter'],
-  serverExternalPackages: [
-    'puppeteer',
-    '@solana/web3.js',
-    '@solana/spl-token',
-    'bigint-buffer',
-  ],
+  serverExternalPackages: ['puppeteer', 'bigint-buffer'],
 
   // Faster dev compiles: tree-shake heavy package entrypoints (Turbopack + webpack)
   experimental: {
