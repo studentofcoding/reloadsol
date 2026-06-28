@@ -59,7 +59,7 @@
     "@metaplex-foundation/umi-bundle-defaults": "^1.2.0",
     "@meteora-ag/dlmm": "^1.9.10",
     "@solana/spl-token": "^0.3.11",
-    "@solana/web3.js": "^1.87.6",
+    "@solana/web3.js": "^1.98.4",
     "@supabase/supabase-js": "^2.50.0",
     "@tanstack/react-query": "^5.81.2",
     "@types/chart.js": "^4.0.1",
@@ -79,14 +79,13 @@
     "dotenv": "^17.2.1",
     "events": "^3.3.0",
     "geist": "^1.4.2",
-    "gray-matter": "^4.0.3",
     "html2canvas": "^1.4.1",
     "https-browserify": "^1.0.0",
-    "next": "16.1.7",
+    "next": "16.2.9",
     "ora": "^5.4.1",
     "os-browserify": "^0.3.0",
     "path-browserify": "^1.0.1",
-    "postcss": "^8.0.0",
+    "postcss": "^8.5.15",
     "puppeteer": "^24.37.3",
     "react": "19",
     "react-chartjs-2": "^5.3.0",
@@ -110,12 +109,19 @@
     "@types/react-dom": "^19.2.3",
     "@typescript-eslint/parser": "^8.61.1",
     "eslint": "^9.39.4",
-    "eslint-config-next": "16.1.7",
+    "eslint-config-next": "16.2.9",
     "typescript": "^5.0.0",
     "vitest": "^3.2.6"
   },
   "engines": {
     "node": ">=20.9.0",
     "npm": ">=8.0.0"
+  },
+  "overrides": {
+    "bigint-buffer": "npm:bigint-buffer-fixed@1.1.6",
+    "uuid": "^11.1.1",
+    "next": {
+      "postcss": "8.5.15"
+    }
   }
 }

@@ -3,8 +3,7 @@ FROM node:20-alpine AS deps
 RUN apk add --no-cache libc6-compat python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json* .npmrc ./
-RUN npm ci \
-  && npm rebuild bigint-buffer
+RUN npm ci
 
 FROM node:20-alpine AS builder
 WORKDIR /app
@@ -44,8 +43,7 @@ FROM node:20-alpine AS development
 WORKDIR /app
 RUN apk add --no-cache libc6-compat python3 make g++ wget
 COPY package.json package-lock.json* .npmrc ./
-RUN npm ci \
-  && npm rebuild bigint-buffer
+RUN npm ci
 COPY . .
 ENV NODE_ENV=development
 ENV NEXT_TELEMETRY_DISABLED=1

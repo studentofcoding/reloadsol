@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import type {
@@ -138,6 +138,20 @@ type McapTrackerReportStats = {
   milestone_buckets: McapTrackerMilestoneBucket[];
   timeline_inconsistent_count: number;
   total_tracked_tokens: number;
+};
+
+type StrategyAdminQueryData = {
+  data: StrategiesResponse;
+  outcomes: OutcomeRow[];
+  outcomesTotal: number;
+  reports: {
+    breakdown: ReportBreakdown[];
+    coverage: CoverageRow[];
+    ab_pairs: AbPair[];
+    ranking: ReportBreakdown[];
+    ml_stats: MlLabelStats;
+    mcap_tracker_stats: McapTrackerReportStats | null;
+  } | null;
 };
 
 type WorkerRow = {
@@ -334,9 +348,23 @@ export default function StrategyAdminHub() {
     };
   }, []);
 
-  const strategiesQuery = useQuery({
-    queryKey: [
-      "strategy-admin",
+  const strategyAdminQueryKey = useMemo(
+    () =>
+      [
+        "strategy-admin",
+        reportFrom,
+        reportTo,
+        reportDomain,
+        reportStrategyId,
+        reportSimulated,
+        reportMlLabel,
+        reportMlCondition,
+        reportStatus,
+        reportPnlFilter,
+        reportEntryMcapBand,
+        outcomesOffset,
+      ] as const,
+    [
       reportFrom,
       reportTo,
       reportDomain,
@@ -349,6 +377,10 @@ export default function StrategyAdminHub() {
       reportEntryMcapBand,
       outcomesOffset,
     ],
+  );
+
+  const strategiesQuery = useQuery({
+    queryKey: strategyAdminQueryKey,
     queryFn: async () => {
       const reportParams = new URLSearchParams();
       if (reportFrom) reportParams.set("from", reportFrom);
@@ -543,32 +575,20 @@ export default function StrategyAdminHub() {
     strategiesQuery,
   ]);
 
-  const strategyAdminQueryKey = [
-    "strategy-admin",
-    reportFrom,
-    reportTo,
-    reportDomain,
-    reportStrategyId,
-    reportSimulated,
-    reportMlLabel,
-    reportMlCondition,
-    reportStatus,
-    reportPnlFilter,
-    reportEntryMcapBand,
-    outcomesOffset,
-  ] as const;
-
   const updateOutcomeInCache = useCallback(
     (updated: StrategyOutcomeRow, rowIndex?: number) => {
-      queryClient.setQueryData(strategyAdminQueryKey, (old: typeof strategiesQuery.data) => {
-        if (!old) return old;
-        const idx = rowIndex ?? old.outcomes.findIndex((r) => r.id === updated.id);
-        if (idx < 0) return old;
-        const nextOutcomes = old.outcomes.map((row, i) => (i === idx ? updated : row));
-        return { ...old, outcomes: nextOutcomes };
-      });
+      queryClient.setQueryData<StrategyAdminQueryData | undefined>(
+        strategyAdminQueryKey,
+        (old) => {
+          if (!old) return old;
+          const idx = rowIndex ?? old.outcomes.findIndex((r) => r.id === updated.id);
+          if (idx < 0) return old;
+          const nextOutcomes = old.outcomes.map((row, i) => (i === idx ? updated : row));
+          return { ...old, outcomes: nextOutcomes };
+        },
+      );
     },
-    [queryClient, strategyAdminQueryKey, strategiesQuery.data],
+    [queryClient, strategyAdminQueryKey],
   );
 
   const handleTrainingClassChange = useCallback(

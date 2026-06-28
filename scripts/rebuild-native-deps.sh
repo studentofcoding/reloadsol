@@ -11,6 +11,60 @@ log() {
   echo "[rebuild-native-deps] $*"
 }
 
+STAMP_FILE="$ROOT/.cache/bigint-native.stamp"
+
+lockfile_hash() {
+  if [[ -f package-lock.json ]]; then
+    shasum -a 256 package-lock.json 2>/dev/null | awk '{print $1}'
+  else
+    shasum -a 256 package.json 2>/dev/null | awk '{print $1}'
+  fi
+}
+
+write_stamp() {
+  mkdir -p "$(dirname "$STAMP_FILE")"
+  lockfile_hash > "$STAMP_FILE"
+}
+
+stamp_matches_lockfile() {
+  [[ -f "$STAMP_FILE" ]] || return 1
+  [[ "$(cat "$STAMP_FILE" 2>/dev/null)" == "$(lockfile_hash)" ]]
+}
+
+mark_lockfile_handled() {
+  write_stamp
+}
+
+find_bigint_package_dirs() {
+  find node_modules -name package.json -path '*/bigint-buffer/package.json' 2>/dev/null \
+    | sed 's|/package.json$||' \
+    | sort -u
+}
+
+find_bigint_native_modules() {
+  find node_modules -name 'bigint_buffer.node' -type f 2>/dev/null
+}
+
+bigint_bindings_up_to_date() {
+  local pkg_dirs native_module
+  pkg_dirs="$(find_bigint_package_dirs)"
+  if [[ -z "$pkg_dirs" ]]; then
+    return 1
+  fi
+  while IFS= read -r pkg_dir; do
+    [[ -n "$pkg_dir" ]] || continue
+    native_module="$(find "$pkg_dir" -name 'bigint_buffer.node' -type f 2>/dev/null | head -1)"
+    if [[ -z "$native_module" || ! "$native_module" -nt "$pkg_dir/package.json" ]]; then
+      return 1
+    fi
+  done <<< "$pkg_dirs"
+  return 0
+}
+
+has_bigint_buffer_installed() {
+  [[ -n "$(find_bigint_package_dirs)" ]]
+}
+
 has_cpp_compiler() {
   command -v g++ >/dev/null 2>&1 || command -v clang++ >/dev/null 2>&1
 }
@@ -33,33 +87,54 @@ install_hint() {
   esac
 }
 
+if [[ "${SKIP_NATIVE_REBUILD:-}" == "1" ]]; then
+  log "SKIP_NATIVE_REBUILD=1 — skipping."
+  exit 0
+fi
+
+if ! has_bigint_buffer_installed; then
+  log "bigint-buffer not installed — skipping."
+  exit 0
+fi
+
+if bigint_bindings_up_to_date; then
+  mark_lockfile_handled
+  log "Native bindings already built — skipping."
+  exit 0
+fi
+
+if [[ "${FORCE_NATIVE_REBUILD:-}" != "1" ]] && stamp_matches_lockfile; then
+  log "Native rebuild already completed for this lockfile — skipping."
+  exit 0
+fi
+
 if ! command -v python3 >/dev/null 2>&1; then
+  mark_lockfile_handled
   log "python3 not found — skipping native rebuild (pure JS fallback will be used)."
   install_hint
   exit 0
 fi
 
 if ! command -v make >/dev/null 2>&1; then
+  mark_lockfile_handled
   log "make not found — skipping native rebuild (pure JS fallback will be used)."
   install_hint
   exit 0
 fi
 
 if ! has_cpp_compiler; then
+  mark_lockfile_handled
   log "C++ compiler not found — skipping native rebuild (pure JS fallback will be used)."
   install_hint
   exit 0
 fi
 
-if [[ ! -d node_modules/bigint-buffer ]]; then
-  log "bigint-buffer not installed — skipping."
-  exit 0
-fi
-
 log "Rebuilding bigint-buffer native bindings..."
 if npm rebuild bigint-buffer; then
+  mark_lockfile_handled
   log "bigint-buffer native bindings OK."
 else
+  mark_lockfile_handled
   log "WARN: bigint-buffer rebuild failed — pure JS fallback will be used."
   install_hint
   exit 0

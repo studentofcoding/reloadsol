@@ -25,15 +25,13 @@ Optional: Discord webhook, Telegram bot token (DLMM alerts), trading keypair for
 
 ### Native deps (Solana / bigint-buffer)
 
-`@solana/web3.js` uses native `bigint-buffer` bindings for performance. If you see `bigint: Failed to load bindings`, install build tools and rebuild:
+`@solana/web3.js` uses native `bigint-buffer` bindings for performance. npm **`overrides`** pin **`bigint-buffer-fixed@1.1.6`** (CVE-2025-3194). Postinstall rebuilds native addons once when build tools are present; skips if `bigint_buffer.node` is already up to date. Force rebuild: `npm run rebuild:native`. Set `SKIP_NATIVE_REBUILD=1` to skip (e.g. Docker image already rebuilt).
 
 | OS | Install |
 |----|---------|
 | macOS | `xcode-select --install` |
 | Debian/Ubuntu | `sudo apt install -y build-essential python3` |
 | Alpine (Docker) | `python3 make g++` (included in project `Dockerfile`) |
-
-Then run `npm run rebuild:native` (also runs automatically on `npm install` / `npm ci` when tools are present).
 
 ---
 

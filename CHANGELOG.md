@@ -8,6 +8,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Security — npm audit remediation
+
+- **Next.js 16.2.9**, **postcss 8.5.x**, **@solana/web3.js 1.98.x** — addresses reported Next/postcss/uuid advisories.
+- **npm overrides** — `bigint-buffer-fixed@1.1.6` (GHSA-3gc7-fjrx-p6mg), `uuid@^11.1.1`; blog front matter uses [`parseFrontMatter`](src/lib/frontmatter.ts) instead of `gray-matter`/`js-yaml`.
+- **Residual:** `elliptic` via `crypto-browserify` (browser polyfill only; no non-breaking npm fix); `postcss` nested in Next 16.2.9 (patched at app level via direct dep); `tar` via `node-gyp` build chain for native addons (install-time only).
+- **Rebuild perf** — skip native rebuild when `.node` already built; removed duplicate rebuild from [`npm-ci-sync.sh`](scripts/npm-ci-sync.sh) (postinstall only).
+
 ### Fixed — bigint-buffer native bindings (macOS / Linux)
 
 - **[`scripts/rebuild-native-deps.sh`](scripts/rebuild-native-deps.sh)** — postinstall rebuild of `bigint-buffer` when python3/make/C++ compiler are available; skips gracefully otherwise.
