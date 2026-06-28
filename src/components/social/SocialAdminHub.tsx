@@ -1,6 +1,8 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import ChartBuyModal from "@/components/ChartBuyModal";
+import { isValidMintAddress } from "@/utils/jupiter";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 type TrackedWallet = {
   address: string;
@@ -38,6 +40,50 @@ type SocialEvent = {
   occurred_at: string;
 };
 
+const POLL_INTERVAL_MS = 15_000;
+
+function truncateMint(address: string): string {
+  if (address.length <= 12) return address;
+  return `${address.slice(0, 4)}…${address.slice(-4)}`;
+}
+
+function formatRelativeTime(date: Date | null, nowMs: number): string {
+  if (!date) return "";
+  const secs = Math.floor((nowMs - date.getTime()) / 1000);
+  if (secs < 5) return "just now";
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.floor(mins / 60)}h ago`;
+}
+
+function TokenCell({
+  tokenAddress,
+  onOpen,
+}: {
+  tokenAddress: string;
+  onOpen: () => void;
+}) {
+  const valid = isValidMintAddress(tokenAddress);
+  if (!valid) {
+    return (
+      <span className="font-mono text-xs text-gray-500" title={tokenAddress}>
+        {truncateMint(tokenAddress)}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="font-mono text-xs text-blue-400 hover:text-blue-300 hover:underline"
+      title={tokenAddress}
+      onClick={onOpen}
+    >
+      {truncateMint(tokenAddress)}
+    </button>
+  );
+}
+
 export default function SocialAdminHub() {
   const [wallets, setWallets] = useState<TrackedWallet[]>([]);
   const [rollups, setRollups] = useState<SocialRollup[]>([]);
@@ -47,9 +93,32 @@ export default function SocialAdminHub() {
   const [error, setError] = useState<string | null>(null);
   const [newAddress, setNewAddress] = useState("");
   const [newLabel, setNewLabel] = useState("");
+  const [modalTokenAddress, setModalTokenAddress] = useState<string | null>(
+    null,
+  );
+  const [modalTokenList, setModalTokenList] = useState<string[]>([]);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [isLive, setIsLive] = useState(true);
+  const [now, setNow] = useState(() => Date.now());
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const eventTokenList = useMemo(
+    () => events.map((e) => e.token_address).filter(isValidMintAddress),
+    [events],
+  );
+
+  const rollupTokenList = useMemo(
+    () => rollups.map((r) => r.token_address).filter(isValidMintAddress),
+    [rollups],
+  );
+
+  const openBuyModal = useCallback((tokenAddress: string, list: string[]) => {
+    if (!isValidMintAddress(tokenAddress)) return;
+    setModalTokenList(list);
+    setModalTokenAddress(tokenAddress);
+  }, []);
+
+  const load = useCallback(async (options?: { silent?: boolean }) => {
+    if (!options?.silent) setLoading(true);
     setError(null);
     try {
       const [walletsRes, eventsRes] = await Promise.all([
@@ -69,13 +138,61 @@ export default function SocialAdminHub() {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (!options?.silent) setLoading(false);
+      setLastUpdatedAt(new Date());
     }
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = () => {
+      if (intervalId) return;
+      setIsLive(true);
+      intervalId = setInterval(() => {
+        if (document.visibilityState === "hidden") return;
+        void load({ silent: true });
+      }, POLL_INTERVAL_MS);
+    };
+
+    const stopPolling = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+      setIsLive(false);
+    };
+
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        stopPolling();
+      } else {
+        void load({ silent: true });
+        startPolling();
+      }
+    };
+
+    startPolling();
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [load]);
+
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
+
+  const modalIndex = modalTokenAddress
+    ? modalTokenList.indexOf(modalTokenAddress)
+    : -1;
 
   const addWallet = async () => {
     if (!newAddress.trim() || !newLabel.trim()) return;
@@ -129,24 +246,48 @@ export default function SocialAdminHub() {
         <div className="grid grid-cols-3 gap-4 text-sm">
           <div className="rounded border border-gray-800 bg-gray-900/60 p-4">
             <div className="text-gray-400">Events (24h)</div>
-            <div className="text-xl font-semibold text-white">{stats.eventCount24h}</div>
+            <div className="text-xl font-semibold text-white">
+              {stats.eventCount24h}
+            </div>
           </div>
           <div className="rounded border border-gray-800 bg-gray-900/60 p-4">
             <div className="text-gray-400">Rollups</div>
-            <div className="text-xl font-semibold text-white">{stats.rollupCount}</div>
+            <div className="text-xl font-semibold text-white">
+              {stats.rollupCount}
+            </div>
           </div>
           <div className="rounded border border-gray-800 bg-gray-900/60 p-4">
             <div className="text-gray-400">Active wallets</div>
-            <div className="text-xl font-semibold text-white">{stats.walletCount}</div>
+            <div className="text-xl font-semibold text-white">
+              {stats.walletCount}
+            </div>
           </div>
         </div>
       ) : null}
 
       <section>
-        <h2 className="mb-3 text-lg font-medium text-white">Recent channel activity</h2>
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <h2 className="text-lg font-medium text-white">
+            Recent channel activity
+          </h2>
+          {isLive ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-800/60 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-400">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
+              Live
+            </span>
+          ) : null}
+          {lastUpdatedAt ? (
+            <span className="text-xs text-gray-500">
+              Updated {formatRelativeTime(lastUpdatedAt, now)}
+            </span>
+          ) : null}
+        </div>
         <p className="mb-3 text-xs text-gray-500">
-          Telegram mentions from social-ingest (excludes tracked-wallet poll). Live logs:{" "}
-          <code className="text-gray-400">docker compose logs -f social-ingest</code>
+          Telegram mentions from social-ingest (excludes tracked-wallet poll).
+          Live logs:{" "}
+          <code className="text-gray-400">
+            docker compose logs -f social-ingest
+          </code>
         </p>
         <div className="overflow-x-auto rounded border border-gray-800">
           <table className="min-w-full text-left text-sm">
@@ -157,23 +298,47 @@ export default function SocialAdminHub() {
                 <th className="px-3 py-2">Channel</th>
                 <th className="px-3 py-2">Type</th>
                 <th className="px-3 py-2">Token</th>
+                <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody>
               {events.map((e) => (
                 <tr key={e.id} className="border-t border-gray-800 text-gray-200">
-                  <td className="px-3 py-2 text-xs text-gray-400">{e.occurred_at}</td>
+                  <td className="px-3 py-2 text-xs text-gray-400">
+                    {e.occurred_at}
+                  </td>
                   <td className="px-3 py-2">{e.source}</td>
                   <td className="px-3 py-2">{e.channel_label ?? "—"}</td>
                   <td className="px-3 py-2">{e.event_type}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{e.token_address}</td>
+                  <td className="px-3 py-2">
+                    <TokenCell
+                      tokenAddress={e.token_address}
+                      onOpen={() =>
+                        openBuyModal(e.token_address, eventTokenList)
+                      }
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    {isValidMintAddress(e.token_address) ? (
+                      <button
+                        type="button"
+                        className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+                        title="Open Chart & Buy"
+                        onClick={() =>
+                          openBuyModal(e.token_address, eventTokenList)
+                        }
+                      >
+                        Buy
+                      </button>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
               {events.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-4 text-gray-500">
-                    No Telegram events in the last 24h — check social-ingest is running and
-                    channels are active
+                  <td colSpan={6} className="px-3 py-4 text-gray-500">
+                    No Telegram events in the last 24h — check social-ingest is
+                    running and channels are active
                   </td>
                 </tr>
               ) : null}
@@ -261,22 +426,49 @@ export default function SocialAdminHub() {
                 <th className="px-3 py-2">Wallet buys 1h</th>
                 <th className="px-3 py-2">Top source</th>
                 <th className="px-3 py-2">Updated</th>
+                <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody>
               {rollups.map((r) => (
-                <tr key={r.token_address} className="border-t border-gray-800 text-gray-200">
-                  <td className="px-3 py-2 font-mono text-xs">{r.token_address}</td>
+                <tr
+                  key={r.token_address}
+                  className="border-t border-gray-800 text-gray-200"
+                >
+                  <td className="px-3 py-2">
+                    <TokenCell
+                      tokenAddress={r.token_address}
+                      onOpen={() =>
+                        openBuyModal(r.token_address, rollupTokenList)
+                      }
+                    />
+                  </td>
                   <td className="px-3 py-2">{r.mention_count_30m}</td>
                   <td className="px-3 py-2">{r.unique_channel_count_30m}</td>
                   <td className="px-3 py-2">{r.smart_wallet_buy_count_1h}</td>
                   <td className="px-3 py-2">{r.top_source ?? "—"}</td>
-                  <td className="px-3 py-2 text-xs text-gray-400">{r.updated_at}</td>
+                  <td className="px-3 py-2 text-xs text-gray-400">
+                    {r.updated_at}
+                  </td>
+                  <td className="px-3 py-2">
+                    {isValidMintAddress(r.token_address) ? (
+                      <button
+                        type="button"
+                        className="rounded bg-blue-600 px-2 py-1 text-xs text-white hover:bg-blue-700"
+                        title="Open Chart & Buy"
+                        onClick={() =>
+                          openBuyModal(r.token_address, rollupTokenList)
+                        }
+                      >
+                        Buy
+                      </button>
+                    ) : null}
+                  </td>
                 </tr>
               ))}
               {rollups.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-4 text-gray-500">
+                  <td colSpan={7} className="px-3 py-4 text-gray-500">
                     No rollups yet — run social ingest + POST /api/social/rollup
                   </td>
                 </tr>
@@ -285,6 +477,25 @@ export default function SocialAdminHub() {
           </table>
         </div>
       </section>
+
+      {modalTokenAddress ? (
+        <ChartBuyModal
+          tokenAddress={modalTokenAddress}
+          onClose={() => setModalTokenAddress(null)}
+          onNavigate={(direction) => {
+            if (modalIndex === -1 || modalTokenList.length === 0) return;
+            const nextIndex =
+              direction === "next" ? modalIndex + 1 : modalIndex - 1;
+            if (nextIndex >= 0 && nextIndex < modalTokenList.length) {
+              setModalTokenAddress(modalTokenList[nextIndex]);
+            }
+          }}
+          hasPrev={modalIndex > 0}
+          hasNext={
+            modalIndex >= 0 && modalIndex < modalTokenList.length - 1
+          }
+        />
+      ) : null}
     </div>
   );
 }

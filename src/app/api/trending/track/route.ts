@@ -36,8 +36,63 @@ import {
   getUnionFilterForActiveStrategies,
 } from '@/strategies/load-strategy'
 import { resolveTrendingSimMode } from '@/utils/trending-execution-mode'
+import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
 
-export const runtime = 'nodejs'
+function mapPoolToTrackedToken(pool: JupiterPool) {
+  const topHolders = pool.baseAsset.audit?.topHoldersPercentage
+  const poolCreatedAt =
+    pool.createdAt != null
+      ? new Date(
+          typeof pool.createdAt === 'number' ? pool.createdAt : pool.createdAt,
+        ).toISOString()
+      : null
+
+  return {
+    token_address: pool.baseAsset.id,
+    token_symbol: pool.baseAsset.symbol,
+    token_name: pool.baseAsset.name,
+    logo_url: pool.baseAsset.icon,
+    current_price: pool.baseAsset.usdPrice,
+    organic_score: pool.baseAsset.organicScore,
+    market_cap: pool.baseAsset.mcap,
+    volume_1h: pool.baseAsset.stats1h.buyVolume,
+    volume_5m: pool.baseAsset.stats5m?.buyVolume ?? null,
+    top_holders_pct:
+      typeof topHolders === 'number' && Number.isFinite(topHolders)
+        ? topHolders
+        : null,
+    pool_created_at: poolCreatedAt,
+    change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
+    change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100,
+  }
+}
+
+async function attachBuyEntryFeatures(
+  simulation: TradingSimulation,
+  token: {
+    token_address: string
+    token_symbol: string | null
+    market_cap: number | null
+    organic_score: number | null
+    top_holders_pct?: number | null
+    volume_5m?: number | null
+    pool_created_at?: string | null
+  },
+): Promise<void> {
+  const entryFeatures = await buildFullEntryFeatureSnapshot(token.token_address, {
+    entryAt: simulation.simulation_started_at,
+    firstSeenAt: token.pool_created_at ?? undefined,
+    entryMcap: token.market_cap,
+    organicScore: token.organic_score,
+    topHoldersPct: token.top_holders_pct ?? null,
+    volume5m: token.volume_5m ?? null,
+    tokenSymbol: token.token_symbol,
+    skipJupiter:
+      token.organic_score != null && token.top_holders_pct != null,
+  })
+  ;(simulation as unknown as Record<string, unknown>).entry_features = entryFeatures
+}
+
 
 // ====================================================================================================
 // REAL TRADING SETUP INSTRUCTIONS:
@@ -1689,18 +1744,7 @@ async function performEnhancedFiltering(
       token: pool,
       passed: true,
       rejectionReasons: [],
-      mappedToken: {
-        token_address: pool.baseAsset.id,
-        token_symbol: pool.baseAsset.symbol,
-        token_name: pool.baseAsset.name,
-        logo_url: pool.baseAsset.icon,
-        current_price: pool.baseAsset.usdPrice,
-        organic_score: pool.baseAsset.organicScore,
-        market_cap: pool.baseAsset.mcap,
-        volume_1h: pool.baseAsset.stats1h.buyVolume,
-        change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
-        change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100
-      }
+      mappedToken: mapPoolToTrackedToken(pool),
     }))
 
     return {
@@ -1837,18 +1881,7 @@ async function performEnhancedFiltering(
 
     // If passed, create mapped token data
     if (passed) {
-      result.mappedToken = {
-        token_address: pool.baseAsset.id,
-        token_symbol: pool.baseAsset.symbol,
-        token_name: pool.baseAsset.name,
-        logo_url: pool.baseAsset.icon,
-        current_price: pool.baseAsset.usdPrice,
-        organic_score: pool.baseAsset.organicScore,
-        market_cap: pool.baseAsset.mcap,
-        volume_1h: pool.baseAsset.stats1h.buyVolume,
-        change_1h: (pool.baseAsset.stats1h?.priceChange ?? 0) / 100,
-        change_5m: (pool.baseAsset.stats5m?.priceChange ?? 0) / 100
-      }
+      result.mappedToken = mapPoolToTrackedToken(pool)
     }
 
     results.push(result)
@@ -4474,6 +4507,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               initialSimulation.initial_token_amount = buyOperation.token_amount_received
               ;(initialSimulation as unknown as Record<string, unknown>).strategy_id = assignedStrategy
               ;(initialSimulation as unknown as Record<string, unknown>).entry_market_cap = token.market_cap
+              await attachBuyEntryFeatures(initialSimulation, token)
               tradingSimulation = initialSimulation
 
               console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
@@ -4775,6 +4809,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 initialSimulation.initial_token_amount = buyOperation.token_amount_received
                 ;(initialSimulation as unknown as Record<string, unknown>).strategy_id = assignedStrategy
                 ;(initialSimulation as unknown as Record<string, unknown>).entry_market_cap = token.market_cap
+                await attachBuyEntryFeatures(initialSimulation, token)
 
                 console.log(`💰 Buy operation completed for ${token.token_symbol}: ${buyOperation.token_amount_received} tokens (${initialSimulation.is_simulated ? 'simulated' : 'real'}) using ${assignedStrategy} strategy`)
 

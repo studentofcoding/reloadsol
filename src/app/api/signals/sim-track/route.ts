@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getActiveSignalsForSim } from '@/strategies/load-signals'
 import { scoreSignalsForStrategy } from '@/strategies/signals-pipeline'
 import { recordSignalsOutcome } from '@/strategies/outcomes'
-import {
-  buildEntryFeatureSnapshot,
-  mergeEntryFeaturesForOutcome,
-} from '@/strategies/entry-feature-snapshot'
+import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
+import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
 import { getSocialSnapshot } from '@/strategies/social-snapshot-loader'
 import { appendSimPositionMonitorSnapshot, resolveTokenMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
@@ -318,13 +316,22 @@ export async function POST(request: NextRequest) {
           signal.token_symbol?.trim() ||
           signal.token_address.slice(0, 8)
 
-        await openSimPosition({
-          strategyId: strategy.id,
-          mintAddress: signal.token_address,
-          symbol,
-          solAmount: strategy.config.execution.simBuySol,
-          priceUsd,
-          entryFeatures: {
+        const entryAt = new Date().toISOString()
+        const entryFeatures = await buildFullEntryFeatureSnapshot(
+          signal.token_address,
+          {
+            entryAt,
+            firstSeenAt: signal.first_seen_at,
+            entryMcap: signal.current_mcap,
+            tokenSymbol: symbol,
+            volume5m: liveMetrics.volume_5m,
+            monitorSnapshots:
+              liveMetrics.volume_5m != null || liveMetrics.price_usd != null
+                ? [liveMetrics]
+                : [],
+            social,
+          },
+          {
             score: signal.score,
             decision: signal.decision,
             growth: signal.mcap_growth_percent,
@@ -333,16 +340,16 @@ export async function POST(request: NextRequest) {
             rationale: signal.rationale,
             social_boost: signal.socialBoost ?? 0,
             initial_price_usd: priceUsd,
-            ...buildEntryFeatureSnapshot({
-              entryAt: new Date().toISOString(),
-              firstSeenAt: signal.first_seen_at,
-              entryMcap: signal.current_mcap,
-              tokenSymbol: symbol,
-              volume5m: liveMetrics.volume_5m,
-              monitorSnapshots: liveMetrics.volume_5m != null ? [liveMetrics] : [],
-              social,
-            }),
           },
+        )
+
+        await openSimPosition({
+          strategyId: strategy.id,
+          mintAddress: signal.token_address,
+          symbol,
+          solAmount: strategy.config.execution.simBuySol,
+          priceUsd,
+          entryFeatures,
         })
         opened++
         openMintSet.add(signal.token_address)

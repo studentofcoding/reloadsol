@@ -3,10 +3,10 @@ import { getActiveMcapTrackerForSim } from '@/strategies/load-mcap-tracker'
 import { recordMcapTrackerOutcome } from '@/strategies/outcomes'
 import {
   appendMonitorSnapshot,
-  buildEntryFeatureSnapshot,
   mergeEntryFeaturesForOutcome,
   readMonitorSnapshotsFromFeatures,
 } from '@/strategies/entry-feature-snapshot'
+import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
 import { checkSocialGate } from '@/strategies/social-snapshot-loader'
 import type { SocialSnapshot } from '@/strategies/social/types'
 import {
@@ -84,24 +84,33 @@ async function openSimPosition(params: {
   const volume5m = params.snapshot.volume_5m ?? liveMetrics.volume_5m
 
   const entryFeatures = {
-    entry_template: params.entryTemplate,
-    ...buildEntryFeatureSnapshot({
-      entryAt: params.entryAt,
-      firstSeenAt: params.snapshot.first_seen_at,
-      entryMcap: params.entryMcap,
-      organicScore: params.snapshot.organic_score,
-      topHoldersPct: params.snapshot.top_holders_pct,
-      volume5m,
-      tokenSymbol: params.symbol,
-      monitorSnapshots: volume5m != null ? [liveMetrics] : [],
-      social: params.social ?? null,
-    }),
-    ...buildMcapOutcomeFeatures({
-      snapshot: params.snapshot,
-      entryTemplate: params.entryTemplate,
-      entryMcap: params.entryMcap,
-      exitMcap: params.snapshot.current_mcap,
-    }),
+    ...(await buildFullEntryFeatureSnapshot(
+      params.mintAddress,
+      {
+        entryAt: params.entryAt,
+        firstSeenAt: params.snapshot.first_seen_at,
+        entryMcap: params.entryMcap,
+        organicScore: params.snapshot.organic_score,
+        topHoldersPct: params.snapshot.top_holders_pct,
+        volume5m,
+        tokenSymbol: params.symbol,
+        monitorSnapshots:
+          volume5m != null || liveMetrics.price_usd != null ? [liveMetrics] : [],
+        social: params.social ?? null,
+        skipJupiter:
+          params.snapshot.organic_score != null &&
+          params.snapshot.top_holders_pct != null,
+      },
+      {
+        entry_template: params.entryTemplate,
+        ...buildMcapOutcomeFeatures({
+          snapshot: params.snapshot,
+          entryTemplate: params.entryTemplate,
+          entryMcap: params.entryMcap,
+          exitMcap: params.snapshot.current_mcap,
+        }),
+      },
+    )),
   }
 
   const record = buildTradingRecord({

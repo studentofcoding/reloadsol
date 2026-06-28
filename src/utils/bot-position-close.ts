@@ -6,8 +6,12 @@ import {
 } from '@/utils/trading-records-db'
 import { calculateGainPercentage } from '@/utils/trading-math'
 import { recordTrendingBotOutcome } from '@/strategies/outcomes'
-import { buildEntryMcapFeatures } from '@/strategies/outcome-features'
-import { buildEntryFeatureSnapshot, mergeMonitorSnapshots, priceHistoryToMonitorSnapshots } from '@/strategies/entry-feature-snapshot'
+import {
+  mergeEntryFeaturesForOutcome,
+  mergeMonitorSnapshots,
+  priceHistoryToMonitorSnapshots,
+} from '@/strategies/entry-feature-snapshot'
+import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
 import { filterPointsToWindow, parsePriceHistory } from '@/strategies/trade-window-chart-data'
 
 const TRACKER_TABLE =
@@ -199,6 +203,26 @@ export async function finalizeBotPositionClose(
       : []
   const monitorSnapshots = mergeMonitorSnapshots(existingMonitors, clippedHistory)
 
+  const buyFeatures =
+    sim.entry_features && typeof sim.entry_features === 'object'
+      ? (sim.entry_features as Record<string, unknown>)
+      : {}
+
+  const closeEntryFeatures = await buildFullEntryFeatureSnapshot(
+    params.tokenAddress,
+    {
+      entryAt,
+      firstSeenAt:
+        typeof tracker.created_at === 'string' ? tracker.created_at : entryAt,
+      entryMcap,
+      organicScore:
+        typeof tracker.organic_score === 'number' ? tracker.organic_score : null,
+      volume5m: typeof tracker.volume_5m === 'number' ? tracker.volume_5m : null,
+      tokenSymbol: params.tokenSymbol,
+      monitorSnapshots,
+    },
+  )
+
   await recordTrendingBotOutcome({
     strategyId: params.strategyId,
     tokenAddress: params.tokenAddress,
@@ -213,19 +237,7 @@ export async function finalizeBotPositionClose(
       sell_percentage: params.sellPercentage,
       initial_price_usd: params.initialPriceUsd,
       exit_price_usd: params.currentPriceUsd,
-      token_symbol: params.tokenSymbol,
-      ...buildEntryFeatureSnapshot({
-        entryAt,
-        firstSeenAt:
-          typeof tracker.created_at === 'string' ? tracker.created_at : entryAt,
-        entryMcap,
-        organicScore:
-          typeof tracker.organic_score === 'number' ? tracker.organic_score : null,
-        volume5m: typeof tracker.volume_5m === 'number' ? tracker.volume_5m : null,
-        tokenSymbol: params.tokenSymbol,
-        monitorSnapshots,
-      }),
-      ...buildEntryMcapFeatures(entryMcap),
+      ...mergeEntryFeaturesForOutcome(buyFeatures, closeEntryFeatures),
     },
   })
 }
