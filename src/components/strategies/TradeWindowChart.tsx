@@ -24,7 +24,9 @@ import { formatAppDateTime } from "@/utils/datetime";
 import {
   formatVolume,
   hasVolumeData,
+  isVolumePresent,
   volumeBarColors,
+  volumeBarValues,
 } from "@/components/strategies/trade-window-chart-utils";
 
 ChartJS.register(
@@ -97,18 +99,17 @@ export default function TradeWindowChart({
     const datasets: ChartDataset<"line" | "bar">[] = [priceDataset];
 
     if (showVolume) {
+      const barValues = volumeBarValues(points);
+      const barColors = volumeBarColors(points);
       datasets.push({
         type: "bar",
         label: "Vol 5m",
-        data: points.map((p) => ({
+        data: points.map((p, index) => ({
           x: new Date(p.timestamp).getTime(),
-          y:
-            p.volume_5m != null && Number.isFinite(p.volume_5m)
-              ? p.volume_5m
-              : 0,
+          y: barValues[index],
         })),
-        backgroundColor: volumeBarColors(points),
-        borderColor: volumeBarColors(points),
+        backgroundColor: barColors,
+        borderColor: barColors,
         borderWidth: 1,
         yAxisID: "y1",
         order: 2,
@@ -144,9 +145,11 @@ export default function TradeWindowChart({
               const label = ctx.dataset.label ?? "";
               const y = ctx.parsed.y;
               if (label.startsWith("Vol")) {
-                return y != null && y > 0
-                  ? `${label}: ${formatVolume(y)}`
-                  : `${label}: —`;
+                const vol = points[ctx.dataIndex]?.volume_5m;
+                if (!isVolumePresent(vol)) {
+                  return `${label}: missing`;
+                }
+                return `${label}: ${formatVolume(vol)}`;
               }
               return `Price: $${formatPrice(y ?? 0)}`;
             },
@@ -192,7 +195,7 @@ export default function TradeWindowChart({
           : {}),
       },
     }),
-    [entryMs, exitMs, lineColor, showVolume],
+    [entryMs, exitMs, lineColor, showVolume, points],
   );
 
   return (
@@ -222,7 +225,8 @@ export default function TradeWindowChart({
         )}
         {showVolume && (
           <span className="text-gray-500">
-            Vol bars: green = up vs prior sample, red = down
+            Vol bars: green = up vs prior sample, red = down · gap = missing volume
+            (tracker)
           </span>
         )}
         {!showVolume && volumeNote && (

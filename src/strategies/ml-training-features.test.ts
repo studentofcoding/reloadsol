@@ -4,6 +4,7 @@ import {
   extractMlFeatureVector,
   extractMlTrainingRow,
   hasTrainingClass,
+  resolveEffectiveTrainingClass,
 } from './ml-training-features'
 import type { StrategyOutcomeRow } from './types'
 
@@ -47,12 +48,20 @@ describe('extractMlFeatureVector', () => {
   })
 })
 
+describe('resolveEffectiveTrainingClass', () => {
+  it('recomputes tier from pnl when stored class missing', () => {
+    expect(
+      resolveEffectiveTrainingClass({ features: {}, pnl_pct: 35, status: 'won' }, true),
+    ).toBe(1)
+  })
+})
+
 describe('extractMlTrainingRow', () => {
-  it('returns row for labeled outcome with complete features', () => {
+  it('returns row for tier 1 outcome with complete features', () => {
     const row = extractMlTrainingRow(
       outcome({
+        pnl_pct: 35,
         features: {
-          training_class: 1,
           entry_mcap: 80_000,
           entry_mcap_band: '51-100k',
           organic_score: 65,
@@ -62,40 +71,40 @@ describe('extractMlTrainingRow', () => {
           entry_template: 'milestone_80',
         },
       }),
+      true,
     )
     expect(row?.training_class).toBe(1)
     expect(row?.features.entry_template_milestone_80).toBe(1)
   })
 
-  it('skips marginal or incomplete rows', () => {
-    expect(extractMlTrainingRow(outcome({ features: { training_class: null } }))).toBeNull()
+  it('skips incomplete feature rows', () => {
     expect(
-      extractMlTrainingRow(outcome({ features: { training_class: 1, entry_mcap: 1 } })),
+      extractMlTrainingRow(outcome({ pnl_pct: 35, features: { training_class: 1, entry_mcap: 1 } }), true),
     ).toBeNull()
   })
 })
 
 describe('computeMlDatasetStats', () => {
-  it('counts labeled, marginal, and readiness', () => {
+  it('counts labeled tiers and pnl buckets', () => {
     const stats = computeMlDatasetStats([
-      outcome({ features: { training_class: 1 } }),
-      outcome({ id: '2', features: { training_class: 0 } }),
-      outcome({ id: '3', pnl_pct: 30, features: {} }),
-      outcome({ id: '4', pnl_pct: null, features: {} }),
+      outcome({ pnl_pct: 35, status: 'won', features: {} }),
+      outcome({ id: '2', pnl_pct: -10, status: 'lost', features: {} }),
+      outcome({ id: '3', pnl_pct: 120, status: 'won', features: {} }),
+      outcome({ id: '4', pnl_pct: null, status: null, features: {} }),
     ])
-    expect(stats.labeled).toBe(2)
-    expect(stats.class_1).toBe(1)
-    expect(stats.class_0).toBe(1)
-    expect(stats.marginal).toBe(1)
+    expect(stats.labeled).toBe(3)
+    expect(stats.by_class['1']).toBe(1)
+    expect(stats.by_class['0']).toBe(1)
+    expect(stats.by_class['3']).toBe(1)
     expect(stats.unlabeled).toBe(1)
+    expect(stats.pnl_buckets.twenty_to_50).toBe(1)
     expect(stats.ready).toBe(false)
   })
 })
 
 describe('hasTrainingClass', () => {
-  it('detects 0/1 only', () => {
-    expect(hasTrainingClass({ training_class: 1 })).toBe(true)
-    expect(hasTrainingClass({ training_class: 0 })).toBe(true)
-    expect(hasTrainingClass({ training_class: null })).toBe(false)
+  it('detects recomputed tiers', () => {
+    expect(hasTrainingClass({ features: {}, pnl_pct: 35, status: 'won' }, true)).toBe(true)
+    expect(hasTrainingClass({ features: {}, pnl_pct: null, status: null }, true)).toBe(false)
   })
 })

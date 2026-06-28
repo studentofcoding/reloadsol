@@ -101,8 +101,18 @@ export function readTrainingClass(
   features: Record<string, unknown> | null | undefined,
 ): number | null {
   const v = features?.training_class
-  if (v === 0 || v === 1) return v
+  if (v === 0 || v === 1 || v === 2 || v === 3 || v === 4) return v
+  if (typeof v === 'string') {
+    const n = Number(v)
+    if (n === 0 || n === 1 || n === 2 || n === 3 || n === 4) return n
+  }
   return null
+}
+
+export function isLabeledTrainingClass(
+  value: number | null | undefined,
+): value is 0 | 1 | 2 | 3 | 4 {
+  return value === 0 || value === 1 || value === 2 || value === 3 || value === 4
 }
 
 export function readMonitorSnapshotCount(

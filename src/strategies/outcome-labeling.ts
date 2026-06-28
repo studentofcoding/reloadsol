@@ -1,9 +1,6 @@
-import type { OutcomeMlCondition, OutcomeMlLabel } from './types'
+import type { OutcomeMlCondition, OutcomeMlLabel, TrainingClass } from './types'
 
-export type TrainingClass = 0 | 1 | null
-
-const WIN_PNL_THRESHOLD = 50
-const LOSE_PNL_THRESHOLD = 20
+export type { TrainingClass }
 
 export function computeTrainingClass(
   pnlPct: number | null | undefined,
@@ -11,16 +8,22 @@ export function computeTrainingClass(
 ): TrainingClass {
   if (pnlPct == null || !Number.isFinite(pnlPct)) return null
   const isWon = status === 'won' || pnlPct >= 0
-  if (isWon && pnlPct >= WIN_PNL_THRESHOLD) return 1
-  if (!isWon || pnlPct < LOSE_PNL_THRESHOLD) return 0
-  return null
+
+  if (!isWon || pnlPct < 0) return 0
+  if (isWon && pnlPct < 20) return 0
+  if (isWon && pnlPct < 50) return 1
+  if (pnlPct < 100) return 2
+  if (pnlPct < 300) return 3
+  return 4
 }
 
 export function trainingClassToMlLabel(
   trainingClass: TrainingClass,
 ): OutcomeMlLabel | null {
-  if (trainingClass === 1) return 'interesting'
   if (trainingClass === 0) return 'skip'
+  if (trainingClass != null && trainingClass >= 1 && trainingClass <= 4) {
+    return 'interesting'
+  }
   return null
 }
 
@@ -52,9 +55,7 @@ export function buildAutoMlNote(
   if (pnlPct != null && Number.isFinite(pnlPct)) {
     parts.push(`${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%`)
   }
-  if (trainingClass === 1) parts.push('class=1')
-  if (trainingClass === 0) parts.push('class=0')
-  if (trainingClass === null) parts.push('marginal')
+  if (trainingClass != null) parts.push(`class=${trainingClass}`)
   if (features.reached_80 === true) parts.push('reached_80')
   if (typeof features.organic_score === 'number') {
     parts.push(`organic=${features.organic_score}`)
@@ -78,7 +79,7 @@ export function applyAutoOutcomeLabels(
 
   return {
     ...base,
-    training_class: trainingClass,
+    ...(trainingClass != null ? { training_class: trainingClass } : {}),
     ...(mlLabel ? { ml_label: mlLabel } : {}),
     ...(mlCondition ? { ml_condition: mlCondition } : {}),
     ml_note: mlNote,

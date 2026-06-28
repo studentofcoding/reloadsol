@@ -16,7 +16,9 @@ export async function GET(request: NextRequest) {
       strategyId,
     })
     const stats = computeMlDatasetStats(rows)
-    const extractableLabeled = rows.filter((row) => extractMlTrainingRow(row) != null).length
+    const extractableLabeled = rows.filter(
+      (row) => extractMlTrainingRow(row, true) != null,
+    ).length
 
     return NextResponse.json({
       success: true,

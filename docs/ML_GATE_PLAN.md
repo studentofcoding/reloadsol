@@ -29,7 +29,7 @@ flowchart TD
 |-------|--------|----------|
 | L1 Rules | Done | `getMcapSimOpenSkipReason()` in `mcap-sim-track.ts` |
 | Entry features | Done | `buildEntryFeatureSnapshot()` |
-| Auto labels | Done | `computeTrainingClass()` — class `1` if won + PnL ≥ 50%, `0` if lost or PnL < 20% |
+| Auto labels | Done | `computeTrainingClass()` — tiers 0–4 by PnL band (see below) |
 | Training data | Done | `strategy_outcomes`, CSV export |
 | Regime tags | Done | `market_regime_tags` → `regime_tag_at_exit` |
 | Paper trading | Done | `POST /api/mcap-tracking/sim-track`, `POST /api/signals/sim-track` |
@@ -41,8 +41,8 @@ flowchart TD
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **0** | Dataset readiness API, training export filter, feature spec | **Done** — see below |
-| **1** | Python train pipeline (`ml/train.py`), ONNX artifact | **Done** — see `ml/README.md` |
+| **0** | Dataset readiness API, tier labels 0–4, backfill, export | **Done** |
+| **1** | Python multiclass train pipeline (`ml/train.py`), ONNX artifact | **Done** — see `ml/README.md` |
 | **2** | ONNX runtime scorer in Node (`entry-ml-scorer.ts`) | Planned |
 | **3** | LLM gate (`entry-llm-gate.ts`) + regime prompt | Planned |
 | **4** | Sim-track shadow/enforce modes | Planned |
@@ -56,9 +56,19 @@ flowchart TD
 
 | Check | Target |
 |-------|--------|
-| Closed outcomes with `training_class` 0 or 1 | ≥ **200** (300+ preferred) |
-| First domain | **`mcap_tracker`** |
+| Closed outcomes with `training_class` 0–4 | ≥ **200** (300+ preferred) |
+| Balanced tiers | `train_ready === true` (multiple tiers or class 0 + wins) |
 | Regime tags | Tag daily in Strategy Admin → Reports |
+
+### Tier labels
+
+| Class | Condition |
+|-------|-----------|
+| **0** | Lost, negative PnL, or won with PnL < 20% |
+| **1** | Won, 20% ≤ PnL < 50% |
+| **2** | 50% ≤ PnL < 100% |
+| **3** | 100% ≤ PnL < 300% |
+| **4** | PnL ≥ 300% |
 
 ### Readiness API
 
@@ -66,15 +76,21 @@ flowchart TD
 GET /api/strategies/ml/dataset-stats?domain=mcap_tracker
 ```
 
-Returns labeled counts, class balance, marginal/unlabeled counts, date range, and `ready` when labeled ≥ 200.
+Returns `by_class`, `pnl_buckets`, `labeled`, `train_ready`, and `ready` (labeled ≥ 200).
+
+Backfill stored labels:
+
+```
+POST /api/strategies/ml/backfill-labels?dry_run=true&domain=mcap_tracker&key=SECRET
+```
 
 ### Training export
 
 ```
-GET /api/strategies/outcomes?format=csv&training_class_only=true&domain=mcap_tracker&limit=5000
+GET /api/strategies/outcomes?format=csv&training_class_only=true&recompute_labels=true&limit=5000
 ```
 
-Only rows with `training_class` ∈ {0, 1}. Marginal wins (20–50% PnL) excluded.
+Rows with `training_class` ∈ {0,1,2,3,4}. Optional `training_class_min=1` for win tiers only.
 
 ### Entry-time features (no leakage)
 

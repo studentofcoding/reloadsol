@@ -223,6 +223,8 @@ export type OutcomeMlLabel = 'skip' | 'interesting' | 'anomaly'
 
 export type OutcomeMlCondition = 'old_chart' | 'price_topped' | 'new_chart'
 
+export type TrainingClass = 0 | 1 | 2 | 3 | 4 | null
+
 export interface OutcomeMlMetadata {
   ml_label?: OutcomeMlLabel | null
   ml_condition?: OutcomeMlCondition | null
@@ -230,7 +232,7 @@ export interface OutcomeMlMetadata {
   ml_labeled_at?: string | null
   ml_condition_at?: string | null
   ml_manual?: boolean
-  training_class?: 0 | 1 | null
+  training_class?: TrainingClass
   regime_tag_at_exit?: string | null
 }
 

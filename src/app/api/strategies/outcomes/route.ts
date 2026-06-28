@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listStrategyOutcomes } from '@/strategies/db'
+import { resolveEffectiveTrainingClass } from '@/strategies/ml-training-features'
 import type { StrategyDomain, StrategyOutcomeRow } from '@/strategies/types'
 import {
-  formatEntryMcap,
   readEntryMcap,
   readMonitorSnapshotCount,
   readOrganicScore,
   readTokenAgeHours,
   readTokenSymbol,
   readTopHoldersPct,
-  readTrainingClass,
   readVolumeAtEntry,
 } from '@/strategies/outcome-features'
 
@@ -47,7 +46,7 @@ function resolvePnlFilter(pnlFilter: string | null): {
   }
 }
 
-function toCsv(rows: StrategyOutcomeRow[]): string {
+function toCsv(rows: StrategyOutcomeRow[], recomputeLabels: boolean): string {
   const headers = [
     'id',
     'strategy_id',
@@ -76,6 +75,7 @@ function toCsv(rows: StrategyOutcomeRow[]): string {
   ]
   const lines = [headers.join(',')]
   for (const r of rows) {
+    const trainingClass = resolveEffectiveTrainingClass(r, recomputeLabels)
     lines.push(
       [
         r.id,
@@ -90,7 +90,7 @@ function toCsv(rows: StrategyOutcomeRow[]): string {
         readTokenAgeHours(r.features) ?? '',
         readVolumeAtEntry(r.features) ?? '',
         readMonitorSnapshotCount(r.features),
-        readTrainingClass(r.features) ?? '',
+        trainingClass ?? '',
         readFeatureString(r.features, 'entry_template'),
         readFeatureString(r.features, 'regime_tag_at_exit'),
         r.entry_at ?? '',
@@ -133,6 +133,8 @@ export async function GET(request: NextRequest) {
       parseOptionalNumber(searchParams.get('pnl_max')) ??
       resolvePnlFilter(pnlFilter).pnlMax
     const trainingClassOnly = searchParams.get('training_class_only') === 'true'
+    const trainingClassMin = parseOptionalNumber(searchParams.get('training_class_min'))
+    const recomputeLabels = searchParams.get('recompute_labels') === 'true'
     const limit = parseInt(searchParams.get('limit') ?? '500', 10)
     const offset = parseInt(searchParams.get('offset') ?? '0', 10)
 
@@ -149,12 +151,14 @@ export async function GET(request: NextRequest) {
       pnlMax,
       entryMcapBand,
       trainingClassOnly,
+      trainingClassMin,
+      recomputeLabels,
       limit: format === 'csv' ? Math.min(limit, 5000) : limit,
       offset,
     })
 
     if (format === 'csv') {
-      const csv = toCsv(rows)
+      const csv = toCsv(rows, recomputeLabels)
       return new NextResponse(csv, {
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',

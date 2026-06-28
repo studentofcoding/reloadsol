@@ -1,5 +1,6 @@
-import { readTrainingClass } from './outcome-features'
-import type { StrategyDomain, StrategyOutcomeRow } from './types'
+import { computeTrainingClass } from './outcome-labeling'
+import { isLabeledTrainingClass, readTrainingClass } from './outcome-features'
+import type { StrategyDomain, StrategyOutcomeRow, TrainingClass } from './types'
 
 /** Minimum labeled outcomes before ML gate enforce mode is recommended. */
 export const ML_MIN_LABELED_OUTCOMES = 200
@@ -26,27 +27,45 @@ export const ML_NUMERIC_FEATURE_KEYS = [
 
 export type MlNumericFeatureKey = (typeof ML_NUMERIC_FEATURE_KEYS)[number]
 
+export type MlLabeledClass = 0 | 1 | 2 | 3 | 4
+
 export type MlTrainingRow = {
   id: string
   strategy_id: string
   domain: StrategyDomain
   entry_at: string
-  training_class: 0 | 1
+  training_class: MlLabeledClass
   features: Record<string, number>
 }
+
+export type MlPnlBuckets = {
+  negative: number
+  zero_to_20: number
+  twenty_to_50: number
+  fifty_to_100: number
+  hundred_to_300: number
+  three_hundred_plus: number
+  unknown: number
+}
+
+export type MlClassCounts = Record<'0' | '1' | '2' | '3' | '4', number>
 
 export type MlDatasetStats = {
   min_required: number
   ready: boolean
+  train_ready: boolean
   total_closed: number
   labeled: number
-  class_0: number
-  class_1: number
-  marginal: number
   unlabeled: number
-  by_domain: Record<string, { labeled: number; class_0: number; class_1: number }>
-  by_strategy: Record<string, { labeled: number; class_0: number; class_1: number }>
+  by_class: MlClassCounts
+  pnl_buckets: MlPnlBuckets
+  by_domain: Record<string, MlClassCounts>
+  by_strategy: Record<string, MlClassCounts>
   entry_at_range: { earliest: string | null; latest: string | null }
+}
+
+function emptyClassCounts(): MlClassCounts {
+  return { '0': 0, '1': 0, '2': 0, '3': 0, '4': 0 }
 }
 
 function readFeatureNumber(
@@ -78,6 +97,28 @@ export function log1p(value: number | null | undefined): number | null {
 export function capTokenAgeHours(hours: number | null | undefined): number | null {
   if (hours == null || !Number.isFinite(hours) || hours < 0) return null
   return Math.min(hours, 168)
+}
+
+/** Stored class from features, or recomputed from pnl/status when missing. */
+export function resolveEffectiveTrainingClass(
+  row: Pick<StrategyOutcomeRow, 'features' | 'pnl_pct' | 'status'>,
+  recompute = false,
+): TrainingClass {
+  if (!recompute) {
+    const stored = readTrainingClass(row.features)
+    if (isLabeledTrainingClass(stored)) return stored as MlLabeledClass
+  }
+  return computeTrainingClass(row.pnl_pct, row.status)
+}
+
+export function bucketPnl(pnl: number | null | undefined): keyof MlPnlBuckets {
+  if (pnl == null || !Number.isFinite(pnl)) return 'unknown'
+  if (pnl < 0) return 'negative'
+  if (pnl < 20) return 'zero_to_20'
+  if (pnl < 50) return 'twenty_to_50'
+  if (pnl < 100) return 'fifty_to_100'
+  if (pnl < 300) return 'hundred_to_300'
+  return 'three_hundred_plus'
 }
 
 /** Entry-time numeric vector for ML (mirrors ml/features.py). */
@@ -117,9 +158,12 @@ export function extractMlFeatureVector(
   return vector
 }
 
-export function extractMlTrainingRow(row: StrategyOutcomeRow): MlTrainingRow | null {
-  const trainingClass = readTrainingClass(row.features)
-  if (trainingClass !== 0 && trainingClass !== 1) return null
+export function extractMlTrainingRow(
+  row: StrategyOutcomeRow,
+  recompute = false,
+): MlTrainingRow | null {
+  const trainingClass = resolveEffectiveTrainingClass(row, recompute)
+  if (!isLabeledTrainingClass(trainingClass)) return null
   if (!row.entry_at) return null
 
   const features = extractMlFeatureVector(row.features)
@@ -135,29 +179,47 @@ export function extractMlTrainingRow(row: StrategyOutcomeRow): MlTrainingRow | n
   }
 }
 
-export function hasTrainingClass(features: Record<string, unknown> | null | undefined): boolean {
-  const tc = readTrainingClass(features)
-  return tc === 0 || tc === 1
+export function hasTrainingClass(
+  row: Pick<StrategyOutcomeRow, 'features' | 'pnl_pct' | 'status'>,
+  recompute = false,
+): boolean {
+  return isLabeledTrainingClass(resolveEffectiveTrainingClass(row, recompute))
 }
 
-function bumpDomainStrategy(
-  map: Record<string, { labeled: number; class_0: number; class_1: number }>,
-  key: string,
-  trainingClass: 0 | 1,
-): void {
-  const entry = map[key] ?? { labeled: 0, class_0: 0, class_1: 0 }
-  entry.labeled += 1
-  if (trainingClass === 0) entry.class_0 += 1
-  else entry.class_1 += 1
+export function matchesTrainingClassFilter(
+  row: StrategyOutcomeRow,
+  options: { trainingClassOnly?: boolean; trainingClassMin?: number; recompute?: boolean },
+): boolean {
+  const tc = resolveEffectiveTrainingClass(row, options.recompute)
+  if (!isLabeledTrainingClass(tc)) return false
+  if (options.trainingClassMin != null && tc < options.trainingClassMin) return false
+  if (options.trainingClassOnly) return true
+  return true
+}
+
+function bumpClassCounts(map: Record<string, MlClassCounts>, key: string, cls: MlLabeledClass): void {
+  const entry = map[key] ?? emptyClassCounts()
+  entry[String(cls) as keyof MlClassCounts] += 1
   map[key] = entry
+}
+
+function countWinTiers(byClass: MlClassCounts): number {
+  return (['1', '2', '3', '4'] as const).filter((k) => byClass[k] > 0).length
 }
 
 export function computeMlDatasetStats(rows: StrategyOutcomeRow[]): MlDatasetStats {
   let labeled = 0
-  let class0 = 0
-  let class1 = 0
-  let marginal = 0
   let unlabeled = 0
+  const byClass = emptyClassCounts()
+  const pnlBuckets: MlPnlBuckets = {
+    negative: 0,
+    zero_to_20: 0,
+    twenty_to_50: 0,
+    fifty_to_100: 0,
+    hundred_to_300: 0,
+    three_hundred_plus: 0,
+    unknown: 0,
+  }
   const byDomain: MlDatasetStats['by_domain'] = {}
   const byStrategy: MlDatasetStats['by_strategy'] = {}
   let earliest: string | null = null
@@ -169,33 +231,33 @@ export function computeMlDatasetStats(rows: StrategyOutcomeRow[]): MlDatasetStat
       if (!latest || row.entry_at > latest) latest = row.entry_at
     }
 
-    const tc = readTrainingClass(row.features)
-    if (tc === 0) {
+    pnlBuckets[bucketPnl(row.pnl_pct)] += 1
+
+    const tc = resolveEffectiveTrainingClass(row, true)
+    if (isLabeledTrainingClass(tc)) {
       labeled += 1
-      class0 += 1
-      bumpDomainStrategy(byDomain, row.domain, 0)
-      bumpDomainStrategy(byStrategy, row.strategy_id, 0)
-    } else if (tc === 1) {
-      labeled += 1
-      class1 += 1
-      bumpDomainStrategy(byDomain, row.domain, 1)
-      bumpDomainStrategy(byStrategy, row.strategy_id, 1)
-    } else if (tc === null && row.pnl_pct != null) {
-      marginal += 1
+      byClass[String(tc) as keyof MlClassCounts] += 1
+      bumpClassCounts(byDomain, row.domain, tc)
+      bumpClassCounts(byStrategy, row.strategy_id, tc)
     } else {
       unlabeled += 1
     }
   }
 
+  const winTiers = countWinTiers(byClass)
+  const trainReady =
+    labeled >= ML_MIN_LABELED_OUTCOMES &&
+    (winTiers >= 2 || (byClass['0'] >= 10 && labeled - byClass['0'] >= 10))
+
   return {
     min_required: ML_MIN_LABELED_OUTCOMES,
     ready: labeled >= ML_MIN_LABELED_OUTCOMES,
+    train_ready: trainReady,
     total_closed: rows.length,
     labeled,
-    class_0: class0,
-    class_1: class1,
-    marginal,
     unlabeled,
+    by_class: byClass,
+    pnl_buckets: pnlBuckets,
     by_domain: byDomain,
     by_strategy: byStrategy,
     entry_at_range: { earliest, latest },

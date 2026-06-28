@@ -119,6 +119,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added — Trade window volume overlay
 
 - **[`TradeWindowChart.tsx`](src/components/strategies/TradeWindowChart.tsx)** — dual axis: price (left), Vol 5m bars (right); bar color green/red vs previous sample.
+- **Missing volume** — null `volume_5m` renders as a chart gap (not a zero-height gray bar); tooltip shows “missing”.
 - **Chart API** — [`loadOutcomeTradeWindowChart`](src/strategies/db.ts) passes `volume_5m` from tracker `price_history` and [`monitor_snapshots`](src/strategies/entry-feature-snapshot.ts); synthetic 2-point fallback enriches entry/exit volume from outcome features.
 
 ### Added — Volume capture (all strategy domains)

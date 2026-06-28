@@ -1,10 +1,10 @@
 import { supabase } from '@/utils/supabase'
 import { getTrackingHealthStats } from '@/utils/mcap-tracker'
 import { countOpenMcapSimPositions } from '@/utils/mcap-sim-track'
-import { readTokenSymbol } from './outcome-features'
+import { readTokenSymbol, readTrainingClass } from './outcome-features'
 import { dedupeStrategyOutcomeRows, mcapSimClosedOutcomeKey } from './outcome-dedupe'
 import { applyAutoOutcomeLabels } from './outcome-labeling'
-import { hasTrainingClass } from './ml-training-features'
+import { matchesTrainingClassFilter } from './ml-training-features'
 import {
   monitorSnapshotsToChartPoints,
   priceHistoryToMonitorSnapshots,
@@ -317,6 +317,8 @@ export async function listStrategyOutcomes(params: {
   pnlMax?: number
   entryMcapBand?: string
   trainingClassOnly?: boolean
+  trainingClassMin?: number
+  recomputeLabels?: boolean
   limit?: number
   offset?: number
 }): Promise<{ rows: StrategyOutcomeRow[]; total: number }> {
@@ -376,8 +378,14 @@ export async function listStrategyOutcomes(params: {
   }
 
   let deduped = dedupeStrategyOutcomeRows((data ?? []) as StrategyOutcomeRow[])
-  if (params.trainingClassOnly) {
-    deduped = deduped.filter((row) => hasTrainingClass(row.features))
+  if (params.trainingClassOnly || params.trainingClassMin != null) {
+    deduped = deduped.filter((row) =>
+      matchesTrainingClassFilter(row, {
+        trainingClassOnly: params.trainingClassOnly,
+        trainingClassMin: params.trainingClassMin,
+        recompute: params.recomputeLabels,
+      }),
+    )
   }
   deduped.sort((a, b) =>
     (b.created_at ?? '').localeCompare(a.created_at ?? ''),
@@ -409,6 +417,62 @@ export async function loadOutcomesForMlDataset(params?: {
 
   const deduped = dedupeStrategyOutcomeRows((data ?? []) as StrategyOutcomeRow[])
   return enrichOutcomeSymbols(deduped)
+}
+
+export async function backfillOutcomeLabels(params?: {
+  domain?: StrategyDomain
+  strategyId?: string
+  dryRun?: boolean
+}): Promise<{
+  updated: number
+  skipped_manual: number
+  preview: Record<'0' | '1' | '2' | '3' | '4' | 'null', number>
+}> {
+  const rows = await loadOutcomesForMlDataset({
+    domain: params?.domain,
+    strategyId: params?.strategyId,
+  })
+
+  const preview: Record<'0' | '1' | '2' | '3' | '4' | 'null', number> = {
+    '0': 0,
+    '1': 0,
+    '2': 0,
+    '3': 0,
+    '4': 0,
+    null: 0,
+  }
+  let updated = 0
+  let skippedManual = 0
+
+  for (const row of rows) {
+    if (row.features?.ml_manual === true) {
+      skippedManual += 1
+      continue
+    }
+
+    const nextFeatures = applyAutoOutcomeLabels(row.features, row.pnl_pct, row.status)
+    const tc = readTrainingClass(nextFeatures)
+    if (tc === 0 || tc === 1 || tc === 2 || tc === 3 || tc === 4) {
+      preview[String(tc) as '0' | '1' | '2' | '3' | '4'] += 1
+    } else {
+      preview.null += 1
+    }
+
+    if (params?.dryRun) continue
+
+    const { error } = await supabase
+      .from('strategy_outcomes')
+      .update({ features: nextFeatures })
+      .eq('id', row.id)
+
+    if (error) {
+      console.warn('[strategies/db] backfillOutcomeLabels update failed:', error.message)
+      continue
+    }
+    updated += 1
+  }
+
+  return { updated, skipped_manual: skippedManual, preview }
 }
 
 async function enrichOutcomeSymbols(
