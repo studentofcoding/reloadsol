@@ -6,6 +6,7 @@ import {
   listTrackedWallets,
   upsertTrackedWallet,
 } from '@/strategies/social/db'
+import { normalizeSolanaAddress } from '@/utils/solana-address'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,8 +43,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const address = normalizeSolanaAddress(body.address)
+    if (!address) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid Solana wallet address' },
+        { status: 400 },
+      )
+    }
+
     const ok = await upsertTrackedWallet({
-      address: body.address.trim(),
+      address,
       label: body.label.trim(),
       tier: body.tier === 'tier1' ? 'tier1' : 'tier2',
       tags: Array.isArray(body.tags) ? body.tags : [],

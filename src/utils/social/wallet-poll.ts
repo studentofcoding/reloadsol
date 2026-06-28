@@ -8,6 +8,8 @@ import {
   markWalletPolled,
   upsertWalletHolding,
 } from '@/strategies/social/db'
+import { isValidSolanaAddress } from '@/utils/solana-address'
+
 const STABLE_MINTS = new Set([
   SOL_MINT,
   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
@@ -24,6 +26,13 @@ export async function pollTrackedWallets(): Promise<{
   const errors: string[] = []
 
   for (const wallet of wallets) {
+    if (!isValidSolanaAddress(wallet.address)) {
+      const message = 'Invalid Solana address'
+      errors.push(`${wallet.address}: ${message}`)
+      await markWalletPolled(wallet.address, message)
+      continue
+    }
+
     try {
       const { tokens } = await fetchShyftAllTokensDirect(wallet.address)
       const seenAt = new Date().toISOString()

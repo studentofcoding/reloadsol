@@ -18,7 +18,7 @@ if [[ "$count" -gt 1 ]]; then
   exit 1
 fi
 
-key="$(grep -E '^SHYFT_API_KEY=' .env | tail -1 | cut -d= -f2- | tr -d '"'"' | tr -d '[:space:]')"
+key="$(grep -E '^SHYFT_API_KEY=' .env | tail -1 | cut -d= -f2- | tr -d "\"'" | tr -d '[:space:]')"
 if [[ -z "$key" || "$key" == "your-shyft-api-key" ]]; then
   echo "ERROR: SHYFT_API_KEY missing or placeholder — set a real key from https://shyft.to dashboard."
   exit 1

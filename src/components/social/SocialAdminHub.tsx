@@ -28,9 +28,20 @@ type SocialStats = {
   walletCount: number;
 };
 
+type SocialEvent = {
+  id: string;
+  token_address: string;
+  event_type: string;
+  source: string;
+  channel_label: string | null;
+  wallet_label: string | null;
+  occurred_at: string;
+};
+
 export default function SocialAdminHub() {
   const [wallets, setWallets] = useState<TrackedWallet[]>([]);
   const [rollups, setRollups] = useState<SocialRollup[]>([]);
+  const [events, setEvents] = useState<SocialEvent[]>([]);
   const [stats, setStats] = useState<SocialStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -41,12 +52,20 @@ export default function SocialAdminHub() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/social/wallets?rollups_limit=40");
-      const json = await res.json();
+      const [walletsRes, eventsRes] = await Promise.all([
+        fetch("/api/social/wallets?rollups_limit=40"),
+        fetch("/api/social/events?limit=50&hours=24&telegram_only=true"),
+      ]);
+      const json = await walletsRes.json();
       if (!json.success) throw new Error(json.error || "Failed to load");
       setWallets(json.wallets ?? []);
       setRollups(json.rollups ?? []);
       setStats(json.stats ?? null);
+
+      const eventsJson = await eventsRes.json();
+      if (eventsJson.success) {
+        setEvents(eventsJson.events ?? []);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -122,6 +141,46 @@ export default function SocialAdminHub() {
           </div>
         </div>
       ) : null}
+
+      <section>
+        <h2 className="mb-3 text-lg font-medium text-white">Recent channel activity</h2>
+        <p className="mb-3 text-xs text-gray-500">
+          Telegram mentions from social-ingest (excludes tracked-wallet poll). Live logs:{" "}
+          <code className="text-gray-400">docker compose logs -f social-ingest</code>
+        </p>
+        <div className="overflow-x-auto rounded border border-gray-800">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-gray-900 text-gray-400">
+              <tr>
+                <th className="px-3 py-2">Time</th>
+                <th className="px-3 py-2">Source</th>
+                <th className="px-3 py-2">Channel</th>
+                <th className="px-3 py-2">Type</th>
+                <th className="px-3 py-2">Token</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((e) => (
+                <tr key={e.id} className="border-t border-gray-800 text-gray-200">
+                  <td className="px-3 py-2 text-xs text-gray-400">{e.occurred_at}</td>
+                  <td className="px-3 py-2">{e.source}</td>
+                  <td className="px-3 py-2">{e.channel_label ?? "—"}</td>
+                  <td className="px-3 py-2">{e.event_type}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{e.token_address}</td>
+                </tr>
+              ))}
+              {events.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-3 py-4 text-gray-500">
+                    No Telegram events in the last 24h — check social-ingest is running and
+                    channels are active
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       <section>
         <h2 className="mb-3 text-lg font-medium text-white">Tracked wallets</h2>

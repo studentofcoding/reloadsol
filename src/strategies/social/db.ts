@@ -141,6 +141,37 @@ export async function fetchRecentSocialEvents(
   return (data ?? []) as SocialTokenEventRow[]
 }
 
+export async function fetchRecentSocialEventsFeed(options?: {
+  limit?: number
+  hours?: number
+  telegramOnly?: boolean
+}): Promise<SocialTokenEventRow[]> {
+  const limit = options?.limit ?? 50
+  const hours = options?.hours ?? 24
+  const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
+
+  let query = supabase
+    .from('social_token_events')
+    .select('*')
+    .gte('occurred_at', since)
+    .order('occurred_at', { ascending: false })
+    .limit(limit)
+
+  if (options?.telegramOnly) {
+    query = query.neq('source', 'tracked_wallet_poll')
+  }
+
+  const { data, error } = await query
+
+  if (error) {
+    if (isMissingTableError(error.message)) return []
+    console.warn('[social/db] fetchRecentSocialEventsFeed failed:', error.message)
+    return []
+  }
+
+  return (data ?? []) as SocialTokenEventRow[]
+}
+
 export async function refreshSocialRollups(now = new Date()): Promise<{
   tokensUpdated: number
   error?: string

@@ -214,6 +214,23 @@ Keep exactly **one** `CRON_PORT=` line in `.env`. `CRON_SERVICE_URL` must stay `
 - Recreate web: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate web`
 - Verify: `bash scripts/verify-shyft-env.sh` then `curl -X POST "http://127.0.0.1:${WEB_PORT:-80}/api/social/wallet-poll?key=${TRENDING_TRACKER_SECRET}"`
 
+**Social wallet poll: Shyft 429 (rate limit):** wallet poll bursts Shyft REST calls. Set `SHYFT_MAX_REQ_PER_SEC=5` in `.env` (default). Recreate web after change. On 429 the client retries with backoff automatically.
+
+**Social wallet poll: Shyft 400 (validation):** truncated wallet addresses in `tracked_wallets` — re-parse seed file and upsert:
+
+```bash
+npx tsx scripts/seed-tracked-wallets.ts
+# Remove stale truncated rows in Supabase if duplicates remain (addresses missing suffix)
+```
+
+**Telegram channel activity:** UI at `/dev/social` → **Recent channel activity** (from `social_token_events`, Telegram sources only). Live sidecar logs:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f social-ingest
+```
+
+Look for `Ingest OK (200): N events`. After events exist, refresh rollups: `curl -X POST "http://127.0.0.1:${WEB_PORT:-80}/api/social/rollup?key=${TRENDING_TRACKER_SECRET}"`.
+
 **Real trading halted:** check `bot_trading_state` in Supabase; circuit breaker opens after `BOT_TRADING_FAILURE_THRESHOLD` failures.
 
 **Build OOM:** host build uses `NODE_OPTIONS=--max-old-space-size=4096` in `docker-deploy.sh`.

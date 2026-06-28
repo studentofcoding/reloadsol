@@ -7,11 +7,10 @@ import fs from 'fs'
 import path from 'path'
 import { config as loadEnv } from 'dotenv'
 import { createClient } from '@supabase/supabase-js'
+import { isValidSolanaAddress, normalizeSolanaAddress } from '../src/utils/solana-address'
 
 loadEnv({ path: path.resolve(__dirname, '../.env.local') })
 loadEnv({ path: path.resolve(__dirname, '../.env') })
-
-const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
 
 type WalletSeed = {
   address: string
@@ -20,10 +19,45 @@ type WalletSeed = {
   tags: string[]
 }
 
-function normalizeAddress(raw: string): string | null {
-  const compact = raw.replace(/\s+/g, '').trim()
-  if (BASE58.test(compact)) return compact
-  return null
+function isAddressHeader(line: string): boolean {
+  return /^Address:\s*/i.test(line) || /^•?\s*Wallet Address:/i.test(line)
+}
+
+function isRecordStart(line: string): boolean {
+  return (
+    /^Wallet Name:/i.test(line) ||
+    /^• Wallet Name:/i.test(line) ||
+    /^Name:/i.test(line) ||
+    isAddressHeader(line)
+  )
+}
+
+/** Join lines after an address header until a valid Solana pubkey or record boundary. */
+function collectAddressFromLines(
+  lines: string[],
+  startIndex: number,
+  inlineValue?: string,
+): { address: string | null; nextIndex: number } {
+  let compact = (inlineValue ?? '').replace(/\s+/g, '')
+
+  if (compact && isValidSolanaAddress(compact)) {
+    return { address: normalizeSolanaAddress(compact), nextIndex: startIndex }
+  }
+
+  let i = inlineValue ? startIndex : startIndex + 1
+  while (i < lines.length) {
+    const raw = lines[i].trim()
+    if (!raw) break
+    if (isRecordStart(raw)) break
+
+    compact += raw.replace(/\s+/g, '')
+    if (isValidSolanaAddress(compact)) {
+      return { address: normalizeSolanaAddress(compact), nextIndex: i }
+    }
+    i += 1
+  }
+
+  return { address: null, nextIndex: i - 1 }
 }
 
 function parsePotentialWalletFile(filePath: string): WalletSeed[] {
@@ -36,31 +70,30 @@ function parsePotentialWalletFile(filePath: string): WalletSeed[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim()
     let label = ''
-    let addressRaw = ''
+    let address: string | null = null
 
-    const addressMatch = line.match(/^Address:\s*(.+)$/i)
+    const addressMatch = line.match(/^Address:\s*(.*)$/i)
     if (addressMatch) {
-      addressRaw = addressMatch[1]
       const prev = lines[i - 1]?.trim() ?? ''
       const nameMatch = prev.match(/^Name:\s*(.+)$/i)
       label = nameMatch?.[1] ?? prev.replace(/^Name:\s*/i, '')
+      const collected = collectAddressFromLines(lines, i, addressMatch[1])
+      address = collected.address
+      i = collected.nextIndex
     }
 
-    const walletNameMatch = line.match(/^Wallet Name:\s*(.+)$/i)
-    if (walletNameMatch) {
+    const walletNameMatch = line.match(/^•?\s*Wallet Name:\s*(.+)$/i)
+    if (walletNameMatch && !address) {
       label = walletNameMatch[1].trim()
       const next = lines[i + 1]?.trim() ?? ''
-      if (/^Wallet Address:/i.test(next)) {
-        addressRaw = lines[i + 2]?.trim() ?? ''
-        i += 2
-      } else if (/^• Wallet Address:/i.test(next)) {
-        addressRaw = lines[i + 2]?.trim() ?? ''
-        i += 2
+      if (isAddressHeader(next)) {
+        const inline = next.replace(/^•?\s*Wallet Address:\s*/i, '').replace(/^Address:\s*/i, '')
+        const collected = collectAddressFromLines(lines, i + 1, inline || undefined)
+        address = collected.address
+        i = collected.nextIndex
       }
     }
 
-    if (!addressRaw) continue
-    const address = normalizeAddress(addressRaw)
     if (!address) continue
 
     const lower = label.toLowerCase()
