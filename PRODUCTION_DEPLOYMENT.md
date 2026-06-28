@@ -192,7 +192,7 @@ curl -X POST http://127.0.0.1:8080/trigger/sltp
 - `docker port reloadsol-web 3000/tcp` shows `0.0.0.0:80` when using `WEB_PORT=80`.
 - Cloudflare SSL **Flexible** when Docker publishes HTTP on `:80` with no nginx on `:443`.
 
-**Cron: `address already in use` / container stuck `Created`:** merged compose used to bind the same host port twice (`docker-compose.yml` + `docker-compose.prod.yml` both define cron `ports`). Fixed with `ports: - !override` in `docker-compose.prod.yml`. Verify:
+**Cron: `address already in use` / container stuck `Created`:** merged compose used to bind the same host port twice (`docker-compose.yml` + `docker-compose.prod.yml` both define cron `ports`). Fixed with `ports: !override` on the key in `docker-compose.prod.yml`. Verify:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml config | grep -A8 '^  cron:'

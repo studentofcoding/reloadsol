@@ -9,10 +9,8 @@ services:
 
   cron:
     restart: always
-    # Bind cron health port to localhost only on the host (optional hardening)
     # !override replaces base docker-compose.yml ports (avoid double-bind on same host port)
-    ports:
-      - !override
+    ports: !override
       - "127.0.0.1:${CRON_PORT:-8080}:8080"
 
   social-ingest:

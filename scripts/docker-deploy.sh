@@ -254,7 +254,7 @@ verify_compose_port_config() {
   ')"
   if [[ "$cron_port_count" -gt 1 ]]; then
     log "ERROR: merged compose defines ${cron_port_count} cron port mappings (expected 1)."
-    log "Ensure docker-compose.prod.yml uses 'ports: - !override' for cron."
+    log "Ensure docker-compose.prod.yml uses 'ports: !override' for cron."
     exit 1
   fi
 }
