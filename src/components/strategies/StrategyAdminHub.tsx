@@ -172,7 +172,11 @@ type WorkersStatusResponse = {
   cron_reachable: boolean;
   cron_uptime: string | null;
   workers: WorkerRow[];
-  domain_heartbeat: Array<{ domain: string; last_outcome_at: string | null }>;
+  domain_heartbeat: Array<{
+    domain: string;
+    last_outcome_at: string | null;
+    heartbeat_source?: "outcome" | "position_close" | "position_activity" | "worker";
+  }>;
 };
 
 const EXECUTION_MODES: ExecutionMode[] = ["sim_only", "live_only", "ab_parallel"];
@@ -198,6 +202,23 @@ function formatRelativeTime(date: Date | null, nowMs: number): string {
 }
 
 const REPORTS_POLL_INTERVAL_MS = 15_000;
+
+function heartbeatSourceLabel(
+  source?: WorkersStatusResponse["domain_heartbeat"][number]["heartbeat_source"],
+): string {
+  switch (source) {
+    case "outcome":
+      return " (closed outcome)";
+    case "position_close":
+      return " (position close)";
+    case "position_activity":
+      return " (manage activity)";
+    case "worker":
+      return " (worker run)";
+    default:
+      return "";
+  }
+}
 
 function AdminToastBanner({
   toast,
@@ -1728,12 +1749,22 @@ function WorkersTab({
         <h3 className="text-lg font-semibold text-white mb-3">Domain heartbeat</h3>
         <p className="text-gray-500 text-xs mb-3">
           Last closed outcome in Supabase per domain (cross-check vs worker status).
+          DLMM may show manage activity or worker run when no closes exist yet.
         </p>
         <ul className="text-sm text-gray-300 space-y-1">
           {(data?.domain_heartbeat ?? []).map((h) => (
             <li key={h.domain}>
               <span className="text-gray-400">{h.domain}:</span>{" "}
-              {formatAppDateTime(h.last_outcome_at) || "no outcomes yet"}
+              {h.last_outcome_at ? (
+                <>
+                  {formatAppDateTime(h.last_outcome_at)}
+                  <span className="text-gray-500">
+                    {heartbeatSourceLabel(h.heartbeat_source)}
+                  </span>
+                </>
+              ) : (
+                "no activity yet"
+              )}
             </li>
           ))}
         </ul>

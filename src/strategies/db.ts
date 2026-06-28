@@ -1124,36 +1124,138 @@ export async function aggregateStrategyReports(params: {
   return { breakdown, abPairs, topTrades, worstTrades, coverage, mlStats, mcapTrackerStats }
 }
 
-export async function getStrategyDomainHeartbeats(): Promise<
-  Array<{ domain: StrategyDomain; last_outcome_at: string | null }>
-> {
+export type StrategyDomainHeartbeatSource =
+  | 'outcome'
+  | 'position_close'
+  | 'position_activity'
+  | 'worker'
+
+export type StrategyDomainHeartbeat = {
+  domain: StrategyDomain
+  last_outcome_at: string | null
+  heartbeat_source?: StrategyDomainHeartbeatSource
+}
+
+async function getLatestOutcomeHeartbeat(
+  domain: StrategyDomain,
+): Promise<{ last_outcome_at: string | null; heartbeat_source?: StrategyDomainHeartbeatSource }> {
+  const { data, error } = await supabase
+    .from('strategy_outcomes')
+    .select('exit_at, created_at')
+    .eq('domain', domain)
+    .order('exit_at', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return { last_outcome_at: null }
+    }
+    console.warn(`[strategies/db] domain heartbeat failed (${domain}):`, error.message)
+    return { last_outcome_at: null }
+  }
+
+  const row = data as { exit_at?: string | null; created_at?: string | null } | null
+  const lastOutcomeAt = row?.exit_at ?? row?.created_at ?? null
+  if (!lastOutcomeAt) return { last_outcome_at: null }
+  return { last_outcome_at: lastOutcomeAt, heartbeat_source: 'outcome' }
+}
+
+export async function getDlmmPositionHeartbeats(): Promise<{
+  last_closed_at: string | null
+  last_activity_at: string | null
+}> {
+  const [closedRes, activityRes] = await Promise.all([
+    supabase
+      .from('dlmm_positions')
+      .select('closed_at')
+      .eq('status', 'closed')
+      .not('closed_at', 'is', null)
+      .order('closed_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('dlmm_positions')
+      .select('last_decision_at')
+      .not('last_decision_at', 'is', null)
+      .order('last_decision_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ])
+
+  if (closedRes.error && !closedRes.error.message?.includes('does not exist')) {
+    console.warn(
+      '[strategies/db] dlmm closed heartbeat failed:',
+      closedRes.error.message,
+    )
+  }
+  if (activityRes.error && !activityRes.error.message?.includes('does not exist')) {
+    console.warn(
+      '[strategies/db] dlmm activity heartbeat failed:',
+      activityRes.error.message,
+    )
+  }
+
+  const closedRow = closedRes.data as { closed_at?: string | null } | null
+  const activityRow = activityRes.data as { last_decision_at?: string | null } | null
+
+  return {
+    last_closed_at: closedRow?.closed_at ?? null,
+    last_activity_at: activityRow?.last_decision_at ?? null,
+  }
+}
+
+async function getDlmmDomainHeartbeat(params?: {
+  dlmmWorkerLastSuccessAt?: string | null
+}): Promise<StrategyDomainHeartbeat> {
+  const outcome = await getLatestOutcomeHeartbeat('dlmm')
+  if (outcome.last_outcome_at) {
+    return { domain: 'dlmm', ...outcome }
+  }
+
+  const positions = await getDlmmPositionHeartbeats()
+  if (positions.last_closed_at) {
+    return {
+      domain: 'dlmm',
+      last_outcome_at: positions.last_closed_at,
+      heartbeat_source: 'position_close',
+    }
+  }
+
+  if (positions.last_activity_at) {
+    return {
+      domain: 'dlmm',
+      last_outcome_at: positions.last_activity_at,
+      heartbeat_source: 'position_activity',
+    }
+  }
+
+  const workerAt = params?.dlmmWorkerLastSuccessAt?.trim()
+  if (workerAt) {
+    return {
+      domain: 'dlmm',
+      last_outcome_at: workerAt,
+      heartbeat_source: 'worker',
+    }
+  }
+
+  return { domain: 'dlmm', last_outcome_at: null }
+}
+
+export async function getStrategyDomainHeartbeats(params?: {
+  dlmmWorkerLastSuccessAt?: string | null
+}): Promise<StrategyDomainHeartbeat[]> {
   const domains: StrategyDomain[] = ['signals', 'trending_bot', 'dlmm', 'mcap_tracker']
-  const results: Array<{ domain: StrategyDomain; last_outcome_at: string | null }> = []
+  const results: StrategyDomainHeartbeat[] = []
 
   for (const domain of domains) {
-    const { data, error } = await supabase
-      .from('strategy_outcomes')
-      .select('exit_at, created_at')
-      .eq('domain', domain)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (error) {
-      if (error.code === '42P01' || error.message?.includes('does not exist')) {
-        results.push({ domain, last_outcome_at: null })
-        continue
-      }
-      console.warn('[strategies/db] domain heartbeat failed:', error.message)
-      results.push({ domain, last_outcome_at: null })
+    if (domain === 'dlmm') {
+      results.push(await getDlmmDomainHeartbeat(params))
       continue
     }
 
-    const row = data as { exit_at?: string | null; created_at?: string | null } | null
-    results.push({
-      domain,
-      last_outcome_at: row?.exit_at ?? row?.created_at ?? null,
-    })
+    const outcome = await getLatestOutcomeHeartbeat(domain)
+    results.push({ domain, ...outcome })
   }
 
   return results

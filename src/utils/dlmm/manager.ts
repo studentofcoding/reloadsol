@@ -63,6 +63,17 @@ export async function runDlmmManageCycle(): Promise<DlmmManageCycleResult> {
     }
 
     const all = await getPositions();
+    try {
+      const { syncMissingDlmmOutcomesFromPositions } = await import(
+        '@/strategies/outcomes'
+      );
+      await syncMissingDlmmOutcomesFromPositions();
+    } catch (error) {
+      console.warn(
+        '[dlmm/manage] dlmm outcome backfill skipped:',
+        error instanceof Error ? error.message : error,
+      );
+    }
     return {
       success: true,
       decisions,

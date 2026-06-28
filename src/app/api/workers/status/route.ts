@@ -45,7 +45,10 @@ export async function GET() {
     cronReachable = false
   }
 
-  const domainHeartbeat = await getStrategyDomainHeartbeats()
+  const dlmmWorker = workers.find((w) => w.id === 'dlmm_manage')
+  const domainHeartbeat = await getStrategyDomainHeartbeats({
+    dlmmWorkerLastSuccessAt: dlmmWorker?.last_success_at ?? null,
+  })
 
   return NextResponse.json({
     success: true,
