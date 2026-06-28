@@ -63,6 +63,20 @@ export function buildAutoMlNote(
   return parts.join(': ')
 }
 
+/** Apply manual training class override; syncs ml_label and marks ml_manual. */
+export function applyManualTrainingClass(
+  features: Record<string, unknown>,
+  trainingClass: 0 | 1 | 2 | 3 | 4,
+): Record<string, unknown> {
+  const mlLabel = trainingClassToMlLabel(trainingClass)
+  return {
+    ...features,
+    ml_manual: true,
+    training_class: trainingClass,
+    ...(mlLabel ? { ml_label: mlLabel } : {}),
+  }
+}
+
 /** Apply auto ML fields when not manually labeled. */
 export function applyAutoOutcomeLabels(
   features: Record<string, unknown> | null | undefined,

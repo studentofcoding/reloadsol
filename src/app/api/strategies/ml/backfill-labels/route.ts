@@ -16,7 +16,8 @@ function getMlSecret(): string {
 
 export async function POST(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key')
-  if (!isAuthorizedRequest(key, getMlSecret())) {
+  const devBypass = process.env.NODE_ENV === 'development' && !key
+  if (!devBypass && !isAuthorizedRequest(key, getMlSecret())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
 

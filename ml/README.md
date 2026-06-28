@@ -54,9 +54,17 @@ Target: `stats.ready === true` (≥ 200 labeled rows), `stats.train_ready === tr
 Backfill stored labels on existing rows (optional — export recomputes anyway):
 
 ```bash
+# Local script (loads .env / .env.local)
+npm run ml:backfill-labels -- --dry-run
+npm run ml:backfill-labels
+npm run ml:backfill-labels -- --domain=trending_bot --strategy-id=att
+
+# Or via API (app running; key required in production)
 curl -X POST 'http://localhost:3000/api/strategies/ml/backfill-labels?dry_run=true&domain=mcap_tracker&key=YOUR_SECRET'
 curl -X POST 'http://localhost:3000/api/strategies/ml/backfill-labels?domain=mcap_tracker&key=YOUR_SECRET'
 ```
+
+In **Strategy Admin → Reports**, use **Backfill auto labels** on the Outcomes table (preview → confirm). Respects current domain/strategy filters.
 
 ## Phase 1 — Export & train
 

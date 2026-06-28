@@ -1,10 +1,13 @@
 "use client";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useIsClient } from "@/hooks/useIsClient";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import Draggable, { DraggableProps } from "react-draggable";
+import { executeBulkBuy } from "@/utils/jupiter";
+import { trackBuy } from "@/utils/operations-api";
+import type { BulkBuyRequest } from "@/types";
 
 // react-draggable v4.6 types require all props; runtime defaults cover the rest
 const TypedDraggable = Draggable as React.ComponentType<
@@ -84,7 +87,7 @@ function getInitialChartsState(): {
 
 export default function SignalsTab() {
   const queryClient = useQueryClient();
-  const { connected, publicKey, signTransaction } = useWallet();
+  const { connected, publicKey, signAllTransactions } = useWallet();
   const { connection } = useConnection();
   const isClient = useIsClient();
   const walletAddress = connected && publicKey ? publicKey.toString() : null;
@@ -136,6 +139,9 @@ export default function SignalsTab() {
   const [chartModalTokenAddress, setChartModalTokenAddress] = useState<
     string | null
   >(null);
+  const [buyStates, setBuyStates] = useState<
+    Record<string, { loading?: boolean; error?: string; status?: string }>
+  >({});
 
   const { walletBalance: walletBalanceSol } = useWalletBalances({
     connection,
@@ -209,6 +215,104 @@ export default function SignalsTab() {
   };
 
   // Chart popup handlers
+  const handleFastBuy = useCallback(
+    async (tokenAddress: string, tokenSymbol?: string) => {
+      if (!connected || !publicKey || !signAllTransactions) {
+        setBuyStates((prev) => ({
+          ...prev,
+          [tokenAddress]: { loading: false, error: "Connect wallet" },
+        }));
+        return;
+      }
+      if (!connection) {
+        setBuyStates((prev) => ({
+          ...prev,
+          [tokenAddress]: { loading: false, error: "RPC not ready" },
+        }));
+        return;
+      }
+      const solAmount = buyConfig.solAmount;
+      if (!solAmount || solAmount <= 0) {
+        setBuyStates((prev) => ({
+          ...prev,
+          [tokenAddress]: { loading: false, error: "Set buy amount" },
+        }));
+        return;
+      }
+
+      setBuyStates((prev) => ({
+        ...prev,
+        [tokenAddress]: { loading: true, status: "Buying…" },
+      }));
+
+      try {
+        const priorityFee = Math.round(buyConfig.fees * LAMPORTS_PER_SOL);
+        const balanceBeforeOp = await connection.getBalance(publicKey);
+        const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL;
+        const requiredAmount = solAmount + priorityFee / LAMPORTS_PER_SOL;
+        if (balanceBeforeSOL < requiredAmount) {
+          throw new Error(
+            `Need ${requiredAmount.toFixed(4)} SOL, have ${balanceBeforeSOL.toFixed(4)}`,
+          );
+        }
+
+        const request: BulkBuyRequest = {
+          solAmount,
+          tokenMints: [tokenAddress],
+          slippage: 200,
+          priorityFee,
+        };
+
+        const buyResult = await executeBulkBuy(
+          request,
+          publicKey.toString(),
+          connection,
+          signAllTransactions,
+        );
+
+        if (!buyResult.success || buyResult.successfulPurchases.length === 0) {
+          throw new Error(
+            buyResult.failedPurchases[0]?.error || "Buy failed",
+          );
+        }
+
+        setBuyStates((prev) => ({
+          ...prev,
+          [tokenAddress]: { loading: false, status: "Done" },
+        }));
+        setTimeout(() => {
+          setBuyStates((prev) => {
+            const next = { ...prev };
+            delete next[tokenAddress];
+            return next;
+          });
+        }, 2500);
+
+        trackBuy(publicKey.toString(), buyResult.successfulPurchases.length, {
+          failureCount: buyResult.failedPurchases.length,
+          solAmount,
+          tokenMints: [tokenAddress],
+          signatures: buyResult.signatures,
+        }).catch(console.error);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setBuyStates((prev) => ({
+          ...prev,
+          [tokenAddress]: { loading: false, error: msg },
+        }));
+        console.error(`Fast buy failed for ${tokenSymbol ?? tokenAddress}:`, e);
+      }
+    },
+    [
+      buyConfig.fees,
+      buyConfig.solAmount,
+      connected,
+      connection,
+      publicKey,
+      signAllTransactions,
+    ],
+  );
+
   const handleOpenChart = (tokenAddress: string, tokenSymbol?: string) => {
     // Check if chart is already open
     const existingChart = floatingCharts.find(
@@ -633,11 +737,15 @@ export default function SignalsTab() {
                             </span>
                             <button
                               onClick={() =>
-                                setChartModalTokenAddress(chart.tokenAddress)
+                                void handleFastBuy(chart.tokenAddress, chart.tokenSymbol)
                               }
-                              className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 text-white cursor-pointer"
+                              disabled={buyStates[chart.tokenAddress]?.loading}
+                              className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white cursor-pointer"
+                              title={buyStates[chart.tokenAddress]?.error || "Fast buy"}
                             >
-                              Buy
+                              {buyStates[chart.tokenAddress]?.loading
+                                ? "Buying…"
+                                : buyStates[chart.tokenAddress]?.status || "Buy"}
                             </button>
                             <GlobalWatchlistButton
                               tokenAddress={chart.tokenAddress}
@@ -778,12 +886,18 @@ export default function SignalsTab() {
                           </button>
                           <button
                             onClick={() =>
-                              setChartModalTokenAddress(s.token_address)
+                              void handleFastBuy(s.token_address, s.token_symbol)
                             }
-                            className="px-3 py-1 rounded text-xs font-medium bg-green-600 text-white hover:bg-green-700"
-                            title="Open Chart & Buy"
+                            disabled={buyStates[s.token_address]?.loading}
+                            className="px-3 py-1 rounded text-xs font-medium bg-green-600 text-white hover:bg-green-700 disabled:opacity-50"
+                            title={
+                              buyStates[s.token_address]?.error ||
+                              `Fast buy ${buyConfig.solAmount} SOL`
+                            }
                           >
-                            Buy
+                            {buyStates[s.token_address]?.loading
+                              ? "Buying…"
+                              : buyStates[s.token_address]?.status || "Buy"}
                           </button>
                           <DlmmChartActions
                             tokenAddress={s.token_address}
@@ -853,11 +967,15 @@ export default function SignalsTab() {
                     </span>
                     <button
                       onClick={() =>
-                        setChartModalTokenAddress(chart.tokenAddress)
+                        void handleFastBuy(chart.tokenAddress, chart.tokenSymbol)
                       }
-                      className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 text-white cursor-pointer"
+                      disabled={buyStates[chart.tokenAddress]?.loading}
+                      className="px-3 py-1 rounded text-sm font-medium bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white cursor-pointer"
+                      title={buyStates[chart.tokenAddress]?.error || "Fast buy"}
                     >
-                      Buy
+                      {buyStates[chart.tokenAddress]?.loading
+                        ? "Buying…"
+                        : buyStates[chart.tokenAddress]?.status || "Buy"}
                     </button>
                     <GlobalWatchlistButton
                       tokenAddress={chart.tokenAddress}

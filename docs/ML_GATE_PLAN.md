@@ -78,11 +78,14 @@ GET /api/strategies/ml/dataset-stats?domain=mcap_tracker
 
 Returns `by_class`, `pnl_buckets`, `labeled`, `train_ready`, and `ready` (labeled ≥ 200).
 
-Backfill stored labels:
+Backfill stored labels (run once after tier scheme deploy, or when old rows show "—" in Strategy Admin):
 
+```bash
+npm run ml:backfill-labels -- --dry-run
+npm run ml:backfill-labels
 ```
-POST /api/strategies/ml/backfill-labels?dry_run=true&domain=mcap_tracker&key=SECRET
-```
+
+Or `POST /api/strategies/ml/backfill-labels?dry_run=true&domain=mcap_tracker&key=SECRET` — see [`ml/README.md`](../ml/README.md).
 
 ### Training export
 

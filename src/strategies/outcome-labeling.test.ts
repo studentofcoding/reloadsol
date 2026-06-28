@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyAutoOutcomeLabels, computeTrainingClass } from '@/strategies/outcome-labeling'
+import { applyAutoOutcomeLabels, applyManualTrainingClass, computeTrainingClass } from '@/strategies/outcome-labeling'
 
 describe('computeTrainingClass', () => {
   it('returns 0 for losses and weak wins below 20%', () => {
@@ -54,5 +54,22 @@ describe('applyAutoOutcomeLabels', () => {
     )
     expect(result.ml_label).toBe('anomaly')
     expect(result.training_class).toBeUndefined()
+  })
+})
+
+describe('applyManualTrainingClass', () => {
+  it('sets skip label for class 0 and ml_manual', () => {
+    const result = applyManualTrainingClass({ ml_condition: 'new_chart' }, 0)
+    expect(result.training_class).toBe(0)
+    expect(result.ml_label).toBe('skip')
+    expect(result.ml_manual).toBe(true)
+    expect(result.ml_condition).toBe('new_chart')
+  })
+
+  it('sets interesting label for class 2 and ml_manual', () => {
+    const result = applyManualTrainingClass({}, 2)
+    expect(result.training_class).toBe(2)
+    expect(result.ml_label).toBe('interesting')
+    expect(result.ml_manual).toBe(true)
   })
 })

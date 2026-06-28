@@ -181,7 +181,7 @@ export function normalizeTrackingTimeline(record: McapSnapshot): boolean {
   return changed
 }
 
-/** Backfill milestone timestamps when growth already exceeds thresholds. */
+/** Backfill one missing milestone when growth already exceeds thresholds (lowest first). */
 export function reconcileMilestonesFromGrowth(
   record: McapSnapshot,
   nowIso?: string,
@@ -189,15 +189,14 @@ export function reconcileMilestonesFromGrowth(
   const growth = record.mcap_growth_percent ?? 0
   const milestoneIso =
     nowIso ?? record.last_updated_at ?? new Date().toISOString()
-  let changed = false
   for (const threshold of GROWTH_THRESHOLDS) {
     const columnName = getThresholdColumnName(threshold)
     if (growth >= threshold && !record[columnName]) {
       record[columnName] = milestoneIso
-      changed = true
+      return true
     }
   }
-  return changed
+  return false
 }
 
 /** Start a fresh tracking session (new baseline, clear milestones). */
@@ -280,7 +279,6 @@ export function minutesBetween(
 // Helper: update threshold timestamp fields when growth crosses thresholds
 function updateThresholdTimestamps(record: McapSnapshot, growthPercent: number, nowIso: string): boolean {
   normalizeTrackingTimeline(record)
-  reconcileMilestonesFromGrowth(record, nowIso)
   const firstMs = parseIsoMs(record.first_seen_at) ?? 0
   const nowMs = parseIsoMs(nowIso) ?? Date.now()
   if (nowMs < firstMs) {
@@ -290,10 +288,10 @@ function updateThresholdTimestamps(record: McapSnapshot, growthPercent: number, 
   let changed = false
   for (const threshold of GROWTH_THRESHOLDS) {
     const columnName = getThresholdColumnName(threshold)
-    const alreadySet = !!record[columnName]
-    if (growthPercent >= threshold && !alreadySet) {
+    if (growthPercent >= threshold && !record[columnName]) {
       record[columnName] = nowIso
       changed = true
+      break
     }
   }
   return changed
@@ -951,7 +949,6 @@ async function fetchMcapRecordByAddress(tokenAddress: string): Promise<McapSnaps
     if (error || !data) return null
     const record = data as McapSnapshot
     normalizeTrackingTimeline(record)
-    reconcileMilestonesFromGrowth(record)
     return record
   } catch {
     return null
@@ -1270,7 +1267,6 @@ export async function fetchRecentMcapTrackingRows(params: {
 
   return (data as McapSnapshot[]).map((row) => {
     normalizeTrackingTimeline(row)
-    reconcileMilestonesFromGrowth(row)
     return row
   })
 }

@@ -81,15 +81,25 @@ describe('normalizeTrackingTimeline v2', () => {
 })
 
 describe('reconcileMilestonesFromGrowth', () => {
-  it('restores when_reach_80mc after normalize clears stale milestone', () => {
+  it('restores only the lowest milestone per call after normalize clears stale data', () => {
     const record = row()
     normalizeTrackingTimeline(record)
     expect(record.when_reach_80mc).toBeNull()
-    const now = new Date().toISOString()
-    expect(reconcileMilestonesFromGrowth(record, now)).toBe(true)
-    expect(record.when_reach_80mc).toBe(now)
-    expect(record.when_reach_120mc).toBe(now)
-    expect(record.when_reach_200mc).toBe(now)
+    const t1 = new Date().toISOString()
+    expect(reconcileMilestonesFromGrowth(record, t1)).toBe(true)
+    expect(record.when_reach_80mc).toBe(t1)
+    expect(record.when_reach_120mc).toBeNull()
+    expect(record.when_reach_200mc).toBeNull()
+
+    const t2 = new Date(Date.now() + 60_000).toISOString()
+    expect(reconcileMilestonesFromGrowth(record, t2)).toBe(true)
+    expect(record.when_reach_120mc).toBe(t2)
+    expect(record.when_reach_200mc).toBeNull()
+
+    const t3 = new Date(Date.now() + 120_000).toISOString()
+    expect(reconcileMilestonesFromGrowth(record, t3)).toBe(true)
+    expect(record.when_reach_200mc).toBe(t3)
+    expect(reconcileMilestonesFromGrowth(record, t3)).toBe(false)
   })
 })
 

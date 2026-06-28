@@ -17,7 +17,9 @@ import {
   formatEntryMcap,
   readEntryMcap,
   readTokenSymbol,
+  readTrainingClass,
 } from "@/strategies/outcome-features";
+import { computeTrainingClass } from "@/strategies/outcome-labeling";
 
 const LABELS: { id: OutcomeMlLabel; title: string; activeClass: string }[] = [
   { id: "skip", title: "Skip", activeClass: "bg-gray-600 ring-gray-400" },
@@ -33,6 +35,18 @@ const CONDITIONS: {
   { id: "old_chart", title: "Old Chart", activeClass: "bg-purple-700 ring-purple-400" },
   { id: "price_topped", title: "Price Topped", activeClass: "bg-teal-700 ring-teal-400" },
   { id: "new_chart", title: "New Chart", activeClass: "bg-indigo-700 ring-indigo-400" },
+];
+
+const TRAINING_CLASS_OPTIONS: {
+  value: 0 | 1 | 2 | 3 | 4;
+  title: string;
+  short: string;
+}[] = [
+  { value: 0, short: "c0 skip", title: "Skip — loss or win < 20%" },
+  { value: 1, short: "c1", title: "Won 20–50%" },
+  { value: 2, short: "c2", title: "Won 50–100%" },
+  { value: 3, short: "c3", title: "Won 100–300%" },
+  { value: 4, short: "c4", title: "Won ≥ 300%" },
 ];
 
 export const CONDITION_TITLES: Record<OutcomeMlCondition, string> = {
@@ -109,6 +123,9 @@ export default function OutcomeReviewModal({
     readMlCondition(outcome.features),
   );
   const [mlNote, setMlNote] = useState(readMlNote(outcome.features));
+  const [trainingClass, setTrainingClass] = useState<number | null>(
+    readTrainingClass(outcome.features),
+  );
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -151,6 +168,7 @@ export default function OutcomeReviewModal({
   const tokenSymbol = readTokenSymbol(outcome.features);
   const entryMcap = readEntryMcap(outcome.features);
   const gmgnInterval = pickGmgnIntervalForWindow(outcome.entry_at, outcome.exit_at);
+  const autoTrainingClass = computeTrainingClass(outcome.pnl_pct, outcome.status);
 
   const showToast = useCallback(
     (kind: "success" | "error", title: string, detail?: string) => {
@@ -187,8 +205,11 @@ export default function OutcomeReviewModal({
   }, [onClose, onNavigate, hasPrev, hasNext]);
 
   const saveLabel = useCallback(async () => {
-    if (!hasAnyMlData(mlLabel, mlCondition, mlNote)) {
-      const msg = "Select a label, condition, or add a note";
+    if (
+      !hasAnyMlData(mlLabel, mlCondition, mlNote) &&
+      trainingClass == null
+    ) {
+      const msg = "Select a label, condition, training class, or add a note";
       setSaveError(msg);
       showToast("error", "Cannot save outcome", msg);
       return;
@@ -204,6 +225,7 @@ export default function OutcomeReviewModal({
           ml_condition: mlCondition,
           ml_note: mlNote || null,
           ml_manual: true,
+          ...(trainingClass != null ? { training_class: trainingClass } : {}),
         }),
       });
       const json = await res.json();
@@ -214,6 +236,7 @@ export default function OutcomeReviewModal({
       const detailParts = [
         mlLabel ? `label: ${mlLabel}` : null,
         mlCondition ? `condition: ${mlCondition}` : null,
+        trainingClass != null ? `class: c${trainingClass}` : null,
       ].filter(Boolean);
       showToast(
         "success",
@@ -241,6 +264,7 @@ export default function OutcomeReviewModal({
     mlLabel,
     mlCondition,
     mlNote,
+    trainingClass,
     outcome.id,
     outcome.token_address,
     onSaved,
@@ -260,6 +284,7 @@ export default function OutcomeReviewModal({
           ml_label: null,
           ml_condition: null,
           ml_note: null,
+          training_class: null,
         }),
       });
       const json = await res.json();
@@ -267,6 +292,7 @@ export default function OutcomeReviewModal({
       setMlLabel(null);
       setMlCondition(null);
       setMlNote("");
+      setTrainingClass(null);
       onSaved(json.outcome as StrategyOutcomeRow);
       showToast(
         "success",
@@ -442,6 +468,34 @@ export default function OutcomeReviewModal({
                   }`}
                 >
                   {title}
+                </button>
+              ))}
+            </div>
+
+            <h3 className="text-sm font-semibold text-white mb-1">Training class</h3>
+            {autoTrainingClass != null &&
+              trainingClass != null &&
+              autoTrainingClass !== trainingClass && (
+                <p className="text-xs text-gray-500 mb-2">
+                  Auto from PnL: c{autoTrainingClass}
+                </p>
+              )}
+            <div className="flex flex-wrap gap-2 mb-4">
+              {TRAINING_CLASS_OPTIONS.map(({ value, short, title }) => (
+                <button
+                  key={value}
+                  type="button"
+                  title={title}
+                  onClick={() =>
+                    setTrainingClass((prev) => (prev === value ? null : value))
+                  }
+                  className={`px-3 py-1.5 text-xs rounded border border-gray-600 text-white transition ${
+                    trainingClass === value
+                      ? "bg-emerald-800 ring-2 ring-emerald-400"
+                      : "bg-gray-800 hover:bg-gray-700"
+                  }`}
+                >
+                  {short}
                 </button>
               ))}
             </div>

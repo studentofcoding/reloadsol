@@ -40,6 +40,32 @@ import {
 
 const OUTCOMES_PAGE_SIZE = 100;
 
+type BackfillPhase = "idle" | "preview" | "running";
+
+const TRAINING_CLASS_OPTIONS: { value: 0 | 1 | 2 | 3 | 4; label: string; title: string }[] = [
+  { value: 0, label: "c0", title: "Skip — loss or win < 20%" },
+  { value: 1, label: "c1", title: "Won 20–50%" },
+  { value: 2, label: "c2", title: "Won 50–100%" },
+  { value: 3, label: "c3", title: "Won 100–300%" },
+  { value: 4, label: "c4", title: "Won ≥ 300%" },
+];
+
+async function patchOutcomeTrainingClass(
+  id: string,
+  trainingClass: 0 | 1 | 2 | 3 | 4,
+): Promise<StrategyOutcomeRow> {
+  const res = await fetch(`/api/strategies/outcomes/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ training_class: trainingClass, ml_manual: true }),
+  });
+  const json = (await res.json()) as { success?: boolean; error?: string; outcome?: StrategyOutcomeRow };
+  if (!res.ok || !json.success || !json.outcome) {
+    throw new Error(json.error || "Failed to update training class");
+  }
+  return json.outcome;
+}
+
 type TabId = "config" | "reports" | "workers";
 
 type StrategiesResponse = {
@@ -279,6 +305,8 @@ export default function StrategyAdminHub() {
   const [regimeNotes, setRegimeNotes] = useState("");
   const [savingRegime, setSavingRegime] = useState(false);
   const [showEntryFeatureColumns, setShowEntryFeatureColumns] = useState(false);
+  const [backfillPhase, setBackfillPhase] = useState<BackfillPhase>("idle");
+  const [patchingClassId, setPatchingClassId] = useState<string | null>(null);
 
   const dismissToast = useCallback(() => {
     if (toastTimerRef.current) {
@@ -426,6 +454,141 @@ export default function StrategyAdminHub() {
       showToast("error", "Workers refresh failed", formatError(e));
     }
   }, [workersQuery, showToast]);
+
+  const backfillAutoLabels = useCallback(async () => {
+    setBackfillPhase("preview");
+    try {
+      const params = new URLSearchParams({ dry_run: "true" });
+      if (reportDomain) params.set("domain", reportDomain);
+      if (reportStrategyId) params.set("strategyId", reportStrategyId);
+
+      const previewRes = await fetch(
+        `/api/strategies/ml/backfill-labels?${params.toString()}`,
+        { method: "POST" },
+      );
+      const previewJson = (await previewRes.json()) as {
+        success?: boolean;
+        error?: string;
+        preview?: Record<string, number>;
+        skipped_manual?: number;
+      };
+      if (!previewRes.ok || !previewJson.success) {
+        throw new Error(previewJson.error || "Backfill preview failed");
+      }
+
+      const p = previewJson.preview ?? {};
+      const previewDetail = [
+        `c0 ${p["0"] ?? 0}`,
+        `c1 ${p["1"] ?? 0}`,
+        `c2 ${p["2"] ?? 0}`,
+        `c3 ${p["3"] ?? 0}`,
+        `c4 ${p["4"] ?? 0}`,
+        previewJson.skipped_manual
+          ? `skip manual ${previewJson.skipped_manual}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+
+      showToast("success", "Backfill preview", previewDetail);
+
+      const scope =
+        reportDomain || reportStrategyId
+          ? ` (${[reportDomain, reportStrategyId].filter(Boolean).join("/")})`
+          : " (all outcomes)";
+
+      setBackfillPhase("idle");
+      if (
+        !window.confirm(
+          `Backfill auto ML labels${scope}?\n\nPreview: ${previewDetail}\n\nRows with ml_manual stay unchanged.`,
+        )
+      ) {
+        showToast("success", "Backfill cancelled", previewDetail);
+        return;
+      }
+
+      setBackfillPhase("running");
+      params.delete("dry_run");
+      const runRes = await fetch(
+        `/api/strategies/ml/backfill-labels?${params.toString()}`,
+        { method: "POST" },
+      );
+      const runJson = (await runRes.json()) as {
+        success?: boolean;
+        error?: string;
+        updated?: number;
+        skipped_manual?: number;
+      };
+      if (!runRes.ok || !runJson.success) {
+        throw new Error(runJson.error || "Backfill failed");
+      }
+
+      await strategiesQuery.refetch();
+      showToast(
+        "success",
+        `Backfilled ${runJson.updated ?? 0} outcomes`,
+        runJson.skipped_manual
+          ? `${runJson.skipped_manual} manual rows skipped`
+          : undefined,
+      );
+    } catch (e) {
+      showToast("error", "Backfill failed", formatError(e));
+    } finally {
+      setBackfillPhase("idle");
+    }
+  }, [
+    reportDomain,
+    reportStrategyId,
+    showToast,
+    strategiesQuery,
+  ]);
+
+  const strategyAdminQueryKey = [
+    "strategy-admin",
+    reportFrom,
+    reportTo,
+    reportDomain,
+    reportStrategyId,
+    reportSimulated,
+    reportMlLabel,
+    reportMlCondition,
+    reportStatus,
+    reportPnlFilter,
+    reportEntryMcapBand,
+    outcomesOffset,
+  ] as const;
+
+  const updateOutcomeInCache = useCallback(
+    (updated: StrategyOutcomeRow, rowIndex?: number) => {
+      queryClient.setQueryData(strategyAdminQueryKey, (old: typeof strategiesQuery.data) => {
+        if (!old) return old;
+        const idx = rowIndex ?? old.outcomes.findIndex((r) => r.id === updated.id);
+        if (idx < 0) return old;
+        const nextOutcomes = old.outcomes.map((row, i) => (i === idx ? updated : row));
+        return { ...old, outcomes: nextOutcomes };
+      });
+    },
+    [queryClient, strategyAdminQueryKey, strategiesQuery.data],
+  );
+
+  const handleTrainingClassChange = useCallback(
+    async (outcome: OutcomeRow, idx: number, raw: string) => {
+      if (!raw) return;
+      const trainingClass = Number(raw) as 0 | 1 | 2 | 3 | 4;
+      if (trainingClass < 0 || trainingClass > 4) return;
+      setPatchingClassId(outcome.id);
+      try {
+        const updated = await patchOutcomeTrainingClass(outcome.id, trainingClass);
+        updateOutcomeInCache(updated, idx);
+        showToast("success", `Class c${trainingClass} saved`, readTokenSymbol(updated.features) ?? undefined);
+      } catch (e) {
+        showToast("error", "Class update failed", formatError(e));
+      } finally {
+        setPatchingClassId(null);
+      }
+    },
+    [showToast, updateOutcomeInCache],
+  );
 
   const switchTab = (next: TabId) => {
     setTab(next);
@@ -1119,8 +1282,29 @@ export default function StrategyAdminHub() {
             </ul>
           </section>
 
-          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-2">Outcomes (ML feed)</h2>
+          <section className="relative bg-gray-900 border border-gray-700 rounded-lg p-6">
+            {backfillPhase === "running" && (
+              <div className="absolute inset-0 z-10 flex flex-col items-center justify-center rounded-lg bg-gray-950/80">
+                <div className="w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full animate-spin mb-3" />
+                <p className="text-sm text-white">Backfilling ML labels…</p>
+              </div>
+            )}
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+              <h2 className="text-xl font-bold text-white">Outcomes (ML feed)</h2>
+              <button
+                type="button"
+                disabled={backfillPhase !== "idle"}
+                onClick={() => void backfillAutoLabels()}
+                className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white text-xs rounded"
+                title="Recompute skip/interesting and training_class 0–4 on stored outcomes (respects current domain/strategy filters)"
+              >
+                {backfillPhase === "preview"
+                  ? "Loading preview…"
+                  : backfillPhase === "running"
+                    ? "Backfilling…"
+                    : "Backfill auto labels"}
+              </button>
+            </div>
             <p className="text-gray-500 text-xs mb-4">
               Closed trades only — partial TP sells stay open in Algo tester until 100% sold.
               {" "}
@@ -1222,13 +1406,38 @@ export default function StrategyAdminHub() {
                             {o.pnl_pct != null ? `${Number(o.pnl_pct).toFixed(2)}%` : "—"}
                           </td>
                           <td className="p-2">{o.status ?? "—"}</td>
-                          <td className="p-2">
-                            <OutcomeMlBadge features={o.features} />
-                            {readTrainingClass(o.features) != null && (
-                              <span className="text-xs text-gray-500 ml-1">
-                                c{readTrainingClass(o.features)}
-                              </span>
-                            )}
+                          <td className="p-2" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center gap-1 flex-wrap">
+                              <OutcomeMlBadge features={o.features} />
+                              <select
+                                value={
+                                  readTrainingClass(o.features) != null
+                                    ? String(readTrainingClass(o.features))
+                                    : ""
+                                }
+                                disabled={
+                                  backfillPhase === "running" ||
+                                  patchingClassId === o.id
+                                }
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  void handleTrainingClassChange(o, idx, e.target.value);
+                                }}
+                                className="bg-gray-800 border border-gray-600 text-xs text-gray-200 rounded px-1 py-0.5 max-w-[4rem] disabled:opacity-50"
+                                title="Training class (manual override)"
+                              >
+                                <option value="">—</option>
+                                {TRAINING_CLASS_OPTIONS.map((opt) => (
+                                  <option key={opt.value} value={opt.value} title={opt.title}>
+                                    {opt.label}
+                                  </option>
+                                ))}
+                              </select>
+                              {patchingClassId === o.id && (
+                                <span className="inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
+                              )}
+                            </div>
                           </td>
                           <td className="p-2">
                             <OutcomeMlConditionBadge features={o.features} />
@@ -1253,7 +1462,7 @@ export default function StrategyAdminHub() {
                   </button>
                   <button
                     type="button"
-                    disabled={outcomesOffset <= 0}
+                    disabled={outcomesOffset <= 0 || backfillPhase === "running"}
                     onClick={() => {
                       setOutcomesOffset(Math.max(0, outcomesOffset - OUTCOMES_PAGE_SIZE));
                       setSelectedOutcomeIndex(null);
@@ -1264,7 +1473,10 @@ export default function StrategyAdminHub() {
                   </button>
                   <button
                     type="button"
-                    disabled={outcomesOffset + OUTCOMES_PAGE_SIZE >= outcomesTotal}
+                    disabled={
+                      outcomesOffset + OUTCOMES_PAGE_SIZE >= outcomesTotal ||
+                      backfillPhase === "running"
+                    }
                     onClick={() => {
                       setOutcomesOffset(outcomesOffset + OUTCOMES_PAGE_SIZE);
                       setSelectedOutcomeIndex(null);
@@ -1298,29 +1510,7 @@ export default function StrategyAdminHub() {
           onClose={() => setSelectedOutcomeIndex(null)}
           onNotify={(kind, title, detail) => showToast(kind, title, detail)}
           onSaved={(updated) => {
-            queryClient.setQueryData(
-              [
-                "strategy-admin",
-                reportFrom,
-                reportTo,
-                reportDomain,
-                reportStrategyId,
-                reportSimulated,
-                reportMlLabel,
-                reportMlCondition,
-                reportStatus,
-                reportPnlFilter,
-                reportEntryMcapBand,
-                outcomesOffset,
-              ],
-              (old: typeof strategiesQuery.data) => {
-                if (!old) return old;
-                const nextOutcomes = old.outcomes.map((row, i) =>
-                  i === selectedOutcomeIndex ? updated : row,
-                );
-                return { ...old, outcomes: nextOutcomes };
-              },
-            );
+            updateOutcomeInCache(updated, selectedOutcomeIndex ?? undefined);
           }}
           onNavigate={(direction) => {
             if (selectedOutcomeIndex == null) return;

@@ -1,5 +1,5 @@
 import { supabase } from '@/utils/supabase'
-import { fixTrackingTimeline, isInTrackingRange, type McapSnapshot } from '@/utils/mcap-tracker'
+import { normalizeTrackingTimeline, isInTrackingRange, type McapSnapshot } from '@/utils/mcap-tracker'
 import { getRugAddressSet } from '@/utils/rug-list/db'
 import { log } from '@/utils/unified-logger'
 import {
@@ -194,7 +194,7 @@ export async function fetchAndScoreSignals(
   const items = (data ?? []) as McapTrackingRow[]
 
   for (const row of items) {
-    fixTrackingTimeline(row as McapSnapshot, true)
+    normalizeTrackingTimeline(row as McapSnapshot)
   }
 
   let signals: ScoredSignal[] = items.map((row) => rowToScoredSignal(row, strategyConfig))

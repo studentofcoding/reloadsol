@@ -3,6 +3,8 @@ import {
   loadStrategyOutcomeById,
   updateStrategyOutcomeFeatures,
 } from '@/strategies/db'
+import { applyManualTrainingClass } from '@/strategies/outcome-labeling'
+import { isLabeledTrainingClass } from '@/strategies/outcome-features'
 import type { OutcomeMlCondition, OutcomeMlLabel } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
@@ -30,6 +32,7 @@ type PatchBody = {
   ml_condition?: OutcomeMlCondition | null
   ml_note?: string | null
   ml_manual?: boolean
+  training_class?: number | null
 }
 
 export async function PATCH(
@@ -89,6 +92,25 @@ export async function PATCH(
 
     if (body.ml_manual === true) {
       featurePatch.ml_manual = true
+    }
+
+    if ('training_class' in body) {
+      if (body.training_class === null) {
+        featurePatch.training_class = null
+      } else if (isLabeledTrainingClass(body.training_class)) {
+        const merged = applyManualTrainingClass(
+          { ...(existing.features ?? {}), ...featurePatch },
+          body.training_class,
+        )
+        featurePatch.training_class = merged.training_class
+        featurePatch.ml_manual = merged.ml_manual
+        if (merged.ml_label) featurePatch.ml_label = merged.ml_label
+      } else {
+        return NextResponse.json(
+          { success: false, error: 'Invalid training_class (must be 0–4)' },
+          { status: 400 },
+        )
+      }
     }
 
     if (Object.keys(featurePatch).length === 0) {
