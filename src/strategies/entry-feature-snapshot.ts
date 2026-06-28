@@ -196,6 +196,7 @@ export function mergeEntryFeaturesForOutcome(
     volume_5m: buy.volume_5m ?? closeFeatures.volume_5m ?? null,
     entry_mcap: buy.entry_mcap ?? closeFeatures.entry_mcap ?? null,
     entry_mcap_band: buy.entry_mcap_band ?? closeFeatures.entry_mcap_band ?? null,
+    token_symbol: buy.token_symbol ?? closeFeatures.token_symbol ?? null,
     monitor_snapshots: monitors,
   }
 }

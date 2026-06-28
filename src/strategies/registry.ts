@@ -184,7 +184,8 @@ export const SIGNALS_STRATEGIES: Record<string, import('./types').SignalsStrateg
   signals_sell_over_100: {
     id: 'signals_sell_over_100',
     name: 'Sell over 100%',
-    description: 'Favor exit above 100% growth; penalize late surges',
+    description:
+      'Exit at ≥100% mcap growth from tracking baseline; sim PnL uses mcap (not rugged token price)',
     is_active: true,
     execution_mode: 'sim_only',
     config: {

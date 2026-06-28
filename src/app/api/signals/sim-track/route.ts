@@ -13,6 +13,7 @@ import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { getSolPriceUSD } from '@/utils/solana'
+import { computeMcapSimPnlPct } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 
@@ -128,6 +129,8 @@ async function closeSimPosition(params: {
   symbol: string
   entryAt: string | null
   entryFeatures: Record<string, unknown>
+  exitMcap?: number | null
+  exitGrowthPercent?: number | null
 }): Promise<number> {
   const records = await fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET)
   const cycle = computeOpenSimCycle(records, params.mintAddress)
@@ -142,10 +145,24 @@ async function closeSimPosition(params: {
       ? (remaining * sellPriceUsd) / solPrice
       : cycle.totalSolBought
 
-  const pnlPct =
-    cycle.totalSolBought > 0
-      ? ((solReceived - cycle.totalSolBought) / cycle.totalSolBought) * 100
-      : 0
+  const firstMcap =
+    typeof params.entryFeatures.first_mcap === 'number'
+      ? params.entryFeatures.first_mcap
+      : typeof params.entryFeatures.entry_mcap === 'number'
+        ? params.entryFeatures.entry_mcap
+        : null
+  const exitMcap = params.exitMcap ?? null
+
+  // ponytail: signals strategies exit on mcap milestones — price PnL on rugged tokens lied (0% WR)
+  let pnlPct: number
+  if (firstMcap != null && firstMcap > 0 && exitMcap != null && exitMcap > 0) {
+    pnlPct = computeMcapSimPnlPct(firstMcap, exitMcap)
+  } else {
+    pnlPct =
+      cycle.totalSolBought > 0
+        ? ((solReceived - cycle.totalSolBought) / cycle.totalSolBought) * 100
+        : 0
+  }
 
   const record = buildTradingRecord({
     walletAddress: SIGNALS_SIM_WALLET,
@@ -202,7 +219,11 @@ async function closeSimPosition(params: {
     isSimulated: true,
     features: mergeEntryFeaturesForOutcome(buyFeatures, {
       ...params.entryFeatures,
+      token_symbol: params.symbol,
       exit_price_usd: sellPriceUsd,
+      exit_mcap: exitMcap,
+      mcap_growth_at_exit: params.exitGrowthPercent ?? null,
+      pnl_basis: firstMcap != null && exitMcap != null ? 'mcap' : 'price',
       initial_price_usd:
         typeof buyFeatures.initial_price_usd === 'number'
           ? buyFeatures.initial_price_usd
@@ -258,9 +279,11 @@ export async function POST(request: NextRequest) {
           await closeSimPosition({
             strategyId: strategy.id,
             mintAddress: pos.mintAddress,
-            symbol: pos.symbol,
+            symbol: signal?.token_symbol || pos.symbol,
             entryAt: pos.entryAt,
             entryFeatures: pos.entryFeatures,
+            exitMcap: signal?.current_mcap ?? null,
+            exitGrowthPercent: signal?.mcap_growth_percent ?? null,
           })
           closed++
           openMintSet.delete(pos.mintAddress)
@@ -291,16 +314,21 @@ export async function POST(request: NextRequest) {
 
         const social = await getSocialSnapshot(signal.token_address)
 
+        const symbol =
+          signal.token_symbol?.trim() ||
+          signal.token_address.slice(0, 8)
+
         await openSimPosition({
           strategyId: strategy.id,
           mintAddress: signal.token_address,
-          symbol: signal.token_symbol,
+          symbol,
           solAmount: strategy.config.execution.simBuySol,
           priceUsd,
           entryFeatures: {
             score: signal.score,
             decision: signal.decision,
             growth: signal.mcap_growth_percent,
+            first_mcap: signal.first_mcap,
             recency_minutes: signal.trend_age_minutes,
             rationale: signal.rationale,
             social_boost: signal.socialBoost ?? 0,
@@ -309,7 +337,7 @@ export async function POST(request: NextRequest) {
               entryAt: new Date().toISOString(),
               firstSeenAt: signal.first_seen_at,
               entryMcap: signal.current_mcap,
-              tokenSymbol: signal.token_symbol,
+              tokenSymbol: symbol,
               volume5m: liveMetrics.volume_5m,
               monitorSnapshots: liveMetrics.volume_5m != null ? [liveMetrics] : [],
               social,

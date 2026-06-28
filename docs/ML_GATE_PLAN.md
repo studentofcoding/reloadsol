@@ -121,21 +121,35 @@ See [`ml/README.md`](../ml/README.md).
 cd ml && python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# Export (from running app or CSV)
-python export_training_data.py --source api --domain mcap_tracker --output data/training.parquet
+# Export (from running app or CSV) — writes ml/data/v1/training.parquet + dataset_manifest.json
+npm run ml:export
+python export_training_data.py --version v1 --domain mcap_tracker
 
-# Check readiness
-python check_dataset.py data/training.parquet
+# Check readiness + model drift
+npm run ml:check-dataset
 
-# Train → ml/artifacts/v1/
-python train.py --input data/training.parquet --version v1
+# Train → ml/artifacts/v1/ (sets metrics.gate_ready when macro-F1 ≥ 0.65)
+python train.py --input data/v1/training.parquet --version v1
 ```
+
+Operator feedback loop: [`docs/OPERATOR_STATE.md`](../docs/OPERATOR_STATE.md)
 
 Outputs: `model.onnx`, `model.lgb.txt` (fallback), `model.meta.json` (metrics, feature order, `confidence_min`).
 
 ---
 
 ## Phase 2 — Runtime ML scorer (planned)
+
+**Checker/maker decoupling:** The ONNX scorer (checker) receives only raw entry features from `ml-training-features.ts` — never strategy scores, weights, or rationale. Strategy logic (maker) stays in registry + assign; the verifier must remain blind to those to avoid verification rot.
+
+**Drift / verification rot:** Weekly (or after ≥50 new outcomes):
+
+```bash
+npm run ml:export
+npm run ml:check-dataset
+```
+
+Reject live gating when `model.meta.json` → `metrics.gate_ready` is false (macro-F1 &lt; 0.65). See [`docs/OPERATOR_STATE.md`](OPERATOR_STATE.md).
 
 - `src/strategies/entry-ml-scorer.ts` — ONNX via `onnxruntime-node`
 - Strategy config: `ml.enabled`, `ml.mode` (`off` | `shadow` | `enforce`), `ml.confidenceMin`

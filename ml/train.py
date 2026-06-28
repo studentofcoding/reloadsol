@@ -115,6 +115,8 @@ def main() -> None:
     pred = np.argmax(proba, axis=1)
     y_true = y_test.to_numpy()
     macro_f1 = float(f1_score(y_true, pred, average="macro", zero_division=0))
+    min_f1_gate = 0.65
+    gate_ready = macro_f1 >= min_f1_gate and len(test_df) >= 20
     accuracy = float(accuracy_score(y_true, pred))
     report = classification_report(y_true, pred, zero_division=0, output_dict=True)
 
@@ -150,6 +152,8 @@ def main() -> None:
             "macro_f1": macro_f1,
             "accuracy": accuracy,
             "classification_report": report,
+            "gate_ready": gate_ready,
+            "min_macro_f1_gate": min_f1_gate,
         },
         "feature_importance": feature_importance,
         "best_iteration": booster.best_iteration,
@@ -164,6 +168,7 @@ def main() -> None:
 
     print(f"Train rows: {len(train_df)}  Test rows: {len(test_df)}")
     print(f"Macro-F1: {macro_f1:.4f}  Accuracy: {accuracy:.4f}")
+    print(f"Gate ready (macro-F1 ≥ {min_f1_gate}): {gate_ready}")
     print(f"Saved {lgb_path}")
     if onnx_ok:
         print(f"Saved {onnx_path}")

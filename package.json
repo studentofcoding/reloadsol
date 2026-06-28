@@ -15,6 +15,8 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "ml:backfill-labels": "npx tsx scripts/backfill-ml-labels.ts",
+    "ml:export": "cd ml && python export_training_data.py --version v1",
+    "ml:check-dataset": "cd ml && python check_dataset.py data/v1/training.parquet --meta artifacts/v1/model.meta.json",
     "test:watch": "vitest",
     "verify:no-raw-useeffect": "node scripts/verify-no-raw-useeffect.js",
     "logs": "node scripts/tail-logs.js",

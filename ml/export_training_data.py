@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import os
 from pathlib import Path
 
@@ -132,10 +133,13 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("data/training.parquet"),
-        help="Output parquet path",
+        default=None,
+        help="Output parquet path (default: data/{version}/training.parquet)",
     )
     args = parser.parse_args()
+
+    if args.output is None:
+        args.output = Path("data") / args.version / "training.parquet"
 
     if args.source == "csv":
         if not args.csv:
@@ -159,7 +163,17 @@ def main() -> None:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(args.output, index=False)
+    manifest = {
+        "version": args.version,
+        "rows": len(df),
+        "feature_columns": feature_columns,
+        "domain": args.domain,
+        "source": args.source,
+    }
+    manifest_path = args.output.parent / "dataset_manifest.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"Wrote {args.output} ({len(df)} rows, {len(feature_columns)} features)")
+    print(f"Wrote {manifest_path}")
 
 
 if __name__ == "__main__":

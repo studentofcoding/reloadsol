@@ -22,6 +22,12 @@ def main() -> None:
         default=MIN_LABELED_OUTCOMES,
         help="Minimum labeled rows",
     )
+    parser.add_argument(
+        "--meta",
+        type=Path,
+        default=None,
+        help="Optional model.meta.json — warn if macro_f1 below gate or suspiciously perfect",
+    )
     args = parser.parse_args()
 
     if args.input.suffix == ".parquet":
@@ -65,6 +71,19 @@ def main() -> None:
             print(f"Missing columns: {missing}")
         if "entry_at" in df.columns and labeled:
             print(f"Entry range: {summary['entry_at_range']['earliest']} → {summary['entry_at_range']['latest']}")
+
+    if args.meta and args.meta.is_file():
+        meta = json.loads(args.meta.read_text())
+        metrics = meta.get("metrics") or {}
+        macro_f1 = metrics.get("macro_f1")
+        test_rows = meta.get("test_rows")
+        gate = metrics.get("min_macro_f1_gate", 0.65)
+        if macro_f1 is not None:
+            print(f"Model macro-F1: {macro_f1} (gate ≥ {gate})")
+            if macro_f1 < gate:
+                print(f"WARNING: macro-F1 below {gate} — not ready to gate live trades")
+            if macro_f1 >= 0.99 and isinstance(test_rows, int) and test_rows < 100:
+                print("WARNING: near-perfect metrics on small holdout — likely overfit / verification rot")
 
     if not summary["ready"]:
         raise SystemExit(1)

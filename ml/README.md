@@ -71,15 +71,14 @@ In **Strategy Admin → Reports**, use **Backfill auto labels** on the Outcomes 
 ```bash
 export API_BASE_URL=http://localhost:3000
 
-# All domains, recomputed tier labels
-python export_training_data.py --output data/training.parquet
+# Versioned export → ml/data/v1/training.parquet + dataset_manifest.json
+npm run ml:export
 
-# Single domain
-python export_training_data.py --domain mcap_tracker --output data/training.parquet
-
-python check_dataset.py data/training.parquet --min-rows 30
-python train.py --input data/training.parquet --version v1 --min-rows 33
+python check_dataset.py data/v1/training.parquet --meta artifacts/v1/model.meta.json --min-rows 33
+python train.py --input data/v1/training.parquet --version v1 --min-rows 33
 ```
+
+See [`docs/OPERATOR_STATE.md`](../docs/OPERATOR_STATE.md) for the feedback loop and gating checklist.
 
 ### ML v2 (social + telegram features)
 

@@ -44,7 +44,7 @@ function rowToScoredSignal(
 ): ScoredSignal {
   const base = buildSignalScoringItem({
     token_address: row.token_address,
-    token_symbol: row.token_symbol,
+    token_symbol: row.token_symbol?.trim() || row.token_address.slice(0, 8),
     first_mcap: row.first_mcap,
     current_mcap: row.current_mcap,
     mcap_growth_percent: row.mcap_growth_percent,

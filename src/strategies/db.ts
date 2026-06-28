@@ -489,13 +489,17 @@ async function enrichOutcomeSymbols(
       ? 'trending_token_tracker_dev'
       : 'trending_token_tracker'
 
-  const [trackerRes, signalsRes] = await Promise.all([
+  const [trackerRes, signalsRes, mcapRes] = await Promise.all([
     supabase
       .from(trackerTable)
       .select('token_address, token_symbol')
       .in('token_address', addresses),
     supabase
       .from('trading_signals')
+      .select('token_address, token_symbol')
+      .in('token_address', addresses),
+    supabase
+      .from('token_mcap_tracking')
       .select('token_address, token_symbol')
       .in('token_address', addresses),
   ])
@@ -505,6 +509,11 @@ async function enrichOutcomeSymbols(
     if (row.token_symbol) symbolMap.set(row.token_address, row.token_symbol)
   }
   for (const row of signalsRes.data ?? []) {
+    if (row.token_symbol && !symbolMap.has(row.token_address)) {
+      symbolMap.set(row.token_address, row.token_symbol)
+    }
+  }
+  for (const row of mcapRes.data ?? []) {
     if (row.token_symbol && !symbolMap.has(row.token_address)) {
       symbolMap.set(row.token_address, row.token_symbol)
     }
