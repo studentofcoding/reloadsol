@@ -207,6 +207,13 @@ Keep exactly **one** `CRON_PORT=` line in `.env`. `CRON_SERVICE_URL` must stay `
 
 **Cron 401 on SL/TP:** pass `TRENDING_TRACKER_SECRET` as `?key=` (configured in `main.go`).
 
+**Social wallet poll: Shyft API failed (401):** `/dev/social` shows `Unauthorized` on every wallet `Last poll`. The web container sends `SHYFT_API_KEY` to `api.shyft.to/sol/v1/wallet/all_tokens`.
+
+- Set a real key from [shyft.to](https://shyft.to) dashboard (not `your-shyft-api-key`).
+- Keep exactly **one** `SHYFT_API_KEY=` line; align `RPC_URL=https://rpc.shyft.to?api_key=...`.
+- Recreate web: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate web`
+- Verify: `bash scripts/verify-shyft-env.sh` then `curl -X POST "http://127.0.0.1:${WEB_PORT:-80}/api/social/wallet-poll?key=${TRENDING_TRACKER_SECRET}"`
+
 **Real trading halted:** check `bot_trading_state` in Supabase; circuit breaker opens after `BOT_TRADING_FAILURE_THRESHOLD` failures.
 
 **Build OOM:** host build uses `NODE_OPTIONS=--max-old-space-size=4096` in `docker-deploy.sh`.

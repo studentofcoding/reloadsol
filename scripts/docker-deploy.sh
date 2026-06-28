@@ -259,9 +259,25 @@ verify_compose_port_config() {
   fi
 }
 
+verify_shyft_api_key() {
+  local key count
+  count="$(grep -cE '^SHYFT_API_KEY=' .env 2>/dev/null || true)"
+  if [[ "$count" -gt 1 ]]; then
+    log "ERROR: .env has ${count} SHYFT_API_KEY= lines (keep exactly one)."
+    exit 1
+  fi
+  key="$(read_env_var SHYFT_API_KEY 2>/dev/null || true)"
+  if [[ -z "$key" || "$key" == "your-shyft-api-key" ]]; then
+    log "ERROR: SHYFT_API_KEY missing or still placeholder in .env (https://shyft.to dashboard)."
+    log "Wallet poll and /api/shyft/* need a valid key; set RPC_URL with the same api_key."
+    exit 1
+  fi
+}
+
 verify_env_and_compose() {
   check_duplicate_env_port WEB_PORT
   check_duplicate_env_port CRON_PORT
+  verify_shyft_api_key
   verify_compose_port_config
 }
 

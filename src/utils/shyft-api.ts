@@ -17,7 +17,7 @@ export type ShyftApiResponse<T> = {
 };
 
 export function getShyftApiKey(): string | null {
-  const key = process.env.SHYFT_API_KEY;
+  const key = process.env.SHYFT_API_KEY?.trim();
   if (!key || key === "your-shyft-api-key") {
     return null;
   }
