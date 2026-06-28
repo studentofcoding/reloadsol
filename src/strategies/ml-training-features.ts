@@ -1,4 +1,4 @@
-import { computeTrainingClass } from './outcome-labeling'
+import { computeTrainingClass, gateClassFromTrainingClass, potentialTierFromTrainingClass } from './outcome-labeling'
 import { isLabeledTrainingClass, readTrainingClass } from './outcome-features'
 import type { StrategyDomain, StrategyOutcomeRow, TrainingClass } from './types'
 
@@ -63,6 +63,10 @@ export type MlPnlBuckets = {
 
 export type MlClassCounts = Record<'0' | '1' | '2' | '3' | '4', number>
 
+export type MlGateClassCounts = Record<'0' | '1', number>
+
+export type MlPotentialTierCounts = Record<'1' | '2' | '3' | '4', number>
+
 export type MlDatasetStats = {
   min_required: number
   ready: boolean
@@ -71,6 +75,8 @@ export type MlDatasetStats = {
   labeled: number
   unlabeled: number
   by_class: MlClassCounts
+  by_gate_class: MlGateClassCounts
+  potential_tier_counts: MlPotentialTierCounts
   pnl_buckets: MlPnlBuckets
   by_domain: Record<string, MlClassCounts>
   by_strategy: Record<string, MlClassCounts>
@@ -79,6 +85,14 @@ export type MlDatasetStats = {
 
 function emptyClassCounts(): MlClassCounts {
   return { '0': 0, '1': 0, '2': 0, '3': 0, '4': 0 }
+}
+
+function emptyGateClassCounts(): MlGateClassCounts {
+  return { '0': 0, '1': 0 }
+}
+
+function emptyPotentialTierCounts(): MlPotentialTierCounts {
+  return { '1': 0, '2': 0, '3': 0, '4': 0 }
 }
 
 function readFeatureNumber(
@@ -292,6 +306,8 @@ export function computeMlDatasetStats(rows: StrategyOutcomeRow[]): MlDatasetStat
   let labeled = 0
   let unlabeled = 0
   const byClass = emptyClassCounts()
+  const byGateClass = emptyGateClassCounts()
+  const potentialTierCounts = emptyPotentialTierCounts()
   const pnlBuckets: MlPnlBuckets = {
     negative: 0,
     zero_to_20: 0,
@@ -318,6 +334,14 @@ export function computeMlDatasetStats(rows: StrategyOutcomeRow[]): MlDatasetStat
     if (isLabeledTrainingClass(tc)) {
       labeled += 1
       byClass[String(tc) as keyof MlClassCounts] += 1
+      const gate = gateClassFromTrainingClass(tc)
+      if (gate != null) {
+        byGateClass[String(gate) as keyof MlGateClassCounts] += 1
+      }
+      const tier = potentialTierFromTrainingClass(tc)
+      if (tier != null) {
+        potentialTierCounts[String(tier) as keyof MlPotentialTierCounts] += 1
+      }
       bumpClassCounts(byDomain, row.domain, tc)
       bumpClassCounts(byStrategy, row.strategy_id, tc)
     } else {
@@ -338,6 +362,8 @@ export function computeMlDatasetStats(rows: StrategyOutcomeRow[]): MlDatasetStat
     labeled,
     unlabeled,
     by_class: byClass,
+    by_gate_class: byGateClass,
+    potential_tier_counts: potentialTierCounts,
     pnl_buckets: pnlBuckets,
     by_domain: byDomain,
     by_strategy: byStrategy,

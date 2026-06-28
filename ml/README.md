@@ -1,6 +1,9 @@
 # ML training pipeline (Layer 2)
 
-Train a LightGBM **multiclass** classifier (classes 0–4) on closed `strategy_outcomes`.
+Two-stage entry models on closed `strategy_outcomes`:
+
+- **Stage A (gate):** binary `gate_class` — skip (0) vs allow (1)
+- **Stage B (potential):** tiers 1–4 on winners only (advisory)
 
 Full plan: [docs/ML_GATE_PLAN.md](../docs/ML_GATE_PLAN.md)
 
@@ -21,93 +24,79 @@ brew install libomp
 
 Use **Python 3.10–3.12** (not 3.14 — SciPy/LightGBM stacks conflict with `numpy<2` on 3.14).
 
-**NumPy 2.x:** LightGBM/matplotlib in many envs still require NumPy 1.x. This repo pins `numpy<2` in `requirements.txt`. Use a fresh venv or conda env on 3.10–3.12:
-
-```bash
-python3.11 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python -c "import numpy; import lightgbm; print(numpy.__version__, 'ok')"
-```
-
-If you already installed NumPy 2 in an existing env:
-
-```bash
-pip install 'numpy>=1.26.0,<2.0.0' --force-reinstall
-pip install -r requirements.txt
-```
-
 ## Docker deploy
 
-ML runs on the **host** (or a separate CI job), not in web/cron containers. Changes under `ml/` do **not** trigger Docker rebuild (`docker-scope.sh` skips them). Use `npm run docker:deploy:web` when `src/` or app deps change.
+ML runs on the **host** (or a separate CI job), not in web/cron containers. Node shadow scoring uses `onnxruntime-node` in the **web** container — redeploy web after scorer changes.
 
 ## Phase 0 — Check dataset (app running)
-
-With the Next app up (`npm run dev`):
 
 ```bash
 curl -s 'http://localhost:3000/api/strategies/ml/dataset-stats?domain=mcap_tracker' | jq
 ```
 
-Target: `stats.ready === true` (≥ 200 labeled rows), `stats.train_ready === true` (balanced tiers).
+Response includes `by_gate_class` and `potential_tier_counts`. Target: ≥ 200 labeled rows for gate training.
 
-Backfill stored labels on existing rows (optional — export recomputes anyway):
-
-```bash
-# Local script (loads .env / .env.local)
-npm run ml:backfill-labels -- --dry-run
-npm run ml:backfill-labels
-npm run ml:backfill-labels -- --domain=trending_bot --strategy-id=att
-
-# Or via API (app running; key required in production)
-curl -X POST 'http://localhost:3000/api/strategies/ml/backfill-labels?dry_run=true&domain=mcap_tracker&key=YOUR_SECRET'
-curl -X POST 'http://localhost:3000/api/strategies/ml/backfill-labels?domain=mcap_tracker&key=YOUR_SECRET'
-```
-
-In **Strategy Admin → Reports**, use **Backfill auto labels** on the Outcomes table (preview → confirm). Respects current domain/strategy filters.
-
-## Phase 1 — Export & train
+## Phase 1 — Export & train (v2 two-stage)
 
 ```bash
 export API_BASE_URL=http://localhost:3000
 
-# Versioned export → ml/data/v1/training.parquet + dataset_manifest.json
+# → ml/data/v2/training.parquet + dataset_manifest.json (gate_class, potential_tier columns)
 npm run ml:export
 
-python check_dataset.py data/v1/training.parquet --meta artifacts/v1/model.meta.json --min-rows 33
-python train.py --input data/v1/training.parquet --version v1 --min-rows 33
+npm run ml:check-dataset
+npm run ml:train-gate
+npm run ml:train-potential   # needs ≥30 gate=1 rows, ≥2 tiers
+npm run ml:check-potential
 ```
 
-See [`docs/OPERATOR_STATE.md`](../docs/OPERATOR_STATE.md) for the feedback loop and gating checklist.
-
-### ML v2 (social + telegram features)
-
-After sim outcomes include social fields from entry snapshots:
+Manual equivalents:
 
 ```bash
-python export_training_data.py --version v2 --output data/training_v2.parquet
-python train.py --input data/training_v2.parquet --version v2 --min-rows 200
+cd ml
+python train.py --stage gate --input data/v2/training.parquet --version v2-gate
+python train.py --stage potential --input data/v2/training.parquet --version v2-potential
+python train.py --stage multiclass --input data/v2/training.parquet --version v1  # legacy
 ```
 
-Artifacts land in `ml/artifacts/v2/` with five extra features: mention counts, unique channels, minutes since first mention, smart-wallet buy count, and `has_smart_wallet_buy`.
+## Labels
 
-## v1 artifacts
+| Column | Meaning |
+|--------|---------|
+| `training_class` | Legacy tiers 0–4 (UI / backfill) |
+| `gate_class` | **0** = class 0; **1** = classes 1–4 |
+| `potential_tier` | **1–4** when gate=1; null otherwise |
 
-| File | Purpose |
-|------|---------|
-| `model.onnx` | Node inference (Phase 2) |
-| `model.lgb.txt` | Native LightGBM fallback |
-| `model.meta.json` | Feature order, macro-F1, class counts |
-
-## Tier labels (`training_class`)
+Tier rules (`training_class` / derived columns):
 
 | Class | Condition |
 |-------|-----------|
-| **0** | Lost, negative PnL, or won with PnL < 20% |
-| **1** | Won, 20% ≤ PnL < 50% |
-| **2** | 50% ≤ PnL < 100% |
-| **3** | 100% ≤ PnL < 300% |
+| **0** | Loss, negative PnL, or win &lt; 20% |
+| **1** | 20% ≤ PnL &lt; 50% |
+| **2** | 50% ≤ PnL &lt; 100% |
+| **3** | 100% ≤ PnL &lt; 300% |
 | **4** | PnL ≥ 300% |
+
+## Artifacts
+
+| Path | Purpose |
+|------|---------|
+| `artifacts/v2-gate/model.onnx` | Binary gate — shadow + future enforce |
+| `artifacts/v2-potential/model.onnx` | Upside tier — advisory |
+| `*/model.meta.json` | `metrics.gate_ready`, feature order |
+
+Gate ready: macro-F1 ≥ **0.65** (200+ rows). Potential ready: macro-F1 ≥ **0.55** (30+ winners).
+
+## Shadow runtime (Node)
+
+After training, sim buys on mcap tracker persist shadow scores on `entry_features`:
+
+- `ml_gate_p_bad`, `ml_gate_predicted`
+- `ml_potential_tier`, `ml_potential_moon_score`
+
+Env: `ML_GATE_ARTIFACT_DIR`, `ML_POTENTIAL_ARTIFACT_DIR`, `ML_GATE_MODE=shadow` (default).
+
+See [`docs/OPERATOR_STATE.md`](../docs/OPERATOR_STATE.md).
 
 ## Feature spec
 
@@ -119,4 +108,4 @@ Mirrors `src/strategies/ml-training-features.ts`:
 
 ## Retrain
 
-Re-export after new sim outcomes close, bump version (`--version v2`), compare `model.meta.json` metrics before deploying.
+Re-export after new sim closes. Do not change entry/exit rules mid-collection. Compare both `v2-gate` and `v2-potential` meta before enforce mode.

@@ -63,6 +63,41 @@ def compute_training_class(
     return 4
 
 
+def compute_gate_class(
+    pnl_pct: float | None,
+    status: str | None,
+) -> int | None:
+    training_class = compute_training_class(pnl_pct, status)
+    if training_class is None:
+        return None
+    return 0 if training_class == 0 else 1
+
+
+def compute_potential_tier(
+    pnl_pct: float | None,
+    status: str | None,
+) -> int | None:
+    training_class = compute_training_class(pnl_pct, status)
+    if training_class is None or training_class == 0:
+        return None
+    return training_class
+
+
+def gate_class_from_training_class(training_class: int | None) -> int | None:
+    if training_class is None:
+        return None
+    return 0 if training_class == 0 else 1
+
+
+def potential_tier_from_training_class(training_class: int | None) -> int | None:
+    if training_class is None or training_class == 0:
+        return None
+    return training_class
+
+
+MIN_POTENTIAL_OUTCOMES = 30
+
+
 def _read_number(row: dict[str, Any], key: str) -> float | None:
     value = row.get(key)
     if value is None or value == "":

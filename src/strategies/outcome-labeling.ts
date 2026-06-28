@@ -2,6 +2,9 @@ import type { OutcomeMlCondition, OutcomeMlLabel, TrainingClass } from './types'
 
 export type { TrainingClass }
 
+export type GateClass = 0 | 1
+export type PotentialTier = 1 | 2 | 3 | 4
+
 export function computeTrainingClass(
   pnlPct: number | null | undefined,
   status: string | null | undefined,
@@ -15,6 +18,40 @@ export function computeTrainingClass(
   if (pnlPct < 100) return 2
   if (pnlPct < 300) return 3
   return 4
+}
+
+/** Stage A binary: 0 = skip tier (loss or win < 20%), 1 = allow tier (win >= 20%). */
+export function computeGateClass(
+  pnlPct: number | null | undefined,
+  status: string | null | undefined,
+): GateClass | null {
+  const trainingClass = computeTrainingClass(pnlPct, status)
+  if (trainingClass == null) return null
+  return trainingClass === 0 ? 0 : 1
+}
+
+/** Stage B potential tier (1–4); null when gate class is 0. */
+export function computePotentialTier(
+  pnlPct: number | null | undefined,
+  status: string | null | undefined,
+): PotentialTier | null {
+  const trainingClass = computeTrainingClass(pnlPct, status)
+  if (trainingClass == null || trainingClass === 0) return null
+  return trainingClass as PotentialTier
+}
+
+export function gateClassFromTrainingClass(
+  trainingClass: TrainingClass,
+): GateClass | null {
+  if (trainingClass == null) return null
+  return trainingClass === 0 ? 0 : 1
+}
+
+export function potentialTierFromTrainingClass(
+  trainingClass: TrainingClass,
+): PotentialTier | null {
+  if (trainingClass == null || trainingClass === 0) return null
+  return trainingClass as PotentialTier
 }
 
 export function trainingClassToMlLabel(

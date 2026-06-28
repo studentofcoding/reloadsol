@@ -15,6 +15,8 @@ import requests
 from features import (
     FEATURE_COLUMNS,
     FEATURE_COLUMNS_V2,
+    gate_class_from_training_class,
+    potential_tier_from_training_class,
     read_training_class,
     row_to_feature_vector,
     row_to_feature_vector_v2,
@@ -76,6 +78,8 @@ def build_training_frame(raw: pd.DataFrame, recompute: bool = True, version: str
         if features is None:
             skipped_incomplete += 1
             continue
+        gate_class = gate_class_from_training_class(label)
+        potential_tier = potential_tier_from_training_class(label)
         records.append(
             {
                 "id": row_dict.get("id"),
@@ -83,6 +87,8 @@ def build_training_frame(raw: pd.DataFrame, recompute: bool = True, version: str
                 "domain": row_dict.get("domain"),
                 "entry_at": row_dict.get("entry_at"),
                 "training_class": label,
+                "gate_class": gate_class,
+                "potential_tier": potential_tier,
                 **features,
             }
         )
@@ -163,12 +169,24 @@ def main() -> None:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(args.output, index=False)
+    gate_counts = (
+        df["gate_class"].value_counts(dropna=False).astype(int).to_dict()
+        if "gate_class" in df.columns
+        else {}
+    )
+    tier_counts = (
+        df["potential_tier"].dropna().value_counts().astype(int).to_dict()
+        if "potential_tier" in df.columns
+        else {}
+    )
     manifest = {
         "version": args.version,
         "rows": len(df),
         "feature_columns": feature_columns,
         "domain": args.domain,
         "source": args.source,
+        "gate_class_counts": {str(k): int(v) for k, v in gate_counts.items()},
+        "potential_tier_counts": {str(k): int(v) for k, v in tier_counts.items()},
     }
     manifest_path = args.output.parent / "dataset_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")

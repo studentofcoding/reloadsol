@@ -7,6 +7,8 @@ import {
   readMonitorSnapshotsFromFeatures,
 } from '@/strategies/entry-feature-snapshot'
 import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
+import { scoreEntryFeaturesShadow } from '@/strategies/entry-ml-scorer'
+import { mergeShadowScoresIntoEntryFeatures } from '@/strategies/ml-shadow-log'
 import { checkSocialGate } from '@/strategies/social-snapshot-loader'
 import type { SocialSnapshot } from '@/strategies/social/types'
 import {
@@ -113,6 +115,9 @@ async function openSimPosition(params: {
     )),
   }
 
+  const shadow = await scoreEntryFeaturesShadow(entryFeatures)
+  const scoredEntryFeatures = mergeShadowScoresIntoEntryFeatures(entryFeatures, shadow)
+
   const record = buildTradingRecord({
     walletAddress: MCAP_TRACKER_SIM_WALLET,
     operationType: 'buy',
@@ -141,7 +146,7 @@ async function openSimPosition(params: {
     trading_simulation: {
       strategy_id: params.strategyId,
       entry_at: params.entryAt,
-      entry_features: entryFeatures,
+      entry_features: scoredEntryFeatures,
     },
   })
 

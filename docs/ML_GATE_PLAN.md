@@ -42,10 +42,10 @@ flowchart TD
 | Phase | Scope | Status |
 |-------|-------|--------|
 | **0** | Dataset readiness API, tier labels 0–4, backfill, export | **Done** |
-| **1** | Python multiclass train pipeline (`ml/train.py`), ONNX artifact | **Done** — see `ml/README.md` |
-| **2** | ONNX runtime scorer in Node (`entry-ml-scorer.ts`) | Planned |
+| **1** | Two-stage train (`gate` + `potential`), export v2 columns | **Done** — see `ml/README.md` |
+| **2** | ONNX runtime scorer in Node (`entry-ml-scorer.ts`) | **Done** (shadow) |
 | **3** | LLM gate (`entry-llm-gate.ts`) + regime prompt | Planned |
-| **4** | Sim-track shadow/enforce modes | Planned |
+| **4** | Sim-track enforce mode | Shadow **done**; enforce planned |
 | **5** | Reports + promotion checklist | Planned |
 
 ---
@@ -113,47 +113,61 @@ Shared spec: `src/strategies/ml-training-features.ts` and `ml/features.py`.
 
 ---
 
-## Phase 1 — Train LightGBM
+## Phase 1 — Train LightGBM (two-stage v2)
 
 See [`ml/README.md`](../ml/README.md).
 
+**Stage A — Gate (binary):** `gate_class` 0 = skip tier (loss or win &lt; 20%), 1 = allow (win ≥ 20%).
+
+**Stage B — Potential (tiers 1–4):** trained on `gate_class === 1` rows only; predicts upside bucket.
+
+Legacy 5-class `training_class` export/train still supported via `--stage multiclass`.
+
 ```bash
-cd ml && python -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-
-# Export (from running app or CSV) — writes ml/data/v1/training.parquet + dataset_manifest.json
 npm run ml:export
-python export_training_data.py --version v1 --domain mcap_tracker
-
-# Check readiness + model drift
+npm run ml:train-gate
+npm run ml:train-potential
 npm run ml:check-dataset
-
-# Train → ml/artifacts/v1/ (sets metrics.gate_ready when macro-F1 ≥ 0.65)
-python train.py --input data/v1/training.parquet --version v1
 ```
 
-Operator feedback loop: [`docs/OPERATOR_STATE.md`](../docs/OPERATOR_STATE.md)
+Artifacts:
 
-Outputs: `model.onnx`, `model.lgb.txt` (fallback), `model.meta.json` (metrics, feature order, `confidence_min`).
+- `ml/artifacts/v2-gate/` — binary gate (enforce candidate)
+- `ml/artifacts/v2-potential/` — tier model (advisory only for now)
 
 ---
 
-## Phase 2 — Runtime ML scorer (planned)
+## Phase 2 — Runtime ML scorer (shadow live)
+
+**Status:** Shadow scoring on `mcap-tracking/sim-track` opens — trades are **never** blocked yet.
 
 **Checker/maker decoupling:** The ONNX scorer (checker) receives only raw entry features from `ml-training-features.ts` — never strategy scores, weights, or rationale. Strategy logic (maker) stays in registry + assign; the verifier must remain blind to those to avoid verification rot.
+
+**Implementation:**
+
+- [`src/strategies/entry-ml-scorer.ts`](../src/strategies/entry-ml-scorer.ts) — dual ONNX (gate + potential) via `onnxruntime-node`
+- [`src/strategies/ml-shadow-log.ts`](../src/strategies/ml-shadow-log.ts) — persists shadow fields on `entry_features`
+- Env: `ML_GATE_ARTIFACT_DIR`, `ML_POTENTIAL_ARTIFACT_DIR`, `ML_GATE_MODE=shadow|enforce|off` (enforce not wired yet)
+
+**Shadow fields on buy `entry_features`:**
+
+| Field | Meaning |
+|-------|---------|
+| `ml_gate_p_bad` | P(gate class 0) |
+| `ml_gate_predicted` | 0 or 1 |
+| `ml_potential_tier` | Predicted tier 1–4 (advisory) |
+| `ml_potential_moon_score` | P(tier≥3) |
+| `ml_shadow_at` | ISO timestamp |
 
 **Drift / verification rot:** Weekly (or after ≥50 new outcomes):
 
 ```bash
 npm run ml:export
 npm run ml:check-dataset
+npm run ml:check-potential
 ```
 
-Reject live gating when `model.meta.json` → `metrics.gate_ready` is false (macro-F1 &lt; 0.65). See [`docs/OPERATOR_STATE.md`](OPERATOR_STATE.md).
-
-- `src/strategies/entry-ml-scorer.ts` — ONNX via `onnxruntime-node`
-- Strategy config: `ml.enabled`, `ml.mode` (`off` | `shadow` | `enforce`), `ml.confidenceMin`
-- Persist `ml_confidence` on every candidate in shadow mode
+Reject live gating when `model.meta.json` → `metrics.gate_ready` is false (gate macro-F1 &lt; 0.65). v1 multiclass is deprecated for gating. See [`docs/OPERATOR_STATE.md`](OPERATOR_STATE.md).
 
 ---
 
@@ -166,16 +180,15 @@ Reject live gating when `model.meta.json` → `metrics.gate_ready` is false (mac
 
 ---
 
-## Phase 4 — Paper trading integration (planned)
+## Phase 4 — Paper trading integration
 
-Hook in `mcap-tracking/sim-track` **after** `shouldOpenMcapSim()`, **before** `openSimPosition()`:
+Shadow hook is live in `mcap-tracking/sim-track` inside `openSimPosition` (scores every open, never skips).
 
-1. `buildEntryFeatureSnapshot()`
-2. `scoreEntryFeatures()`
-3. `evaluateEntryGate()`
-4. Skip with `ml_low_confidence` / `llm_reject` when `enforce`
+**Enforce rollout (later):**
 
-Rollout: **shadow** (1 week) → counterfactual analysis → **enforce** with conservative threshold.
+1. `ML_GATE_MODE=enforce` — skip when `ml_gate_p_bad` &gt; threshold
+2. Counterfactual analysis on shadow logs
+3. Potential model remains advisory until tier coverage is strong
 
 ---
 
@@ -198,7 +211,10 @@ Live capital: same gate on trending track **only after** mcap_tracker paper prov
 |------|---------|
 | `docs/ML_GATE_PLAN.md` | This document |
 | `ml/README.md` | Train/export quick start |
-| `ml/train.py` | LightGBM + ONNX export |
+| `ml/train.py` | LightGBM + ONNX (`--stage gate|potential|multiclass`) |
+| `src/strategies/outcome-labeling.ts` | `computeGateClass`, `computePotentialTier` |
+| `src/strategies/entry-ml-scorer.ts` | ONNX shadow scorer (gate + potential) |
+| `src/strategies/ml-shadow-log.ts` | Merge shadow fields into `entry_features` |
 | `ml/export_training_data.py` | Pull training parquet |
 | `ml/check_dataset.py` | Local readiness check |
 | `ml/features.py` | Feature engineering (mirrors TS) |

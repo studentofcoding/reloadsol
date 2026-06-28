@@ -31,9 +31,12 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 ## Data hygiene
 
 - Run `npm run ml:backfill-labels` after tier label changes.
-- Export versioned data: `npm run ml:export` → `ml/data/v1/training.parquet` + `dataset_manifest.json`.
-- Train: `cd ml && python train.py --input data/v1/training.parquet --version v1`.
-- Weekly drift check: `npm run ml:check-dataset` (verification rot).
+- Export versioned data: `npm run ml:export` → `ml/data/v2/training.parquet` + `dataset_manifest.json`.
+- Train gate: `npm run ml:train-gate` → `ml/artifacts/v2-gate/`
+- Train potential (advisory): `npm run ml:train-potential` → `ml/artifacts/v2-potential/`
+- Check: `npm run ml:check-dataset` / `npm run ml:check-potential`
+- Shadow scoring runs on mcap sim opens (`entry_features.ml_gate_*`); **enforce not enabled**
+- Do not gate live on v1 multiclass (overfit); use v2-gate `gate_ready` only
 
 ## Risk / kill switch
 
@@ -45,4 +48,5 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 | Date | Change |
 |------|--------|
+| 2026-06-28 | Two-stage ML: v2-gate binary + v2-potential tiers; shadow ONNX on mcap sim-track |
 | 2026-06-28 | Fixed signals sim PnL (mcap vs price); symbol backfill from `token_mcap_tracking`; versioned ML export + gate_ready in train meta |

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { applyAutoOutcomeLabels, applyManualTrainingClass, computeTrainingClass } from '@/strategies/outcome-labeling'
+import {
+  applyAutoOutcomeLabels,
+  applyManualTrainingClass,
+  computeGateClass,
+  computePotentialTier,
+  computeTrainingClass,
+  gateClassFromTrainingClass,
+  potentialTierFromTrainingClass,
+} from '@/strategies/outcome-labeling'
 
 describe('computeTrainingClass', () => {
   it('returns 0 for losses and weak wins below 20%', () => {
@@ -24,6 +32,39 @@ describe('computeTrainingClass', () => {
 
   it('returns null when pnl missing', () => {
     expect(computeTrainingClass(null, 'won')).toBe(null)
+  })
+})
+
+describe('computeGateClass', () => {
+  it('maps skip tier to 0 and wins >= 20% to 1', () => {
+    expect(computeGateClass(-10, 'lost')).toBe(0)
+    expect(computeGateClass(15, 'won')).toBe(0)
+    expect(computeGateClass(20, 'won')).toBe(1)
+    expect(computeGateClass(300, 'won')).toBe(1)
+  })
+
+  it('derives from training class helpers', () => {
+    expect(gateClassFromTrainingClass(0)).toBe(0)
+    expect(gateClassFromTrainingClass(3)).toBe(1)
+  })
+})
+
+describe('computePotentialTier', () => {
+  it('returns null for gate 0 rows', () => {
+    expect(computePotentialTier(-5, 'lost')).toBe(null)
+    expect(computePotentialTier(10, 'won')).toBe(null)
+  })
+
+  it('returns tier 1–4 for winners >= 20%', () => {
+    expect(computePotentialTier(35, 'won')).toBe(1)
+    expect(computePotentialTier(80, 'won')).toBe(2)
+    expect(computePotentialTier(150, 'won')).toBe(3)
+    expect(computePotentialTier(400, 'won')).toBe(4)
+  })
+
+  it('derives from training class helpers', () => {
+    expect(potentialTierFromTrainingClass(0)).toBe(null)
+    expect(potentialTierFromTrainingClass(2)).toBe(2)
   })
 })
 
