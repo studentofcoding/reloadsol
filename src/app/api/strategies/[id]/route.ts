@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { TRENDING_BOT_STRATEGIES, SIGNALS_STRATEGIES, DLMM_STRATEGY_DEFAULTS } from '@/strategies/registry'
+import { TRENDING_BOT_STRATEGIES, SIGNALS_STRATEGIES, DLMM_STRATEGY_DEFAULTS, MCAP_TRACKER_STRATEGIES } from '@/strategies/registry'
 import { mergeStrategyOverride } from '@/strategies/merge'
 import { mergeSignalsStrategy } from '@/strategies/merge-signals'
+import { mergeMcapTrackerStrategy } from '@/strategies/merge-mcap-tracker'
 import { mergeDlmmStrategy, dlmmConfigToAgentPatch } from '@/strategies/merge-dlmm'
 import {
   invalidateStrategyCache,
 } from '@/strategies/load-strategy'
 import { invalidateSignalsCache } from '@/strategies/load-signals'
+import { invalidateMcapTrackerCache } from '@/strategies/load-mcap-tracker'
 import { invalidateDlmmStrategyCache } from '@/strategies/load-dlmm'
 import { upsertStrategyDefinition, loadStrategyDefinitionById } from '@/strategies/db'
 import { updateAgentConfig } from '@/utils/dlmm/db'
@@ -14,6 +16,7 @@ import type {
   ExecutionMode,
   TrendingBotStrategyOverride,
   SignalsStrategyOverride,
+  McapTrackerStrategyOverride,
   DlmmStrategyOverride,
 } from '@/strategies/types'
 
@@ -34,6 +37,9 @@ function resolveStrategyBase(id: string) {
   }
   if (SIGNALS_STRATEGIES[id]) {
     return { domain: 'signals' as const, base: SIGNALS_STRATEGIES[id] }
+  }
+  if (MCAP_TRACKER_STRATEGIES[id]) {
+    return { domain: 'mcap_tracker' as const, base: MCAP_TRACKER_STRATEGIES[id] }
   }
   if (id === 'dlmm_default') {
     return { domain: 'dlmm' as const, base: DLMM_STRATEGY_DEFAULTS }
@@ -109,6 +115,33 @@ export async function PATCH(
       }
 
       invalidateSignalsCache()
+      return NextResponse.json({ success: true, strategy: merged })
+    }
+
+    if (resolved.domain === 'mcap_tracker') {
+      const configOverride = (body.config ?? {}) as McapTrackerStrategyOverride
+      const merged = mergeMcapTrackerStrategy(
+        resolved.base as import('@/strategies/types').McapTrackerStrategy,
+        configOverride,
+        body.is_active ?? null,
+      )
+      if (body.execution_mode) merged.execution_mode = body.execution_mode
+
+      const result = await upsertStrategyDefinition({
+        id,
+        domain: 'mcap_tracker',
+        name: body.name ?? merged.name,
+        description: body.description ?? merged.description,
+        config: configOverride,
+        is_active: body.is_active ?? merged.is_active,
+        execution_mode: body.execution_mode ?? existingRow?.execution_mode ?? merged.execution_mode,
+      })
+
+      if (!result.ok) {
+        return NextResponse.json({ success: false, error: result.error }, { status: 500 })
+      }
+
+      invalidateMcapTrackerCache()
       return NextResponse.json({ success: true, strategy: merged })
     }
 

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getActiveMcapTrackerForSim } from '@/strategies/load-mcap-tracker'
 import { recordMcapTrackerOutcome } from '@/strategies/outcomes'
-import { buildEntryMcapFeatures } from '@/strategies/outcome-features'
+import {
+  appendMonitorSnapshot,
+  buildEntryFeatureSnapshot,
+  mergeEntryFeaturesForOutcome,
+  readMonitorSnapshotsFromFeatures,
+} from '@/strategies/entry-feature-snapshot'
 import { fetchTradingRecordsForWallet, loadMcapSimClosedOutcomeKeys, mcapSimClosedOutcomeKey } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
@@ -67,9 +72,15 @@ async function openSimPosition(params: {
 
   const entryFeatures = {
     entry_template: params.entryTemplate,
-    entry_mcap: params.entryMcap,
-    token_symbol: params.symbol,
-    ...buildEntryMcapFeatures(params.entryMcap),
+    ...buildEntryFeatureSnapshot({
+      entryAt: params.entryAt,
+      firstSeenAt: params.snapshot.first_seen_at,
+      entryMcap: params.entryMcap,
+      organicScore: params.snapshot.organic_score,
+      topHoldersPct: params.snapshot.top_holders_pct,
+      volume5m: params.snapshot.volume_5m,
+      tokenSymbol: params.symbol,
+    }),
     ...buildMcapOutcomeFeatures({
       snapshot: params.snapshot,
       entryTemplate: params.entryTemplate,
@@ -166,6 +177,38 @@ async function closeSimPosition(params: {
 
   await insertTradingRecord(record)
 
+  const buyRecord = [...records]
+    .reverse()
+    .find(
+      (rec) =>
+        rec.operationType === 'buy' &&
+        rec.bot_strategy === params.strategyId &&
+        rec.tokens?.some((t) => t.mintAddress === params.mintAddress),
+    )
+  const buyFeatures =
+    buyRecord?.trading_simulation &&
+    typeof buyRecord.trading_simulation === 'object' &&
+    buyRecord.trading_simulation.entry_features &&
+    typeof buyRecord.trading_simulation.entry_features === 'object'
+      ? (buyRecord.trading_simulation.entry_features as Record<string, unknown>)
+      : null
+
+  const closeFeatures = buildMcapOutcomeFeatures({
+    snapshot: params.snapshot,
+    entryTemplate: params.entryTemplate,
+    entryMcap: params.entryMcap,
+    exitMcap,
+    closeReason: params.closeReason,
+  })
+  const monitorSnapshots = appendMonitorSnapshot(
+    readMonitorSnapshotsFromFeatures(buyFeatures),
+    {
+      timestamp: new Date().toISOString(),
+      volume_5m: params.snapshot.volume_5m ?? null,
+      market_cap: exitMcap,
+    },
+  )
+
   await recordMcapTrackerOutcome({
     strategyId: params.strategyId,
     tokenAddress: params.mintAddress,
@@ -174,12 +217,9 @@ async function closeSimPosition(params: {
     pnlPct,
     status: pnlPct >= 0 ? 'won' : 'lost',
     isSimulated: true,
-    features: buildMcapOutcomeFeatures({
-      snapshot: params.snapshot,
-      entryTemplate: params.entryTemplate,
-      entryMcap: params.entryMcap,
-      exitMcap,
-      closeReason: params.closeReason,
+    features: mergeEntryFeaturesForOutcome(buyFeatures, {
+      ...closeFeatures,
+      monitor_snapshots: monitorSnapshots,
     }),
   })
 
@@ -230,7 +270,11 @@ export async function POST(request: NextRequest) {
           (await fetchMcapTrackingRow(pos.mintAddress))
         if (!snapshot) continue
 
-        const closeReason = getMcapSimCloseReason(snapshot)
+        const closeReason = getMcapSimCloseReason(snapshot, {
+          stopLossPct: strategy.config.exit.stopLossPct,
+          takeProfitPct: strategy.config.exit.takeProfitPct,
+          maxHoldHours: strategy.config.exit.maxHoldHours,
+        })
         if (!closeReason) continue
 
         await closeSimPosition({

@@ -59,3 +59,55 @@ export function buildEntryMcapFeatures(mcap: number | null | undefined): Record<
     ...(band ? { entry_mcap_band: band } : {}),
   }
 }
+
+function readFeatureNumber(
+  features: Record<string, unknown> | null | undefined,
+  key: string,
+): number | null {
+  const v = features?.[key]
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string') {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+export function readOrganicScore(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'organic_score')
+}
+
+export function readTopHoldersPct(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'top_holders_pct')
+}
+
+export function readTokenAgeHours(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'token_age_hours')
+}
+
+export function readVolumeAtEntry(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'volume_at_entry')
+}
+
+export function readTrainingClass(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  const v = features?.training_class
+  if (v === 0 || v === 1) return v
+  return null
+}
+
+export function readMonitorSnapshotCount(
+  features: Record<string, unknown> | null | undefined,
+): number {
+  const raw = features?.monitor_snapshots
+  return Array.isArray(raw) ? raw.length : 0
+}

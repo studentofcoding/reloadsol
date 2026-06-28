@@ -2,10 +2,8 @@ import { supabase } from '@/utils/supabase'
 import { getTrackingHealthStats } from '@/utils/mcap-tracker'
 import { countOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol } from './outcome-features'
-import {
-  dedupeStrategyOutcomeRows,
-  mcapSimClosedOutcomeKey,
-} from './outcome-dedupe'
+import { dedupeStrategyOutcomeRows, mcapSimClosedOutcomeKey } from './outcome-dedupe'
+import { applyAutoOutcomeLabels } from './outcome-labeling'
 import { isOpenTrackerPosition, resolveTrackerStrategyId } from '@/utils/trading-simulation'
 import type {
   StrategyDefinitionRow,
@@ -129,6 +127,72 @@ export async function loadMcapSimClosedOutcomeKeys(
   return keys
 }
 
+export async function loadRegimeTagForDate(tagDate: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('market_regime_tags')
+    .select('regime_tag')
+    .eq('tag_date', tagDate)
+    .maybeSingle()
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return null
+    }
+    console.warn('[strategies/db] loadRegimeTagForDate failed:', error.message)
+    return null
+  }
+
+  return typeof data?.regime_tag === 'string' ? data.regime_tag : null
+}
+
+export async function upsertMarketRegimeTag(params: {
+  tagDate: string
+  regimeTag: string
+  notes?: string | null
+}): Promise<{ ok: boolean; error?: string }> {
+  const { error } = await supabase.from('market_regime_tags').upsert(
+    {
+      tag_date: params.tagDate,
+      regime_tag: params.regimeTag,
+      notes: params.notes ?? null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'tag_date' },
+  )
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return { ok: false, error: 'market_regime_tags table missing' }
+    }
+    return { ok: false, error: error.message }
+  }
+  return { ok: true }
+}
+
+export async function listMarketRegimeTags(limit = 30): Promise<
+  Array<{ tag_date: string; regime_tag: string; notes: string | null }>
+> {
+  const { data, error } = await supabase
+    .from('market_regime_tags')
+    .select('tag_date, regime_tag, notes')
+    .order('tag_date', { ascending: false })
+    .limit(limit)
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return []
+    }
+    console.warn('[strategies/db] listMarketRegimeTags failed:', error.message)
+    return []
+  }
+
+  return (data ?? []) as Array<{
+    tag_date: string
+    regime_tag: string
+    notes: string | null
+  }>
+}
+
 async function strategyOutcomeExists(params: {
   strategy_id: string
   domain: StrategyDomain
@@ -181,16 +245,24 @@ export async function insertStrategyOutcome(params: {
     if (exists) return
   }
 
+  const exitAt = params.exit_at ?? new Date().toISOString()
+  let features = params.features ?? {}
+  const regimeTag = await loadRegimeTagForDate(exitAt.slice(0, 10))
+  if (regimeTag) {
+    features = { ...features, regime_tag_at_exit: regimeTag }
+  }
+  features = applyAutoOutcomeLabels(features, params.pnl_pct, params.status)
+
   const { error } = await supabase.from('strategy_outcomes').insert({
     strategy_id: params.strategy_id,
     domain: params.domain,
     token_address: params.token_address,
     entry_at: params.entry_at ?? null,
-    exit_at: params.exit_at ?? new Date().toISOString(),
+    exit_at: exitAt,
     pnl_pct: params.pnl_pct ?? null,
     status: params.status ?? null,
     is_simulated: params.is_simulated ?? true,
-    features: params.features ?? null,
+    features,
   })
 
   if (error) {

@@ -25,6 +25,7 @@ import {
 import type { TokenFilterConfig, TrendingBotStrategy as TradingStrategyConfig } from '@/strategies/types'
 import { DEFAULT_FILTER_CONFIG } from '@/strategies/registry'
 import { assignTokenToStrategy } from '@/strategies/assign'
+import { tokenMatchesTrendingBotStrategy } from '@/strategies/strategy-filters'
 import {
   refreshTrackStrategyCache,
   resolveTradingStrategy,
@@ -89,7 +90,8 @@ const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_t
 interface PriceRecord {
   timestamp: string
   price_usd: number
-  volume: number | null
+  volume_5m: number | null
+  market_cap?: number | null
 }
 
 interface TrackedToken {
@@ -4274,7 +4276,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           const initialPriceRecord: PriceRecord = {
             timestamp: new Date().toISOString(),
             price_usd: token.current_price,
-            volume: token.volume_1h
+            volume_5m: token.volume_5m ?? null,
+            market_cap: token.market_cap ?? null,
           }
 
           const currentTime = new Date().toISOString()
@@ -4408,17 +4411,15 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
             // Assign token to strategy
             const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation, getTrackStrategyRegistry())
-
-            // Enforce strategy-specific constraints before proceeding
-            const strategy = resolveTradingStrategy(assignedStrategy)
-
-            // Market cap constraints
-            if (strategy.conditions?.min_market_cap && token.market_cap < strategy.conditions.min_market_cap) {
-              console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000).toFixed(0)}k below minimum $${(strategy.conditions.min_market_cap / 1000).toFixed(0)}k`)
+            if (!assignedStrategy) {
+              console.log(`🚫 Token ${token.token_symbol} rejected: no active strategy matches mcap/organic/holders band`)
               continue
             }
-            if (strategy.conditions?.max_market_cap && token.market_cap > strategy.conditions.max_market_cap) {
-              console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000000).toFixed(2)}M above maximum $${(strategy.conditions.max_market_cap / 1000).toFixed(0)}k`)
+
+            const strategy = resolveTradingStrategy(assignedStrategy)
+
+            if (!tokenMatchesTrendingBotStrategy(token, strategy)) {
+              console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': outside filtering band`)
               continue
             }
 
@@ -4515,7 +4516,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           const initialPriceRecord: PriceRecord = {
             timestamp: new Date().toISOString(),
             price_usd: token.current_price,
-            volume: token.volume_1h
+            volume_5m: token.volume_5m ?? null,
+            market_cap: token.market_cap ?? null,
           }
 
           if (tradingSimulation) {
@@ -4707,17 +4709,15 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
               // Assign token to strategy
               const assignedStrategy = assignTokenToStrategy(token, activeStrategies, allocation, getTrackStrategyRegistry())
-
-              // Enforce strategy-specific constraints before proceeding
-              const strategy = resolveTradingStrategy(assignedStrategy)
-
-              // Market cap constraints
-              if (strategy.conditions?.min_market_cap && token.market_cap < strategy.conditions.min_market_cap) {
-                console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000).toFixed(0)}k below minimum $${(strategy.conditions.min_market_cap / 1000).toFixed(0)}k`)
+              if (!assignedStrategy) {
+                console.log(`🚫 Dip buy ${token.token_symbol} rejected: no active strategy matches band`)
                 continue
               }
-              if (strategy.conditions?.max_market_cap && token.market_cap > strategy.conditions.max_market_cap) {
-                console.log(`🚫 Token ${token.token_symbol} rejected by strategy '${assignedStrategy}': Market cap $${(token.market_cap / 1000000).toFixed(2)}M above maximum $${(strategy.conditions.max_market_cap / 1000).toFixed(0)}k`)
+
+              const strategy = resolveTradingStrategy(assignedStrategy)
+
+              if (!tokenMatchesTrendingBotStrategy(token, strategy)) {
+                console.log(`🚫 Dip buy ${token.token_symbol} rejected by '${assignedStrategy}': outside filtering band`)
                 continue
               }
 
@@ -5109,7 +5109,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
         const newPriceRecord: PriceRecord = {
           timestamp: new Date().toISOString(),
           price_usd: token.current_price,
-          volume: token.volume_1h
+          volume_5m: token.volume_5m ?? null,
+          market_cap: token.market_cap ?? null,
         }
 
         // Update price history (keep last 24 hours, max 288 records for 5-minute intervals)
@@ -5345,7 +5346,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
         const newPriceRecord: PriceRecord = {
           timestamp: new Date().toISOString(),
           price_usd: currentPrice,
-          volume: token.volume_1h
+          volume_5m: token.volume_5m ?? null,
+          market_cap: token.market_cap ?? null,
         }
 
         const existingPriceHistory: PriceRecord[] = existingToken.price_history || []

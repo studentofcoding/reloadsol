@@ -21,6 +21,9 @@ export interface McapSnapshot {
   is_tracking_stuck?: boolean
   label?: TokenLabel | null
   stop_reason?: string | null
+  organic_score?: number | null
+  top_holders_pct?: number | null
+  volume_5m?: number | null
 }
 
 export interface McapTrackingResult {
@@ -1085,8 +1088,13 @@ export function getMcapDisplayString(trackingResult: McapTrackingResult): string
 }
 
 // Function to check if token is in tracking range
-export function isInTrackingRange(mcap: number): boolean {
-  return mcap >= 30_000 && mcap <= 2_000_000 // 30k to 2M range
+export function isInTrackingRange(
+  mcap: number,
+  entry?: { mcapMin?: number; mcapMax?: number },
+): boolean {
+  const min = entry?.mcapMin ?? 30_000
+  const max = entry?.mcapMax ?? 2_000_000
+  return mcap >= min && mcap <= max
 }
 
 // Function to clean up old records (can be called periodically)
@@ -1171,15 +1179,31 @@ export type McapSimCloseReason =
   | 'tracking_stopped'
   | 'take_profit_200'
 
-export function getMcapSimCloseReason(snapshot: McapSnapshot): McapSimCloseReason | null {
+export type McapSimExitConfig = {
+  stopLossPct?: number
+  takeProfitPct?: number
+  maxHoldHours?: number
+}
+
+export function getMcapSimCloseReason(
+  snapshot: McapSnapshot,
+  exitConfig?: McapSimExitConfig,
+): McapSimCloseReason | null {
   if (snapshot.label === 'rugged') return 'label_rugged'
   const stopReason = (snapshot.stop_reason ?? '').trim()
   if (stopReason.length > 0) return 'tracking_stopped'
   const growth = snapshot.mcap_growth_percent ?? 0
-  if (growth >= 200) return 'take_profit_200'
-  if (growth <= STOP_LOSS_THRESHOLD) return 'stop_loss'
+  const takeProfitPct = exitConfig?.takeProfitPct ?? 200
+  const stopLossPct = exitConfig?.stopLossPct ?? STOP_LOSS_THRESHOLD
+  const maxHoldMs =
+    (exitConfig?.maxHoldHours ?? MAX_TRACKING_AGE_MS / (1000 * 60 * 60)) *
+    60 *
+    60 *
+    1000
+  if (growth >= takeProfitPct) return 'take_profit_200'
+  if (growth <= stopLossPct) return 'stop_loss'
   const ageMs = Date.now() - (parseIsoMs(snapshot.first_seen_at) ?? Date.now())
-  if (ageMs >= MAX_TRACKING_AGE_MS) return 'max_age'
+  if (ageMs >= maxHoldMs) return 'max_age'
   if (snapshot.is_tracking_stuck) return 'stuck'
   return null
 }

@@ -6,6 +6,7 @@ import Link from "next/link";
 import type {
   TrendingBotStrategy,
   SignalsStrategy,
+  McapTrackerStrategy,
   DlmmStrategy,
   ExecutionMode,
   TokenFilterConfig,
@@ -28,7 +29,13 @@ import {
   ENTRY_MCAP_BAND_OPTIONS,
   formatEntryMcap,
   readEntryMcap,
+  readMonitorSnapshotCount,
+  readOrganicScore,
+  readTokenAgeHours,
   readTokenSymbol,
+  readTopHoldersPct,
+  readTrainingClass,
+  readVolumeAtEntry,
 } from "@/strategies/outcome-features";
 
 const OUTCOMES_PAGE_SIZE = 100;
@@ -43,6 +50,10 @@ type StrategiesResponse = {
     allocation: Record<string, number>;
   };
   signals?: { effective: Record<string, SignalsStrategy> };
+  mcap_tracker?: {
+    effective: Record<string, McapTrackerStrategy>;
+    active: string[];
+  };
   dlmm?: { effective: DlmmStrategy };
 };
 
@@ -261,6 +272,13 @@ export default function StrategyAdminHub() {
     null,
   );
   const [triggeringWorker, setTriggeringWorker] = useState<string | null>(null);
+  const [regimeDate, setRegimeDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [regimeTag, setRegimeTag] = useState("high_vol_meme");
+  const [regimeNotes, setRegimeNotes] = useState("");
+  const [savingRegime, setSavingRegime] = useState(false);
+  const [showEntryFeatureColumns, setShowEntryFeatureColumns] = useState(false);
 
   const dismissToast = useCallback(() => {
     if (toastTimerRef.current) {
@@ -440,6 +458,28 @@ export default function StrategyAdminHub() {
     }
   };
 
+  const saveRegimeTag = async () => {
+    setSavingRegime(true);
+    try {
+      const res = await fetch("/api/strategies/regime", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tag_date: regimeDate,
+          regime_tag: regimeTag,
+          notes: regimeNotes || null,
+        }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || "Save failed");
+      showToast("success", "Regime tag saved", regimeDate);
+    } catch (e) {
+      showToast("error", "Regime save failed", formatError(e));
+    } finally {
+      setSavingRegime(false);
+    }
+  };
+
   const saveStrategy = async (
     id: string,
     patch: {
@@ -511,6 +551,7 @@ export default function StrategyAdminHub() {
   const effective = data?.trending_bot?.effective ?? {};
   const active = data?.trending_bot?.active ?? [];
   const signals = Object.values(data?.signals?.effective ?? {});
+  const mcapTracker = Object.values(data?.mcap_tracker?.effective ?? {});
   const dlmm = data?.dlmm?.effective;
 
   return (
@@ -577,6 +618,26 @@ export default function StrategyAdminHub() {
             </div>
             <Link href="/dev/signals" className="text-blue-400 text-sm underline mt-3 inline-block">
               Open Signals hub (manual live buys)
+            </Link>
+          </section>
+
+          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+            <h2 className="text-xl font-bold text-white mb-4">MCap tracker strategies</h2>
+            <div className="grid gap-4 md:grid-cols-2">
+              {mcapTracker.map((s) => (
+                <McapTrackerCard
+                  key={s.id}
+                  strategy={s}
+                  saving={saving === s.id}
+                  onSave={saveStrategy}
+                />
+              ))}
+            </div>
+            <Link
+              href="/dev/signals?tab=tracker"
+              className="text-blue-400 text-sm underline mt-3 inline-block"
+            >
+              Open MCap tracker tab
             </Link>
           </section>
 
@@ -878,6 +939,53 @@ export default function StrategyAdminHub() {
               </>
             )}
 
+            <h3 className="text-lg font-semibold text-white mb-2">Market regime</h3>
+            <p className="text-gray-500 text-xs mb-3">
+              Tag daily context for ML (attached to new outcomes as regime_tag_at_exit).
+            </p>
+            <div className="flex flex-wrap gap-3 mb-6 items-end">
+              <label className="text-gray-400 text-xs">
+                Date
+                <input
+                  type="date"
+                  className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
+                  value={regimeDate}
+                  onChange={(e) => setRegimeDate(e.target.value)}
+                />
+              </label>
+              <label className="text-gray-400 text-xs">
+                Regime
+                <select
+                  className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white min-w-[200px]"
+                  value={regimeTag}
+                  onChange={(e) => setRegimeTag(e.target.value)}
+                >
+                  <option value="high_vol_meme">High vol / memecoin season</option>
+                  <option value="low_vol_consolidation">Low vol / consolidation</option>
+                  <option value="btc_correlation">Trending BTC correlation</option>
+                  <option value="custom">Custom (edit notes)</option>
+                </select>
+              </label>
+              <label className="text-gray-400 text-xs flex-1 min-w-[200px]">
+                Notes
+                <input
+                  type="text"
+                  className="block mt-1 w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
+                  value={regimeNotes}
+                  onChange={(e) => setRegimeNotes(e.target.value)}
+                  placeholder="Optional context"
+                />
+              </label>
+              <button
+                type="button"
+                disabled={savingRegime}
+                onClick={() => void saveRegimeTag()}
+                className="px-3 py-1.5 bg-blue-600 disabled:opacity-50 rounded text-white text-xs"
+              >
+                {savingRegime ? "Saving…" : "Save regime"}
+              </button>
+            </div>
+
             <h3 className="text-lg font-semibold text-white mb-2">MCap tracker sim outcomes</h3>
             <p className="text-gray-500 text-xs mb-2">
               Paper trades from{" "}
@@ -1040,6 +1148,20 @@ export default function StrategyAdminHub() {
                         <th className="p-2">Mode</th>
                         <th className="p-2">Token</th>
                         <th className="p-2">Entry MCap</th>
+                        {showEntryFeatureColumns && (
+                          <>
+                            <th className="p-2">Organic</th>
+                            <th className="p-2">Holders%</th>
+                            <th className="p-2">Age(h)</th>
+                            <th className="p-2">Vol@entry</th>
+                            <th
+                              className="p-2"
+                              title="Price/volume/mcap snapshots recorded while the position was open"
+                            >
+                              Track samples
+                            </th>
+                          </>
+                        )}
                         <th className="p-2">Entry</th>
                         <th className="p-2">Exit</th>
                         <th className="p-2">PnL%</th>
@@ -1071,6 +1193,29 @@ export default function StrategyAdminHub() {
                           <td className="p-2">
                             {formatEntryMcap(readEntryMcap(o.features))}
                           </td>
+                          {showEntryFeatureColumns && (
+                            <>
+                              <td className="p-2">
+                                {readOrganicScore(o.features) ?? "—"}
+                              </td>
+                              <td className="p-2">
+                                {readTopHoldersPct(o.features) != null
+                                  ? `${readTopHoldersPct(o.features)}%`
+                                  : "—"}
+                              </td>
+                              <td className="p-2">
+                                {readTokenAgeHours(o.features) ?? "—"}
+                              </td>
+                              <td className="p-2">
+                                {readVolumeAtEntry(o.features) != null
+                                  ? Math.round(readVolumeAtEntry(o.features)!)
+                                  : "—"}
+                              </td>
+                              <td className="p-2">
+                                {readMonitorSnapshotCount(o.features) || "—"}
+                              </td>
+                            </>
+                          )}
                           <td className="p-2">{formatAppDateTime(o.entry_at)}</td>
                           <td className="p-2">{formatAppDateTime(o.exit_at)}</td>
                           <td className="p-2">
@@ -1079,6 +1224,11 @@ export default function StrategyAdminHub() {
                           <td className="p-2">{o.status ?? "—"}</td>
                           <td className="p-2">
                             <OutcomeMlBadge features={o.features} />
+                            {readTrainingClass(o.features) != null && (
+                              <span className="text-xs text-gray-500 ml-1">
+                                c{readTrainingClass(o.features)}
+                              </span>
+                            )}
                           </td>
                           <td className="p-2">
                             <OutcomeMlConditionBadge features={o.features} />
@@ -1088,7 +1238,19 @@ export default function StrategyAdminHub() {
                     </tbody>
                   </table>
                 </div>
-                <div className="flex gap-2 mt-4">
+                <div className="flex flex-wrap items-center gap-2 mt-4">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowEntryFeatureColumns((v) => !v);
+                    }}
+                    className="px-3 py-1.5 bg-gray-700 text-white text-xs rounded"
+                  >
+                    {showEntryFeatureColumns
+                      ? "Hide entry features"
+                      : "Show entry features"}
+                  </button>
                   <button
                     type="button"
                     disabled={outcomesOffset <= 0}
@@ -1681,6 +1843,135 @@ function SignalsCard({
                   stuckPenalty: parseFloat(stuckPenalty),
                   stopLossPenalty: parseFloat(stopLossPenalty),
                   sellOver100LatePenalty: parseFloat(sellOver100LatePenalty),
+                },
+              },
+            })
+          }
+          className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => onSave(strategy.id, { is_active: !strategy.is_active })}
+          className="px-3 py-1.5 bg-gray-700 text-white text-xs rounded"
+        >
+          {strategy.is_active ? "Deactivate" : "Activate"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function McapTrackerCard({
+  strategy,
+  saving,
+  onSave,
+}: {
+  strategy: McapTrackerStrategy;
+  saving: boolean;
+  onSave: (id: string, patch: Record<string, unknown>) => void;
+}) {
+  const q = strategy.config.query;
+  const e = strategy.config.execution;
+  const x = strategy.config.exit;
+  const en = strategy.config.entry;
+  const [entryTemplate, setEntryTemplate] = useState(strategy.config.entryTemplate);
+  const [recency, setRecency] = useState(String(q.recencyMinutes));
+  const [limit, setLimit] = useState(String(q.limit ?? 300));
+  const [simBuy, setSimBuy] = useState(String(e.simBuySol));
+  const [maxOpen, setMaxOpen] = useState(String(e.maxOpenPositions));
+  const [stopLoss, setStopLoss] = useState(String(x.stopLossPct));
+  const [takeProfit, setTakeProfit] = useState(String(x.takeProfitPct));
+  const [maxHold, setMaxHold] = useState(String(x.maxHoldHours));
+  const [mcapMin, setMcapMin] = useState(String(en.mcapMin));
+  const [mcapMax, setMcapMax] = useState(String(en.mcapMax));
+  const [organicMin, setOrganicMin] = useState(
+    en.organicScoreMin != null ? String(en.organicScoreMin) : "",
+  );
+  const [holdersMax, setHoldersMax] = useState(
+    en.topHoldersPctMax != null ? String(en.topHoldersPctMax) : "",
+  );
+  const [execMode, setExecMode] = useState(strategy.execution_mode);
+
+  return (
+    <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
+      <h3 className="font-semibold text-white">{strategy.name}</h3>
+      <p className="text-xs text-gray-500 mb-3">
+        {strategy.id} · {entryTemplate}
+      </p>
+      <label className="text-xs text-gray-400 block mb-2">
+        Execution mode
+        <ExecutionModeSelect value={execMode} onChange={setExecMode} />
+      </label>
+      <label className="text-xs text-gray-400 block mb-2">
+        Entry template
+        <select
+          className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white text-xs"
+          value={entryTemplate}
+          onChange={(ev) =>
+            setEntryTemplate(ev.target.value as "first_seen" | "milestone_80")
+          }
+        >
+          <option value="first_seen">first_seen</option>
+          <option value="milestone_80">milestone_80</option>
+        </select>
+      </label>
+      <Section title="Query">
+        <FieldGrid>
+          <NumberField label="recency (min)" value={recency} onChange={setRecency} step="1" />
+          <NumberField label="limit" value={limit} onChange={setLimit} step="1" />
+        </FieldGrid>
+      </Section>
+      <Section title="Execution">
+        <FieldGrid>
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" />
+          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" />
+        </FieldGrid>
+      </Section>
+      <Section title="Exit">
+        <FieldGrid>
+          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" />
+          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" />
+          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" />
+        </FieldGrid>
+      </Section>
+      <Section title="Entry filters">
+        <FieldGrid>
+          <NumberField label="mcap min" value={mcapMin} onChange={setMcapMin} step="1000" />
+          <NumberField label="mcap max" value={mcapMax} onChange={setMcapMax} step="1000" />
+          <NumberField label="organic min" value={organicMin} onChange={setOrganicMin} step="1" />
+          <NumberField label="holders max %" value={holdersMax} onChange={setHoldersMax} step="1" />
+        </FieldGrid>
+      </Section>
+      <div className="flex gap-2 mt-2">
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() =>
+            onSave(strategy.id, {
+              execution_mode: execMode,
+              config: {
+                entryTemplate,
+                query: {
+                  recencyMinutes: parseInt(recency, 10),
+                  limit: parseInt(limit, 10),
+                },
+                execution: {
+                  simBuySol: parseFloat(simBuy),
+                  maxOpenPositions: parseInt(maxOpen, 10),
+                },
+                exit: {
+                  stopLossPct: parseFloat(stopLoss),
+                  takeProfitPct: parseFloat(takeProfit),
+                  maxHoldHours: parseFloat(maxHold),
+                },
+                entry: {
+                  mcapMin: parseFloat(mcapMin),
+                  mcapMax: parseFloat(mcapMax),
+                  organicScoreMin: organicMin ? parseFloat(organicMin) : undefined,
+                  topHoldersPctMax: holdersMax ? parseFloat(holdersMax) : undefined,
                 },
               },
             })

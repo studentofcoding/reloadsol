@@ -140,18 +140,32 @@ export interface McapTrackerStrategyConfig {
   entryTemplate: McapTrackerEntryTemplate
   query: {
     recencyMinutes: number
+    limit?: number
   }
   execution: {
     simBuySol: number
     maxOpenPositions: number
   }
+  exit: {
+    stopLossPct: number
+    takeProfitPct: number
+    maxHoldHours: number
+  }
+  entry: {
+    mcapMin: number
+    mcapMax: number
+    organicScoreMin?: number
+    topHoldersPctMax?: number
+  }
 }
 
 export type McapTrackerStrategyOverride = Partial<
-  Omit<McapTrackerStrategyConfig, 'query' | 'execution'>
+  Omit<McapTrackerStrategyConfig, 'query' | 'execution' | 'exit' | 'entry'>
 > & {
   query?: Partial<McapTrackerStrategyConfig['query']>
   execution?: Partial<McapTrackerStrategyConfig['execution']>
+  exit?: Partial<McapTrackerStrategyConfig['exit']>
+  entry?: Partial<McapTrackerStrategyConfig['entry']>
 }
 
 export interface McapTrackerStrategy {
@@ -215,6 +229,9 @@ export interface OutcomeMlMetadata {
   ml_note?: string | null
   ml_labeled_at?: string | null
   ml_condition_at?: string | null
+  ml_manual?: boolean
+  training_class?: 0 | 1 | null
+  regime_tag_at_exit?: string | null
 }
 
 export interface OutcomeChartPoint {

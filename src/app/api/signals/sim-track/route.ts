@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getActiveSignalsForSim } from '@/strategies/load-signals'
 import { scoreSignalsForStrategy } from '@/strategies/signals-pipeline'
 import { recordSignalsOutcome } from '@/strategies/outcomes'
-import { buildEntryMcapFeatures } from '@/strategies/outcome-features'
+import { buildEntryFeatureSnapshot } from '@/strategies/entry-feature-snapshot'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
@@ -259,8 +259,12 @@ export async function POST(request: NextRequest) {
             growth: signal.mcap_growth_percent,
             recency_minutes: signal.trend_age_minutes,
             rationale: signal.rationale,
-            token_symbol: signal.token_symbol,
-            ...buildEntryMcapFeatures(signal.current_mcap),
+            ...buildEntryFeatureSnapshot({
+              entryAt: new Date().toISOString(),
+              firstSeenAt: signal.first_seen_at,
+              entryMcap: signal.current_mcap,
+              tokenSymbol: signal.token_symbol,
+            }),
           },
         })
         opened++

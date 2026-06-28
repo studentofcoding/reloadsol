@@ -600,6 +600,17 @@ ALTER TABLE dlmm_lessons ENABLE ROW LEVEL SECURITY;
 ALTER TABLE strategy_definitions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE strategy_outcomes ENABLE ROW LEVEL SECURITY;
 
+CREATE TABLE IF NOT EXISTS market_regime_tags (
+  tag_date DATE PRIMARY KEY,
+  regime_tag TEXT NOT NULL,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_regime_tags_updated
+  ON market_regime_tags (updated_at DESC);
+
 -- Per-wallet global watchlist (GMGN charts, nav bar)
 CREATE TABLE IF NOT EXISTS wallet_watchlist (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

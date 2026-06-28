@@ -1,49 +1,39 @@
 import type { TrendingBotStrategy } from './types'
+import {
+  tokenMatchesTrendingBotStrategy,
+  type StrategyMatchToken,
+} from './strategy-filters'
 
 export function assignTokenToStrategy(
-  token: {
-    token_symbol?: string
-    market_cap?: number
-    organic_score?: number
-  },
+  token: StrategyMatchToken & { token_symbol?: string },
   strategies: string[],
   allocation: Record<string, number>,
   registry: Record<string, TrendingBotStrategy>,
-): string {
-  const marketCap = token.market_cap || 0
-  const organicScore = token.organic_score || 0
-
-  for (const strategyId of strategies) {
+): string | null {
+  const eligible = strategies.filter((strategyId) => {
     const strategy = registry[strategyId]
-    if (!strategy?.conditions) continue
+    return strategy && tokenMatchesTrendingBotStrategy(token, strategy)
+  })
 
-    let meetsConditions = true
-    const c = strategy.conditions
+  if (eligible.length === 0) return null
 
-    if (c.min_market_cap && marketCap < c.min_market_cap) {
-      meetsConditions = false
-    }
-    if (c.max_market_cap && marketCap > c.max_market_cap) {
-      meetsConditions = false
-    }
-    if (c.min_organic_score && organicScore < c.min_organic_score) {
-      meetsConditions = false
-    }
-
-    if (meetsConditions) {
-      return strategyId
-    }
-  }
+  if (eligible.length === 1) return eligible[0]
 
   const random = Math.random()
   let cumulativeWeight = 0
+  const eligibleWeight = eligible.reduce(
+    (sum, id) => sum + (allocation[id] ?? 0),
+    0,
+  )
 
-  for (const strategyId of strategies) {
-    cumulativeWeight += allocation[strategyId] ?? 0
+  if (eligibleWeight <= 0) return eligible[0]
+
+  for (const strategyId of eligible) {
+    cumulativeWeight += (allocation[strategyId] ?? 0) / eligibleWeight
     if (random <= cumulativeWeight) {
       return strategyId
     }
   }
 
-  return strategies[0]
+  return eligible[0]
 }

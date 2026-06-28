@@ -19,6 +19,14 @@ export function mergeMcapTrackerStrategy(
         ...base.config.execution,
         ...(o.execution ?? {}),
       },
+      exit: {
+        ...base.config.exit,
+        ...(o.exit ?? {}),
+      },
+      entry: {
+        ...base.config.entry,
+        ...(o.entry ?? {}),
+      },
     },
   }
 }

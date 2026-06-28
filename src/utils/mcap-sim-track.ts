@@ -78,6 +78,8 @@ export type McapSimOpenSkipReason =
   | 'first_seen_too_old'
   | 'no_milestone'
   | 'no_entry_mcap'
+  | 'low_organic'
+  | 'high_holders'
 
 export function resolveMcapSimEntry(
   strategy: McapTrackerStrategy,
@@ -108,7 +110,25 @@ export function getMcapSimOpenSkipReason(
 ): McapSimOpenSkipReason | null {
   if (openMintSet.has(snapshot.token_address)) return 'already_open'
   if (snapshot.label === 'rugged') return 'rugged'
-  if (!isInTrackingRange(snapshot.current_mcap)) return 'out_of_range'
+  if (!isInTrackingRange(snapshot.current_mcap, strategy.config.entry)) {
+    return 'out_of_range'
+  }
+
+  const entryFilters = strategy.config.entry
+  if (
+    entryFilters.organicScoreMin != null &&
+    snapshot.organic_score != null &&
+    snapshot.organic_score < entryFilters.organicScoreMin
+  ) {
+    return 'low_organic'
+  }
+  if (
+    entryFilters.topHoldersPctMax != null &&
+    snapshot.top_holders_pct != null &&
+    snapshot.top_holders_pct >= entryFilters.topHoldersPctMax
+  ) {
+    return 'high_holders'
+  }
 
   if (strategy.config.entryTemplate === 'first_seen') {
     const ageMs = Date.now() - new Date(snapshot.first_seen_at).getTime()

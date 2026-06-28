@@ -29,6 +29,7 @@ type PatchBody = {
   ml_label?: OutcomeMlLabel | null
   ml_condition?: OutcomeMlCondition | null
   ml_note?: string | null
+  ml_manual?: boolean
 }
 
 export async function PATCH(
@@ -84,6 +85,10 @@ export async function PATCH(
         body.ml_note === null || body.ml_note === undefined
           ? null
           : String(body.ml_note).trim().slice(0, 2000)
+    }
+
+    if (body.ml_manual === true) {
+      featurePatch.ml_manual = true
     }
 
     if (Object.keys(featurePatch).length === 0) {

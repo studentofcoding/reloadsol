@@ -29,7 +29,12 @@ export const TRENDING_BOT_STRATEGIES: Record<string, TrendingBotStrategy> = {
     priority_fee_lamports: 1_000_000,
     stop_loss_percentage: -35,
     max_hold_hours: 24,
-    conditions: { max_risk_level: 'high' },
+    conditions: {
+      min_market_cap: 200_000,
+      max_market_cap: 5_000_000,
+      min_organic_score: 60,
+      max_risk_level: 'high',
+    },
     filtering: {
       enabled: true,
       mcap: { min: 200_000, max: 5_000_000 },
@@ -199,6 +204,19 @@ export const SIGNALS_STRATEGIES: Record<string, import('./types').SignalsStrateg
   },
 }
 
+export const DEFAULT_MCAP_TRACKER_EXIT = {
+  stopLossPct: -50,
+  takeProfitPct: 200,
+  maxHoldHours: 96,
+}
+
+export const DEFAULT_MCAP_TRACKER_ENTRY = {
+  mcapMin: 30_000,
+  mcapMax: 2_000_000,
+  organicScoreMin: undefined as number | undefined,
+  topHoldersPctMax: undefined as number | undefined,
+}
+
 export const MCAP_TRACKER_STRATEGIES: Record<string, import('./types').McapTrackerStrategy> = {
   mcap_enter_first_seen: {
     id: 'mcap_enter_first_seen',
@@ -208,8 +226,10 @@ export const MCAP_TRACKER_STRATEGIES: Record<string, import('./types').McapTrack
     execution_mode: 'sim_only',
     config: {
       entryTemplate: 'first_seen',
-      query: { recencyMinutes: 240 },
+      query: { recencyMinutes: 240, limit: 300 },
       execution: { simBuySol: 0.01, maxOpenPositions: 10 },
+      exit: { ...DEFAULT_MCAP_TRACKER_EXIT },
+      entry: { ...DEFAULT_MCAP_TRACKER_ENTRY },
     },
   },
   mcap_enter_at_80: {
@@ -220,8 +240,10 @@ export const MCAP_TRACKER_STRATEGIES: Record<string, import('./types').McapTrack
     execution_mode: 'sim_only',
     config: {
       entryTemplate: 'milestone_80',
-      query: { recencyMinutes: 240 },
+      query: { recencyMinutes: 240, limit: 300 },
       execution: { simBuySol: 0.01, maxOpenPositions: 10 },
+      exit: { ...DEFAULT_MCAP_TRACKER_EXIT },
+      entry: { ...DEFAULT_MCAP_TRACKER_ENTRY },
     },
   },
 }

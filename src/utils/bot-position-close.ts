@@ -7,6 +7,7 @@ import {
 import { calculateGainPercentage } from '@/utils/trading-math'
 import { recordTrendingBotOutcome } from '@/strategies/outcomes'
 import { buildEntryMcapFeatures } from '@/strategies/outcome-features'
+import { buildEntryFeatureSnapshot } from '@/strategies/entry-feature-snapshot'
 
 const TRACKER_TABLE =
   process.env.NODE_ENV === 'development'
@@ -147,7 +148,7 @@ export async function finalizeBotPositionClose(
 
   const { data: tracker } = await supabase
     .from(TRACKER_TABLE)
-    .select('id, trading_simulation, market_cap')
+    .select('id, trading_simulation, market_cap, organic_score, volume_5m, created_at')
     .eq('token_address', params.tokenAddress)
     .in('status', ['tracking', 'waiting'])
     .maybeSingle()
@@ -196,6 +197,19 @@ export async function finalizeBotPositionClose(
       initial_price_usd: params.initialPriceUsd,
       exit_price_usd: params.currentPriceUsd,
       token_symbol: params.tokenSymbol,
+      ...buildEntryFeatureSnapshot({
+        entryAt,
+        firstSeenAt:
+          typeof tracker.created_at === 'string' ? tracker.created_at : entryAt,
+        entryMcap,
+        organicScore:
+          typeof tracker.organic_score === 'number' ? tracker.organic_score : null,
+        volume5m: typeof tracker.volume_5m === 'number' ? tracker.volume_5m : null,
+        tokenSymbol: params.tokenSymbol,
+        monitorSnapshots: Array.isArray(sim.monitor_snapshots)
+          ? (sim.monitor_snapshots as import('@/strategies/entry-feature-snapshot').MonitorSnapshot[])
+          : [],
+      }),
       ...buildEntryMcapFeatures(entryMcap),
     },
   })

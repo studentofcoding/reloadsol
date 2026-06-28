@@ -192,6 +192,7 @@ export default function OutcomeReviewModal({
           ml_label: mlLabel,
           ml_condition: mlCondition,
           ml_note: mlNote || null,
+          ml_manual: true,
         }),
       });
       const json = await res.json();

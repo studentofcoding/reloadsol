@@ -38,6 +38,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Reports coverage** — `open_tracker_count` populated for `mcap_tracker` strategies from `mcap-tracker-sim` wallet (was `null` / invisible while `sim_trade_count` stayed 0 for open-only positions).
 - **Sim-track skip reasons** — response `skipped` array includes `no_milestone`, `out_of_range`, `rugged`, `no_entry_mcap` for debugging.
 
+### Fixed — Duplicate mcap sim outcomes
+
+- **Re-entry guard** — [`mcap-sim-track.ts`](src/utils/mcap-sim-track.ts) + [`sim-track/route.ts`](src/app/api/mcap-tracking/sim-track/route.ts) skip `already_closed` tokens so `mcap_enter_at_80` cannot reopen after close.
+- **Read-time dedupe** — [`outcome-dedupe.ts`](src/strategies/outcome-dedupe.ts) + [`db.ts`](src/strategies/db.ts) dedupe strategy outcome rows in reports/lists.
+- **Idempotent insert** — guard on duplicate `(strategy_id, token_address, entry_at)` before insert.
+- **Tests** — [`strategy-outcomes-dedupe.test.ts`](src/strategies/strategy-outcomes-dedupe.test.ts), extended [`mcap-sim-track.test.ts`](src/utils/mcap-sim-track.test.ts).
+- **Ops patch** — [`supabase/patches/dedupe_mcap_strategy_outcomes.sql`](supabase/patches/dedupe_mcap_strategy_outcomes.sql) for historical duplicate cleanup (run once on Supabase).
+
 ### Fixed — TrackerTab display & analytics
 
 - **Timestamps** — First Seen, milestones (+80% / +120% / +200% labels), Last Updated, Finished At use `formatAppDateTime` (absolute + relative subtitle).
@@ -45,6 +53,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Chart button** — opens `ChartBuyModal` (works on finished tokens); separate mcap refetch button.
 - **CSV export** — milestone columns + formatted dates.
 - **Timeline badge** — warns when `first_seen_at` is still after a milestone post-normalize.
+
+### Fixed — TrackerTab summary stats
+
+- **`stats.highestGrowth`** — API returns max growth across filtered tokens; summary card wired in [`TrackerTab.tsx`](src/components/signals/TrackerTab.tsx).
+- **PnL time windows** — entry/exit hourly buckets use Asia/Bangkok (`getAppLocalParts`) instead of UTC/local server hour in [`mcap-tracking/route.ts`](src/app/api/mcap-tracking/route.ts).
+- **Mcap range buckets** — bucket bounds aligned at 50K boundary in summary analytics.
 
 ### Fixed — Z-Score & analytics API
 
@@ -68,6 +82,39 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Strategy Admin Reports** — Status, PnL preset, and Entry mcap band filters; **Entry MCap** column; token column shows symbol + truncated address (algo-tester style).
 - **ML labeling stats** — reports API returns `ml_stats` (total, unlabeled, by label/condition); Reports tab shows filter-scoped summary.
 - **Coverage table** — **Open (tracker)** column for trending bot strategies (holding-only count via [`isOpenTrackerPosition`](src/utils/trading-simulation.ts)).
+
+### Added — Strategy ML feature pipeline
+
+**Assignment / att fix**
+
+- **[`strategy-filters.ts`](src/strategies/strategy-filters.ts)** — `tokenMatchesTrendingBotStrategy()` enforces per-strategy mcap/organic/holders bands.
+- **[`assign.ts`](src/strategies/assign.ts)** + **[`trending/track/route.ts`](src/app/api/trending/track/route.ts)** — assignment and buy path respect strategy filters (fixes `att` trading below 200k mcap).
+- **[`registry.ts`](src/strategies/registry.ts)** — `att` conditions synced to 200k–5M band.
+- **Tests** — [`assign.test.ts`](src/strategies/assign.test.ts).
+
+**Entry feature store**
+
+- **[`entry-feature-snapshot.ts`](src/strategies/entry-feature-snapshot.ts)** — `buildEntryFeatureSnapshot()`: token age, organic score, top holders %, volume at entry, monitor snapshot count.
+- **Extended [`outcome-features.ts`](src/strategies/outcome-features.ts)** — readers for new feature keys; reports/CSV columns.
+- **Wired on buy/close** — mcap sim-track, signals sim-track, trending bot close ([`bot-position-close.ts`](src/utils/bot-position-close.ts)); `PriceRecord.volume_5m` on track route.
+
+**Auto ML labels**
+
+- **[`outcome-labeling.ts`](src/strategies/outcome-labeling.ts)** — auto `training_class`, `ml_label`, `ml_condition`, `ml_note` on [`insertStrategyOutcome`](src/strategies/db.ts) (respects existing `ml_manual` override).
+- **Manual override** — [`OutcomeReviewModal.tsx`](src/components/strategies/OutcomeReviewModal.tsx) sets `ml_manual`.
+- **Tests** — [`outcome-labeling.test.ts`](src/strategies/outcome-labeling.test.ts).
+
+**Mcap tracker config UI**
+
+- **Extended `McapTrackerStrategyConfig`** — entry/exit thresholds, organic/holders filters in [`types.ts`](src/strategies/types.ts), defaults in registry, merge in [`merge-mcap-tracker.ts`](src/strategies/merge-mcap-tracker.ts).
+- **PATCH API** — [`strategies/[id]/route.ts`](src/app/api/strategies/[id]/route.ts).
+- **`McapTrackerCard`** — full config editor in [`StrategyAdminHub.tsx`](src/components/strategies/StrategyAdminHub.tsx); per-strategy exit/entry in [`mcap-sim-track.ts`](src/utils/mcap-sim-track.ts) / [`mcap-tracker.ts`](src/utils/mcap-tracker.ts).
+
+**Reports and market regime**
+
+- **Outcomes API** — extra CSV/table fields (organic, holders, age, volume, training class) in [`outcomes/route.ts`](src/app/api/strategies/outcomes/route.ts).
+- **`market_regime_tags`** — schema + [`supabase/patches/market_regime_tags.sql`](supabase/patches/market_regime_tags.sql); [`GET/POST /api/strategies/regime`](src/app/api/strategies/regime/route.ts); Reports UI panel to tag daily regime (stored as `regime_tag_at_exit` on new outcomes). Run `market_regime_tags.sql` on Supabase after deploy.
+- **Outcomes table** — collapsible entry-feature columns (Organic, Holders%, Age, Vol@entry, Track samples); **Track samples** replaces abbreviated **Mon** (count of price/volume/mcap snapshots while position was open).
 
 ### Added — Pipeline alignment (algo-tester vs Strategy Admin)
 
