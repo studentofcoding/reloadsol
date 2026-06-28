@@ -234,6 +234,37 @@ ensure_social_running() {
   fi
 }
 
+check_duplicate_env_port() {
+  local key count
+  key="$1"
+  count="$(grep -cE "^${key}=" .env 2>/dev/null || true)"
+  if [[ "$count" -gt 1 ]]; then
+    log "ERROR: .env has ${count} ${key}= lines (keep exactly one). Duplicate keys cause wrong port mapping (Cloudflare 521 / cron bind failures)."
+    exit 1
+  fi
+}
+
+verify_compose_port_config() {
+  local cron_port_count
+  cron_port_count="$("${COMPOSE[@]}" config 2>/dev/null | awk '
+    /^  cron:$/ { in_cron=1; next }
+    in_cron && /^  [a-zA-Z0-9_-]+:$/ { in_cron=0 }
+    in_cron && /published:/ { n++ }
+    END { print n+0 }
+  ')"
+  if [[ "$cron_port_count" -gt 1 ]]; then
+    log "ERROR: merged compose defines ${cron_port_count} cron port mappings (expected 1)."
+    log "Ensure docker-compose.prod.yml uses 'ports: - !override' for cron."
+    exit 1
+  fi
+}
+
+verify_env_and_compose() {
+  check_duplicate_env_port WEB_PORT
+  check_duplicate_env_port CRON_PORT
+  verify_compose_port_config
+}
+
 if [[ ! -f .env ]]; then
   log "Missing .env — copy from .env.docker.example and fill secrets."
   exit 1
@@ -241,6 +272,7 @@ fi
 
 WEB_PORT="$(read_env_var WEB_PORT 2>/dev/null || echo "${WEB_PORT:-3000}")"
 log "Configured WEB_PORT=${WEB_PORT} (host mapping to container :3000)"
+verify_env_and_compose
 
 if [[ "$SKIP_PULL" == false ]]; then
   log "Fetching origin/${BRANCH} ..."

@@ -186,6 +186,25 @@ curl -X POST http://127.0.0.1:8080/trigger/sltp
 
 **Deploy hangs on health check:** ensure `WEB_PORT` in `.env` matches the host port Docker publishes (e.g. `80:3000` → curl `:80`, not `:3000`).
 
+**Cloudflare 521 (web server is down):** Next.js may be healthy inside Docker while Cloudflare cannot reach the origin. Check:
+
+- Exactly **one** `WEB_PORT=` line in `.env` (duplicate keys make Compose use the last value — e.g. `WEB_PORT=3000` while Cloudflare hits `:80`).
+- `docker port reloadsol-web 3000/tcp` shows `0.0.0.0:80` when using `WEB_PORT=80`.
+- Cloudflare SSL **Flexible** when Docker publishes HTTP on `:80` with no nginx on `:443`.
+
+**Cron: `address already in use` / container stuck `Created`:** merged compose used to bind the same host port twice (`docker-compose.yml` + `docker-compose.prod.yml` both define cron `ports`). Fixed with `ports: - !override` in `docker-compose.prod.yml`. Verify:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config | grep -A8 '^  cron:'
+# expect ONE published port (e.g. 127.0.0.1:8082 -> 8080)
+docker rm -f reloadsol-cron 2>/dev/null
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate cron
+curl -fsS "http://127.0.0.1:${CRON_PORT:-8080}/health"
+docker exec reloadsol-web wget -qO- http://cron:8080/health
+```
+
+Keep exactly **one** `CRON_PORT=` line in `.env`. `CRON_SERVICE_URL` must stay `http://cron:8080` (container port, not host port).
+
 **Cron 401 on SL/TP:** pass `TRENDING_TRACKER_SECRET` as `?key=` (configured in `main.go`).
 
 **Real trading halted:** check `bot_trading_state` in Supabase; circuit breaker opens after `BOT_TRADING_FAILURE_THRESHOLD` failures.

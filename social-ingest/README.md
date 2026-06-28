@@ -46,6 +46,17 @@ npm run docker:social
 
 Session files persist via volume `./social-ingest/sessions:/app/sessions`.
 
+### Production session permissions
+
+On the server, Telethon session files must be readable by the Docker container (runs as root):
+
+```bash
+chmod 755 social-ingest/sessions
+chmod 644 social-ingest/sessions/session_search.session*
+```
+
+Do **not** use `chmod 700` on the directory or `chmod 600` on the session file in production — the container may fail auth and crash-loop with `SendCodeRequest` / `FloodWaitError`. Host-only interactive login can use tighter perms temporarily, then relax before `docker compose up social-ingest`.
+
 ## Run locally against dev server
 
 ```bash
