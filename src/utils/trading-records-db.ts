@@ -53,6 +53,28 @@ export async function insertTradingRecord(
   return { inserted: true }
 }
 
+/** Update stored JSON for an existing trading record (server-side). */
+export async function updateTradingRecordData(
+  recordId: string,
+  data: TrackingRecord,
+): Promise<boolean> {
+  const { error } = await supabase
+    .from('trading_records')
+    .update({
+      data,
+      timestamp: new Date(data.timestamp).toISOString(),
+    })
+    .eq('id', recordId)
+
+  if (error) {
+    console.warn('[trading-records-db] update failed:', error.message)
+    return false
+  }
+
+  await afterTradingRecordInserted(data)
+  return true
+}
+
 /** Invalidate GET cache and broadcast SSE after any successful insert. */
 export async function afterTradingRecordInserted(
   record: TrackingRecord,

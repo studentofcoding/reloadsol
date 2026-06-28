@@ -7,6 +7,10 @@ import {
   mergeEntryFeaturesForOutcome,
   readMonitorSnapshotsFromFeatures,
 } from '@/strategies/entry-feature-snapshot'
+import {
+  appendSimPositionMonitorSnapshot,
+  resolveTokenMonitorSnapshot,
+} from '@/strategies/sim-monitor-snapshots'
 import { fetchTradingRecordsForWallet, loadMcapSimClosedOutcomeKeys, mcapSimClosedOutcomeKey } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
@@ -70,6 +74,12 @@ async function openSimPosition(params: {
       ? (params.solAmount * solPrice) / priceUsd
       : params.solAmount * 1000
 
+  const liveMetrics = await resolveTokenMonitorSnapshot(
+    params.mintAddress,
+    params.entryMcap,
+  )
+  const volume5m = params.snapshot.volume_5m ?? liveMetrics.volume_5m
+
   const entryFeatures = {
     entry_template: params.entryTemplate,
     ...buildEntryFeatureSnapshot({
@@ -78,8 +88,9 @@ async function openSimPosition(params: {
       entryMcap: params.entryMcap,
       organicScore: params.snapshot.organic_score,
       topHoldersPct: params.snapshot.top_holders_pct,
-      volume5m: params.snapshot.volume_5m,
+      volume5m,
       tokenSymbol: params.symbol,
+      monitorSnapshots: volume5m != null ? [liveMetrics] : [],
     }),
     ...buildMcapOutcomeFeatures({
       snapshot: params.snapshot,
@@ -270,12 +281,31 @@ export async function POST(request: NextRequest) {
           (await fetchMcapTrackingRow(pos.mintAddress))
         if (!snapshot) continue
 
+        await appendSimPositionMonitorSnapshot({
+          records,
+          strategyId: strategy.id,
+          mintAddress: pos.mintAddress,
+          marketCap: snapshot.current_mcap,
+        })
+
         const closeReason = getMcapSimCloseReason(snapshot, {
           stopLossPct: strategy.config.exit.stopLossPct,
           takeProfitPct: strategy.config.exit.takeProfitPct,
           maxHoldHours: strategy.config.exit.maxHoldHours,
         })
         if (!closeReason) continue
+
+        const enrichedSnapshot = {
+          ...snapshot,
+          volume_5m:
+            snapshot.volume_5m ??
+            (
+              await resolveTokenMonitorSnapshot(
+                pos.mintAddress,
+                snapshot.current_mcap,
+              )
+            ).volume_5m,
+        }
 
         await closeSimPosition({
           strategyId: strategy.id,
@@ -284,7 +314,7 @@ export async function POST(request: NextRequest) {
           entryAt: pos.entryAt,
           entryMcap: pos.entryMcap || snapshot.first_mcap,
           entryTemplate: pos.entryTemplate,
-          snapshot,
+          snapshot: enrichedSnapshot,
           closeReason,
         })
         closed++

@@ -116,6 +116,21 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`market_regime_tags`** — schema + [`supabase/patches/market_regime_tags.sql`](supabase/patches/market_regime_tags.sql); [`GET/POST /api/strategies/regime`](src/app/api/strategies/regime/route.ts); Reports UI panel to tag daily regime (stored as `regime_tag_at_exit` on new outcomes). Run `market_regime_tags.sql` on Supabase after deploy.
 - **Outcomes table** — collapsible entry-feature columns (Organic, Holders%, Age, Vol@entry, Track samples); **Track samples** replaces abbreviated **Mon** (count of price/volume/mcap snapshots while position was open).
 
+### Added — Trade window volume overlay
+
+- **[`TradeWindowChart.tsx`](src/components/strategies/TradeWindowChart.tsx)** — dual axis: price (left), Vol 5m bars (right); bar color green/red vs previous sample.
+- **Chart API** — [`loadOutcomeTradeWindowChart`](src/strategies/db.ts) passes `volume_5m` from tracker `price_history` and [`monitor_snapshots`](src/strategies/entry-feature-snapshot.ts); synthetic 2-point fallback enriches entry/exit volume from outcome features.
+
+### Added — Volume capture (all strategy domains)
+
+- **[`trade-window-chart-data.ts`](src/strategies/trade-window-chart-data.ts)** — legacy `volume` → `volume_5m` parsing, domain-aware chart loading, monitor volume merge by timestamp.
+- **`insertStrategyOutcome`** — on close, clips trending tracker `price_history` into `monitor_snapshots` and backfills `volume_at_entry` when missing.
+- **Sim-track cycles** — [`mcap-tracking/sim-track`](src/app/api/mcap-tracking/sim-track/route.ts) and [`signals/sim-track`](src/app/api/signals/sim-track/route.ts) append `monitor_snapshots` each cycle while positions are open; open paths resolve live `volume_5m` via [`sim-monitor-snapshots.ts`](src/strategies/sim-monitor-snapshots.ts).
+- **Trending bot close** — [`bot-position-close.ts`](src/utils/bot-position-close.ts) embeds clipped tracker history into outcome features.
+- **DLMM close** — stores `pool_volume` / `fee_tvl_ratio_24h` on outcome features; chart shows “Volume N/A for DLMM pools” when no pool metric.
+- **Chart API debug** — `has_volume` and `volume_point_count` on [`outcomes/[id]/chart`](src/app/api/strategies/outcomes/[id]/chart/route.ts); Outcome review modal subtitle when volume is missing.
+- **Tests** — [`trade-window-chart-data.test.ts`](src/strategies/trade-window-chart-data.test.ts), extended [`monitor-chart-points.test.ts`](src/strategies/monitor-chart-points.test.ts).
+
 ### Added — Pipeline alignment (algo-tester vs Strategy Admin)
 
 - **[`src/utils/trading-simulation.ts`](src/utils/trading-simulation.ts)** — `resolveTrackerStrategyId()`, `isOpenTrackerPosition()`, `isSimulatedTrackerPosition()` shared by stats API and coverage reports.

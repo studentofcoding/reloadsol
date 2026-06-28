@@ -21,12 +21,15 @@ export async function GET(
       )
     }
 
-    const { points, source } = await loadOutcomeTradeWindowChart({ outcome })
+    const { points, source, volume_point_count, has_volume } =
+      await loadOutcomeTradeWindowChart({ outcome })
 
     return NextResponse.json({
       success: true,
       points,
       source,
+      volume_point_count,
+      has_volume,
       entry_at: outcome.entry_at,
       exit_at: outcome.exit_at,
       token_address: outcome.token_address,

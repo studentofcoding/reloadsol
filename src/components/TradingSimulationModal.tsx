@@ -802,13 +802,18 @@ export default function TradingSimulationModal({
 
 // ----- Shared chart configuration helpers -----
 
-interface PriceChartConfig {
+interface MixedPriceChartConfig {
   data: ChartData<'line' | 'bar', (number | null)[], string>
   options: ChartOptions<'line' | 'bar'>
 }
 
+interface BarPerformanceChartConfig {
+  data: ChartData<'bar', (number | null)[], string>
+  options: ChartOptions<'bar'>
+}
+
 // Build chart.js compatible config for the price/volume mixed chart
-const getPriceHistoryChartConfig = (priceHistory: PriceRecord[]): PriceChartConfig => {
+const getPriceHistoryChartConfig = (priceHistory: PriceRecord[]): MixedPriceChartConfig => {
   const labels = priceHistory.map((p) => new Date(p.timestamp).toLocaleTimeString())
 
   const priceDataset: ChartDataset<'line' | 'bar', (number | null)[]> = {
@@ -868,7 +873,9 @@ const getPriceHistoryChartConfig = (priceHistory: PriceRecord[]): PriceChartConf
 }
 
 // Build chart.js compatible config for trading configuration performance comparison
-const getConfigurationPerformanceChartConfig = (simulationData: TradingSimulationData): PriceChartConfig => {
+const getConfigurationPerformanceChartConfig = (
+  simulationData: TradingSimulationData,
+): BarPerformanceChartConfig => {
   const configData: Array<{
     label: string
     responseTime: number

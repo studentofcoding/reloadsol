@@ -4,6 +4,26 @@ import { countOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol } from './outcome-features'
 import { dedupeStrategyOutcomeRows, mcapSimClosedOutcomeKey } from './outcome-dedupe'
 import { applyAutoOutcomeLabels } from './outcome-labeling'
+import { hasTrainingClass } from './ml-training-features'
+import {
+  monitorSnapshotsToChartPoints,
+  priceHistoryToMonitorSnapshots,
+  readMonitorSnapshotsFromFeatures,
+  enrichFeaturesWithMonitorSnapshots,
+} from './entry-feature-snapshot'
+import { fetchTrackerTokenMetrics } from './sim-monitor-snapshots'
+import {
+  countVolumePoints,
+  filterPointsToWindow,
+  hasVolumeOnPoints,
+  lastSnapshotVolume,
+  mergeVolumeFromMonitorSnapshots,
+  parsePriceHistory,
+  readVolumeFromFeatures,
+  shouldSkipTrackerForDomain,
+  shouldUseTrackerHistoryFirst,
+  trackerHistoryHasVolume,
+} from './trade-window-chart-data'
 import { isOpenTrackerPosition, resolveTrackerStrategyId } from '@/utils/trading-simulation'
 import type {
   StrategyDefinitionRow,
@@ -14,6 +34,7 @@ import type {
   TrendingBotStrategyOverride,
   ExecutionMode,
   OutcomeChartSource,
+  OutcomeChartPoint,
   MlLabelStats,
   McapTrackerMilestoneBucket,
   McapTrackerReportStats,
@@ -247,6 +268,16 @@ export async function insertStrategyOutcome(params: {
 
   const exitAt = params.exit_at ?? new Date().toISOString()
   let features = params.features ?? {}
+
+  if (params.token_address && params.entry_at && params.domain !== 'dlmm') {
+    features = await enrichOutcomeFeaturesWithTracker({
+      tokenAddress: params.token_address,
+      entryAt: params.entry_at,
+      exitAt,
+      features,
+    })
+  }
+
   const regimeTag = await loadRegimeTagForDate(exitAt.slice(0, 10))
   if (regimeTag) {
     features = { ...features, regime_tag_at_exit: regimeTag }
@@ -285,6 +316,7 @@ export async function listStrategyOutcomes(params: {
   pnlMin?: number
   pnlMax?: number
   entryMcapBand?: string
+  trainingClassOnly?: boolean
   limit?: number
   offset?: number
 }): Promise<{ rows: StrategyOutcomeRow[]; total: number }> {
@@ -343,7 +375,10 @@ export async function listStrategyOutcomes(params: {
     throw error
   }
 
-  const deduped = dedupeStrategyOutcomeRows((data ?? []) as StrategyOutcomeRow[])
+  let deduped = dedupeStrategyOutcomeRows((data ?? []) as StrategyOutcomeRow[])
+  if (params.trainingClassOnly) {
+    deduped = deduped.filter((row) => hasTrainingClass(row.features))
+  }
   deduped.sort((a, b) =>
     (b.created_at ?? '').localeCompare(a.created_at ?? ''),
   )
@@ -351,6 +386,29 @@ export async function listStrategyOutcomes(params: {
   const page = deduped.slice(offset, offset + limit)
   const rows = await enrichOutcomeSymbols(page)
   return { rows, total }
+}
+
+/** All closed outcomes for ML dataset stats (no pagination). */
+export async function loadOutcomesForMlDataset(params?: {
+  domain?: StrategyDomain
+  strategyId?: string
+}): Promise<StrategyOutcomeRow[]> {
+  let query = supabase.from('strategy_outcomes').select('*')
+
+  if (params?.domain) query = query.eq('domain', params.domain)
+  if (params?.strategyId) query = query.eq('strategy_id', params.strategyId)
+
+  const { data, error } = await query
+
+  if (error) {
+    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+      return []
+    }
+    throw error
+  }
+
+  const deduped = dedupeStrategyOutcomeRows((data ?? []) as StrategyOutcomeRow[])
+  return enrichOutcomeSymbols(deduped)
 }
 
 async function enrichOutcomeSymbols(
@@ -449,88 +507,80 @@ export async function updateStrategyOutcomeFeatures(
   return { ok: true, row: data as StrategyOutcomeRow }
 }
 
-const TRACKER_TABLE =
-  process.env.NODE_ENV === 'development'
-    ? 'trending_token_tracker_dev'
-    : 'trending_token_tracker'
-
-type PriceHistoryPoint = { timestamp: string; price_usd: number }
-
-function parsePriceHistory(raw: unknown): PriceHistoryPoint[] {
-  if (!raw) return []
-  let data = raw
-  if (typeof data === 'string') {
-    try {
-      data = JSON.parse(data)
-    } catch {
-      return []
-    }
-  }
-  if (!Array.isArray(data)) return []
-  return data
-    .filter(
-      (p): p is PriceHistoryPoint =>
-        p != null &&
-        typeof p === 'object' &&
-        typeof (p as PriceHistoryPoint).timestamp === 'string' &&
-        typeof (p as PriceHistoryPoint).price_usd === 'number',
-    )
-    .sort(
-      (a, b) =>
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-    )
+export type OutcomeTradeWindowChartResult = {
+  points: OutcomeChartPoint[]
+  source: OutcomeChartSource
+  volume_point_count: number
+  has_volume: boolean
 }
 
-function filterPointsToWindow(
-  points: PriceHistoryPoint[],
-  entryAt: string,
-  exitAt: string,
-): PriceHistoryPoint[] {
-  const start = new Date(entryAt).getTime()
-  const end = new Date(exitAt).getTime()
-  if (Number.isNaN(start) || Number.isNaN(end)) return []
-  return points.filter((p) => {
-    const t = new Date(p.timestamp).getTime()
-    return t >= start && t <= end
-  })
-}
-
-export async function loadOutcomeTradeWindowChart(params: {
-  outcome: StrategyOutcomeRow
-}): Promise<{ points: PriceHistoryPoint[]; source: OutcomeChartSource }> {
-  const { outcome } = params
-  const entryAt = outcome.entry_at
-  const exitAt = outcome.exit_at
-  const tokenAddress = outcome.token_address
-
-  if (!entryAt || !exitAt) {
-    return { points: [], source: 'empty' }
-  }
-
-  if (tokenAddress) {
-    const { data, error } = await supabase
-      .from(TRACKER_TABLE)
-      .select('price_history')
-      .eq('token_address', tokenAddress)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    if (!error && data?.price_history) {
-      const filtered = filterPointsToWindow(
-        parsePriceHistory(data.price_history),
-        entryAt,
-        exitAt,
-      )
-      if (filtered.length > 0) {
-        return { points: filtered, source: 'tracker' }
+async function enrichOutcomeFeaturesWithTracker(params: {
+  tokenAddress: string
+  entryAt: string
+  exitAt: string
+  features: Record<string, unknown>
+}): Promise<Record<string, unknown>> {
+  const metrics = await fetchTrackerTokenMetrics(params.tokenAddress)
+  if (!metrics?.price_history) {
+    if (
+      params.features.volume_at_entry == null &&
+      typeof metrics?.volume_5m === 'number'
+    ) {
+      return {
+        ...params.features,
+        volume_at_entry: metrics.volume_5m,
+        volume_5m: metrics.volume_5m,
       }
     }
+    return params.features
   }
 
-  const features = outcome.features ?? {}
+  const historyPoints = filterPointsToWindow(
+    parsePriceHistory(metrics.price_history),
+    params.entryAt,
+    params.exitAt,
+  )
+  if (historyPoints.length < 2) {
+    if (
+      params.features.volume_at_entry == null &&
+      typeof metrics.volume_5m === 'number'
+    ) {
+      return {
+        ...params.features,
+        volume_at_entry: metrics.volume_5m,
+        volume_5m: metrics.volume_5m,
+      }
+    }
+    return params.features
+  }
+
+  const snapshots = priceHistoryToMonitorSnapshots(
+    historyPoints,
+    params.entryAt,
+    params.exitAt,
+  )
+  return enrichFeaturesWithMonitorSnapshots(params.features, snapshots)
+}
+
+function buildSyntheticChartPoints(params: {
+  entryAt: string
+  exitAt: string
+  features: Record<string, unknown>
+}): { points: OutcomeChartPoint[]; source: OutcomeChartSource } | null {
+  const { entryAt, exitAt, features } = params
   const initialPrice = features.initial_price_usd
   const exitPrice = features.exit_price_usd
+  const entryMcap =
+    typeof features.entry_mcap === 'number' && Number.isFinite(features.entry_mcap)
+      ? features.entry_mcap
+      : null
+  const exitMcap =
+    typeof features.exit_mcap === 'number' && Number.isFinite(features.exit_mcap)
+      ? features.exit_mcap
+      : null
+
+  const entryVolume = readVolumeFromFeatures(features)
+  const exitVolume = lastSnapshotVolume(features) ?? entryVolume
 
   if (
     typeof initialPrice === 'number' &&
@@ -540,8 +590,25 @@ export async function loadOutcomeTradeWindowChart(params: {
   ) {
     return {
       points: [
-        { timestamp: entryAt, price_usd: initialPrice },
-        { timestamp: exitAt, price_usd: exitPrice },
+        { timestamp: entryAt, price_usd: initialPrice, volume_5m: entryVolume },
+        { timestamp: exitAt, price_usd: exitPrice, volume_5m: exitVolume },
+      ],
+      source: 'outcome_features',
+    }
+  }
+
+  if (
+    entryMcap != null &&
+    entryMcap > 0 &&
+    exitMcap != null &&
+    typeof initialPrice === 'number' &&
+    !Number.isNaN(initialPrice)
+  ) {
+    const derivedExit = initialPrice * (exitMcap / entryMcap)
+    return {
+      points: [
+        { timestamp: entryAt, price_usd: initialPrice, volume_5m: entryVolume },
+        { timestamp: exitAt, price_usd: derivedExit, volume_5m: exitVolume },
       ],
       source: 'outcome_features',
     }
@@ -550,14 +617,119 @@ export async function loadOutcomeTradeWindowChart(params: {
   if (typeof exitPrice === 'number' && !Number.isNaN(exitPrice)) {
     return {
       points: [
-        { timestamp: entryAt, price_usd: exitPrice },
-        { timestamp: exitAt, price_usd: exitPrice },
+        { timestamp: entryAt, price_usd: exitPrice, volume_5m: entryVolume },
+        { timestamp: exitAt, price_usd: exitPrice, volume_5m: exitVolume },
       ],
       source: 'synthetic',
     }
   }
 
-  return { points: [], source: 'empty' }
+  return null
+}
+
+export async function loadOutcomeTradeWindowChart(params: {
+  outcome: StrategyOutcomeRow
+}): Promise<OutcomeTradeWindowChartResult> {
+  const { outcome } = params
+  const entryAt = outcome.entry_at
+  const exitAt = outcome.exit_at
+  const tokenAddress = outcome.token_address
+  const domain = outcome.domain
+  const features = outcome.features ?? {}
+
+  if (!entryAt || !exitAt) {
+    return { points: [], source: 'empty', volume_point_count: 0, has_volume: false }
+  }
+
+  const monitorSnapshots = readMonitorSnapshotsFromFeatures(features)
+  const initialPrice = features.initial_price_usd
+  const exitPrice = features.exit_price_usd
+  const entryMcap =
+    typeof features.entry_mcap === 'number' && Number.isFinite(features.entry_mcap)
+      ? features.entry_mcap
+      : null
+
+  let trackerPoints: OutcomeChartPoint[] = []
+  if (tokenAddress && !shouldSkipTrackerForDomain(domain)) {
+    const metrics = await fetchTrackerTokenMetrics(tokenAddress)
+    if (metrics?.price_history) {
+      trackerPoints = filterPointsToWindow(
+        parsePriceHistory(metrics.price_history),
+        entryAt,
+        exitAt,
+      )
+    }
+  }
+
+  const monitorPoints = monitorSnapshotsToChartPoints(
+    monitorSnapshots,
+    entryAt,
+    exitAt,
+    {
+      initialPriceUsd:
+        typeof initialPrice === 'number' && !Number.isNaN(initialPrice)
+          ? initialPrice
+          : null,
+      entryMcap,
+    },
+  )
+
+  const preferTracker =
+    shouldUseTrackerHistoryFirst(domain) ||
+    (domain === 'mcap_tracker' &&
+      trackerPoints.length >= 2 &&
+      trackerHistoryHasVolume(trackerPoints))
+
+  if (preferTracker && trackerPoints.length > 0) {
+    const points = mergeVolumeFromMonitorSnapshots(trackerPoints, monitorSnapshots)
+    return {
+      points,
+      source: 'tracker',
+      volume_point_count: countVolumePoints(points),
+      has_volume: hasVolumeOnPoints(points),
+    }
+  }
+
+  if (monitorPoints.length >= 2) {
+    return {
+      points: monitorPoints,
+      source: 'outcome_features',
+      volume_point_count: countVolumePoints(monitorPoints),
+      has_volume: hasVolumeOnPoints(monitorPoints),
+    }
+  }
+
+  if (trackerPoints.length >= 2) {
+    const points = mergeVolumeFromMonitorSnapshots(trackerPoints, monitorSnapshots)
+    return {
+      points,
+      source: 'tracker',
+      volume_point_count: countVolumePoints(points),
+      has_volume: hasVolumeOnPoints(points),
+    }
+  }
+
+  const synthetic = buildSyntheticChartPoints({ entryAt, exitAt, features })
+  if (synthetic) {
+    const points = mergeVolumeFromMonitorSnapshots(synthetic.points, monitorSnapshots)
+    return {
+      points,
+      source: synthetic.source,
+      volume_point_count: countVolumePoints(points),
+      has_volume: hasVolumeOnPoints(points),
+    }
+  }
+
+  if (monitorPoints.length === 1) {
+    return {
+      points: monitorPoints,
+      source: 'outcome_features',
+      volume_point_count: countVolumePoints(monitorPoints),
+      has_volume: hasVolumeOnPoints(monitorPoints),
+    }
+  }
+
+  return { points: [], source: 'empty', volume_point_count: 0, has_volume: false }
 }
 
 function median(values: number[]): number {

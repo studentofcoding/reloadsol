@@ -7,7 +7,8 @@ import {
 import { calculateGainPercentage } from '@/utils/trading-math'
 import { recordTrendingBotOutcome } from '@/strategies/outcomes'
 import { buildEntryMcapFeatures } from '@/strategies/outcome-features'
-import { buildEntryFeatureSnapshot } from '@/strategies/entry-feature-snapshot'
+import { buildEntryFeatureSnapshot, mergeMonitorSnapshots, priceHistoryToMonitorSnapshots } from '@/strategies/entry-feature-snapshot'
+import { filterPointsToWindow, parsePriceHistory } from '@/strategies/trade-window-chart-data'
 
 const TRACKER_TABLE =
   process.env.NODE_ENV === 'development'
@@ -148,7 +149,9 @@ export async function finalizeBotPositionClose(
 
   const { data: tracker } = await supabase
     .from(TRACKER_TABLE)
-    .select('id, trading_simulation, market_cap, organic_score, volume_5m, created_at')
+    .select(
+      'id, trading_simulation, market_cap, organic_score, volume_5m, created_at, price_history',
+    )
     .eq('token_address', params.tokenAddress)
     .in('status', ['tracking', 'waiting'])
     .maybeSingle()
@@ -178,15 +181,29 @@ export async function finalizeBotPositionClose(
 
   const entryAt =
     typeof sim.simulation_started_at === 'string' ? sim.simulation_started_at : null
+  const exitAt = new Date().toISOString()
   const entryMcap =
     (typeof sim.entry_market_cap === 'number' ? sim.entry_market_cap : null) ??
     (typeof tracker.market_cap === 'number' ? tracker.market_cap : null)
+
+  const existingMonitors = Array.isArray(sim.monitor_snapshots)
+    ? (sim.monitor_snapshots as import('@/strategies/entry-feature-snapshot').MonitorSnapshot[])
+    : []
+  const clippedHistory =
+    entryAt != null
+      ? priceHistoryToMonitorSnapshots(
+          filterPointsToWindow(parsePriceHistory(tracker.price_history), entryAt, exitAt),
+          entryAt,
+          exitAt,
+        )
+      : []
+  const monitorSnapshots = mergeMonitorSnapshots(existingMonitors, clippedHistory)
 
   await recordTrendingBotOutcome({
     strategyId: params.strategyId,
     tokenAddress: params.tokenAddress,
     entryAt,
-    exitAt: new Date().toISOString(),
+    exitAt,
     pnlPct: gainPct,
     status: finalStatus,
     isSimulated: params.isSimulated,
@@ -206,9 +223,7 @@ export async function finalizeBotPositionClose(
           typeof tracker.organic_score === 'number' ? tracker.organic_score : null,
         volume5m: typeof tracker.volume_5m === 'number' ? tracker.volume_5m : null,
         tokenSymbol: params.tokenSymbol,
-        monitorSnapshots: Array.isArray(sim.monitor_snapshots)
-          ? (sim.monitor_snapshots as import('@/strategies/entry-feature-snapshot').MonitorSnapshot[])
-          : [],
+        monitorSnapshots,
       }),
       ...buildEntryMcapFeatures(entryMcap),
     },

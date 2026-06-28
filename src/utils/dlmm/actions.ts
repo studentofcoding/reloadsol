@@ -13,7 +13,7 @@ import {
   updatePosition,
 } from '@/utils/dlmm/db';
 import { createDlmmExecutor } from '@/utils/dlmm/executors';
-import { fetchMeteoraPool, getFeeTvlRatio24h } from '@/utils/meteora';
+import { fetchMeteoraPool, getFeeTvlRatio24h, getPoolVolume24h } from '@/utils/meteora';
 
 async function enforceCapitalLimits(amountSol: number): Promise<string | null> {
   const config = await getAgentConfig();
@@ -193,6 +193,17 @@ export async function removePosition(id: string): Promise<DlmmActionResult> {
   });
 
   const { recordDlmmOutcome } = await import('@/strategies/outcomes');
+
+  let poolVolume: number | null = null
+  let feeTvl24h: number | null = null
+  try {
+    const pool = await fetchMeteoraPool(position.pool_address)
+    poolVolume = getPoolVolume24h(pool)
+    feeTvl24h = getFeeTvlRatio24h(pool)
+  } catch {
+    // pool metrics optional for outcome features
+  }
+
   await recordDlmmOutcome({
     strategyId: 'dlmm_default',
     poolAddress: position.pool_address,
@@ -207,6 +218,11 @@ export async function removePosition(id: string): Promise<DlmmActionResult> {
       amount_sol: position.amount_sol,
       close_reason: execResult.message,
       token_symbol: position.pool_name ?? position.token_x_symbol ?? position.token_y_symbol,
+      pool_volume: poolVolume,
+      fee_tvl_ratio_24h: feeTvl24h,
+      initial_price_usd: position.entry_value_usd > 0 ? position.entry_value_usd : null,
+      exit_price_usd: position.current_value_usd > 0 ? position.current_value_usd : null,
+      volume_at_entry: poolVolume,
     },
   });
 

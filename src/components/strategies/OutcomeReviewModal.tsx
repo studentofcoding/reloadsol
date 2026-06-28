@@ -129,12 +129,23 @@ export default function OutcomeReviewModal({
       return {
         points: (json.points ?? []) as OutcomeChartPoint[],
         source: (json.source ?? "") as string,
+        has_volume: Boolean(json.has_volume),
+        volume_point_count:
+          typeof json.volume_point_count === "number" ? json.volume_point_count : 0,
       };
     },
   });
 
   const chartPoints = chartData?.points ?? [];
   const chartSource = chartData?.source ?? "";
+  const chartHasVolume = chartData?.has_volume ?? false;
+  const chartVolumePointCount = chartData?.volume_point_count ?? 0;
+  const volumeNote =
+    outcome.domain === "dlmm" && !chartHasVolume
+      ? "Volume N/A for DLMM pools"
+      : !chartHasVolume && chartPoints.length > 0
+        ? `No volume data (${chartVolumePointCount} vol points · source: ${chartSource || "?"})`
+        : undefined;
 
   const tokenAddress = outcome.token_address ?? "";
   const tokenSymbol = readTokenSymbol(outcome.features);
@@ -408,6 +419,7 @@ export default function OutcomeReviewModal({
               exitAt={outcome.exit_at}
               pnlPct={outcome.pnl_pct}
               source={chartSource}
+              volumeNote={volumeNote}
             />
           ) : (
             <p className="text-xs text-gray-500">

@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getActiveSignalsForSim } from '@/strategies/load-signals'
 import { scoreSignalsForStrategy } from '@/strategies/signals-pipeline'
 import { recordSignalsOutcome } from '@/strategies/outcomes'
-import { buildEntryFeatureSnapshot } from '@/strategies/entry-feature-snapshot'
+import {
+  buildEntryFeatureSnapshot,
+  mergeEntryFeaturesForOutcome,
+} from '@/strategies/entry-feature-snapshot'
+import { appendSimPositionMonitorSnapshot, resolveTokenMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
@@ -171,6 +175,22 @@ async function closeSimPosition(params: {
 
   await insertTradingRecord(record)
 
+  const buyRecord = [...records]
+    .reverse()
+    .find(
+      (rec) =>
+        rec.operationType === 'buy' &&
+        rec.bot_strategy === params.strategyId &&
+        rec.tokens?.some((t) => t.mintAddress === params.mintAddress),
+    )
+  const buyFeatures =
+    buyRecord?.trading_simulation &&
+    typeof buyRecord.trading_simulation === 'object' &&
+    buyRecord.trading_simulation.entry_features &&
+    typeof buyRecord.trading_simulation.entry_features === 'object'
+      ? (buyRecord.trading_simulation.entry_features as Record<string, unknown>)
+      : params.entryFeatures
+
   await recordSignalsOutcome({
     strategyId: params.strategyId,
     tokenAddress: params.mintAddress,
@@ -179,12 +199,16 @@ async function closeSimPosition(params: {
     pnlPct,
     status: pnlPct >= 0 ? 'won' : 'lost',
     isSimulated: true,
-    features: {
+    features: mergeEntryFeaturesForOutcome(buyFeatures, {
       ...params.entryFeatures,
       exit_price_usd: sellPriceUsd,
+      initial_price_usd:
+        typeof buyFeatures.initial_price_usd === 'number'
+          ? buyFeatures.initial_price_usd
+          : cycle.weightedBuyPriceUsd,
       sol_spent: cycle.totalSolBought,
       sol_received: solReceived,
-    },
+    }),
   })
 
   return pnlPct
@@ -217,6 +241,16 @@ export async function POST(request: NextRequest) {
       const scoredByMint = new Map(scored.map((s) => [s.token_address, s]))
 
       for (const pos of openPositions) {
+        await appendSimPositionMonitorSnapshot({
+          records,
+          strategyId: strategy.id,
+          mintAddress: pos.mintAddress,
+          marketCap:
+            typeof pos.entryFeatures.entry_mcap === 'number'
+              ? pos.entryFeatures.entry_mcap
+              : null,
+        })
+
         const signal = scoredByMint.get(pos.mintAddress)
         const decision = signal?.decision ?? 'hold'
         if (decision === 'exit') {
@@ -246,6 +280,13 @@ export async function POST(request: NextRequest) {
 
         const prices = await fetchTokenPricesForTracking([signal.token_address])
         const priceUsd = prices[signal.token_address] || 0.000001
+        const liveMetrics = await resolveTokenMonitorSnapshot(
+          signal.token_address,
+          signal.current_mcap,
+        )
+        if (liveMetrics.price_usd == null && priceUsd > 0) {
+          liveMetrics.price_usd = priceUsd
+        }
 
         await openSimPosition({
           strategyId: strategy.id,
@@ -259,11 +300,14 @@ export async function POST(request: NextRequest) {
             growth: signal.mcap_growth_percent,
             recency_minutes: signal.trend_age_minutes,
             rationale: signal.rationale,
+            initial_price_usd: priceUsd,
             ...buildEntryFeatureSnapshot({
               entryAt: new Date().toISOString(),
               firstSeenAt: signal.first_seen_at,
               entryMcap: signal.current_mcap,
               tokenSymbol: signal.token_symbol,
+              volume5m: liveMetrics.volume_5m,
+              monitorSnapshots: liveMetrics.volume_5m != null ? [liveMetrics] : [],
             }),
           },
         })

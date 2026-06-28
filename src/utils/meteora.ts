@@ -92,6 +92,11 @@ export function getFeeTvlRatio24h(pool: MeteoraPool): number {
   return pool.fee_tvl_ratio?.['24h'] ?? pool.apr ?? 0;
 }
 
+export function getPoolVolume24h(pool: MeteoraPool): number | null {
+  const volume = pool.volume?.['24h'];
+  return typeof volume === 'number' && Number.isFinite(volume) ? volume : null;
+}
+
 export function getPoolMcap(pool: MeteoraPool): number {
   const xMcap = pool.token_x.market_cap ?? 0;
   const yMcap = pool.token_y.market_cap ?? 0;

@@ -237,6 +237,7 @@ export interface OutcomeMlMetadata {
 export interface OutcomeChartPoint {
   timestamp: string
   price_usd: number
+  volume_5m?: number | null
 }
 
 export type OutcomeChartSource = 'tracker' | 'outcome_features' | 'synthetic' | 'empty'

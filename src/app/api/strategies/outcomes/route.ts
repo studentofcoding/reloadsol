@@ -62,6 +62,7 @@ function toCsv(rows: StrategyOutcomeRow[]): string {
     'volume_at_entry',
     'monitor_count',
     'training_class',
+    'entry_template',
     'regime_tag_at_exit',
     'entry_at',
     'exit_at',
@@ -90,6 +91,7 @@ function toCsv(rows: StrategyOutcomeRow[]): string {
         readVolumeAtEntry(r.features) ?? '',
         readMonitorSnapshotCount(r.features),
         readTrainingClass(r.features) ?? '',
+        readFeatureString(r.features, 'entry_template'),
         readFeatureString(r.features, 'regime_tag_at_exit'),
         r.entry_at ?? '',
         r.exit_at ?? '',
@@ -130,6 +132,7 @@ export async function GET(request: NextRequest) {
     const pnlMax =
       parseOptionalNumber(searchParams.get('pnl_max')) ??
       resolvePnlFilter(pnlFilter).pnlMax
+    const trainingClassOnly = searchParams.get('training_class_only') === 'true'
     const limit = parseInt(searchParams.get('limit') ?? '500', 10)
     const offset = parseInt(searchParams.get('offset') ?? '0', 10)
 
@@ -145,6 +148,7 @@ export async function GET(request: NextRequest) {
       pnlMin,
       pnlMax,
       entryMcapBand,
+      trainingClassOnly,
       limit: format === 'csv' ? Math.min(limit, 5000) : limit,
       offset,
     })
