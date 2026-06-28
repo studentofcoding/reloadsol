@@ -398,6 +398,20 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(mcapTrackerSimEntryID, "mcap_tracker_sim_track")
 
+    socialRollupEntryID, err := cs.cron.AddFunc("@every 120s", cs.runSocialRollup)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("Failed to add social rollup cron job: %v", err))
+        log.Fatal("Failed to add social rollup cron job:", err)
+    }
+    cs.workers.BindEntry(socialRollupEntryID, "social_rollup")
+
+    socialWalletPollEntryID, err := cs.cron.AddFunc("@every 300s", cs.runSocialWalletPoll)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("Failed to add social wallet poll cron job: %v", err))
+        log.Fatal("Failed to add social wallet poll cron job:", err)
+    }
+    cs.workers.BindEntry(socialWalletPollEntryID, "social_wallet_poll")
+
     if cs.config.StrategyReportInterval > 0 {
         reportSpec := fmt.Sprintf("@every %ds", cs.config.StrategyReportInterval)
         reportEntryID, err := cs.cron.AddFunc(reportSpec, cs.runStrategyReportDigest)
@@ -461,6 +475,8 @@ func (cs *CronService) Start() {
 	http.HandleFunc("/trigger/signals-refresh", cs.manualSignalsRefreshTrigger)
     http.HandleFunc("/trigger/signals-sim-track", cs.manualSignalsSimTrackTrigger)
     http.HandleFunc("/trigger/mcap-tracker-sim-track", cs.manualMcapTrackerSimTrackTrigger)
+    http.HandleFunc("/trigger/social-rollup", cs.manualSocialRollupTrigger)
+    http.HandleFunc("/trigger/social-wallet-poll", cs.manualSocialWalletPollTrigger)
     http.HandleFunc("/trigger/strategy-report", cs.manualStrategyReportTrigger)
     http.HandleFunc("/trigger/dlmm-screen", cs.manualDLMMScreenTrigger)
     http.HandleFunc("/trigger/dlmm-sim-track", cs.manualDLMMSimTrackTrigger)
@@ -476,6 +492,8 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("📡 Signals refresh: every %d seconds", cs.config.SignalRefreshInterval))
     cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
     cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim track: every %d seconds", cs.config.McapTrackerSimInterval))
+    cs.logger.Info("📣 Social rollup: every 120 seconds")
+    cs.logger.Info("👛 Social wallet poll: every 300 seconds")
     if cs.config.StrategyReportInterval > 0 {
         cs.logger.Info(fmt.Sprintf("📊 Strategy report digest: every %d seconds", cs.config.StrategyReportInterval))
     } else {
@@ -582,6 +600,34 @@ func (cs *CronService) runMcapTrackerSimTrack() {
     cs.workers.Success("mcap_tracker_sim_track")
 }
 
+func (cs *CronService) runSocialRollup() {
+    cs.workers.Begin("social_rollup")
+    cs.logger.Info("📣 Running social rollup...")
+    url := fmt.Sprintf("%s/api/social/rollup?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Social rollup failed: %v", err))
+        cs.workers.Fail("social_rollup", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Social rollup completed (%d bytes)", len(resp)))
+    cs.workers.Success("social_rollup")
+}
+
+func (cs *CronService) runSocialWalletPoll() {
+    cs.workers.Begin("social_wallet_poll")
+    cs.logger.Info("👛 Running social wallet poll...")
+    url := fmt.Sprintf("%s/api/social/wallet-poll?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Social wallet poll failed: %v", err))
+        cs.workers.Fail("social_wallet_poll", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Social wallet poll completed (%d bytes)", len(resp)))
+    cs.workers.Success("social_wallet_poll")
+}
+
 func (cs *CronService) runStrategyReportDigest() {
     cs.workers.Begin("strategy_report")
     cs.logger.Info("📊 Running strategy report digest...")
@@ -620,6 +666,34 @@ func (cs *CronService) manualMcapTrackerSimTrackTrigger(w http.ResponseWriter, r
     json.NewEncoder(w).Encode(map[string]interface{}{
         "success": true,
         "message": "MCap tracker sim track triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualSocialRollupTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual social rollup trigger")
+    go cs.runSocialRollup()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "Social rollup triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualSocialWalletPollTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual social wallet poll trigger")
+    go cs.runSocialWalletPoll()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "Social wallet poll triggered",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

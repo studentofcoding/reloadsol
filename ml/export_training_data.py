@@ -11,7 +11,25 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-from features import FEATURE_COLUMNS, read_training_class, row_to_feature_vector
+from features import (
+    FEATURE_COLUMNS,
+    FEATURE_COLUMNS_V2,
+    read_training_class,
+    row_to_feature_vector,
+    row_to_feature_vector_v2,
+)
+
+
+def resolve_feature_columns(version: str) -> list[str]:
+    if version == "v2":
+        return FEATURE_COLUMNS_V2
+    return FEATURE_COLUMNS
+
+
+def resolve_row_to_vector(version: str):
+    if version == "v2":
+        return row_to_feature_vector_v2
+    return row_to_feature_vector
 
 
 def fetch_from_api(
@@ -41,7 +59,8 @@ def load_source_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def build_training_frame(raw: pd.DataFrame, recompute: bool = True) -> pd.DataFrame:
+def build_training_frame(raw: pd.DataFrame, recompute: bool = True, version: str = "v1") -> pd.DataFrame:
+    row_to_vector = resolve_row_to_vector(version)
     records: list[dict] = []
     skipped_incomplete = 0
     skipped_label = 0
@@ -52,7 +71,7 @@ def build_training_frame(raw: pd.DataFrame, recompute: bool = True) -> pd.DataFr
         if label is None:
             skipped_label += 1
             continue
-        features = row_to_feature_vector(row_dict)
+        features = row_to_vector(row_dict)
         if features is None:
             skipped_incomplete += 1
             continue
@@ -105,6 +124,12 @@ def main() -> None:
         help="Only export win tiers >= N (1–4)",
     )
     parser.add_argument(
+        "--version",
+        default="v1",
+        choices=["v1", "v2"],
+        help="Feature spec version (v2 includes social/telegram features)",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path("data/training.parquet"),
@@ -123,17 +148,18 @@ def main() -> None:
             training_class_min=args.training_class_min,
         )
 
-    df = build_training_frame(raw)
+    df = build_training_frame(raw, version=args.version)
     if df.empty:
         raise SystemExit("No training rows — check dataset stats API or CSV filters")
 
-    missing_cols = [c for c in FEATURE_COLUMNS if c not in df.columns]
+    feature_columns = resolve_feature_columns(args.version)
+    missing_cols = [c for c in feature_columns if c not in df.columns]
     if missing_cols:
         raise SystemExit(f"Missing feature columns: {missing_cols}")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(args.output, index=False)
-    print(f"Wrote {args.output} ({len(df)} rows, {len(FEATURE_COLUMNS)} features)")
+    print(f"Wrote {args.output} ({len(df)} rows, {len(feature_columns)} features)")
 
 
 if __name__ == "__main__":

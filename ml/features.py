@@ -23,9 +23,19 @@ NUMERIC_FEATURES = [
     "entry_template_milestone_80",
 ]
 
+SOCIAL_FEATURES = [
+    "log_telegram_mention_count_30m",
+    "telegram_unique_channels_30m",
+    "minutes_since_first_mention",
+    "smart_wallet_buy_count_1h",
+    "has_smart_wallet_buy",
+]
+
 BAND_FEATURES = [f"band_{band}" for band in ENTRY_MCAP_BANDS]
 
 FEATURE_COLUMNS = NUMERIC_FEATURES + BAND_FEATURES
+
+FEATURE_COLUMNS_V2 = FEATURE_COLUMNS + SOCIAL_FEATURES
 
 MIN_LABELED_OUTCOMES = 200
 
@@ -78,8 +88,34 @@ def _cap_age(hours: float | None) -> float | None:
     return min(hours, 168.0)
 
 
+def _cap_minutes(minutes: float | None) -> float:
+    if minutes is None or minutes < 0:
+        return 0.0
+    return min(minutes, 720.0)
+
+
+def _read_social_features(row: dict[str, Any]) -> dict[str, float]:
+    mentions = _read_number(row, "telegram_mention_count_30m") or 0.0
+    channels = _read_number(row, "telegram_unique_channels_30m") or 0.0
+    minutes = _cap_minutes(_read_number(row, "minutes_since_first_mention"))
+    wallet_buys = _read_number(row, "smart_wallet_buy_count_1h") or 0.0
+    has_wallet_raw = row.get("has_smart_wallet_buy")
+    has_wallet = 1.0 if has_wallet_raw is True or wallet_buys > 0 else 0.0
+    return {
+        "log_telegram_mention_count_30m": _log1p(mentions) or 0.0,
+        "telegram_unique_channels_30m": channels,
+        "minutes_since_first_mention": minutes,
+        "smart_wallet_buy_count_1h": wallet_buys,
+        "has_smart_wallet_buy": has_wallet,
+    }
+
+
 def row_to_feature_vector(row: dict[str, Any]) -> dict[str, float] | None:
-    """Build feature dict from a CSV/API row (snake_case columns)."""
+    """Build v1 feature dict from a CSV/API row (snake_case columns)."""
+    return row_to_feature_vector_v1(row)
+
+
+def row_to_feature_vector_v1(row: dict[str, Any]) -> dict[str, float] | None:
     log_mcap = _log1p(_read_number(row, "entry_mcap"))
     organic = _read_number(row, "organic_score")
     holders = _read_number(row, "top_holders_pct")
@@ -107,6 +143,14 @@ def row_to_feature_vector(row: dict[str, Any]) -> dict[str, float] | None:
         vector[f"band_{band_id}"] = 1.0 if band == band_id else 0.0
 
     return vector
+
+
+def row_to_feature_vector_v2(row: dict[str, Any]) -> dict[str, float] | None:
+    base = row_to_feature_vector_v1(row)
+    if base is None:
+        return None
+    base.update(_read_social_features(row))
+    return base
 
 
 def read_training_class(row: dict[str, Any], recompute: bool = False) -> int | None:

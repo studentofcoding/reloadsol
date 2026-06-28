@@ -181,6 +181,8 @@ func (cs *CronService) initWorkerRegistry() {
 	workers := []WorkerMeta{
 		{ID: "signals_sim_track", Name: "Signals sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.SignalsSimInterval, TriggerPath: "/trigger/signals-sim-track", CanTrigger: true},
 		{ID: "mcap_tracker_sim_track", Name: "MCap tracker sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.McapTrackerSimInterval, TriggerPath: "/trigger/mcap-tracker-sim-track", CanTrigger: true},
+		{ID: "social_rollup", Name: "Social rollup", Domain: "algo", Schedule: "every 120s", IntervalSec: 120, TriggerPath: "/trigger/social-rollup", CanTrigger: true},
+		{ID: "social_wallet_poll", Name: "Social wallet poll", Domain: "algo", Schedule: "every 300s", IntervalSec: 300, TriggerPath: "/trigger/social-wallet-poll", CanTrigger: true},
 		{ID: "signals_refresh", Name: "Signals refresh", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.SignalRefreshInterval, TriggerPath: "/trigger/signals-refresh", CanTrigger: true},
 		{ID: "trending_tracker", Name: "Trending tracker", Domain: "algo", Schedule: "every 5m", IntervalSec: 300, TriggerPath: "/trigger/trending", CanTrigger: true},
 		{ID: "filtered_trending", Name: "Filtered trending", Domain: "algo", Schedule: "every 2m", IntervalSec: 120, CanTrigger: false},

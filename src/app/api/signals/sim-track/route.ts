@@ -6,6 +6,7 @@ import {
   buildEntryFeatureSnapshot,
   mergeEntryFeaturesForOutcome,
 } from '@/strategies/entry-feature-snapshot'
+import { getSocialSnapshot } from '@/strategies/social-snapshot-loader'
 import { appendSimPositionMonitorSnapshot, resolveTokenMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
@@ -288,6 +289,8 @@ export async function POST(request: NextRequest) {
           liveMetrics.price_usd = priceUsd
         }
 
+        const social = await getSocialSnapshot(signal.token_address)
+
         await openSimPosition({
           strategyId: strategy.id,
           mintAddress: signal.token_address,
@@ -300,6 +303,7 @@ export async function POST(request: NextRequest) {
             growth: signal.mcap_growth_percent,
             recency_minutes: signal.trend_age_minutes,
             rationale: signal.rationale,
+            social_boost: signal.socialBoost ?? 0,
             initial_price_usd: priceUsd,
             ...buildEntryFeatureSnapshot({
               entryAt: new Date().toISOString(),
@@ -308,6 +312,7 @@ export async function POST(request: NextRequest) {
               tokenSymbol: signal.token_symbol,
               volume5m: liveMetrics.volume_5m,
               monitorSnapshots: liveMetrics.volume_5m != null ? [liveMetrics] : [],
+              social,
             }),
           },
         })

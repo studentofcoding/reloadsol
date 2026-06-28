@@ -65,6 +65,26 @@ services:
     networks:
       - reloadsol
 
+  social-ingest:
+    build:
+      context: .
+      dockerfile: social-ingest/Dockerfile
+    container_name: reloadsol-social-ingest
+    env_file:
+      - .env
+    environment:
+      SOCIAL_INGEST_URL: http://web:3000/api/social/ingest
+      SESSION_DIR: /app/sessions
+      SOCIAL_SESSION_NAME: session_search
+    volumes:
+      - ./social-ingest/sessions:/app/sessions
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - reloadsol
+
 networks:
   reloadsol:
     driver: bridge

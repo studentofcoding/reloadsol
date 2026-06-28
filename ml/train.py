@@ -13,7 +13,13 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import accuracy_score, classification_report, f1_score
 
-from features import FEATURE_COLUMNS, MIN_LABELED_OUTCOMES, NUM_CLASSES
+from features import FEATURE_COLUMNS, FEATURE_COLUMNS_V2, MIN_LABELED_OUTCOMES, NUM_CLASSES
+
+
+def resolve_feature_columns(version: str) -> list[str]:
+    if version == "v2":
+        return FEATURE_COLUMNS_V2
+    return FEATURE_COLUMNS
 
 
 def time_split(df: pd.DataFrame, test_ratio: float) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -63,7 +69,8 @@ def main() -> None:
             "Keep sim-track running or lower --min-rows for dry runs."
         )
 
-    missing = [c for c in FEATURE_COLUMNS if c not in df.columns]
+    feature_columns = resolve_feature_columns(args.version)
+    missing = [c for c in feature_columns if c not in df.columns]
     if missing:
         raise SystemExit(f"Missing feature columns: {missing}")
 
@@ -75,13 +82,13 @@ def main() -> None:
         )
 
     train_df, test_df = time_split(df, args.test_ratio)
-    x_train = train_df[FEATURE_COLUMNS]
+    x_train = train_df[feature_columns]
     y_train = train_df["training_class"].astype(int)
-    x_test = test_df[FEATURE_COLUMNS]
+    x_test = test_df[feature_columns]
     y_test = test_df["training_class"].astype(int)
 
-    train_set = lgb.Dataset(x_train, label=y_train, feature_name=FEATURE_COLUMNS)
-    valid_set = lgb.Dataset(x_test, label=y_test, feature_name=FEATURE_COLUMNS, reference=train_set)
+    train_set = lgb.Dataset(x_train, label=y_train, feature_name=feature_columns)
+    valid_set = lgb.Dataset(x_test, label=y_test, feature_name=feature_columns, reference=train_set)
 
     params = {
         "objective": "multiclass",
@@ -115,7 +122,7 @@ def main() -> None:
     feature_importance = {
         name: float(score)
         for name, score in sorted(
-            zip(FEATURE_COLUMNS, importance, strict=True),
+            zip(feature_columns, importance, strict=True),
             key=lambda item: item[1],
             reverse=True,
         )
@@ -128,14 +135,14 @@ def main() -> None:
     booster.save_model(str(lgb_path))
 
     onnx_path = out_dir / "model.onnx"
-    onnx_ok = export_onnx(booster, onnx_path, len(FEATURE_COLUMNS))
+    onnx_ok = export_onnx(booster, onnx_path, len(feature_columns))
 
     meta = {
         "version": args.version,
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "model_type": "multiclass",
         "num_classes": NUM_CLASSES,
-        "feature_columns": FEATURE_COLUMNS,
+        "feature_columns": feature_columns,
         "train_rows": len(train_df),
         "test_rows": len(test_df),
         "class_counts": {str(k): int(v) for k, v in class_counts.items()},

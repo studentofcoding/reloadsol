@@ -46,6 +46,17 @@ function resolvePnlFilter(pnlFilter: string | null): {
   }
 }
 
+function readFeatureNumber(
+  features: Record<string, unknown> | null | undefined,
+  key: string,
+): string {
+  const v = features?.[key]
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v)
+  if (typeof v === 'boolean') return v ? '1' : '0'
+  if (typeof v === 'string') return v
+  return ''
+}
+
 function toCsv(rows: StrategyOutcomeRow[], recomputeLabels: boolean): string {
   const headers = [
     'id',
@@ -63,6 +74,11 @@ function toCsv(rows: StrategyOutcomeRow[], recomputeLabels: boolean): string {
     'training_class',
     'entry_template',
     'regime_tag_at_exit',
+    'telegram_mention_count_30m',
+    'telegram_unique_channels_30m',
+    'minutes_since_first_mention',
+    'smart_wallet_buy_count_1h',
+    'has_smart_wallet_buy',
     'entry_at',
     'exit_at',
     'pnl_pct',
@@ -93,6 +109,11 @@ function toCsv(rows: StrategyOutcomeRow[], recomputeLabels: boolean): string {
         trainingClass ?? '',
         readFeatureString(r.features, 'entry_template'),
         readFeatureString(r.features, 'regime_tag_at_exit'),
+        readFeatureNumber(r.features, 'telegram_mention_count_30m'),
+        readFeatureNumber(r.features, 'telegram_unique_channels_30m'),
+        readFeatureNumber(r.features, 'minutes_since_first_mention'),
+        readFeatureNumber(r.features, 'smart_wallet_buy_count_1h'),
+        readFeatureNumber(r.features, 'has_smart_wallet_buy'),
         r.entry_at ?? '',
         r.exit_at ?? '',
         r.pnl_pct ?? '',

@@ -7,7 +7,8 @@ Production deployment uses **Docker Compose** (Next.js web + Go cron). PM2 scrip
 | Service | Container | Default port | Role |
 |---------|-----------|--------------|------|
 | **web** | `reloadsol-web` | `WEB_PORT` (3000 or 80) | Next.js app + API routes |
-| **cron** | `reloadsol-cron` | `CRON_PORT` (8080) | Trending track, SL/TP, DLMM, signals |
+| **cron** | `reloadsol-cron` | `CRON_PORT` (8080) | Trending track, SL/TP, DLMM, signals, social rollup/wallet-poll |
+| **social-ingest** | `reloadsol-social-ingest` | (none) | Telethon → `POST /api/social/ingest` |
 
 Host build produces `.next/standalone` (avoids OOM in-container); [`Dockerfile.web`](Dockerfile.web) packages the pre-built bundle.
 
@@ -18,13 +19,15 @@ git clone https://github.com/your-org/reloadsol.git
 cd reloadsol
 
 cp .env.docker.example .env
-# Edit .env — SUPABASE_SECRET_KEY, SHYFT_API_KEY, WALLET_SESSION_SECRET, cron secrets
+# Edit .env — SUPABASE_SECRET_KEY, SHYFT_API_KEY, WALLET_SESSION_SECRET, cron secrets, Telegram (API_ID, channel IDs)
 
-# Run supabase/schema.sql in Supabase SQL Editor (includes bot_* lock tables)
+# Run supabase/schema.sql in Supabase SQL Editor (includes social + bot_* tables)
+# First-time social: apply supabase/patches/social_signals.sql, copy Telethon session, then:
+bash scripts/bootstrap-social-server.sh
 
 npm run docker:deploy
-# Auto-detects web vs cron from git diff (scripts/docker-scope.sh)
-# Manual: --web-only | --cron-only | --all
+# Auto-detects web / cron / social from git diff (scripts/docker-scope.sh)
+# Manual: --web-only | --cron-only | --social-only | --all
 ```
 
 Production with host port 80:
@@ -39,9 +42,10 @@ Deploy only what changed (default `--auto`):
 
 | Change | Typical scope | Command |
 |--------|---------------|---------|
-| `src/**`, frontend config | web | `npm run docker:deploy:web` |
+| `src/**`, frontend config | web (+ social-ingest up) | `npm run docker:deploy:web` |
 | `main.go`, `worker_tracker.go` | cron | `npm run docker:deploy:cron` |
-| `docker-compose*.yml`, docker scripts | both | `npm run docker:deploy:all` |
+| `social-ingest/**` | social | `npm run docker:deploy:social` |
+| `docker-compose*.yml`, docker scripts | all three | `npm run docker:deploy:all` |
 
 Inspect scope without deploying:
 
@@ -50,7 +54,7 @@ bash scripts/docker-scope.sh detect
 bash scripts/docker-scope.sh detect-working
 ```
 
-Frontend-only deploys use `docker compose up -d --no-deps web` so **reloadsol-cron keeps running** without rebuild.
+Frontend-only deploys use `docker compose up -d --no-deps web` so **reloadsol-cron keeps running** without rebuild; **social-ingest** is restarted after web is healthy (always-on).
 
 ## CI / GitHub Actions
 
@@ -86,7 +90,22 @@ DLMM_MANAGE_SECRET=...
 
 WEB_PORT=80                 # host → container :3000
 API_HOST=http://web:3000    # cron → web (inside compose network)
+
+# Social ingest (Telethon — see social-ingest/README.md)
+API_ID=
+API_HASH=
+PHONE_NUMBER=
+GMGN_ID=
+GMGN_TRACKER_ID=
+GMGN_SOLANA_FDV_AND_SMART_MONEY_ID=
+FINDER_TRENDING_ID=
+JUNGOOL_ID=
+GAMBLES_ID=
+JOJI_INNER_ID=
+STONK_CALLS_ID=
 ```
+
+Telethon session (not in `.env`): copy `social-ingest/sessions/session_search.session` to the server before first deploy (gitignored).
 
 ### Bot automation (real trading)
 
@@ -138,9 +157,11 @@ sudo certbot --nginx -d yourdomain.com
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 docker compose logs -f web
 docker compose logs -f cron
+docker compose logs -f social-ingest
 
 curl -fsS "http://127.0.0.1:${WEB_PORT:-3000}/api/health"
 curl -fsS "http://127.0.0.1:${CRON_PORT:-8080}/health"
+curl -X POST "http://127.0.0.1:${WEB_PORT:-3000}/api/social/rollup?key=${TRENDING_TRACKER_SECRET}"
 ```
 
 Manual cron triggers (cron container port 8080):
@@ -158,6 +179,8 @@ curl -X POST http://127.0.0.1:8080/trigger/sltp
 - [ ] Trading keypair only in `.env` (not committed)
 - [ ] Firewall: 22, 80, 443 only
 - [ ] Supabase RLS enabled (`supabase/schema.sql`)
+- [ ] Telethon session on server at `social-ingest/sessions/session_search.session`
+- [ ] `bash scripts/bootstrap-social-server.sh` run once (migration + wallet seed)
 
 ## Troubleshooting
 

@@ -35,8 +35,9 @@ resolve_up_services() {
   case "$SERVICES" in
     web) echo "web" ;;
     cron) echo "cron" ;;
-    all|"") echo "web cron" ;;
-    *) echo "Unknown service target: $SERVICES (use web, cron, or all)" >&2; exit 1 ;;
+    social) echo "social-ingest" ;;
+    all|"") echo "web cron social-ingest" ;;
+    *) echo "Unknown service target: $SERVICES (use web, cron, social, or all)" >&2; exit 1 ;;
   esac
 }
 
@@ -64,10 +65,13 @@ if [[ "$MODE" == "prod-daemon" ]]; then
   fi
   if [[ "$SERVICES" == "web" ]]; then
     docker compose "${COMPOSE_FILES[@]}" up --build -d --no-deps web
+    docker compose "${COMPOSE_FILES[@]}" up -d social-ingest
   elif [[ "$SERVICES" == "cron" ]]; then
     docker compose "${COMPOSE_FILES[@]}" up --build -d cron
+  elif [[ "$SERVICES" == "social" ]]; then
+    docker compose "${COMPOSE_FILES[@]}" up --build -d social-ingest
   else
-    docker compose "${COMPOSE_FILES[@]}" up --build -d web cron
+    docker compose "${COMPOSE_FILES[@]}" up --build -d web cron social-ingest
   fi
   exit 0
 fi
@@ -82,6 +86,8 @@ if [[ "$SERVICES" == "web" ]]; then
   docker compose "${COMPOSE_FILES[@]}" up --build web
 elif [[ "$SERVICES" == "cron" ]]; then
   docker compose "${COMPOSE_FILES[@]}" up --build cron
+elif [[ "$SERVICES" == "social" ]]; then
+  docker compose "${COMPOSE_FILES[@]}" up --build social-ingest
 else
-  docker compose "${COMPOSE_FILES[@]}" up --build web cron
+  docker compose "${COMPOSE_FILES[@]}" up --build web cron social-ingest
 fi

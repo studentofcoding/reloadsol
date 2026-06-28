@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # docker-deploy.sh
-# Production deploy for Docker stack (web + cron).
+# Production deploy for Docker stack (web + cron + social-ingest).
 #
 # Key idea: build while the old container is still serving traffic.
-# Only rebuild/recreate services that changed (or --web-only / --cron-only / --all).
+# Only rebuild/recreate services that changed (or --web-only / --cron-only / --social-only / --all).
 #
 # Usage:
 #   ./scripts/docker-deploy.sh              # pull + auto scope + up
 #   ./scripts/docker-deploy.sh --skip-pull  # auto scope + up only (git hook / CI)
-#   ./scripts/docker-deploy.sh --web-only   # web only
+#   ./scripts/docker-deploy.sh --web-only   # web + social-ingest (always-on)
 #   ./scripts/docker-deploy.sh --cron-only  # cron only
-#   ./scripts/docker-deploy.sh --all        # force both (legacy)
+#   ./scripts/docker-deploy.sh --social-only
+#   ./scripts/docker-deploy.sh --all        # force web + cron + social-ingest
 #   ./scripts/docker-deploy.sh --clean      # wipe node_modules/.next first
 #   ./scripts/docker-deploy.sh --full-down  # stop stack before build
 #
@@ -32,6 +33,8 @@ FULL_DOWN=false
 SCOPE_MODE="auto"
 DEPLOY_WEB=false
 DEPLOY_CRON=false
+DEPLOY_SOCIAL=false
+DETECTED_SCOPE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -55,18 +58,28 @@ while [[ $# -gt 0 ]]; do
       SCOPE_MODE="manual"
       DEPLOY_WEB=true
       DEPLOY_CRON=false
+      DEPLOY_SOCIAL=true
       shift
       ;;
     --cron-only)
       SCOPE_MODE="manual"
       DEPLOY_WEB=false
       DEPLOY_CRON=true
+      DEPLOY_SOCIAL=false
+      shift
+      ;;
+    --social-only)
+      SCOPE_MODE="manual"
+      DEPLOY_WEB=false
+      DEPLOY_CRON=false
+      DEPLOY_SOCIAL=true
       shift
       ;;
     --all)
       SCOPE_MODE="manual"
       DEPLOY_WEB=true
       DEPLOY_CRON=true
+      DEPLOY_SOCIAL=true
       shift
       ;;
     *)
@@ -110,13 +123,30 @@ resolve_scope() {
   if [[ "$SCOPE_MODE" == "manual" ]]; then
     return
   fi
-  local detected
-  detected="$(bash scripts/docker-scope.sh detect)"
-  log "Auto-detected deploy scope: ${detected}"
+  DETECTED_SCOPE="$(bash scripts/docker-scope.sh detect)"
+  log "Auto-detected deploy scope: ${DETECTED_SCOPE}"
   DEPLOY_WEB=false
   DEPLOY_CRON=false
-  if [[ "$detected" == *web* ]]; then DEPLOY_WEB=true; fi
-  if [[ "$detected" == *cron* ]]; then DEPLOY_CRON=true; fi
+  DEPLOY_SOCIAL=false
+  if [[ "$DETECTED_SCOPE" == *web* ]]; then DEPLOY_WEB=true; fi
+  if [[ "$DETECTED_SCOPE" == *cron* ]]; then DEPLOY_CRON=true; fi
+  if [[ "$DETECTED_SCOPE" == *social* ]]; then DEPLOY_SOCIAL=true; fi
+  # social-ingest is always-on when web is redeployed
+  if [[ "$DEPLOY_WEB" == true ]]; then DEPLOY_SOCIAL=true; fi
+}
+
+should_build_social() {
+  [[ "$DEPLOY_SOCIAL" == true ]] || return 1
+  if [[ "$SCOPE_MODE" == "manual" ]]; then
+    return 0
+  fi
+  if [[ "$DEPLOY_WEB" == true ]]; then
+    return 0
+  fi
+  if [[ "$DETECTED_SCOPE" == *social* ]]; then
+    return 0
+  fi
+  return 1
 }
 
 verify_standalone_build() {
@@ -192,6 +222,18 @@ wait_for_cron_health() {
   return 1
 }
 
+ensure_social_running() {
+  if [[ "$DEPLOY_SOCIAL" != true && "$DEPLOY_WEB" != true ]]; then
+    return 0
+  fi
+  log "Ensuring social-ingest is running ..."
+  if ! "${COMPOSE[@]}" up -d social-ingest; then
+    log "social-ingest failed to start"
+    "${COMPOSE[@]}" logs --tail=40 social-ingest || true
+    return 1
+  fi
+}
+
 if [[ ! -f .env ]]; then
   log "Missing .env — copy from .env.docker.example and fill secrets."
   exit 1
@@ -209,12 +251,12 @@ fi
 
 resolve_scope
 
-if [[ "$DEPLOY_WEB" == false && "$DEPLOY_CRON" == false ]]; then
+if [[ "$DEPLOY_WEB" == false && "$DEPLOY_CRON" == false && "$DEPLOY_SOCIAL" == false ]]; then
   log "Nothing to deploy (empty scope)."
   exit 0
 fi
 
-log "Deploy plan: web=${DEPLOY_WEB} cron=${DEPLOY_CRON}"
+log "Deploy plan: web=${DEPLOY_WEB} cron=${DEPLOY_CRON} social=${DEPLOY_SOCIAL}"
 
 if [[ "$FULL_DOWN" == true ]]; then
   log "Stopping stack (--full-down) ..."
@@ -245,16 +287,22 @@ if [[ "$DEPLOY_CRON" == true ]]; then
   "${COMPOSE[@]}" build cron
 fi
 
+if should_build_social; then
+  log "Building social-ingest image ..."
+  "${COMPOSE[@]}" build social-ingest
+fi
+
 UP_SERVICES=()
 if [[ "$DEPLOY_WEB" == true ]]; then UP_SERVICES+=(web); fi
 if [[ "$DEPLOY_CRON" == true ]]; then UP_SERVICES+=(cron); fi
 
-log "Recreating services: ${UP_SERVICES[*]} ..."
+log "Recreating services: ${UP_SERVICES[*]:-(none)} social=${DEPLOY_SOCIAL} ..."
+
 if [[ "$DEPLOY_WEB" == true && "$DEPLOY_CRON" == false ]]; then
   "${COMPOSE[@]}" up -d --no-deps web
 elif [[ "$DEPLOY_CRON" == true && "$DEPLOY_WEB" == false ]]; then
-  "${COMPOSE[@]}" up -d cron
-else
+  "${COMPOSE[@]}" up -d --no-deps cron
+elif [[ ${#UP_SERVICES[@]} -gt 0 ]]; then
   "${COMPOSE[@]}" up -d "${UP_SERVICES[@]}"
 fi
 
@@ -269,5 +317,11 @@ if [[ "$DEPLOY_CRON" == true ]]; then
   wait_for_cron_health 30 3 || true
 fi
 
-log "Deploy complete (web=${DEPLOY_WEB} cron=${DEPLOY_CRON})"
+if [[ "$DEPLOY_SOCIAL" == true ]]; then
+  ensure_social_running
+elif [[ "$DEPLOY_WEB" == true ]]; then
+  ensure_social_running
+fi
+
+log "Deploy complete (web=${DEPLOY_WEB} cron=${DEPLOY_CRON} social=${DEPLOY_SOCIAL})"
 "${COMPOSE[@]}" ps

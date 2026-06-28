@@ -3,12 +3,14 @@
 # Usage:
 #   docker-scope.sh detect [--base REF]     # git diff vs REF (default HEAD~1)
 #   docker-scope.sh detect-working          # staged + unstaged vs HEAD
-# Output: "web", "cron", "web,cron", or empty (nothing to deploy)
+# Output: comma-separated scopes: web, cron, social (e.g. "web,cron,social")
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+DEFAULT_SCOPE="web,cron,social"
 
 classify_path() {
   local path="$1"
@@ -17,8 +19,14 @@ classify_path() {
     main.go|worker_tracker.go|go.mod|go.sum|Dockerfile.cron)
       echo "cron"
       ;;
+    social-ingest/*|social-ingest/Dockerfile)
+      echo "social"
+      ;;
+    data/tracked-wallets.txt)
+      echo "skip"
+      ;;
     docker-compose*.yml|.env.docker.example|scripts/docker-*)
-      echo "both"
+      echo "all"
       ;;
     src/*|public/*|package.json|package-lock.json|.npmrc|next.config.*|tsconfig.json|tsconfig.*.json|tailwind.config.*|postcss.config.*|middleware.ts|Dockerfile.web|Dockerfile|components.json|eslint.config.*|.eslintrc*)
       echo "web"
@@ -48,13 +56,32 @@ collect_working_files() {
   } | sort -u
 }
 
+emit_scope() {
+  local has_web="$1"
+  local has_cron="$2"
+  local has_social="$3"
+  local parts=()
+
+  if [[ "$has_web" == true ]]; then parts+=("web"); fi
+  if [[ "$has_cron" == true ]]; then parts+=("cron"); fi
+  if [[ "$has_social" == true ]]; then parts+=("social"); fi
+
+  if [[ ${#parts[@]} -eq 0 ]]; then
+    echo ""
+    return
+  fi
+
+  local IFS=,
+  echo "${parts[*]}"
+}
+
 detect_from_files() {
   local files="$1"
-  local has_web=false has_cron=false
+  local has_web=false has_cron=false has_social=false
   local file scope
 
   if [[ -z "$files" ]]; then
-    echo "web,cron"
+    echo "$DEFAULT_SCOPE"
     return
   fi
 
@@ -62,25 +89,18 @@ detect_from_files() {
     [[ -z "$file" ]] && continue
     scope="$(classify_path "$file")"
     case "$scope" in
-      both)
-        echo "web,cron"
+      all)
+        echo "$DEFAULT_SCOPE"
         return
         ;;
       web) has_web=true ;;
       cron) has_cron=true ;;
+      social) has_social=true ;;
       skip) ;;
     esac
   done <<< "$files"
 
-  if [[ "$has_web" == true && "$has_cron" == true ]]; then
-    echo "web,cron"
-  elif [[ "$has_web" == true ]]; then
-    echo "web"
-  elif [[ "$has_cron" == true ]]; then
-    echo "cron"
-  else
-    echo ""
-  fi
+  emit_scope "$has_web" "$has_cron" "$has_social"
 }
 
 cmd="${1:-detect}"

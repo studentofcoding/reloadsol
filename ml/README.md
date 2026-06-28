@@ -81,7 +81,18 @@ python check_dataset.py data/training.parquet --min-rows 30
 python train.py --input data/training.parquet --version v1 --min-rows 33
 ```
 
-Artifacts land in `ml/artifacts/v1/`:
+### ML v2 (social + telegram features)
+
+After sim outcomes include social fields from entry snapshots:
+
+```bash
+python export_training_data.py --version v2 --output data/training_v2.parquet
+python train.py --input data/training_v2.parquet --version v2 --min-rows 200
+```
+
+Artifacts land in `ml/artifacts/v2/` with five extra features: mention counts, unique channels, minutes since first mention, smart-wallet buy count, and `has_smart_wallet_buy`.
+
+## v1 artifacts
 
 | File | Purpose |
 |------|---------|

@@ -25,6 +25,19 @@ export const ML_NUMERIC_FEATURE_KEYS = [
   'entry_template_milestone_80',
 ] as const
 
+export const ML_SOCIAL_FEATURE_KEYS = [
+  'log_telegram_mention_count_30m',
+  'telegram_unique_channels_30m',
+  'minutes_since_first_mention',
+  'smart_wallet_buy_count_1h',
+  'has_smart_wallet_buy',
+] as const
+
+export const ML_V2_FEATURE_KEYS = [
+  ...ML_NUMERIC_FEATURE_KEYS,
+  ...ML_SOCIAL_FEATURE_KEYS,
+] as const
+
 export type MlNumericFeatureKey = (typeof ML_NUMERIC_FEATURE_KEYS)[number]
 
 export type MlLabeledClass = 0 | 1 | 2 | 3 | 4
@@ -99,6 +112,35 @@ export function capTokenAgeHours(hours: number | null | undefined): number | nul
   return Math.min(hours, 168)
 }
 
+export function capMinutesSinceFirstMention(
+  minutes: number | null | undefined,
+): number {
+  if (minutes == null || !Number.isFinite(minutes) || minutes < 0) return 0
+  return Math.min(minutes, 720)
+}
+
+function readSocialFeatures(features: Record<string, unknown>): Record<string, number> {
+  const mentions = readFeatureNumber(features, 'telegram_mention_count_30m') ?? 0
+  const channels = readFeatureNumber(features, 'telegram_unique_channels_30m') ?? 0
+  const minutes = capMinutesSinceFirstMention(
+    readFeatureNumber(features, 'minutes_since_first_mention'),
+  )
+  const walletBuys = readFeatureNumber(features, 'smart_wallet_buy_count_1h') ?? 0
+  const hasWallet =
+    features.has_smart_wallet_buy === true ||
+    walletBuys > 0
+      ? 1
+      : 0
+
+  return {
+    log_telegram_mention_count_30m: log1p(mentions) ?? 0,
+    telegram_unique_channels_30m: channels,
+    minutes_since_first_mention: minutes,
+    smart_wallet_buy_count_1h: walletBuys,
+    has_smart_wallet_buy: hasWallet,
+  }
+}
+
 /** Stored class from features, or recomputed from pnl/status when missing. */
 export function resolveEffectiveTrainingClass(
   row: Pick<StrategyOutcomeRow, 'features' | 'pnl_pct' | 'status'>,
@@ -121,8 +163,14 @@ export function bucketPnl(pnl: number | null | undefined): keyof MlPnlBuckets {
   return 'three_hundred_plus'
 }
 
-/** Entry-time numeric vector for ML (mirrors ml/features.py). */
+/** Entry-time numeric vector for ML v1 (mirrors ml/features.py). */
 export function extractMlFeatureVector(
+  features: Record<string, unknown> | null | undefined,
+): Record<string, number> | null {
+  return extractMlFeatureVectorV1(features)
+}
+
+export function extractMlFeatureVectorV1(
   features: Record<string, unknown> | null | undefined,
 ): Record<string, number> | null {
   if (!features) return null
@@ -156,6 +204,39 @@ export function extractMlFeatureVector(
   }
 
   return vector
+}
+
+/** Entry-time vector including social/telegram features (ML v2). */
+export function extractMlFeatureVectorV2(
+  features: Record<string, unknown> | null | undefined,
+): Record<string, number> | null {
+  const base = extractMlFeatureVectorV1(features)
+  if (!base) return null
+  return {
+    ...base,
+    ...readSocialFeatures(features ?? {}),
+  }
+}
+
+export function extractMlTrainingRowV2(
+  row: StrategyOutcomeRow,
+  recompute = false,
+): MlTrainingRow | null {
+  const trainingClass = resolveEffectiveTrainingClass(row, recompute)
+  if (!isLabeledTrainingClass(trainingClass)) return null
+  if (!row.entry_at) return null
+
+  const features = extractMlFeatureVectorV2(row.features)
+  if (!features) return null
+
+  return {
+    id: row.id,
+    strategy_id: row.strategy_id,
+    domain: row.domain,
+    entry_at: row.entry_at,
+    training_class: trainingClass,
+    features,
+  }
 }
 
 export function extractMlTrainingRow(

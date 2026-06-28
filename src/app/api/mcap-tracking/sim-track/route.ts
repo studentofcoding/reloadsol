@@ -7,6 +7,8 @@ import {
   mergeEntryFeaturesForOutcome,
   readMonitorSnapshotsFromFeatures,
 } from '@/strategies/entry-feature-snapshot'
+import { checkSocialGate } from '@/strategies/social-snapshot-loader'
+import type { SocialSnapshot } from '@/strategies/social/types'
 import {
   appendSimPositionMonitorSnapshot,
   resolveTokenMonitorSnapshot,
@@ -66,6 +68,7 @@ async function openSimPosition(params: {
   entryTemplate: 'first_seen' | 'milestone_80'
   entryAt: string
   snapshot: McapSnapshot
+  social?: SocialSnapshot | null
 }): Promise<void> {
   const solPrice = await getSolPriceUSD()
   const priceUsd = 0.000001
@@ -91,6 +94,7 @@ async function openSimPosition(params: {
       volume5m,
       tokenSymbol: params.symbol,
       monitorSnapshots: volume5m != null ? [liveMetrics] : [],
+      social: params.social ?? null,
     }),
     ...buildMcapOutcomeFeatures({
       snapshot: params.snapshot,
@@ -361,6 +365,14 @@ export async function POST(request: NextRequest) {
           continue
         }
 
+        const socialGate = await checkSocialGate(snapshot.token_address, strategy.config.social, {
+          domain: 'mcap_tracker',
+        })
+        if (!socialGate.passed) {
+          skipped.push(`${snapshot.token_symbol}: social_gate`)
+          continue
+        }
+
         await openSimPosition({
           strategyId: strategy.id,
           mintAddress: snapshot.token_address,
@@ -370,6 +382,7 @@ export async function POST(request: NextRequest) {
           entryTemplate: strategy.config.entryTemplate,
           entryAt: entry.entryAt,
           snapshot,
+          social: socialGate.snapshot,
         })
         opened++
         openMintSet.add(snapshot.token_address)

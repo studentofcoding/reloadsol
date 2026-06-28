@@ -1,4 +1,6 @@
 import { STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker-constants'
+import { applySocialBoostToScore } from './social-scoring'
+import type { SocialSnapshot } from './social/types'
 import type { SignalsScoringWeights, SignalsStrategyConfig } from './types'
 
 export type SignalScoringItem = {
@@ -22,6 +24,8 @@ export type SignalScoreResult = {
   score: number
   decision: 'enter' | 'hold' | 'exit' | 'skip'
   rationale: string
+  socialBoost?: number
+  socialNotes?: string[]
 }
 
 const MILESTONE_GROWTH_THRESHOLDS = {
@@ -66,6 +70,7 @@ export function getHoldGrowthFloor(minGrowth: number, holdGrowthFloor?: number):
 export function computeScoreAndDecision(
   item: SignalScoringItem,
   strategyConfig: SignalsStrategyConfig,
+  socialSnapshot?: SocialSnapshot | null,
 ): SignalScoreResult {
   const growth = item.mcap_growth_percent || 0
   const isStuck = item.is_tracking_stuck === true
@@ -111,6 +116,22 @@ export function computeScoreAndDecision(
     score -= w.sellOver100LatePenalty
   }
 
+  let socialBoost = 0
+  let socialNotes: string[] = []
+  if (socialSnapshot) {
+    const socialResult = applySocialBoostToScore(score, socialSnapshot, {
+      mentionTier1: w.socialMentionTier1,
+      mentionTier2: w.socialMentionTier2,
+      mentionTier3: w.socialMentionTier3,
+      uniqueChannelBonus: w.socialUniqueChannelBonus,
+      smartWalletBuyBonus: w.socialSmartWalletBuyBonus,
+      tier1WalletBonus: w.socialTier1WalletBonus,
+    })
+    score = socialResult.score
+    socialBoost = socialResult.socialBoost
+    socialNotes = socialResult.socialNotes
+  }
+
   let decision: SignalScoreResult['decision'] = 'skip'
   const rationale: string[] = []
 
@@ -138,7 +159,13 @@ export function computeScoreAndDecision(
     rationale.push('Insufficient momentum')
   }
 
-  return { score, decision, rationale: rationale.join('; ') }
+  return {
+    score,
+    decision,
+    rationale: rationale.join('; '),
+    socialBoost,
+    socialNotes,
+  }
 }
 
 export function buildSignalScoringItem(input: {
@@ -166,6 +193,7 @@ export function buildSignalScoringItem(input: {
 export function applyScoreToItem(
   item: SignalScoringItem,
   strategyConfig: SignalsStrategyConfig,
+  socialSnapshot?: SocialSnapshot | null,
 ): SignalScoringItem & SignalScoreResult {
-  return { ...item, ...computeScoreAndDecision(item, strategyConfig) }
+  return { ...item, ...computeScoreAndDecision(item, strategyConfig, socialSnapshot) }
 }

@@ -42,6 +42,7 @@ export const DEV_API_PREFIXES = [
   '/api/pnl/update',
   '/api/strategies',
   '/api/workers',
+  '/api/social',
 ] as const;
 
 /** Cron / webhook / bearer routes that bypass wallet sessions. */
@@ -53,6 +54,9 @@ export const SERVICE_AUTH_API_PREFIXES = [
   '/api/signals/sim-track',
   '/api/mcap-tracking/sim-track',
   '/api/strategies/report-digest',
+  '/api/social/ingest',
+  '/api/social/rollup',
+  '/api/social/wallet-poll',
 ] as const;
 
 export type ApiAccessTier = 'public' | 'wallet' | 'dev' | 'open';

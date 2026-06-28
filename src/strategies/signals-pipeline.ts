@@ -2,6 +2,12 @@ import { supabase } from '@/utils/supabase'
 import { normalizeTrackingTimeline, isInTrackingRange, type McapSnapshot } from '@/utils/mcap-tracker'
 import { getRugAddressSet } from '@/utils/rug-list/db'
 import { log } from '@/utils/unified-logger'
+import { fetchSocialRollupsMap } from '@/strategies/social/db'
+import {
+  evaluateSocialGate,
+  rollupToSocialSnapshot,
+} from '@/strategies/social-snapshot'
+import type { SocialSnapshot } from '@/strategies/social/types'
 import {
   applyScoreToItem,
   buildSignalScoringItem,
@@ -13,6 +19,8 @@ export type ScoredSignal = SignalScoringItem & {
   score: number
   decision: 'enter' | 'hold' | 'exit' | 'skip'
   rationale: string
+  socialBoost?: number
+  socialNotes?: string[]
 }
 
 type McapTrackingRow = {
@@ -32,6 +40,7 @@ type McapTrackingRow = {
 function rowToScoredSignal(
   row: McapTrackingRow,
   strategyConfig: SignalsStrategyConfig,
+  socialSnapshot?: SocialSnapshot | null,
 ): ScoredSignal {
   const base = buildSignalScoringItem({
     token_address: row.token_address,
@@ -47,12 +56,13 @@ function rowToScoredSignal(
     is_tracking_stuck: row.is_tracking_stuck,
     in_tracking_range: isInTrackingRange(row.current_mcap),
   })
-  return applyScoreToItem(base, strategyConfig) as ScoredSignal
+  return applyScoreToItem(base, strategyConfig, socialSnapshot) as ScoredSignal
 }
 
 export function rescoreScoredSignal(
   signal: ScoredSignal,
   strategyConfig: SignalsStrategyConfig,
+  socialSnapshot?: SocialSnapshot | null,
 ): ScoredSignal {
   const base = buildSignalScoringItem({
     token_address: signal.token_address,
@@ -68,7 +78,7 @@ export function rescoreScoredSignal(
     is_tracking_stuck: signal.is_tracking_stuck,
     in_tracking_range: isInTrackingRange(signal.current_mcap),
   })
-  return applyScoreToItem(base, strategyConfig) as ScoredSignal
+  return applyScoreToItem(base, strategyConfig, socialSnapshot) as ScoredSignal
 }
 
 function sortScoredSignals(signals: ScoredSignal[]): ScoredSignal[] {
@@ -197,7 +207,21 @@ export async function fetchAndScoreSignals(
     normalizeTrackingTimeline(row as McapSnapshot)
   }
 
-  let signals: ScoredSignal[] = items.map((row) => rowToScoredSignal(row, strategyConfig))
+  const rollupMap = await fetchSocialRollupsMap(items.map((r) => r.token_address))
+
+  let signals: ScoredSignal[] = []
+  for (const row of items) {
+    const rollup = rollupMap.get(row.token_address) ?? null
+    const socialSnapshot = rollupToSocialSnapshot(rollup, now)
+    if (strategyConfig.social) {
+      const gate = evaluateSocialGate(socialSnapshot, strategyConfig.social, {
+        tokenAddress: row.token_address,
+        domain: 'signals',
+      })
+      if (!gate.passed) continue
+    }
+    signals.push(rowToScoredSignal(row, strategyConfig, socialSnapshot))
+  }
 
   if (!options?.skipRugValidation) {
     signals = await validateTokensAgainstRugPulls(signals, strategyConfig)

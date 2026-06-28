@@ -1,4 +1,5 @@
 import { buildEntryMcapFeatures } from './outcome-features'
+import { socialSnapshotToFeatureFields, type SocialSnapshot } from './social-snapshot'
 import { filterPointsToWindow } from './trade-window-chart-data'
 import type { OutcomeChartPoint } from './types'
 
@@ -18,6 +19,7 @@ export type EntryFeatureSnapshotInput = {
   volume5m?: number | null
   tokenSymbol?: string | null
   monitorSnapshots?: MonitorSnapshot[]
+  social?: SocialSnapshot | null
 }
 
 export function computeTokenAgeHours(
@@ -50,6 +52,9 @@ export function buildEntryFeatureSnapshot(
   }
   if (input.tokenSymbol) {
     snapshot.token_symbol = input.tokenSymbol
+  }
+  if (input.social) {
+    Object.assign(snapshot, socialSnapshotToFeatureFields(input.social))
   }
   return snapshot
 }

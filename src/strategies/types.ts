@@ -4,6 +4,15 @@ export type ExecutionMode = 'sim_only' | 'live_only' | 'ab_parallel'
 
 export type RiskLevel = 'low' | 'medium' | 'high'
 
+export type SocialGateConfig = {
+  /** Minimum mention count in rolling 30m window (0 = disabled). */
+  socialMinMentions30m?: number
+  /** Require at least one smart-wallet buy in rolling 1h window. */
+  socialRequireSmartWalletBuy?: boolean
+  /** Skip tokens whose first mention is older than this many minutes. */
+  socialMaxMinutesSinceFirstMention?: number
+}
+
 export interface TokenFilterConfig {
   enabled: boolean
   mcap?: { min?: number; max?: number }
@@ -63,6 +72,12 @@ export interface SignalsScoringWeights {
   stuckPenalty: number
   stopLossPenalty: number
   sellOver100LatePenalty: number
+  socialMentionTier1?: number
+  socialMentionTier2?: number
+  socialMentionTier3?: number
+  socialUniqueChannelBonus?: number
+  socialSmartWalletBuyBonus?: number
+  socialTier1WalletBonus?: number
 }
 
 export interface SignalsStrategyConfig {
@@ -78,6 +93,7 @@ export interface SignalsStrategyConfig {
   }
   scoring: SignalsScoringWeights
   enterScoreFloor: number
+  social?: SocialGateConfig
   execution: {
     simBuySol: number
     maxOpenPositions: number
@@ -89,6 +105,7 @@ export type SignalsStrategyOverride = Partial<
 > & {
   query?: Partial<SignalsStrategyConfig['query']>
   scoring?: Partial<SignalsScoringWeights>
+  social?: Partial<SocialGateConfig>
   execution?: Partial<SignalsStrategyConfig['execution']>
 }
 
@@ -157,6 +174,7 @@ export interface McapTrackerStrategyConfig {
     organicScoreMin?: number
     topHoldersPctMax?: number
   }
+  social?: SocialGateConfig
 }
 
 export type McapTrackerStrategyOverride = Partial<
@@ -166,6 +184,7 @@ export type McapTrackerStrategyOverride = Partial<
   execution?: Partial<McapTrackerStrategyConfig['execution']>
   exit?: Partial<McapTrackerStrategyConfig['exit']>
   entry?: Partial<McapTrackerStrategyConfig['entry']>
+  social?: Partial<SocialGateConfig>
 }
 
 export interface McapTrackerStrategy {
