@@ -30,6 +30,8 @@ write_stamp() {
   mkdir -p "$(dirname "$STAMP_FILE")"
   lockfile_hash > "$STAMP_FILE"
 }
+
+find_bigint_package_dirs() {
   find node_modules -name package.json -path '*/bigint-buffer/package.json' 2>/dev/null \
     | sed 's|/package.json$||' \
     | sort -u
@@ -122,6 +124,7 @@ fi
 log "Rebuilding bigint-buffer native bindings..."
 if npm rebuild bigint-buffer; then
   log "bigint-buffer native bindings OK."
+  write_stamp
 else
   log "WARN: bigint-buffer rebuild failed — pure JS fallback will be used."
   install_hint
