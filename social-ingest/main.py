@@ -16,10 +16,12 @@ from dotenv import load_dotenv
 from telethon import TelegramClient, events
 
 from parsers import (
+    build_source_lookup,
     extract_cas,
     extract_sol_amount,
     extract_wallet_name,
     fetch_gmgn_token_metadata,
+    lookup_channel_source,
     parse_channel_ids,
 )
 
@@ -29,6 +31,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [social-ingest] %(message)s",
 )
+# Telethon "Got difference for channel …" is sync noise, not ingest activity.
+logging.getLogger("telethon").setLevel(logging.WARNING)
 
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
@@ -36,6 +40,7 @@ PHONE_NUMBER = os.getenv("PHONE_NUMBER", "")
 SESSION_NAME = os.getenv("SOCIAL_SESSION_NAME", "session_search")
 SESSION_DIR = os.getenv("SESSION_DIR", "social-ingest/sessions")
 ENRICH_GMGN = os.getenv("SOCIAL_ENRICH_GMGN", "true").lower() in ("1", "true", "yes")
+LOG_SKIPS = os.getenv("SOCIAL_INGEST_LOG_SKIPS", "true").lower() in ("1", "true", "yes")
 
 INGEST_URL = os.getenv(
     "SOCIAL_INGEST_URL",
@@ -121,11 +126,10 @@ async def main() -> None:
     if not channels:
         raise SystemExit("No channel IDs configured (GMGN_*, FINDER_TRENDING_ID, etc.)")
 
+    channel_ids, source_by_id = build_source_lookup(channels)
+
     client = TelegramClient(session_path(), API_ID, API_HASH)
     await client.start(phone=PHONE_NUMBER)
-
-    channel_ids = [cid for cid, _ in channels]
-    source_by_id = {cid: source for cid, source in channels}
 
     logging.info(
         "Listening on %d channels (session=%s) → %s",
@@ -138,10 +142,29 @@ async def main() -> None:
 
         @client.on(events.NewMessage(chats=channel_ids))
         async def handler(event):  # type: ignore[no-redef]
-            source = source_by_id.get(event.chat_id)
+            source = lookup_channel_source(event.chat_id, source_by_id)
             if not source:
+                if LOG_SKIPS:
+                    logging.warning(
+                        "Skip message: unknown chat_id=%s (check channel env ids)",
+                        event.chat_id,
+                    )
                 return
+
+            text = event.message.raw_text or ""
             payload = await build_events(http, event.message, source, event.chat_id)
+
+            if not payload:
+                if LOG_SKIPS and text.strip():
+                    excerpt = text.replace("\n", " ")[:120]
+                    logging.info(
+                        "Skip message (no token CA): source=%s chat_id=%s excerpt=%r",
+                        source,
+                        event.chat_id,
+                        excerpt,
+                    )
+                return
+
             await post_events(http, payload)
 
         await client.run_until_disconnected()

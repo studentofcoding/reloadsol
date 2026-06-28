@@ -79,7 +79,7 @@ python social-ingest/main.py
 | `JOJI_INNER_ID` | JOJI |
 | `STONK_CALLS_ID` | STONK_CALLS |
 
-Startup logs print resolved Telethon peer IDs (`env=… raw=… → peer_id=…`).
+Startup logs print resolved channel ids (`bare=` internal id, `marked=` Telethon `event.chat_id`). Set `SOCIAL_INGEST_LOG_SKIPS=false` to hide per-message skip lines.
 
 ## Wallet seed
 
@@ -91,7 +91,8 @@ npm run social:seed-wallets -- --file path/to/wallets.txt
 
 ## Verify
 
-- Logs: `Listening on N channels` and `Ingest OK (200)`
+- Logs: `Listening on N channels`, `Channel … bare=… marked=…`, and `Ingest OK (200)`
+- `Skip message (no token CA)` = channel message received but no parseable Solana address in text
 - Admin UI: `/dev/social`
 - Supabase: `social_token_events` → cron refreshes `social_token_rollups`
 

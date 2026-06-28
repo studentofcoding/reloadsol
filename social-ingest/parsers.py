@@ -43,23 +43,63 @@ def resolve_channel_peer_id(raw_id: int, use_positive: bool) -> int:
     return int(resolved)
 
 
+def marked_channel_id(bare_channel_id: int) -> int:
+    """Telethon event.chat_id uses marked ids (e.g. -1001872223162)."""
+    from telethon.tl.types import PeerChannel
+
+    return utils.get_peer_id(PeerChannel(channel_id=bare_channel_id))
+
+
+def build_source_lookup(
+    channels: list[tuple[int, str]],
+) -> tuple[list[int], dict[int, str]]:
+    """
+    Map both marked and bare channel ids → source label.
+    Returns (marked_ids for NewMessage filter, lookup dict).
+    """
+    source_by_id: dict[int, str] = {}
+    marked_ids: list[int] = []
+
+    for bare_id, source in channels:
+        marked = marked_channel_id(bare_id)
+        source_by_id[bare_id] = source
+        source_by_id[marked] = source
+        if marked not in marked_ids:
+            marked_ids.append(marked)
+
+    return marked_ids, source_by_id
+
+
+def lookup_channel_source(chat_id: int, source_by_id: dict[int, str]) -> str | None:
+    source = source_by_id.get(chat_id)
+    if source:
+        return source
+    try:
+        resolved, _ = utils.resolve_id(chat_id)
+        return source_by_id.get(int(resolved))
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_channel_ids() -> list[tuple[int, str]]:
-    """Resolve Telethon peer IDs from env channel config."""
+    """Resolve bare Telethon channel ids from env channel config."""
     out: list[tuple[int, str]] = []
     for env_key, source, use_positive in CHANNEL_ENV_CONFIG:
         raw = (os.getenv(env_key) or "").strip()
         if not raw.lstrip("-").isdigit():
             continue
         raw_id = int(raw)
-        peer_id = resolve_channel_peer_id(raw_id, use_positive)
+        bare_id = resolve_channel_peer_id(raw_id, use_positive)
+        marked = marked_channel_id(bare_id)
         logging.info(
-            "Channel %s env=%s raw=%s → peer_id=%s",
+            "Channel %s env=%s raw=%s → bare=%s marked=%s",
             source,
             env_key,
             raw_id,
-            peer_id,
+            bare_id,
+            marked,
         )
-        out.append((peer_id, source))
+        out.append((bare_id, source))
     return out
 
 
