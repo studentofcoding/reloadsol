@@ -12,7 +12,7 @@ Update after significant sim batches or when disabling a strategy.
 
 | Strategy | Status | Notes |
 |----------|--------|-------|
-| `mcap_enter_at_80` | **Primary** | Target 150–200 sim closes before live; ~93% WR on 31 trades is promising, not sufficient alone |
+| `mcap_enter_at_80` | **Primary — FROZEN** | Rules locked for data collection; target **200+ sim closes** before ML enforce or live |
 | `att` | Active | Registry floor **200k mcap** — sub-50k entries should not assign here; bad under50k WR is usually `lowcap_moonbag` or legacy rows |
 | `lowcap_moonbag` | Active | 35k–90k band; deactivate if WR stays &lt;10% over 30+ trades |
 | `signals_sell_over_100` | Sim only | Exits on mcap ≥100%; sim PnL now uses mcap basis (fixed price/rug mismatch) |
@@ -35,7 +35,9 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 - Train gate: `npm run ml:train-gate` → `ml/artifacts/v2-gate/`
 - Train potential (advisory): `npm run ml:train-potential` → `ml/artifacts/v2-potential/`
 - Check: `npm run ml:check-dataset` / `npm run ml:check-potential`
-- Shadow scoring runs on mcap sim opens (`entry_features.ml_gate_*`); **enforce not enabled**
+- Shadow scoring runs on mcap sim opens (`entry_features.ml_gate_*`); **enforce wired but default `ML_GATE_MODE=shadow`**
+- Social TTL cleanup every 30m (Go cron → `/api/social/cleanup`); `/dev/social` is manual refresh only
+- Weekly loop: `npm run ml:export` → `ml:train-gate` → `ml:check-dataset`; review shadow `ml_gate_p_bad` histogram before setting `ML_GATE_MODE=enforce`
 - Do not gate live on v1 multiclass (overfit); use v2-gate `gate_ready` only
 
 ## Risk / kill switch
@@ -48,5 +50,6 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 | Date | Change |
 |------|--------|
+| 2026-06-28 | Social TTL cleanup + manual `/dev/social` refresh; `social_overlap` on entry features; L2 enforce wired (default shadow) |
 | 2026-06-28 | Two-stage ML: v2-gate binary + v2-potential tiers; shadow ONNX on mcap sim-track |
 | 2026-06-28 | Fixed signals sim PnL (mcap vs price); symbol backfill from `token_mcap_tracking`; versioned ML export + gate_ready in train meta |

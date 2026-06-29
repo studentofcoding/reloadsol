@@ -412,6 +412,13 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(socialWalletPollEntryID, "social_wallet_poll")
 
+    socialCleanupEntryID, err := cs.cron.AddFunc("@every 30m", cs.runSocialCleanup)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("Failed to add social cleanup cron job: %v", err))
+        log.Fatal("Failed to add social cleanup cron job:", err)
+    }
+    cs.workers.BindEntry(socialCleanupEntryID, "social_cleanup")
+
     if cs.config.StrategyReportInterval > 0 {
         reportSpec := fmt.Sprintf("@every %ds", cs.config.StrategyReportInterval)
         reportEntryID, err := cs.cron.AddFunc(reportSpec, cs.runStrategyReportDigest)
@@ -476,6 +483,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/signals-sim-track", cs.manualSignalsSimTrackTrigger)
     http.HandleFunc("/trigger/mcap-tracker-sim-track", cs.manualMcapTrackerSimTrackTrigger)
     http.HandleFunc("/trigger/social-rollup", cs.manualSocialRollupTrigger)
+    http.HandleFunc("/trigger/social-cleanup", cs.manualSocialCleanupTrigger)
     http.HandleFunc("/trigger/social-wallet-poll", cs.manualSocialWalletPollTrigger)
     http.HandleFunc("/trigger/strategy-report", cs.manualStrategyReportTrigger)
     http.HandleFunc("/trigger/dlmm-screen", cs.manualDLMMScreenTrigger)
@@ -493,6 +501,7 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
     cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim track: every %d seconds", cs.config.McapTrackerSimInterval))
     cs.logger.Info("📣 Social rollup: every 120 seconds")
+    cs.logger.Info("🧹 Social cleanup: every 30 minutes")
     cs.logger.Info("👛 Social wallet poll: every 300 seconds")
     if cs.config.StrategyReportInterval > 0 {
         cs.logger.Info(fmt.Sprintf("📊 Strategy report digest: every %d seconds", cs.config.StrategyReportInterval))
@@ -614,6 +623,20 @@ func (cs *CronService) runSocialRollup() {
     cs.workers.Success("social_rollup")
 }
 
+func (cs *CronService) runSocialCleanup() {
+    cs.workers.Begin("social_cleanup")
+    cs.logger.Info("🧹 Running social cleanup...")
+    url := fmt.Sprintf("%s/api/social/cleanup?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil, 120)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Social cleanup failed: %v", err))
+        cs.workers.Fail("social_cleanup", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Social cleanup completed (%d bytes)", len(resp)))
+    cs.workers.Success("social_cleanup")
+}
+
 func (cs *CronService) runSocialWalletPoll() {
     cs.workers.Begin("social_wallet_poll")
     cs.logger.Info("👛 Running social wallet poll...")
@@ -680,6 +703,20 @@ func (cs *CronService) manualSocialRollupTrigger(w http.ResponseWriter, r *http.
     json.NewEncoder(w).Encode(map[string]interface{}{
         "success": true,
         "message": "Social rollup triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualSocialCleanupTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual social cleanup trigger")
+    go cs.runSocialCleanup()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "Social cleanup triggered",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

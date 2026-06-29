@@ -80,6 +80,7 @@ export type McapSimOpenSkipReason =
   | 'no_entry_mcap'
   | 'low_organic'
   | 'high_holders'
+  | 'ml_gate_reject'
 
 export function resolveMcapSimEntry(
   strategy: McapTrackerStrategy,

@@ -56,6 +56,7 @@ export const SERVICE_AUTH_API_PREFIXES = [
   '/api/strategies/report-digest',
   '/api/social/ingest',
   '/api/social/rollup',
+  '/api/social/cleanup',
   '/api/social/wallet-poll',
 ] as const;
 

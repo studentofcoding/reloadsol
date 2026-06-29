@@ -17,6 +17,7 @@ tsconfig.tsbuildinfo
 
 /trending_api
 /venv
+/ml/venv
 /__pycache__
 social-ingest/sessions/
 *.session

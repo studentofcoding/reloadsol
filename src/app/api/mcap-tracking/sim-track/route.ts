@@ -7,10 +7,17 @@ import {
   readMonitorSnapshotsFromFeatures,
 } from '@/strategies/entry-feature-snapshot'
 import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
-import { scoreEntryFeaturesShadow } from '@/strategies/entry-ml-scorer'
-import { mergeShadowScoresIntoEntryFeatures } from '@/strategies/ml-shadow-log'
-import { checkSocialGate } from '@/strategies/social-snapshot-loader'
-import type { SocialSnapshot } from '@/strategies/social/types'
+import { getMlGatePBadMax } from '@/strategies/entry-ml-scorer'
+import {
+  logMlGateCounterfactual,
+  mergeShadowScoresIntoEntryFeatures,
+} from '@/strategies/ml-shadow-log'
+import {
+  annotateEntryFeatures,
+  evaluateSocialGateFromContext,
+  getSocialContext,
+  type SocialContext,
+} from '@/strategies/social/context'
 import {
   appendSimPositionMonitorSnapshot,
   resolveTokenMonitorSnapshot,
@@ -43,6 +50,16 @@ export const maxDuration = 120
 const MCAP_TRACKER_SIM_WALLET =
   process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim'
 
+type MlScorerModule = typeof import('@/strategies/entry-ml-scorer.server')
+let mlScorerPromise: Promise<MlScorerModule> | null = null
+
+function getMlScorer(): Promise<MlScorerModule> {
+  if (!mlScorerPromise) {
+    mlScorerPromise = import('@/strategies/entry-ml-scorer.server')
+  }
+  return mlScorerPromise
+}
+
 function getSimTrackSecret(): string {
   return (
     process.env.MCAP_TRACKER_SIM_TRACK_SECRET ||
@@ -70,7 +87,8 @@ async function openSimPosition(params: {
   entryTemplate: 'first_seen' | 'milestone_80'
   entryAt: string
   snapshot: McapSnapshot
-  social?: SocialSnapshot | null
+  socialCtx?: SocialContext | null
+  scoredEntryFeatures?: Record<string, unknown> | null
 }): Promise<void> {
   const solPrice = await getSolPriceUSD()
   const priceUsd = 0.000001
@@ -84,9 +102,11 @@ async function openSimPosition(params: {
     params.entryMcap,
   )
   const volume5m = params.snapshot.volume_5m ?? liveMetrics.volume_5m
+  const socialSnapshot = params.socialCtx?.snapshot ?? null
 
-  const entryFeatures = {
-    ...(await buildFullEntryFeatureSnapshot(
+  let scoredEntryFeatures = params.scoredEntryFeatures
+  if (!scoredEntryFeatures) {
+    const baseFeatures = await buildFullEntryFeatureSnapshot(
       params.mintAddress,
       {
         entryAt: params.entryAt,
@@ -98,7 +118,7 @@ async function openSimPosition(params: {
         tokenSymbol: params.symbol,
         monitorSnapshots:
           volume5m != null || liveMetrics.price_usd != null ? [liveMetrics] : [],
-        social: params.social ?? null,
+        social: socialSnapshot,
         skipJupiter:
           params.snapshot.organic_score != null &&
           params.snapshot.top_holders_pct != null,
@@ -112,11 +132,13 @@ async function openSimPosition(params: {
           exitMcap: params.snapshot.current_mcap,
         }),
       },
-    )),
+    )
+    const annotated = params.socialCtx
+      ? annotateEntryFeatures(baseFeatures, params.socialCtx)
+      : baseFeatures
+    const shadow = await (await getMlScorer()).scoreEntryFeaturesShadow(annotated)
+    scoredEntryFeatures = mergeShadowScoresIntoEntryFeatures(annotated, shadow)
   }
-
-  const shadow = await scoreEntryFeaturesShadow(entryFeatures)
-  const scoredEntryFeatures = mergeShadowScoresIntoEntryFeatures(entryFeatures, shadow)
 
   const record = buildTradingRecord({
     walletAddress: MCAP_TRACKER_SIM_WALLET,
@@ -379,13 +401,64 @@ export async function POST(request: NextRequest) {
           continue
         }
 
-        const socialGate = await checkSocialGate(snapshot.token_address, strategy.config.social, {
+        const socialCtx = await getSocialContext(snapshot.token_address)
+        const socialGate = evaluateSocialGateFromContext(socialCtx, strategy.config.social, {
           domain: 'mcap_tracker',
+          tokenAddress: snapshot.token_address,
         })
         if (!socialGate.passed) {
           skipped.push(`${snapshot.token_symbol}: social_gate`)
           continue
         }
+
+        const liveMetrics = await resolveTokenMonitorSnapshot(
+          snapshot.token_address,
+          entry.entryMcap,
+        )
+        const volume5m = snapshot.volume_5m ?? liveMetrics.volume_5m
+        const baseFeatures = await buildFullEntryFeatureSnapshot(
+          snapshot.token_address,
+          {
+            entryAt: entry.entryAt,
+            firstSeenAt: snapshot.first_seen_at,
+            entryMcap: entry.entryMcap,
+            organicScore: snapshot.organic_score,
+            topHoldersPct: snapshot.top_holders_pct,
+            volume5m,
+            tokenSymbol: snapshot.token_symbol,
+            monitorSnapshots:
+              volume5m != null || liveMetrics.price_usd != null ? [liveMetrics] : [],
+            social: socialCtx.snapshot,
+            skipJupiter:
+              snapshot.organic_score != null && snapshot.top_holders_pct != null,
+          },
+          {
+            entry_template: strategy.config.entryTemplate,
+            ...buildMcapOutcomeFeatures({
+              snapshot,
+              entryTemplate: strategy.config.entryTemplate,
+              entryMcap: entry.entryMcap,
+              exitMcap: snapshot.current_mcap,
+            }),
+          },
+        )
+        const annotated = annotateEntryFeatures(baseFeatures, socialCtx)
+        const shadow = await (await getMlScorer()).scoreEntryFeaturesShadow(annotated)
+        const gateDecision = await (await getMlScorer()).evaluateMlGateEnforce(shadow)
+        if (gateDecision.reject) {
+          if (gateDecision.pBad != null) {
+            logMlGateCounterfactual({
+              mintAddress: snapshot.token_address,
+              strategyId: strategy.id,
+              pBad: gateDecision.pBad,
+              threshold: getMlGatePBadMax(),
+              reason: gateDecision.reason ?? 'ml_gate_reject',
+            })
+          }
+          skipped.push(`${snapshot.token_symbol}: ml_gate_reject`)
+          continue
+        }
+        const scoredEntryFeatures = mergeShadowScoresIntoEntryFeatures(annotated, shadow)
 
         await openSimPosition({
           strategyId: strategy.id,
@@ -396,7 +469,8 @@ export async function POST(request: NextRequest) {
           entryTemplate: strategy.config.entryTemplate,
           entryAt: entry.entryAt,
           snapshot,
-          social: socialGate.snapshot,
+          socialCtx,
+          scoredEntryFeatures,
         })
         opened++
         openMintSet.add(snapshot.token_address)

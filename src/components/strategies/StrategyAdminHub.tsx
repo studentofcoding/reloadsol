@@ -355,6 +355,7 @@ export default function StrategyAdminHub() {
   const [backfillPhase, setBackfillPhase] = useState<BackfillPhase>("idle");
   const [patchingClassId, setPatchingClassId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const socialOverlapSeenRef = useRef(new Set<string>());
 
   const reportsPollingActive =
     tab === "reports" && backfillPhase !== "running";
@@ -496,7 +497,10 @@ export default function StrategyAdminHub() {
   });
 
   const data = strategiesQuery.data?.data ?? null;
-  const outcomes = strategiesQuery.data?.outcomes ?? [];
+  const outcomes = useMemo(
+    () => strategiesQuery.data?.outcomes ?? [],
+    [strategiesQuery.data?.outcomes],
+  );
   const outcomesTotal = strategiesQuery.data?.outcomesTotal ?? 0;
   const selectedOutcome =
     selectedOutcomeIndex != null ? outcomes[selectedOutcomeIndex] ?? null : null;
@@ -508,6 +512,30 @@ export default function StrategyAdminHub() {
       ? strategiesQuery.error.message
       : String(strategiesQuery.error)
     : null;
+
+  useEffect(() => {
+    if (tab !== "reports" || outcomes.length === 0) return;
+    for (const o of outcomes) {
+      const feats =
+        o.features && typeof o.features === "object"
+          ? (o.features as Record<string, unknown>)
+          : null;
+      if (!feats || feats.social_overlap !== true) continue;
+      const mint = o.token_address ?? "";
+      const key = `${mint}:${o.entry_at ?? o.id}`;
+      if (socialOverlapSeenRef.current.has(key)) continue;
+      socialOverlapSeenRef.current.add(key);
+      const symbol =
+        (typeof feats.token_symbol === "string" && feats.token_symbol) ||
+        mint.slice(0, 8);
+      showToast(
+        "success",
+        `Social overlap: ${symbol}`,
+        "Token mentioned in last 24h",
+      );
+      break;
+    }
+  }, [outcomes, tab, showToast]);
 
   const load = useCallback(async (options?: { silent?: boolean }) => {
     try {

@@ -32,3 +32,20 @@ export function mergeShadowScoresIntoEntryFeatures(
 
   return next
 }
+
+export function logMlGateCounterfactual(input: {
+  mintAddress: string
+  strategyId: string
+  pBad: number
+  threshold: number
+  reason: string
+}): void {
+  console.info('[ml-gate:counterfactual]', {
+    mint: input.mintAddress,
+    strategy: input.strategyId,
+    p_bad: input.pBad,
+    threshold: input.threshold,
+    reason: input.reason,
+    at: new Date().toISOString(),
+  })
+}

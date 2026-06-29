@@ -369,6 +369,48 @@ export async function markWalletPolled(
     .eq('address', address)
 }
 
+const SOCIAL_RETENTION_HOURS = 24
+
+/** Delete events older than retention window and rollups with no recent activity. */
+export async function cleanupStaleSocialData(
+  retentionHours = SOCIAL_RETENTION_HOURS,
+): Promise<{ eventsDeleted: number; rollupsDeleted: number; error?: string }> {
+  const cutoff = new Date(Date.now() - retentionHours * 60 * 60 * 1000).toISOString()
+
+  const { error: eventsError, count: eventsDeleted } = await supabase
+    .from('social_token_events')
+    .delete({ count: 'exact' })
+    .lt('occurred_at', cutoff)
+
+  if (eventsError) {
+    if (isMissingTableError(eventsError.message)) {
+      return { eventsDeleted: 0, rollupsDeleted: 0, error: eventsError.message }
+    }
+    return { eventsDeleted: 0, rollupsDeleted: 0, error: eventsError.message }
+  }
+
+  const { error: rollupsError, count: rollupsDeleted } = await supabase
+    .from('social_token_rollups')
+    .delete({ count: 'exact' })
+    .lt('last_event_at', cutoff)
+
+  if (rollupsError) {
+    if (isMissingTableError(rollupsError.message)) {
+      return { eventsDeleted: eventsDeleted ?? 0, rollupsDeleted: 0, error: rollupsError.message }
+    }
+    return {
+      eventsDeleted: eventsDeleted ?? 0,
+      rollupsDeleted: 0,
+      error: rollupsError.message,
+    }
+  }
+
+  return {
+    eventsDeleted: eventsDeleted ?? 0,
+    rollupsDeleted: rollupsDeleted ?? 0,
+  }
+}
+
 export async function fetchSocialIngestStats(): Promise<{
   eventCount24h: number
   rollupCount: number

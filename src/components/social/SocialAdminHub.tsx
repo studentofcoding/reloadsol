@@ -2,6 +2,7 @@
 
 import ChartBuyModal from "@/components/ChartBuyModal";
 import { isValidMintAddress } from "@/utils/jupiter";
+import { useQuery } from "@tanstack/react-query";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 
 type TrackedWallet = {
@@ -40,7 +41,33 @@ type SocialEvent = {
   occurred_at: string;
 };
 
-const POLL_INTERVAL_MS = 15_000;
+type SocialAdminData = {
+  wallets: TrackedWallet[];
+  rollups: SocialRollup[];
+  events: SocialEvent[];
+  stats: SocialStats | null;
+  fetchedAt: string;
+};
+
+async function fetchSocialAdminData(): Promise<SocialAdminData> {
+  const [walletsRes, eventsRes] = await Promise.all([
+    fetch("/api/social/wallets?rollups_limit=40"),
+    fetch("/api/social/events?limit=50&hours=24&telegram_only=true"),
+  ]);
+  const json = await walletsRes.json();
+  if (!json.success) throw new Error(json.error || "Failed to load");
+
+  const eventsJson = await eventsRes.json();
+  return {
+    wallets: (json.wallets ?? []) as TrackedWallet[],
+    rollups: (json.rollups ?? []) as SocialRollup[],
+    stats: (json.stats ?? null) as SocialStats | null,
+    events: eventsJson.success
+      ? ((eventsJson.events ?? []) as SocialEvent[])
+      : [],
+    fetchedAt: new Date().toISOString(),
+  };
+}
 
 function truncateMint(address: string): string {
   if (address.length <= 12) return address;
@@ -85,21 +112,46 @@ function TokenCell({
 }
 
 export default function SocialAdminHub() {
-  const [wallets, setWallets] = useState<TrackedWallet[]>([]);
-  const [rollups, setRollups] = useState<SocialRollup[]>([]);
-  const [events, setEvents] = useState<SocialEvent[]>([]);
-  const [stats, setStats] = useState<SocialStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [newAddress, setNewAddress] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [modalTokenAddress, setModalTokenAddress] = useState<string | null>(
     null,
   );
   const [modalTokenList, setModalTokenList] = useState<string[]>([]);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
-  const [isLive, setIsLive] = useState(true);
   const [now, setNow] = useState(() => Date.now());
+
+  const socialQuery = useQuery({
+    queryKey: ["social-admin"],
+    queryFn: fetchSocialAdminData,
+  });
+
+  const wallets = useMemo(
+    () => socialQuery.data?.wallets ?? [],
+    [socialQuery.data?.wallets],
+  );
+  const rollups = useMemo(
+    () => socialQuery.data?.rollups ?? [],
+    [socialQuery.data?.rollups],
+  );
+  const events = useMemo(
+    () => socialQuery.data?.events ?? [],
+    [socialQuery.data?.events],
+  );
+  const stats = socialQuery.data?.stats ?? null;
+  const loading = socialQuery.isLoading;
+  const error =
+    actionError ??
+    (socialQuery.error instanceof Error
+      ? socialQuery.error.message
+      : socialQuery.error
+        ? String(socialQuery.error)
+        : null);
+  const lastUpdatedAt = socialQuery.data?.fetchedAt
+    ? new Date(socialQuery.data.fetchedAt)
+    : socialQuery.dataUpdatedAt
+      ? new Date(socialQuery.dataUpdatedAt)
+      : null;
 
   const eventTokenList = useMemo(
     () => events.map((e) => e.token_address).filter(isValidMintAddress),
@@ -117,73 +169,17 @@ export default function SocialAdminHub() {
     setModalTokenAddress(tokenAddress);
   }, []);
 
-  const load = useCallback(async (options?: { silent?: boolean }) => {
-    if (!options?.silent) setLoading(true);
-    setError(null);
-    try {
-      const [walletsRes, eventsRes] = await Promise.all([
-        fetch("/api/social/wallets?rollups_limit=40"),
-        fetch("/api/social/events?limit=50&hours=24&telegram_only=true"),
-      ]);
-      const json = await walletsRes.json();
-      if (!json.success) throw new Error(json.error || "Failed to load");
-      setWallets(json.wallets ?? []);
-      setRollups(json.rollups ?? []);
-      setStats(json.stats ?? null);
-
-      const eventsJson = await eventsRes.json();
-      if (eventsJson.success) {
-        setEvents(eventsJson.events ?? []);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      if (!options?.silent) setLoading(false);
-      setLastUpdatedAt(new Date());
+  const refresh = useCallback(async () => {
+    setActionError(null);
+    const result = await socialQuery.refetch();
+    if (result.error) {
+      setActionError(
+        result.error instanceof Error
+          ? result.error.message
+          : String(result.error),
+      );
     }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-
-    const startPolling = () => {
-      if (intervalId) return;
-      setIsLive(true);
-      intervalId = setInterval(() => {
-        if (document.visibilityState === "hidden") return;
-        void load({ silent: true });
-      }, POLL_INTERVAL_MS);
-    };
-
-    const stopPolling = () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-      setIsLive(false);
-    };
-
-    const handleVisibility = () => {
-      if (document.visibilityState === "hidden") {
-        stopPolling();
-      } else {
-        void load({ silent: true });
-        startPolling();
-      }
-    };
-
-    startPolling();
-    document.addEventListener("visibilitychange", handleVisibility);
-
-    return () => {
-      stopPolling();
-      document.removeEventListener("visibilitychange", handleVisibility);
-    };
-  }, [load]);
+  }, [socialQuery]);
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
@@ -209,12 +205,12 @@ export default function SocialAdminHub() {
     });
     const json = await res.json();
     if (!json.success) {
-      setError(json.error || "Add failed");
+      setActionError(json.error || "Add failed");
       return;
     }
     setNewAddress("");
     setNewLabel("");
-    await load();
+    await refresh();
   };
 
   const removeWallet = async (address: string) => {
@@ -224,10 +220,10 @@ export default function SocialAdminHub() {
     );
     const json = await res.json();
     if (!json.success) {
-      setError("Delete failed");
+      setActionError("Delete failed");
       return;
     }
-    await load();
+    await refresh();
   };
 
   if (loading) {
@@ -270,12 +266,6 @@ export default function SocialAdminHub() {
           <h2 className="text-lg font-medium text-white">
             Recent channel activity
           </h2>
-          {isLive ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-800/60 bg-emerald-950/40 px-2 py-0.5 text-xs text-emerald-400">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-              Live
-            </span>
-          ) : null}
           {lastUpdatedAt ? (
             <span className="text-xs text-gray-500">
               Updated {formatRelativeTime(lastUpdatedAt, now)}
@@ -372,7 +362,7 @@ export default function SocialAdminHub() {
           <button
             type="button"
             className="rounded border border-gray-700 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800"
-            onClick={() => void load()}
+            onClick={() => void refresh()}
           >
             Refresh
           </button>

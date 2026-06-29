@@ -43,22 +43,41 @@ const getClientSupabaseConfig = () => {
 };
 
 // Create appropriate configuration based on environment
-const config = isServer ? getServerSupabaseConfig() : getClientSupabaseConfig();
+const clientConfig = getClientSupabaseConfig();
 
-function createServerClient(): SupabaseClient {
-  return createClient(config.url, config.key, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-      detectSessionInUrl: false,
+let serverClient: SupabaseClient | null = null;
+
+function getServerClient(): SupabaseClient {
+  if (!serverClient) {
+    const config = getServerSupabaseConfig();
+    serverClient = createClient(config.url, config.key, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+        detectSessionInUrl: false,
+      },
+    });
+  }
+  return serverClient;
+}
+
+function createServerSupabaseProxy(): SupabaseClient {
+  return new Proxy({} as SupabaseClient, {
+    get(_target, prop) {
+      const client = getServerClient();
+      const value = Reflect.get(client, prop, client) as unknown;
+      if (typeof value === 'function') {
+        return (value as (...args: unknown[]) => unknown).bind(client);
+      }
+      return value;
     },
   });
 }
 
 // Main supabase client - only works properly on server
 export const supabase = isServer
-  ? createServerClient()
-  : createClient(config.url, config.key, {
+  ? createServerSupabaseProxy()
+  : createClient(clientConfig.url, clientConfig.key, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
@@ -66,7 +85,7 @@ export const supabase = isServer
     });
 
 // Admin supabase client - server only (same key; kept for call-site clarity)
-export const adminSupabase = isServer ? createServerClient() : supabase;
+export const adminSupabase = isServer ? supabase : supabase;
 
 // Client-side operations should go through API routes instead
 if (!isServer) {

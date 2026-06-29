@@ -11,27 +11,27 @@ import {
 } from '@/utils/wallet-session';
 
 export async function GET(req: NextRequest) {
-  const address = req.nextUrl.searchParams.get('address')?.trim();
-
-  if (!address) {
-    const session = getWalletSessionFromRequest(req);
-    return NextResponse.json({
-      success: true,
-      authenticated: Boolean(session),
-      address: session?.address ?? null,
-      dev: session?.dev ?? false,
-      expiresAt: session ? new Date(session.exp).toISOString() : null,
-    });
-  }
-
   try {
+    const address = req.nextUrl.searchParams.get('address')?.trim();
+
+    if (!address) {
+      const session = getWalletSessionFromRequest(req);
+      return NextResponse.json({
+        success: true,
+        authenticated: Boolean(session),
+        address: session?.address ?? null,
+        dev: session?.dev ?? false,
+        expiresAt: session ? new Date(session.exp).toISOString() : null,
+      });
+    }
+
     const challenge = createWalletSignInChallenge(address);
     return NextResponse.json({ success: true, ...challenge });
   } catch (error) {
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : 'Failed to create nonce',
+        error: error instanceof Error ? error.message : 'Session check failed',
       },
       { status: 500 },
     );
@@ -84,14 +84,24 @@ export async function POST(req: NextRequest) {
 }
 
 export async function HEAD(req: NextRequest) {
-  const session = getWalletSessionFromRequest(req);
-  return NextResponse.json({
-    success: true,
-    authenticated: Boolean(session),
-    address: session?.address ?? null,
-    dev: session?.dev ?? false,
-    expiresAt: session ? new Date(session.exp).toISOString() : null,
-  });
+  try {
+    const session = getWalletSessionFromRequest(req);
+    return NextResponse.json({
+      success: true,
+      authenticated: Boolean(session),
+      address: session?.address ?? null,
+      dev: session?.dev ?? false,
+      expiresAt: session ? new Date(session.exp).toISOString() : null,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : 'Session check failed',
+      },
+      { status: 500 },
+    );
+  }
 }
 
 export async function DELETE() {

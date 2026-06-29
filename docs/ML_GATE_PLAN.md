@@ -45,7 +45,7 @@ flowchart TD
 | **1** | Two-stage train (`gate` + `potential`), export v2 columns | **Done** — see `ml/README.md` |
 | **2** | ONNX runtime scorer in Node (`entry-ml-scorer.ts`) | **Done** (shadow) |
 | **3** | LLM gate (`entry-llm-gate.ts`) + regime prompt | Planned |
-| **4** | Sim-track enforce mode | Shadow **done**; enforce planned |
+| **4** | Sim-track enforce mode | Shadow default; enforce wired (`ML_GATE_MODE=enforce` + `gate_ready`) |
 | **5** | Reports + promotion checklist | Planned |
 
 ---
@@ -147,7 +147,7 @@ Artifacts:
 
 - [`src/strategies/entry-ml-scorer.ts`](../src/strategies/entry-ml-scorer.ts) — dual ONNX (gate + potential) via `onnxruntime-node`
 - [`src/strategies/ml-shadow-log.ts`](../src/strategies/ml-shadow-log.ts) — persists shadow fields on `entry_features`
-- Env: `ML_GATE_ARTIFACT_DIR`, `ML_POTENTIAL_ARTIFACT_DIR`, `ML_GATE_MODE=shadow|enforce|off` (enforce not wired yet)
+- Env: `ML_GATE_ARTIFACT_DIR`, `ML_POTENTIAL_ARTIFACT_DIR`, `ML_GATE_MODE=shadow|enforce|off` (default **shadow**), `ML_GATE_P_BAD_MAX` (default **0.5**)
 
 **Shadow fields on buy `entry_features`:**
 
@@ -182,13 +182,14 @@ Reject live gating when `model.meta.json` → `metrics.gate_ready` is false (gat
 
 ## Phase 4 — Paper trading integration
 
-Shadow hook is live in `mcap-tracking/sim-track` inside `openSimPosition` (scores every open, never skips).
+Shadow hook is live in `mcap-tracking/sim-track` (scores every open candidate).
 
-**Enforce rollout (later):**
+**Enforce (wired, off by default):**
 
-1. `ML_GATE_MODE=enforce` — skip when `ml_gate_p_bad` &gt; threshold
-2. Counterfactual analysis on shadow logs
-3. Potential model remains advisory until tier coverage is strong
+1. Set `ML_GATE_MODE=enforce` only after `metrics.gate_ready === true` and 200+ labeled closes reviewed
+2. Skip when `ml_gate_p_bad > ML_GATE_P_BAD_MAX` (default 0.5) — skip reason `ml_gate_reject`
+3. Counterfactual log: `[ml-gate:counterfactual]` on rejected-would-be trades
+4. Potential model remains advisory only
 
 ---
 

@@ -4,7 +4,7 @@ import { scoreSignalsForStrategy } from '@/strategies/signals-pipeline'
 import { recordSignalsOutcome } from '@/strategies/outcomes'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
 import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
-import { getSocialSnapshot } from '@/strategies/social-snapshot-loader'
+import { annotateEntryFeatures, getSocialContext } from '@/strategies/social/context'
 import { appendSimPositionMonitorSnapshot, resolveTokenMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
@@ -310,14 +310,14 @@ export async function POST(request: NextRequest) {
           liveMetrics.price_usd = priceUsd
         }
 
-        const social = await getSocialSnapshot(signal.token_address)
+        const socialCtx = await getSocialContext(signal.token_address)
 
         const symbol =
           signal.token_symbol?.trim() ||
           signal.token_address.slice(0, 8)
 
         const entryAt = new Date().toISOString()
-        const entryFeatures = await buildFullEntryFeatureSnapshot(
+        const baseFeatures = await buildFullEntryFeatureSnapshot(
           signal.token_address,
           {
             entryAt,
@@ -329,7 +329,7 @@ export async function POST(request: NextRequest) {
               liveMetrics.volume_5m != null || liveMetrics.price_usd != null
                 ? [liveMetrics]
                 : [],
-            social,
+            social: socialCtx.snapshot,
           },
           {
             score: signal.score,
@@ -342,6 +342,7 @@ export async function POST(request: NextRequest) {
             initial_price_usd: priceUsd,
           },
         )
+        const entryFeatures = annotateEntryFeatures(baseFeatures, socialCtx)
 
         await openSimPosition({
           strategyId: strategy.id,

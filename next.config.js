@@ -8,13 +8,24 @@ const nextConfig = {
   // ===== CORE CONFIGURATION =====
   output: 'standalone',
   outputFileTracingRoot: require('path').join(__dirname),
+  outputFileTracingExcludes: {
+    '*': [
+      '**/ml/venv/**',
+      '**/venv/**',
+      '**/.git/**',
+      '**/ml/__pycache__/**',
+    ],
+  },
+  outputFileTracingIncludes: {
+    '/api/mcap-tracking/sim-track': ['./artifacts/**/*', './ml/artifacts/**/*'],
+  },
   typescript: {
     ignoreBuildErrors: process.env.SKIP_BUILD_CHECKS === 'true',
   },
   reactStrictMode: true,
   poweredByHeader: false,
   transpilePackages: ['@jup-ag/wallet-adapter'],
-  serverExternalPackages: ['puppeteer', 'bigint-buffer'],
+  serverExternalPackages: ['puppeteer', 'bigint-buffer', 'onnxruntime-node'],
 
   // Faster dev compiles: tree-shake heavy package entrypoints (Turbopack + webpack)
   experimental: {

@@ -96,6 +96,12 @@ After training, sim buys on mcap tracker persist shadow scores on `entry_feature
 
 Env: `ML_GATE_ARTIFACT_DIR`, `ML_POTENTIAL_ARTIFACT_DIR`, `ML_GATE_MODE=shadow` (default).
 
+In production/Docker, use **absolute** paths (e.g. `/app/ml/artifacts/v2-gate`) to avoid broad standalone file tracing. Relative paths work locally.
+
+Training writes to `ml/artifacts/<version>/` when run from this directory. On the web host, set env to that path (e.g. `ml/artifacts/v2-gate`) or train with `--output-dir ../artifacts/v2-gate` to match the Node default (`artifacts/v2-gate` at repo root).
+
+`npm run build` removes local `venv` / `ml/venv` before Turbopack (broken symlinks panic the bundler). Recreate after build: `cd ml && python3 -m venv venv && pip install -r requirements.txt`.
+
 See [`docs/OPERATOR_STATE.md`](../docs/OPERATOR_STATE.md).
 
 ## Feature spec
