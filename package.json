@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "dev:webpack": "next dev --webpack",
+    "dev": "sh scripts/next-dev.sh",
+    "dev:webpack": "sh scripts/next-dev.sh --webpack",
     "build": "next build",
     "build:webpack": "next build --webpack",
     "build:analyze": "ANALYZE=true next build:webpack",
@@ -15,6 +15,7 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "prebuild": "node scripts/prebuild-strip-local-venvs.js",
+    "postbuild": "node scripts/lock-next-env.js",
     "ml:backfill-labels": "npx tsx scripts/backfill-ml-labels.ts",
     "ml:export": "cd ml && python export_training_data.py --version v1 --output data/v2/training.parquet --domain mcap_tracker",
     "ml:train-gate": "cd ml && python train.py --stage gate --input data/v2/training.parquet --version v2-gate",
