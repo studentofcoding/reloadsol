@@ -321,7 +321,7 @@ verify_env_and_compose() {
 }
 
 prepare_low_memory_deploy() {
-  bash scripts/ensure-swap.sh 2>/dev/null || log "WARN: ensure-swap skipped (run: sudo bash scripts/ensure-swap.sh)"
+  bash scripts/check-deploy-memory.sh
 
   if ! command -v free >/dev/null 2>&1; then
     return 0
@@ -332,6 +332,21 @@ prepare_low_memory_deploy() {
   if [[ "${avail_mb:-0}" -lt 2048 ]]; then
     log "Low memory (${avail_mb}MB available) — stopping app containers (DB stays up) ..."
     docker stop reloadsol-web reloadsol-cron reloadsol-social-ingest 2>/dev/null || true
+  fi
+}
+
+resolve_build_node_options() {
+  if [[ -n "${NODE_OPTIONS:-}" ]]; then
+    return 0
+  fi
+  local total_mb=0
+  if command -v free >/dev/null 2>&1; then
+    total_mb="$(free -m | awk '/^Mem:/ {print $2}')"
+  fi
+  if [[ "${total_mb:-0}" -lt 4096 ]]; then
+    export NODE_OPTIONS="--max-old-space-size=1536"
+  else
+    export NODE_OPTIONS="--max-old-space-size=2048"
   fi
 }
 
@@ -401,17 +416,18 @@ if [[ "$DEPLOY_WEB" == true ]]; then
   export npm_config_audit=false
   export npm_config_jobs=1
   export NPM_CI_OMIT_DEV="${NPM_CI_OMIT_DEV:-1}"
+  export NPM_CI_IGNORE_SCRIPTS=1
   export SKIP_NATIVE_REBUILD=1
 
   bash scripts/npm-ci-sync.sh
 
-  unset SKIP_NATIVE_REBUILD
+  unset SKIP_NATIVE_REBUILD NPM_CI_IGNORE_SCRIPTS
   bash scripts/rebuild-native-deps.sh || true
 
   log "Building Next.js on host (old container still running) ..."
   export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
-  # ponytail: 4GB VPS — leave headroom for OS, Docker, and npm ci
-  export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
+  resolve_build_node_options
+  log "NODE_OPTIONS=${NODE_OPTIONS}"
   npm run build
   verify_standalone_build
 

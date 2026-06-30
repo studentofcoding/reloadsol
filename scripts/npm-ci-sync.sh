@@ -9,12 +9,15 @@
 #   ./scripts/npm-ci-sync.sh --fix-lockfile   # only npm install (update lock file locally)
 #
 # Env:
-#   NPM_CI_OMIT_DEV=1  → same as --omit=dev
+#   NPM_CI_OMIT_DEV=1       → same as --omit=dev
+#   NPM_CI_IGNORE_SCRIPTS=1 → pass --ignore-scripts to npm ci
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+STAMP_FILE="$ROOT/.cache/npm-ci.stamp"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
@@ -44,6 +47,30 @@ done
 if [[ "${NPM_CI_OMIT_DEV:-}" == "1" ]]; then
   NPM_CI_ARGS+=(--omit=dev)
 fi
+
+if [[ "${NPM_CI_IGNORE_SCRIPTS:-}" == "1" ]]; then
+  NPM_CI_ARGS+=(--ignore-scripts)
+fi
+
+lockfile_hash() {
+  if [[ -f package-lock.json ]]; then
+    shasum -a 256 package-lock.json 2>/dev/null | awk '{print $1}'
+  else
+    shasum -a 256 package.json 2>/dev/null | awk '{print $1}'
+  fi
+}
+
+write_npm_ci_stamp() {
+  mkdir -p "$(dirname "$STAMP_FILE")"
+  lockfile_hash > "$STAMP_FILE"
+}
+
+node_modules_up_to_date() {
+  [[ "${NPM_CI_OMIT_DEV:-}" == "1" ]] || return 1
+  [[ -f "$STAMP_FILE" ]] || return 1
+  [[ -f node_modules/.package-lock.json ]] || return 1
+  [[ "$(cat "$STAMP_FILE" 2>/dev/null)" == "$(lockfile_hash)" ]]
+}
 
 lockfile_out_of_sync() {
   local output="$1"
@@ -77,14 +104,34 @@ sync_lockfile() {
 
 run_npm_ci() {
   local logfile="$1"
-  local start_ts end_ts elapsed
+  local start_ts end_ts elapsed heartbeat_pid
 
   start_ts="$(date +%s)"
   log "Running: npm ci ${NPM_CI_ARGS[*]:-}"
+
+  (
+    while true; do
+      sleep 60
+      end_ts="$(date +%s)"
+      elapsed=$((end_ts - start_ts))
+      if command -v free >/dev/null 2>&1; then
+        avail="$(free -m | awk '/^Mem:/ {print "available="$7"MB"}')"
+        log "npm ci still running (${elapsed}s) — ${avail}"
+      else
+        log "npm ci still running (${elapsed}s) ..."
+      fi
+    done
+  ) &
+  heartbeat_pid=$!
+
   set +e
   npm ci --no-audit --no-fund "${NPM_CI_ARGS[@]}" 2>&1 | tee "$logfile"
   local npm_status="${PIPESTATUS[0]}"
   set -e
+
+  kill "$heartbeat_pid" 2>/dev/null || true
+  wait "$heartbeat_pid" 2>/dev/null || true
+
   end_ts="$(date +%s)"
   elapsed=$((end_ts - start_ts))
   log "npm ci finished in ${elapsed}s (exit ${npm_status})"
@@ -97,12 +144,18 @@ if [[ "$FIX_LOCKFILE" == true ]]; then
   exit 0
 fi
 
+if node_modules_up_to_date; then
+  log "node_modules up to date — skipping npm ci (lockfile unchanged)"
+  exit 0
+fi
+
 log "Installing dependencies (npm ci) ..."
 LOGFILE="$(mktemp "${TMPDIR:-/tmp}/npm-ci.XXXXXX")"
 trap 'rm -f "$LOGFILE"' EXIT
 
 NPM_CI_STATUS=0
 if run_npm_ci "$LOGFILE"; then
+  write_npm_ci_stamp
   exit 0
 fi
 NPM_CI_STATUS=$?
@@ -117,6 +170,7 @@ sync_lockfile
 
 log "Retrying npm ci ..."
 if run_npm_ci "$LOGFILE"; then
+  write_npm_ci_stamp
   exit 0
 fi
 NPM_CI_STATUS=$?

@@ -43,15 +43,33 @@ ensure_env() {
 }
 
 npm_install_tencent() {
+  bash scripts/check-deploy-memory.sh
   export PUPPETEER_SKIP_DOWNLOAD="${PUPPETEER_SKIP_DOWNLOAD:-true}"
   export npm_config_fund=false
   export npm_config_audit=false
   export npm_config_jobs=1
   export NPM_CI_OMIT_DEV=1
+  export NPM_CI_IGNORE_SCRIPTS=1
   export SKIP_NATIVE_REBUILD=1
   bash scripts/npm-ci-sync.sh
-  unset SKIP_NATIVE_REBUILD
+  unset SKIP_NATIVE_REBUILD NPM_CI_IGNORE_SCRIPTS
   bash scripts/rebuild-native-deps.sh || true
+}
+
+build_node_options() {
+  if [[ -n "${NODE_OPTIONS:-}" ]]; then
+    echo "$NODE_OPTIONS"
+    return
+  fi
+  local total_mb=0
+  if command -v free >/dev/null 2>&1; then
+    total_mb="$(free -m | awk '/^Mem:/ {print $2}')"
+  fi
+  if [[ "${total_mb:-0}" -lt 4096 ]]; then
+    echo "--max-old-space-size=1536"
+  else
+    echo "--max-old-space-size=4096"
+  fi
 }
 
 cmd_setup() {
@@ -61,7 +79,7 @@ cmd_setup() {
   command -v node >/dev/null 2>&1 || fail "Install Node.js 20+"
   node -e "const v=process.versions.node.split('.').map(Number); if(v[0]<20) process.exit(1)" \
     || fail "Node >= 20 required (have $(node -v))"
-  bash scripts/ensure-swap.sh 2>/dev/null || log "WARN: run sudo bash scripts/ensure-swap.sh if npm ci OOMs"
+  bash scripts/ensure-swap.sh 2>/dev/null || true
   npm_install_tencent
   log "Setup OK"
 }
@@ -95,8 +113,9 @@ cmd_migrate() {
 
 cmd_build() {
   ensure_env
+  bash scripts/check-deploy-memory.sh
   log "Building Next.js on host..."
-  SKIP_BUILD_CHECKS=true NODE_OPTIONS=--max-old-space-size=4096 npm run build
+  SKIP_BUILD_CHECKS=true NODE_OPTIONS="$(build_node_options)" npm run build
   log "Build OK (.next/standalone)"
 }
 
