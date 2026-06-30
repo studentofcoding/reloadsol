@@ -398,7 +398,7 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(mcapTrackerSimEntryID, "mcap_tracker_sim_track")
 
-    socialRollupEntryID, err := cs.cron.AddFunc("@every 120s", cs.runSocialRollup)
+    socialRollupEntryID, err := cs.cron.AddFunc("@every 300s", cs.runSocialRollup)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add social rollup cron job: %v", err))
         log.Fatal("Failed to add social rollup cron job:", err)
@@ -500,7 +500,7 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("📡 Signals refresh: every %d seconds", cs.config.SignalRefreshInterval))
     cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
     cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim track: every %d seconds", cs.config.McapTrackerSimInterval))
-    cs.logger.Info("📣 Social rollup: every 120 seconds")
+    cs.logger.Info("📣 Social rollup: every 300 seconds")
     cs.logger.Info("🧹 Social cleanup: every 30 minutes")
     cs.logger.Info("👛 Social wallet poll: every 300 seconds")
     if cs.config.StrategyReportInterval > 0 {

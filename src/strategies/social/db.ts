@@ -1,4 +1,5 @@
 import { supabase } from '@/utils/supabase'
+import { isSupabaseCircuitOpen, formatSupabaseError } from '@/utils/db-health'
 import type {
   SocialIngestEvent,
   SocialTokenEventRow,
@@ -13,7 +14,7 @@ function isMissingTableError(message?: string): boolean {
 
 type RollupEventRow = Pick<
   SocialTokenEventRow,
-  'token_address' | 'event_type' | 'source' | 'channel_id' | 'channel_label' | 'occurred_at' | 'raw_metadata'
+  'token_address' | 'event_type' | 'source' | 'channel_id' | 'channel_label' | 'occurred_at'
 >
 
 function buildDedupeKey(e: SocialIngestEvent): string {
@@ -176,6 +177,10 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
   tokensUpdated: number
   error?: string
 }> {
+  if (isSupabaseCircuitOpen()) {
+    return { tokensUpdated: 0, error: 'Supabase circuit open — rollup skipped' }
+  }
+
   const nowIso = now.toISOString()
   const t5 = new Date(now.getTime() - 5 * 60 * 1000).toISOString()
   const t30 = new Date(now.getTime() - 30 * 60 * 1000).toISOString()
@@ -184,7 +189,7 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
 
   const { data: recentEvents, error: fetchError } = await supabase
     .from('social_token_events')
-    .select('token_address, event_type, source, channel_id, channel_label, occurred_at, raw_metadata')
+    .select('token_address, event_type, source, channel_id, channel_label, occurred_at')
     .gte('occurred_at', t24)
     .order('occurred_at', { ascending: true })
 
@@ -192,7 +197,7 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
     if (isMissingTableError(fetchError.message)) {
       return { tokensUpdated: 0, error: fetchError.message }
     }
-    return { tokensUpdated: 0, error: fetchError.message }
+    return { tokensUpdated: 0, error: formatSupabaseError(fetchError) }
   }
 
   const byToken = new Map<string, RollupEventRow[]>()
@@ -212,9 +217,7 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
       (e: RollupEventRow) =>
         e.event_type === 'wallet_buy' &&
         e.occurred_at >= t60 &&
-        (e.source.includes('wallet') ||
-          e.source.includes('GMGN_copy') ||
-          e.raw_metadata?.from_tracked_wallet === true),
+        (e.source.includes('wallet') || e.source.includes('GMGN_copy')),
     )
 
     const channels30 = new Set(
@@ -235,10 +238,7 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
     }
 
     const first = events[0]
-    const solSum = walletBuys1h.reduce((sum: number, e: RollupEventRow) => {
-      const v = e.raw_metadata?.sol_amount
-      return sum + (typeof v === 'number' && Number.isFinite(v) ? v : 0)
-    }, 0)
+    const solSum = 0
 
     const lastEvent = events[events.length - 1]
 

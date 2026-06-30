@@ -7,6 +7,31 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
+const EXCERPT_MAX = 120
+
+/** Keep stored JSONB small — rollups only need counts, not full message bodies. */
+function trimRawMetadata(meta: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (typeof meta.sol_amount === 'number' && Number.isFinite(meta.sol_amount)) {
+    out.sol_amount = meta.sol_amount
+  }
+  if (typeof meta.symbol === 'string' && meta.symbol) {
+    out.symbol = meta.symbol.slice(0, 32)
+  }
+  if (typeof meta.token_symbol === 'string' && meta.token_symbol) {
+    out.token_symbol = meta.token_symbol.slice(0, 32)
+  }
+  if (typeof meta.excerpt === 'string' && meta.excerpt) {
+    out.excerpt = meta.excerpt.slice(0, EXCERPT_MAX)
+  }
+  if (meta.from_tracked_wallet === true) {
+    out.from_tracked_wallet = true
+  }
+  if (typeof meta.mcp === 'number' && Number.isFinite(meta.mcp)) {
+    out.mcp = meta.mcp
+  }
+  return out
+}
 
 function parseEvents(body: unknown): SocialIngestEvent[] | { error: string } {
   if (!body || typeof body !== 'object') return { error: 'Invalid JSON body' }
@@ -38,10 +63,11 @@ function parseEvents(body: unknown): SocialIngestEvent[] | { error: string } {
       external_message_id:
         typeof row.external_message_id === 'string' ? row.external_message_id : null,
       occurred_at: typeof row.occurred_at === 'string' ? row.occurred_at : undefined,
-      raw_metadata:
+      raw_metadata: trimRawMetadata(
         row.raw_metadata && typeof row.raw_metadata === 'object'
           ? (row.raw_metadata as Record<string, unknown>)
           : {},
+      ),
     })
   }
 

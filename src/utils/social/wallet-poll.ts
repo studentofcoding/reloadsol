@@ -56,10 +56,7 @@ export async function pollTrackedWallets(): Promise<{
           occurred_at: seenAt,
           raw_metadata: {
             from_tracked_wallet: true,
-            tier: wallet.tier,
-            tags: wallet.tags,
-            token_symbol: token.info?.symbol ?? null,
-            ui_balance: token.balance,
+            token_symbol: token.info?.symbol?.slice(0, 32) ?? null,
           },
         })
       }

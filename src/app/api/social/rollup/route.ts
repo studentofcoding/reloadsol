@@ -15,8 +15,12 @@ export async function POST(request: NextRequest) {
   }
 
   const result = await refreshSocialRollups()
-  return NextResponse.json({
-    success: !result.error,
-    ...result,
-  })
+  const status = result.error ? 503 : 200
+  return NextResponse.json(
+    {
+      success: !result.error,
+      ...result,
+    },
+    { status },
+  )
 }

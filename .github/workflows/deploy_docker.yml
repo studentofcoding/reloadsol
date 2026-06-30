@@ -8,6 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: self-hosted
+    timeout-minutes: 45
 
     steps:
       - name: Checkout code
@@ -23,4 +24,6 @@ jobs:
         run: bash scripts/docker-deploy.sh --skip-pull
         env:
           SKIP_BUILD_CHECKS: "true"
-          NODE_OPTIONS: "--max-old-space-size=4096"
+          NODE_OPTIONS: "--max-old-space-size=2048"
+          PUPPETEER_SKIP_DOWNLOAD: "true"
+          NPM_CI_OMIT_DEV: "1"

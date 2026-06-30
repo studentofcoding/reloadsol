@@ -235,6 +235,19 @@ Look for `Ingest OK (200): N events`. After events exist, refresh rollups: `curl
 
 **Real trading halted:** check `bot_trading_state` in Supabase; circuit breaker opens after `BOT_TRADING_FAILURE_THRESHOLD` failures.
 
-**Build OOM:** host build uses `NODE_OPTIONS=--max-old-space-size=4096` in `docker-deploy.sh`.
+**Build OOM / deploy stops during `npm ci`:** on a **4 GB** VPS, `npm ci` + Puppeteer + `next build` can exceed RAM while the old web container is still running. Deploy mitigations in [`scripts/docker-deploy.sh`](scripts/docker-deploy.sh):
+
+- `PUPPETEER_SKIP_DOWNLOAD=true` (also in [`.npmrc`](.npmrc)) — skips Chromium download on the server
+- `npm ci --omit=dev` via [`scripts/npm-ci-sync.sh`](scripts/npm-ci-sync.sh) — smaller install footprint
+- `NODE_OPTIONS=--max-old-space-size=2048` — leaves headroom for OS + Docker
+- Live-streamed npm output + `free -h` on failure (check `dmesg | tail` for OOM killer)
+
+If the new web container fails health after swap, deploy **rolls back** to the previous image automatically (CI still exits non-zero).
+
+Override heap for larger hosts: `NODE_OPTIONS=--max-old-space-size=4096 npm run docker:deploy`.
+
+**Puppeteer capture locally:** `.npmrc` skips Chromium by default; run `PUPPETEER_SKIP_DOWNLOAD=false npm install` when you need `/api/capture`.
+
+**Supabase 522 / HTML errors in web logs:** usually **egress quota exceeded** on Free plan (Dashboard → Usage). The project returns Cloudflare error pages instead of JSON. Mitigations in code: social rollup every 5m, rollup query without `raw_metadata`, 60s Supabase circuit breaker, job locks fail closed when DB is down. **Fix:** upgrade plan or wait for billing cycle reset; redeploy **cron** after changing rollup interval.
 
 See also [`README.md`](README.md) and [`CHANGELOG.md`](CHANGELOG.md).

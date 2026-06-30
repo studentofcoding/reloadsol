@@ -39,8 +39,11 @@ API_HASH = os.getenv("API_HASH", "")
 PHONE_NUMBER = os.getenv("PHONE_NUMBER", "")
 SESSION_NAME = os.getenv("SOCIAL_SESSION_NAME", "session_search")
 SESSION_DIR = os.getenv("SESSION_DIR", "social-ingest/sessions")
-ENRICH_GMGN = os.getenv("SOCIAL_ENRICH_GMGN", "true").lower() in ("1", "true", "yes")
+ENRICH_GMGN = os.getenv("SOCIAL_ENRICH_GMGN", "false").lower() in ("1", "true", "yes")
 LOG_SKIPS = os.getenv("SOCIAL_INGEST_LOG_SKIPS", "true").lower() in ("1", "true", "yes")
+MAX_CAS_PER_MESSAGE = max(1, int(os.getenv("SOCIAL_MAX_CAS_PER_MESSAGE", "3")))
+STORE_EXCERPT = os.getenv("SOCIAL_STORE_EXCERPT", "false").lower() in ("1", "true", "yes")
+EXCERPT_MAX = min(500, max(40, int(os.getenv("SOCIAL_EXCERPT_MAX", "120"))))
 
 INGEST_URL = os.getenv(
     "SOCIAL_INGEST_URL",
@@ -83,8 +86,8 @@ async def build_events(
     occurred_at = message.date.astimezone(timezone.utc).isoformat()
     channel_label = source
     message_id = str(message.id)
-    cas = extract_cas(text)
-    if not cas:
+    all_cas = extract_cas(text)
+    if not all_cas:
         return []
 
     wallet_name = extract_wallet_name(text)
@@ -92,15 +95,29 @@ async def build_events(
     is_wallet_channel = source == "GMGN_copy_trade"
     event_type = "wallet_buy" if is_wallet_channel and "buy" in text.lower() else "mention"
 
+    if len(all_cas) > MAX_CAS_PER_MESSAGE:
+        logging.info(
+            "Truncating %d CAs → %d (message=%s source=%s)",
+            len(all_cas),
+            MAX_CAS_PER_MESSAGE,
+            message_id,
+            source,
+        )
+    cas = all_cas[:MAX_CAS_PER_MESSAGE]
+
+    excerpt = (
+        text.replace("\n", " ")[:EXCERPT_MAX] if STORE_EXCERPT else None
+    )
+
     events_out: list[dict] = []
-    for ca in cas:
-        raw_metadata: dict = {
-            "sol_amount": sol_amount,
-            "excerpt": text[:500],
-        }
-        if ENRICH_GMGN:
-            gmgn = await fetch_gmgn_token_metadata(http, ca)
-            raw_metadata.update(gmgn)
+    for index, ca in enumerate(cas):
+        raw_metadata: dict = {}
+        if event_type == "wallet_buy" and sol_amount is not None:
+            raw_metadata["sol_amount"] = sol_amount
+        if excerpt and index == 0:
+            raw_metadata["excerpt"] = excerpt
+        if ENRICH_GMGN and index == 0:
+            raw_metadata.update(await fetch_gmgn_token_metadata(http, ca))
 
         events_out.append(
             {
@@ -132,9 +149,11 @@ async def main() -> None:
     await client.start(phone=PHONE_NUMBER)
 
     logging.info(
-        "Listening on %d channels (session=%s) → %s",
+        "Listening on %d channels (session=%s enrich_gmgn=%s max_cas=%d) → %s",
         len(channel_ids),
         session_path(),
+        ENRICH_GMGN,
+        MAX_CAS_PER_MESSAGE,
         INGEST_URL,
     )
 

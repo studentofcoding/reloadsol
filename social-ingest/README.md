@@ -89,14 +89,25 @@ npm run social:seed-wallets -- --dry-run
 npm run social:seed-wallets -- --file path/to/wallets.txt
 ```
 
+## Egress / efficiency (defaults)
+
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `SOCIAL_ENRICH_GMGN` | `false` | GMGN HTTP per message (off saves latency + metadata size) |
+| `SOCIAL_MAX_CAS_PER_MESSAGE` | `3` | Cap token addresses extracted from one Telegram message |
+| `SOCIAL_STORE_EXCERPT` | `false` | Omit message excerpt from `raw_metadata` (biggest JSON saver) |
+| `SOCIAL_EXCERPT_MAX` | `120` | Max excerpt length when `SOCIAL_STORE_EXCERPT=true` |
+
+Mentions store `{}` or minimal metadata; `wallet_buy` keeps `sol_amount` when parsed. The ingest API trims any oversized `raw_metadata` before Supabase insert.
+
+Set `SOCIAL_ENRICH_GMGN=true` only if you need `symbol` / `mcp` on first CA per message (one GMGN call).
+
 ## Verify
 
 - Logs: `Listening on N channels`, `Channel … bare=… marked=…`, and `Ingest OK (200)`
 - `Skip message (no token CA)` = channel message received but no parseable Solana address in text
 - Admin UI: `/dev/social`
 - Supabase: `social_token_events` → cron refreshes `social_token_rollups`
-
-Optional GMGN enrichment (`mcp`, `net_in_volume_1m`, `symbol` in `raw_metadata`): set `SOCIAL_ENRICH_GMGN=false` to disable.
 
 ## Deploy scope
 

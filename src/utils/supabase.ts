@@ -1,4 +1,9 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import {
+  isSupabaseCircuitOpen,
+  recordSupabaseFailure,
+  recordSupabaseSuccess,
+} from './db-health';
 
 // Environment detection
 const isServer = typeof window === 'undefined';
@@ -47,6 +52,43 @@ const clientConfig = getClientSupabaseConfig();
 
 let serverClient: SupabaseClient | null = null;
 
+const SUPABASE_FETCH_TIMEOUT_MS = parseInt(
+  process.env.SUPABASE_FETCH_TIMEOUT_MS || '15000',
+  10,
+);
+
+function createSupabaseFetch(): typeof fetch {
+  return async (input, init) => {
+    if (isSupabaseCircuitOpen()) {
+      throw new TypeError('Supabase circuit open (recent failures)');
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), SUPABASE_FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      });
+
+      const contentType = response.headers.get('content-type') ?? '';
+      if (!response.ok && contentType.includes('text/html')) {
+        recordSupabaseFailure();
+      } else if (response.ok) {
+        recordSupabaseSuccess();
+      }
+
+      return response;
+    } catch (error) {
+      recordSupabaseFailure();
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+}
+
 function getServerClient(): SupabaseClient {
   if (!serverClient) {
     const config = getServerSupabaseConfig();
@@ -55,6 +97,9 @@ function getServerClient(): SupabaseClient {
         autoRefreshToken: false,
         persistSession: false,
         detectSessionInUrl: false,
+      },
+      global: {
+        fetch: createSupabaseFetch(),
       },
     });
   }

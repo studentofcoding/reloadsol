@@ -1,4 +1,9 @@
 import { supabase } from '@/utils/supabase'
+import {
+  formatSupabaseError,
+  isSupabaseCircuitOpen,
+  isSupabaseQuotaOrTimeoutError,
+} from '@/utils/db-health'
 
 const STATE_ID = 'global'
 const FAILURE_THRESHOLD = parseInt(
@@ -125,6 +130,13 @@ export async function acquireTradeLock(
   strategyId: string,
   ttlSeconds = TRADE_LOCK_TTL_SEC,
 ): Promise<{ acquired: boolean; reason?: string }> {
+  if (isSupabaseCircuitOpen()) {
+    return {
+      acquired: false,
+      reason: 'Supabase circuit open — trade lock not acquired',
+    }
+  }
+
   const now = new Date()
   const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString()
 
@@ -151,8 +163,13 @@ export async function acquireTradeLock(
     }
   }
 
-  console.warn('[bot-trading-state] trade lock insert failed:', error.message)
-  return { acquired: true }
+  console.warn('[bot-trading-state] trade lock insert failed:', formatSupabaseError(error))
+  return {
+    acquired: false,
+    reason: isSupabaseQuotaOrTimeoutError(error)
+      ? 'Supabase unavailable (quota/timeout) — trade lock not acquired'
+      : formatSupabaseError(error),
+  }
 }
 
 export async function releaseTradeLock(

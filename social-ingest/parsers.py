@@ -114,7 +114,7 @@ def extract_ca_with_pump(message: str) -> str | None:
     return None
 
 
-def extract_cas(text: str) -> list[str]:
+def extract_cas(text: str, *, max_count: int | None = None) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
 
@@ -128,6 +128,8 @@ def extract_cas(text: str) -> list[str]:
             continue
         seen.add(match)
         ordered.append(match)
+        if max_count is not None and len(ordered) >= max_count:
+            break
 
     return ordered
 

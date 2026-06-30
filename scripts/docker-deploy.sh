@@ -167,6 +167,38 @@ verify_standalone_build() {
   log "Standalone build verified (.next/standalone + .next/static)"
 }
 
+rollback_web_container() {
+  local prev_image="$1"
+  if [[ -z "$prev_image" ]]; then
+    log "Cannot rollback web — no previous image saved"
+    return 1
+  fi
+
+  local service_image
+  service_image="$("${COMPOSE[@]}" config --images web 2>/dev/null | head -1 || true)"
+  if [[ -z "$service_image" ]]; then
+    log "Cannot resolve compose web image name for rollback"
+    return 1
+  fi
+
+  log "Rolling back web to previous image as ${service_image} ..."
+  docker tag "$prev_image" "$service_image"
+  if ! "${COMPOSE[@]}" up -d --no-deps --force-recreate --no-build web; then
+    log "Rollback recreate failed"
+    return 1
+  fi
+
+  local rollback_url
+  rollback_url="http://127.0.0.1:$(resolve_web_host_port)/api/health"
+  if wait_for_health "$rollback_url" 30 5; then
+    log "Rollback successful — web is healthy again on previous image"
+    return 0
+  fi
+
+  log "Rollback container also failed health check"
+  return 1
+}
+
 wait_for_health() {
   local url="$1"
   local attempts="${2:-60}"
@@ -290,6 +322,11 @@ WEB_PORT="$(read_env_var WEB_PORT 2>/dev/null || echo "${WEB_PORT:-3000}")"
 log "Configured WEB_PORT=${WEB_PORT} (host mapping to container :3000)"
 verify_env_and_compose
 
+if command -v free >/dev/null 2>&1; then
+  log "Host memory at deploy start:"
+  free -h
+fi
+
 if [[ "$SKIP_PULL" == false ]]; then
   log "Fetching origin/${BRANCH} ..."
   git fetch origin "$BRANCH"
@@ -317,12 +354,17 @@ if [[ "$CLEAN" == true ]]; then
 fi
 
 if [[ "$DEPLOY_WEB" == true ]]; then
-  log "Installing dependencies (npm ci) ..."
-  bash scripts/npm-ci-sync.sh
+  export PUPPETEER_SKIP_DOWNLOAD="${PUPPETEER_SKIP_DOWNLOAD:-true}"
+  export npm_config_fund=false
+  export npm_config_audit=false
+  export NPM_CI_OMIT_DEV="${NPM_CI_OMIT_DEV:-1}"
+
+  bash scripts/npm-ci-sync.sh --omit=dev
 
   log "Building Next.js on host (old container still running) ..."
   export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
-  export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
+  # ponytail: 4GB VPS — leave headroom for OS, Docker, and npm ci
+  export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=2048}"
   npm run build
   verify_standalone_build
 
@@ -346,6 +388,12 @@ if [[ "$DEPLOY_CRON" == true ]]; then UP_SERVICES+=(cron); fi
 
 log "Recreating services: ${UP_SERVICES[*]:-(none)} social=${DEPLOY_SOCIAL} ..."
 
+PREV_WEB_IMAGE=""
+if [[ "$DEPLOY_WEB" == true ]] && docker inspect reloadsol-web >/dev/null 2>&1; then
+  PREV_WEB_IMAGE="$(docker inspect --format='{{.Image}}' reloadsol-web)"
+  log "Saved previous web image for rollback: ${PREV_WEB_IMAGE}"
+fi
+
 if [[ "$DEPLOY_WEB" == true && "$DEPLOY_CRON" == false ]]; then
   "${COMPOSE[@]}" up -d --no-deps web
 elif [[ "$DEPLOY_CRON" == true && "$DEPLOY_WEB" == false ]]; then
@@ -358,7 +406,10 @@ if [[ "$DEPLOY_WEB" == true ]]; then
   WEB_HOST_PORT="$(resolve_web_host_port)"
   HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/api/health"
   log "Host health URL: ${HEALTH_URL}"
-  wait_for_health "$HEALTH_URL" 60 5
+  if ! wait_for_health "$HEALTH_URL" 60 5; then
+    rollback_web_container "$PREV_WEB_IMAGE" || true
+    exit 1
+  fi
 fi
 
 if [[ "$DEPLOY_CRON" == true ]]; then

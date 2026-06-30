@@ -34,8 +34,70 @@ export function isDbConnectivityError(error: unknown): boolean {
     combined.includes('etimedout') ||
     combined.includes('network') ||
     combined.includes('getaddrinfo') ||
-    combined.includes('failed to fetch')
+    combined.includes('failed to fetch') ||
+    combined.includes('522') ||
+    combined.includes('connection timed out') ||
+    combined.includes('circuit open') ||
+    combined.includes('aborted')
   );
+}
+
+/** Supabase free-tier egress exceeded or origin timeout (Cloudflare 522 HTML). */
+export function isSupabaseQuotaOrTimeoutError(error: unknown): boolean {
+  const combined = errorTextParts(error);
+  return (
+    combined.includes('522') ||
+    combined.includes('connection timed out') ||
+    combined.includes('quota') ||
+    combined.includes('egress') ||
+    combined.includes('exceeded') ||
+    combined.includes('rate limit') ||
+    combined.includes('<!doctype html') ||
+    combined.includes('<html')
+  );
+}
+
+/** Short log-safe message — never dump Cloudflare HTML pages. */
+export function formatSupabaseError(error: unknown): string {
+  if (isSupabaseQuotaOrTimeoutError(error)) {
+    return 'Supabase unreachable (522/timeout — check Dashboard egress quota and project status)';
+  }
+  if (isDbConnectivityError(error)) {
+    const host = getSupabaseHost() ?? 'unknown host';
+    return `Supabase unreachable (${host})`;
+  }
+  if (error instanceof Error && error.message) {
+    const msg = error.message.trim();
+    if (msg.length > 240) return `${msg.slice(0, 240)}…`;
+    return msg;
+  }
+  if (typeof error === 'object' && error !== null) {
+    const e = error as Record<string, unknown>;
+    if (typeof e.message === 'string' && e.message) {
+      const msg = e.message.trim();
+      if (msg.length > 240) return `${msg.slice(0, 240)}…`;
+      return msg;
+    }
+  }
+  return 'Database error';
+}
+
+let supabaseCircuitOpenUntil = 0;
+const SUPABASE_CIRCUIT_COOLDOWN_MS = parseInt(
+  process.env.SUPABASE_CIRCUIT_COOLDOWN_MS || '60000',
+  10,
+);
+
+export function isSupabaseCircuitOpen(): boolean {
+  return Date.now() < supabaseCircuitOpenUntil;
+}
+
+export function recordSupabaseFailure(): void {
+  supabaseCircuitOpenUntil = Date.now() + SUPABASE_CIRCUIT_COOLDOWN_MS;
+}
+
+export function recordSupabaseSuccess(): void {
+  supabaseCircuitOpenUntil = 0;
 }
 
 function errorTextParts(error: unknown): string {

@@ -37,6 +37,7 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 - Check: `npm run ml:check-dataset` / `npm run ml:check-potential`
 - Shadow scoring runs on mcap sim opens (`entry_features.ml_gate_*`); **enforce wired but default `ML_GATE_MODE=shadow`**
 - Social TTL cleanup every 30m (Go cron → `/api/social/cleanup`); `/dev/social` is manual refresh only
+- **Supabase egress (Free plan 5 GB/mo):** social rollup every 5m (was 2m); rollup query omits `raw_metadata`. If Dashboard shows egress overage → Cloudflare **522** on API calls until quota resets or plan upgrades. Check **Settings → Usage → Egress** in Supabase.
 - Weekly loop: `npm run ml:export` → `ml:train-gate` → `ml:check-dataset`; review shadow `ml_gate_p_bad` histogram before setting `ML_GATE_MODE=enforce`
 - Do not gate live on v1 multiclass (overfit); use v2-gate `gate_ready` only
 
