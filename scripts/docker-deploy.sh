@@ -119,6 +119,24 @@ resolve_web_host_port() {
   echo "${WEB_PORT:-3000}"
 }
 
+resolve_cron_host_port() {
+  local from_docker from_env
+
+  from_docker="$(docker port reloadsol-cron 8080/tcp 2>/dev/null | head -1 | sed 's/.*://')"
+  if [[ -n "$from_docker" ]]; then
+    echo "$from_docker"
+    return
+  fi
+
+  from_env="$(read_env_var CRON_PORT 2>/dev/null || true)"
+  if [[ -n "$from_env" ]]; then
+    echo "$from_env"
+    return
+  fi
+
+  echo "${CRON_PORT:-8080}"
+}
+
 resolve_scope() {
   if [[ "$SCOPE_MODE" == "manual" ]]; then
     return
@@ -238,7 +256,7 @@ wait_for_health() {
 
 wait_for_cron_health() {
   local port attempts delay
-  port="$(read_env_var CRON_PORT 2>/dev/null || echo "${CRON_PORT:-8080}")"
+  port="$(resolve_cron_host_port)"
   attempts="${1:-30}"
   delay="${2:-3}"
   log "Waiting for reloadsol-cron health on port ${port} ..."

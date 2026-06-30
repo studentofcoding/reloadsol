@@ -134,13 +134,18 @@ cmd_deploy() {
 
 cmd_smoke() {
   ensure_env
-  local port="${WEB_PORT:-3000}"
-  local base="http://127.0.0.1:${port}"
+  local web_port cron_port base
+  web_port="$(bash scripts/resolve-host-ports.sh web)"
+  cron_port="$(bash scripts/resolve-host-ports.sh cron)"
+  base="http://127.0.0.1:${web_port}"
   log "Health: ${base}/api/health"
   curl -sf "${base}/api/health" | head -c 500 || fail "web health failed"
   echo ""
   log "DLMM: ${base}/api/dlmm/health"
   curl -sf "${base}/api/dlmm/health" | head -c 800 || fail "dlmm health failed"
+  echo ""
+  log "Cron: http://127.0.0.1:${cron_port}/health"
+  curl -sf "http://127.0.0.1:${cron_port}/health" | head -c 500 || fail "cron health failed"
   echo ""
   log "Smoke OK"
 }
