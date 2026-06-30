@@ -52,11 +52,16 @@ lockfile_out_of_sync() {
 
 log_failure_diagnostics() {
   local logfile="$1"
+  local exit_code="${2:-}"
   log "npm ci failed — last 40 lines of log:"
   tail -n 40 "$logfile" >&2 || true
   if command -v free >/dev/null 2>&1; then
     log "Memory (free -h):"
     free -h >&2 || true
+  fi
+  if [[ "$exit_code" == "137" ]]; then
+    log "Exit 137 = process killed (usually OOM). Add swap: sudo bash scripts/ensure-swap.sh"
+    log "Kernel OOM log: dmesg | tail -20"
   fi
 }
 
@@ -96,12 +101,14 @@ log "Installing dependencies (npm ci) ..."
 LOGFILE="$(mktemp "${TMPDIR:-/tmp}/npm-ci.XXXXXX")"
 trap 'rm -f "$LOGFILE"' EXIT
 
+NPM_CI_STATUS=0
 if run_npm_ci "$LOGFILE"; then
   exit 0
 fi
+NPM_CI_STATUS=$?
 
 if ! lockfile_out_of_sync "$(cat "$LOGFILE")"; then
-  log_failure_diagnostics "$LOGFILE"
+  log_failure_diagnostics "$LOGFILE" "$NPM_CI_STATUS"
   exit 1
 fi
 
@@ -112,6 +119,7 @@ log "Retrying npm ci ..."
 if run_npm_ci "$LOGFILE"; then
   exit 0
 fi
+NPM_CI_STATUS=$?
 
-log_failure_diagnostics "$LOGFILE"
+log_failure_diagnostics "$LOGFILE" "$NPM_CI_STATUS"
 exit 1

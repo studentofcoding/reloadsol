@@ -277,13 +277,20 @@ check_duplicate_env_port() {
 }
 
 verify_compose_port_config() {
-  local cron_port_count
-  cron_port_count="$("${COMPOSE[@]}" config 2>/dev/null | awk '
+  local config_out cron_port_count
+
+  if ! config_out="$("${COMPOSE[@]}" config)"; then
+    log "ERROR: docker compose config failed (often blank WEB_PORT=/CRON_PORT= in .env)."
+    log "Try: bash scripts/sanitize-env-ports.sh"
+    exit 1
+  fi
+
+  cron_port_count="$(awk '
     /^  cron:$/ { in_cron=1; next }
     in_cron && /^  [a-zA-Z0-9_-]+:$/ { in_cron=0 }
     in_cron && /published:/ { n++ }
     END { print n+0 }
-  ')"
+  ' <<< "$config_out")"
   if [[ "$cron_port_count" -gt 1 ]]; then
     log "ERROR: merged compose defines ${cron_port_count} cron port mappings (expected 1)."
     log "Ensure docker-compose.prod.yml uses 'ports: !override' for cron."
@@ -313,14 +320,47 @@ verify_env_and_compose() {
   verify_compose_port_config
 }
 
+prepare_low_memory_deploy() {
+  bash scripts/ensure-swap.sh 2>/dev/null || log "WARN: ensure-swap skipped (run: sudo bash scripts/ensure-swap.sh)"
+
+  if ! command -v free >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local avail_mb
+  avail_mb="$(free -m | awk '/^Mem:/ {print $7}')"
+  if [[ "${avail_mb:-0}" -lt 2048 ]]; then
+    log "Low memory (${avail_mb}MB available) — stopping app containers (DB stays up) ..."
+    docker stop reloadsol-web reloadsol-cron reloadsol-social-ingest 2>/dev/null || true
+  fi
+}
+
+start_db_stack() {
+  log "Starting Postgres + PgBouncer (db-first) ..."
+  set +e
+  bash scripts/start-db-stack.sh
+  local db_status=$?
+  set -e
+  if [[ "$db_status" -ne 0 ]]; then
+    log "WARN: DB stack start failed — check POSTGRES_PASSWORD in .env"
+  else
+    docker compose -f docker-compose.yml -f docker-compose.migrate.yml ps reloadsol-db reloadsol-bouncer 2>/dev/null || true
+  fi
+}
+
 if [[ ! -f .env ]]; then
   log "Missing .env — copy from .env.docker.example and fill secrets."
   exit 1
 fi
 
+bash scripts/sanitize-env-ports.sh
+start_db_stack
+
 WEB_PORT="$(read_env_var WEB_PORT 2>/dev/null || echo "${WEB_PORT:-3000}")"
 log "Configured WEB_PORT=${WEB_PORT} (host mapping to container :3000)"
 verify_env_and_compose
+
+bash scripts/ensure-swap.sh 2>/dev/null || log "WARN: ensure-swap skipped (run: sudo bash scripts/ensure-swap.sh)"
 
 if command -v free >/dev/null 2>&1; then
   log "Host memory at deploy start:"
@@ -354,12 +394,19 @@ if [[ "$CLEAN" == true ]]; then
 fi
 
 if [[ "$DEPLOY_WEB" == true ]]; then
+  prepare_low_memory_deploy
+
   export PUPPETEER_SKIP_DOWNLOAD="${PUPPETEER_SKIP_DOWNLOAD:-true}"
   export npm_config_fund=false
   export npm_config_audit=false
+  export npm_config_jobs=1
   export NPM_CI_OMIT_DEV="${NPM_CI_OMIT_DEV:-1}"
+  export SKIP_NATIVE_REBUILD=1
 
-  bash scripts/npm-ci-sync.sh --omit=dev
+  bash scripts/npm-ci-sync.sh
+
+  unset SKIP_NATIVE_REBUILD
+  bash scripts/rebuild-native-deps.sh || true
 
   log "Building Next.js on host (old container still running) ..."
   export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"

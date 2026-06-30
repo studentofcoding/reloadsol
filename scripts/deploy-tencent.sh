@@ -35,26 +35,23 @@ ensure_env() {
       fail "Missing .env"
     fi
   fi
+  bash scripts/sanitize-env-ports.sh
   # shellcheck disable=SC1091
   set -a && source .env && set +a
   [[ -n "${POSTGRES_PASSWORD:-}" ]] || fail "Set POSTGRES_PASSWORD in .env"
   [[ "${POSTGRES_PASSWORD}" != "change-me" ]] || fail "Replace placeholder POSTGRES_PASSWORD in .env"
-  for key in WEB_PORT CRON_PORT POSTGRES_HOST_PORT; do
-    if grep -qE "^${key}=$" .env 2>/dev/null; then
-      fail "$key is empty in .env — set a number or remove the line"
-    fi
-  done
 }
 
 npm_install_tencent() {
-  local registry
-  registry="$(npm config get registry 2>/dev/null || true)"
-  if [[ "$registry" == *tencentyun* ]] || [[ "$registry" == *tencent* ]]; then
-    log "Tencent npm mirror detected — using registry.npmjs.org"
-    npm install --registry=https://registry.npmjs.org/
-  else
-    npm install
-  fi
+  export PUPPETEER_SKIP_DOWNLOAD="${PUPPETEER_SKIP_DOWNLOAD:-true}"
+  export npm_config_fund=false
+  export npm_config_audit=false
+  export npm_config_jobs=1
+  export NPM_CI_OMIT_DEV=1
+  export SKIP_NATIVE_REBUILD=1
+  bash scripts/npm-ci-sync.sh
+  unset SKIP_NATIVE_REBUILD
+  bash scripts/rebuild-native-deps.sh || true
 }
 
 cmd_setup() {
@@ -64,7 +61,7 @@ cmd_setup() {
   command -v node >/dev/null 2>&1 || fail "Install Node.js 20+"
   node -e "const v=process.versions.node.split('.').map(Number); if(v[0]<20) process.exit(1)" \
     || fail "Node >= 20 required (have $(node -v))"
-  bash scripts/docker-install.sh
+  bash scripts/ensure-swap.sh 2>/dev/null || log "WARN: run sudo bash scripts/ensure-swap.sh if npm ci OOMs"
   npm_install_tencent
   log "Setup OK"
 }
@@ -72,8 +69,8 @@ cmd_setup() {
 cmd_db() {
   ensure_env
   log "Starting Postgres + PgBouncer (DB bound to 127.0.0.1:5432)..."
-  "${COMPOSE_DB[@]}" up -d reloadsol-db reloadsol-bouncer
-  "${COMPOSE_DB[@]}" ps reloadsol-db reloadsol-bouncer
+  bash scripts/start-db-stack.sh
+  docker compose -f docker-compose.yml -f docker-compose.migrate.yml ps reloadsol-db reloadsol-bouncer
   log "DB ready. Direct URL for migrate:"
   log "  DATABASE_URL_DIRECT=postgresql://${POSTGRES_USER:-postgres}:****@127.0.0.1:5432/${POSTGRES_DB:-reloadsol_db}"
 }

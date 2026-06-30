@@ -14,6 +14,8 @@ if [[ ! -f .env ]]; then
   fi
 fi
 
+bash scripts/sanitize-env-ports.sh
+
 bash scripts/docker-install.sh
 
 MODE="${1:-prod}"

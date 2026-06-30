@@ -7,13 +7,13 @@ services:
     environment:
       NODE_ENV: production
     ports: !override
-      - "${WEB_PORT:-80}:3000"
+      - "80:3000"
 
   cron:
     restart: always
     # !override replaces base docker-compose.yml ports (avoid double-bind on same host port)
     ports: !override
-      - "127.0.0.1:${CRON_PORT:-8080}:8080"
+      - "127.0.0.1:8080:8080"
 
   social-ingest:
     restart: always
