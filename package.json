@@ -2,6 +2,7 @@
   "name": "solana-bulk-buy",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@10.9.0",
   "scripts": {
     "dev": "sh scripts/next-dev.sh",
     "dev:webpack": "sh scripts/next-dev.sh --webpack",

@@ -54,6 +54,7 @@ npm_install_tencent() {
   bash scripts/npm-ci-sync.sh
   unset SKIP_NATIVE_REBUILD NPM_CI_IGNORE_SCRIPTS
   bash scripts/rebuild-native-deps.sh || true
+  bash scripts/install-build-deps.sh
 }
 
 build_node_options() {
@@ -114,6 +115,7 @@ cmd_migrate() {
 cmd_build() {
   ensure_env
   bash scripts/check-deploy-memory.sh
+  bash scripts/install-build-deps.sh
   log "Building Next.js on host..."
   SKIP_BUILD_CHECKS=true NODE_OPTIONS="$(build_node_options)" npm run build
   log "Build OK (.next/standalone)"

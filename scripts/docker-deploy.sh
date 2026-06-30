@@ -423,6 +423,7 @@ if [[ "$DEPLOY_WEB" == true ]]; then
 
   unset SKIP_NATIVE_REBUILD NPM_CI_IGNORE_SCRIPTS
   bash scripts/rebuild-native-deps.sh || true
+  bash scripts/install-build-deps.sh
 
   log "Building Next.js on host (old container still running) ..."
   export SKIP_BUILD_CHECKS="${SKIP_BUILD_CHECKS:-true}"
