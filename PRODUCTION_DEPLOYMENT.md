@@ -72,6 +72,24 @@ Optional post-pull hook:
 npm run docker:deploy:hook
 ```
 
+## Tencent Linux quick deploy
+
+```bash
+cp .env.docker.example .env          # edit POSTGRES_PASSWORD + secrets
+bash scripts/deploy-tencent.sh setup # docker, npm (registry fix), deps
+bash scripts/deploy-tencent.sh db    # postgres + pgbouncer on 127.0.0.1:5432
+
+# Optional: migrate from Supabase
+export SOURCE_DATABASE_URL='postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres'
+bash scripts/deploy-tencent.sh migrate
+
+bash scripts/deploy-tencent.sh deploy  # or: bash scripts/deploy-tencent.sh all
+bash scripts/deploy-tencent.sh smoke
+bash scripts/deploy-tencent.sh backup
+```
+
+See also [README.md](../README.md#npm-install-fails-on-tencent-cloud-http-451--xrpl).
+
 ## Environment variables
 
 Copy from [`.env.docker.example`](.env.docker.example). Minimum for production:

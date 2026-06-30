@@ -59,6 +59,7 @@
     "postinstall": "bash scripts/rebuild-native-deps.sh",
     "social:seed-wallets": "npx tsx scripts/seed-tracked-wallets.ts",
     "docker:social": "docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build social-ingest",
+    "deploy:tencent": "bash scripts/deploy-tencent.sh",
     "social:bootstrap": "bash scripts/bootstrap-social-server.sh"
   },
   "dependencies": {

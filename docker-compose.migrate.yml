@@ -1,0 +1,10 @@
+# Bind Postgres to localhost only — for pgcopydb / psql from the host during cutover.
+# NOT for production steady-state (omit this file after migrate).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.migrate.yml up -d reloadsol-db reloadsol-bouncer
+
+services:
+  reloadsol-db:
+    ports:
+      - "127.0.0.1:5432:5432"

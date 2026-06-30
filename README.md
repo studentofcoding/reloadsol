@@ -368,6 +368,22 @@ See [CHANGELOG.md](./CHANGELOG.md) for complete release notes.
 
 Tencent's default npm mirror blocks some packages (e.g. `xrpl`) with **451 Unavailable For Legal Reasons**. This project no longer depends on those packages (legacy Trezor wallet bundle removed).
 
+**One-shot Tencent deploy** (setup → DB → build → deploy):
+
+```bash
+cp .env.docker.example .env   # edit POSTGRES_PASSWORD, secrets
+bash scripts/deploy-tencent.sh all
+
+# Migrate from Supabase (maintenance window):
+export SOURCE_DATABASE_URL='postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres'
+bash scripts/deploy-tencent.sh db        # if not running
+bash scripts/deploy-tencent.sh migrate
+bash scripts/deploy-tencent.sh deploy
+bash scripts/deploy-tencent.sh smoke
+```
+
+Subcommands: `setup` | `db` | `migrate` | `build` | `deploy` | `smoke` | `backup` | `all`
+
 If install still fails:
 
 ```bash

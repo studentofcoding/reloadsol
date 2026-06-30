@@ -5,8 +5,10 @@ set -euo pipefail
 #
 # Usage:
 #   SOURCE_DATABASE_URL='postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres' \
-#   TARGET_DATABASE_URL='postgresql://postgres:pass@localhost:5432/reloadsol_db' \
+#   TARGET_DATABASE_URL='postgresql://postgres:pass@127.0.0.1:5432/reloadsol_db' \
 #   bash scripts/migrate-from-supabase.sh
+#
+# Optional: USE_PGCOPYDB_DOCKER=1 runs pgcopydb via container on the compose network.
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -14,29 +16,53 @@ cd "$ROOT"
 SOURCE_DATABASE_URL="${SOURCE_DATABASE_URL:?set Supabase direct URL (port 5432, not pooler)}"
 TARGET_DATABASE_URL="${TARGET_DATABASE_URL:?set reloadsol-db direct URL}"
 
-if ! command -v pgcopydb >/dev/null 2>&1; then
-  echo "pgcopydb not found. Install: brew install pgcopydb" >&2
+if ! command -v psql >/dev/null 2>&1; then
+  echo "psql not found. Install: sudo apt install -y postgresql-client" >&2
   exit 1
 fi
 
-if ! command -v psql >/dev/null 2>&1; then
-  echo "psql not found" >&2
+run_pgcopydb_clone() {
+  local target="$TARGET_DATABASE_URL"
+  local -a extra=( "$@" )
+
+  if command -v pgcopydb >/dev/null 2>&1; then
+    pgcopydb clone --source "$SOURCE_DATABASE_URL" --target "$target" "${extra[@]}"
+    return
+  fi
+
+  if [[ "${USE_PGCOPYDB_DOCKER:-}" == "1" ]]; then
+    local network
+    network="$(docker inspect reloadsol-db --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null || true)"
+    if [[ -z "$network" ]]; then
+      network="$(docker network ls --format '{{.Name}}' | grep reloadsol | head -1 || true)"
+    fi
+    [[ -n "$network" ]] || { echo "Start DB first: bash scripts/deploy-tencent.sh db" >&2; exit 1; }
+    target="${target/@127.0.0.1/@reloadsol-db}"
+    target="${target/@localhost/@reloadsol-db}"
+    docker run --rm \
+      --network "$network" \
+      ghcr.io/dimitri/pgcopydb:latest \
+      pgcopydb clone --source "$SOURCE_DATABASE_URL" --target "$target" "${extra[@]}"
+    return
+  fi
+
+  echo "pgcopydb not found." >&2
+  echo "  Ubuntu/Debian: build from https://github.com/dimitri/pgcopydb" >&2
+  echo "  Or: USE_PGCOPYDB_DOCKER=1 bash scripts/migrate-from-supabase.sh" >&2
   exit 1
-fi
+}
 
 echo "→ Ensuring extensions on target..."
 psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/init/00-extensions.sql
 
 echo "→ Cloning public schema (tables + functions + data)..."
-pgcopydb clone \
-  --source "$SOURCE_DATABASE_URL" \
-  --target "$TARGET_DATABASE_URL" \
-  --schema public \
+run_pgcopydb_clone \
   --drop-if-exists \
   --no-owner \
   --no-acl \
   --table-jobs 4 \
-  --index-jobs 4
+  --index-jobs 4 \
+  --schema public
 
 echo "→ Re-applying roles/grants..."
 psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -f db/init/01-roles.sql

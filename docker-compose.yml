@@ -76,7 +76,7 @@ services:
       dockerfile: Dockerfile.web
     container_name: reloadsol-web
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "3000:3000"
     env_file:
       - .env
     environment:
@@ -108,7 +108,7 @@ services:
       dockerfile: Dockerfile.cron
     container_name: reloadsol-cron
     ports:
-      - "${CRON_PORT:-8080}:8080"
+      - "8080:8080"
     env_file:
       - .env
     environment:

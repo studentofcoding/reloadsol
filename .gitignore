@@ -20,5 +20,6 @@ tsconfig.tsbuildinfo
 /ml/venv
 /__pycache__
 social-ingest/sessions/
+backups/
 *.session
 *.session-journal
