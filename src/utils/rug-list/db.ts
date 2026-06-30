@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase';
+import { query, queryOne } from '@/utils/db';
 import type { TokenRugEntry, TokenRugSource } from '@/types/rug-list';
 import {
   DbUnavailableError,
@@ -27,13 +27,10 @@ function mapRugEntry(row: Record<string, unknown>): TokenRugEntry {
 
 export async function getRugList(): Promise<TokenRugEntry[]> {
   try {
-    const { data, error } = await supabase
-      .from('token_rug_list')
-      .select('*')
-      .order('added_at', { ascending: false });
-
-    if (error) throw error;
-    return (data ?? []).map(mapRugEntry);
+    const { rows } = await query<Record<string, unknown>>(
+      `SELECT * FROM token_rug_list ORDER BY added_at DESC`,
+    );
+    return rows.map(mapRugEntry);
   } catch (error) {
     logDbReadFallback('getRugList', error);
     return [];
@@ -47,14 +44,11 @@ export async function getRugAddressSet(): Promise<Set<string>> {
 
 export async function isTokenRugged(tokenAddress: string): Promise<boolean> {
   try {
-    const { data, error } = await supabase
-      .from('token_rug_list')
-      .select('token_address')
-      .eq('token_address', tokenAddress)
-      .maybeSingle();
-
-    if (error) throw error;
-    return Boolean(data);
+    const row = await queryOne<{ token_address: string }>(
+      `SELECT token_address FROM token_rug_list WHERE token_address = $1 LIMIT 1`,
+      [tokenAddress],
+    );
+    return Boolean(row);
   } catch (error) {
     logDbReadFallback('isTokenRugged', error);
     return false;
@@ -67,22 +61,23 @@ export async function addRugEntry(input: {
   source: TokenRugSource;
 }): Promise<TokenRugEntry> {
   try {
-    const { data, error } = await supabase
-      .from('token_rug_list')
-      .upsert(
-        {
-          token_address: input.token_address,
-          token_symbol: input.token_symbol ?? null,
-          source: input.source,
-          added_at: new Date().toISOString(),
-        },
-        { onConflict: 'token_address' },
-      )
-      .select('*')
-      .single();
-
-    if (error) throw error;
-    return mapRugEntry(data);
+    const row = await queryOne<Record<string, unknown>>(
+      `INSERT INTO token_rug_list (token_address, token_symbol, source, added_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (token_address) DO UPDATE SET
+         token_symbol = EXCLUDED.token_symbol,
+         source = EXCLUDED.source,
+         added_at = EXCLUDED.added_at
+       RETURNING *`,
+      [
+        input.token_address,
+        input.token_symbol ?? null,
+        input.source,
+        new Date().toISOString(),
+      ],
+    );
+    if (!row) throw new Error('Upsert failed');
+    return mapRugEntry(row);
   } catch (error) {
     assertDbWritable(error);
     throw error instanceof DbUnavailableError ? error : new Error(formatDbError(error));
@@ -91,11 +86,9 @@ export async function addRugEntry(input: {
 
 export async function removeRugEntry(tokenAddress: string): Promise<void> {
   try {
-    const { error } = await supabase
-      .from('token_rug_list')
-      .delete()
-      .eq('token_address', tokenAddress);
-    if (error) throw error;
+    await query(`DELETE FROM token_rug_list WHERE token_address = $1`, [
+      tokenAddress,
+    ]);
   } catch (error) {
     assertDbWritable(error);
   }

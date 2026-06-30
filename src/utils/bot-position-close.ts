@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
 import { getSolPriceUSD } from '@/utils/solana'
 import {
   buildTradingRecord,
@@ -66,21 +66,21 @@ export async function hasActiveSlTpPosition(
   walletAddress: string,
   tokenAddress: string,
 ): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('sl_tp_positions')
-    .select('id')
-    .eq('wallet_address', walletAddress)
-    .eq('token_address', tokenAddress)
-    .eq('is_active', true)
-    .limit(1)
-    .maybeSingle()
-
-  if (error) {
-    console.warn('[bot-position-close] SL/TP lookup failed:', error.message)
+  try {
+    const row = await queryOne<{ id: string }>(
+      `SELECT id FROM sl_tp_positions
+       WHERE wallet_address = $1 AND token_address = $2 AND is_active = true
+       LIMIT 1`,
+      [walletAddress, tokenAddress],
+    )
+    return !!row
+  } catch (error) {
+    console.warn(
+      '[bot-position-close] SL/TP lookup failed:',
+      (error as Error).message,
+    )
     return false
   }
-
-  return !!data
 }
 
 /** Single path for bot sell history + tracker status after a close (sim or real). */
@@ -151,41 +151,56 @@ export async function finalizeBotPositionClose(
 
   const finalStatus = gainPct >= 0 ? 'won' : 'lost'
 
-  const { data: tracker } = await supabase
-    .from(TRACKER_TABLE)
-    .select(
-      'id, trading_simulation, market_cap, organic_score, volume_5m, created_at, price_history',
-    )
-    .eq('token_address', params.tokenAddress)
-    .in('status', ['tracking', 'waiting'])
-    .maybeSingle()
+  const tracker = await queryOne<{
+    id: string
+    trading_simulation: Record<string, unknown> | null
+    market_cap: number | null
+    organic_score: number | null
+    volume_5m: number | null
+    created_at: string
+    price_history: unknown
+  }>(
+    `SELECT id, trading_simulation, market_cap, organic_score, volume_5m, created_at, price_history
+     FROM ${TRACKER_TABLE}
+     WHERE token_address = $1 AND status IN ('tracking', 'waiting')
+     LIMIT 1`,
+    [params.tokenAddress],
+  )
 
   if (!tracker) {
     return
   }
 
-  const sim =
-    (tracker.trading_simulation as Record<string, unknown> | null) ?? {}
+  const sim = tracker.trading_simulation ?? {}
+  const now = new Date().toISOString()
 
-  await supabase
-    .from(TRACKER_TABLE)
-    .update({
-      status: finalStatus,
-      status_changed_at: new Date().toISOString(),
-      last_price_usd: params.currentPriceUsd,
-      current_gain_percentage: gainPct,
-      trading_simulation: {
+  await query(
+    `UPDATE ${TRACKER_TABLE} SET
+       status = $2,
+       status_changed_at = $3,
+       last_price_usd = $4,
+       current_gain_percentage = $5,
+       trading_simulation = $6,
+       updated_at = $7
+     WHERE id = $1`,
+    [
+      tracker.id,
+      finalStatus,
+      now,
+      params.currentPriceUsd,
+      gainPct,
+      JSON.stringify({
         ...sim,
         current_status: 'completed',
         remaining_token_amount: '0',
-      },
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', tracker.id)
+      }),
+      now,
+    ],
+  )
 
   const entryAt =
     typeof sim.simulation_started_at === 'string' ? sim.simulation_started_at : null
-  const exitAt = new Date().toISOString()
+  const exitAt = now
   const entryMcap =
     (typeof sim.entry_market_cap === 'number' ? sim.entry_market_cap : null) ??
     (typeof tracker.market_cap === 'number' ? tracker.market_cap : null)

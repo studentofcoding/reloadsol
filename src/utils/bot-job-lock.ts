@@ -1,21 +1,29 @@
-import { supabase } from '@/utils/supabase'
+import { query } from '@/utils/db'
 import {
-  formatSupabaseError,
-  isSupabaseCircuitOpen,
-  isSupabaseQuotaOrTimeoutError,
+  formatDbConnectionError,
+  isDbCircuitOpen,
+  isDbQuotaOrTimeoutError,
 } from '@/utils/db-health'
 
 const DEFAULT_TTL_SEC = parseInt(process.env.BOT_JOB_LOCK_TTL_SEC || '600', 10)
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: string }).code === '23505'
+  )
+}
 
 /** Prevent overlapping cron/API job runs across server instances. */
 export async function acquireJobLock(
   jobName: string,
   ttlSeconds = DEFAULT_TTL_SEC,
 ): Promise<{ acquired: boolean; reason?: string }> {
-  if (isSupabaseCircuitOpen()) {
+  if (isDbCircuitOpen()) {
     return {
       acquired: false,
-      reason: 'Supabase circuit open — skipping job until cooldown',
+      reason: 'Database circuit open — skipping job until cooldown',
     }
   }
 
@@ -23,40 +31,38 @@ export async function acquireJobLock(
   const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString()
   const lockedBy = `worker-${crypto.randomUUID()}`
 
-  await supabase
-    .from('bot_job_locks')
-    .delete()
-    .lt('expires_at', now.toISOString())
+  await query(
+    `DELETE FROM bot_job_locks WHERE expires_at < $1`,
+    [now.toISOString()],
+  )
 
-  const { error } = await supabase.from('bot_job_locks').insert({
-    job_name: jobName,
-    locked_at: now.toISOString(),
-    locked_by: lockedBy,
-    expires_at: expiresAt,
-  })
-
-  if (!error) {
+  try {
+    await query(
+      `INSERT INTO bot_job_locks (job_name, locked_at, locked_by, expires_at)
+       VALUES ($1, $2, $3, $4)`,
+      [jobName, now.toISOString(), lockedBy, expiresAt],
+    )
     return { acquired: true }
-  }
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return {
+        acquired: false,
+        reason: `Job "${jobName}" already running`,
+      }
+    }
 
-  if (error.code === '23505') {
+    const reason = formatDbConnectionError(error)
+    console.warn(`[bot-job-lock] lock insert failed for ${jobName}:`, reason)
     return {
       acquired: false,
-      reason: `Job "${jobName}" already running`,
+      reason: isDbQuotaOrTimeoutError(error)
+        ? 'Database unavailable (timeout) — job skipped'
+        : reason,
     }
-  }
-
-  const reason = formatSupabaseError(error)
-  console.warn(`[bot-job-lock] lock insert failed for ${jobName}:`, reason)
-  return {
-    acquired: false,
-    reason: isSupabaseQuotaOrTimeoutError(error)
-      ? 'Supabase unavailable (quota/timeout) — job skipped'
-      : reason,
   }
 }
 
 export async function releaseJobLock(jobName: string): Promise<void> {
-  if (isSupabaseCircuitOpen()) return
-  await supabase.from('bot_job_locks').delete().eq('job_name', jobName)
+  if (isDbCircuitOpen()) return
+  await query(`DELETE FROM bot_job_locks WHERE job_name = $1`, [jobName])
 }

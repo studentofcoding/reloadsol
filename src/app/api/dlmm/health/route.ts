@@ -24,8 +24,9 @@ export async function GET() {
       setup:
         !dbStatus.configured || !dbStatus.reachable || !dbStatus.schemaReady
           ? [
-              'Set SUPABASE_URL and SUPABASE_SECRET_KEY in .env',
-              'Run supabase/schema.sql in Supabase SQL editor',
+              'Set DATABASE_URL in .env (via reloadsol-bouncer in Docker)',
+              'Fresh dev: docker compose up applies db/init/*.sql automatically',
+              'Migrate from Supabase: bash scripts/migrate-from-supabase.sh',
               'Restart: npm run docker:down && npm run docker:up',
             ]
           : undefined,

@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase';
+import { query, queryOne } from '@/utils/db';
 import type {
   DlmmAgentConfig,
   DlmmLesson,
@@ -30,31 +30,62 @@ function logDbReadFallback(fn: string, error: unknown) {
   console.warn(`[dlmm/db] ${fn} fallback:`, formatDbError(error));
 }
 
+function buildSetClause(
+  patch: Record<string, unknown>,
+  skip: Set<string>,
+): { setSql: string; values: unknown[] } {
+  const sets: string[] = [];
+  const values: unknown[] = [];
+  let i = 1;
+  for (const [key, value] of Object.entries(patch)) {
+    if (skip.has(key) || value === undefined) continue;
+    sets.push(`${key} = $${i++}`);
+    values.push(value);
+  }
+  return { setSql: sets.join(', '), values };
+}
+
 export async function getAgentConfig(): Promise<DlmmAgentConfig> {
   try {
-    const { data, error } = await supabase
-      .from('dlmm_agent_config')
-      .select('*')
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const row = await queryOne<Record<string, unknown>>(
+      `SELECT * FROM dlmm_agent_config
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+    );
 
-    if (error) throw error;
-
-    if (!data) {
+    if (!row) {
       const defaults = defaultAgentConfig();
-      const { data: inserted, error: insertError } = await supabase
-        .from('dlmm_agent_config')
-        .insert(defaults)
-        .select('*')
-        .single();
-      if (insertError) throw insertError;
+      const inserted = await queryOne<Record<string, unknown>>(
+        `INSERT INTO dlmm_agent_config (
+           enabled, dry_run, min_tvl, min_fee_tvl, min_organic_score, min_holders,
+           take_profit_pct, stop_loss_pct, oor_timeout_min, max_sol_per_position,
+           max_sol_at_risk, bin_range_interval, muted_positions, use_llm_reasoner
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         RETURNING *`,
+        [
+          defaults.enabled,
+          defaults.dry_run,
+          defaults.min_tvl,
+          defaults.min_fee_tvl,
+          defaults.min_organic_score,
+          defaults.min_holders,
+          defaults.take_profit_pct,
+          defaults.stop_loss_pct,
+          defaults.oor_timeout_min,
+          defaults.max_sol_per_position,
+          defaults.max_sol_at_risk,
+          defaults.bin_range_interval,
+          defaults.muted_positions,
+          defaults.use_llm_reasoner,
+        ],
+      );
+      if (!inserted) throw new Error('Insert failed');
       clearDlmmDbStatusCache();
       return mapAgentConfig(inserted);
     }
 
     clearDlmmDbStatusCache();
-    return mapAgentConfig(data);
+    return mapAgentConfig(row);
   } catch (error) {
     if (isDbConnectivityError(error) || formatDbError(error).includes('missing')) {
       logDbReadFallback('getAgentConfig', error);
@@ -95,23 +126,31 @@ export async function updateAgentConfig(
     const current = await getAgentConfig();
     if (current.id === 'env-fallback') {
       throw new DbUnavailableError(
-        'Cannot save config — Supabase is unavailable. Fix .env and apply supabase/schema.sql.',
+        'Cannot save config — database unavailable. Fix DATABASE_URL and apply db/init schema.',
       );
     }
 
-    const { data, error } = await supabase
-      .from('dlmm_agent_config')
-      .update({
-        ...patch,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', current.id)
-      .select('*')
-      .single();
+    const { setSql, values } = buildSetClause(
+      patch as Record<string, unknown>,
+      new Set(['id', 'updated_at']),
+    );
+    const updatedAt = new Date().toISOString();
+    const params = setSql
+      ? [...values, updatedAt, current.id]
+      : [updatedAt, current.id];
+    const setClause = setSql
+      ? `${setSql}, updated_at = $${values.length + 1}`
+      : 'updated_at = $1';
 
-    if (error) throw error;
+    const row = await queryOne<Record<string, unknown>>(
+      `UPDATE dlmm_agent_config SET ${setClause}
+       WHERE id = $${params.length}
+       RETURNING *`,
+      params,
+    );
+    if (!row) throw new Error('Config not found');
     clearDlmmDbStatusCache();
-    return mapAgentConfig(data);
+    return mapAgentConfig(row);
   } catch (error) {
     if (error instanceof DbUnavailableError) throw error;
     assertDbWritable(error);
@@ -134,8 +173,31 @@ export async function saveCandidates(candidates: DlmmScreenCandidate[]): Promise
     screened_at: c.screened_at,
   }));
   try {
-    const { error } = await supabase.from('dlmm_candidates').insert(rows);
-    if (error) throw error;
+    const values: unknown[] = [];
+    const placeholders = rows.map((row, i) => {
+      const base = i * 11;
+      values.push(
+        row.pool_address,
+        row.pool_name,
+        row.token_x_symbol,
+        row.token_y_symbol,
+        row.tvl,
+        row.fee_tvl_ratio_24h,
+        row.organic_score,
+        row.holders,
+        row.mcap,
+        row.score,
+        row.screened_at,
+      );
+      return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9}, $${base + 10}, $${base + 11})`;
+    });
+    await query(
+      `INSERT INTO dlmm_candidates (
+         pool_address, pool_name, token_x_symbol, token_y_symbol, tvl,
+         fee_tvl_ratio_24h, organic_score, holders, mcap, score, screened_at
+       ) VALUES ${placeholders.join(', ')}`,
+      values,
+    );
     clearDlmmDbStatusCache();
   } catch (error) {
     console.warn('[dlmm/db] saveCandidates skipped:', formatDbError(error));
@@ -144,25 +206,24 @@ export async function saveCandidates(candidates: DlmmScreenCandidate[]): Promise
 
 export async function getLatestCandidates(limit = 20): Promise<DlmmScreenCandidate[]> {
   try {
-    const { data, error } = await supabase
-      .from('dlmm_candidates')
-      .select('*')
-      .order('screened_at', { ascending: false })
-      .limit(limit);
-
-    if (error) throw error;
-    return (data ?? []).map((row) => ({
-      pool_address: row.pool_address,
-      pool_name: row.pool_name,
-      token_x_symbol: row.token_x_symbol,
-      token_y_symbol: row.token_y_symbol,
+    const { rows } = await query<Record<string, unknown>>(
+      `SELECT * FROM dlmm_candidates
+       ORDER BY screened_at DESC
+       LIMIT $1`,
+      [limit],
+    );
+    return rows.map((row) => ({
+      pool_address: String(row.pool_address),
+      pool_name: row.pool_name ? String(row.pool_name) : '',
+      token_x_symbol: row.token_x_symbol ? String(row.token_x_symbol) : '',
+      token_y_symbol: row.token_y_symbol ? String(row.token_y_symbol) : '',
       tvl: Number(row.tvl),
       fee_tvl_ratio_24h: Number(row.fee_tvl_ratio_24h),
       organic_score: Number(row.organic_score),
       holders: Number(row.holders),
       mcap: Number(row.mcap),
       score: Number(row.score),
-      screened_at: row.screened_at,
+      screened_at: String(row.screened_at),
     }));
   } catch (error) {
     logDbReadFallback('getLatestCandidates', error);
@@ -183,13 +244,10 @@ function mapPotentialEntry(row: Record<string, unknown>): DlmmPotentialEntry {
 
 export async function getPotentialList(): Promise<DlmmPotentialEntry[]> {
   try {
-    const { data, error } = await supabase
-      .from('dlmm_potential_list')
-      .select('*')
-      .order('added_at', { ascending: false });
-
-    if (error) throw error;
-    return (data ?? []).map(mapPotentialEntry);
+    const { rows } = await query<Record<string, unknown>>(
+      `SELECT * FROM dlmm_potential_list ORDER BY added_at DESC`,
+    );
+    return rows.map(mapPotentialEntry);
   } catch (error) {
     logDbReadFallback('getPotentialList', error);
     return [];
@@ -203,24 +261,26 @@ export async function addPotentialEntry(input: {
   notes?: string | null;
 }): Promise<DlmmPotentialEntry> {
   try {
-    const { data, error } = await supabase
-      .from('dlmm_potential_list')
-      .upsert(
-        {
-          token_address: input.token_address,
-          token_symbol: input.token_symbol ?? null,
-          source: input.source,
-          notes: input.notes ?? null,
-          added_at: new Date().toISOString(),
-        },
-        { onConflict: 'token_address' },
-      )
-      .select('*')
-      .single();
-
-    if (error) throw error;
+    const row = await queryOne<Record<string, unknown>>(
+      `INSERT INTO dlmm_potential_list (token_address, token_symbol, source, notes, added_at)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (token_address) DO UPDATE SET
+         token_symbol = EXCLUDED.token_symbol,
+         source = EXCLUDED.source,
+         notes = EXCLUDED.notes,
+         added_at = EXCLUDED.added_at
+       RETURNING *`,
+      [
+        input.token_address,
+        input.token_symbol ?? null,
+        input.source,
+        input.notes ?? null,
+        new Date().toISOString(),
+      ],
+    );
+    if (!row) throw new Error('Upsert failed');
     clearDlmmDbStatusCache();
-    return mapPotentialEntry(data);
+    return mapPotentialEntry(row);
   } catch (error) {
     assertDbWritable(error);
   }
@@ -228,11 +288,9 @@ export async function addPotentialEntry(input: {
 
 export async function removePotentialEntry(tokenAddress: string): Promise<void> {
   try {
-    const { error } = await supabase
-      .from('dlmm_potential_list')
-      .delete()
-      .eq('token_address', tokenAddress);
-    if (error) throw error;
+    await query(`DELETE FROM dlmm_potential_list WHERE token_address = $1`, [
+      tokenAddress,
+    ]);
     clearDlmmDbStatusCache();
   } catch (error) {
     assertDbWritable(error);
@@ -272,14 +330,17 @@ function mapPosition(row: Record<string, unknown>): DlmmPosition {
 
 export async function getPositions(status?: string): Promise<DlmmPosition[]> {
   try {
-    let query = supabase
-      .from('dlmm_positions')
-      .select('*')
-      .order('updated_at', { ascending: false });
-    if (status) query = query.eq('status', status);
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data ?? []).map(mapPosition);
+    const { rows } = status
+      ? await query<Record<string, unknown>>(
+          `SELECT * FROM dlmm_positions
+           WHERE status = $1
+           ORDER BY updated_at DESC`,
+          [status],
+        )
+      : await query<Record<string, unknown>>(
+          `SELECT * FROM dlmm_positions ORDER BY updated_at DESC`,
+        );
+    return rows.map(mapPosition);
   } catch (error) {
     logDbReadFallback('getPositions', error);
     return [];
@@ -288,13 +349,11 @@ export async function getPositions(status?: string): Promise<DlmmPosition[]> {
 
 export async function getPositionById(id: string): Promise<DlmmPosition | null> {
   try {
-    const { data, error } = await supabase
-      .from('dlmm_positions')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
-    if (error) throw error;
-    return data ? mapPosition(data) : null;
+    const row = await queryOne<Record<string, unknown>>(
+      `SELECT * FROM dlmm_positions WHERE id = $1`,
+      [id],
+    );
+    return row ? mapPosition(row) : null;
   } catch (error) {
     logDbReadFallback('getPositionById', error);
     return null;
@@ -305,34 +364,39 @@ export async function insertPosition(
   row: Partial<DlmmPosition>,
 ): Promise<DlmmPosition> {
   try {
-    const { data, error } = await supabase
-      .from('dlmm_positions')
-      .insert({
-        pool_address: row.pool_address,
-        pool_name: row.pool_name,
-        position_pubkey: row.position_pubkey,
-        token_x_symbol: row.token_x_symbol,
-        token_y_symbol: row.token_y_symbol,
-        amount_sol: row.amount_sol ?? 0,
-        min_bin_id: row.min_bin_id,
-        max_bin_id: row.max_bin_id,
-        entry_value_usd: row.entry_value_usd ?? 0,
-        current_value_usd: row.current_value_usd ?? row.entry_value_usd ?? 0,
-        fees_earned_usd: row.fees_earned_usd ?? 0,
-        pnl_pct: row.pnl_pct ?? 0,
-        status: row.status ?? 'open',
-        is_muted: row.is_muted ?? false,
-        take_profit_pct: row.take_profit_pct,
-        stop_loss_pct: row.stop_loss_pct,
-        oor_timeout_min: row.oor_timeout_min,
-        tx_signature: row.tx_signature,
-        updated_at: new Date().toISOString(),
-      })
-      .select('*')
-      .single();
-    if (error) throw error;
+    const inserted = await queryOne<Record<string, unknown>>(
+      `INSERT INTO dlmm_positions (
+         pool_address, pool_name, position_pubkey, token_x_symbol, token_y_symbol,
+         amount_sol, min_bin_id, max_bin_id, entry_value_usd, current_value_usd,
+         fees_earned_usd, pnl_pct, status, is_muted, take_profit_pct, stop_loss_pct,
+         oor_timeout_min, tx_signature, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+       RETURNING *`,
+      [
+        row.pool_address,
+        row.pool_name,
+        row.position_pubkey,
+        row.token_x_symbol,
+        row.token_y_symbol,
+        row.amount_sol ?? 0,
+        row.min_bin_id,
+        row.max_bin_id,
+        row.entry_value_usd ?? 0,
+        row.current_value_usd ?? row.entry_value_usd ?? 0,
+        row.fees_earned_usd ?? 0,
+        row.pnl_pct ?? 0,
+        row.status ?? 'open',
+        row.is_muted ?? false,
+        row.take_profit_pct,
+        row.stop_loss_pct,
+        row.oor_timeout_min,
+        row.tx_signature,
+        new Date().toISOString(),
+      ],
+    );
+    if (!inserted) throw new Error('Insert failed');
     clearDlmmDbStatusCache();
-    return mapPosition(data);
+    return mapPosition(inserted);
   } catch (error) {
     assertDbWritable(error);
   }
@@ -343,15 +407,27 @@ export async function updatePosition(
   patch: Partial<DlmmPosition>,
 ): Promise<DlmmPosition> {
   try {
-    const { data, error } = await supabase
-      .from('dlmm_positions')
-      .update({ ...patch, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select('*')
-      .single();
-    if (error) throw error;
+    const { setSql, values } = buildSetClause(
+      patch as Record<string, unknown>,
+      new Set(['id', 'updated_at']),
+    );
+    const updatedAt = new Date().toISOString();
+    const params = setSql
+      ? [...values, updatedAt, id]
+      : [updatedAt, id];
+    const setClause = setSql
+      ? `${setSql}, updated_at = $${values.length + 1}`
+      : 'updated_at = $1';
+
+    const row = await queryOne<Record<string, unknown>>(
+      `UPDATE dlmm_positions SET ${setClause}
+       WHERE id = $${params.length}
+       RETURNING *`,
+      params,
+    );
+    if (!row) throw new Error('Position not found');
     clearDlmmDbStatusCache();
-    return mapPosition(data);
+    return mapPosition(row);
   } catch (error) {
     assertDbWritable(error);
   }
@@ -359,12 +435,11 @@ export async function updatePosition(
 
 export async function getOpenSolAtRisk(): Promise<number> {
   try {
-    const { data, error } = await supabase
-      .from('dlmm_positions')
-      .select('amount_sol')
-      .in('status', ['open', 'out_of_range', 'pending']);
-    if (error) throw error;
-    return (data ?? []).reduce((sum, row) => sum + Number(row.amount_sol || 0), 0);
+    const { rows } = await query<{ amount_sol: number | string | null }>(
+      `SELECT amount_sol FROM dlmm_positions
+       WHERE status IN ('open', 'out_of_range', 'pending')`,
+    );
+    return rows.reduce((sum, row) => sum + Number(row.amount_sol || 0), 0);
   } catch (error) {
     logDbReadFallback('getOpenSolAtRisk', error);
     return 0;
@@ -375,15 +450,19 @@ export async function appendLesson(
   lesson: Omit<DlmmLesson, 'id' | 'created_at'>,
 ): Promise<void> {
   try {
-    const { error } = await supabase.from('dlmm_lessons').insert({
-      position_id: lesson.position_id,
-      pool_address: lesson.pool_address,
-      decision: lesson.decision,
-      reason: lesson.reason,
-      pnl_pct: lesson.pnl_pct,
-      fee_tvl_at_entry: lesson.fee_tvl_at_entry,
-    });
-    if (error) throw error;
+    await query(
+      `INSERT INTO dlmm_lessons (
+         position_id, pool_address, decision, reason, pnl_pct, fee_tvl_at_entry
+       ) VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        lesson.position_id,
+        lesson.pool_address,
+        lesson.decision,
+        lesson.reason,
+        lesson.pnl_pct,
+        lesson.fee_tvl_at_entry,
+      ],
+    );
   } catch (error) {
     console.warn('[dlmm/db] appendLesson skipped:', formatDbError(error));
   }
@@ -391,17 +470,17 @@ export async function appendLesson(
 
 export async function getRecentLessons(limit = 20): Promise<DlmmLesson[]> {
   try {
-    const { data, error } = await supabase
-      .from('dlmm_lessons')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    return (data ?? []).map((row) => ({
+    const { rows } = await query<Record<string, unknown>>(
+      `SELECT * FROM dlmm_lessons
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [limit],
+    );
+    return rows.map((row) => ({
       id: String(row.id),
       position_id: row.position_id ? String(row.position_id) : null,
       pool_address: String(row.pool_address),
-      decision: row.decision,
+      decision: row.decision as DlmmLesson['decision'],
       reason: String(row.reason),
       pnl_pct: row.pnl_pct != null ? Number(row.pnl_pct) : null,
       fee_tvl_at_entry: row.fee_tvl_at_entry != null ? Number(row.fee_tvl_at_entry) : null,

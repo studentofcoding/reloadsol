@@ -1,5 +1,6 @@
 import { insertStrategyOutcome } from './db'
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
+import { isMissingSchemaError } from '@/utils/db-health'
 import { getAgentConfig } from '@/utils/dlmm/db'
 import type { DlmmPosition } from '@/types/dlmm'
 
@@ -129,48 +130,54 @@ function mapDlmmPositionRow(row: Record<string, unknown>): DlmmPosition {
 }
 
 async function dlmmOutcomeExistsForPosition(positionId: string): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('strategy_outcomes')
-    .select('id')
-    .eq('domain', 'dlmm')
-    .eq('features->>position_id', positionId)
-    .limit(1)
-    .maybeSingle()
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  try {
+    const row = await queryOne<{ id: string }>(
+      `SELECT id FROM strategy_outcomes
+       WHERE domain = 'dlmm'
+         AND features->>'position_id' = $1
+       LIMIT 1`,
+      [positionId],
+    )
+    return !!row
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return false
     }
-    console.warn('[strategies/outcomes] dlmm outcome lookup failed:', error.message)
+    console.warn(
+      '[strategies/outcomes] dlmm outcome lookup failed:',
+      error instanceof Error ? error.message : error,
+    )
     return false
   }
-
-  return !!data
 }
 
 /** Backfill strategy_outcomes rows for closed DLMM positions missing an outcome record. */
 export async function syncMissingDlmmOutcomesFromPositions(
   limit = 20,
 ): Promise<number> {
-  const { data, error } = await supabase
-    .from('dlmm_positions')
-    .select('*')
-    .eq('status', 'closed')
-    .not('closed_at', 'is', null)
-    .order('closed_at', { ascending: false })
-    .limit(limit)
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  let rows: Record<string, unknown>[]
+  try {
+    const result = await query<Record<string, unknown>>(
+      `SELECT * FROM dlmm_positions
+       WHERE status = 'closed'
+         AND closed_at IS NOT NULL
+       ORDER BY closed_at DESC
+       LIMIT $1`,
+      [limit],
+    )
+    rows = result.rows
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return 0
     }
-    console.warn('[strategies/outcomes] dlmm backfill query failed:', error.message)
+    console.warn(
+      '[strategies/outcomes] dlmm backfill query failed:',
+      error instanceof Error ? error.message : error,
+    )
     return 0
   }
 
-  const positions = (data ?? []).map((row) =>
-    mapDlmmPositionRow(row as Record<string, unknown>),
-  )
+  const positions = rows.map((row) => mapDlmmPositionRow(row))
   if (positions.length === 0) return 0
 
   const config = await getAgentConfig()

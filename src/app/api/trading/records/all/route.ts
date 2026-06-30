@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/utils/supabase'
+import { query } from '@/utils/db'
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
@@ -31,20 +31,17 @@ export async function GET(request: NextRequest) {
       }
     })()
 
-    const { data, error } = await supabase
-      .from('trading_records')
-      .select('*')
-      .order('timestamp', { ascending: false })
-      .limit(limit)
-
-    if (error) {
-      throw error
-    }
+    const { rows } = await query<{ data: unknown }>(
+      `SELECT data FROM trading_records
+       ORDER BY timestamp DESC
+       LIMIT $1`,
+      [limit],
+    )
 
     return NextResponse.json(
       {
         success: true,
-        records: (data || []).map((item: any) => item.data)
+        records: rows.map((item) => item.data)
       },
       {
         headers: {

@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server'
+import { isDbConfigured } from '@/utils/db-health'
+import { queryOne } from '@/utils/db'
 
 export async function HEAD() {
   return new NextResponse(null, { status: 200 })
@@ -6,21 +8,37 @@ export async function HEAD() {
 
 export async function GET() {
   try {
+    let db: { ok: boolean; error?: string } = { ok: false }
+    if (isDbConfigured()) {
+      try {
+        await queryOne('SELECT 1 AS ok')
+        db = { ok: true }
+      } catch (error) {
+        db = {
+          ok: false,
+          error: error instanceof Error ? error.message : 'Database ping failed',
+        }
+      }
+    } else {
+      db = { ok: false, error: 'DATABASE_URL not configured' }
+    }
+
     return NextResponse.json({
-      status: 'healthy',
+      status: db.ok ? 'healthy' : 'degraded',
+      db,
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       memory: process.memoryUsage(),
-      version: process.env.npm_package_version || '1.0.0'
+      version: process.env.npm_package_version || '1.0.0',
     })
   } catch (error) {
     return NextResponse.json(
-      { 
-        status: 'unhealthy', 
+      {
+        status: 'unhealthy',
         error: error instanceof Error ? error.message : 'Unknown error',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       },
-      { status: 500 }
+      { status: 500 },
     )
   }
 }

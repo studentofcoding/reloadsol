@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { queryOne } from '@/utils/db';
 import { fetchWalletStats } from '@/utils/points';
 
 interface WalletStatsResponse {
@@ -17,7 +18,6 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const walletAddress = searchParams.get('wallet');
 
-    // Input validation
     if (!walletAddress || typeof walletAddress !== 'string') {
       return NextResponse.json(
         { error: 'Wallet address is required' },
@@ -25,7 +25,6 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Validate wallet address format (Solana public key is 32 bytes base58 encoded)
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(walletAddress)) {
       return NextResponse.json(
         { error: 'Invalid wallet address format' },
@@ -33,26 +32,15 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Fetch wallet stats from database
     const stats = await fetchWalletStats(walletAddress);
 
-    // Get detailed breakdown from database for more accurate reporting
-    const { supabase } = await import('@/utils/supabase');
-    const { data: detailedData, error } = await supabase
-      .from('token_operations')
-      .select('swap_count, close_count')
-      .eq('wallet_address', walletAddress)
-      .single();
+    const detailedData = await queryOne<{ swap_count: number; close_count: number }>(
+      `SELECT swap_count, close_count FROM token_operations WHERE wallet_address = $1`,
+      [walletAddress],
+    );
 
-    let swapCount = 0;
-    let closeCount = 0;
-
-    if (!error && detailedData) {
-      swapCount = detailedData.swap_count || 0;
-      closeCount = detailedData.close_count || 0;
-    }
-
-    // Calculate detailed breakdown
+    const swapCount = detailedData?.swap_count || 0;
+    const closeCount = detailedData?.close_count || 0;
     const swapPoints = swapCount * 10;
     const closePoints = closeCount * 5;
 
@@ -63,19 +51,18 @@ export async function GET(request: NextRequest) {
       closeCount,
       breakdown: {
         swapPoints,
-        closePoints
-      }
+        closePoints,
+      },
     };
 
     return NextResponse.json(response);
-
   } catch (error) {
     console.error('Error fetching wallet points:', error);
-    
+
     return NextResponse.json(
-      { 
+      {
         error: 'Failed to fetch wallet points',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error instanceof Error ? error.message : 'Unknown error',
       },
       { status: 500 }
     );
@@ -95,7 +82,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Limit batch size for performance
     if (walletAddresses.length > 50) {
       return NextResponse.json(
         { error: 'Maximum 50 wallet addresses allowed per batch' },
@@ -103,7 +89,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate all wallet addresses
     for (const address of walletAddresses) {
       if (!address || typeof address !== 'string' || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
         return NextResponse.json(
@@ -113,7 +98,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Fetch stats for all wallets
     const results = await Promise.all(
       walletAddresses.map(async (walletAddress: string) => {
         try {
@@ -121,14 +105,14 @@ export async function POST(request: NextRequest) {
           return {
             walletAddress,
             ...stats,
-            error: null
+            error: null,
           };
         } catch (error) {
           return {
             walletAddress,
             points: 0,
             tokenCount: 0,
-            error: error instanceof Error ? error.message : 'Unknown error'
+            error: error instanceof Error ? error.message : 'Unknown error',
           };
         }
       })
@@ -137,18 +121,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       results,
-      count: results.length
+      count: results.length,
     });
-
   } catch (error) {
     console.error('Error fetching batch wallet points:', error);
-    
+
     return NextResponse.json(
-      { 
+      {
         error: 'Failed to fetch batch wallet points',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error instanceof Error ? error.message : 'Unknown error',
       },
       { status: 500 }
     );
   }
-} 
+}

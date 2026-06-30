@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase'
+import { queryOne } from '@/utils/db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import {
   appendMonitorSnapshot,
@@ -21,26 +21,35 @@ export type TrackerTokenMetrics = {
 export async function fetchTrackerTokenMetrics(
   tokenAddress: string,
 ): Promise<TrackerTokenMetrics | null> {
-  const { data, error } = await supabase
-    .from(TRACKER_TABLE)
-    .select('volume_5m, last_price_usd, price_history')
-    .eq('token_address', tokenAddress)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  try {
+    const data = await queryOne<{
+      volume_5m: unknown
+      last_price_usd: unknown
+      price_history: unknown
+    }>(
+      `SELECT volume_5m, last_price_usd, price_history
+       FROM ${TRACKER_TABLE}
+       WHERE token_address = $1
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [tokenAddress],
+    )
 
-  if (error || !data) return null
+    if (!data) return null
 
-  return {
-    volume_5m:
-      typeof data.volume_5m === 'number' && Number.isFinite(data.volume_5m)
-        ? data.volume_5m
-        : null,
-    last_price_usd:
-      typeof data.last_price_usd === 'number' && Number.isFinite(data.last_price_usd)
-        ? data.last_price_usd
-        : null,
-    price_history: data.price_history,
+    return {
+      volume_5m:
+        typeof data.volume_5m === 'number' && Number.isFinite(data.volume_5m)
+          ? data.volume_5m
+          : null,
+      last_price_usd:
+        typeof data.last_price_usd === 'number' && Number.isFinite(data.last_price_usd)
+          ? data.last_price_usd
+          : null,
+      price_history: data.price_history,
+    }
+  } catch {
+    return null
   }
 }
 

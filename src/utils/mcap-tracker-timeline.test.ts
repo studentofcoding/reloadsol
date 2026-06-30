@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/utils/supabase', () => ({
-  supabase: { from: vi.fn() },
+vi.mock('@/utils/db', () => ({
+  query: vi.fn(),
+  queryOne: vi.fn(),
 }))
 
 vi.mock('@/utils/unified-logger', () => ({

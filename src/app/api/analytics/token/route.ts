@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { withUnifiedLogging } from '@/utils/unified-logger';
-import { supabase } from '@/utils/supabase';
+import { query } from '@/utils/db';
 import { ZScoreAnomalyDetector } from '@/utils/algo/anomaly-detection';
 import { EnhancedMomentumAnalyzer } from '@/utils/algo/momentum-analysis';
 import type { EnrichedTokenData } from '@/utils/data-aggregation';
@@ -101,7 +101,7 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
             requestId: logger.getRequestId()
         });
 
-        // Fetch MCap tracking data from Supabase (server-side)
+        // Fetch MCap tracking data from Postgres (server-side)
         let mcapData;
         try {
             mcapData = await fetchMcapTrackingData(tokenAddresses, maxAge, logger);
@@ -184,35 +184,27 @@ export const POST = withUnifiedLogging(async (request: NextRequest, logger) => {
 // Server-side MCap data fetching with improved error handling
 async function fetchMcapTrackingData(tokenAddresses: string[], maxAge: number, logger: any) {
     try {
-        let query = supabase
-            .from('token_mcap_tracking')
-            .select('*')
-            .in('token_address', tokenAddresses)
-            .order('last_updated_at', { ascending: false });
+        const params: unknown[] = [tokenAddresses];
+        let sql = `
+            SELECT * FROM token_mcap_tracking
+            WHERE token_address = ANY($1::text[])`;
 
-        // Apply age filter if specified
         if (maxAge && maxAge > 0) {
             const cutoffTime = new Date(Date.now() - maxAge * 60 * 1000).toISOString();
-            query = query.gte('last_updated_at', cutoffTime);
+            sql += ` AND last_updated_at >= $2`;
+            params.push(cutoffTime);
         }
 
-        const { data, error } = await query;
+        sql += ` ORDER BY last_updated_at DESC`;
 
-        if (error) {
-            logger.error('api_request', 'Supabase query failed', undefined, {
-                supabaseError: error.message,
-                code: error.code,
-                details: error.details
-            });
-            throw new Error(`Database query failed: ${error.message}`);
-        }
+        const { rows } = await query(sql, params);
 
         logger.debug('api_request', 'MCap data fetched successfully', {
-            recordsFound: data?.length || 0,
+            recordsFound: rows.length,
             requestedTokens: tokenAddresses.length
         });
 
-        return data || [];
+        return rows;
     } catch (error) {
         logger.error('api_request', 'MCap data fetch error', error instanceof Error ? error : undefined, {
             error: getErrorMessage(error)

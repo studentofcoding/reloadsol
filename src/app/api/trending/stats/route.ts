@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
 import {
   getAppDayBounds,
   getAppLocalDateString,
@@ -75,18 +75,22 @@ function mapPeriodTokens(summary: SummaryRow, tokens: TrackerRow[]) {
 }
 
 async function fetchPeriodTokens(summary: SummaryRow): Promise<ReturnType<typeof mapPeriodTokens>> {
-  const { data: summaryPeriodTokens, error } = await supabase
-    .from(TRACKER_TABLE)
-    .select('*')
-    .gte('tracking_started_at', summary.period_start)
-    .lte('tracking_started_at', summary.period_end)
-    .order('peak_gain_percentage', { ascending: false })
+  try {
+    const { rows: summaryPeriodTokens } = await query<TrackerRow>(
+      `SELECT * FROM ${TRACKER_TABLE}
+       WHERE tracking_started_at >= $1 AND tracking_started_at <= $2
+       ORDER BY peak_gain_percentage DESC`,
+      [summary.period_start, summary.period_end],
+    )
 
-  if (error || !summaryPeriodTokens) {
+    if (!summaryPeriodTokens || summaryPeriodTokens.length === 0) {
+      return mapPeriodTokens(summary, (summary.top_winners as TrackerRow[]) ?? [])
+    }
+
+    return mapPeriodTokens(summary, summaryPeriodTokens)
+  } catch {
     return mapPeriodTokens(summary, (summary.top_winners as TrackerRow[]) ?? [])
   }
-
-  return mapPeriodTokens(summary, summaryPeriodTokens as TrackerRow[])
 }
 
 function buildEnhancedSummary(
@@ -154,20 +158,22 @@ function computeCohortStats(tokens: TrackerRow[]) {
 
 async function findSummaryForDate(dateStr: string): Promise<SummaryRow | null> {
   const { start, end } = getAppDayBounds(dateStr)
-  const { data, error } = await supabase
-    .from(SUMMARY_TABLE)
-    .select('*')
-    .gte('period_end', start.toISOString())
-    .lte('period_end', end.toISOString())
-    .order('period_end', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-
-  if (error) {
-    console.warn('[trending/stats] summary lookup failed:', error.message)
+  try {
+    const data = await queryOne<SummaryRow>(
+      `SELECT * FROM ${SUMMARY_TABLE}
+       WHERE period_end >= $1 AND period_end <= $2
+       ORDER BY period_end DESC
+       LIMIT 1`,
+      [start.toISOString(), end.toISOString()],
+    )
+    return data
+  } catch (error) {
+    console.warn(
+      '[trending/stats] summary lookup failed:',
+      error instanceof Error ? error.message : error,
+    )
     return null
   }
-  return (data as SummaryRow | null) ?? null
 }
 
 export async function GET(request: NextRequest) {
@@ -216,73 +222,53 @@ export async function GET(request: NextRequest) {
       dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : null
 
     const [
-      summaryResult,
-      trackingResult,
-      completedResult,
-      historicalResult,
+      { rows: summaries },
+      { rows: trackingResult },
+      { rows: completedResult },
+      { rows: historicalSummaries },
     ] = await Promise.all([
-      supabase
-        .from(SUMMARY_TABLE)
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(1),
-      supabase
-        .from(TRACKER_TABLE)
-        .select('*')
-        .eq('status', 'tracking')
-        .order('peak_gain_percentage', { ascending: false }),
-      supabase
-        .from(TRACKER_TABLE)
-        .select('*')
-        .in('status', ['won', 'lost'])
-        .gte('status_changed_at', last7Days)
-        .order('status_changed_at', { ascending: false })
-        .limit(20),
-      supabase
-        .from(SUMMARY_TABLE)
-        .select('*')
-        .gte('created_at', last7Days)
-        .order('created_at', { ascending: false })
-        .limit(7),
+      query<SummaryRow>(
+        `SELECT * FROM ${SUMMARY_TABLE} ORDER BY created_at DESC LIMIT 1`,
+      ),
+      query<TrackerRow>(
+        `SELECT * FROM ${TRACKER_TABLE} WHERE status = 'tracking' ORDER BY peak_gain_percentage DESC`,
+      ),
+      query<TrackerRow>(
+        `SELECT * FROM ${TRACKER_TABLE}
+         WHERE status IN ('won', 'lost') AND status_changed_at >= $1
+         ORDER BY status_changed_at DESC
+         LIMIT 20`,
+        [last7Days],
+      ),
+      query<SummaryRow>(
+        `SELECT * FROM ${SUMMARY_TABLE}
+         WHERE created_at >= $1
+         ORDER BY created_at DESC
+         LIMIT 7`,
+        [last7Days],
+      ),
     ])
 
-    if (summaryResult.error) {
-      throw new Error(`Failed to fetch summaries: ${summaryResult.error.message}`)
-    }
-    if (trackingResult.error) {
-      throw new Error(
-        `Failed to fetch tracking tokens: ${trackingResult.error.message}`,
-      )
-    }
-    if (completedResult.error) {
-      throw new Error(
-        `Failed to fetch completed tokens: ${completedResult.error.message}`,
-      )
-    }
-    if (historicalResult.error) {
-      throw new Error(
-        `Failed to fetch historical summaries: ${historicalResult.error.message}`,
-      )
-    }
+    let trackingTokens = trackingResult.filter(isOpenTrackerPosition)
+    let recentCompleted = completedResult
 
-    const summaries = summaryResult.data
-    let trackingTokens = (trackingResult.data ?? []).filter(isOpenTrackerPosition)
-    let recentCompleted = completedResult.data
-    const historicalSummaries = historicalResult.data
-
-    let watchingCountQuery = supabase
-      .from(TRACKER_TABLE)
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'waiting')
-
+    let watchingCount = 0
     if (selectedDate) {
       const { start, end } = getAppDayBounds(selectedDate)
-      watchingCountQuery = watchingCountQuery
-        .gte('waiting_started_at', start.toISOString())
-        .lte('waiting_started_at', end.toISOString())
+      const watchingRow = await queryOne<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM ${TRACKER_TABLE}
+         WHERE status = 'waiting'
+           AND waiting_started_at >= $1
+           AND waiting_started_at <= $2`,
+        [start.toISOString(), end.toISOString()],
+      )
+      watchingCount = watchingRow?.count ?? 0
+    } else {
+      const watchingRow = await queryOne<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM ${TRACKER_TABLE} WHERE status = 'waiting'`,
+      )
+      watchingCount = watchingRow?.count ?? 0
     }
-
-    const { count: watchingCount } = await watchingCountQuery
 
     trackingTokens = applyFilters(trackingTokens ?? [])
     recentCompleted = applyFilters(recentCompleted ?? [])
@@ -423,7 +409,7 @@ export async function GET(request: NextRequest) {
       },
       data_freshness: {
         tracking_tokens_count: activeTracking.statistics.total_tracking,
-        watching_tokens_count: watchingCount ?? 0,
+        watching_tokens_count: watchingCount,
         latest_summary_age_hours:
           activeSummary?.created_at
             ? Math.round(

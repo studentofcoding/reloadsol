@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase'
+import { queryOne } from '@/utils/db'
 import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 import { fetchMcapTrackingRow } from '@/utils/mcap-tracker'
 import {
@@ -38,35 +38,46 @@ type JupiterEntryHints = {
 async function fetchTrackerEntryHints(
   tokenAddress: string,
 ): Promise<TrackerEntryHints | null> {
-  const { data, error } = await supabase
-    .from(TRACKER_TABLE)
-    .select('organic_score, volume_5m, market_cap, created_at, tracking_started_at')
-    .eq('token_address', tokenAddress)
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  try {
+    const data = await queryOne<{
+      organic_score: unknown
+      volume_5m: unknown
+      market_cap: unknown
+      created_at: unknown
+      tracking_started_at: unknown
+    }>(
+      `SELECT organic_score, volume_5m, market_cap, created_at, tracking_started_at
+       FROM ${TRACKER_TABLE}
+       WHERE token_address = $1
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [tokenAddress],
+    )
 
-  if (error || !data) return null
+    if (!data) return null
 
-  return {
-    organicScore:
-      typeof data.organic_score === 'number' && Number.isFinite(data.organic_score)
-        ? data.organic_score
-        : null,
-    volume5m:
-      typeof data.volume_5m === 'number' && Number.isFinite(data.volume_5m)
-        ? data.volume_5m
-        : null,
-    firstSeenAt:
-      typeof data.tracking_started_at === 'string'
-        ? data.tracking_started_at
-        : typeof data.created_at === 'string'
-          ? data.created_at
+    return {
+      organicScore:
+        typeof data.organic_score === 'number' && Number.isFinite(data.organic_score)
+          ? data.organic_score
           : null,
-    entryMcap:
-      typeof data.market_cap === 'number' && Number.isFinite(data.market_cap)
-        ? data.market_cap
-        : null,
+      volume5m:
+        typeof data.volume_5m === 'number' && Number.isFinite(data.volume_5m)
+          ? data.volume_5m
+          : null,
+      firstSeenAt:
+        typeof data.tracking_started_at === 'string'
+          ? data.tracking_started_at
+          : typeof data.created_at === 'string'
+            ? data.created_at
+            : null,
+      entryMcap:
+        typeof data.market_cap === 'number' && Number.isFinite(data.market_cap)
+          ? data.market_cap
+          : null,
+    }
+  } catch {
+    return null
   }
 }
 

@@ -1,11 +1,12 @@
-const PLACEHOLDER_HOSTS = [
-  'your-project.supabase.co',
-  'placeholder.supabase.co',
-  'example.supabase.co',
-];
+const PLACEHOLDER_PASSWORDS = new Set([
+  'change-me',
+  'your-secret-key',
+  'placeholder-key',
+  'supersecretpassword',
+]);
 
-export function getSupabaseHost(): string | null {
-  const url = process.env.SUPABASE_URL;
+export function getDbHost(): string | null {
+  const url = process.env.DATABASE_URL;
   if (!url) return null;
   try {
     return new URL(url).hostname;
@@ -14,16 +15,27 @@ export function getSupabaseHost(): string | null {
   }
 }
 
-export function isSupabaseConfigured(): boolean {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SECRET_KEY?.trim();
-  if (!url || !key) return false;
-  if (key === 'your-secret-key' || key === 'placeholder-key') return false;
-  if (key.startsWith('PASTE_')) return false;
-  const host = getSupabaseHost();
-  if (!host) return false;
-  return !PLACEHOLDER_HOSTS.some((p) => host === p || host.includes('your-project'));
+export function isDbConfigured(): boolean {
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    const password = parsed.password;
+    if (!password || PLACEHOLDER_PASSWORDS.has(password)) return false;
+    if (password.startsWith('PASTE_')) return false;
+    const host = parsed.hostname;
+    if (!host || host === 'placeholder') return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
+
+/** @deprecated use isDbConfigured */
+export const isSupabaseConfigured = isDbConfigured;
+
+/** @deprecated use getDbHost */
+export const getSupabaseHost = getDbHost;
 
 export function isDbConnectivityError(error: unknown): boolean {
   const combined = errorTextParts(error);
@@ -38,12 +50,16 @@ export function isDbConnectivityError(error: unknown): boolean {
     combined.includes('522') ||
     combined.includes('connection timed out') ||
     combined.includes('circuit open') ||
-    combined.includes('aborted')
+    combined.includes('aborted') ||
+    combined.includes('connect econnrefused') ||
+    combined.includes('connection terminated') ||
+    combined.includes('password authentication failed') ||
+    combined.includes('too many clients') ||
+    combined.includes('53300')
   );
 }
 
-/** Supabase free-tier egress exceeded or origin timeout (Cloudflare 522 HTML). */
-export function isSupabaseQuotaOrTimeoutError(error: unknown): boolean {
+export function isDbQuotaOrTimeoutError(error: unknown): boolean {
   const combined = errorTextParts(error);
   return (
     combined.includes('522') ||
@@ -57,14 +73,16 @@ export function isSupabaseQuotaOrTimeoutError(error: unknown): boolean {
   );
 }
 
-/** Short log-safe message — never dump Cloudflare HTML pages. */
-export function formatSupabaseError(error: unknown): string {
-  if (isSupabaseQuotaOrTimeoutError(error)) {
-    return 'Supabase unreachable (522/timeout — check Dashboard egress quota and project status)';
+/** @deprecated use isDbQuotaOrTimeoutError */
+export const isSupabaseQuotaOrTimeoutError = isDbQuotaOrTimeoutError;
+
+export function formatDbConnectionError(error: unknown): string {
+  if (isDbQuotaOrTimeoutError(error)) {
+    return 'Database unreachable (timeout — check Postgres and PgBouncer status)';
   }
   if (isDbConnectivityError(error)) {
-    const host = getSupabaseHost() ?? 'unknown host';
-    return `Supabase unreachable (${host})`;
+    const host = getDbHost() ?? 'unknown host';
+    return `Database unreachable (${host})`;
   }
   if (error instanceof Error && error.message) {
     const msg = error.message.trim();
@@ -82,23 +100,37 @@ export function formatSupabaseError(error: unknown): string {
   return 'Database error';
 }
 
-let supabaseCircuitOpenUntil = 0;
-const SUPABASE_CIRCUIT_COOLDOWN_MS = parseInt(
-  process.env.SUPABASE_CIRCUIT_COOLDOWN_MS || '60000',
+/** @deprecated use formatDbConnectionError */
+export const formatSupabaseError = formatDbConnectionError;
+
+let dbCircuitOpenUntil = 0;
+const DB_CIRCUIT_COOLDOWN_MS = parseInt(
+  process.env.DATABASE_CIRCUIT_COOLDOWN_MS ||
+    process.env.SUPABASE_CIRCUIT_COOLDOWN_MS ||
+    '60000',
   10,
 );
 
-export function isSupabaseCircuitOpen(): boolean {
-  return Date.now() < supabaseCircuitOpenUntil;
+export function isDbCircuitOpen(): boolean {
+  return Date.now() < dbCircuitOpenUntil;
 }
 
-export function recordSupabaseFailure(): void {
-  supabaseCircuitOpenUntil = Date.now() + SUPABASE_CIRCUIT_COOLDOWN_MS;
+/** @deprecated use isDbCircuitOpen */
+export const isSupabaseCircuitOpen = isDbCircuitOpen;
+
+export function recordDbFailure(): void {
+  dbCircuitOpenUntil = Date.now() + DB_CIRCUIT_COOLDOWN_MS;
 }
 
-export function recordSupabaseSuccess(): void {
-  supabaseCircuitOpenUntil = 0;
+/** @deprecated use recordDbFailure */
+export const recordSupabaseFailure = recordDbFailure;
+
+export function recordDbSuccess(): void {
+  dbCircuitOpenUntil = 0;
 }
+
+/** @deprecated use recordDbSuccess */
+export const recordSupabaseSuccess = recordDbSuccess;
 
 function errorTextParts(error: unknown): string {
   const parts: string[] = [];
@@ -130,12 +162,12 @@ export function isMissingSchemaError(error: unknown): boolean {
 
 export function formatDbError(error: unknown): string {
   if (isDbConnectivityError(error)) {
-    const host = getSupabaseHost() ?? 'unknown host';
-    return `Supabase unreachable (${host}). Set valid SUPABASE_URL and SUPABASE_SECRET_KEY in .env, then apply supabase/schema.sql.`;
+    const host = getDbHost() ?? 'unknown host';
+    return `Database unreachable (${host}). Set DATABASE_URL in .env and apply db/init schema.`;
   }
 
   if (isMissingSchemaError(error)) {
-    return 'DLMM tables missing. Run supabase/schema.sql in your Supabase SQL editor.';
+    return 'DLMM tables missing. Run db/init/02-schema.sql (or supabase/schema.sql).';
   }
 
   if (error instanceof Error && error.message) return error.message;
@@ -153,7 +185,7 @@ export class DbUnavailableError extends Error {
   readonly status = 503;
 
   constructor(message?: string) {
-    super(message ?? formatDbError(new Error('fetch failed')));
+    super(message ?? formatDbError(new Error('connection refused')));
     this.name = 'DbUnavailableError';
   }
 }

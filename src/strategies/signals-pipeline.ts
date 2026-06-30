@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase'
+import { query } from '@/utils/db'
 import { normalizeTrackingTimeline, isInTrackingRange, type McapSnapshot } from '@/utils/mcap-tracker'
 import { getRugAddressSet } from '@/utils/rug-list/db'
 import { log } from '@/utils/unified-logger'
@@ -165,43 +165,51 @@ export async function fetchAndScoreSignals(
   strategyConfig: SignalsStrategyConfig,
   options?: { skipRugValidation?: boolean },
 ): Promise<ScoredSignal[]> {
-  const { query } = strategyConfig
-  const limit = Math.min(query.limit, 100)
-  const recencyMinutes = Math.max(query.recencyMinutes, 1)
-  const minGrowth = query.minGrowth
-  const includeStuck = query.includeStuck
-  const maxAgeMinutes = Math.max(query.maxAgeMinutes, 1)
-
-  let dbQuery = supabase
-    .from('token_mcap_tracking')
-    .select(
-      'token_address, token_symbol, first_mcap, current_mcap, mcap_growth_percent, first_seen_at, last_updated_at, when_reach_80mc, when_reach_120mc, when_reach_200mc, is_tracking_stuck',
-    )
-    .not('mcap_growth_percent', 'is', null)
-    .not('current_mcap', 'is', null)
-    .not('first_mcap', 'is', null)
-    .gt('first_mcap', 0)
-    .gt('current_mcap', 0)
-
-  if (!includeStuck) {
-    dbQuery = dbQuery.eq('is_tracking_stuck', false)
-  }
+  const { query: queryConfig } = strategyConfig
+  const limit = Math.min(queryConfig.limit, 100)
+  const recencyMinutes = Math.max(queryConfig.recencyMinutes, 1)
+  const minGrowth = queryConfig.minGrowth
+  const includeStuck = queryConfig.includeStuck
+  const maxAgeMinutes = Math.max(queryConfig.maxAgeMinutes, 1)
 
   const now = new Date()
   const recencyCutoff = new Date(now.getTime() - recencyMinutes * 60 * 1000).toISOString()
   const lastUpdateCutoff = new Date(now.getTime() - maxAgeMinutes * 60 * 1000).toISOString()
 
-  dbQuery = dbQuery
-    .gte('first_seen_at', recencyCutoff)
-    .gte('last_updated_at', lastUpdateCutoff)
-    .gte('mcap_growth_percent', Math.min(minGrowth, 10000))
-    .order('mcap_growth_percent', { ascending: false })
-    .limit(limit * 5)
+  const conditions = [
+    'mcap_growth_percent IS NOT NULL',
+    'current_mcap IS NOT NULL',
+    'first_mcap IS NOT NULL',
+    'first_mcap > 0',
+    'current_mcap > 0',
+  ]
+  const params: unknown[] = []
 
-  const { data, error } = await dbQuery
-  if (error) throw error
+  if (!includeStuck) {
+    conditions.push('is_tracking_stuck = false')
+  }
 
-  const items = (data ?? []) as McapTrackingRow[]
+  params.push(recencyCutoff)
+  conditions.push(`first_seen_at >= $${params.length}`)
+  params.push(lastUpdateCutoff)
+  conditions.push(`last_updated_at >= $${params.length}`)
+  params.push(Math.min(minGrowth, 10000))
+  conditions.push(`mcap_growth_percent >= $${params.length}`)
+  params.push(limit * 5)
+  const limitParam = `$${params.length}`
+
+  const { rows } = await query<McapTrackingRow>(
+    `SELECT token_address, token_symbol, first_mcap, current_mcap, mcap_growth_percent,
+            first_seen_at, last_updated_at, when_reach_80mc, when_reach_120mc,
+            when_reach_200mc, is_tracking_stuck
+     FROM token_mcap_tracking
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY mcap_growth_percent DESC
+     LIMIT ${limitParam}`,
+    params,
+  )
+
+  const items = rows
 
   for (const row of items) {
     normalizeTrackingTimeline(row as McapSnapshot)

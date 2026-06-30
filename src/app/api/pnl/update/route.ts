@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/utils/supabase'
+import { query } from '@/utils/db'
 
 function getPnLUpdateSecret(): string {
   return (
@@ -108,15 +108,13 @@ async function updateAllUsersPnL(): Promise<PnLResult[]> {
     const thirtyDaysAgo = new Date()
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
     
-    const { data: records, error } = await supabase
-      .from('trading_records')
-      .select('*')
-      .gte('timestamp', thirtyDaysAgo.toISOString())
-      .order('timestamp', { ascending: true })
-    
-    if (error) {
-      throw new Error(`Failed to fetch trading records: ${error.message}`)
-    }
+    const { rows: records } = await query<TradingRecord>(
+      `SELECT id, wallet_address, operation_type, timestamp, data
+       FROM trading_records
+       WHERE timestamp >= $1
+       ORDER BY timestamp ASC`,
+      [thirtyDaysAgo.toISOString()],
+    )
     
     if (!records || records.length === 0) {
       console.log('📊 No trading records found')
@@ -125,7 +123,7 @@ async function updateAllUsersPnL(): Promise<PnLResult[]> {
     
     // Group records by wallet address
     const walletRecords = new Map<string, TradingRecord[]>()
-    records.forEach((record: any) => {
+    records.forEach((record) => {
       const walletAddress = record.wallet_address
       if (!walletRecords.has(walletAddress)) {
         walletRecords.set(walletAddress, [])
@@ -154,21 +152,20 @@ async function updateAllUsersPnL(): Promise<PnLResult[]> {
         
         results.push(pnlResult)
         
-        // Update token_operations table
-        const { error: updateError } = await supabase
-          .from('token_operations')
-          .upsert({
-            wallet_address: walletAddress,
-            trade_pnl: totalPnL,
-            last_pnl_update: new Date().toISOString()
-          }, {
-            onConflict: 'wallet_address'
-          })
-        
-        if (updateError) {
-          console.error(`Failed to update PnL for ${walletAddress}:`, updateError)
-        } else {
+        const lastPnlUpdate = new Date().toISOString()
+        try {
+          await query(
+            `INSERT INTO token_operations (wallet_address, trade_pnl, last_pnl_update)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (wallet_address)
+             DO UPDATE SET
+               trade_pnl = EXCLUDED.trade_pnl,
+               last_pnl_update = EXCLUDED.last_pnl_update`,
+            [walletAddress, totalPnL, lastPnlUpdate],
+          )
           console.log(`✅ Updated PnL for ${walletAddress}: $${totalPnL.toFixed(2)}`)
+        } catch (updateError) {
+          console.error(`Failed to update PnL for ${walletAddress}:`, updateError)
         }
         
       } catch (error) {
@@ -223,4 +220,4 @@ export async function GET() {
     usage: 'POST with ?key= or Authorization: Bearer header to update PnL',
     timestamp: new Date().toISOString()
   })
-} 
+}

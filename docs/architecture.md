@@ -200,9 +200,13 @@ Wallet session: `WALLET_SESSION_SECRET` cookie after SIWS-style sign-in.
 
 ---
 
-## 6. Data layer (Supabase)
+## 6. Data layer (Docker Postgres)
 
-Apply [`supabase/schema.sql`](../supabase/schema.sql) in SQL Editor. Idempotent patches at file bottom add columns on older projects.
+Schema source: [`supabase/schema.sql`](../supabase/schema.sql) (applied via [`db/init/`](../db/init/) on first `docker compose up`).
+
+Stack: `reloadsol-db` (Postgres 16, 1GB cap) → `reloadsol-bouncer` (PgBouncer transaction pool) → Next.js `pg` pool (`DATABASE_URL`).
+
+Migrate from hosted Supabase: `bash scripts/migrate-from-supabase.sh` (pgcopydb, public schema).
 
 ### Core trading
 

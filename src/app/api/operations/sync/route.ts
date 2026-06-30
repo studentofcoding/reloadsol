@@ -1,5 +1,5 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/utils/supabase'
+import { NextRequest, NextResponse } from 'next/server';
+import { query } from '@/utils/db';
 
 interface TokenOperations {
   wallet_address: string;
@@ -20,44 +20,40 @@ interface TokenOperations {
 // POST /api/operations/sync - Sync cached operations to database
 export async function POST(request: NextRequest) {
   try {
-    const { operations }: { operations: TokenOperations[] } = await request.json()
+    const { operations }: { operations: TokenOperations[] } = await request.json();
 
     if (!operations || !Array.isArray(operations)) {
       return NextResponse.json(
         { error: 'operations array is required' },
         { status: 400 }
-      )
+      );
     }
 
-    // Process each operation
     for (const operation of operations) {
-      // Use atomic increment operation to prevent race conditions
-      const { error } = await supabase.rpc('increment_operation_counts', {
-        p_wallet_address: operation.wallet_address,
-        p_swap_increment: operation.swap_count,
-        p_close_increment: operation.close_count,
-        p_sol_balance: operation.sol_balance,
-        p_timestamp: operation.last_operation_time
-      });
-
-      if (error) {
-        console.error('Error syncing operation:', error)
-        throw error
-      }
+      await query(
+        `SELECT increment_operation_counts($1, $2, $3, $4, $5)`,
+        [
+          operation.wallet_address,
+          operation.swap_count,
+          operation.close_count,
+          operation.sol_balance ?? null,
+          operation.last_operation_time,
+        ],
+      );
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      synced: operations.length 
-    })
+    return NextResponse.json({
+      success: true,
+      synced: operations.length,
+    });
   } catch (error) {
-    console.error('Error syncing operations:', error)
+    console.error('Error syncing operations:', error);
     return NextResponse.json(
-      { 
+      {
         error: 'Failed to sync operations',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error instanceof Error ? error.message : 'Unknown error',
       },
       { status: 500 }
-    )
+    );
   }
-} 
+}

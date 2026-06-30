@@ -1,4 +1,5 @@
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
+import { isMissingSchemaError } from '@/utils/db-health'
 import { getTrackingHealthStats } from '@/utils/mcap-tracker'
 import { countOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol, readTrainingClass } from './outcome-features'
@@ -40,45 +41,188 @@ import type {
   McapTrackerReportStats,
 } from './types'
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function toIso(value: unknown): string {
+  if (value instanceof Date) return value.toISOString()
+  return String(value ?? '')
+}
+
+function toIsoOrNull(value: unknown): string | null {
+  if (value == null) return null
+  return toIso(value)
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as Record<string, unknown>
+    } catch {
+      return {}
+    }
+  }
+  if (typeof value === 'object' && value !== null) {
+    return value as Record<string, unknown>
+  }
+  return {}
+}
+
+function mapStrategyDefinitionRow(row: Record<string, unknown>): StrategyDefinitionRow {
+  return {
+    id: String(row.id),
+    domain: row.domain as StrategyDomain,
+    name: String(row.name),
+    description: row.description != null ? String(row.description) : null,
+    config: parseJsonObject(row.config),
+    is_active: Boolean(row.is_active),
+    execution_mode: row.execution_mode as ExecutionMode,
+    version: Number(row.version ?? 1),
+    updated_at: toIso(row.updated_at),
+  }
+}
+
+function mapStrategyOutcomeRow(row: Record<string, unknown>): StrategyOutcomeRow {
+  return {
+    id: String(row.id),
+    strategy_id: String(row.strategy_id),
+    domain: row.domain as StrategyDomain,
+    token_address: row.token_address != null ? String(row.token_address) : null,
+    entry_at: toIsoOrNull(row.entry_at),
+    exit_at: toIsoOrNull(row.exit_at),
+    pnl_pct: row.pnl_pct != null ? Number(row.pnl_pct) : null,
+    status: row.status != null ? String(row.status) : null,
+    is_simulated: Boolean(row.is_simulated),
+    features:
+      row.features != null ? parseJsonObject(row.features) : null,
+    created_at: toIso(row.created_at),
+  }
+}
+
+function getTrackerTableName(): string {
+  return process.env.NODE_ENV === 'development'
+    ? 'trending_token_tracker_dev'
+    : 'trending_token_tracker'
+}
+
+type OutcomeFilterParams = {
+  strategyId?: string
+  domain?: StrategyDomain
+  isSimulated?: boolean
+  from?: string
+  to?: string
+  mlLabel?: string
+  mlCondition?: string
+  status?: string
+  pnlMin?: number
+  pnlMax?: number
+  entryMcapBand?: string
+}
+
+function buildOutcomeWhereClause(params: OutcomeFilterParams): {
+  sql: string
+  values: unknown[]
+} {
+  const conditions: string[] = []
+  const values: unknown[] = []
+
+  if (params.strategyId) {
+    values.push(params.strategyId)
+    conditions.push(`strategy_id = $${values.length}`)
+  }
+  if (params.domain) {
+    values.push(params.domain)
+    conditions.push(`domain = $${values.length}`)
+  }
+  if (params.isSimulated !== undefined) {
+    values.push(params.isSimulated)
+    conditions.push(`is_simulated = $${values.length}`)
+  }
+  if (params.from) {
+    values.push(params.from)
+    conditions.push(`exit_at >= $${values.length}`)
+  }
+  if (params.to) {
+    values.push(params.to)
+    conditions.push(`exit_at <= $${values.length}`)
+  }
+  if (params.mlLabel === 'unlabeled') {
+    conditions.push(`(features->>'ml_label' IS NULL OR features->>'ml_label' = '')`)
+  } else if (params.mlLabel) {
+    values.push(params.mlLabel)
+    conditions.push(`features->>'ml_label' = $${values.length}`)
+  }
+  if (params.mlCondition === 'none') {
+    conditions.push(
+      `(features->>'ml_condition' IS NULL OR features->>'ml_condition' = '')`,
+    )
+  } else if (params.mlCondition) {
+    values.push(params.mlCondition)
+    conditions.push(`features->>'ml_condition' = $${values.length}`)
+  }
+  if (params.status) {
+    values.push(params.status)
+    conditions.push(`status = $${values.length}`)
+  }
+  if (params.pnlMin !== undefined) {
+    values.push(params.pnlMin)
+    conditions.push(`pnl_pct >= $${values.length}`)
+  }
+  if (params.pnlMax !== undefined) {
+    values.push(params.pnlMax)
+    conditions.push(`pnl_pct <= $${values.length}`)
+  }
+  if (params.entryMcapBand) {
+    values.push(params.entryMcapBand)
+    conditions.push(`features->>'entry_mcap_band' = $${values.length}`)
+  }
+
+  const sql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  return { sql, values }
+}
+
 export async function loadStrategyDefinitionRows(
   domain?: StrategyDomain,
 ): Promise<StrategyDefinitionRow[]> {
-  let query = supabase.from('strategy_definitions').select('*')
-  if (domain) {
-    query = query.eq('domain', domain)
-  }
+  try {
+    if (domain) {
+      const { rows } = await query<Record<string, unknown>>(
+        `SELECT * FROM strategy_definitions WHERE domain = $1`,
+        [domain],
+      )
+      return rows.map(mapStrategyDefinitionRow)
+    }
 
-  const { data, error } = await query
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+    const { rows } = await query<Record<string, unknown>>(
+      `SELECT * FROM strategy_definitions`,
+    )
+    return rows.map(mapStrategyDefinitionRow)
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return []
     }
-    console.warn('[strategies/db] load failed:', error.message)
+    console.warn('[strategies/db] load failed:', errorMessage(error))
     return []
   }
-
-  return (data ?? []) as StrategyDefinitionRow[]
 }
 
 export async function loadStrategyDefinitionById(
   id: string,
 ): Promise<StrategyDefinitionRow | null> {
-  const { data, error } = await supabase
-    .from('strategy_definitions')
-    .select('*')
-    .eq('id', id)
-    .maybeSingle()
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  try {
+    const row = await queryOne<Record<string, unknown>>(
+      `SELECT * FROM strategy_definitions WHERE id = $1 LIMIT 1`,
+      [id],
+    )
+    return row ? mapStrategyDefinitionRow(row) : null
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return null
     }
-    console.warn('[strategies/db] load by id failed:', error.message)
+    console.warn('[strategies/db] load by id failed:', errorMessage(error))
     return null
   }
-
-  return (data as StrategyDefinitionRow) ?? null
 }
 
 export async function upsertStrategyDefinition(params: {
@@ -90,27 +234,61 @@ export async function upsertStrategyDefinition(params: {
   is_active: boolean
   execution_mode?: ExecutionMode
 }): Promise<{ ok: boolean; error?: string }> {
-  const row: Record<string, unknown> = {
-    id: params.id,
-    domain: params.domain,
-    name: params.name,
-    description: params.description ?? null,
-    config: params.config,
-    is_active: params.is_active,
-    updated_at: new Date().toISOString(),
-  }
-  if (params.execution_mode) {
-    row.execution_mode = params.execution_mode
-  }
+  const updatedAt = new Date().toISOString()
+  const configJson = JSON.stringify(params.config)
 
-  const { error } = await supabase.from('strategy_definitions').upsert(row, {
-    onConflict: 'id',
-  })
-
-  if (error) {
-    return { ok: false, error: error.message }
+  try {
+    if (params.execution_mode) {
+      await query(
+        `INSERT INTO strategy_definitions (
+           id, domain, name, description, config, is_active, updated_at, execution_mode
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (id) DO UPDATE SET
+           domain = EXCLUDED.domain,
+           name = EXCLUDED.name,
+           description = EXCLUDED.description,
+           config = EXCLUDED.config,
+           is_active = EXCLUDED.is_active,
+           updated_at = EXCLUDED.updated_at,
+           execution_mode = EXCLUDED.execution_mode`,
+        [
+          params.id,
+          params.domain,
+          params.name,
+          params.description ?? null,
+          configJson,
+          params.is_active,
+          updatedAt,
+          params.execution_mode,
+        ],
+      )
+    } else {
+      await query(
+        `INSERT INTO strategy_definitions (
+           id, domain, name, description, config, is_active, updated_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (id) DO UPDATE SET
+           domain = EXCLUDED.domain,
+           name = EXCLUDED.name,
+           description = EXCLUDED.description,
+           config = EXCLUDED.config,
+           is_active = EXCLUDED.is_active,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          params.id,
+          params.domain,
+          params.name,
+          params.description ?? null,
+          configJson,
+          params.is_active,
+          updatedAt,
+        ],
+      )
+    }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, error: errorMessage(error) }
   }
-  return { ok: true }
 }
 
 export { dedupeStrategyOutcomeRows, mcapSimClosedOutcomeKey } from './outcome-dedupe'
@@ -121,49 +299,48 @@ export async function loadMcapSimClosedOutcomeKeys(
 ): Promise<Set<string>> {
   if (tokenAddresses.length === 0) return new Set()
 
-  const { data, error } = await supabase
-    .from('strategy_outcomes')
-    .select('token_address, entry_at')
-    .eq('strategy_id', strategyId)
-    .eq('domain', 'mcap_tracker')
-    .in('token_address', tokenAddresses)
+  try {
+    const { rows } = await query<{ token_address: string; entry_at: string }>(
+      `SELECT token_address, entry_at FROM strategy_outcomes
+       WHERE strategy_id = $1
+         AND domain = 'mcap_tracker'
+         AND token_address = ANY($2::text[])`,
+      [strategyId, tokenAddresses],
+    )
 
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+    const keys = new Set<string>()
+    for (const row of rows) {
+      if (row.token_address && row.entry_at) {
+        keys.add(mcapSimClosedOutcomeKey(row.token_address, toIso(row.entry_at)))
+      }
+    }
+    return keys
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return new Set()
     }
     console.warn(
       '[strategies/db] loadMcapSimClosedOutcomeKeys failed:',
-      error.message,
+      errorMessage(error),
     )
     return new Set()
   }
-
-  const keys = new Set<string>()
-  for (const row of data ?? []) {
-    if (row.token_address && row.entry_at) {
-      keys.add(mcapSimClosedOutcomeKey(row.token_address, row.entry_at))
-    }
-  }
-  return keys
 }
 
 export async function loadRegimeTagForDate(tagDate: string): Promise<string | null> {
-  const { data, error } = await supabase
-    .from('market_regime_tags')
-    .select('regime_tag')
-    .eq('tag_date', tagDate)
-    .maybeSingle()
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  try {
+    const row = await queryOne<{ regime_tag: string | null }>(
+      `SELECT regime_tag FROM market_regime_tags WHERE tag_date = $1 LIMIT 1`,
+      [tagDate],
+    )
+    return typeof row?.regime_tag === 'string' ? row.regime_tag : null
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return null
     }
-    console.warn('[strategies/db] loadRegimeTagForDate failed:', error.message)
+    console.warn('[strategies/db] loadRegimeTagForDate failed:', errorMessage(error))
     return null
   }
-
-  return typeof data?.regime_tag === 'string' ? data.regime_tag : null
 }
 
 export async function upsertMarketRegimeTag(params: {
@@ -171,47 +348,56 @@ export async function upsertMarketRegimeTag(params: {
   regimeTag: string
   notes?: string | null
 }): Promise<{ ok: boolean; error?: string }> {
-  const { error } = await supabase.from('market_regime_tags').upsert(
-    {
-      tag_date: params.tagDate,
-      regime_tag: params.regimeTag,
-      notes: params.notes ?? null,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'tag_date' },
-  )
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  try {
+    await query(
+      `INSERT INTO market_regime_tags (tag_date, regime_tag, notes, updated_at)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (tag_date) DO UPDATE SET
+         regime_tag = EXCLUDED.regime_tag,
+         notes = EXCLUDED.notes,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        params.tagDate,
+        params.regimeTag,
+        params.notes ?? null,
+        new Date().toISOString(),
+      ],
+    )
+    return { ok: true }
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return { ok: false, error: 'market_regime_tags table missing' }
     }
-    return { ok: false, error: error.message }
+    return { ok: false, error: errorMessage(error) }
   }
-  return { ok: true }
 }
 
 export async function listMarketRegimeTags(limit = 30): Promise<
   Array<{ tag_date: string; regime_tag: string; notes: string | null }>
 > {
-  const { data, error } = await supabase
-    .from('market_regime_tags')
-    .select('tag_date, regime_tag, notes')
-    .order('tag_date', { ascending: false })
-    .limit(limit)
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  try {
+    const { rows } = await query<{
+      tag_date: string
+      regime_tag: string
+      notes: string | null
+    }>(
+      `SELECT tag_date, regime_tag, notes FROM market_regime_tags
+       ORDER BY tag_date DESC
+       LIMIT $1`,
+      [limit],
+    )
+    return rows.map((row) => ({
+      tag_date: toIso(row.tag_date).slice(0, 10),
+      regime_tag: String(row.regime_tag),
+      notes: row.notes != null ? String(row.notes) : null,
+    }))
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return []
     }
-    console.warn('[strategies/db] listMarketRegimeTags failed:', error.message)
+    console.warn('[strategies/db] listMarketRegimeTags failed:', errorMessage(error))
     return []
   }
-
-  return (data ?? []) as Array<{
-    tag_date: string
-    regime_tag: string
-    notes: string | null
-  }>
 }
 
 async function strategyOutcomeExists(params: {
@@ -220,25 +406,24 @@ async function strategyOutcomeExists(params: {
   token_address: string
   entry_at: string
 }): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('strategy_outcomes')
-    .select('id')
-    .eq('strategy_id', params.strategy_id)
-    .eq('domain', params.domain)
-    .eq('token_address', params.token_address)
-    .eq('entry_at', params.entry_at)
-    .limit(1)
-    .maybeSingle()
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  try {
+    const row = await queryOne<{ id: string }>(
+      `SELECT id FROM strategy_outcomes
+       WHERE strategy_id = $1
+         AND domain = $2
+         AND token_address = $3
+         AND entry_at = $4
+       LIMIT 1`,
+      [params.strategy_id, params.domain, params.token_address, params.entry_at],
+    )
+    return !!row
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return false
     }
-    console.warn('[strategies/db] strategyOutcomeExists failed:', error.message)
+    console.warn('[strategies/db] strategyOutcomeExists failed:', errorMessage(error))
     return false
   }
-
-  return !!data
 }
 
 export async function insertStrategyOutcome(params: {
@@ -284,23 +469,29 @@ export async function insertStrategyOutcome(params: {
   }
   features = applyAutoOutcomeLabels(features, params.pnl_pct, params.status)
 
-  const { error } = await supabase.from('strategy_outcomes').insert({
-    strategy_id: params.strategy_id,
-    domain: params.domain,
-    token_address: params.token_address,
-    entry_at: params.entry_at ?? null,
-    exit_at: exitAt,
-    pnl_pct: params.pnl_pct ?? null,
-    status: params.status ?? null,
-    is_simulated: params.is_simulated ?? true,
-    features,
-  })
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  try {
+    await query(
+      `INSERT INTO strategy_outcomes (
+         strategy_id, domain, token_address, entry_at, exit_at,
+         pnl_pct, status, is_simulated, features
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        params.strategy_id,
+        params.domain,
+        params.token_address,
+        params.entry_at ?? null,
+        exitAt,
+        params.pnl_pct ?? null,
+        params.status ?? null,
+        params.is_simulated ?? true,
+        JSON.stringify(features),
+      ],
+    )
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return
     }
-    console.warn('[strategies/db] outcome insert failed:', error.message)
+    console.warn('[strategies/db] outcome insert failed:', errorMessage(error))
   }
 }
 
@@ -325,59 +516,25 @@ export async function listStrategyOutcomes(params: {
   const limit = params.limit ?? 50
   const offset = params.offset ?? 0
 
-  let query = supabase
-    .from('strategy_outcomes')
-    .select('*')
-    .order('created_at', { ascending: false })
+  const { sql: whereSql, values } = buildOutcomeWhereClause(params)
 
-  if (params.strategyId) {
-    query = query.eq('strategy_id', params.strategyId)
-  }
-  if (params.domain) {
-    query = query.eq('domain', params.domain)
-  }
-  if (params.isSimulated !== undefined) {
-    query = query.eq('is_simulated', params.isSimulated)
-  }
-  if (params.from) {
-    query = query.gte('exit_at', params.from)
-  }
-  if (params.to) {
-    query = query.lte('exit_at', params.to)
-  }
-  if (params.mlLabel === 'unlabeled') {
-    query = query.or('features->>ml_label.is.null,features->>ml_label.eq.')
-  } else if (params.mlLabel) {
-    query = query.eq('features->>ml_label', params.mlLabel)
-  }
-  if (params.mlCondition === 'none') {
-    query = query.or('features->>ml_condition.is.null,features->>ml_condition.eq.')
-  } else if (params.mlCondition) {
-    query = query.eq('features->>ml_condition', params.mlCondition)
-  }
-  if (params.status) {
-    query = query.eq('status', params.status)
-  }
-  if (params.pnlMin !== undefined) {
-    query = query.gte('pnl_pct', params.pnlMin)
-  }
-  if (params.pnlMax !== undefined) {
-    query = query.lte('pnl_pct', params.pnlMax)
-  }
-  if (params.entryMcapBand) {
-    query = query.eq('features->>entry_mcap_band', params.entryMcapBand)
-  }
-
-  const { data, error } = await query
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  let rows: StrategyOutcomeRow[]
+  try {
+    const result = await query<Record<string, unknown>>(
+      `SELECT * FROM strategy_outcomes
+       ${whereSql}
+       ORDER BY created_at DESC`,
+      values,
+    )
+    rows = result.rows.map(mapStrategyOutcomeRow)
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return { rows: [], total: 0 }
     }
     throw error
   }
 
-  let deduped = dedupeStrategyOutcomeRows((data ?? []) as StrategyOutcomeRow[])
+  let deduped = dedupeStrategyOutcomeRows(rows)
   if (params.trainingClassOnly || params.trainingClassMin != null) {
     deduped = deduped.filter((row) =>
       matchesTrainingClassFilter(row, {
@@ -392,8 +549,8 @@ export async function listStrategyOutcomes(params: {
   )
   const total = deduped.length
   const page = deduped.slice(offset, offset + limit)
-  const rows = await enrichOutcomeSymbols(page)
-  return { rows, total }
+  const enriched = await enrichOutcomeSymbols(page)
+  return { rows: enriched, total }
 }
 
 /** All closed outcomes for ML dataset stats (no pagination). */
@@ -401,21 +558,26 @@ export async function loadOutcomesForMlDataset(params?: {
   domain?: StrategyDomain
   strategyId?: string
 }): Promise<StrategyOutcomeRow[]> {
-  let query = supabase.from('strategy_outcomes').select('*')
+  const { sql: whereSql, values } = buildOutcomeWhereClause({
+    domain: params?.domain,
+    strategyId: params?.strategyId,
+  })
 
-  if (params?.domain) query = query.eq('domain', params.domain)
-  if (params?.strategyId) query = query.eq('strategy_id', params.strategyId)
-
-  const { data, error } = await query
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  let rows: StrategyOutcomeRow[]
+  try {
+    const result = await query<Record<string, unknown>>(
+      `SELECT * FROM strategy_outcomes ${whereSql}`,
+      values,
+    )
+    rows = result.rows.map(mapStrategyOutcomeRow)
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return []
     }
     throw error
   }
 
-  const deduped = dedupeStrategyOutcomeRows((data ?? []) as StrategyOutcomeRow[])
+  const deduped = dedupeStrategyOutcomeRows(rows)
   return enrichOutcomeSymbols(deduped)
 }
 
@@ -460,16 +622,18 @@ export async function backfillOutcomeLabels(params?: {
 
     if (params?.dryRun) continue
 
-    const { error } = await supabase
-      .from('strategy_outcomes')
-      .update({ features: nextFeatures })
-      .eq('id', row.id)
-
-    if (error) {
-      console.warn('[strategies/db] backfillOutcomeLabels update failed:', error.message)
-      continue
+    try {
+      await query(
+        `UPDATE strategy_outcomes SET features = $2 WHERE id = $1`,
+        [row.id, JSON.stringify(nextFeatures)],
+      )
+      updated += 1
+    } catch (error) {
+      console.warn(
+        '[strategies/db] backfillOutcomeLabels update failed:',
+        errorMessage(error),
+      )
     }
-    updated += 1
   }
 
   return { updated, skipped_manual: skippedManual, preview }
@@ -484,36 +648,36 @@ async function enrichOutcomeSymbols(
   if (needLookup.length === 0) return rows
 
   const addresses = Array.from(new Set(needLookup.map((r) => r.token_address!)))
-  const trackerTable =
-    process.env.NODE_ENV === 'development'
-      ? 'trending_token_tracker_dev'
-      : 'trending_token_tracker'
+  const trackerTable = getTrackerTableName()
 
-  const [trackerRes, signalsRes, mcapRes] = await Promise.all([
-    supabase
-      .from(trackerTable)
-      .select('token_address, token_symbol')
-      .in('token_address', addresses),
-    supabase
-      .from('trading_signals')
-      .select('token_address, token_symbol')
-      .in('token_address', addresses),
-    supabase
-      .from('token_mcap_tracking')
-      .select('token_address, token_symbol')
-      .in('token_address', addresses),
+  const [trackerRows, signalsRows, mcapRows] = await Promise.all([
+    query<{ token_address: string; token_symbol: string | null }>(
+      `SELECT token_address, token_symbol FROM ${trackerTable}
+       WHERE token_address = ANY($1::text[])`,
+      [addresses],
+    ).then((r) => r.rows).catch(() => [] as Array<{ token_address: string; token_symbol: string | null }>),
+    query<{ token_address: string; token_symbol: string | null }>(
+      `SELECT token_address, token_symbol FROM trading_signals
+       WHERE token_address = ANY($1::text[])`,
+      [addresses],
+    ).then((r) => r.rows).catch(() => [] as Array<{ token_address: string; token_symbol: string | null }>),
+    query<{ token_address: string; token_symbol: string | null }>(
+      `SELECT token_address, token_symbol FROM token_mcap_tracking
+       WHERE token_address = ANY($1::text[])`,
+      [addresses],
+    ).then((r) => r.rows).catch(() => [] as Array<{ token_address: string; token_symbol: string | null }>),
   ])
 
   const symbolMap = new Map<string, string>()
-  for (const row of trackerRes.data ?? []) {
+  for (const row of trackerRows) {
     if (row.token_symbol) symbolMap.set(row.token_address, row.token_symbol)
   }
-  for (const row of signalsRes.data ?? []) {
+  for (const row of signalsRows) {
     if (row.token_symbol && !symbolMap.has(row.token_address)) {
       symbolMap.set(row.token_address, row.token_symbol)
     }
   }
-  for (const row of mcapRes.data ?? []) {
+  for (const row of mcapRows) {
     if (row.token_symbol && !symbolMap.has(row.token_address)) {
       symbolMap.set(row.token_address, row.token_symbol)
     }
@@ -533,20 +697,18 @@ async function enrichOutcomeSymbols(
 export async function loadStrategyOutcomeById(
   id: string,
 ): Promise<StrategyOutcomeRow | null> {
-  const { data, error } = await supabase
-    .from('strategy_outcomes')
-    .select('*')
-    .eq('id', id)
-    .maybeSingle()
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  try {
+    const row = await queryOne<Record<string, unknown>>(
+      `SELECT * FROM strategy_outcomes WHERE id = $1 LIMIT 1`,
+      [id],
+    )
+    return row ? mapStrategyOutcomeRow(row) : null
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return null
     }
     throw error
   }
-
-  return (data as StrategyOutcomeRow) ?? null
 }
 
 export async function updateStrategyOutcomeFeatures(
@@ -563,21 +725,21 @@ export async function updateStrategyOutcomeFeatures(
     ...featurePatch,
   }
 
-  const { data, error } = await supabase
-    .from('strategy_outcomes')
-    .update({ features: mergedFeatures })
-    .eq('id', id)
-    .select('*')
-    .single()
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  try {
+    const row = await queryOne<Record<string, unknown>>(
+      `UPDATE strategy_outcomes SET features = $2 WHERE id = $1 RETURNING *`,
+      [id, JSON.stringify(mergedFeatures)],
+    )
+    if (!row) {
+      return { ok: false, error: 'Outcome not found' }
+    }
+    return { ok: true, row: mapStrategyOutcomeRow(row) }
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return { ok: false, error: 'Outcomes table unavailable' }
     }
-    return { ok: false, error: error.message }
+    return { ok: false, error: errorMessage(error) }
   }
-
-  return { ok: true, row: data as StrategyOutcomeRow }
 }
 
 export type OutcomeTradeWindowChartResult = {
@@ -912,18 +1074,24 @@ export async function aggregateStrategyReports(params: {
   mlStats: MlLabelStats
   mcapTrackerStats: McapTrackerReportStats
 }> {
-  let query = supabase.from('strategy_outcomes').select('*')
+  const emptyMcapStats: McapTrackerReportStats = {
+    strategies: [],
+    milestone_buckets: [],
+    timeline_inconsistent_count: 0,
+    total_tracked_tokens: 0,
+  }
 
-  if (params.strategyId) query = query.eq('strategy_id', params.strategyId)
-  if (params.domain) query = query.eq('domain', params.domain)
-  if (params.isSimulated !== undefined) query = query.eq('is_simulated', params.isSimulated)
-  if (params.from) query = query.gte('exit_at', params.from)
-  if (params.to) query = query.lte('exit_at', params.to)
+  const { sql: whereSql, values } = buildOutcomeWhereClause(params)
 
-  const { data, error } = await query
-
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+  let rows: StrategyOutcomeRow[]
+  try {
+    const result = await query<Record<string, unknown>>(
+      `SELECT * FROM strategy_outcomes ${whereSql}`,
+      values,
+    )
+    rows = dedupeStrategyOutcomeRows(result.rows.map(mapStrategyOutcomeRow))
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return {
         breakdown: [],
         abPairs: [],
@@ -931,18 +1099,12 @@ export async function aggregateStrategyReports(params: {
         worstTrades: [],
         coverage: [],
         mlStats: { total: 0, unlabeled: 0, by_label: {}, by_condition: {} },
-        mcapTrackerStats: {
-          strategies: [],
-          milestone_buckets: [],
-          timeline_inconsistent_count: 0,
-          total_tracked_tokens: 0,
-        },
+        mcapTrackerStats: emptyMcapStats,
       }
     }
     throw error
   }
 
-  const rows = dedupeStrategyOutcomeRows((data ?? []) as StrategyOutcomeRow[])
   const groups = new Map<string, StrategyOutcomeRow[]>()
 
   for (const row of rows) {
@@ -1027,21 +1189,29 @@ export async function aggregateStrategyReports(params: {
   }
 
   const openByStrategy = new Map<string, number>()
-  const trackerTable =
-    process.env.NODE_ENV === 'development'
-      ? 'trending_token_tracker_dev'
-      : 'trending_token_tracker'
-  const { data: trackerRows } = await supabase
-    .from(trackerTable)
-    .select('status, trading_simulation')
-    .eq('status', 'tracking')
-  for (const row of trackerRows ?? []) {
-    if (!isOpenTrackerPosition(row)) continue
-    const sid = resolveTrackerStrategyId(
-      row.trading_simulation as Record<string, unknown> | null | undefined,
+  const trackerTable = getTrackerTableName()
+  try {
+    const { rows: trackerRows } = await query<{
+      status: string
+      trading_simulation: Record<string, unknown> | null
+    }>(
+      `SELECT status, trading_simulation FROM ${trackerTable} WHERE status = 'tracking'`,
     )
-    if (!sid) continue
-    openByStrategy.set(sid, (openByStrategy.get(sid) ?? 0) + 1)
+    for (const row of trackerRows) {
+      if (!isOpenTrackerPosition(row)) continue
+      const sid = resolveTrackerStrategyId(
+        row.trading_simulation as Record<string, unknown> | null | undefined,
+      )
+      if (!sid) continue
+      openByStrategy.set(sid, (openByStrategy.get(sid) ?? 0) + 1)
+    }
+  } catch (error) {
+    if (!isMissingSchemaError(error)) {
+      console.warn(
+        '[strategies/db] tracker open count failed:',
+        errorMessage(error),
+      )
+    }
   }
 
   const mcapOpenByStrategy = new Map<string, number>()
@@ -1139,69 +1309,68 @@ export type StrategyDomainHeartbeat = {
 async function getLatestOutcomeHeartbeat(
   domain: StrategyDomain,
 ): Promise<{ last_outcome_at: string | null; heartbeat_source?: StrategyDomainHeartbeatSource }> {
-  const { data, error } = await supabase
-    .from('strategy_outcomes')
-    .select('exit_at, created_at')
-    .eq('domain', domain)
-    .order('exit_at', { ascending: false, nullsFirst: false })
-    .limit(1)
-    .maybeSingle()
+  try {
+    const row = await queryOne<{ exit_at: string | null; created_at: string | null }>(
+      `SELECT exit_at, created_at FROM strategy_outcomes
+       WHERE domain = $1
+       ORDER BY exit_at DESC NULLS LAST
+       LIMIT 1`,
+      [domain],
+    )
 
-  if (error) {
-    if (error.code === '42P01' || error.message?.includes('does not exist')) {
+    const lastOutcomeAt = toIsoOrNull(row?.exit_at) ?? toIsoOrNull(row?.created_at)
+    if (!lastOutcomeAt) return { last_outcome_at: null }
+    return { last_outcome_at: lastOutcomeAt, heartbeat_source: 'outcome' }
+  } catch (error) {
+    if (isMissingSchemaError(error)) {
       return { last_outcome_at: null }
     }
-    console.warn(`[strategies/db] domain heartbeat failed (${domain}):`, error.message)
+    console.warn(
+      `[strategies/db] domain heartbeat failed (${domain}):`,
+      errorMessage(error),
+    )
     return { last_outcome_at: null }
   }
-
-  const row = data as { exit_at?: string | null; created_at?: string | null } | null
-  const lastOutcomeAt = row?.exit_at ?? row?.created_at ?? null
-  if (!lastOutcomeAt) return { last_outcome_at: null }
-  return { last_outcome_at: lastOutcomeAt, heartbeat_source: 'outcome' }
 }
 
 export async function getDlmmPositionHeartbeats(): Promise<{
   last_closed_at: string | null
   last_activity_at: string | null
 }> {
-  const [closedRes, activityRes] = await Promise.all([
-    supabase
-      .from('dlmm_positions')
-      .select('closed_at')
-      .eq('status', 'closed')
-      .not('closed_at', 'is', null)
-      .order('closed_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
-    supabase
-      .from('dlmm_positions')
-      .select('last_decision_at')
-      .not('last_decision_at', 'is', null)
-      .order('last_decision_at', { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+  const [closedRow, activityRow] = await Promise.all([
+    queryOne<{ closed_at: string | null }>(
+      `SELECT closed_at FROM dlmm_positions
+       WHERE status = 'closed' AND closed_at IS NOT NULL
+       ORDER BY closed_at DESC
+       LIMIT 1`,
+    ).catch((error) => {
+      if (!isMissingSchemaError(error)) {
+        console.warn(
+          '[strategies/db] dlmm closed heartbeat failed:',
+          errorMessage(error),
+        )
+      }
+      return null
+    }),
+    queryOne<{ last_decision_at: string | null }>(
+      `SELECT last_decision_at FROM dlmm_positions
+       WHERE last_decision_at IS NOT NULL
+       ORDER BY last_decision_at DESC
+       LIMIT 1`,
+    ).catch((error) => {
+      if (!isMissingSchemaError(error)) {
+        console.warn(
+          '[strategies/db] dlmm activity heartbeat failed:',
+          errorMessage(error),
+        )
+      }
+      return null
+    }),
   ])
 
-  if (closedRes.error && !closedRes.error.message?.includes('does not exist')) {
-    console.warn(
-      '[strategies/db] dlmm closed heartbeat failed:',
-      closedRes.error.message,
-    )
-  }
-  if (activityRes.error && !activityRes.error.message?.includes('does not exist')) {
-    console.warn(
-      '[strategies/db] dlmm activity heartbeat failed:',
-      activityRes.error.message,
-    )
-  }
-
-  const closedRow = closedRes.data as { closed_at?: string | null } | null
-  const activityRow = activityRes.data as { last_decision_at?: string | null } | null
-
   return {
-    last_closed_at: closedRow?.closed_at ?? null,
-    last_activity_at: activityRow?.last_decision_at ?? null,
+    last_closed_at: toIsoOrNull(closedRow?.closed_at),
+    last_activity_at: toIsoOrNull(activityRow?.last_decision_at),
   }
 }
 
@@ -1264,18 +1433,22 @@ export async function getStrategyDomainHeartbeats(params?: {
 export async function fetchTradingRecordsForWallet(
   walletAddress: string,
 ): Promise<import('@/utils/trading-tracker').TrackingRecord[]> {
-  const { data, error } = await supabase
-    .from('trading_records')
-    .select('data')
-    .eq('wallet_address', walletAddress)
-    .order('timestamp', { ascending: true })
-
-  if (error) {
-    console.warn('[strategies/db] trading_records fetch failed:', error.message)
+  try {
+    const { rows } = await query<{ data: import('@/utils/trading-tracker').TrackingRecord }>(
+      `SELECT data FROM trading_records
+       WHERE wallet_address = $1
+       ORDER BY timestamp ASC`,
+      [walletAddress],
+    )
+    return rows.map((r) =>
+      typeof r.data === 'string'
+        ? (JSON.parse(r.data) as import('@/utils/trading-tracker').TrackingRecord)
+        : r.data,
+    )
+  } catch (error) {
+    console.warn('[strategies/db] trading_records fetch failed:', errorMessage(error))
     return []
   }
-
-  return (data ?? []).map((r) => r.data as import('@/utils/trading-tracker').TrackingRecord)
 }
 
 /** @deprecated use Record<string, unknown> config in upsert */

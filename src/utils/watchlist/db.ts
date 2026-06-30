@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase';
+import { query, queryOne } from '@/utils/db';
 import type { WalletWatchlistEntry } from '@/types/watchlist';
 import { assertDbWritable, formatDbError } from '@/utils/db-health';
 import { getTokenPrice } from '@/utils/jupiter-api';
@@ -37,18 +37,18 @@ async function resolveInitialPrice(
 export async function getWatchlist(
   walletAddress: string,
 ): Promise<WalletWatchlistEntry[]> {
-  const { data, error } = await supabase
-    .from('wallet_watchlist')
-    .select('*')
-    .eq('wallet_address', walletAddress)
-    .order('added_at', { ascending: false });
-
-  if (error) {
+  try {
+    const { rows } = await query<Record<string, unknown>>(
+      `SELECT * FROM wallet_watchlist
+       WHERE wallet_address = $1
+       ORDER BY added_at DESC`,
+      [walletAddress],
+    );
+    return rows.map(mapEntry);
+  } catch (error) {
     console.warn('[watchlist/db] getWatchlist:', formatDbError(error));
     return [];
   }
-
-  return (data ?? []).map(mapEntry);
 }
 
 export async function addWatchlistEntry(input: {
@@ -68,23 +68,26 @@ export async function addWatchlistEntry(input: {
   }
 
   if (current) {
-    const { data, error } = await supabase
-      .from('wallet_watchlist')
-      .update({
-        token_symbol: input.token_symbol ?? current.token_symbol,
-        logo_url: input.logo_url ?? current.logo_url,
-      })
-      .eq('wallet_address', input.wallet_address)
-      .eq('token_address', input.token_address)
-      .select('*')
-      .single();
-
-    if (error) {
+    try {
+      const row = await queryOne<Record<string, unknown>>(
+        `UPDATE wallet_watchlist SET
+           token_symbol = COALESCE($3, token_symbol),
+           logo_url = COALESCE($4, logo_url)
+         WHERE wallet_address = $1 AND token_address = $2
+         RETURNING *`,
+        [
+          input.wallet_address,
+          input.token_address,
+          input.token_symbol ?? current.token_symbol,
+          input.logo_url ?? current.logo_url,
+        ],
+      );
+      if (!row) throw new Error('Watchlist entry not found');
+      return mapEntry(row);
+    } catch (error) {
       assertDbWritable(error);
       throw new Error(formatDbError(error));
     }
-
-    return mapEntry(data);
   }
 
   const initial_price_usd = await resolveInitialPrice(
@@ -92,37 +95,38 @@ export async function addWatchlistEntry(input: {
     input.initial_price_usd,
   );
 
-  const { data, error } = await supabase
-    .from('wallet_watchlist')
-    .insert({
-      wallet_address: input.wallet_address,
-      token_address: input.token_address,
-      token_symbol: input.token_symbol ?? null,
-      logo_url: input.logo_url ?? null,
-      initial_price_usd,
-    })
-    .select('*')
-    .single();
-
-  if (error) {
+  try {
+    const row = await queryOne<Record<string, unknown>>(
+      `INSERT INTO wallet_watchlist (
+         wallet_address, token_address, token_symbol, logo_url, initial_price_usd
+       ) VALUES ($1, $2, $3, $4, $5)
+       RETURNING *`,
+      [
+        input.wallet_address,
+        input.token_address,
+        input.token_symbol ?? null,
+        input.logo_url ?? null,
+        initial_price_usd,
+      ],
+    );
+    if (!row) throw new Error('Insert failed');
+    return mapEntry(row);
+  } catch (error) {
     assertDbWritable(error);
     throw new Error(formatDbError(error));
   }
-
-  return mapEntry(data);
 }
 
 export async function removeWatchlistEntry(
   walletAddress: string,
   tokenAddress: string,
 ): Promise<void> {
-  const { error } = await supabase
-    .from('wallet_watchlist')
-    .delete()
-    .eq('wallet_address', walletAddress)
-    .eq('token_address', tokenAddress);
-
-  if (error) {
+  try {
+    await query(
+      `DELETE FROM wallet_watchlist WHERE wallet_address = $1 AND token_address = $2`,
+      [walletAddress, tokenAddress],
+    );
+  } catch (error) {
     assertDbWritable(error);
     throw new Error(formatDbError(error));
   }

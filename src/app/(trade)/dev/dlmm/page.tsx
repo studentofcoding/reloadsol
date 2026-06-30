@@ -139,7 +139,7 @@ export default function DlmmDashboardPage() {
                   <code className="text-red-100">SUPABASE_SECRET_KEY</code> in{" "}
                   <code className="text-red-100">.env</code>
                 </li>
-                <li>Run <code className="text-red-100">supabase/schema.sql</code> in Supabase SQL editor</li>
+                <li>Ensure Postgres is running (<code className="text-red-100">docker compose up reloadsol-db reloadsol-bouncer</code>) and schema applied (<code className="text-red-100">db/init/</code>)</li>
                 <li>Restart Docker: <code className="text-red-100">npm run docker:down && npm run docker:up</code></li>
               </ol>
               <p className="mt-2 text-red-300/80">

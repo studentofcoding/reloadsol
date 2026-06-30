@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
 import { log } from '@/utils/unified-logger'
 import { Connection, PublicKey, Keypair, VersionedTransaction } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
@@ -296,17 +296,13 @@ export async function syncExistingOpenPositions(walletAddress: string, options?:
         }
 
         // Check which positions already exist in SL/TP tracker
-        const { data: existingPositions, error: fetchError } = await supabase
-            .from('sl_tp_positions')
-            .select('token_address')
-            .eq('wallet_address', walletAddress)
-            .eq('is_active', true)
+        const { rows: existingPositions } = await query<{ token_address: string }>(
+            `SELECT token_address FROM sl_tp_positions
+             WHERE wallet_address = $1 AND is_active = true`,
+            [walletAddress],
+        )
 
-        if (fetchError) {
-            throw fetchError
-        }
-
-        const existingTokens = new Set(existingPositions?.map(p => p.token_address) || [])
+        const existingTokens = new Set(existingPositions.map(p => p.token_address))
 
         let synced = 0
         let skipped = 0
@@ -450,27 +446,61 @@ export async function addSLTPPosition(params: {
             sl_executed: false
         }
 
-        const { data, error } = await supabase
-            .from('sl_tp_positions')
-            .insert(position)
-            .select('id')
-            .single()
+        const row = await queryOne<{ id: string }>(
+            `INSERT INTO sl_tp_positions (
+               wallet_address, token_address, token_symbol, position_size,
+               entry_price, current_price, stop_loss_price, take_profit_price,
+               stop_loss_percentage, take_profit_percentage, position_type,
+               strategy_id, created_at, updated_at, is_active,
+               tp1_percentage, tp1_sell_percentage, tp2_percentage,
+               tp3_percentage, tp3_enabled,
+               tp1_executed, tp2_executed, tp3_executed, sl_executed
+             ) VALUES (
+               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+               $16, $17, $18, $19, $20, $21, $22, $23, $24
+             ) RETURNING id`,
+            [
+                position.wallet_address,
+                position.token_address,
+                position.token_symbol,
+                position.position_size,
+                position.entry_price,
+                position.current_price,
+                position.stop_loss_price,
+                position.take_profit_price,
+                position.stop_loss_percentage,
+                position.take_profit_percentage,
+                position.position_type,
+                position.strategy_id ?? null,
+                position.created_at,
+                position.updated_at,
+                position.is_active,
+                position.tp1_percentage ?? null,
+                position.tp1_sell_percentage ?? null,
+                position.tp2_percentage ?? null,
+                position.tp3_percentage ?? null,
+                position.tp3_enabled ?? null,
+                position.tp1_executed ?? false,
+                position.tp2_executed ?? false,
+                position.tp3_executed ?? false,
+                position.sl_executed ?? false,
+            ],
+        )
 
-        if (error) throw error
+        if (!row) throw new Error('Insert failed')
 
-        // Cache the position
-        const fullPosition = { ...position, id: data.id }
+        const fullPosition = { ...position, id: row.id }
         positionCache.set(`${walletAddress}_${tokenAddress}`, fullPosition)
 
         log.info('price_tracking', 'SL/TP position added', {
-            positionId: data.id,
+            positionId: row.id,
             tokenSymbol,
             positionType,
             stopLossPercentage,
             takeProfitPercentage
         })
 
-        return data.id
+        return row.id
 
     } catch (error) {
         log.error('error_handling', 'Failed to add SL/TP position', error as Error, { params })
@@ -620,10 +650,12 @@ async function reconcileClosedPositions(positions: SLTPPosition[]): Promise<{ fi
             if (!hasBalance) {
                 // Mark inactive in DB
                 try {
-                    await supabase
-                        .from('sl_tp_positions')
-                        .update({ is_active: false, updated_at: new Date().toISOString() })
-                        .eq('id', pos.id)
+                    await query(
+                        `UPDATE sl_tp_positions
+                         SET is_active = false, updated_at = $2
+                         WHERE id = $1`,
+                        [pos.id, new Date().toISOString()],
+                    )
 
                     // Remove from cache
                     for (const [key, cached] of Array.from(positionCache.entries())) {
@@ -684,10 +716,12 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
 
         // If no balance remains, deactivate and stop
         if (walletUiAmount <= ZERO_BALANCE_THRESHOLD) {
-            await supabase
-                .from('sl_tp_positions')
-                .update({ is_active: false, updated_at: new Date().toISOString(), current_price: triggerResult.current_price })
-                .eq('id', position.id)
+            await query(
+                `UPDATE sl_tp_positions
+                 SET is_active = false, updated_at = $2, current_price = $3
+                 WHERE id = $1`,
+                [position.id, new Date().toISOString(), triggerResult.current_price],
+            )
 
             log.info('sell_execution', 'No wallet balance left; deactivating position without executing swap', {
                 positionId: position.id,
@@ -708,10 +742,12 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
                 walletUiAmount,
                 sellPercentage: triggerResult.sell_percentage
             })
-            await supabase
-                .from('sl_tp_positions')
-                .update({ is_active: false, updated_at: new Date().toISOString(), current_price: triggerResult.current_price })
-                .eq('id', position.id)
+            await query(
+                `UPDATE sl_tp_positions
+                 SET is_active = false, updated_at = $2, current_price = $3
+                 WHERE id = $1`,
+                [position.id, new Date().toISOString(), triggerResult.current_price],
+            )
             return true
         }
 
@@ -802,10 +838,27 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
                 break
         }
 
-        await supabase
-            .from('sl_tp_positions')
-            .update(updateData)
-            .eq('id', position.id)
+        await query(
+            `UPDATE sl_tp_positions SET
+               updated_at = $2,
+               current_price = $3,
+               sl_executed = COALESCE($4, sl_executed),
+               tp1_executed = COALESCE($5, tp1_executed),
+               tp2_executed = COALESCE($6, tp2_executed),
+               tp3_executed = COALESCE($7, tp3_executed),
+               is_active = COALESCE($8, is_active)
+             WHERE id = $1`,
+            [
+                position.id,
+                updateData.updated_at,
+                updateData.current_price,
+                updateData.sl_executed ?? null,
+                updateData.tp1_executed ?? null,
+                updateData.tp2_executed ?? null,
+                updateData.tp3_executed ?? null,
+                updateData.is_active ?? null,
+            ],
+        )
 
         // Send notification
         try {
@@ -886,16 +939,14 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
 // Function to get active positions for a wallet
 export async function getWalletSLTPPositions(walletAddress: string): Promise<SLTPPosition[]> {
     try {
-        const { data: positions, error } = await supabase
-            .from('sl_tp_positions')
-            .select('*')
-            .eq('wallet_address', walletAddress)
-            .eq('is_active', true)
-            .order('created_at', { ascending: false })
+        const { rows: positions } = await query<SLTPPosition>(
+            `SELECT * FROM sl_tp_positions
+             WHERE wallet_address = $1 AND is_active = true
+             ORDER BY created_at DESC`,
+            [walletAddress],
+        )
 
-        if (error) throw error
-
-        return positions || []
+        return positions
 
     } catch (error) {
         log.error('error_handling', 'Failed to get wallet SL/TP positions', error as Error, { walletAddress })
@@ -906,15 +957,12 @@ export async function getWalletSLTPPositions(walletAddress: string): Promise<SLT
 // Function to remove/deactivate a position
 export async function removeSLTPPosition(positionId: string): Promise<boolean> {
     try {
-        const { error } = await supabase
-            .from('sl_tp_positions')
-            .update({
-                is_active: false,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', positionId)
-
-        if (error) throw error
+        await query(
+            `UPDATE sl_tp_positions
+             SET is_active = false, updated_at = $2
+             WHERE id = $1`,
+            [positionId, new Date().toISOString()],
+        )
 
         // Remove from cache
         for (const entry of Array.from(positionCache.entries())) {
@@ -940,13 +988,11 @@ export async function cleanupOldSLTPPositions(daysOld: number = 30): Promise<voi
         const cutoffDate = new Date()
         cutoffDate.setDate(cutoffDate.getDate() - daysOld)
 
-        const { error } = await supabase
-            .from('sl_tp_positions')
-            .delete()
-            .eq('is_active', false)
-            .lt('updated_at', cutoffDate.toISOString())
-
-        if (error) throw error
+        await query(
+            `DELETE FROM sl_tp_positions
+             WHERE is_active = false AND updated_at < $1`,
+            [cutoffDate.toISOString()],
+        )
 
         log.info('price_tracking', 'Old SL/TP positions cleaned up', { daysOld })
 
@@ -979,36 +1025,31 @@ export interface SLTPTrackingSummary {
 export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
     try {
         // Get all active positions
-        const { data: activePositions, error: activeError } = await supabase
-            .from('sl_tp_positions')
-            .select('*')
-            .eq('is_active', true)
-            .order('updated_at', { ascending: false })
+        const { rows: activePositions } = await query<SLTPPosition>(
+            `SELECT * FROM sl_tp_positions
+             WHERE is_active = true
+             ORDER BY updated_at DESC`,
+        )
 
-        if (activeError) throw activeError
-
-        // Get finished positions from last 24 hours for recent activity view
         const last24h = new Date()
         last24h.setHours(last24h.getHours() - 24)
 
-        const { data: finishedPositions, error: finishedError } = await supabase
-            .from('sl_tp_positions')
-            .select('*')
-            .eq('is_active', false)
-            .gte('updated_at', last24h.toISOString())
-            .order('updated_at', { ascending: false })
-
-        if (finishedError) throw finishedError
+        const { rows: finishedPositions } = await query<SLTPPosition>(
+            `SELECT * FROM sl_tp_positions
+             WHERE is_active = false AND updated_at >= $1
+             ORDER BY updated_at DESC`,
+            [last24h.toISOString()],
+        )
 
         // Calculate statistics
         const activeByType = { manual: 0, bot: 0 }
         const finishedByTrigger = { stop_loss: 0, take_profit_1: 0, take_profit_2: 0, take_profit_3: 0 }
 
-        activePositions?.forEach(pos => {
+        activePositions.forEach(pos => {
             activeByType[pos.position_type as 'manual' | 'bot']++
         })
 
-        finishedPositions?.forEach(pos => {
+        finishedPositions.forEach(pos => {
             if (pos.sl_executed) finishedByTrigger.stop_loss++
             if (pos.tp1_executed) finishedByTrigger.take_profit_1++
             if (pos.tp2_executed) finishedByTrigger.take_profit_2++
@@ -1016,19 +1057,19 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
         })
 
         const uniqueWallets = new Set([
-            ...(activePositions?.map(p => p.wallet_address) || []),
-            ...(finishedPositions?.map(p => p.wallet_address) || [])
+            ...activePositions.map(p => p.wallet_address),
+            ...finishedPositions.map(p => p.wallet_address)
         ]).size
 
         return {
-            active_positions: activePositions || [],
-            finished_positions: finishedPositions || [],
+            active_positions: activePositions,
+            finished_positions: finishedPositions,
             statistics: {
-                total_active: activePositions?.length || 0,
-                total_finished: finishedPositions?.length || 0,
+                total_active: activePositions.length,
+                total_finished: finishedPositions.length,
                 active_by_type: activeByType,
                 finished_by_trigger: finishedByTrigger,
-                total_tracked_tokens: (activePositions?.length || 0) + (finishedPositions?.length || 0),
+                total_tracked_tokens: activePositions.length + finishedPositions.length,
                 unique_wallets: uniqueWallets
             },
             last_monitor_run: new Date().toISOString()
@@ -1044,14 +1085,11 @@ export async function getSLTPTrackingSummary(): Promise<SLTPTrackingSummary> {
 export async function monitorSLTPPositions(returnSummary: boolean = false): Promise<SLTPTrackingSummary | void> {
     try {
         // Get all active positions
-        const { data: positions, error } = await supabase
-            .from('sl_tp_positions')
-            .select('*')
-            .eq('is_active', true)
+        const { rows: positions } = await query<SLTPPosition>(
+            `SELECT * FROM sl_tp_positions WHERE is_active = true`,
+        )
 
-        if (error) throw error
-
-        if (!positions || positions.length === 0) {
+        if (positions.length === 0) {
             log.debug('price_tracking', 'No active SL/TP positions to monitor')
             if (returnSummary) {
                 return await getSLTPTrackingSummary()
@@ -1092,13 +1130,12 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
             }
 
             // Update current price in database
-            await supabase
-                .from('sl_tp_positions')
-                .update({
-                    current_price: currentPrice,
-                    updated_at: new Date().toISOString()
-                })
-                .eq('id', position.id)
+            await query(
+                `UPDATE sl_tp_positions
+                 SET current_price = $2, updated_at = $3
+                 WHERE id = $1`,
+                [position.id, currentPrice, new Date().toISOString()],
+            )
 
             // Check for triggers
             const triggerResult = checkSLTPTriggers(position, currentPrice)
@@ -1140,14 +1177,11 @@ export async function monitorSLTPPositions(returnSummary: boolean = false): Prom
 export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary> {
     try {
         // Get all active positions
-        const { data: positions, error } = await supabase
-            .from('sl_tp_positions')
-            .select('*')
-            .eq('is_active', true)
+        const { rows: positions } = await query<SLTPPosition>(
+            `SELECT * FROM sl_tp_positions WHERE is_active = true`,
+        )
 
-        if (error) throw error
-
-        if (!positions || positions.length === 0) {
+        if (positions.length === 0) {
             log.debug('price_tracking', 'No active SL/TP positions to monitor')
             return await getSLTPTrackingSummary()
         }
@@ -1182,13 +1216,12 @@ export async function runSLTPMonitorAndSummarize(): Promise<SLTPTrackingSummary>
             }
 
             // Update current price in database
-            await supabase
-                .from('sl_tp_positions')
-                .update({
-                    current_price: currentPrice,
-                    updated_at: new Date().toISOString()
-                })
-                .eq('id', position.id)
+            await query(
+                `UPDATE sl_tp_positions
+                 SET current_price = $2, updated_at = $3
+                 WHERE id = $1`,
+                [position.id, currentPrice, new Date().toISOString()],
+            )
 
             // Check for triggers
             const triggerResult = checkSLTPTriggers(position, currentPrice)

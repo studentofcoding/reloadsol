@@ -3,10 +3,10 @@
  * Seed tracked_wallets from data/tracked-wallets.txt
  * Usage: npx tsx scripts/seed-tracked-wallets.ts [--dry-run] [--file path/to/wallets.txt]
  */
+import { Pool } from 'pg'
 import fs from 'fs'
 import path from 'path'
 import { config as loadEnv } from 'dotenv'
-import { createClient } from '@supabase/supabase-js'
 import { isValidSolanaAddress, normalizeSolanaAddress } from '../src/utils/solana-address'
 
 loadEnv({ path: path.resolve(__dirname, '../.env.local') })
@@ -138,29 +138,33 @@ async function main() {
     return
   }
 
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.SUPABASE_SECRET_KEY?.trim()
-  if (!url || !key) {
-    console.error('Set SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_SECRET_KEY')
+  const url =
+    process.env.DATABASE_URL_DIRECT?.trim() || process.env.DATABASE_URL?.trim()
+  if (!url) {
+    console.error('Set DATABASE_URL or DATABASE_URL_DIRECT')
     process.exit(1)
   }
 
-  const supabase = createClient(url, key)
-  const { error } = await supabase.from('tracked_wallets').upsert(
-    wallets.map((w) => ({
-      address: w.address,
-      label: w.label,
-      tier: w.tier,
-      tags: w.tags,
-      is_active: true,
-      updated_at: new Date().toISOString(),
-    })),
-    { onConflict: 'address' },
-  )
-
-  if (error) {
-    console.error('Upsert failed:', error.message)
-    process.exit(1)
+  const pool = new Pool({
+    connectionString: url,
+    prepare: false,
+  } as ConstructorParameters<typeof Pool>[0])
+  try {
+    for (const w of wallets) {
+      await pool.query(
+        `INSERT INTO tracked_wallets (address, label, tier, tags, is_active, updated_at)
+         VALUES ($1, $2, $3, $4, true, $5)
+         ON CONFLICT (address) DO UPDATE SET
+           label = EXCLUDED.label,
+           tier = EXCLUDED.tier,
+           tags = EXCLUDED.tags,
+           is_active = true,
+           updated_at = EXCLUDED.updated_at`,
+        [w.address, w.label, w.tier, w.tags, new Date().toISOString()],
+      )
+    }
+  } finally {
+    await pool.end()
   }
 
   console.log(`Seeded ${wallets.length} tracked_wallets`)

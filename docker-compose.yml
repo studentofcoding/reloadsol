@@ -11,6 +11,65 @@
 # Production:      npm run docker:prod
 
 services:
+  reloadsol-db:
+    image: postgres:16-alpine
+    container_name: reloadsol-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-reloadsol_db}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - max_connections=50
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - maintenance_work_mem=64MB
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-reloadsol_db}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - reloadsol
+
+  reloadsol-bouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: reloadsol-bouncer
+    restart: unless-stopped
+    environment:
+      DB_HOST: reloadsol-db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      DB_NAME: ${POSTGRES_DB:-reloadsol_db}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 200
+      DEFAULT_POOL_SIZE: 30
+    depends_on:
+      reloadsol-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - reloadsol
+
   web:
     build:
       context: .
@@ -29,6 +88,10 @@ services:
       API_HOST: ${API_HOST:-http://web:3000}
       # Workers tab + /api/workers/status (web container → cron service name)
       CRON_SERVICE_URL: ${CRON_SERVICE_URL:-http://cron:8080}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@reloadsol-bouncer:5432/${POSTGRES_DB:-reloadsol_db}
+    depends_on:
+      reloadsol-bouncer:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
       interval: 30s
@@ -88,3 +151,6 @@ services:
 networks:
   reloadsol:
     driver: bridge
+
+volumes:
+  postgres_data:

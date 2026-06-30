@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
 import { TokenLabel } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
 import { markTokenRug } from '@/utils/rug-list/service'
@@ -35,36 +35,28 @@ export async function PUT(request: NextRequest) {
       label: label || 'cleared'
     })
 
-    // Check if token exists in tracking
-    const { data: existingToken, error: fetchError } = await supabase
-      .from('token_mcap_tracking')
-      .select('token_address, token_symbol, label')
-      .eq('token_address', tokenAddress)
-      .single()
+    const existingToken = await queryOne<{
+      token_address: string
+      token_symbol: string
+      label: TokenLabel | null
+    }>(
+      `SELECT token_address, token_symbol, label
+       FROM token_mcap_tracking
+       WHERE token_address = $1`,
+      [tokenAddress],
+    )
 
-    if (fetchError) {
-      if (fetchError.code === 'PGRST116') {
-        return NextResponse.json({
-          success: false,
-          error: 'Token not found in tracking database'
-        }, { status: 404 })
-      }
-      throw fetchError
+    if (!existingToken) {
+      return NextResponse.json({
+        success: false,
+        error: 'Token not found in tracking database'
+      }, { status: 404 })
     }
 
-    // Update the label
-    const { error: updateError } = await supabase
-      .from('token_mcap_tracking')
-      .update({ label: label || null })
-      .eq('token_address', tokenAddress)
-
-    if (updateError) {
-      log.error('api_request', 'Failed to update token label', updateError as Error, {
-        tokenAddress,
-        label
-      })
-      throw updateError
-    }
+    await query(
+      `UPDATE token_mcap_tracking SET label = $2 WHERE token_address = $1`,
+      [tokenAddress, label || null],
+    )
 
     if (label === 'rugged') {
       await markTokenRug({
@@ -111,20 +103,22 @@ export async function GET(request: NextRequest) {
 
     // Get specific token label
     if (tokenAddress) {
-      const { data, error } = await supabase
-        .from('token_mcap_tracking')
-        .select('token_address, token_symbol, label')
-        .eq('token_address', tokenAddress)
-        .single()
+      const data = await queryOne<{
+        token_address: string
+        token_symbol: string
+        label: TokenLabel | null
+      }>(
+        `SELECT token_address, token_symbol, label
+         FROM token_mcap_tracking
+         WHERE token_address = $1`,
+        [tokenAddress],
+      )
 
-      if (error) {
-        if (error.code === 'PGRST116') {
-          return NextResponse.json({
-            success: false,
-            error: 'Token not found'
-          }, { status: 404 })
-        }
-        throw error
+      if (!data) {
+        return NextResponse.json({
+          success: false,
+          error: 'Token not found'
+        }, { status: 404 })
       }
 
       return NextResponse.json({
@@ -142,13 +136,13 @@ export async function GET(request: NextRequest) {
         }, { status: 400 })
       }
 
-      const { data, error } = await supabase
-        .from('token_mcap_tracking')
-        .select('token_address, token_symbol, label, mcap_growth_percent, last_updated_at')
-        .eq('label', labelFilter)
-        .order('last_updated_at', { ascending: false })
-
-      if (error) throw error
+      const { rows: data } = await query(
+        `SELECT token_address, token_symbol, label, mcap_growth_percent, last_updated_at
+         FROM token_mcap_tracking
+         WHERE label = $1
+         ORDER BY last_updated_at DESC`,
+        [labelFilter],
+      )
 
       return NextResponse.json({
         success: true,
@@ -158,15 +152,13 @@ export async function GET(request: NextRequest) {
     }
 
     // Get label statistics
-    const { data, error } = await supabase
-      .from('token_mcap_tracking')
-      .select('label')
-
-    if (error) throw error
+    const { rows: data } = await query<{ label: TokenLabel | null }>(
+      `SELECT label FROM token_mcap_tracking`,
+    )
 
     const labelStats = data.reduce((acc, token) => {
-      const label = token.label || 'unlabeled'
-      acc[label] = (acc[label] || 0) + 1
+      const tokenLabel = token.label || 'unlabeled'
+      acc[tokenLabel] = (acc[tokenLabel] || 0) + 1
       return acc
     }, {} as Record<string, number>)
 

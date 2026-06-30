@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase'
+import { query } from '@/utils/db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import { invalidateTradingRecordsCache } from '@/utils/trading-records-cache'
 import { broadcastTradeUpdateServer } from '@/utils/trading-notifications'
@@ -18,7 +18,7 @@ export function shouldSkipTradingRecord(record: TrackingRecord): boolean {
   )
 }
 
-/** Insert a trading record directly into Supabase (server-side). */
+/** Insert a trading record directly into Postgres (server-side). */
 export async function insertTradingRecord(
   record: TrackingRecord,
 ): Promise<{ inserted: boolean; skipped?: boolean; reason?: string }> {
@@ -42,11 +42,17 @@ export async function insertTradingRecord(
     data: record,
   }
 
-  const { error } = await supabase.from('trading_records').insert(dbRecord)
-
-  if (error) {
-    throw error
-  }
+  await query(
+    `INSERT INTO trading_records (id, wallet_address, operation_type, timestamp, data)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      dbRecord.id,
+      dbRecord.wallet_address,
+      dbRecord.operation_type,
+      dbRecord.timestamp,
+      JSON.stringify(dbRecord.data),
+    ],
+  )
 
   await afterTradingRecordInserted(record)
 
@@ -58,21 +64,18 @@ export async function updateTradingRecordData(
   recordId: string,
   data: TrackingRecord,
 ): Promise<boolean> {
-  const { error } = await supabase
-    .from('trading_records')
-    .update({
-      data,
-      timestamp: new Date(data.timestamp).toISOString(),
-    })
-    .eq('id', recordId)
-
-  if (error) {
-    console.warn('[trading-records-db] update failed:', error.message)
+  try {
+    const { rowCount } = await query(
+      `UPDATE trading_records SET data = $2, timestamp = $3 WHERE id = $1`,
+      [recordId, JSON.stringify(data), new Date(data.timestamp).toISOString()],
+    )
+    if (rowCount === 0) return false
+    await afterTradingRecordInserted(data)
+    return true
+  } catch (error) {
+    console.warn('[trading-records-db] update failed:', (error as Error).message)
     return false
   }
-
-  await afterTradingRecordInserted(data)
-  return true
 }
 
 /** Invalidate GET cache and broadcast SSE after any successful insert. */

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
@@ -1667,15 +1667,10 @@ async function checkManualTradingHistoryBatch(tokenAddresses: string[]): Promise
     const manuallyTradedTokens = new Set<string>()
 
     // Query trading_records table for any manual trades (is_bot_operation = false or null)
-    const { data, error } = await supabase
-      .from('trading_records')
-      .select('data')
-      .or('data->>is_bot_operation.is.null,data->>is_bot_operation.eq.false')
-
-    if (error) {
-      console.error('Error checking manual trading history:', error)
-      return manuallyTradedTokens // Return empty set if we can't check
-    }
+    const { rows: data } = await query<{ data: Record<string, unknown> }>(
+      `SELECT data FROM trading_records
+       WHERE (data->>'is_bot_operation' IS NULL OR data->>'is_bot_operation' = 'false')`,
+    )
 
     if (!data || data.length === 0) {
       return manuallyTradedTokens // No manual trades found
@@ -2175,14 +2170,17 @@ async function checkForManualSells(tokens: TrackedToken[]): Promise<void> {
             } as any
 
             // Update token status to won (manual intervention)
-            await supabase
-              .from(TRACKER_TABLE)
-              .update({
-                status: 'won',
-                status_changed_at: new Date().toISOString(),
-                trading_simulation: token.trading_simulation
-              })
-              .eq('id', token.id)
+            await query(
+              `UPDATE ${TRACKER_TABLE}
+               SET status = $1, status_changed_at = $2, trading_simulation = $3, updated_at = NOW()
+               WHERE id = $4`,
+              [
+                'won',
+                new Date().toISOString(),
+                JSON.stringify(token.trading_simulation),
+                token.id,
+              ],
+            )
 
             // Send Discord notification about manual sell
             if (shouldEnableNotifications()) {
@@ -3557,34 +3555,28 @@ async function executeManualPositionSL(
 async function setTradingMode(isSimulated: boolean, keypairPath?: string): Promise<void> {
   try {
     // Update all active simulations
-    const { data: activeSimulations, error: fetchError } = await supabase
-      .from(TRACKER_TABLE)
-      .select('*')
-      .eq('status', 'tracking')
-      .not('trading_simulation', 'is', null)
-
-    if (fetchError) {
-      throw new Error(`Failed to fetch active simulations: ${fetchError.message}`)
-    }
+    const { rows: activeSimulations } = await query<{ id: string; token_symbol: string | null; trading_simulation: TradingSimulation | null }>(
+      `SELECT id, token_symbol, trading_simulation FROM ${TRACKER_TABLE}
+       WHERE status = 'tracking' AND trading_simulation IS NOT NULL`,
+    )
 
     // Update each simulation's trading mode
-    for (const token of activeSimulations || []) {
+    for (const token of activeSimulations) {
       if (token.trading_simulation) {
         const simulation = token.trading_simulation as TradingSimulation
         simulation.is_simulated = isSimulated
         simulation.keypair_path = keypairPath
 
-        const { error: updateError } = await supabase
-          .from(TRACKER_TABLE)
-          .update({
-            trading_simulation: simulation
-          })
-          .eq('id', token.id)
-
-        if (updateError) {
-          console.error(`Failed to update trading mode for ${token.token_symbol}:`, updateError)
-        } else {
+        try {
+          await query(
+            `UPDATE ${TRACKER_TABLE}
+             SET trading_simulation = $1, updated_at = NOW()
+             WHERE id = $2`,
+            [JSON.stringify(simulation), token.id],
+          )
           console.log(`✅ Updated trading mode for ${token.token_symbol}: ${isSimulated ? 'Simulated' : 'Real'} trading`)
+        } catch (updateError) {
+          console.error(`Failed to update trading mode for ${token.token_symbol}:`, updateError)
         }
       }
     }
@@ -4155,18 +4147,18 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     }
 
     // Get currently tracked and waiting tokens
-    const { data: trackedTokens, error: fetchError } = await supabase
-      .from(TRACKER_TABLE)
-      .select(
-        `id, token_address, token_symbol, token_name, logo_url,
-         initial_price_usd, last_price_usd, peak_price_usd,
-         current_gain_percentage, peak_gain_percentage, status,
-         organic_score, market_cap, volume_1h,
-         tracking_started_at, updated_at,
-         trading_simulation, price_history,
-         waiting_started_at, waiting_initial_price, volume_5m, status_changed_at, created_at`
-      )
-      .in('status', ['tracking', 'waiting'])
+    const { rows: trackedTokens } = await query<TrackedToken>(
+      `SELECT id, token_address, token_symbol, token_name, logo_url,
+              initial_price_usd, last_price_usd, peak_price_usd,
+              current_gain_percentage, peak_gain_percentage, status,
+              organic_score, market_cap, volume_1h,
+              tracking_started_at, updated_at,
+              trading_simulation, price_history,
+              waiting_started_at, waiting_initial_price, volume_5m, status_changed_at, created_at
+       FROM ${TRACKER_TABLE}
+       WHERE status = ANY($1::text[])`,
+      [['tracking', 'waiting']],
+    )
 
     // Check for manual sells before processing new tokens
     if (trackedTokens && trackedTokens.length > 0) {
@@ -4177,10 +4169,6 @@ async function internalTrackPost(request: NextRequest, logger: any) {
         console.error('❌ Error checking for manual sells:', error)
         // Continue processing even if manual sell detection fails
       }
-    }
-
-    if (fetchError) {
-      throw new Error(`Failed to fetch tracked tokens: ${fetchError.message}`)
     }
 
     const trackedTokensMap = new Map<string, TrackedToken>()
@@ -4200,7 +4188,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
       .map(t => t.id)
 
     if (purgeIds?.length) {
-      await supabase.from(TRACKER_TABLE).delete().in('id', purgeIds)
+      await query(`DELETE FROM ${TRACKER_TABLE} WHERE id = ANY($1::text[])`, [purgeIds])
     }
 
     // Assign strategies to filtered tokens
@@ -4219,12 +4207,12 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
       if (!existingToken) {
         // Check if token exists in database with ANY status (not just tracking)
-        const { data: existingAnyStatus } = await supabase
-          .from(TRACKER_TABLE)
-          .select('*') // Select all fields instead of just 'id'
-          .eq('token_address', token.token_address)
-          .eq('token_symbol', token.token_symbol)
-          .single()
+        const existingAnyStatus = await queryOne<TrackedToken>(
+          `SELECT * FROM ${TRACKER_TABLE}
+           WHERE token_address = $1 AND token_symbol = $2
+           LIMIT 1`,
+          [token.token_address, token.token_symbol],
+        )
 
         if (existingAnyStatus) {
           // Enhanced logging with detailed token information
@@ -4318,45 +4306,67 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           updatesPromises.push(
             (async () => {
               try {
-                const { error } = await supabase
-                  .from(TRACKER_TABLE)
-                  .upsert({
-                    id: tokenId,
-                    token_address: token.token_address,
-                    token_symbol: token.token_symbol,
-                    token_name: token.token_name,
-                    logo_url: token.logo_url,
-                    initial_price_usd: token.current_price,
-                    last_price_usd: token.current_price,
-                    peak_price_usd: 0,
-                    current_gain_percentage: 0,
-                    peak_gain_percentage: 0,
-                    status: 'waiting',
-                    organic_score: token.organic_score,
-                    market_cap: token.market_cap,
-                    volume_1h: token.volume_1h,
-                    tracking_started_at: currentTime,
-                    trading_simulation: null, // No simulation until we buy
-                    price_history: [initialPriceRecord],
-                    // New waiting system fields
-                    waiting_started_at: currentTime,
-                    waiting_initial_price: token.current_price
-                  }, {
-                    onConflict: 'token_address',
-                    ignoreDuplicates: false
-                  })
-
-                if (error) {
-                  logTradeOperation('Database Upsert Error', {
-                    tokenSymbol: token.token_symbol,
-                    tokenAddress: token.token_address,
-                    errorCode: error.code,
-                    errorMessage: error.message,
-                    isRestart: !!existingAnyStatus
-                  }, new Error(error.message))
-                  throw error
-                }
+                await query(
+                  `INSERT INTO ${TRACKER_TABLE} (
+                     id, token_address, token_symbol, token_name, logo_url,
+                     initial_price_usd, last_price_usd, peak_price_usd,
+                     current_gain_percentage, peak_gain_percentage, status,
+                     organic_score, market_cap, volume_1h, tracking_started_at,
+                     trading_simulation, price_history, waiting_started_at, waiting_initial_price
+                   ) VALUES (
+                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
+                   )
+                   ON CONFLICT (token_address) DO UPDATE SET
+                     id = EXCLUDED.id,
+                     token_symbol = EXCLUDED.token_symbol,
+                     token_name = EXCLUDED.token_name,
+                     logo_url = EXCLUDED.logo_url,
+                     initial_price_usd = EXCLUDED.initial_price_usd,
+                     last_price_usd = EXCLUDED.last_price_usd,
+                     peak_price_usd = EXCLUDED.peak_price_usd,
+                     current_gain_percentage = EXCLUDED.current_gain_percentage,
+                     peak_gain_percentage = EXCLUDED.peak_gain_percentage,
+                     status = EXCLUDED.status,
+                     organic_score = EXCLUDED.organic_score,
+                     market_cap = EXCLUDED.market_cap,
+                     volume_1h = EXCLUDED.volume_1h,
+                     tracking_started_at = EXCLUDED.tracking_started_at,
+                     trading_simulation = EXCLUDED.trading_simulation,
+                     price_history = EXCLUDED.price_history,
+                     waiting_started_at = EXCLUDED.waiting_started_at,
+                     waiting_initial_price = EXCLUDED.waiting_initial_price,
+                     updated_at = NOW()`,
+                  [
+                    tokenId,
+                    token.token_address,
+                    token.token_symbol,
+                    token.token_name,
+                    token.logo_url,
+                    token.current_price,
+                    token.current_price,
+                    0,
+                    0,
+                    0,
+                    'waiting',
+                    token.organic_score,
+                    token.market_cap,
+                    token.volume_1h,
+                    currentTime,
+                    null,
+                    JSON.stringify([initialPriceRecord]),
+                    currentTime,
+                    token.current_price,
+                  ],
+                )
               } catch (err) {
+                const pgErr = err as { code?: string; message?: string }
+                logTradeOperation('Database Upsert Error', {
+                  tokenSymbol: token.token_symbol,
+                  tokenAddress: token.token_address,
+                  errorCode: pgErr.code,
+                  errorMessage: pgErr.message,
+                  isRestart: !!existingAnyStatus
+                }, err instanceof Error ? err : new Error(String(err)))
                 console.error(`❌ Failed to upsert waiting token ${token.token_symbol}:`, err)
                 // Don't re-throw to prevent unhandled rejection - let Promise.allSettled handle it
                 return { success: false, error: err, tokenSymbol: token.token_symbol }
@@ -4559,41 +4569,54 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             (async () => {
               try {
                 // Use UPSERT to handle race conditions and duplicate token addresses
-                const { error } = await supabase
-                  .from(TRACKER_TABLE)
-                  .upsert({
-                    id: tokenId,
-                    token_address: token.token_address,
-                    token_symbol: token.token_symbol,
-                    token_name: token.token_name,
-                    logo_url: token.logo_url,
-                    initial_price_usd: token.current_price,
-                    last_price_usd: token.current_price,
-                    peak_price_usd: 0,
-                    current_gain_percentage: 0,
-                    peak_gain_percentage: 0,
-                    status: 'tracking',
-                    organic_score: token.organic_score,
-                    market_cap: token.market_cap,
-                    volume_1h: token.volume_1h,
-                    tracking_started_at: new Date().toISOString(),
-                    trading_simulation: tradingSimulation,
-                    price_history: [initialPriceRecord]
-                  }, {
-                    onConflict: 'token_address',
-                    ignoreDuplicates: false
-                  })
-
-                if (error) {
-                  logTradeOperation('Database Upsert Error', {
-                    tokenSymbol: token.token_symbol,
-                    tokenAddress: token.token_address,
-                    errorCode: error.code,
-                    errorMessage: error.message,
-                    isRestart: !!existingAnyStatus
-                  }, new Error(error.message))
-                  throw error
-                }
+                await query(
+                  `INSERT INTO ${TRACKER_TABLE} (
+                     id, token_address, token_symbol, token_name, logo_url,
+                     initial_price_usd, last_price_usd, peak_price_usd,
+                     current_gain_percentage, peak_gain_percentage, status,
+                     organic_score, market_cap, volume_1h, tracking_started_at,
+                     trading_simulation, price_history
+                   ) VALUES (
+                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+                   )
+                   ON CONFLICT (token_address) DO UPDATE SET
+                     id = EXCLUDED.id,
+                     token_symbol = EXCLUDED.token_symbol,
+                     token_name = EXCLUDED.token_name,
+                     logo_url = EXCLUDED.logo_url,
+                     initial_price_usd = EXCLUDED.initial_price_usd,
+                     last_price_usd = EXCLUDED.last_price_usd,
+                     peak_price_usd = EXCLUDED.peak_price_usd,
+                     current_gain_percentage = EXCLUDED.current_gain_percentage,
+                     peak_gain_percentage = EXCLUDED.peak_gain_percentage,
+                     status = EXCLUDED.status,
+                     organic_score = EXCLUDED.organic_score,
+                     market_cap = EXCLUDED.market_cap,
+                     volume_1h = EXCLUDED.volume_1h,
+                     tracking_started_at = EXCLUDED.tracking_started_at,
+                     trading_simulation = EXCLUDED.trading_simulation,
+                     price_history = EXCLUDED.price_history,
+                     updated_at = NOW()`,
+                  [
+                    tokenId,
+                    token.token_address,
+                    token.token_symbol,
+                    token.token_name,
+                    token.logo_url,
+                    token.current_price,
+                    token.current_price,
+                    0,
+                    0,
+                    0,
+                    'tracking',
+                    token.organic_score,
+                    token.market_cap,
+                    token.volume_1h,
+                    new Date().toISOString(),
+                    JSON.stringify(tradingSimulation),
+                    JSON.stringify([initialPriceRecord]),
+                  ],
+                )
 
                 // Send Discord notification for new token detection (MOVED BEFORE RETURN)
                 if (shouldEnableNotifications()) {
@@ -4616,6 +4639,14 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
                 return { success: true, tokenSymbol: token.token_symbol }
               } catch (err) {
+                const pgErr = err as { code?: string; message?: string }
+                logTradeOperation('Database Upsert Error', {
+                  tokenSymbol: token.token_symbol,
+                  tokenAddress: token.token_address,
+                  errorCode: pgErr.code,
+                  errorMessage: pgErr.message,
+                  isRestart: !!existingAnyStatus
+                }, err instanceof Error ? err : new Error(String(err)))
                 console.error(`❌ Failed to upsert token ${token.token_symbol}:`, err)
                 // Don't re-throw to prevent unhandled rejection - let Promise.allSettled handle it
                 return { success: false, error: err, tokenSymbol: token.token_symbol }
@@ -4649,16 +4680,19 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             // Remove from waiting queue (mark as skipped due to timeout)
             updatesPromises.push(
               (async () => {
-                const { error } = await supabase
-                  .from(TRACKER_TABLE)
-                  .update({
-                    status: 'skipped',
-                    status_changed_at: currentTime.toISOString(),
-                    last_price_usd: token.current_price,
-                    current_gain_percentage: calculateGainPercentage(token.current_price, existingToken.waiting_initial_price!)
-                  })
-                  .eq('id', existingToken.id)
-                if (error) throw error
+                await query(
+                  `UPDATE ${TRACKER_TABLE}
+                   SET status = $1, status_changed_at = $2, last_price_usd = $3,
+                       current_gain_percentage = $4, updated_at = NOW()
+                   WHERE id = $5`,
+                  [
+                    'skipped',
+                    currentTime.toISOString(),
+                    token.current_price,
+                    calculateGainPercentage(token.current_price, existingToken.waiting_initial_price!),
+                    existingToken.id,
+                  ],
+                )
               })()
             )
             continue
@@ -4843,20 +4877,25 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 // Update token status to tracking with buy simulation
                 updatesPromises.push(
                   (async () => {
-                    const { error } = await supabase
-                      .from(TRACKER_TABLE)
-                      .update({
-                        status: 'tracking',
-                        status_changed_at: currentTime.toISOString(),
-                        initial_price_usd: token.current_price, // Update initial price to dip price
-                        last_price_usd: token.current_price,
-                        peak_price_usd: token.current_price,
-                        current_gain_percentage: 0, // Reset gain calculation from new buy price
-                        peak_gain_percentage: 0,
-                        trading_simulation: initialSimulation
-                      })
-                      .eq('id', existingToken.id)
-                    if (error) throw error
+                    await query(
+                      `UPDATE ${TRACKER_TABLE}
+                       SET status = $1, status_changed_at = $2, initial_price_usd = $3,
+                           last_price_usd = $4, peak_price_usd = $5,
+                           current_gain_percentage = $6, peak_gain_percentage = $7,
+                           trading_simulation = $8, updated_at = NOW()
+                       WHERE id = $9`,
+                      [
+                        'tracking',
+                        currentTime.toISOString(),
+                        token.current_price,
+                        token.current_price,
+                        token.current_price,
+                        0,
+                        0,
+                        JSON.stringify(initialSimulation),
+                        existingToken.id,
+                      ],
+                    )
                   })()
                 )
 
@@ -4885,13 +4924,10 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 // Keep in waiting status for next attempt
                 updatesPromises.push(
                   (async () => {
-                    const { error } = await supabase
-                      .from(TRACKER_TABLE)
-                      .update({
-                        last_price_usd: token.current_price
-                      })
-                      .eq('id', existingToken.id)
-                    if (error) throw error
+                    await query(
+                      `UPDATE ${TRACKER_TABLE} SET last_price_usd = $1, updated_at = NOW() WHERE id = $2`,
+                      [token.current_price, existingToken.id],
+                    )
                   })()
                 )
               }
@@ -4901,13 +4937,10 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               // Keep in waiting status for next attempt
               updatesPromises.push(
                 (async () => {
-                  const { error } = await supabase
-                    .from(TRACKER_TABLE)
-                    .update({
-                      last_price_usd: token.current_price
-                    })
-                    .eq('id', existingToken.id)
-                  if (error) throw error
+                  await query(
+                    `UPDATE ${TRACKER_TABLE} SET last_price_usd = $1, updated_at = NOW() WHERE id = $2`,
+                    [token.current_price, existingToken.id],
+                  )
                 })()
               )
             }
@@ -4916,16 +4949,19 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             // Still waiting - just update price
             updatesPromises.push(
               (async () => {
-                const { error } = await supabase
-                  .from(TRACKER_TABLE)
-                  .update({
-                    last_price_usd: token.current_price,
-                    organic_score: token.organic_score,
-                    market_cap: token.market_cap,
-                    volume_1h: token.volume_1h
-                  })
-                  .eq('id', existingToken.id)
-                if (error) throw error
+                await query(
+                  `UPDATE ${TRACKER_TABLE}
+                   SET last_price_usd = $1, organic_score = $2, market_cap = $3,
+                       volume_1h = $4, updated_at = NOW()
+                   WHERE id = $5`,
+                  [
+                    token.current_price,
+                    token.organic_score,
+                    token.market_cap,
+                    token.volume_1h,
+                    existingToken.id,
+                  ],
+                )
               })()
             )
             continue
@@ -4986,20 +5022,24 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           // Mark as stopped due to staleness or age
           updatesPromises.push(
             (async () => {
-              const { error } = await supabase
-                .from(TRACKER_TABLE)
-                .update({
-                  status: 'stopped',
-                  status_changed_at: new Date().toISOString(),
-                  last_price_usd: token.current_price,
-                  current_gain_percentage: currentGain,
-                  peak_gain_percentage: peakGain,
-                  organic_score: token.organic_score,
-                  market_cap: token.market_cap,
-                  volume_1h: token.volume_1h
-                })
-                .eq('id', existingToken.id)
-              if (error) throw error
+              await query(
+                `UPDATE ${TRACKER_TABLE}
+                 SET status = $1, status_changed_at = $2, last_price_usd = $3,
+                     current_gain_percentage = $4, peak_gain_percentage = $5,
+                     organic_score = $6, market_cap = $7, volume_1h = $8, updated_at = NOW()
+                 WHERE id = $9`,
+                [
+                  'stopped',
+                  new Date().toISOString(),
+                  token.current_price,
+                  currentGain,
+                  peakGain,
+                  token.organic_score,
+                  token.market_cap,
+                  token.volume_1h,
+                  existingToken.id,
+                ],
+              )
             })()
           )
 
@@ -5162,23 +5202,28 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           // Mark as lost (original logic)
           updatesPromises.push(
             (async () => {
-              const { error } = await supabase
-                .from(TRACKER_TABLE)
-                .update({
-                  last_price_usd: token.current_price,
-                  peak_price_usd: newPeakPrice,
-                  current_gain_percentage: currentGain,
-                  peak_gain_percentage: peakGain,
-                  status: 'lost',
-                  status_changed_at: new Date().toISOString(),
-                  organic_score: token.organic_score,
-                  market_cap: token.market_cap,
-                  volume_1h: token.volume_1h,
-                  trading_simulation: existingToken.trading_simulation,
-                  price_history: updatedPriceHistory
-                })
-                .eq('id', existingToken.id)
-              if (error) throw error
+              await query(
+                `UPDATE ${TRACKER_TABLE}
+                 SET last_price_usd = $1, peak_price_usd = $2, current_gain_percentage = $3,
+                     peak_gain_percentage = $4, status = $5, status_changed_at = $6,
+                     organic_score = $7, market_cap = $8, volume_1h = $9,
+                     trading_simulation = $10, price_history = $11, updated_at = NOW()
+                 WHERE id = $12`,
+                [
+                  token.current_price,
+                  newPeakPrice,
+                  currentGain,
+                  peakGain,
+                  'lost',
+                  new Date().toISOString(),
+                  token.organic_score,
+                  token.market_cap,
+                  token.volume_1h,
+                  JSON.stringify(existingToken.trading_simulation),
+                  JSON.stringify(updatedPriceHistory),
+                  existingToken.id,
+                ],
+              )
             })()
           )
 
@@ -5188,23 +5233,28 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           // Update tracking token with new price data and simulation results
           updatesPromises.push(
             (async () => {
-              const { error } = await supabase
-                .from(TRACKER_TABLE)
-                .update({
-                  last_price_usd: token.current_price,
-                  peak_price_usd: newPeakPrice,
-                  current_gain_percentage: currentGain,
-                  peak_gain_percentage: peakGain,
-                  status: existingToken.status,
-                  status_changed_at: existingToken.status_changed_at,
-                  organic_score: token.organic_score,
-                  market_cap: token.market_cap,
-                  volume_1h: token.volume_1h,
-                  trading_simulation: existingToken.trading_simulation,
-                  price_history: updatedPriceHistory
-                })
-                .eq('id', existingToken.id)
-              if (error) throw error
+              await query(
+                `UPDATE ${TRACKER_TABLE}
+                 SET last_price_usd = $1, peak_price_usd = $2, current_gain_percentage = $3,
+                     peak_gain_percentage = $4, status = $5, status_changed_at = $6,
+                     organic_score = $7, market_cap = $8, volume_1h = $9,
+                     trading_simulation = $10, price_history = $11, updated_at = NOW()
+                 WHERE id = $12`,
+                [
+                  token.current_price,
+                  newPeakPrice,
+                  currentGain,
+                  peakGain,
+                  existingToken.status,
+                  existingToken.status_changed_at,
+                  token.organic_score,
+                  token.market_cap,
+                  token.volume_1h,
+                  JSON.stringify(existingToken.trading_simulation),
+                  JSON.stringify(updatedPriceHistory),
+                  existingToken.id,
+                ],
+              )
             })()
           )
 
@@ -5396,29 +5446,45 @@ async function internalTrackPost(request: NextRequest, logger: any) {
         // Add update promise
         if (isLost && existingToken.status === 'tracking') {
           updatesPromises.push((async () => {
-            await supabase.from(TRACKER_TABLE).update({
-              last_price_usd: currentPrice,
-              peak_price_usd: newPeakPrice,
-              current_gain_percentage: currentGain,
-              peak_gain_percentage: peakGain,
-              status: 'lost',
-              status_changed_at: new Date().toISOString(),
-              trading_simulation: existingToken.trading_simulation,
-              price_history: updatedPriceHistory
-            }).eq('id', existingToken.id)
+            await query(
+              `UPDATE ${TRACKER_TABLE}
+               SET last_price_usd = $1, peak_price_usd = $2, current_gain_percentage = $3,
+                   peak_gain_percentage = $4, status = $5, status_changed_at = $6,
+                   trading_simulation = $7, price_history = $8, updated_at = NOW()
+               WHERE id = $9`,
+              [
+                currentPrice,
+                newPeakPrice,
+                currentGain,
+                peakGain,
+                'lost',
+                new Date().toISOString(),
+                JSON.stringify(existingToken.trading_simulation),
+                JSON.stringify(updatedPriceHistory),
+                existingToken.id,
+              ],
+            )
           })())
           tokensLost++
           console.log(`❌ Orphaned Token lost (${currentGain.toFixed(2)}%): ${token.token_symbol}`)
         } else {
           updatesPromises.push((async () => {
-            await supabase.from(TRACKER_TABLE).update({
-              last_price_usd: currentPrice,
-              peak_price_usd: newPeakPrice,
-              current_gain_percentage: currentGain,
-              peak_gain_percentage: peakGain,
-              trading_simulation: existingToken.trading_simulation,
-              price_history: updatedPriceHistory
-            }).eq('id', existingToken.id)
+            await query(
+              `UPDATE ${TRACKER_TABLE}
+               SET last_price_usd = $1, peak_price_usd = $2, current_gain_percentage = $3,
+                   peak_gain_percentage = $4, trading_simulation = $5, price_history = $6,
+                   updated_at = NOW()
+               WHERE id = $7`,
+              [
+                currentPrice,
+                newPeakPrice,
+                currentGain,
+                peakGain,
+                JSON.stringify(existingToken.trading_simulation),
+                JSON.stringify(updatedPriceHistory),
+                existingToken.id,
+              ],
+            )
           })())
           tokensUpdated++
         }
@@ -5443,11 +5509,13 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     }
 
     // Get updated statistics
-    const { data: currentStats, error: statsError } = await supabase
-      .from(TRACKER_TABLE)
-      .select('status')
-
-    if (statsError) {
+    let currentStats: { status: string }[] = []
+    try {
+      const { rows } = await query<{ status: string }>(
+        `SELECT status FROM ${TRACKER_TABLE}`,
+      )
+      currentStats = rows
+    } catch (statsError) {
       console.error('Failed to fetch current stats:', statsError)
     }
 
@@ -5559,14 +5627,13 @@ export const GET = withUnifiedLogging(async (request: NextRequest, logger) => {
     logger.info('api_request', 'Fetching token tracking data', { tokenAddress })
 
     // Get token data with trade comparison
-    const { data: token, error } = await supabase
-      .from(TRACKER_TABLE)
-      .select('*')
-      .eq('token_address', tokenAddress)
-      .single()
+    const token = await queryOne<Record<string, unknown>>(
+      `SELECT * FROM ${TRACKER_TABLE} WHERE token_address = $1 LIMIT 1`,
+      [tokenAddress],
+    )
 
-    if (error || !token) {
-      logger.warn('api_request', 'Tracked token not found', { tokenAddress, error })
+    if (!token) {
+      logger.warn('api_request', 'Tracked token not found', { tokenAddress })
       return NextResponse.json({ error: 'Token not found', token_address: tokenAddress }, { status: 404 })
     }
 
@@ -5717,15 +5784,14 @@ async function checkTradingBalance(): Promise<{ balance: number, canTrade: boole
 
 async function getTotalSOLAtRisk(): Promise<number> {
   // Fetch only required fields to keep payload light
-  const { data: activeRealTrades } = await supabase
-    .from(TRACKER_TABLE)
-    .select('trading_simulation')
-    .eq('status', 'tracking')
-    .not('trading_simulation', 'is', null)
+  const { rows: activeRealTrades } = await query<{ trading_simulation: TradingSimulation }>(
+    `SELECT trading_simulation FROM ${TRACKER_TABLE}
+     WHERE status = 'tracking' AND trading_simulation IS NOT NULL`,
+  )
 
   let totalAtRisk = 0
 
-  for (const trade of activeRealTrades || []) {
+  for (const trade of activeRealTrades) {
     const simulation = trade.trading_simulation as TradingSimulation
 
     // Skip simulated positions entirely
@@ -5757,15 +5823,14 @@ async function getTotalSOLAtRisk(): Promise<number> {
 // Add strategy-specific risk calculation
 async function getTotalSOLAtRiskByStrategy(strategyId: string): Promise<number> {
   // Fetch only required fields to keep payload light
-  const { data: activeRealTrades } = await supabase
-    .from(TRACKER_TABLE)
-    .select('trading_simulation')
-    .eq('status', 'tracking')
-    .not('trading_simulation', 'is', null)
+  const { rows: activeRealTrades } = await query<{ trading_simulation: TradingSimulation }>(
+    `SELECT trading_simulation FROM ${TRACKER_TABLE}
+     WHERE status = 'tracking' AND trading_simulation IS NOT NULL`,
+  )
 
   let totalAtRisk = 0
 
-  for (const trade of activeRealTrades || []) {
+  for (const trade of activeRealTrades) {
     const simulation = trade.trading_simulation as TradingSimulation
 
     // Skip simulated positions entirely
@@ -5835,16 +5900,25 @@ async function checkWalletHoldings(tokenAddress: string, currentPrice?: number):
 
     if (!hasSignificantHolding && currentPrice) {
       // Look for completed (sold) tokens with this address
-      const { data: completedTokens, error } = await supabase
-        .from(TRACKER_TABLE)
-        .select('id, token_address, token_symbol, initial_price_usd, trading_simulation, tracking_started_at')
-        .eq('token_address', tokenAddress)
-        .in('status', ['completed', 'won', 'lost'])
-        .not('trading_simulation', 'is', null)
-        .order('tracking_started_at', { ascending: false })
-        .limit(1) // Get the most recent completed trade
+      const { rows: completedTokens } = await query<{
+        id: string
+        token_address: string
+        token_symbol: string | null
+        initial_price_usd: number
+        trading_simulation: TradingSimulation
+        tracking_started_at: string
+      }>(
+        `SELECT id, token_address, token_symbol, initial_price_usd, trading_simulation, tracking_started_at
+         FROM ${TRACKER_TABLE}
+         WHERE token_address = $1
+           AND status = ANY($2::text[])
+           AND trading_simulation IS NOT NULL
+         ORDER BY tracking_started_at DESC
+         LIMIT 1`,
+        [tokenAddress, ['completed', 'won', 'lost']],
+      )
 
-      if (!error && completedTokens && completedTokens.length > 0) {
+      if (completedTokens.length > 0) {
         const lastCompletedToken = completedTokens[0]
         const simulation = lastCompletedToken.trading_simulation as TradingSimulation
 
@@ -5884,19 +5958,23 @@ async function checkRecentPurchaseHistory(tokenAddress: string, tokenSymbol: str
     // Check database for recent purchases of this token - changed to 5 minutes
     const cutoffTime = new Date(Date.now() - 5 * 60 * 1000) // 5 minutes instead of hours
 
-    const { data: recentTokens, error } = await supabase
-      .from(TRACKER_TABLE)
-      .select('id, token_address, token_symbol, tracking_started_at, trading_simulation, status, initial_price_usd')
-      .eq('token_address', tokenAddress)
-      .gte('tracking_started_at', cutoffTime.toISOString())
-      .order('tracking_started_at', { ascending: false })
+    const { rows: recentTokens } = await query<{
+      id: string
+      token_address: string
+      token_symbol: string | null
+      tracking_started_at: string
+      trading_simulation: TradingSimulation | null
+      status: string
+      initial_price_usd: number
+    }>(
+      `SELECT id, token_address, token_symbol, tracking_started_at, trading_simulation, status, initial_price_usd
+       FROM ${TRACKER_TABLE}
+       WHERE token_address = $1 AND tracking_started_at >= $2
+       ORDER BY tracking_started_at DESC`,
+      [tokenAddress, cutoffTime.toISOString()],
+    )
 
-    if (error) {
-      console.error(`❌ Error checking purchase history for ${tokenSymbol}:`, error)
-      return { shouldPrevent: false }
-    }
-
-    if (!recentTokens || recentTokens.length === 0) {
+    if (recentTokens.length === 0) {
       console.log(`✅ No recent purchases found for ${tokenSymbol}`)
       return { shouldPrevent: false }
     }

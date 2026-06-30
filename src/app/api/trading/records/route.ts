@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { assertSessionWallet, requireWalletSession } from '@/utils/api-auth'
-import { supabase } from '@/utils/supabase'
+import { query } from '@/utils/db'
 import {
   insertTradingRecord,
   shouldSkipTradingRecord,
@@ -14,7 +14,6 @@ import {
   setCachedRecords,
 } from '@/utils/trading-records-cache'
 
-// Database schema for Supabase
 interface DatabaseRecord {
   id: string
   wallet_address: string
@@ -71,18 +70,15 @@ async function fetchTradingRecordsWithCache(walletAddress: string, limit: number
 }
 
 async function fetchTradingRecordsFromDB(walletAddress: string, limit: number): Promise<any[]> {
-  const { data, error } = await supabase
-    .from('trading_records')
-    .select('*')
-    .eq('wallet_address', walletAddress)
-    .order('timestamp', { ascending: false })
-    .limit(limit)
+  const { rows } = await query<DatabaseRecord>(
+    `SELECT * FROM trading_records
+     WHERE wallet_address = $1
+     ORDER BY timestamp DESC
+     LIMIT $2`,
+    [walletAddress, limit],
+  )
 
-  if (error) {
-    throw error
-  }
-
-  return (data || []).map((item: DatabaseRecord) => item.data)
+  return rows.map((item) => item.data)
 }
 
 function resolveAllowedOrigin(request: NextRequest): string | null {
@@ -234,14 +230,10 @@ export async function DELETE(request: NextRequest) {
       )
     }
 
-    const { error } = await supabase
-      .from('trading_records')
-      .delete()
-      .match({ id, wallet_address: walletAddress })
-
-    if (error) {
-      throw error
-    }
+    await query(
+      `DELETE FROM trading_records WHERE id = $1 AND wallet_address = $2`,
+      [id, walletAddress],
+    )
 
     const invalidated = invalidateTradingRecordsCache(walletAddress)
     console.log(`🗑️ Deleted record ${id} and invalidated ${invalidated} cache entries for wallet ${walletAddress.substring(0, 8)}...`)

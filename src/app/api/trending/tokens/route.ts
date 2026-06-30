@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
 import { getAppDayBounds } from '@/utils/datetime'
 
 // Force dynamic rendering
@@ -18,45 +18,52 @@ export async function GET(request: NextRequest) {
 
     const offset = (page - 1) * limit
 
-    let query = supabase
-      .from(TRACKER_TABLE)
-      .select('*', { count: 'exact' })
+    const conditions: string[] = []
+    const values: unknown[] = []
 
-    // Date filter (tracking_started_at, Asia/Bangkok calendar day)
     if (date) {
       const { start, end } = getAppDayBounds(date)
-      query = query
-        .gte('tracking_started_at', start.toISOString())
-        .lte('tracking_started_at', end.toISOString())
+      values.push(start.toISOString())
+      conditions.push(`tracking_started_at >= $${values.length}`)
+      values.push(end.toISOString())
+      conditions.push(`tracking_started_at <= $${values.length}`)
     }
 
-    // Search filter
     if (search) {
-      query = query.or(`token_symbol.ilike.%${search}%,token_name.ilike.%${search}%,token_address.ilike.%${search}%`)
+      values.push(`%${search}%`)
+      conditions.push(
+        `(token_symbol ILIKE $${values.length} OR token_name ILIKE $${values.length} OR token_address ILIKE $${values.length})`,
+      )
     }
 
-    // Order by created_at desc
-    query = query
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1)
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
-    const { data: tokens, error, count } = await query
+    const countRow = await queryOne<{ count: number }>(
+      `SELECT COUNT(*)::int AS count FROM ${TRACKER_TABLE} ${whereClause}`,
+      values,
+    )
+    const count = countRow?.count ?? 0
 
-    if (error) {
-      console.error('Error fetching tokens:', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
+    const listValues = [...values, limit, offset]
+    const limitIdx = values.length + 1
+    const offsetIdx = values.length + 2
+
+    const { rows: tokens } = await query(
+      `SELECT * FROM ${TRACKER_TABLE} ${whereClause}
+       ORDER BY created_at DESC
+       LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+      listValues,
+    )
 
     return NextResponse.json({
       tokens,
       pagination: {
         page,
         limit,
-        total: count || 0,
-        totalPages: Math.ceil((count || 0) / limit)
-      }
+        total: count,
+        totalPages: Math.ceil(count / limit),
+      },
     })
-
   } catch (error) {
     console.error('Unexpected error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

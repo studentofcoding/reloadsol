@@ -1,24 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
 import { markTokenRug, unmarkTokenRug } from '@/utils/rug-list/service'
 import { removeRugEntry } from '@/utils/rug-list/db'
 import { getRugList } from '@/utils/rug-list/service'
 
 export const dynamic = 'force-dynamic'
 
+interface TradingSignalRow {
+  token_address: string
+  token_symbol: string | null
+  label: string | null
+  market_cap: number
+  price: number
+  initial_price: number
+  result: unknown
+  image_reference: string | null
+  source: string
+  updated_at: string
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const { data, error } = await supabase
-      .from('trading_signals')
-      .select('*')
-      .in('label', ['watching', 'potential', 'rugged'])
-      .order('updated_at', { ascending: false })
-
-    if (error) throw error
+    const { rows: data } = await query<TradingSignalRow>(
+      `SELECT * FROM trading_signals
+       WHERE label IN ('watching', 'potential', 'rugged')
+       ORDER BY updated_at DESC`,
+    )
 
     const rugEntries = await getRugList()
     const byAddress = new Map(
-      (data ?? []).map((d) => [d.token_address, d]),
+      data.map((d) => [d.token_address, d]),
     )
 
     for (const rug of rugEntries) {
@@ -76,59 +87,74 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Token address required' }, { status: 400 })
     }
 
-    // Upsert logic
     const now = new Date().toISOString()
 
-    // Check if exists
-    const { data: existing } = await supabase
-      .from('trading_signals')
-      .select('*')
-      .eq('token_address', tokenAddress)
-      .single()
-
-    let error;
+    const existing = await queryOne<TradingSignalRow>(
+      `SELECT * FROM trading_signals WHERE token_address = $1 LIMIT 1`,
+      [tokenAddress],
+    )
 
     if (existing) {
-      // Update existing
-      const updateData: any = {
-        updated_at: now
+      const setClauses: string[] = ['updated_at = $2']
+      const params: unknown[] = [tokenAddress, now]
+
+      if (label) {
+        setClauses.push(`label = $${params.length + 1}`)
+        params.push(label)
       }
-      if (label) updateData.label = label
-      if (tokenSymbol) updateData.token_symbol = tokenSymbol
-      if (mcap) updateData.market_cap = mcap
-      if (price) updateData.price = price
-      // Only update initial_price if explicitly provided (usually shouldn't change after set)
-      if (initialPrice) updateData.initial_price = initialPrice
-      if (result) updateData.result = result
-      if (imageReference) updateData.image_reference = imageReference
-      // Source is usually immutable, but allow update if provided explicitly
-      if (source) updateData.source = source
+      if (tokenSymbol) {
+        setClauses.push(`token_symbol = $${params.length + 1}`)
+        params.push(tokenSymbol)
+      }
+      if (mcap) {
+        setClauses.push(`market_cap = $${params.length + 1}`)
+        params.push(mcap)
+      }
+      if (price) {
+        setClauses.push(`price = $${params.length + 1}`)
+        params.push(price)
+      }
+      if (initialPrice) {
+        setClauses.push(`initial_price = $${params.length + 1}`)
+        params.push(initialPrice)
+      }
+      if (result) {
+        setClauses.push(`result = $${params.length + 1}`)
+        params.push(JSON.stringify(result))
+      }
+      if (imageReference) {
+        setClauses.push(`image_reference = $${params.length + 1}`)
+        params.push(imageReference)
+      }
+      if (source) {
+        setClauses.push(`source = $${params.length + 1}`)
+        params.push(source)
+      }
 
-      const { error: upError } = await supabase
-        .from('trading_signals')
-        .update(updateData)
-        .eq('token_address', tokenAddress)
-      error = upError
+      await query(
+        `UPDATE trading_signals SET ${setClauses.join(', ')} WHERE token_address = $1`,
+        params,
+      )
     } else {
-      // Insert new
-      const { error: inError } = await supabase
-        .from('trading_signals')
-        .insert({
-          token_address: tokenAddress,
-          token_symbol: tokenSymbol || 'UNKNOWN',
-          market_cap: mcap || 0,
-          price: price || 0,
-          initial_price: initialPrice || price || 0, // Set initial price to current price if not provided
-          updated_at: now,
-          label: label || 'watching',
-          result: result || null,
-          image_reference: imageReference || null,
-          source: source || 'manual'
-        })
-      error = inError
+      await query(
+        `INSERT INTO trading_signals (
+           token_address, token_symbol, market_cap, price, initial_price,
+           updated_at, label, result, image_reference, source
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          tokenAddress,
+          tokenSymbol || 'UNKNOWN',
+          mcap || 0,
+          price || 0,
+          initialPrice || price || 0,
+          now,
+          label || 'watching',
+          result ? JSON.stringify(result) : null,
+          imageReference || null,
+          source || 'manual',
+        ],
+      )
     }
-
-    if (error) throw error
 
     if (label === 'rugged') {
       await markTokenRug({
@@ -155,13 +181,10 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Token address required' }, { status: 400 })
     }
 
-    // Just clear the label to remove from view
-    const { error } = await supabase
-      .from('trading_signals')
-      .update({ label: null })
-      .eq('token_address', tokenAddress)
-
-    if (error) throw error
+    await query(
+      `UPDATE trading_signals SET label = NULL WHERE token_address = $1`,
+      [tokenAddress],
+    )
 
     return NextResponse.json({ success: true })
   } catch (error) {

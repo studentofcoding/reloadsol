@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase'
+import { query } from '@/utils/db'
 import { McapSnapshot } from '@/utils/mcap-tracker'
 import { ZScoreAnomalyDetector, TokenMetrics, type AnomalyResult } from '@/utils/algo/anomaly-detection'
 import { EnhancedMomentumAnalyzer } from '@/utils/algo/momentum-analysis'
@@ -134,27 +134,25 @@ class DataAggregationService {
     }
 
     /**
-     * Fetch MCap tracking data from Supabase
+     * Fetch MCap tracking data from Postgres
      */
     private async fetchMcapTrackingData(maxAge?: number): Promise<McapSnapshot[]> {
-        let query = supabase
-            .from('token_mcap_tracking')
-            .select('*')
-            .order('last_updated_at', { ascending: false })
-
-        // Apply age filter if specified
         if (maxAge) {
             const cutoffTime = new Date(Date.now() - maxAge * 60 * 1000).toISOString()
-            query = query.gte('last_updated_at', cutoffTime)
+            const { rows } = await query<McapSnapshot>(
+                `SELECT * FROM token_mcap_tracking
+                 WHERE last_updated_at >= $1
+                 ORDER BY last_updated_at DESC`,
+                [cutoffTime],
+            )
+            return rows
         }
 
-        const { data, error } = await query
-
-        if (error) {
-            throw new Error(`Failed to fetch MCap data: ${error.message}`)
-        }
-
-        return data || []
+        const { rows } = await query<McapSnapshot>(
+            `SELECT * FROM token_mcap_tracking
+             ORDER BY last_updated_at DESC`,
+        )
+        return rows
     }
 
     /**

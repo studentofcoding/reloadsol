@@ -6,6 +6,8 @@ Production deployment uses **Docker Compose** (Next.js web + Go cron). PM2 scrip
 
 | Service | Container | Default port | Role |
 |---------|-----------|--------------|------|
+| **reloadsol-db** | `reloadsol-db` | 5432 (internal) | Postgres 16 (1GB cap) |
+| **reloadsol-bouncer** | `reloadsol-bouncer` | 5432 (internal) | PgBouncer transaction pool |
 | **web** | `reloadsol-web` | `WEB_PORT` (3000 or 80) | Next.js app + API routes |
 | **cron** | `reloadsol-cron` | `CRON_PORT` (8080) | Trending track, SL/TP, DLMM, signals, social rollup/wallet-poll |
 | **social-ingest** | `reloadsol-social-ingest` | (none) | Telethon → `POST /api/social/ingest` |
@@ -19,10 +21,10 @@ git clone https://github.com/your-org/reloadsol.git
 cd reloadsol
 
 cp .env.docker.example .env
-# Edit .env — SUPABASE_SECRET_KEY, SHYFT_API_KEY, WALLET_SESSION_SECRET, cron secrets, Telegram (API_ID, channel IDs)
+# Edit .env — POSTGRES_PASSWORD, DATABASE_URL, SHYFT_API_KEY, WALLET_SESSION_SECRET, cron secrets, Telegram
 
-# Run supabase/schema.sql in Supabase SQL Editor (includes social + bot_* tables)
-# First-time social: apply supabase/patches/social_signals.sql, copy Telethon session, then:
+# Fresh deploy: docker compose applies db/init/*.sql on first start
+# Migrate from Supabase: bash scripts/migrate-from-supabase.sh (see README)
 bash scripts/bootstrap-social-server.sh
 
 npm run docker:deploy
@@ -75,8 +77,9 @@ npm run docker:deploy:hook
 Copy from [`.env.docker.example`](.env.docker.example). Minimum for production:
 
 ```bash
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co
-SUPABASE_SECRET_KEY=sb_secret_...
+POSTGRES_PASSWORD=...
+DATABASE_URL=postgresql://postgres:...@reloadsol-bouncer:5432/reloadsol_db
+DATABASE_URL_DIRECT=postgresql://postgres:...@reloadsol-db:5432/reloadsol_db
 
 SHYFT_API_KEY=...
 RPC_URL=https://rpc.shyft.to?api_key=...
@@ -175,10 +178,11 @@ curl -X POST http://127.0.0.1:8080/trigger/sltp
 
 - [ ] HTTPS in front of web
 - [ ] Strong `WALLET_SESSION_SECRET` and cron secrets (not defaults)
-- [ ] `SUPABASE_SECRET_KEY` server-only (never `NEXT_PUBLIC_*`)
+- [ ] `DATABASE_URL` points at PgBouncer (`reloadsol-bouncer`) in Docker
+- [ ] `POSTGRES_PASSWORD` set (not placeholder)
 - [ ] Trading keypair only in `.env` (not committed)
 - [ ] Firewall: 22, 80, 443 only
-- [ ] Supabase RLS enabled (`supabase/schema.sql`)
+- [ ] RLS enabled on app tables (`db/init/02-schema.sql`)
 - [ ] Telethon session on server at `social-ingest/sessions/session_search.session`
 - [ ] `bash scripts/bootstrap-social-server.sh` run once (migration + wallet seed)
 

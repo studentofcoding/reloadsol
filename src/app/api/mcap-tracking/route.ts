@@ -1,9 +1,92 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats, STOP_LOSS_THRESHOLD, MAX_TRACKING_AGE_MS, TokenLabel, normalizeTrackingTimeline, type McapSnapshot } from '@/utils/mcap-tracker'
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
 import { getSolPriceUSD } from '@/utils/solana'
 import { getAppLocalParts } from '@/utils/datetime'
 import { log } from '@/utils/unified-logger'
+
+const LIST_SORT_COLUMNS = new Set([
+  'last_updated_at', 'first_seen_at', 'mcap_growth_percent',
+  'current_mcap', 'first_mcap', 'token_symbol', 'token_address',
+])
+
+function getTimeFilterCutoff(timeFilter: string): Date | null {
+  if (timeFilter === 'all') return null
+  const now = new Date()
+  switch (timeFilter) {
+    case '1h': return new Date(now.getTime() - 60 * 60 * 1000)
+    case '4h': return new Date(now.getTime() - 4 * 60 * 60 * 1000)
+    case '24h': return new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    case '3d': return new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000)
+    case '7d': return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+    case '1m': return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+    default: return null
+  }
+}
+
+type McapListFilterParams = {
+  search?: string
+  timeFilter?: string
+  performanceFilter?: string
+  minGrowth?: string | null
+  maxGrowth?: string | null
+  minMcap?: string | null
+  maxMcap?: string | null
+  statsOnly?: boolean
+}
+
+function buildMcapListWhere(params: McapListFilterParams): { sql: string; values: unknown[] } {
+  const conditions: string[] = []
+  const values: unknown[] = []
+
+  if (params.statsOnly) {
+    conditions.push('mcap_growth_percent IS NOT NULL')
+    conditions.push('current_mcap IS NOT NULL')
+    conditions.push('first_mcap IS NOT NULL')
+    conditions.push('first_mcap > 0')
+    conditions.push('current_mcap > 0')
+  }
+
+  if (params.search) {
+    values.push(`%${params.search}%`)
+    conditions.push(`(token_symbol ILIKE $${values.length} OR token_address ILIKE $${values.length})`)
+  }
+
+  const cutoff = getTimeFilterCutoff(params.timeFilter || 'all')
+  if (cutoff) {
+    values.push(cutoff.toISOString())
+    conditions.push(`first_seen_at >= $${values.length}`)
+  }
+
+  const performanceFilter = params.performanceFilter || 'all'
+  if (performanceFilter === 'gainers') {
+    conditions.push('mcap_growth_percent > 0')
+  } else if (performanceFilter === 'losers') {
+    conditions.push('mcap_growth_percent < 0')
+  } else if (performanceFilter === 'top_performers') {
+    conditions.push('mcap_growth_percent >= 100')
+  }
+
+  if (params.minGrowth != null && params.minGrowth !== '') {
+    values.push(parseFloat(params.minGrowth))
+    conditions.push(`mcap_growth_percent >= $${values.length}`)
+  }
+  if (params.maxGrowth != null && params.maxGrowth !== '') {
+    values.push(parseFloat(params.maxGrowth))
+    conditions.push(`mcap_growth_percent <= $${values.length}`)
+  }
+  if (params.minMcap != null && params.minMcap !== '') {
+    values.push(parseFloat(params.minMcap))
+    conditions.push(`first_mcap >= $${values.length}`)
+  }
+  if (params.maxMcap != null && params.maxMcap !== '') {
+    values.push(parseFloat(params.maxMcap))
+    conditions.push(`first_mcap <= $${values.length}`)
+  }
+
+  const sql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+  return { sql, values }
+}
 
 // Server-side toast deduplication to reduce duplicate notifications across quick successive calls.
 // Note: This is a best-effort in-memory window and may not cover multi-instance deployments.
@@ -98,174 +181,57 @@ export async function GET(request: NextRequest) {
       // Get current SOL price for calculations
       const solPriceUSD = await getSolPriceUSD()
 
-      // Build query
-      let query = supabase
-        .from('token_mcap_tracking')
-        .select('*', { count: 'exact' })
-
-      // Apply search filter
-      if (search) {
-        query = query.or(`token_symbol.ilike.%${search}%,token_address.ilike.%${search}%`)
+      const filterParams: McapListFilterParams = {
+        search,
+        timeFilter,
+        performanceFilter,
+        minGrowth,
+        maxGrowth,
+        minMcap,
+        maxMcap,
       }
+      const { sql: whereClause, values: whereValues } = buildMcapListWhere(filterParams)
 
-      // Apply time-based filters
-      if (timeFilter !== 'all') {
-        const now = new Date()
-        let cutoffTime: Date
+      const sortColumn = LIST_SORT_COLUMNS.has(sortBy) ? sortBy : 'last_updated_at'
+      const sortDir = sortOrder === 'asc' ? 'ASC' : 'DESC'
 
-        switch (timeFilter) {
-          case '1h':
-            cutoffTime = new Date(now.getTime() - 60 * 60 * 1000)
-            break
-          case '4h':
-            cutoffTime = new Date(now.getTime() - 4 * 60 * 60 * 1000)
-            break
-          case '24h':
-            cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-            break
-          case '3d':
-            cutoffTime = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000)
-            break
-          case '7d':
-            cutoffTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-            break
-          case '1m':
-            cutoffTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-            break
-          default:
-            cutoffTime = new Date(0) // No filter
-        }
+      const countRow = await queryOne<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM token_mcap_tracking ${whereClause}`,
+        whereValues,
+      )
+      const count = countRow?.count ?? 0
 
-        if (cutoffTime.getTime() > 0) {
-          query = query.gte('first_seen_at', cutoffTime.toISOString())
-        }
-      }
+      const listValues = [...whereValues, limit, offset]
+      const limitIdx = whereValues.length + 1
+      const offsetIdx = whereValues.length + 2
+      const { rows: data } = await query<McapSnapshot>(
+        `SELECT * FROM token_mcap_tracking ${whereClause}
+         ORDER BY ${sortColumn} ${sortDir}
+         LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        listValues,
+      )
 
-      // Apply performance filters
-      if (performanceFilter !== 'all') {
-        switch (performanceFilter) {
-          case 'gainers':
-            query = query.gt('mcap_growth_percent', 0)
-            break
-          case 'losers':
-            query = query.lt('mcap_growth_percent', 0)
-            break
-          case 'top_performers':
-            query = query.gte('mcap_growth_percent', 100)
-            break
-        }
-      }
-
-      // Apply growth filters
-      if (minGrowth !== null) {
-        query = query.gte('mcap_growth_percent', parseFloat(minGrowth))
-      }
-      if (maxGrowth !== null) {
-        query = query.lte('mcap_growth_percent', parseFloat(maxGrowth))
-      }
-
-      // Apply MCap filters
-      if (minMcap !== null) {
-        query = query.gte('first_mcap', parseFloat(minMcap))
-      }
-      if (maxMcap !== null) {
-        query = query.lte('first_mcap', parseFloat(maxMcap))
-      }
-
-      // Apply sorting and pagination
-      query = query
-        .order(sortBy, { ascending: sortOrder === 'asc' })
-        .range(offset, offset + limit - 1)
-
-      const { data, error, count } = await query
-
-      if (error) throw error
-
-      // Get all data for comprehensive statistics with proper validation
-      // Apply the same filters as the main query to ensure consistent statistics
-      let allDataQuery = supabase
-        .from('token_mcap_tracking')
-        .select('mcap_growth_percent, current_mcap, first_mcap, first_seen_at, last_updated_at, when_reach_80mc, when_reach_120mc, when_reach_200mc, is_tracking_stuck')
-        .not('mcap_growth_percent', 'is', null)
-        .not('current_mcap', 'is', null)
-        .not('first_mcap', 'is', null)
-        .gt('first_mcap', 0)
-        .gt('current_mcap', 0)
-
-      // Apply search filter to statistics query
-      if (search) {
-        allDataQuery = allDataQuery.or(`token_symbol.ilike.%${search}%,token_address.ilike.%${search}%`)
-      }
-
-      // Apply time-based filters to statistics query
-      if (timeFilter !== 'all') {
-        const now = new Date()
-        let cutoffTime: Date
-
-        switch (timeFilter) {
-          case '1h':
-            cutoffTime = new Date(now.getTime() - 60 * 60 * 1000)
-            break
-          case '4h':
-            cutoffTime = new Date(now.getTime() - 4 * 60 * 60 * 1000)
-            break
-          case '24h':
-            cutoffTime = new Date(now.getTime() - 24 * 60 * 60 * 1000)
-            break
-          case '3d':
-            cutoffTime = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000)
-            break
-          case '7d':
-            cutoffTime = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
-            break
-          case '1m':
-            cutoffTime = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
-            break
-          default:
-            cutoffTime = new Date(0) // No filter
-        }
-
-        if (cutoffTime.getTime() > 0) {
-          allDataQuery = allDataQuery.gte('first_seen_at', cutoffTime.toISOString())
-        }
-      }
-
-      // Apply performance filters to statistics query
-      if (performanceFilter !== 'all') {
-        switch (performanceFilter) {
-          case 'gainers':
-            allDataQuery = allDataQuery.gt('mcap_growth_percent', 0)
-            break
-          case 'losers':
-            allDataQuery = allDataQuery.lt('mcap_growth_percent', 0)
-            break
-          case 'top_performers':
-            allDataQuery = allDataQuery.gte('mcap_growth_percent', 100)
-            break
-        }
-      }
-
-      // Apply growth filters to statistics query
-      if (minGrowth !== null) {
-        allDataQuery = allDataQuery.gte('mcap_growth_percent', parseFloat(minGrowth))
-      }
-      if (maxGrowth !== null) {
-        allDataQuery = allDataQuery.lte('mcap_growth_percent', parseFloat(maxGrowth))
-      }
-
-      // Apply MCap filters to statistics query
-      if (minMcap !== null) {
-        allDataQuery = allDataQuery.gte('first_mcap', parseFloat(minMcap))
-      }
-      if (maxMcap !== null) {
-        allDataQuery = allDataQuery.lte('first_mcap', parseFloat(maxMcap))
-      }
-
-      // Explicitly set a high limit to ensure we get all records for statistics
-      // Supabase default is often 1000, which causes the discrepancy (70k total vs 1k stats)
-      allDataQuery = allDataQuery.limit(100000)
-
-      const { data: allData } = await allDataQuery
+      const { sql: statsWhere, values: statsValues } = buildMcapListWhere({
+        ...filterParams,
+        statsOnly: true,
+      })
+      const { rows: allData } = await query<{
+        mcap_growth_percent: number
+        current_mcap: number
+        first_mcap: number
+        first_seen_at: string
+        last_updated_at: string
+        when_reach_80mc: string | null
+        when_reach_120mc: string | null
+        when_reach_200mc: string | null
+        is_tracking_stuck: boolean
+      }>(
+        `SELECT mcap_growth_percent, current_mcap, first_mcap, first_seen_at, last_updated_at,
+                when_reach_80mc, when_reach_120mc, when_reach_200mc, is_tracking_stuck
+         FROM token_mcap_tracking ${statsWhere}
+         LIMIT 100000`,
+        statsValues,
+      )
 
       if (!allData) {
         throw new Error('Failed to fetch statistics data')
@@ -609,11 +575,17 @@ export async function GET(request: NextRequest) {
 
       // Use a separate query for 30-day stats to ensure we have the full history
       // regardless of the current list filters (which might limit to 24h, etc.)
-      const { data: thirtyDayData } = await supabase
-        .from('token_mcap_tracking')
-        .select('first_seen_at, mcap_growth_percent, current_mcap')
-        .gte('first_seen_at', thirtyDaysAgo.toISOString())
-        .limit(100000) // Ensure we get enough records
+      const { rows: thirtyDayData } = await query<{
+        first_seen_at: string
+        mcap_growth_percent: number
+        current_mcap: number
+      }>(
+        `SELECT first_seen_at, mcap_growth_percent, current_mcap
+         FROM token_mcap_tracking
+         WHERE first_seen_at >= $1
+         LIMIT 100000`,
+        [thirtyDaysAgo.toISOString()],
+      )
 
       const summaryData = thirtyDayData || []
 
@@ -810,11 +782,10 @@ export async function GET(request: NextRequest) {
     if (action === 'track' && tokenAddress && tokenSymbol && mcap) {
       // Respect stop_reason: if 'rug', skip tracking
       try {
-        const { data: stopRecord } = await supabase
-          .from('token_mcap_tracking')
-          .select('stop_reason')
-          .eq('token_address', tokenAddress)
-          .single()
+        const stopRecord = await queryOne<{ stop_reason: string | null }>(
+          `SELECT stop_reason FROM token_mcap_tracking WHERE token_address = $1`,
+          [tokenAddress],
+        )
 
         const stopReason = (stopRecord?.stop_reason || '').toString().toLowerCase()
         if (stopReason === 'rug') {
@@ -902,11 +873,10 @@ export async function GET(request: NextRequest) {
       try {
         // Respect stop_reason: if 'rug', skip refetch tracking
         try {
-          const { data: stopRecord } = await supabase
-            .from('token_mcap_tracking')
-            .select('stop_reason')
-            .eq('token_address', tokenAddress)
-            .single()
+          const stopRecord = await queryOne<{ stop_reason: string | null }>(
+            `SELECT stop_reason FROM token_mcap_tracking WHERE token_address = $1`,
+            [tokenAddress],
+          )
 
           const stopReason = (stopRecord?.stop_reason || '').toString().toLowerCase()
           if (stopReason === 'rug') {
@@ -956,11 +926,10 @@ export async function GET(request: NextRequest) {
         // Get token symbol from database if not provided
         let symbol = tokenSymbol || 'UNKNOWN'
         if (!symbol) {
-          const { data: existingRecord } = await supabase
-            .from('token_mcap_tracking')
-            .select('token_symbol')
-            .eq('token_address', tokenAddress)
-            .single()
+          const existingRecord = await queryOne<{ token_symbol: string }>(
+            `SELECT token_symbol FROM token_mcap_tracking WHERE token_address = $1`,
+            [tokenAddress],
+          )
 
           symbol = existingRecord?.token_symbol || liveTok?.token_symbol || 'UNKNOWN'
         }
@@ -1071,14 +1040,10 @@ export async function POST(request: NextRequest) {
       const cap = Math.min(addresses.length, 200)
       const target = addresses.slice(0, cap)
 
-      const { error: updErr } = await supabase
-        .from('token_mcap_tracking')
-        .update({ stop_reason: normalizedReason })
-        .in('token_address', target)
-
-      if (updErr) {
-        return NextResponse.json({ success: false, error: updErr.message || 'Failed to update stop_reason' }, { status: 500 })
-      }
+      await query(
+        `UPDATE token_mcap_tracking SET stop_reason = $1 WHERE token_address = ANY($2::text[])`,
+        [normalizedReason, target],
+      )
 
       log.info('mcap_tracker', 'Updated stop_reason for tokens', { count: target.length, reason: normalizedReason || 'null' })
 
@@ -1109,11 +1074,10 @@ export async function POST(request: NextRequest) {
 
       // Respect stop_reason: if 'rug', skip bulk tracking
       try {
-        const { data: stopRecord } = await supabase
-          .from('token_mcap_tracking')
-          .select('stop_reason')
-          .eq('token_address', token.address)
-          .single()
+        const stopRecord = await queryOne<{ stop_reason: string | null }>(
+          `SELECT stop_reason FROM token_mcap_tracking WHERE token_address = $1`,
+          [token.address],
+        )
         const stopReason = (stopRecord?.stop_reason || '').toString().toLowerCase()
         if (stopReason === 'rug') {
           results.set(token.address, {

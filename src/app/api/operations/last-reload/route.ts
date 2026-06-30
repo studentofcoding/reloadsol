@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/utils/supabase';
+import { query, queryOne } from '@/utils/db';
 
 interface LastReloadResponse {
   walletAddress: string;
@@ -11,22 +11,19 @@ interface LastReloadResponse {
 
 export async function GET(request: NextRequest) {
   try {
-    // Get the last 10 operations from all wallets, only those with close operations
-    const { data, error } = await supabase
-      .from('token_operations')
-      .select('wallet_address, sol_balance, last_operation_time, close_count')
-      .not('last_operation_time', 'is', null)
-      .gt('close_count', 0) // Only operations with close count > 0
-      .order('last_operation_time', { ascending: false })
-      .limit(10);
-
-    if (error) {
-      console.error('Error fetching last reload:', error);
-      return NextResponse.json(
-        { error: 'Failed to fetch last operations' },
-        { status: 500 }
-      );
-    }
+    const { rows: data } = await query<{
+      wallet_address: string;
+      sol_balance: number;
+      last_operation_time: string;
+      close_count: number;
+    }>(
+      `SELECT wallet_address, sol_balance, last_operation_time, close_count
+       FROM token_operations
+       WHERE last_operation_time IS NOT NULL
+         AND close_count > 0
+       ORDER BY last_operation_time DESC
+       LIMIT 10`,
+    );
 
     if (!data || data.length === 0) {
       return NextResponse.json(
@@ -35,13 +32,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Process each operation - only close operations
-    const operations = data.map(operation => {
-      // Calculate SOL recovered only from close operations (rent recovery)
+    const operations = data.map((operation) => {
       const avgSolPerClose = 0.002;
       const totalSolRecovered = (operation.close_count || 0) * avgSolPerClose;
-
-      // Format wallet address (first 3 and last 3 characters)
       const shortWallet = `${operation.wallet_address.slice(0, 3)}..${operation.wallet_address.slice(-3)}`;
 
       return {
@@ -49,18 +42,17 @@ export async function GET(request: NextRequest) {
         totalSolRecovered,
         lastOperationTime: operation.last_operation_time,
         operationType: 'close' as const,
-        shortWallet
+        shortWallet,
       };
     });
 
     return NextResponse.json(operations);
-
   } catch (error) {
     console.error('Error in last-reload API:', error);
     return NextResponse.json(
-      { 
+      {
         error: 'Internal server error',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error instanceof Error ? error.message : 'Unknown error',
       },
       { status: 500 }
     );
@@ -73,7 +65,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { walletAddress, solRecovered, operationType } = body;
 
-    // Input validation
     if (!walletAddress || typeof walletAddress !== 'string') {
       return NextResponse.json(
         { error: 'Invalid wallet address' },
@@ -88,7 +79,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate wallet address format
     if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(walletAddress)) {
       return NextResponse.json(
         { error: 'Invalid wallet address format' },
@@ -96,51 +86,40 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get current data
-    const { data: existing } = await supabase
-      .from('token_operations')
-      .select('total_sol_recovered')
-      .eq('wallet_address', walletAddress)
-      .single();
+    const existing = await queryOne<{ total_sol_recovered: number }>(
+      `SELECT total_sol_recovered FROM token_operations WHERE wallet_address = $1`,
+      [walletAddress],
+    );
 
     const currentTotal = existing?.total_sol_recovered || 0;
     const newTotal = currentTotal + solRecovered;
+    const lastOperationTime = new Date().toISOString();
 
-    // Update the total SOL recovered
-    const { error } = await supabase
-      .from('token_operations')
-      .upsert({
-        wallet_address: walletAddress,
-        total_sol_recovered: newTotal,
-        last_operation_time: new Date().toISOString()
-      }, {
-        onConflict: 'wallet_address'
-      });
-
-    if (error) {
-      console.error('Error updating SOL recovered:', error);
-      return NextResponse.json(
-        { error: 'Failed to update SOL recovered' },
-        { status: 500 }
-      );
-    }
+    await query(
+      `INSERT INTO token_operations (wallet_address, total_sol_recovered, last_operation_time)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (wallet_address)
+       DO UPDATE SET
+         total_sol_recovered = EXCLUDED.total_sol_recovered,
+         last_operation_time = EXCLUDED.last_operation_time`,
+      [walletAddress, newTotal, lastOperationTime],
+    );
 
     return NextResponse.json({
       success: true,
       walletAddress,
       totalSolRecovered: newTotal,
       addedAmount: solRecovered,
-      message: `Added ${solRecovered} SOL, total now ${newTotal.toFixed(4)} SOL`
+      message: `Added ${solRecovered} SOL, total now ${newTotal.toFixed(4)} SOL`,
     });
-
   } catch (error) {
     console.error('Error updating SOL recovered:', error);
     return NextResponse.json(
-      { 
+      {
         error: 'Failed to update SOL recovered',
-        details: error instanceof Error ? error.message : 'Unknown error'
+        details: error instanceof Error ? error.message : 'Unknown error',
       },
       { status: 500 }
     );
   }
-} 
+}

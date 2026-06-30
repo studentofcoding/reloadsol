@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { assertSessionWallet, requireWalletSession } from '@/utils/api-auth';
-import { supabase } from '@/utils/supabase';
+import { query } from '@/utils/db';
 
 interface TrackOperationRequest {
   walletAddress: string;
@@ -46,73 +46,20 @@ function mapOperationToType(operationType: 'buy' | 'sell' | 'close'): 'swap' | '
   return operationType === 'close' ? 'close' : 'swap';
 }
 
-// Direct update function (server-side version)
 async function directUpdateOperation(
-  walletAddress: string, 
+  walletAddress: string,
   type: 'close' | 'swap',
   count: number,
   solBalance?: number,
 ) {
-  // Atomic operation using raw SQL to prevent race conditions
   const timestamp = new Date().toISOString();
-  
-  // Build the SQL query for atomic increment
   const swapIncrement = type === 'swap' ? count : 0;
   const closeIncrement = type === 'close' ? count : 0;
-  
-  // Use PostgreSQL's atomic upsert via Supabase RPC
-  // This calls a stored procedure that handles the atomic increment
-  // 
-  // REQUIRED: Create this PostgreSQL function in your Supabase database:
-  // 
-  // CREATE OR REPLACE FUNCTION increment_operation_counts(
-  //   p_wallet_address TEXT,
-  //   p_swap_increment INTEGER,
-  //   p_close_increment INTEGER,
-  //   p_sol_balance NUMERIC DEFAULT NULL,
-  //   p_timestamp TIMESTAMPTZ DEFAULT NOW()
-  // ) RETURNS VOID AS $$
-  // BEGIN
-  //   INSERT INTO token_operations (
-  //     wallet_address, 
-  //     swap_count, 
-  //     close_count, 
-  //     last_operation_time,
-  //     sol_balance,
-  //     last_balance_update
-  //   ) VALUES (
-  //     p_wallet_address, 
-  //     p_swap_increment, 
-  //     p_close_increment, 
-  //     p_timestamp,
-  //     COALESCE(p_sol_balance, 0),
-  //     p_timestamp
-  //   )
-  //   ON CONFLICT (wallet_address) 
-  //   DO UPDATE SET
-  //     swap_count = COALESCE(token_operations.swap_count, 0) + p_swap_increment,
-  //     close_count = COALESCE(token_operations.close_count, 0) + p_close_increment,
-  //     last_operation_time = p_timestamp,
-  //     sol_balance = CASE 
-  //       WHEN p_sol_balance IS NOT NULL THEN p_sol_balance 
-  //       ELSE COALESCE(token_operations.sol_balance, 0) 
-  //     END,
-  //     last_balance_update = CASE 
-  //       WHEN p_sol_balance IS NOT NULL THEN p_timestamp 
-  //       ELSE COALESCE(token_operations.last_balance_update, token_operations.last_operation_time) 
-  //     END;
-  // END;
-  // $$ LANGUAGE plpgsql;
-  //
-  const { error } = await supabase.rpc('increment_operation_counts', {
-    p_wallet_address: walletAddress,
-    p_swap_increment: swapIncrement,
-    p_close_increment: closeIncrement,
-    p_sol_balance: solBalance,
-    p_timestamp: timestamp
-  });
 
-  if (error) throw error;
+  await query(
+    `SELECT increment_operation_counts($1, $2, $3, $4, $5)`,
+    [walletAddress, swapIncrement, closeIncrement, solBalance ?? null, timestamp],
+  );
 }
 
 /* SECURITY_REVIEW
@@ -132,13 +79,13 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    
+
     // Handle both old and new request formats
     let walletAddress: string;
     let operationType: 'buy' | 'sell' | 'close';
     let successCount: number;
     let solBalance: number | undefined;
-    
+
     if ('type' in body) {
       // New simplified format from client supabase utils
       const directUpdate = body as DirectUpdateRequest;
@@ -154,7 +101,7 @@ export async function POST(request: NextRequest) {
       successCount = trackRequest.successCount;
       solBalance = trackRequest.solBalance;
     }
-    
+
     // Input validation
     if (!walletAddress || typeof walletAddress !== 'string') {
       return NextResponse.json(
@@ -196,7 +143,7 @@ export async function POST(request: NextRequest) {
 
     // Map operation type for database
     const dbOperationType = mapOperationToType(operationType);
-    
+
     // Update database
     await directUpdateOperation(
       walletAddress,
@@ -227,9 +174,9 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Error tracking operation:', error);
-    
+
     return NextResponse.json(
-      { 
+      {
         error: 'Failed to track operation',
         details: error instanceof Error ? error.message : 'Unknown error'
       },
@@ -246,4 +193,4 @@ export async function GET() {
     supportedMethods: ['POST'],
     timestamp: new Date().toISOString()
   });
-} 
+}

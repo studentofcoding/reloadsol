@@ -35,7 +35,7 @@ read_env_var() {
 [[ -f .env ]] || fail "Missing .env — copy from .env.docker.example"
 
 missing=()
-for key in SUPABASE_URL SUPABASE_SECRET_KEY API_ID API_HASH PHONE_NUMBER; do
+for key in DATABASE_URL API_ID API_HASH PHONE_NUMBER; do
   val="$(read_env_var "$key" 2>/dev/null || true)"
   if [[ -z "$val" ]]; then
     missing+=("$key")
@@ -69,7 +69,7 @@ fi
 
 log "Env OK (${channel_count} channel IDs configured)"
 log "Session OK (${SESSION_FILE})"
-log "Reminder: apply supabase/patches/social_signals.sql in Supabase if not done yet"
+log "Reminder: ensure db/init schema is applied (automatic on fresh docker compose up)"
 
 if [[ "$CHECK_ONLY" == true ]]; then
   log "Checks passed (--check, skipping wallet seed)"

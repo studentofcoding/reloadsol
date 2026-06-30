@@ -1,9 +1,17 @@
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
 import { log } from '@/utils/unified-logger'
 import { formatAppTimeWithZone } from '@/utils/datetime'
 import { STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker-constants'
 
 export { STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker-constants'
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: string }).code === '23505'
+  )
+}
 
 export type TokenLabel = 'valid' | 'traded_live' | 'potential' | 'rugged' | 'watching'
 
@@ -235,23 +243,26 @@ export function fixTrackingTimeline(record: McapSnapshot, persist = false): Mcap
   const repaired = normalizeTrackingTimeline(record)
   const backfilled = reconcileMilestonesFromGrowth(record)
   if ((repaired || backfilled) && persist) {
-    void supabase
-      .from('token_mcap_tracking')
-      .update({
-        first_seen_at: record.first_seen_at,
-        when_reach_80mc: record.when_reach_80mc,
-        when_reach_120mc: record.when_reach_120mc,
-        when_reach_200mc: record.when_reach_200mc,
+    void query(
+      `UPDATE token_mcap_tracking SET
+         first_seen_at = $2,
+         when_reach_80mc = $3,
+         when_reach_120mc = $4,
+         when_reach_200mc = $5
+       WHERE token_address = $1`,
+      [
+        record.token_address,
+        record.first_seen_at,
+        record.when_reach_80mc,
+        record.when_reach_120mc,
+        record.when_reach_200mc,
+      ],
+    ).catch((error) => {
+      log.warn('price_tracking', 'Failed to persist timeline repair', {
+        tokenAddress: record.token_address,
+        error: error instanceof Error ? error.message : String(error),
       })
-      .eq('token_address', record.token_address)
-      .then(({ error }) => {
-        if (error) {
-          log.warn('price_tracking', 'Failed to persist timeline repair', {
-            tokenAddress: record.token_address,
-            error: error.message,
-          })
-        }
-      })
+    })
   }
   return record
 }
@@ -441,15 +452,13 @@ async function checkAndSendThresholdNotifications(
       // Check recent notification from dedicated table
       let recentlyNotified = false
       try {
-        const { data, error } = await supabase
-          .from('mcap_threshold_notifications')
-          .select('notified_at')
-          .eq('token_address', record.token_address)
-          .eq('threshold', threshold)
-          .order('notified_at', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        if (error) throw error
+        const data = await queryOne<{ notified_at: string }>(
+          `SELECT notified_at FROM mcap_threshold_notifications
+           WHERE token_address = $1 AND threshold = $2
+           ORDER BY notified_at DESC
+           LIMIT 1`,
+          [record.token_address, threshold],
+        )
         if (data?.notified_at) {
           const notifiedAt = new Date(data.notified_at).getTime()
           const hoursSince = (Date.now() - notifiedAt) / (1000 * 60 * 60)
@@ -483,16 +492,18 @@ async function checkAndSendThresholdNotifications(
 
         // Record notification
         try {
-          const { error } = await supabase
-            .from('mcap_threshold_notifications')
-            .insert({
-              token_address: record.token_address,
-              token_symbol: tokenSymbol,
+          await query(
+            `INSERT INTO mcap_threshold_notifications
+               (token_address, token_symbol, threshold, growth_percent, notified_at)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+              record.token_address,
+              tokenSymbol,
               threshold,
-              growth_percent: growthPercent,
-              notified_at: new Date().toISOString()
-            })
-          if (error) throw error
+              growthPercent,
+              new Date().toISOString(),
+            ],
+          )
         } catch (e) {
           log.error('discord_notification', 'Failed recording threshold notification', e as Error, {
             tokenAddress: record.token_address,
@@ -653,17 +664,14 @@ export async function trackTokenMcap(
     // Check database for existing record (robust handling)
     let existingRecord: McapSnapshot | null = null
     try {
-      const { data, error } = await supabase
-        .from('token_mcap_tracking')
-        .select('*')
-        .eq('token_address', tokenAddress)
-        .order('last_updated_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      if (error) {
-        throw error
-      }
-      existingRecord = (data as McapSnapshot) ?? null
+      const data = await queryOne<McapSnapshot>(
+        `SELECT * FROM token_mcap_tracking
+         WHERE token_address = $1
+         ORDER BY last_updated_at DESC
+         LIMIT 1`,
+        [tokenAddress],
+      )
+      existingRecord = data ?? null
       if (existingRecord) {
         normalizeTrackingTimeline(existingRecord)
       }
@@ -941,15 +949,13 @@ type InsertMcapResult =
 
 async function fetchMcapRecordByAddress(tokenAddress: string): Promise<McapSnapshot | null> {
   try {
-    const { data, error } = await supabase
-      .from('token_mcap_tracking')
-      .select('*')
-      .eq('token_address', tokenAddress)
-      .maybeSingle()
-    if (error || !data) return null
-    const record = data as McapSnapshot
-    normalizeTrackingTimeline(record)
-    return record
+    const data = await queryOne<McapSnapshot>(
+      `SELECT * FROM token_mcap_tracking WHERE token_address = $1`,
+      [tokenAddress],
+    )
+    if (!data) return null
+    normalizeTrackingTimeline(data)
+    return data
   } catch {
     return null
   }
@@ -959,21 +965,34 @@ async function fetchMcapRecordByAddress(tokenAddress: string): Promise<McapSnaps
 async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult> {
   try {
     normalizeTrackingTimeline(record)
-    const { error } = await supabase.from('token_mcap_tracking').insert({
-      token_address: record.token_address,
-      token_symbol: record.token_symbol,
-      first_mcap: record.first_mcap,
-      current_mcap: record.current_mcap,
-      first_seen_at: record.first_seen_at,
-      last_updated_at: record.last_updated_at,
-      mcap_growth_percent: record.mcap_growth_percent,
-      when_reach_80mc: record.when_reach_80mc,
-      when_reach_120mc: record.when_reach_120mc,
-      when_reach_200mc: record.when_reach_200mc,
-      is_tracking_stuck: record.is_tracking_stuck === true,
-    })
+    await query(
+      `INSERT INTO token_mcap_tracking (
+         token_address, token_symbol, first_mcap, current_mcap,
+         first_seen_at, last_updated_at, mcap_growth_percent,
+         when_reach_80mc, when_reach_120mc, when_reach_200mc, is_tracking_stuck
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        record.token_address,
+        record.token_symbol,
+        record.first_mcap,
+        record.current_mcap,
+        record.first_seen_at,
+        record.last_updated_at,
+        record.mcap_growth_percent,
+        record.when_reach_80mc,
+        record.when_reach_120mc,
+        record.when_reach_200mc,
+        record.is_tracking_stuck === true,
+      ],
+    )
 
-    if (error?.code === '23505') {
+    log.debug('price_tracking', 'Inserted MCap record', {
+      tokenAddress: record.token_address,
+      tokenSymbol: record.token_symbol,
+    })
+    return { status: 'inserted' }
+  } catch (error) {
+    if (isUniqueViolation(error)) {
       const existing = await fetchMcapRecordByAddress(record.token_address)
       if (existing) {
         log.info('price_tracking', 'Insert conflict — using existing MCap record', {
@@ -985,22 +1004,6 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
       }
     }
 
-    if (error) {
-      log.error('price_tracking', 'Error inserting MCap record', error as Error, {
-        tokenAddress: record.token_address,
-        tokenSymbol: record.token_symbol,
-      })
-      const existing = await fetchMcapRecordByAddress(record.token_address)
-      if (existing) return { status: 'conflict', existing }
-      return { status: 'inserted' }
-    }
-
-    log.debug('price_tracking', 'Inserted MCap record', {
-      tokenAddress: record.token_address,
-      tokenSymbol: record.token_symbol,
-    })
-    return { status: 'inserted' }
-  } catch (error) {
     log.error('price_tracking', 'Error in insertMcapRecord', error as Error, {
       tokenAddress: record.token_address,
       tokenSymbol: record.token_symbol,
@@ -1015,37 +1018,43 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
 async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boolean = true): Promise<void> {
   try {
     const repairedTimeline = normalizeTrackingTimeline(record)
-    const updateData: Record<string, unknown> = {
-      current_mcap: record.current_mcap,
-      last_updated_at: record.last_updated_at,
-      mcap_growth_percent: record.mcap_growth_percent,
-      is_tracking_stuck: record.is_tracking_stuck === true,
-    }
+    const sets = [
+      'current_mcap = $2',
+      'last_updated_at = $3',
+      'mcap_growth_percent = $4',
+      'is_tracking_stuck = $5',
+    ]
+    const params: unknown[] = [
+      record.token_address,
+      record.current_mcap,
+      record.last_updated_at,
+      record.mcap_growth_percent,
+      record.is_tracking_stuck === true,
+    ]
+    let paramIdx = 6
 
     if (repairedTimeline) {
-      updateData.first_seen_at = record.first_seen_at
-      updateData.when_reach_80mc = record.when_reach_80mc
-      updateData.when_reach_120mc = record.when_reach_120mc
-      updateData.when_reach_200mc = record.when_reach_200mc
+      sets.push(`first_seen_at = $${paramIdx++}`)
+      params.push(record.first_seen_at)
+      sets.push(`when_reach_80mc = $${paramIdx++}`)
+      params.push(record.when_reach_80mc)
+      sets.push(`when_reach_120mc = $${paramIdx++}`)
+      params.push(record.when_reach_120mc)
+      sets.push(`when_reach_200mc = $${paramIdx++}`)
+      params.push(record.when_reach_200mc)
     } else if (includeThresholds) {
-      updateData.when_reach_80mc = record.when_reach_80mc
-      updateData.when_reach_120mc = record.when_reach_120mc
-      updateData.when_reach_200mc = record.when_reach_200mc
+      sets.push(`when_reach_80mc = $${paramIdx++}`)
+      params.push(record.when_reach_80mc)
+      sets.push(`when_reach_120mc = $${paramIdx++}`)
+      params.push(record.when_reach_120mc)
+      sets.push(`when_reach_200mc = $${paramIdx++}`)
+      params.push(record.when_reach_200mc)
     }
 
-    const { error } = await supabase
-      .from('token_mcap_tracking')
-      .update(updateData)
-      .eq('token_address', record.token_address)
-
-    if (error) {
-      log.error('price_tracking', 'Error updating MCap record', error as Error, {
-        tokenAddress: record.token_address,
-        tokenSymbol: record.token_symbol,
-        includeThresholds
-      })
-      return
-    }
+    await query(
+      `UPDATE token_mcap_tracking SET ${sets.join(', ')} WHERE token_address = $1`,
+      params,
+    )
 
     log.debug('price_tracking', 'Updated MCap record', {
       tokenAddress: record.token_address,
@@ -1100,16 +1109,11 @@ export async function cleanupOldMcapRecords(daysOld: number = 30): Promise<void>
     const cutoffDate = new Date()
     cutoffDate.setDate(cutoffDate.getDate() - daysOld)
 
-    const { error } = await supabase
-      .from('token_mcap_tracking')
-      .delete()
-      .lt('last_updated_at', cutoffDate.toISOString())
-
-    if (error) {
-      console.error('Error cleaning up old MCap records:', error)
-    } else {
-      console.log(`Cleaned up MCap records older than ${daysOld} days`)
-    }
+    const { rowCount } = await query(
+      `DELETE FROM token_mcap_tracking WHERE last_updated_at < $1`,
+      [cutoffDate.toISOString()],
+    )
+    console.log(`Cleaned up ${rowCount} MCap records older than ${daysOld} days`)
   } catch (error) {
     console.error('Error in cleanupOldMcapRecords:', error)
   }
@@ -1126,16 +1130,11 @@ export async function cleanupOldNotificationRecords(daysOld: number = 7): Promis
     const cutoffDate = new Date()
     cutoffDate.setDate(cutoffDate.getDate() - daysOld)
 
-    const { error } = await supabase
-      .from('mcap_threshold_notifications')
-      .delete()
-      .lt('notified_at', cutoffDate.toISOString())
-
-    if (error) {
-      console.error('Error cleaning up old notification records:', error)
-    } else {
-      console.log(`Cleaned up notification records older than ${daysOld} days`)
-    }
+    const { rowCount } = await query(
+      `DELETE FROM mcap_threshold_notifications WHERE notified_at < $1`,
+      [cutoffDate.toISOString()],
+    )
+    console.log(`Cleaned up ${rowCount} notification records older than ${daysOld} days`)
   } catch (error) {
     console.error('Error in cleanupOldNotificationRecords:', error)
   }
@@ -1256,16 +1255,17 @@ export async function fetchRecentMcapTrackingRows(params: {
   const limit = params.limit ?? 200
   const cutoff = new Date(Date.now() - recencyMinutes * 60 * 1000).toISOString()
 
-  const { data, error } = await supabase
-    .from('token_mcap_tracking')
-    .select('*')
-    .gte('last_updated_at', cutoff)
-    .order('last_updated_at', { ascending: false })
-    .limit(limit)
+  const { rows: data } = await query<McapSnapshot>(
+    `SELECT * FROM token_mcap_tracking
+     WHERE last_updated_at >= $1
+     ORDER BY last_updated_at DESC
+     LIMIT $2`,
+    [cutoff, limit],
+  )
 
-  if (error || !data) return []
+  if (!data) return []
 
-  return (data as McapSnapshot[]).map((row) => {
+  return data.map((row) => {
     normalizeTrackingTimeline(row)
     return row
   })
@@ -1282,13 +1282,19 @@ export async function getTrackingHealthStats(): Promise<{
   timelineInconsistentCount: number
 }> {
   try {
-    const { data, error } = await supabase
-      .from('token_mcap_tracking')
-      .select(
-        'mcap_growth_percent, first_seen_at, last_updated_at, is_tracking_stuck, when_reach_80mc, when_reach_120mc, when_reach_200mc',
-      )
-
-    if (error) throw error
+    const { rows: data } = await query<{
+      mcap_growth_percent: number | null
+      first_seen_at: string
+      last_updated_at: string
+      is_tracking_stuck: boolean
+      when_reach_80mc: string | null
+      when_reach_120mc: string | null
+      when_reach_200mc: string | null
+    }>(
+      `SELECT mcap_growth_percent, first_seen_at, last_updated_at, is_tracking_stuck,
+              when_reach_80mc, when_reach_120mc, when_reach_200mc
+       FROM token_mcap_tracking`,
+    )
 
     const now = Date.now()
     const oneHourAgo = now - 60 * 60 * 1000

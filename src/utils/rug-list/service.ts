@@ -1,4 +1,4 @@
-import { supabase } from '@/utils/supabase';
+import { query, queryOne } from '@/utils/db';
 import type { TokenRugSource } from '@/types/rug-list';
 import { removePotentialEntry } from '@/utils/dlmm/db';
 import {
@@ -22,81 +22,77 @@ async function syncTradingSignalRugged(
   tokenSymbol?: string | null,
 ): Promise<void> {
   const now = new Date().toISOString();
-  const { data: existing } = await supabase
-    .from('trading_signals')
-    .select('token_address, token_symbol, source')
-    .eq('token_address', tokenAddress)
-    .maybeSingle();
+  const existing = await queryOne<{
+    token_address: string;
+    token_symbol: string | null;
+    source: string;
+  }>(
+    `SELECT token_address, token_symbol, source FROM trading_signals
+     WHERE token_address = $1 LIMIT 1`,
+    [tokenAddress],
+  );
 
   if (existing) {
-    await supabase
-      .from('trading_signals')
-      .update({ label: 'rugged', updated_at: now })
-      .eq('token_address', tokenAddress);
+    await query(
+      `UPDATE trading_signals SET label = 'rugged', updated_at = $2
+       WHERE token_address = $1`,
+      [tokenAddress, now],
+    );
     return;
   }
 
-  await supabase.from('trading_signals').insert({
-    token_address: tokenAddress,
-    token_symbol: tokenSymbol || 'UNKNOWN',
-    label: 'rugged',
-    market_cap: 0,
-    price: 0,
-    initial_price: 0,
-    updated_at: now,
-    source: 'manual',
-  });
+  await query(
+    `INSERT INTO trading_signals (
+       token_address, token_symbol, label, market_cap, price, initial_price,
+       updated_at, source
+     ) VALUES ($1, $2, 'rugged', 0, 0, 0, $3, 'manual')`,
+    [tokenAddress, tokenSymbol || 'UNKNOWN', now],
+  );
 }
 
 async function syncMcapTrackingRugged(tokenAddress: string): Promise<void> {
-  const { data: existing } = await supabase
-    .from('token_mcap_tracking')
-    .select('token_address')
-    .eq('token_address', tokenAddress)
-    .maybeSingle();
+  const existing = await queryOne<{ token_address: string }>(
+    `SELECT token_address FROM token_mcap_tracking WHERE token_address = $1 LIMIT 1`,
+    [tokenAddress],
+  );
 
   if (!existing) return;
 
-  await supabase
-    .from('token_mcap_tracking')
-    .update({ label: 'rugged', last_updated_at: new Date().toISOString() })
-    .eq('token_address', tokenAddress);
+  await query(
+    `UPDATE token_mcap_tracking SET label = 'rugged', last_updated_at = $2
+     WHERE token_address = $1`,
+    [tokenAddress, new Date().toISOString()],
+  );
 }
 
 async function revertTradingSignalRugged(tokenAddress: string): Promise<void> {
-  const { data: existing } = await supabase
-    .from('trading_signals')
-    .select('label')
-    .eq('token_address', tokenAddress)
-    .maybeSingle();
+  const existing = await queryOne<{ label: string | null }>(
+    `SELECT label FROM trading_signals WHERE token_address = $1 LIMIT 1`,
+    [tokenAddress],
+  );
 
   if (!existing || existing.label !== 'rugged') return;
 
-  await supabase
-    .from('trading_signals')
-    .update({
-      label: 'watching',
-      updated_at: new Date().toISOString(),
-    })
-    .eq('token_address', tokenAddress);
+  await query(
+    `UPDATE trading_signals SET label = 'watching', updated_at = $2
+     WHERE token_address = $1`,
+    [tokenAddress, new Date().toISOString()],
+  );
 }
 
 async function revertMcapTrackingRugged(tokenAddress: string): Promise<void> {
-  const { data: existing } = await supabase
-    .from('token_mcap_tracking')
-    .select('label')
-    .eq('token_address', tokenAddress)
-    .maybeSingle();
+  const existing = await queryOne<{ label: string | null }>(
+    `SELECT label FROM token_mcap_tracking WHERE token_address = $1 LIMIT 1`,
+    [tokenAddress],
+  );
 
   if (!existing || existing.label !== 'rugged') return;
 
-  await supabase
-    .from('token_mcap_tracking')
-    .update({
-      label: 'watching',
-      last_updated_at: new Date().toISOString(),
-    })
-    .eq('token_address', tokenAddress);
+  await query(
+    `UPDATE token_mcap_tracking SET label = 'watching', last_updated_at = $2
+     WHERE token_address = $1`,
+    [tokenAddress, new Date().toISOString()],
+  );
 }
 
 /** Single write path: upsert rug list + sync legacy labels + drop from DLMM potential. */

@@ -1,20 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { buildEntryFeatureSnapshot } from './entry-feature-snapshot'
 
-vi.mock('@/utils/supabase', () => ({
-  supabase: {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          order: () => ({
-            limit: () => ({
-              maybeSingle: () => Promise.resolve({ data: null, error: null }),
-            }),
-          }),
-        }),
-      }),
-    }),
-  },
+vi.mock('@/utils/db', () => ({
+  queryOne: vi.fn().mockResolvedValue(null),
 }))
 vi.mock('@/utils/jupiter-metadata', () => ({
   fetchTokenMetadataFromJupiter: vi.fn(),

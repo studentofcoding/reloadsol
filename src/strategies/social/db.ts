@@ -1,5 +1,5 @@
-import { supabase } from '@/utils/supabase'
-import { isSupabaseCircuitOpen, formatSupabaseError } from '@/utils/db-health'
+import { query, queryOne } from '@/utils/db'
+import { isDbCircuitOpen, formatDbConnectionError } from '@/utils/db-health'
 import type {
   SocialIngestEvent,
   SocialTokenEventRow,
@@ -7,9 +7,32 @@ import type {
   TrackedWalletRow,
 } from './types'
 
-function isMissingTableError(message?: string): boolean {
-  if (!message) return false
-  return message.includes('does not exist') || message.includes('42P01')
+function isMissingTableError(error: unknown): boolean {
+  if (typeof error === 'object' && error !== null) {
+    const e = error as { code?: string; message?: string }
+    if (e.code === '42P01') return true
+    if (e.message?.includes('does not exist')) return true
+  }
+  if (error instanceof Error) {
+    return error.message.includes('does not exist') || error.message.includes('42P01')
+  }
+  return false
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    return String((error as { message: unknown }).message)
+  }
+  return String(error)
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: string }).code === '23505'
+  )
 }
 
 type RollupEventRow = Pick<
@@ -32,55 +55,65 @@ export async function insertSocialEvents(
 ): Promise<{ inserted: number; skipped: number; errors: string[] }> {
   if (events.length === 0) return { inserted: 0, skipped: 0, errors: [] }
 
-  const rows = events.map((e) => ({
-    token_address: e.token_address,
-    event_type: e.event_type,
-    source: e.source,
-    channel_id: e.channel_id ?? null,
-    channel_label: e.channel_label ?? null,
-    wallet_address: e.wallet_address ?? null,
-    wallet_label: e.wallet_label ?? null,
-    external_message_id: e.external_message_id ?? null,
-    dedupe_key: buildDedupeKey(e),
-    occurred_at: e.occurred_at ?? new Date().toISOString(),
-    raw_metadata: e.raw_metadata ?? {},
-  }))
+  const values: unknown[] = []
+  const placeholders: string[] = []
+  let param = 1
 
-  const { data, error } = await supabase
-    .from('social_token_events')
-    .upsert(rows, {
-      onConflict: 'dedupe_key',
-      ignoreDuplicates: true,
-    })
-    .select('id')
-
-  if (error) {
-    if (isMissingTableError(error.message)) {
-      return { inserted: 0, skipped: events.length, errors: [error.message] }
-    }
-    throw new Error(error.message)
+  for (const e of events) {
+    placeholders.push(
+      `($${param}, $${param + 1}, $${param + 2}, $${param + 3}, $${param + 4}, $${param + 5}, $${param + 6}, $${param + 7}, $${param + 8}, $${param + 9}, $${param + 10})`,
+    )
+    values.push(
+      e.token_address,
+      e.event_type,
+      e.source,
+      e.channel_id ?? null,
+      e.channel_label ?? null,
+      e.wallet_address ?? null,
+      e.wallet_label ?? null,
+      e.external_message_id ?? null,
+      buildDedupeKey(e),
+      e.occurred_at ?? new Date().toISOString(),
+      JSON.stringify(e.raw_metadata ?? {}),
+    )
+    param += 11
   }
 
-  const inserted = data?.length ?? 0
-  return { inserted, skipped: events.length - inserted, errors: [] }
+  try {
+    const { rows } = await query<{ id: string }>(
+      `INSERT INTO social_token_events (
+         token_address, event_type, source, channel_id, channel_label,
+         wallet_address, wallet_label, external_message_id, dedupe_key,
+         occurred_at, raw_metadata
+       ) VALUES ${placeholders.join(', ')}
+       ON CONFLICT (dedupe_key) DO NOTHING
+       RETURNING id`,
+      values,
+    )
+
+    const inserted = rows.length
+    return { inserted, skipped: events.length - inserted, errors: [] }
+  } catch (error) {
+    if (isMissingTableError(error)) {
+      return { inserted: 0, skipped: events.length, errors: [errorMessage(error)] }
+    }
+    throw new Error(errorMessage(error))
+  }
 }
 
 export async function fetchSocialRollup(
   tokenAddress: string,
 ): Promise<SocialTokenRollupRow | null> {
-  const { data, error } = await supabase
-    .from('social_token_rollups')
-    .select('*')
-    .eq('token_address', tokenAddress)
-    .maybeSingle()
-
-  if (error) {
-    if (isMissingTableError(error.message)) return null
-    console.warn('[social/db] fetchSocialRollup failed:', error.message)
+  try {
+    return await queryOne<SocialTokenRollupRow>(
+      `SELECT * FROM social_token_rollups WHERE token_address = $1 LIMIT 1`,
+      [tokenAddress],
+    )
+  } catch (error) {
+    if (isMissingTableError(error)) return null
+    console.warn('[social/db] fetchSocialRollup failed:', errorMessage(error))
     return null
   }
-
-  return (data as SocialTokenRollupRow | null) ?? null
 }
 
 export async function fetchSocialRollupsMap(
@@ -89,57 +122,55 @@ export async function fetchSocialRollupsMap(
   const unique = Array.from(new Set(tokenAddresses.filter(Boolean)))
   if (unique.length === 0) return new Map()
 
-  const { data, error } = await supabase
-    .from('social_token_rollups')
-    .select('*')
-    .in('token_address', unique)
+  try {
+    const { rows } = await query<SocialTokenRollupRow>(
+      `SELECT * FROM social_token_rollups WHERE token_address = ANY($1::text[])`,
+      [unique],
+    )
 
-  if (error) {
-    if (isMissingTableError(error.message)) return new Map()
-    console.warn('[social/db] fetchSocialRollupsMap failed:', error.message)
+    const map = new Map<string, SocialTokenRollupRow>()
+    for (const row of rows) {
+      map.set(row.token_address, row)
+    }
+    return map
+  } catch (error) {
+    if (isMissingTableError(error)) return new Map()
+    console.warn('[social/db] fetchSocialRollupsMap failed:', errorMessage(error))
     return new Map()
   }
-
-  const map = new Map<string, SocialTokenRollupRow>()
-  for (const row of (data ?? []) as SocialTokenRollupRow[]) {
-    map.set(row.token_address, row)
-  }
-  return map
 }
 
 export async function fetchSocialRollups(limit = 100): Promise<SocialTokenRollupRow[]> {
-  const { data, error } = await supabase
-    .from('social_token_rollups')
-    .select('*')
-    .order('updated_at', { ascending: false })
-    .limit(limit)
-
-  if (error) {
-    if (isMissingTableError(error.message)) return []
-    console.warn('[social/db] fetchSocialRollups failed:', error.message)
+  try {
+    const { rows } = await query<SocialTokenRollupRow>(
+      `SELECT * FROM social_token_rollups ORDER BY updated_at DESC LIMIT $1`,
+      [limit],
+    )
+    return rows
+  } catch (error) {
+    if (isMissingTableError(error)) return []
+    console.warn('[social/db] fetchSocialRollups failed:', errorMessage(error))
     return []
   }
-
-  return (data ?? []) as SocialTokenRollupRow[]
 }
 
 export async function fetchRecentSocialEvents(
   tokenAddress: string,
   limit = 20,
 ): Promise<SocialTokenEventRow[]> {
-  const { data, error } = await supabase
-    .from('social_token_events')
-    .select('*')
-    .eq('token_address', tokenAddress)
-    .order('occurred_at', { ascending: false })
-    .limit(limit)
-
-  if (error) {
-    if (isMissingTableError(error.message)) return []
+  try {
+    const { rows } = await query<SocialTokenEventRow>(
+      `SELECT * FROM social_token_events
+       WHERE token_address = $1
+       ORDER BY occurred_at DESC
+       LIMIT $2`,
+      [tokenAddress, limit],
+    )
+    return rows
+  } catch (error) {
+    if (isMissingTableError(error)) return []
     return []
   }
-
-  return (data ?? []) as SocialTokenEventRow[]
 }
 
 export async function fetchRecentSocialEventsFeed(options?: {
@@ -151,34 +182,32 @@ export async function fetchRecentSocialEventsFeed(options?: {
   const hours = options?.hours ?? 24
   const since = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString()
 
-  let query = supabase
-    .from('social_token_events')
-    .select('*')
-    .gte('occurred_at', since)
-    .order('occurred_at', { ascending: false })
-    .limit(limit)
+  const sql = options?.telegramOnly
+    ? `SELECT * FROM social_token_events
+       WHERE occurred_at >= $1 AND source != 'tracked_wallet_poll'
+       ORDER BY occurred_at DESC
+       LIMIT $2`
+    : `SELECT * FROM social_token_events
+       WHERE occurred_at >= $1
+       ORDER BY occurred_at DESC
+       LIMIT $2`
 
-  if (options?.telegramOnly) {
-    query = query.neq('source', 'tracked_wallet_poll')
-  }
-
-  const { data, error } = await query
-
-  if (error) {
-    if (isMissingTableError(error.message)) return []
-    console.warn('[social/db] fetchRecentSocialEventsFeed failed:', error.message)
+  try {
+    const { rows } = await query<SocialTokenEventRow>(sql, [since, limit])
+    return rows
+  } catch (error) {
+    if (isMissingTableError(error)) return []
+    console.warn('[social/db] fetchRecentSocialEventsFeed failed:', errorMessage(error))
     return []
   }
-
-  return (data ?? []) as SocialTokenEventRow[]
 }
 
 export async function refreshSocialRollups(now = new Date()): Promise<{
   tokensUpdated: number
   error?: string
 }> {
-  if (isSupabaseCircuitOpen()) {
-    return { tokensUpdated: 0, error: 'Supabase circuit open — rollup skipped' }
+  if (isDbCircuitOpen()) {
+    return { tokensUpdated: 0, error: 'Database circuit open — rollup skipped' }
   }
 
   const nowIso = now.toISOString()
@@ -187,21 +216,25 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
   const t60 = new Date(now.getTime() - 60 * 60 * 1000).toISOString()
   const t24 = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
 
-  const { data: recentEvents, error: fetchError } = await supabase
-    .from('social_token_events')
-    .select('token_address, event_type, source, channel_id, channel_label, occurred_at')
-    .gte('occurred_at', t24)
-    .order('occurred_at', { ascending: true })
-
-  if (fetchError) {
-    if (isMissingTableError(fetchError.message)) {
-      return { tokensUpdated: 0, error: fetchError.message }
+  let recentEvents: RollupEventRow[]
+  try {
+    const { rows } = await query<RollupEventRow>(
+      `SELECT token_address, event_type, source, channel_id, channel_label, occurred_at
+       FROM social_token_events
+       WHERE occurred_at >= $1
+       ORDER BY occurred_at ASC`,
+      [t24],
+    )
+    recentEvents = rows
+  } catch (fetchError) {
+    if (isMissingTableError(fetchError)) {
+      return { tokensUpdated: 0, error: errorMessage(fetchError) }
     }
-    return { tokensUpdated: 0, error: formatSupabaseError(fetchError) }
+    return { tokensUpdated: 0, error: formatDbConnectionError(fetchError) }
   }
 
   const byToken = new Map<string, RollupEventRow[]>()
-  for (const row of (recentEvents ?? []) as RollupEventRow[]) {
+  for (const row of recentEvents) {
     const list = byToken.get(row.token_address) ?? []
     list.push(row)
     byToken.set(row.token_address, list)
@@ -263,56 +296,113 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
     return { tokensUpdated: 0 }
   }
 
-  const { error: upsertError } = await supabase
-    .from('social_token_rollups')
-    .upsert(rollups, { onConflict: 'token_address' })
+  const values: unknown[] = []
+  const placeholders: string[] = []
+  let param = 1
 
-  if (upsertError) {
-    return { tokensUpdated: 0, error: upsertError.message }
+  for (const r of rollups) {
+    placeholders.push(
+      `($${param}, $${param + 1}, $${param + 2}, $${param + 3}, $${param + 4}, $${param + 5}, $${param + 6}, $${param + 7}, $${param + 8}, $${param + 9}, $${param + 10}, $${param + 11}, $${param + 12})`,
+    )
+    values.push(
+      r.token_address,
+      r.first_seen_at,
+      r.first_source,
+      r.first_channel,
+      r.mention_count_5m,
+      r.mention_count_30m,
+      r.mention_count_24h,
+      r.unique_channel_count_30m,
+      r.smart_wallet_buy_count_1h,
+      r.smart_wallet_buy_sol_1h,
+      r.top_source,
+      r.last_event_at,
+      r.updated_at,
+    )
+    param += 13
+  }
+
+  try {
+    await query(
+      `INSERT INTO social_token_rollups (
+         token_address, first_seen_at, first_source, first_channel,
+         mention_count_5m, mention_count_30m, mention_count_24h,
+         unique_channel_count_30m, smart_wallet_buy_count_1h, smart_wallet_buy_sol_1h,
+         top_source, last_event_at, updated_at
+       ) VALUES ${placeholders.join(', ')}
+       ON CONFLICT (token_address) DO UPDATE SET
+         first_seen_at = EXCLUDED.first_seen_at,
+         first_source = EXCLUDED.first_source,
+         first_channel = EXCLUDED.first_channel,
+         mention_count_5m = EXCLUDED.mention_count_5m,
+         mention_count_30m = EXCLUDED.mention_count_30m,
+         mention_count_24h = EXCLUDED.mention_count_24h,
+         unique_channel_count_30m = EXCLUDED.unique_channel_count_30m,
+         smart_wallet_buy_count_1h = EXCLUDED.smart_wallet_buy_count_1h,
+         smart_wallet_buy_sol_1h = EXCLUDED.smart_wallet_buy_sol_1h,
+         top_source = EXCLUDED.top_source,
+         last_event_at = EXCLUDED.last_event_at,
+         updated_at = EXCLUDED.updated_at`,
+      values,
+    )
+  } catch (upsertError) {
+    return { tokensUpdated: 0, error: errorMessage(upsertError) }
   }
 
   return { tokensUpdated: rollups.length }
 }
 
 export async function listTrackedWallets(activeOnly = true): Promise<TrackedWalletRow[]> {
-  let query = supabase.from('tracked_wallets').select('*').order('label')
-  if (activeOnly) query = query.eq('is_active', true)
-
-  const { data, error } = await query
-  if (error) {
-    if (isMissingTableError(error.message)) return []
-    console.warn('[social/db] listTrackedWallets failed:', error.message)
+  try {
+    const sql = activeOnly
+      ? `SELECT * FROM tracked_wallets WHERE is_active = true ORDER BY label`
+      : `SELECT * FROM tracked_wallets ORDER BY label`
+    const { rows } = await query<TrackedWalletRow>(sql)
+    return rows
+  } catch (error) {
+    if (isMissingTableError(error)) return []
+    console.warn('[social/db] listTrackedWallets failed:', errorMessage(error))
     return []
   }
-
-  return (data ?? []) as TrackedWalletRow[]
 }
 
 export async function upsertTrackedWallet(
   wallet: Pick<TrackedWalletRow, 'address' | 'label' | 'tier' | 'tags' | 'is_active'>,
 ): Promise<boolean> {
-  const { error } = await supabase.from('tracked_wallets').upsert(
-    {
-      ...wallet,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'address' },
-  )
-
-  if (error) {
-    console.warn('[social/db] upsertTrackedWallet failed:', error.message)
+  try {
+    await query(
+      `INSERT INTO tracked_wallets (address, label, tier, tags, is_active, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (address) DO UPDATE SET
+         label = EXCLUDED.label,
+         tier = EXCLUDED.tier,
+         tags = EXCLUDED.tags,
+         is_active = EXCLUDED.is_active,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        wallet.address,
+        wallet.label,
+        wallet.tier,
+        wallet.tags,
+        wallet.is_active,
+        new Date().toISOString(),
+      ],
+    )
+    return true
+  } catch (error) {
+    console.warn('[social/db] upsertTrackedWallet failed:', errorMessage(error))
     return false
   }
-  return true
 }
 
 export async function deleteTrackedWallet(address: string): Promise<boolean> {
-  const { error } = await supabase.from('tracked_wallets').delete().eq('address', address)
-  if (error) {
-    console.warn('[social/db] deleteTrackedWallet failed:', error.message)
+  try {
+    await query(`DELETE FROM tracked_wallets WHERE address = $1`, [address])
+    return true
+  } catch (error) {
+    console.warn('[social/db] deleteTrackedWallet failed:', errorMessage(error))
     return false
   }
-  return true
 }
 
 export async function upsertWalletHolding(
@@ -320,53 +410,52 @@ export async function upsertWalletHolding(
   tokenAddress: string,
   seenAt: string,
 ): Promise<'inserted' | 'existing' | 'error'> {
-  const { data: existing, error: readError } = await supabase
-    .from('tracked_wallet_holdings')
-    .select('wallet_address')
-    .eq('wallet_address', walletAddress)
-    .eq('token_address', tokenAddress)
-    .maybeSingle()
+  try {
+    const existing = await queryOne<{ wallet_address: string }>(
+      `SELECT wallet_address FROM tracked_wallet_holdings
+       WHERE wallet_address = $1 AND token_address = $2
+       LIMIT 1`,
+      [walletAddress, tokenAddress],
+    )
 
-  if (readError && !isMissingTableError(readError.message)) {
+    if (existing) {
+      await query(
+        `UPDATE tracked_wallet_holdings SET last_seen_at = $3
+         WHERE wallet_address = $1 AND token_address = $2`,
+        [walletAddress, tokenAddress, seenAt],
+      )
+      return 'existing'
+    }
+
+    await query(
+      `INSERT INTO tracked_wallet_holdings (wallet_address, token_address, first_seen_at, last_seen_at)
+       VALUES ($1, $2, $3, $3)`,
+      [walletAddress, tokenAddress, seenAt],
+    )
+    return 'inserted'
+  } catch (error) {
+    if (isMissingTableError(error)) return 'error'
+    if (isUniqueViolation(error)) return 'existing'
     return 'error'
   }
-
-  if (existing) {
-    await supabase
-      .from('tracked_wallet_holdings')
-      .update({ last_seen_at: seenAt })
-      .eq('wallet_address', walletAddress)
-      .eq('token_address', tokenAddress)
-    return 'existing'
-  }
-
-  const { error } = await supabase.from('tracked_wallet_holdings').insert({
-    wallet_address: walletAddress,
-    token_address: tokenAddress,
-    first_seen_at: seenAt,
-    last_seen_at: seenAt,
-  })
-
-  if (error) {
-    if (error.code === '23505') return 'existing'
-    return 'error'
-  }
-
-  return 'inserted'
 }
 
 export async function markWalletPolled(
   address: string,
   errorMsg?: string | null,
 ): Promise<void> {
-  await supabase
-    .from('tracked_wallets')
-    .update({
-      last_polled_at: new Date().toISOString(),
-      last_poll_error: errorMsg ?? null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('address', address)
+  try {
+    await query(
+      `UPDATE tracked_wallets SET
+         last_polled_at = $2,
+         last_poll_error = $3,
+         updated_at = $4
+       WHERE address = $1`,
+      [address, new Date().toISOString(), errorMsg ?? null, new Date().toISOString()],
+    )
+  } catch {
+    // ponytail: fire-and-forget poll marker, same as prior supabase call
+  }
 }
 
 const SOCIAL_RETENTION_HOURS = 24
@@ -377,37 +466,31 @@ export async function cleanupStaleSocialData(
 ): Promise<{ eventsDeleted: number; rollupsDeleted: number; error?: string }> {
   const cutoff = new Date(Date.now() - retentionHours * 60 * 60 * 1000).toISOString()
 
-  const { error: eventsError, count: eventsDeleted } = await supabase
-    .from('social_token_events')
-    .delete({ count: 'exact' })
-    .lt('occurred_at', cutoff)
-
-  if (eventsError) {
-    if (isMissingTableError(eventsError.message)) {
-      return { eventsDeleted: 0, rollupsDeleted: 0, error: eventsError.message }
+  let eventsDeleted = 0
+  try {
+    const { rowCount } = await query(
+      `DELETE FROM social_token_events WHERE occurred_at < $1`,
+      [cutoff],
+    )
+    eventsDeleted = rowCount
+  } catch (eventsError) {
+    if (isMissingTableError(eventsError)) {
+      return { eventsDeleted: 0, rollupsDeleted: 0, error: errorMessage(eventsError) }
     }
-    return { eventsDeleted: 0, rollupsDeleted: 0, error: eventsError.message }
+    return { eventsDeleted: 0, rollupsDeleted: 0, error: errorMessage(eventsError) }
   }
 
-  const { error: rollupsError, count: rollupsDeleted } = await supabase
-    .from('social_token_rollups')
-    .delete({ count: 'exact' })
-    .lt('last_event_at', cutoff)
-
-  if (rollupsError) {
-    if (isMissingTableError(rollupsError.message)) {
-      return { eventsDeleted: eventsDeleted ?? 0, rollupsDeleted: 0, error: rollupsError.message }
+  try {
+    const { rowCount } = await query(
+      `DELETE FROM social_token_rollups WHERE last_event_at < $1`,
+      [cutoff],
+    )
+    return { eventsDeleted, rollupsDeleted: rowCount }
+  } catch (rollupsError) {
+    if (isMissingTableError(rollupsError)) {
+      return { eventsDeleted, rollupsDeleted: 0, error: errorMessage(rollupsError) }
     }
-    return {
-      eventsDeleted: eventsDeleted ?? 0,
-      rollupsDeleted: 0,
-      error: rollupsError.message,
-    }
-  }
-
-  return {
-    eventsDeleted: eventsDeleted ?? 0,
-    rollupsDeleted: rollupsDeleted ?? 0,
+    return { eventsDeleted, rollupsDeleted: 0, error: errorMessage(rollupsError) }
   }
 }
 
@@ -418,21 +501,26 @@ export async function fetchSocialIngestStats(): Promise<{
 }> {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
-  const [events, rollups, wallets] = await Promise.all([
-    supabase
-      .from('social_token_events')
-      .select('id', { count: 'exact', head: true })
-      .gte('occurred_at', since),
-    supabase.from('social_token_rollups').select('token_address', { count: 'exact', head: true }),
-    supabase
-      .from('tracked_wallets')
-      .select('address', { count: 'exact', head: true })
-      .eq('is_active', true),
-  ])
+  try {
+    const [events, rollups, wallets] = await Promise.all([
+      queryOne<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM social_token_events WHERE occurred_at >= $1`,
+        [since],
+      ),
+      queryOne<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM social_token_rollups`,
+      ),
+      queryOne<{ count: number }>(
+        `SELECT COUNT(*)::int AS count FROM tracked_wallets WHERE is_active = true`,
+      ),
+    ])
 
-  return {
-    eventCount24h: events.count ?? 0,
-    rollupCount: rollups.count ?? 0,
-    walletCount: wallets.count ?? 0,
+    return {
+      eventCount24h: events?.count ?? 0,
+      rollupCount: rollups?.count ?? 0,
+      walletCount: wallets?.count ?? 0,
+    }
+  } catch {
+    return { eventCount24h: 0, rollupCount: 0, walletCount: 0 }
   }
 }

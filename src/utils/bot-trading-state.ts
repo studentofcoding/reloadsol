@@ -1,8 +1,8 @@
-import { supabase } from '@/utils/supabase'
+import { query, queryOne } from '@/utils/db'
 import {
-  formatSupabaseError,
-  isSupabaseCircuitOpen,
-  isSupabaseQuotaOrTimeoutError,
+  formatDbConnectionError,
+  isDbCircuitOpen,
+  isDbQuotaOrTimeoutError,
 } from '@/utils/db-health'
 
 const STATE_ID = 'global'
@@ -22,36 +22,33 @@ interface BotTradingStateRow {
   updated_at: string
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { code?: string }).code === '23505'
+  )
+}
+
 async function getOrCreateState(): Promise<BotTradingStateRow | null> {
-  const { data, error } = await supabase
-    .from('bot_trading_state')
-    .select('*')
-    .eq('id', STATE_ID)
-    .maybeSingle()
+  try {
+    const row = await queryOne<BotTradingStateRow>(
+      `SELECT * FROM bot_trading_state WHERE id = $1`,
+      [STATE_ID],
+    )
+    if (row) return row
 
-  if (error) {
-    console.warn('[bot-trading-state] read failed:', error.message)
+    return await queryOne<BotTradingStateRow>(
+      `INSERT INTO bot_trading_state (id, consecutive_failures, real_trading_halted)
+       VALUES ($1, 0, false)
+       ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+       RETURNING *`,
+      [STATE_ID],
+    )
+  } catch (error) {
+    console.warn('[bot-trading-state] read/init failed:', (error as Error).message)
     return null
   }
-
-  if (data) return data as BotTradingStateRow
-
-  const { data: inserted, error: insertError } = await supabase
-    .from('bot_trading_state')
-    .insert({
-      id: STATE_ID,
-      consecutive_failures: 0,
-      real_trading_halted: false,
-    })
-    .select('*')
-    .maybeSingle()
-
-  if (insertError) {
-    console.warn('[bot-trading-state] init failed:', insertError.message)
-    return null
-  }
-
-  return inserted as BotTradingStateRow | null
 }
 
 /** Returns whether real bot trading is allowed (circuit breaker). */
@@ -68,16 +65,16 @@ export async function isRealTradingHalted(): Promise<{
     const haltUntil =
       new Date(state.halted_at).getTime() + HALT_MINUTES * 60 * 1000
     if (Date.now() >= haltUntil) {
-      await supabase
-        .from('bot_trading_state')
-        .update({
-          real_trading_halted: false,
-          consecutive_failures: 0,
-          halted_at: null,
-          halt_reason: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', STATE_ID)
+      await query(
+        `UPDATE bot_trading_state SET
+           real_trading_halted = false,
+           consecutive_failures = 0,
+           halted_at = NULL,
+           halt_reason = NULL,
+           updated_at = $2
+         WHERE id = $1`,
+        [STATE_ID, new Date().toISOString()],
+      )
       return { halted: false }
     }
   }
@@ -91,31 +88,46 @@ export async function isRealTradingHalted(): Promise<{
 }
 
 export async function recordTradingSuccess(): Promise<void> {
-  await supabase
-    .from('bot_trading_state')
-    .upsert({
-      id: STATE_ID,
-      consecutive_failures: 0,
-      real_trading_halted: false,
-      halted_at: null,
-      halt_reason: null,
-      updated_at: new Date().toISOString(),
-    })
+  const now = new Date().toISOString()
+  await query(
+    `INSERT INTO bot_trading_state (
+       id, consecutive_failures, real_trading_halted, halted_at, halt_reason, updated_at
+     ) VALUES ($1, 0, false, NULL, NULL, $2)
+     ON CONFLICT (id) DO UPDATE SET
+       consecutive_failures = 0,
+       real_trading_halted = false,
+       halted_at = NULL,
+       halt_reason = NULL,
+       updated_at = EXCLUDED.updated_at`,
+    [STATE_ID, now],
+  )
 }
 
 export async function recordTradingFailure(reason: string): Promise<void> {
   const state = await getOrCreateState()
   const failures = (state?.consecutive_failures ?? 0) + 1
   const shouldHalt = failures >= FAILURE_THRESHOLD
+  const now = new Date().toISOString()
 
-  await supabase.from('bot_trading_state').upsert({
-    id: STATE_ID,
-    consecutive_failures: failures,
-    real_trading_halted: shouldHalt,
-    halted_at: shouldHalt ? new Date().toISOString() : null,
-    halt_reason: shouldHalt ? reason : null,
-    updated_at: new Date().toISOString(),
-  })
+  await query(
+    `INSERT INTO bot_trading_state (
+       id, consecutive_failures, real_trading_halted, halted_at, halt_reason, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (id) DO UPDATE SET
+       consecutive_failures = EXCLUDED.consecutive_failures,
+       real_trading_halted = EXCLUDED.real_trading_halted,
+       halted_at = EXCLUDED.halted_at,
+       halt_reason = EXCLUDED.halt_reason,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      STATE_ID,
+      failures,
+      shouldHalt,
+      shouldHalt ? now : null,
+      shouldHalt ? reason : null,
+      now,
+    ],
+  )
 
   if (shouldHalt) {
     console.error(
@@ -130,45 +142,43 @@ export async function acquireTradeLock(
   strategyId: string,
   ttlSeconds = TRADE_LOCK_TTL_SEC,
 ): Promise<{ acquired: boolean; reason?: string }> {
-  if (isSupabaseCircuitOpen()) {
+  if (isDbCircuitOpen()) {
     return {
       acquired: false,
-      reason: 'Supabase circuit open — trade lock not acquired',
+      reason: 'Database circuit open — trade lock not acquired',
     }
   }
 
   const now = new Date()
   const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString()
 
-  await supabase
-    .from('bot_trade_locks')
-    .delete()
-    .lt('expires_at', now.toISOString())
+  await query(
+    `DELETE FROM bot_trade_locks WHERE expires_at < $1`,
+    [now.toISOString()],
+  )
 
-  const { error } = await supabase.from('bot_trade_locks').insert({
-    token_address: tokenAddress,
-    strategy_id: strategyId,
-    locked_at: now.toISOString(),
-    expires_at: expiresAt,
-  })
-
-  if (!error) {
+  try {
+    await query(
+      `INSERT INTO bot_trade_locks (token_address, strategy_id, locked_at, expires_at)
+       VALUES ($1, $2, $3, $4)`,
+      [tokenAddress, strategyId, now.toISOString(), expiresAt],
+    )
     return { acquired: true }
-  }
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return {
+        acquired: false,
+        reason: `Trade lock held for ${tokenAddress} (${strategyId})`,
+      }
+    }
 
-  if (error.code === '23505') {
+    console.warn('[bot-trading-state] trade lock insert failed:', formatDbConnectionError(error))
     return {
       acquired: false,
-      reason: `Trade lock held for ${tokenAddress} (${strategyId})`,
+      reason: isDbQuotaOrTimeoutError(error)
+        ? 'Database unavailable (timeout) — trade lock not acquired'
+        : formatDbConnectionError(error),
     }
-  }
-
-  console.warn('[bot-trading-state] trade lock insert failed:', formatSupabaseError(error))
-  return {
-    acquired: false,
-    reason: isSupabaseQuotaOrTimeoutError(error)
-      ? 'Supabase unavailable (quota/timeout) — trade lock not acquired'
-      : formatSupabaseError(error),
   }
 }
 
@@ -176,9 +186,8 @@ export async function releaseTradeLock(
   tokenAddress: string,
   strategyId: string,
 ): Promise<void> {
-  await supabase
-    .from('bot_trade_locks')
-    .delete()
-    .eq('token_address', tokenAddress)
-    .eq('strategy_id', strategyId)
+  await query(
+    `DELETE FROM bot_trade_locks WHERE token_address = $1 AND strategy_id = $2`,
+    [tokenAddress, strategyId],
+  )
 }

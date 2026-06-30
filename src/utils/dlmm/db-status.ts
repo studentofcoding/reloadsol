@@ -1,7 +1,8 @@
-import { supabase } from '@/utils/supabase';
+import { query } from '@/utils/db';
 import {
   formatDbError,
-  isSupabaseConfigured,
+  getDbHost,
+  isDbConfigured,
 } from '@/utils/db-health';
 
 export interface DlmmDbStatus {
@@ -20,36 +21,23 @@ export async function getDlmmDbStatus(force = false): Promise<DlmmDbStatus> {
     return cachedStatus.value;
   }
 
-  const host = process.env.SUPABASE_URL
-    ? (() => {
-        try {
-          return new URL(process.env.SUPABASE_URL!).hostname;
-        } catch {
-          return null;
-        }
-      })()
-    : null;
+  const host = getDbHost();
 
-  if (!isSupabaseConfigured()) {
+  if (!isDbConfigured()) {
     const value: DlmmDbStatus = {
       configured: false,
       reachable: false,
       schemaReady: false,
       host,
       error:
-        'Supabase not configured. Set SUPABASE_URL and SUPABASE_SECRET_KEY in .env (see .env.docker.example).',
+        'Database not configured. Set DATABASE_URL in .env (see .env.docker.example).',
     };
     cachedStatus = { at: Date.now(), value };
     return value;
   }
 
   try {
-    const { error } = await supabase
-      .from('dlmm_agent_config')
-      .select('id')
-      .limit(1);
-
-    if (error) throw error;
+    await query(`SELECT id FROM dlmm_agent_config LIMIT 1`);
 
     const value: DlmmDbStatus = {
       configured: true,

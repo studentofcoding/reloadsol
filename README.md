@@ -1,6 +1,6 @@
 # ReloadSOL
 
-Next.js + Go-cron Solana trading platform: bulk token buys, trending tracker, mcap analytics, SL/TP monitoring, and an autonomous Meteora DLMM agent. Bulk buy/sell uses Solana Tracker Raptor; Jupiter Portfolio for wallet tokens; Shyft RPC via `/api/rpc`; Supabase for persistence; and Jupiter [Wallet Kit](https://developers.jup.ag/docs/tool-kits/wallet-kit) for universal wallet connectivity.
+Next.js + Go-cron Solana trading platform: bulk token buys, trending tracker, mcap analytics, SL/TP monitoring, and an autonomous Meteora DLMM agent. Bulk buy/sell uses Solana Tracker Raptor; Jupiter Portfolio for wallet tokens; Shyft RPC via `/api/rpc`; Docker Postgres + PgBouncer for persistence; and Jupiter [Wallet Kit](https://developers.jup.ag/docs/tool-kits/wallet-kit) for universal wallet connectivity.
 
 ## Features
 
@@ -17,8 +17,8 @@ Next.js + Go-cron Solana trading platform: bulk token buys, trending tracker, mc
 | Tool | Version | Notes |
 |------|---------|-------|
 | [Node.js](https://nodejs.org/) | 20+ | Host build for Docker prod mode |
-| [Docker](https://docs.docker.com/get-docker/) | 24+ with Compose v2 | Recommended for full stack |
-| [Supabase](https://supabase.com/) project | — | Free tier works for dev |
+| [Docker](https://docs.docker.com/get-docker/) | 24+ with Compose v2 | Recommended for full stack (includes Postgres + PgBouncer) |
+| Postgres | 16 | Runs in Docker (`reloadsol-db` + `reloadsol-bouncer`) |
 | [Shyft RPC](https://shyft.to/) API key | — | Replaces legacy Helius setup |
 
 Optional: Discord webhook, Telegram bot token (DLMM alerts), trading keypair for live bot trading.
@@ -43,9 +43,9 @@ cd reloadsol
 
 npm install
 cp .env.docker.example .env
-# Edit .env — at minimum: SUPABASE_*, SHYFT_API_KEY, RPC_URL
+# Edit .env — at minimum: POSTGRES_PASSWORD, DATABASE_URL, SHYFT_API_KEY, RPC_URL
 
-# Apply database schema in Supabase SQL Editor (see below)
+# Postgres schema is applied automatically on first docker compose up (db/init/)
 npm run docker:up
 ```
 
@@ -72,9 +72,9 @@ cp .env.docker.example .env
 Edit `.env` with your secrets. Minimum required for a working stack:
 
 ```bash
-# Supabase — Dashboard → Project Settings → API Keys
-SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-SUPABASE_SECRET_KEY=your-sb-secret-key
+# Postgres (Docker compose starts reloadsol-db + reloadsol-bouncer)
+POSTGRES_PASSWORD=change-me
+DATABASE_URL=postgresql://postgres:change-me@reloadsol-bouncer:5432/reloadsol_db
 
 # Shyft — https://shyft.to dashboard (server-side RPC via /api/rpc proxy)
 # Wallet tokens: Jupiter Portfolio via /api/jupiter/portfolio (both /buy and /sell)
@@ -87,22 +87,33 @@ RPC_URL=https://rpc.shyft.to?api_key=your-shyft-api-key,https://api.mainnet-beta
 
 See [Environment variables](#environment-variables) for the full list.
 
-### 3. Supabase database
+### 3. Database
 
-1. Open your [Supabase](https://supabase.com/dashboard) project → **SQL Editor**
-2. Paste and run the entire contents of [`supabase/schema.sql`](supabase/schema.sql)
-3. Safe to re-run on existing projects (uses `IF NOT EXISTS` + idempotent patches)
+**Fresh Docker setup:** schema is applied automatically on first `docker compose up` via [`db/init/`](db/init/) (extensions + [`supabase/schema.sql`](supabase/schema.sql)).
 
-Tables created include: `token_operations`, `trading_records`, `trading_signals`, `sl_tp_positions`, `trending_token_tracker`, `token_mcap_tracking`, `token_ohlc_bars`, and DLMM tables (`dlmm_agent_config`, `dlmm_candidates`, `dlmm_positions`, `dlmm_lessons`).
+**Migrate from hosted Supabase:**
 
-Verify DLMM health after deploy: `GET /api/dlmm/health`
+```bash
+# Stop writes first (cron + social-ingest)
+SOURCE_DATABASE_URL='postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres' \
+TARGET_DATABASE_URL='postgresql://postgres:pass@localhost:5432/reloadsol_db' \
+bash scripts/migrate-from-supabase.sh
+```
+
+Use Supabase **direct** connection (port 5432), not the transaction pooler. pgcopydb connects to `reloadsol-db` directly, not PgBouncer.
+
+Tables include: `token_operations`, `trading_records`, `trading_signals`, `sl_tp_positions`, `trending_token_tracker`, `token_mcap_tracking`, DLMM tables, social signal tables, and bot lock tables.
+
+Verify after deploy: `GET /api/dlmm/health` and `GET /api/health`
 
 ### 4. Run with Docker
 
-Docker runs two services:
+Docker runs four core services:
 
 | Service | Container | Port | Role |
 |---------|-----------|------|------|
+| **reloadsol-db** | `reloadsol-db` | 5432 (internal) | Postgres 16 |
+| **reloadsol-bouncer** | `reloadsol-bouncer` | 5432 (internal) | PgBouncer transaction pool |
 | **web** | `reloadsol-web` | 3000 | Next.js app + API routes |
 | **cron** | `reloadsol-cron` | 8080 | Go scheduler (trending, SL/TP, DLMM) |
 
@@ -143,8 +154,9 @@ Copy from [`.env.docker.example`](.env.docker.example). Key groups:
 
 | Variable | Description |
 |----------|-------------|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SECRET_KEY` | Server secret key (`sb_secret_...`) |
+| `POSTGRES_PASSWORD` | Postgres superuser password |
+| `DATABASE_URL` | App connection via PgBouncer (`reloadsol-bouncer:5432` in compose) |
+| `DATABASE_URL_DIRECT` | Direct Postgres URL for pgcopydb/psql (`reloadsol-db:5432`) |
 | `SHYFT_API_KEY` | Shyft dashboard API key — powers server-side RPC via `/api/rpc` proxy |
 | `RPC_URL` | Comma-separated RPC URLs (max 5). Server `/api/rpc` proxy with failover. |
 | `NEXT_PUBLIC_RPC_URL` | Optional — browser uses `/api/rpc` proxy by default; set only for legacy direct-RPC paths. |
@@ -330,17 +342,16 @@ See [CHANGELOG.md](./CHANGELOG.md) for complete release notes.
 
 ## Troubleshooting
 
-### Supabase `ENOTFOUND` or empty dashboards
+### Database unreachable or empty dashboards
 
-- Confirm `SUPABASE_URL` resolves (correct project ref from dashboard)
-- Run [`supabase/schema.sql`](supabase/schema.sql) in SQL Editor
-- Rebuild Docker web only: `npm run docker:deploy:web`
-- Rebuild cron only: `npm run docker:deploy:cron`
-- Full stack: `npm run docker:down && npm run docker:up`
+- Confirm `DATABASE_URL` points at `reloadsol-bouncer` (not `reloadsol-db`) for the app
+- Fresh install: `docker compose up` applies `db/init/*.sql` on empty volume
+- Migrate: `bash scripts/migrate-from-supabase.sh` with direct Supabase URL
+- Rebuild: `npm run docker:down && npm run docker:up`
 
 ### DLMM manage returns `skipped`
 
-- Schema not applied — run `supabase/schema.sql`
+- Schema not applied — run `docker compose up` on fresh volume or migrate with pgcopydb
 - Check `GET /api/dlmm/health` for the exact reason
 
 ### Cron 500 errors
