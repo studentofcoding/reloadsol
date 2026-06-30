@@ -25,11 +25,14 @@ export function getPool(): Pool {
   return pool;
 }
 
+export type QueryOptions = { bypassCircuit?: boolean };
+
 export async function query<T extends QueryResultRow = QueryResultRow>(
   sql: string,
   params?: unknown[],
+  opts?: QueryOptions,
 ): Promise<{ rows: T[]; rowCount: number }> {
-  if (isDbCircuitOpen()) {
+  if (!opts?.bypassCircuit && isDbCircuitOpen()) {
     throw new TypeError('Database circuit open (recent failures)');
   }
   try {
@@ -45,8 +48,9 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
 export async function queryOne<T extends QueryResultRow = QueryResultRow>(
   sql: string,
   params?: unknown[],
+  opts?: QueryOptions,
 ): Promise<T | null> {
-  const { rows } = await query<T>(sql, params);
+  const { rows } = await query<T>(sql, params, opts);
   return rows[0] ?? null;
 }
 

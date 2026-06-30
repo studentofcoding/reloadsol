@@ -11,7 +11,7 @@ export async function GET() {
     let db: { ok: boolean; error?: string } = { ok: false }
     if (isDbConfigured()) {
       try {
-        await queryOne('SELECT 1 AS ok')
+        await queryOne('SELECT 1 AS ok', [], { bypassCircuit: true })
         db = { ok: true }
       } catch (error) {
         db = {

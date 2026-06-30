@@ -7,7 +7,8 @@
 #   bash scripts/deploy-tencent.sh migrate   # pgcopydb Supabase → local Postgres (needs SOURCE_DATABASE_URL)
 #   bash scripts/deploy-tencent.sh build     # Next.js host build for Dockerfile.web
 #   bash scripts/deploy-tencent.sh deploy      # full prod stack (web + cron + social-ingest)
-#   bash scripts/deploy-tencent.sh smoke     # curl health endpoints
+#   bash scripts/deploy-tencent.sh smoke     # infra health (OK pre-migrate)
+#   bash scripts/deploy-tencent.sh smoke --strict  # require DB + DLMM healthy
 #   bash scripts/deploy-tencent.sh backup      # pg_dump to ./backups/
 #   bash scripts/deploy-tencent.sh all         # setup → db → build → deploy (skip migrate; run migrate separately)
 #
@@ -26,6 +27,8 @@ COMPOSE_DB=(docker compose -f docker-compose.yml -f docker-compose.migrate.yml)
 log() { echo "[deploy-tencent] $*"; }
 fail() { log "ERROR: $*"; exit 1; }
 
+SMOKE_STRICT=false
+
 ensure_env() {
   if [[ ! -f .env ]]; then
     if [[ -f .env.docker.example ]]; then
@@ -36,8 +39,7 @@ ensure_env() {
     fi
   fi
   bash scripts/sanitize-env-ports.sh
-  # shellcheck disable=SC1091
-  set -a && source .env && set +a
+  eval "$(bash scripts/load-env.sh)"
   [[ -n "${POSTGRES_PASSWORD:-}" ]] || fail "Set POSTGRES_PASSWORD in .env"
   [[ "${POSTGRES_PASSWORD}" != "change-me" ]] || fail "Replace placeholder POSTGRES_PASSWORD in .env"
 }
@@ -134,20 +136,72 @@ cmd_deploy() {
 
 cmd_smoke() {
   ensure_env
-  local web_port cron_port base
+  local web_port cron_port base web_json dlmm_code dlmm_body
+
+  if docker inspect reloadsol-web >/dev/null 2>&1; then
+    log "Web DATABASE_URL (masked):"
+    docker exec reloadsol-web node -e \
+      "console.log(process.env.DATABASE_URL?.replace(/:([^:@/]+)@/, ':***@') || 'unset')" 2>/dev/null || true
+  fi
+  if docker inspect reloadsol-bouncer >/dev/null 2>&1; then
+    if docker exec reloadsol-bouncer pg_isready -h reloadsol-db -p 5432 >/dev/null 2>&1; then
+      log "PgBouncer → Postgres: OK"
+    else
+      log "WARN: pg_isready via bouncer failed"
+    fi
+  fi
+
   web_port="$(bash scripts/resolve-host-ports.sh web)"
   cron_port="$(bash scripts/resolve-host-ports.sh cron)"
   base="http://127.0.0.1:${web_port}"
+
   log "Health: ${base}/api/health"
-  curl -sf "${base}/api/health" | head -c 500 || fail "web health failed"
+  web_json="$(curl -s "${base}/api/health" || true)"
+  if [[ -z "$web_json" ]]; then
+    fail "web health unreachable"
+  fi
+  if grep -q 'circuit open' <<< "$web_json"; then
+    log "WARN: DB circuit open — restarting reloadsol-web and retrying..."
+    docker restart reloadsol-web 2>/dev/null || true
+    sleep 15
+    web_json="$(curl -s "${base}/api/health" || true)"
+  fi
+  echo "$web_json" | head -c 500
   echo ""
+
+  if [[ "$SMOKE_STRICT" == true ]]; then
+    grep -qE '"status"\s*:\s*"healthy"' <<< "$web_json" || fail "web not healthy (pre-migrate? run smoke without --strict)"
+  elif ! grep -qE '"status"\s*:\s*"(healthy|degraded)"' <<< "$web_json"; then
+    fail "web health unexpected response"
+  fi
+
   log "DLMM: ${base}/api/dlmm/health"
-  curl -sf "${base}/api/dlmm/health" | head -c 800 || fail "dlmm health failed"
-  echo ""
+  dlmm_code="$(curl -s -o /tmp/reloadsol-dlmm-smoke.json -w "%{http_code}" "${base}/api/dlmm/health" || echo "000")"
+  dlmm_body="$(cat /tmp/reloadsol-dlmm-smoke.json 2>/dev/null || true)"
+  if [[ "$dlmm_code" == "503" ]]; then
+    echo "$dlmm_body" | head -c 800
+    echo ""
+    if [[ "$SMOKE_STRICT" == true ]]; then
+      fail "dlmm health failed (503) — run: bash scripts/deploy-tencent.sh migrate"
+    fi
+    log "WARN: DLMM 503 — pre-migrate or schema not ready. Run: bash scripts/deploy-tencent.sh migrate"
+  elif [[ "$dlmm_code" != "200" ]]; then
+    echo "$dlmm_body" | head -c 800
+    fail "dlmm health failed (HTTP ${dlmm_code})"
+  else
+    echo "$dlmm_body" | head -c 800
+    echo ""
+  fi
+
   log "Cron: http://127.0.0.1:${cron_port}/health"
   curl -sf "http://127.0.0.1:${cron_port}/health" | head -c 500 || fail "cron health failed"
   echo ""
-  log "Smoke OK"
+
+  if [[ "$SMOKE_STRICT" == true ]]; then
+    log "Smoke OK (strict)"
+  else
+    log "Smoke OK (infra — use 'smoke --strict' after migrate)"
+  fi
 }
 
 cmd_backup() {
@@ -180,7 +234,10 @@ case "${1:-}" in
   migrate) cmd_migrate ;;
   build)   cmd_build ;;
   deploy)  cmd_deploy ;;
-  smoke)   cmd_smoke ;;
+  smoke)
+    [[ "${2:-}" == "--strict" ]] && SMOKE_STRICT=true
+    cmd_smoke
+    ;;
   backup)  cmd_backup ;;
   all)     cmd_all ;;
   -h|--help|help) usage ;;
