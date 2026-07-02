@@ -17,7 +17,7 @@ docker inspect reloadsol-web >/dev/null 2>&1 || fail "reloadsol-web not running 
 
 log "DATABASE_URL in web container (masked):"
 docker exec reloadsol-web node -e \
-  "console.log(process.env.DATABASE_URL?.replace(/:([^:@/]+)@/, ':***@') || 'unset')" \
+  "const u=new URL(process.env.DATABASE_URL||''); console.log('postgresql://'+u.username+':***@'+u.hostname+':'+(u.port||5432)+u.pathname)" \
   || fail "Could not read DATABASE_URL from reloadsol-web"
 
 log "Testing Postgres from inside reloadsol-web..."
@@ -28,9 +28,12 @@ p.query('SELECT 1 AS ok')
   .then(r => { console.log('ok=', r.rows[0].ok); return p.end(); })
   .catch(e => { console.error('FAIL:', e.message); process.exit(1); });
 "; then
-  log "DB test failed — fix DATABASE_URL in .env (URL-encode password if it contains @ # : %)"
-  log "  Example: node -e \"console.log(encodeURIComponent('your-pass'))\""
-  log "  Then redeploy: bash scripts/deploy-tencent.sh deploy"
+  log "DB test failed"
+  log "  If 'wrong password type': recreate bouncer (Postgres 16 + SCRAM needs AUTH_TYPE=scram-sha-256 in docker-compose.yml)"
+  log "    docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d reloadsol-bouncer"
+  log "  If auth/URL issue: fix DATABASE_URL in .env (user must match POSTGRES_USER; URL-encode @ # : % in password)"
+  log "    node -e \"console.log(encodeURIComponent('your-pass'))\""
+  log "  Then: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps web"
   exit 1
 fi
 

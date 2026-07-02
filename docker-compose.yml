@@ -56,6 +56,8 @@ services:
       DB_USER: ${POSTGRES_USER:-postgres}
       DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       DB_NAME: ${POSTGRES_DB:-reloadsol_db}
+      # Postgres 14+ uses SCRAM; edoburu/pgbouncer defaults to md5 without this
+      AUTH_TYPE: scram-sha-256
       POOL_MODE: transaction
       MAX_CLIENT_CONN: 200
       DEFAULT_POOL_SIZE: 30

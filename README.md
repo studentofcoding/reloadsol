@@ -409,7 +409,9 @@ bash scripts/recover-db-circuit.sh
 # or manually: docker restart reloadsol-web && bash scripts/deploy-tencent.sh smoke --strict
 ```
 
-Ensure `.env` `DATABASE_URL` uses host `reloadsol-bouncer` and URL-encodes the password if it contains `@`, `#`, `:`, or `%`.
+Ensure `.env` `DATABASE_URL` uses host `reloadsol-bouncer`, user matches `POSTGRES_USER`, and URL-encodes the password if it contains `@`, `#`, `:`, or `%`.
+
+**`wrong password type` through bouncer:** Postgres 16 uses SCRAM; PgBouncer needs `AUTH_TYPE: scram-sha-256` in [`docker-compose.yml`](docker-compose.yml). After pull: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d reloadsol-bouncer web`.
 
 If install still fails:
 
