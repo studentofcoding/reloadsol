@@ -12,6 +12,17 @@ import {
   resolveTrackerStrategyId,
 } from '@/utils/trading-simulation'
 import { sumSummaryTokenProfitPct } from '@/utils/trending-profit'
+import { cacheGet, cacheSet } from '@/utils/redis-cache'
+
+const STATS_REDIS_TTL_SECONDS = 60
+
+function statsCacheKey(params: {
+  date: string | null
+  isSim: string | null
+  strategy: string | null
+}): string {
+  return `stats:${params.date ?? 'latest'}:${params.isSim ?? 'all'}:${params.strategy ?? 'all'}`
+}
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
@@ -213,6 +224,28 @@ export async function GET(request: NextRequest) {
     const isSimParam = searchParams.get('is_simulated')
     const strategyFilter = searchParams.get('strategy_id')
     const dateParam = searchParams.get('date')
+
+    const cacheKey = statsCacheKey({
+      date: dateParam,
+      isSim: isSimParam,
+      strategy: strategyFilter,
+    })
+
+    if (!nocache && !refresh) {
+      const cached = await cacheGet<Record<string, unknown>>(cacheKey)
+      if (cached) {
+        return NextResponse.json(
+          { ...cached, cached: true },
+          {
+            status: 200,
+            headers: {
+              'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=30',
+              'X-Cache-Status': 'HIT',
+            },
+          },
+        )
+      }
+    }
 
     const filterBySim = (token: { trading_simulation?: unknown }) => {
       if (isSimParam === null || isSimParam === '') return true
@@ -461,6 +494,10 @@ export async function GET(request: NextRequest) {
       cached: false,
       cache_age: 0,
       expires_in: nocache ? 0 : 300,
+    }
+
+    if (!nocache && !refresh) {
+      await cacheSet(cacheKey, enhancedResponse, STATS_REDIS_TTL_SECONDS)
     }
 
     const cacheHeaders: Record<string, string> = nocache

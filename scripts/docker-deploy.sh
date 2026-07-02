@@ -494,6 +494,7 @@ if [[ "$DEPLOY_WEB" == false && "$DEPLOY_CRON" == false && "$DEPLOY_SOCIAL" == f
   if [[ "$DEPLOY_INFRA" == true ]]; then
     log "Deploy plan: infra-only (skipping app build)"
     deploy_infra_stack
+    bash scripts/warm-cache.sh 2>/dev/null || log "WARN: warm-cache skipped"
     log "Infra-only deploy complete"
     exit 0
   fi
@@ -608,4 +609,7 @@ elif [[ "$DEPLOY_WEB" == true ]]; then
 fi
 
 log "Deploy complete (web=${DEPLOY_WEB} cron=${DEPLOY_CRON} social=${DEPLOY_SOCIAL})"
+if [[ "$DEPLOY_WEB" == true || "$DEPLOY_INFRA" == true ]]; then
+  bash scripts/warm-cache.sh 2>/dev/null || log "WARN: warm-cache skipped"
+fi
 "${COMPOSE[@]}" ps

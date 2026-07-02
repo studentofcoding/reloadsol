@@ -7,8 +7,6 @@ interface TokenPrice {
   change_5m: number
 }
 
-export const runtime = 'edge'
-
 export async function GET() {
   try {
     const TRENDING_URLS = [

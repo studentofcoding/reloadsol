@@ -115,13 +115,15 @@ Verify after deploy: `GET /api/dlmm/health` and `GET /api/health`
 
 ### 4. Run with Docker
 
-Docker runs four core services:
+Docker runs core services (prod overlay adds **nginx** edge cache + **redis**):
 
 | Service | Container | Port | Role |
 |---------|-----------|------|------|
 | **reloadsol-db** | `reloadsol-db` | 5432 (internal) | Postgres 16 |
 | **reloadsol-bouncer** | `reloadsol-bouncer` | 5432 (internal) | PgBouncer transaction pool |
-| **web** | `reloadsol-web` | 3000 | Next.js app + API routes |
+| **reloadsol-nginx** | `reloadsol-nginx` | 80 (public) | Reverse proxy + edge cache |
+| **redis** | `reloadsol-redis` | 6379 (internal) | Shared API cache |
+| **web** | `reloadsol-web` | 3000 (internal) | Next.js app + API routes |
 | **cron** | `reloadsol-cron` | 8080 | Go scheduler (trending, SL/TP, DLMM) |
 
 ```bash
@@ -137,6 +139,34 @@ npm run docker:deploy:cron  # deploy cron only (Go changes)
 npm run docker:down         # stop containers
 npm run docker:logs         # tail logs
 ```
+
+### Scoped deploy (VPS)
+
+Use [`scripts/deploy-tencent.sh`](scripts/deploy-tencent.sh) or [`scripts/docker-deploy.sh`](scripts/docker-deploy.sh) flags:
+
+| Command | Rebuilds | Runs `npm run build`? |
+|---------|----------|------------------------|
+| `bash scripts/deploy-tencent.sh deploy web` | web (+ social) | Yes |
+| `bash scripts/deploy-tencent.sh deploy cron` | cron | No |
+| `bash scripts/deploy-tencent.sh deploy db` | Postgres + PgBouncer | **No** |
+| `bash scripts/deploy-tencent.sh deploy infra` | nginx + redis | **No** |
+| `bash scripts/docker-deploy.sh --db-only` | db only | **No** |
+| `bash scripts/docker-deploy.sh --infra-only` | infra only | **No** |
+
+Scope detection: `bash scripts/docker-scope.sh detect --base HEAD~1`  
+Smoke test: `bash scripts/deploy-smoke-scopes.sh`
+
+Post-deploy, `scripts/warm-cache.sh` hits `/api/solprice`, `/api/trending`, `/api/trending/stats`, `/api/rpc/health` (auto-run after web/infra deploy).
+
+### Post-deploy verification
+
+| Check | How |
+|-------|-----|
+| Edge cache | Repeat `curl -I https://reloadsol.app/api/solprice` — look for `X-Cache-Status: HIT` |
+| Redis memory | `docker exec reloadsol-redis redis-cli INFO memory` (stay under ~96MB) |
+| Raptor swaps | LiveTab single buy/sell; bulk buy/sell on `/buy` `/sell` |
+| No home polling | Wallet on `/` or `/blog` — no `/api/trading/records` in Network tab |
+| Jupiter widget | `/swap` loads terminal; other routes do not fetch `terminal.jup.ag` |
 
 **How it works:** `scripts/docker-up.sh` runs `npm ci` first, then builds Next.js on the host for prod (`npm run build` → `.next/standalone`) and packages via `Dockerfile.web`. **`docker:deploy`** uses `scripts/docker-scope.sh` to rebuild only web or cron when possible (frontend-only changes do not restart cron). Dev default is **web only**; use `docker:dev:full` when you need cron locally. Cron calls the web service at `API_HOST=http://web:3000`.
 

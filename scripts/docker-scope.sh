@@ -28,7 +28,7 @@ classify_path() {
     db/init/*|db/*)
       echo "db"
       ;;
-    nginx/*)
+    nginx/*|redis/*|redis.conf)
       echo "infra"
       ;;
     docker-compose*.yml|.env.docker.example|scripts/docker-*)
@@ -137,8 +137,16 @@ case "$cmd" in
   detect-working)
     detect_from_files "$(collect_working_files)"
     ;;
+  classify)
+    path="${1:-}"
+    if [[ -z "$path" ]]; then
+      echo "Usage: docker-scope.sh classify PATH" >&2
+      exit 1
+    fi
+    classify_path "$path"
+    ;;
   *)
-    echo "Usage: docker-scope.sh detect [--base REF] | detect-working" >&2
+    echo "Usage: docker-scope.sh detect [--base REF] | detect-working | classify PATH" >&2
     exit 1
     ;;
 esac

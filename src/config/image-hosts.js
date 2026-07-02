@@ -21,6 +21,12 @@ const IMAGE_REMOTE_HOSTS = [
 ];
 
 /** Hosts with flaky/missing assets — load directly in browser, skip /_next/image upstream fetch. */
-const UNOPTIMIZED_IMAGE_HOSTS = ["static-create.jup.ag"];
+const UNOPTIMIZED_IMAGE_HOSTS = [
+  "static-create.jup.ag",
+  "pump.mypinata.cloud",
+  "nftstorage.link",
+  "gateway.pinata.cloud",
+  "cf-ipfs.com",
+];
 
 module.exports = { IMAGE_REMOTE_HOSTS, UNOPTIMIZED_IMAGE_HOSTS };
