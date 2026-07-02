@@ -16,7 +16,7 @@ import type { RpcDiagnosticRow } from "@/app/api/rpc/diagnostics/route";
 const STORAGE_KEY = "reloadsol:rpc-endpoint";
 const AUTO_STORAGE_KEY = "reloadsol:rpc-auto";
 const AUTO_RECHECK_MS = 30 * 60 * 1000;
-const HEALTH_REFRESH_MS = 60_000;
+const HEALTH_REFRESH_MS = 5 * 60_000;
 
 const DEFAULT_FALLBACK_RPC_URL =
   process.env.NEXT_PUBLIC_RPC_URL ?? "https://api.mainnet-beta.solana.com";

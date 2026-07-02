@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useState } from "react";
+import React, { Suspense } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -42,18 +42,6 @@ function SignalsHubContent() {
   const pathname = usePathname();
   const rawTab = searchParams.get("tab");
   const activeTab: TabId = isTabId(rawTab) ? rawTab : "signals";
-  const [mountedTabs, setMountedTabs] = useState<Set<TabId>>(
-    () => new Set([activeTab]),
-  );
-
-  if (!mountedTabs.has(activeTab)) {
-    setMountedTabs((prev) => {
-      if (prev.has(activeTab)) return prev;
-      const next = new Set(prev);
-      next.add(activeTab);
-      return next;
-    });
-  }
 
   const setTab = (tab: TabId) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -84,26 +72,10 @@ function SignalsHubContent() {
         ))}
       </div>
 
-      {mountedTabs.has("signals") && (
-        <div hidden={activeTab !== "signals"} aria-hidden={activeTab !== "signals"}>
-          <SignalsTab />
-        </div>
-      )}
-      {mountedTabs.has("live") && (
-        <div hidden={activeTab !== "live"} aria-hidden={activeTab !== "live"}>
-          <LiveTab />
-        </div>
-      )}
-      {mountedTabs.has("board") && (
-        <div hidden={activeTab !== "board"} aria-hidden={activeTab !== "board"}>
-          <BoardTab />
-        </div>
-      )}
-      {mountedTabs.has("tracker") && (
-        <div hidden={activeTab !== "tracker"} aria-hidden={activeTab !== "tracker"}>
-          <TrackerTab />
-        </div>
-      )}
+      {activeTab === "signals" && <SignalsTab />}
+      {activeTab === "live" && <LiveTab />}
+      {activeTab === "board" && <BoardTab />}
+      {activeTab === "tracker" && <TrackerTab />}
     </div>
   );
 }

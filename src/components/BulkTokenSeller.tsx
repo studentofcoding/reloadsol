@@ -1174,7 +1174,7 @@ export default function BulkTokenSeller() {
   }, [walletAddress]);
 
   useEffect(() => {
-    if (!autoSelectBest || !walletAddress || !isWalletReady) {
+    if (!autoSelectBest || !walletAddress || !isWalletReady || !showRpcPanel) {
       return;
     }
 
@@ -1188,6 +1188,7 @@ export default function BulkTokenSeller() {
     autoSelectBest,
     walletAddress,
     isWalletReady,
+    showRpcPanel,
     autoSelectBestEndpoint,
   ]);
 

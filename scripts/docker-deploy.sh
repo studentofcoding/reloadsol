@@ -11,6 +11,8 @@
 #   ./scripts/docker-deploy.sh --web-only   # web + social-ingest (always-on)
 #   ./scripts/docker-deploy.sh --cron-only  # cron only
 #   ./scripts/docker-deploy.sh --social-only
+#   ./scripts/docker-deploy.sh --db-only      # Postgres + PgBouncer only (no npm build)
+#   ./scripts/docker-deploy.sh --infra-only   # nginx/redis when present (no npm build)
 #   ./scripts/docker-deploy.sh --all        # force web + cron + social-ingest
 #   ./scripts/docker-deploy.sh --clean      # wipe node_modules/.next first
 #   ./scripts/docker-deploy.sh --full-down  # stop stack before build
@@ -34,6 +36,8 @@ SCOPE_MODE="auto"
 DEPLOY_WEB=false
 DEPLOY_CRON=false
 DEPLOY_SOCIAL=false
+DEPLOY_DB=false
+DEPLOY_INFRA=false
 DETECTED_SCOPE=""
 
 while [[ $# -gt 0 ]]; do
@@ -73,6 +77,24 @@ while [[ $# -gt 0 ]]; do
       DEPLOY_WEB=false
       DEPLOY_CRON=false
       DEPLOY_SOCIAL=true
+      shift
+      ;;
+    --db-only)
+      SCOPE_MODE="manual"
+      DEPLOY_WEB=false
+      DEPLOY_CRON=false
+      DEPLOY_SOCIAL=false
+      DEPLOY_DB=true
+      DEPLOY_INFRA=false
+      shift
+      ;;
+    --infra-only)
+      SCOPE_MODE="manual"
+      DEPLOY_WEB=false
+      DEPLOY_CRON=false
+      DEPLOY_SOCIAL=false
+      DEPLOY_DB=false
+      DEPLOY_INFRA=true
       shift
       ;;
     --all)
@@ -146,11 +168,40 @@ resolve_scope() {
   DEPLOY_WEB=false
   DEPLOY_CRON=false
   DEPLOY_SOCIAL=false
+  DEPLOY_DB=false
+  DEPLOY_INFRA=false
   if [[ "$DETECTED_SCOPE" == *web* ]]; then DEPLOY_WEB=true; fi
   if [[ "$DETECTED_SCOPE" == *cron* ]]; then DEPLOY_CRON=true; fi
   if [[ "$DETECTED_SCOPE" == *social* ]]; then DEPLOY_SOCIAL=true; fi
+  if [[ "$DETECTED_SCOPE" == *db* ]]; then DEPLOY_DB=true; fi
+  if [[ "$DETECTED_SCOPE" == *infra* ]]; then DEPLOY_INFRA=true; fi
   # social-ingest is always-on when web is redeployed
   if [[ "$DEPLOY_WEB" == true ]]; then DEPLOY_SOCIAL=true; fi
+}
+
+deploy_db_stack() {
+  log "Restarting Postgres + PgBouncer ..."
+  "${COMPOSE[@]}" up -d reloadsol-db reloadsol-bouncer
+  docker compose -f docker-compose.yml -f docker-compose.migrate.yml ps reloadsol-db reloadsol-bouncer 2>/dev/null || true
+}
+
+deploy_infra_stack() {
+  local services=()
+  local svc
+  while IFS= read -r svc; do
+    [[ -z "$svc" ]] && continue
+    if [[ "$svc" == "nginx" || "$svc" == "redis" ]]; then
+      services+=("$svc")
+    fi
+  done < <("${COMPOSE[@]}" config --services 2>/dev/null || true)
+
+  if [[ ${#services[@]} -eq 0 ]]; then
+    log "No infra services (nginx/redis) in compose — nothing to start."
+    return 0
+  fi
+
+  log "Starting infra: ${services[*]} ..."
+  "${COMPOSE[@]}" up -d "${services[@]}"
 }
 
 should_build_social() {
@@ -410,11 +461,28 @@ fi
 resolve_scope
 
 if [[ "$DEPLOY_WEB" == false && "$DEPLOY_CRON" == false && "$DEPLOY_SOCIAL" == false ]]; then
+  if [[ "$DEPLOY_DB" == true ]]; then
+    log "Deploy plan: db-only (skipping app build)"
+    deploy_db_stack
+    log "DB-only deploy complete"
+    exit 0
+  fi
+  if [[ "$DEPLOY_INFRA" == true ]]; then
+    log "Deploy plan: infra-only (skipping app build)"
+    deploy_infra_stack
+    log "Infra-only deploy complete"
+    exit 0
+  fi
   log "Nothing to deploy (empty scope)."
   exit 0
 fi
 
-log "Deploy plan: web=${DEPLOY_WEB} cron=${DEPLOY_CRON} social=${DEPLOY_SOCIAL}"
+if [[ "$DEPLOY_WEB" == false && "$DEPLOY_CRON" == false && "$DEPLOY_SOCIAL" == false && "$DEPLOY_DB" == false && "$DEPLOY_INFRA" == false ]]; then
+  log "Nothing to deploy (empty scope)."
+  exit 0
+fi
+
+log "Deploy plan: web=${DEPLOY_WEB} cron=${DEPLOY_CRON} social=${DEPLOY_SOCIAL} db=${DEPLOY_DB} infra=${DEPLOY_INFRA}"
 
 if [[ "$FULL_DOWN" == true ]]; then
   log "Stopping stack (--full-down) ..."

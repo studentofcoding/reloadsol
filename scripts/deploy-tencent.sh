@@ -7,7 +7,11 @@
 #   bash scripts/deploy-tencent.sh schema    # apply db/init/*.sql (no Supabase; idempotent)
 #   bash scripts/deploy-tencent.sh migrate   # optional pgcopydb from Supabase (needs SOURCE_DATABASE_URL)
 #   bash scripts/deploy-tencent.sh build     # Next.js host build for Dockerfile.web
-#   bash scripts/deploy-tencent.sh deploy      # full prod stack (web + cron + social-ingest)
+#   bash scripts/deploy-tencent.sh deploy              # full prod stack (web + cron + social-ingest)
+#   bash scripts/deploy-tencent.sh deploy web            # web + social only
+#   bash scripts/deploy-tencent.sh deploy db             # Postgres + PgBouncer only (no npm build)
+#   bash scripts/deploy-tencent.sh deploy infra          # nginx/redis when present
+#   bash scripts/deploy-tencent.sh deploy cron           # cron only
 #   bash scripts/deploy-tencent.sh smoke     # infra health (OK pre-migrate)
 #   bash scripts/deploy-tencent.sh smoke --strict  # require DB + DLMM healthy
 #   bash scripts/deploy-tencent.sh backup      # pg_dump to ./backups/
@@ -144,12 +148,40 @@ cmd_build() {
 }
 
 cmd_deploy() {
+  local target="${1:-all}"
   ensure_env
-  if [[ ! -d .next/standalone ]]; then
-    cmd_build
-  fi
-  log "Deploying production stack..."
-  bash scripts/docker-deploy.sh --skip-pull --all
+  case "$target" in
+    all)
+      if [[ ! -d .next/standalone ]]; then
+        cmd_build
+      fi
+      log "Deploying production stack..."
+      bash scripts/docker-deploy.sh --skip-pull --all
+      ;;
+    web)
+      log "Deploying web scope..."
+      bash scripts/docker-deploy.sh --skip-pull --web-only
+      ;;
+    db)
+      log "Deploying db scope..."
+      bash scripts/docker-deploy.sh --skip-pull --db-only
+      ;;
+    infra)
+      log "Deploying infra scope..."
+      bash scripts/docker-deploy.sh --skip-pull --infra-only
+      ;;
+    cron)
+      log "Deploying cron scope..."
+      bash scripts/docker-deploy.sh --skip-pull --cron-only
+      ;;
+    social)
+      log "Deploying social scope..."
+      bash scripts/docker-deploy.sh --skip-pull --social-only
+      ;;
+    *)
+      fail "Unknown deploy target: ${target} (use: all, web, db, infra, cron, social)"
+      ;;
+  esac
   "${COMPOSE[@]}" ps
   log "Deploy OK — run: bash scripts/deploy-tencent.sh smoke"
 }
@@ -253,7 +285,10 @@ case "${1:-}" in
   schema|init-schema) cmd_schema ;;
   migrate) cmd_migrate ;;
   build)   cmd_build ;;
-  deploy)  cmd_deploy ;;
+  deploy)
+    shift || true
+    cmd_deploy "${1:-all}"
+    ;;
   smoke)
     [[ "${2:-}" == "--strict" ]] && SMOKE_STRICT=true
     cmd_smoke

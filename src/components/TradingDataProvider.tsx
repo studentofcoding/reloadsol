@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useCallback } from "react";
+import React, { createContext, useContext, useCallback, useState, useEffect } from "react";
 import {
   QueryClient,
   QueryClientProvider,
@@ -95,6 +95,7 @@ export function useSolPrice() {
 export function useTradingRecords(
   walletAddress?: string,
   sessionReady = true,
+  refetchIntervalMs: number | false = 5_000,
 ) {
   return useQuery({
     queryKey: QUERY_KEYS.tradingRecords(walletAddress || ""),
@@ -111,7 +112,10 @@ export function useTradingRecords(
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 8000),
     enabled: !!walletAddress && sessionReady,
     staleTime: 1000 * 3,
-    refetchInterval: sessionReady && walletAddress ? 1000 * 5 : false,
+    refetchInterval:
+      sessionReady && walletAddress && refetchIntervalMs !== false
+        ? refetchIntervalMs
+        : false,
   });
 }
 
@@ -226,13 +230,26 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
   const sessionReady =
     walletSessionStatus === 'ready' || walletSessionStatus === 'checking';
 
+  const [sseConnected, setSseConnected] = useState(false);
+
+  useEffect(() => {
+    return tradingTracker.onSSEStateChange(setSseConnected);
+  }, []);
+
+  const recordsRefetchInterval =
+    sessionReady && walletAddress ? (sseConnected ? 30_000 : 5_000) : false;
+
   // Query for trading records
   const {
     data: records = [],
     isLoading: isLoadingRecords,
     error: recordsError,
     refetch: refetchRecords,
-  } = useTradingRecords(walletAddress ?? undefined, sessionReady);
+  } = useTradingRecords(
+    walletAddress ?? undefined,
+    sessionReady,
+    recordsRefetchInterval,
+  );
 
   // Track operation mutation
   const trackOperationMutation = useTrackOperation();

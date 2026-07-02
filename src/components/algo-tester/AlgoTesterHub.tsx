@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useState } from "react";
+import React, { Suspense } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -35,18 +35,6 @@ function AlgoTesterHubContent() {
   const pathname = usePathname();
   const rawTab = searchParams.get("tab");
   const activeTab: TabId = isTabId(rawTab) ? rawTab : "dashboard";
-  const [mountedTabs, setMountedTabs] = useState<Set<TabId>>(
-    () => new Set([activeTab]),
-  );
-
-  if (!mountedTabs.has(activeTab)) {
-    setMountedTabs((prev) => {
-      if (prev.has(activeTab)) return prev;
-      const next = new Set(prev);
-      next.add(activeTab);
-      return next;
-    });
-  }
 
   const setTab = (tab: TabId) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -74,19 +62,8 @@ function AlgoTesterHubContent() {
         ))}
       </div>
 
-      {mountedTabs.has("dashboard") && (
-        <div
-          hidden={activeTab !== "dashboard"}
-          aria-hidden={activeTab !== "dashboard"}
-        >
-          <AlgoDashboardTab />
-        </div>
-      )}
-      {mountedTabs.has("history") && (
-        <div hidden={activeTab !== "history"} aria-hidden={activeTab !== "history"}>
-          <HistoryTab />
-        </div>
-      )}
+      {activeTab === "dashboard" && <AlgoDashboardTab />}
+      {activeTab === "history" && <HistoryTab />}
     </div>
   );
 }
