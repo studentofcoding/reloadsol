@@ -731,17 +731,17 @@ export default function AlgoDashboardTab() {
   };
 
   const formatPercentage = (percentage: number, showSign: boolean = true) => {
+    const n = Number(percentage)
+    if (!Number.isFinite(n)) {
+      return <span className="text-gray-400">—</span>
+    }
     const color =
-      percentage > 0
-        ? "text-green-400"
-        : percentage < 0
-          ? "text-red-400"
-          : "text-gray-400";
-    const sign = showSign && percentage > 0 ? "+" : "";
+      n > 0 ? "text-green-400" : n < 0 ? "text-red-400" : "text-gray-400";
+    const sign = showSign && n > 0 ? "+" : "";
     return (
       <span className={color}>
         {sign}
-        {percentage.toFixed(2)}%
+        {n.toFixed(2)}%
       </span>
     );
   };
@@ -1086,7 +1086,7 @@ export default function AlgoDashboardTab() {
             <h3 className="text-sm md:text-lg font-semibold mb-2">Win Rate</h3>
             <p className="text-xl md:text-3xl font-bold text-green-400">
               {activeSummary?.win_rate != null
-                ? `${activeSummary.win_rate.toFixed(1)}%`
+                ? `${Number(activeSummary.win_rate).toFixed(1)}%`
                 : "—"}
             </p>
             {activeSummary && stats.trends.win_rate_change !== 0 && (

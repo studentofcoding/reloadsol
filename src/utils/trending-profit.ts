@@ -6,14 +6,15 @@ export type SummaryToken = {
 
 /** Per-token gain % for 24h summary cohort (matches algo-tester leaderboard display). */
 export function getSummaryTokenGainPct(token: SummaryToken): number {
-  const currentGain =
-    token.current_gain_percentage ?? token.peak_gain_percentage ?? 0
+  const currentGain = Number(
+    token.current_gain_percentage ?? token.peak_gain_percentage ?? 0,
+  )
   const isLoser =
     currentGain < -50 || token.status === 'lost'
   if (isLoser) {
     return currentGain
   }
-  return token.peak_gain_percentage ?? currentGain
+  return Number(token.peak_gain_percentage ?? currentGain)
 }
 
 export function sumSummaryTokenProfitPct(tokens: SummaryToken[]): {

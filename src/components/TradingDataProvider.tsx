@@ -270,6 +270,9 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
       queryClient.invalidateQueries({
         queryKey: QUERY_KEYS.tradingRecords(walletAddress),
       });
+      queryClient.invalidateQueries({
+        queryKey: ["wallet-tokens", walletAddress],
+      });
     };
 
     const onSessionReady = (event: Event) => {

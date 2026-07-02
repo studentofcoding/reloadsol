@@ -7,7 +7,7 @@ This document summarizes how bulk swaps and token account closures work across t
 | Layer | Service | Files |
 |-------|---------|-------|
 | Wallet tokens | Jupiter Portfolio | `useWalletTokens.ts`, `jupiter-portfolio.ts` |
-| Swaps | Raptor quote-and-swap + send + status poll | `solanatracker-raptor.ts`, `/api/solanatracker/*` |
+| Swaps | Jupiter Ultra order/execute (primary) → Raptor fallback | `jupiter-ultra.ts`, `swap-executor.ts`, `/api/jupiter/ultra/*`, `/api/solanatracker/*` |
 | RPC | Same-origin `/api/rpc` proxy | `RpcContext.tsx`, `/api/rpc/route.ts` |
 | Prices/metadata | Jupiter APIs (UI support, not swap execution) | `/api/tokens/prices`, `/api/jupiter/metadata` |
 | Charts | GMGN iframe embeds only (`gmgn.cc`) | `BulkTokenBuyer.tsx`, `BulkTokenSeller.tsx`, chart pages |
@@ -15,12 +15,16 @@ This document summarizes how bulk swaps and token account closures work across t
 
 ## Providers and Flow
 
-- **Solana Tracker Raptor (bulk buy and bulk sell)**
-  - Quote: `GET /api/solanatracker/quote` → Raptor `GET /quote` (amount in smallest units, `slippageBps`)
+- **Jupiter Ultra (primary swap execution)**
+  - Order: `POST /api/jupiter/ultra/order` → `POST https://ultra-api.jup.ag/order?…&clientPlatform=jupiter.web.home_page`
+  - Execute: `POST /api/jupiter/ultra/execute` → `POST https://ultra-api.jup.ag/execute?clientPlatform=jupiter.web.home_page` with `{ signedTransaction, requestId }`
+  - Implementation: `prepareSwapTransaction`, `submitSignedSwap` in `src/utils/swap-executor.ts`; used by `executeBulkBuy`, `executeBulkSellAlt`, `getSwapQuote`, `getSwapTransaction`
+
+- **Solana Tracker Raptor (fallback)**
+  - Quote: `GET /api/solanatracker/quote` → Raptor `GET /quote`
   - Swap: `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`
   - Send: `POST /api/solanatracker/send` → Raptor `POST /send-transaction` (RPC fallback if send fails)
-  - Implementation: `executeBulkSellAlt`, `executeBulkBuy` in `src/utils/jupiter.ts`
-  - Close: Uses `closeTokenAccounts` after swaps or close-only operations
+  - Used when Ultra order/execute fails
 
 - **GMGN (charts only)**
   - Embedded `gmgn.cc` iframes on `/buy` and `/sell` for price charts
@@ -32,9 +36,10 @@ This document summarizes how bulk swaps and token account closures work across t
   - User signs once; transaction sent via `/api/rpc`
   - Fallback: manual burn + close in `closeTokenAccounts` if craft fails
 
-- **Jupiter swap API (other features only)**
-  - `getSwapQuote` / `getSwapTransaction` remain for signals, SL/TP, trending tracker, and legacy single-token paths
-  - Bulk `/buy` and `/sell` do **not** fall back to Jupiter swap execution
+- **Single-token / signals paths**
+  - `getSwapQuote` uses Raptor quote (for UI previews)
+  - `getSwapTransaction` uses Ultra first, Raptor fallback via `swap-executor.ts`
+  - No lite-api swap execution
 
 - **Single-token UI**
   - `CatchTheCoinClient.tsx` sells via Jupiter utilities (quote + swap) but does not auto-close the token account after selling. Closing is handled in bulk flows.

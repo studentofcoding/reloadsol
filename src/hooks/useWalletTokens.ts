@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Connection, PublicKey } from "@solana/web3.js";
 import { categorizeUserTokens, type UserToken } from "@/utils/jupiter";
@@ -108,34 +109,39 @@ export function useWalletTokens({
     enabled: isEnabled,
     staleTime: 30_000,
     refetchInterval,
+    refetchOnWindowFocus: false,
     retry: 1,
   });
 
-  const refetchTokens = async (forceRefresh = false): Promise<void> => {
-    if (!connection || !publicKey || !walletAddress) {
+  const refetchTokens = useCallback(
+    async (forceRefresh = false): Promise<void> => {
+      if (!connection || !publicKey || !walletAddress) {
+        await query.refetch();
+        return;
+      }
+      if (forceRefresh) {
+        await queryClient.fetchQuery({
+          queryKey,
+          queryFn: () =>
+            fetchWalletTokens(connection, publicKey, walletAddress, true),
+          staleTime: 0,
+        });
+        return;
+      }
       await query.refetch();
-      return;
-    }
-    if (forceRefresh) {
-      await queryClient.fetchQuery({
-        queryKey,
-        queryFn: () =>
-          fetchWalletTokens(connection, publicKey, walletAddress, true),
-        staleTime: 0,
-      });
-      return;
-    }
-    await query.refetch();
-  };
+    },
+    [connection, publicKey, walletAddress, query, queryClient, queryKey],
+  );
 
-  const patchTokens = (
-    updater: (data: WalletTokensData) => WalletTokensData,
-  ) => {
-    queryClient.setQueryData<WalletTokensData>(queryKey, (prev) => {
-      if (!prev) return prev;
-      return updater(prev);
-    });
-  };
+  const patchTokens = useCallback(
+    (updater: (data: WalletTokensData) => WalletTokensData) => {
+      queryClient.setQueryData<WalletTokensData>(queryKey, (prev) => {
+        if (!prev) return prev;
+        return updater(prev);
+      });
+    },
+    [queryClient, queryKey],
+  );
 
   return {
     ...query,

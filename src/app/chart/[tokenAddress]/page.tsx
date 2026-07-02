@@ -1,7 +1,7 @@
 "use client";
 
 import { OptimizedImage } from "@/components/OptimizedImage";
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, { useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useRpc } from "@/contexts/RpcContext";
@@ -19,7 +19,6 @@ import {
   UserToken,
 } from "@/utils/jupiter";
 import {
-  tradingTracker,
   fetchTokenPricesForTracking,
 } from "@/utils/trading-tracker";
 import {
@@ -180,28 +179,6 @@ export default function ChartPage() {
   // Balance tracking
   const [balanceBefore, setBalanceBefore] = useState<number>(0);
   const [balanceAfter, setBalanceAfter] = useState<number>(0);
-
-  // Setup SSE connection for real-time updates
-  useEffect(() => {
-    if (!connected || !publicKey) {
-      return;
-    }
-
-    console.log("📡 Setting up SSE connection in ChartPage");
-
-    const unsubscribe = tradingTracker.subscribeToWallet(
-      publicKey.toString(),
-      () => {
-        console.log("📡 Received SSE update for wallet positions");
-        void refetchTokens(false);
-      },
-    );
-
-    return () => {
-      console.log("🧹 Cleaning up SSE connection in ChartPage");
-      unsubscribe();
-    };
-  }, [connected, publicKey, refetchTokens]);
 
   const handleBuy = useCallback(async () => {
     if (!connected || !publicKey || !signAllTransactions) {

@@ -110,6 +110,9 @@ async function fetchPortfolioFromUrl(
   }
 }
 
+// ponytail: dedupe in-flight client fetches per URL; upgrade path = React Query only
+const portfolioInflight = new Map<string, Promise<JupiterPortfolioResponse>>();
+
 /** Client-side fetch via Next.js proxy. */
 export async function fetchJupiterPortfolio(
   walletAddress: string,
@@ -118,10 +121,17 @@ export async function fetchJupiterPortfolio(
     wallet: walletAddress,
     include: "reclaimableLamports",
   });
-  return fetchPortfolioFromUrl(
-    `/api/jupiter/portfolio?${query.toString()}`,
-    PORTFOLIO_FETCH_TIMEOUT_MS,
+  const url = `/api/jupiter/portfolio?${query.toString()}`;
+
+  // ponytail: dedupe in-flight client fetches per URL; upgrade path = React Query only
+  const inflight = portfolioInflight.get(url);
+  if (inflight) return inflight;
+
+  const promise = fetchPortfolioFromUrl(url, PORTFOLIO_FETCH_TIMEOUT_MS).finally(
+    () => portfolioInflight.delete(url),
   );
+  portfolioInflight.set(url, promise);
+  return promise;
 }
 
 /** Server-side fetch directly from Jupiter. */

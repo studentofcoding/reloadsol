@@ -136,7 +136,9 @@ export default function HistoryTab() {
   };
 
   const formatPercentage = (value: number): string => {
-    return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+    const n = Number(value)
+    if (!Number.isFinite(n)) return "—"
+    return `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
   };
 
   const formatDuration = (
@@ -300,7 +302,9 @@ export default function HistoryTab() {
               </div>
               <div className="bg-purple-900/20 border border-purple-600 p-4 rounded-lg text-center">
                 <div className="text-2xl font-bold text-purple-400">
-                  {stats.winRate.toFixed(1)}%
+                  {Number.isFinite(Number(stats.winRate))
+                    ? `${Number(stats.winRate).toFixed(1)}%`
+                    : "—"}
                 </div>
                 <div className="text-sm text-gray-400">Win Rate</div>
               </div>

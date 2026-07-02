@@ -3,10 +3,8 @@ import { createConnection, getConnection } from './connection'
 // Re-export the connection utilities
 export { createConnection, getConnection, RPC_ENDPOINTS } from './connection'
 
-// Jupiter API endpoints
+// Jupiter API endpoints (swap execution uses Ultra → Raptor; tokens list for legacy refs)
 export const JUPITER_API = {
-  quote: 'https://lite-api.jup.ag/swap/v1/quote',
-  swap: 'https://lite-api.jup.ag/swap/v1/swap',
   tokens: 'https://token.jup.ag/strict',
 }
 

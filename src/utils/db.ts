@@ -1,4 +1,7 @@
-import { Pool, PoolClient, QueryResultRow } from 'pg';
+import { Pool, PoolClient, QueryResultRow, types } from 'pg';
+
+// Postgres NUMERIC (OID 1700) → JS number for API/UI .toFixed() etc.
+types.setTypeParser(1700, (val) => parseFloat(val));
 import {
   isDbCircuitOpen,
   isDbConnectivityError,

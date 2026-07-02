@@ -28,6 +28,33 @@ type SummaryRow = Record<string, unknown> & {
   win_rate?: number
 }
 
+function coerceNum(v: unknown): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : 0
+}
+
+function coerceTrackerRow(row: TrackerRow): TrackerRow {
+  return {
+    ...row,
+    initial_price_usd: coerceNum(row.initial_price_usd),
+    peak_price_usd: coerceNum(row.peak_price_usd),
+    last_price_usd: coerceNum(row.last_price_usd),
+    peak_gain_percentage: coerceNum(row.peak_gain_percentage),
+    current_gain_percentage: coerceNum(row.current_gain_percentage),
+    market_cap: row.market_cap != null ? coerceNum(row.market_cap) : null,
+  }
+}
+
+function coerceSummaryRow(row: SummaryRow): SummaryRow {
+  return {
+    ...row,
+    win_rate: row.win_rate != null ? coerceNum(row.win_rate) : undefined,
+    avg_peak_gain: row.avg_peak_gain != null ? coerceNum(row.avg_peak_gain) : undefined,
+    max_peak_gain: row.max_peak_gain != null ? coerceNum(row.max_peak_gain) : undefined,
+    avg_loss: row.avg_loss != null ? coerceNum(row.avg_loss) : undefined,
+  }
+}
+
 type TrackerRow = Record<string, unknown> & {
   token_address: string
   token_symbol: string | null
@@ -58,16 +85,16 @@ function mapPeriodTokens(summary: SummaryRow, tokens: TrackerRow[]) {
       token_symbol: token.token_symbol,
       token_name: token.token_name,
       logo_url: token.logo_url,
-      initial_price_usd: token.initial_price_usd,
-      peak_price_usd: token.peak_price_usd,
-      last_price_usd: token.last_price_usd,
-      peak_gain_percentage: token.peak_gain_percentage,
+      initial_price_usd: coerceNum(token.initial_price_usd),
+      peak_price_usd: coerceNum(token.peak_price_usd),
+      last_price_usd: coerceNum(token.last_price_usd),
+      peak_gain_percentage: coerceNum(token.peak_gain_percentage),
       tracking_duration_hours: Math.round(trackingDuration * 100) / 100,
       tracking_started_at: token.tracking_started_at,
       status_changed_at: token.status_changed_at || summary.period_end,
       status: token.status,
-      current_gain_percentage: token.current_gain_percentage,
-      market_cap: token.market_cap,
+      current_gain_percentage: coerceNum(token.current_gain_percentage),
+      market_cap: token.market_cap != null ? coerceNum(token.market_cap) : null,
       trading_simulation: token.trading_simulation,
       price_history: token.price_history,
     }
@@ -100,6 +127,7 @@ function buildEnhancedSummary(
   const profitStats = sumSummaryTokenProfitPct(periodTokens)
   return {
     ...summary,
+    ...coerceSummaryRow(summary),
     top_winners: periodTokens,
     total_profit_pct: profitStats.totalProfitPct,
     average_profit_pct: profitStats.averageProfitPct,
@@ -108,43 +136,44 @@ function buildEnhancedSummary(
 }
 
 function computeCohortStats(tokens: TrackerRow[]) {
-  const holding = tokens.filter((t) => t.status === 'tracking')
-  const sortedByPeak = [...tokens].sort(
-    (a, b) => (b.peak_gain_percentage ?? 0) - (a.peak_gain_percentage ?? 0),
+  const normalized = tokens.map(coerceTrackerRow)
+  const holding = normalized.filter((t) => t.status === 'tracking')
+  const sortedByPeak = [...normalized].sort(
+    (a, b) => coerceNum(b.peak_gain_percentage) - coerceNum(a.peak_gain_percentage),
   )
   const top = sortedByPeak[0]
 
   const avgCurrentGain =
     holding.length > 0
-      ? holding.reduce((sum, t) => sum + (t.current_gain_percentage || 0), 0) /
+      ? holding.reduce((sum, t) => sum + coerceNum(t.current_gain_percentage), 0) /
         holding.length
-      : tokens.length > 0
-        ? tokens.reduce((sum, t) => sum + (t.current_gain_percentage || 0), 0) /
-          tokens.length
+      : normalized.length > 0
+        ? normalized.reduce((sum, t) => sum + coerceNum(t.current_gain_percentage), 0) /
+          normalized.length
         : 0
 
   const avgPeakGain =
-    tokens.length > 0
-      ? tokens.reduce((sum, t) => sum + (t.peak_gain_percentage || 0), 0) /
-        tokens.length
+    normalized.length > 0
+      ? normalized.reduce((sum, t) => sum + coerceNum(t.peak_gain_percentage), 0) /
+        normalized.length
       : 0
 
   return {
     statistics: {
       total_tracking: holding.length,
       positive_performers:
-        tokens.filter((t) => (t.current_gain_percentage ?? 0) > 0).length || 0,
+        normalized.filter((t) => coerceNum(t.current_gain_percentage) > 0).length || 0,
       negative_performers:
-        tokens.filter((t) => (t.current_gain_percentage ?? 0) < 0).length || 0,
+        normalized.filter((t) => coerceNum(t.current_gain_percentage) < 0).length || 0,
       at_risk:
-        tokens.filter((t) => (t.current_gain_percentage ?? 0) <= -40).length ||
+        normalized.filter((t) => coerceNum(t.current_gain_percentage) <= -40).length ||
         0,
       top_performer: top
         ? {
             token_symbol: top.token_symbol,
             token_name: top.token_name,
-            current_gain_percentage: top.current_gain_percentage,
-            peak_gain_percentage: top.peak_gain_percentage,
+            current_gain_percentage: coerceNum(top.current_gain_percentage),
+            peak_gain_percentage: coerceNum(top.peak_gain_percentage),
           }
         : null,
     },
@@ -374,8 +403,8 @@ export async function GET(request: NextRequest) {
         winRateTrend = 0
       }
     } else if (historicalSummaries && historicalSummaries.length >= 2) {
-      const latestWinRate = historicalSummaries[0]?.win_rate || 0
-      const previousWinRate = historicalSummaries[1]?.win_rate || 0
+      const latestWinRate = coerceNum(historicalSummaries[0]?.win_rate)
+      const previousWinRate = coerceNum(historicalSummaries[1]?.win_rate)
       winRateTrend = latestWinRate - previousWinRate
     }
 
