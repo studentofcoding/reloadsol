@@ -4,13 +4,14 @@
 # Usage:
 #   bash scripts/deploy-tencent.sh setup     # check deps, npm install (registry.npmjs.org)
 #   bash scripts/deploy-tencent.sh db        # start reloadsol-db + reloadsol-bouncer (localhost :5432)
-#   bash scripts/deploy-tencent.sh migrate   # pgcopydb Supabase → local Postgres (needs SOURCE_DATABASE_URL)
+#   bash scripts/deploy-tencent.sh schema    # apply db/init/*.sql (no Supabase; idempotent)
+#   bash scripts/deploy-tencent.sh migrate   # optional pgcopydb from Supabase (needs SOURCE_DATABASE_URL)
 #   bash scripts/deploy-tencent.sh build     # Next.js host build for Dockerfile.web
 #   bash scripts/deploy-tencent.sh deploy      # full prod stack (web + cron + social-ingest)
 #   bash scripts/deploy-tencent.sh smoke     # infra health (OK pre-migrate)
 #   bash scripts/deploy-tencent.sh smoke --strict  # require DB + DLMM healthy
 #   bash scripts/deploy-tencent.sh backup      # pg_dump to ./backups/
-#   bash scripts/deploy-tencent.sh all         # setup → db → build → deploy (skip migrate; run migrate separately)
+#   bash scripts/deploy-tencent.sh all         # setup → db → schema → build → deploy
 #
 # Env (in .env):
 #   POSTGRES_PASSWORD, DATABASE_URL, DATABASE_URL_DIRECT
@@ -92,8 +93,15 @@ cmd_db() {
   log "Starting Postgres + PgBouncer (DB bound to 127.0.0.1:5432)..."
   bash scripts/start-db-stack.sh
   docker compose -f docker-compose.yml -f docker-compose.migrate.yml ps reloadsol-db reloadsol-bouncer
-  log "DB ready. Direct URL for migrate:"
-  log "  DATABASE_URL_DIRECT=postgresql://${POSTGRES_USER:-postgres}:****@127.0.0.1:5432/${POSTGRES_DB:-reloadsol_db}"
+  log "DB ready. Apply schema: bash scripts/deploy-tencent.sh schema"
+  log "  Direct URL: postgresql://${POSTGRES_USER:-postgres}:****@127.0.0.1:5432/${POSTGRES_DB:-reloadsol_db}"
+}
+
+cmd_schema() {
+  ensure_env
+  bash scripts/init-local-db.sh
+  bash scripts/verify-schema.sh
+  log "Schema OK — run: bash scripts/deploy-tencent.sh deploy && bash scripts/deploy-tencent.sh smoke --strict"
 }
 
 cmd_migrate() {
@@ -104,10 +112,18 @@ cmd_migrate() {
     export USE_PGCOPYDB_DOCKER=1
   fi
   [[ -n "${SOURCE_DATABASE_URL:-}" ]] || fail "Export SOURCE_DATABASE_URL (Supabase direct :5432)"
-  export TARGET_DATABASE_URL="${TARGET_DATABASE_URL:-${DATABASE_URL_DIRECT:-}}"
-  if [[ -z "$TARGET_DATABASE_URL" ]]; then
-    export TARGET_DATABASE_URL="postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB:-reloadsol_db}"
-  fi
+  bash scripts/validate-database-url.sh "$SOURCE_DATABASE_URL" "SOURCE_DATABASE_URL" \
+    || fail "Fix SOURCE_DATABASE_URL — see Supabase Dashboard → Connect → Direct connection"
+  # Always build local target from .env (URL-encoded password; ignore pre-exported TARGET)
+  export TARGET_DATABASE_URL="$(
+    PGUSER="${POSTGRES_USER:-postgres}" \
+    PGPASSWORD="${POSTGRES_PASSWORD}" \
+    PGDATABASE="${POSTGRES_DB:-reloadsol_db}" \
+    PGHOST=127.0.0.1 PGPORT=5432 \
+    bash scripts/build-database-url.sh
+  )"
+  bash scripts/validate-database-url.sh "$TARGET_DATABASE_URL" "TARGET_DATABASE_URL"
+  log "Target: postgresql://${POSTGRES_USER:-postgres}:****@127.0.0.1:5432/${POSTGRES_DB:-reloadsol_db}"
   log "Stopping writers during migrate..."
   "${COMPOSE[@]}" stop cron social-ingest 2>/dev/null || true
   bash scripts/migrate-from-supabase.sh
@@ -182,9 +198,9 @@ cmd_smoke() {
     echo "$dlmm_body" | head -c 800
     echo ""
     if [[ "$SMOKE_STRICT" == true ]]; then
-      fail "dlmm health failed (503) — run: bash scripts/deploy-tencent.sh migrate"
+      fail "dlmm health failed (503) — run: bash scripts/deploy-tencent.sh schema"
     fi
-    log "WARN: DLMM 503 — pre-migrate or schema not ready. Run: bash scripts/deploy-tencent.sh migrate"
+    log "WARN: DLMM 503 — schema not ready. Run: bash scripts/deploy-tencent.sh schema"
   elif [[ "$dlmm_code" != "200" ]]; then
     echo "$dlmm_body" | head -c 800
     fail "dlmm health failed (HTTP ${dlmm_code})"
@@ -200,7 +216,7 @@ cmd_smoke() {
   if [[ "$SMOKE_STRICT" == true ]]; then
     log "Smoke OK (strict)"
   else
-    log "Smoke OK (infra — use 'smoke --strict' after migrate)"
+    log "Smoke OK (infra — use 'smoke --strict' after schema)"
   fi
 }
 
@@ -216,11 +232,10 @@ cmd_backup() {
 cmd_all() {
   cmd_setup
   cmd_db
+  cmd_schema
   cmd_build
-  log "Skipping migrate — run manually when ready:"
-  log "  export SOURCE_DATABASE_URL='postgresql://...supabase direct...'"
-  log "  bash scripts/deploy-tencent.sh migrate"
   cmd_deploy
+  log "Run: bash scripts/deploy-tencent.sh smoke --strict"
 }
 
 usage() {
@@ -231,6 +246,7 @@ usage() {
 case "${1:-}" in
   setup)   cmd_setup ;;
   db)      cmd_db ;;
+  schema|init-schema) cmd_schema ;;
   migrate) cmd_migrate ;;
   build)   cmd_build ;;
   deploy)  cmd_deploy ;;

@@ -89,9 +89,16 @@ See [Environment variables](#environment-variables) for the full list.
 
 ### 3. Database
 
-**Fresh Docker setup:** schema is applied automatically on first `docker compose up` via [`db/init/`](db/init/) (extensions + [`supabase/schema.sql`](supabase/schema.sql)).
+**Fresh Docker setup:** schema is applied automatically on first `docker compose up` via [`db/init/`](db/init/) (extensions + full app schema in `02-schema.sql`).
 
-**Migrate from hosted Supabase:**
+**Existing volume or no Supabase:** apply schema from the repo (empty tables, no historical data):
+
+```bash
+bash scripts/deploy-tencent.sh db
+bash scripts/deploy-tencent.sh schema    # idempotent — safe to re-run
+```
+
+**Optional — migrate from hosted Supabase** (when available):
 
 ```bash
 # Stop writes first (cron + social-ingest)
@@ -368,21 +375,32 @@ See [CHANGELOG.md](./CHANGELOG.md) for complete release notes.
 
 Tencent's default npm mirror blocks some packages (e.g. `xrpl`) with **451 Unavailable For Legal Reasons**. This project no longer depends on those packages (legacy Trezor wallet bundle removed).
 
-**One-shot Tencent deploy** (setup → DB → build → deploy):
+**One-shot Tencent deploy** (setup → DB → schema → build → deploy):
 
 ```bash
 cp .env.docker.example .env   # edit POSTGRES_PASSWORD, secrets
 bash scripts/deploy-tencent.sh all
-
-# Migrate from Supabase (maintenance window):
-export SOURCE_DATABASE_URL='postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres'
-bash scripts/deploy-tencent.sh db        # if not running
-bash scripts/deploy-tencent.sh migrate
-bash scripts/deploy-tencent.sh deploy
-bash scripts/deploy-tencent.sh smoke
+bash scripts/deploy-tencent.sh smoke --strict
 ```
 
-Subcommands: `setup` | `db` | `migrate` | `build` | `deploy` | `smoke` | `backup` | `all`
+**Step-by-step (no Supabase):**
+
+```bash
+bash scripts/deploy-tencent.sh db
+bash scripts/deploy-tencent.sh schema
+bash scripts/deploy-tencent.sh deploy
+bash scripts/deploy-tencent.sh smoke --strict
+```
+
+**Optional — migrate from Supabase** (when available):
+
+```bash
+export SOURCE_DATABASE_URL='postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres'
+export USE_PGCOPYDB_DOCKER=1
+bash scripts/deploy-tencent.sh migrate
+```
+
+Subcommands: `setup` | `db` | `schema` | `migrate` | `build` | `deploy` | `smoke` | `backup` | `all`
 
 If install still fails:
 

@@ -16,6 +16,9 @@ cd "$ROOT"
 SOURCE_DATABASE_URL="${SOURCE_DATABASE_URL:?set Supabase direct URL (port 5432, not pooler)}"
 TARGET_DATABASE_URL="${TARGET_DATABASE_URL:?set reloadsol-db direct URL}"
 
+bash scripts/validate-database-url.sh "$SOURCE_DATABASE_URL" "SOURCE_DATABASE_URL"
+bash scripts/validate-database-url.sh "$TARGET_DATABASE_URL" "TARGET_DATABASE_URL"
+
 if ! command -v psql >/dev/null 2>&1; then
   echo "psql not found. Install: sudo apt install -y postgresql-client" >&2
   exit 1
