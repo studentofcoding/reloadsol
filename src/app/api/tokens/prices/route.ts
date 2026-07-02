@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchTokenPricesBatch, getJupiterApiVersion, JupiterAPIError } from '@/utils/jupiter-api'
+import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 // Enhanced cache with longer TTL for high-volume usage
 interface PriceCache {
@@ -51,7 +52,11 @@ function isRateLimited(): boolean {
   return requestCount >= MAX_REQUESTS_PER_MINUTE
 }
 
-function getCachedPrice(mint: string): number | null {
+function priceRedisKey(mint: string): string {
+  return `prices:${mint}`
+}
+
+function getCachedPriceFromMemory(mint: string): number | null {
   const cached = priceCache.get(mint)
   if (!cached) return null
 
@@ -60,7 +65,6 @@ function getCachedPrice(mint: string): number | null {
     return cached.price
   }
 
-  // Check if we can use stale cache to avoid API calls
   if (now <= cached.timestamp + STALE_CACHE_TTL_MS) {
     console.log(`Using stale cache for ${mint}`)
     return cached.price
@@ -69,16 +73,39 @@ function getCachedPrice(mint: string): number | null {
   return null
 }
 
+async function getCachedPrice(mint: string): Promise<number | null> {
+  const fromMemory = getCachedPriceFromMemory(mint)
+  if (fromMemory !== null) return fromMemory
+
+  const fromRedis = await cacheGet<PriceCache>(priceRedisKey(mint))
+  if (!fromRedis) return null
+
+  const now = Date.now()
+  if (now <= fromRedis.expiresAt || now <= fromRedis.timestamp + STALE_CACHE_TTL_MS) {
+    priceCache.set(mint, fromRedis)
+    return fromRedis.price
+  }
+
+  return null
+}
+
 function setCachedPrice(mint: string, price: number, source: string = 'jupiter') {
   const now = Date.now()
   const ttl = POPULAR_TOKENS.has(mint) ? POPULAR_CACHE_TTL_MS : CACHE_TTL_MS
-
-  priceCache.set(mint, {
+  const entry: PriceCache = {
     price,
     timestamp: now,
     expiresAt: now + ttl,
-    source
-  })
+    source,
+  }
+
+  priceCache.set(mint, entry)
+
+  void cacheSet(
+    priceRedisKey(mint),
+    entry,
+    Math.ceil(ttl / 1000),
+  )
 }
 
 async function fetchPricesFromJupiter(tokens: string[]): Promise<Record<string, number>> {
@@ -115,7 +142,6 @@ async function fetchPricesFromJupiter(tokens: string[]): Promise<Record<string, 
 function processBatchedRequests() {
   if (pendingRequests.length === 0) return
 
-  // Collect all unique tokens from pending requests
   const allTokens = new Set<string>()
   pendingRequests.forEach(req => {
     req.tokens.forEach(token => allTokens.add(token))
@@ -124,34 +150,32 @@ function processBatchedRequests() {
   const uniqueTokens = Array.from(allTokens)
   console.log(`Processing batch: ${pendingRequests.length} requests for ${uniqueTokens.length} unique tokens`)
 
-  // Get cached prices first
-  const cachedPrices: Record<string, number> = {}
-  const tokensToFetch: string[] = []
-
-  uniqueTokens.forEach(token => {
-    const cached = getCachedPrice(token)
-    if (cached !== null) {
-      cachedPrices[token] = cached
-    } else {
-      tokensToFetch.push(token)
-    }
-  })
-
-  console.log(`Cache hit: ${Object.keys(cachedPrices).length}, Need to fetch: ${tokensToFetch.length}`)
-
-  // Process the batch
   Promise.resolve().then(async () => {
+    const cachedPrices: Record<string, number> = {}
+    const tokensToFetch: string[] = []
+
+    await Promise.all(
+      uniqueTokens.map(async (token) => {
+        const cached = await getCachedPrice(token)
+        if (cached !== null) {
+          cachedPrices[token] = cached
+        } else {
+          tokensToFetch.push(token)
+        }
+      }),
+    )
+
+    console.log(`Cache hit: ${Object.keys(cachedPrices).length}, Need to fetch: ${tokensToFetch.length}`)
+
     let freshPrices: Record<string, number> = {}
 
     if (tokensToFetch.length > 0 && !isRateLimited()) {
       try {
-        // Split into chunks of 100 (Jupiter API limit)
         const chunks = []
         for (let i = 0; i < tokensToFetch.length; i += 100) {
           chunks.push(tokensToFetch.slice(i, i + 100))
         }
 
-        // Fetch all chunks (if within rate limit)
         const chunkPromises = chunks.slice(0, Math.floor((MAX_REQUESTS_PER_MINUTE - requestCount) / chunks.length))
         const chunkResults = await Promise.allSettled(
           chunkPromises.map(chunk => fetchPricesFromJupiter(chunk))
@@ -167,12 +191,10 @@ function processBatchedRequests() {
       }
     }
 
-    // Combine cached and fresh prices
     const allPrices = { ...cachedPrices, ...freshPrices }
 
-    // Resolve all pending requests
     const requestsToResolve = [...pendingRequests]
-    pendingRequests.length = 0 // Clear the queue
+    pendingRequests.length = 0
 
     requestsToResolve.forEach(request => {
       const requestPrices: Record<string, number> = {}
@@ -182,7 +204,6 @@ function processBatchedRequests() {
       request.resolve(requestPrices)
     })
   }).catch(error => {
-    // Reject all pending requests on error
     const requestsToReject = [...pendingRequests]
     pendingRequests.length = 0
     requestsToReject.forEach(request => request.reject(error))
@@ -248,8 +269,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         prices,
-        cached_tokens: Object.keys(prices).filter(token => getCachedPrice(token) !== null).length,
-        fresh_tokens: Object.keys(prices).filter(token => getCachedPrice(token) === null).length,
+        cached_tokens: validTokens.filter((token) => getCachedPriceFromMemory(token) !== null).length,
+        fresh_tokens: validTokens.filter((token) => getCachedPriceFromMemory(token) === null).length,
         rate_limit_remaining: Math.max(0, MAX_REQUESTS_PER_MINUTE - requestCount),
         cache_stats: {
           total_cached: priceCache.size,

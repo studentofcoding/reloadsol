@@ -14,7 +14,15 @@ read_env_var() {
 }
 
 resolve_web_host_port() {
-  local from_docker from_env
+  local from_nginx from_docker from_env
+
+  if docker inspect reloadsol-nginx >/dev/null 2>&1; then
+    from_nginx="$(docker port reloadsol-nginx 80/tcp 2>/dev/null | head -1 | sed 's/.*://')"
+    if [[ -n "$from_nginx" ]]; then
+      echo "$from_nginx"
+      return
+    fi
+  fi
 
   from_docker="$(docker port reloadsol-web 3000/tcp 2>/dev/null | head -1 | sed 's/.*://')"
   if [[ -n "$from_docker" ]]; then

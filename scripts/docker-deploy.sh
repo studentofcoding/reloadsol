@@ -124,7 +124,15 @@ read_env_var() {
 }
 
 resolve_web_host_port() {
-  local from_docker from_env
+  local from_nginx from_docker from_env
+
+  if docker inspect reloadsol-nginx >/dev/null 2>&1; then
+    from_nginx="$(docker port reloadsol-nginx 80/tcp 2>/dev/null | head -1 | sed 's/.*://')"
+    if [[ -n "$from_nginx" ]]; then
+      echo "$from_nginx"
+      return
+    fi
+  fi
 
   from_docker="$(docker port reloadsol-web 3000/tcp 2>/dev/null | head -1 | sed 's/.*://')"
   if [[ -n "$from_docker" ]]; then
@@ -138,7 +146,7 @@ resolve_web_host_port() {
     return
   fi
 
-  echo "${WEB_PORT:-3000}"
+  echo "${WEB_PORT:-80}"
 }
 
 resolve_cron_host_port() {
@@ -265,6 +273,22 @@ rollback_web_container() {
   fi
 
   log "Rollback container also failed health check"
+  return 1
+}
+
+wait_for_web_internal_health() {
+  local attempts="${1:-60}"
+  local delay="${2:-5}"
+  log "Waiting for reloadsol-web internal /api/health ..."
+  for ((i = 1; i <= attempts; i++)); do
+    if docker exec reloadsol-web wget --no-verbose --tries=1 -O /dev/null http://127.0.0.1:3000/api/health 2>/dev/null; then
+      log "Web container health OK (internal)"
+      return 0
+    fi
+    sleep "$delay"
+  done
+  log "Web internal health check failed"
+  "${COMPOSE[@]}" logs --tail=80 web || true
   return 1
 }
 
@@ -553,12 +577,23 @@ elif [[ ${#UP_SERVICES[@]} -gt 0 ]]; then
 fi
 
 if [[ "$DEPLOY_WEB" == true ]]; then
-  WEB_HOST_PORT="$(resolve_web_host_port)"
-  HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/api/health"
-  log "Host health URL: ${HEALTH_URL}"
-  if ! wait_for_health "$HEALTH_URL" 60 5; then
+  if ! wait_for_web_internal_health 60 5; then
     rollback_web_container "$PREV_WEB_IMAGE" || true
     exit 1
+  fi
+  if "${COMPOSE[@]}" config --services 2>/dev/null | grep -qx nginx; then
+    log "Starting nginx edge proxy ..."
+    "${COMPOSE[@]}" up -d nginx redis || true
+    sleep 2
+    WEB_HOST_PORT="$(resolve_web_host_port)"
+    HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/api/health"
+    log "Edge health URL: ${HEALTH_URL}"
+    wait_for_health "$HEALTH_URL" 30 3 || true
+  else
+    WEB_HOST_PORT="$(resolve_web_host_port)"
+    HEALTH_URL="http://127.0.0.1:${WEB_HOST_PORT}/api/health"
+    log "Host health URL: ${HEALTH_URL}"
+    wait_for_health "$HEALTH_URL" 30 3 || true
   fi
 fi
 

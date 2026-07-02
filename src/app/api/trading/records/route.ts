@@ -26,11 +26,11 @@ interface DatabaseRecord {
 const REQUEST_TIMEOUT = 10000
 
 // Fetch trading records with caching and deduplication
-async function fetchTradingRecordsWithCache(walletAddress: string, limit: number): Promise<any[]> {
-  const cached = getCachedRecords(walletAddress, limit)
+async function fetchTradingRecordsWithCache(walletAddress: string, limit: number): Promise<{ records: any[]; fromCache: boolean }> {
+  const cached = await getCachedRecords(walletAddress, limit)
   if (cached) {
     console.log(`🎯 Cache hit for trading records: ${walletAddress.substring(0, 8)}... (${limit} records)`)
-    return cached as any[]
+    return { records: cached as any[], fromCache: true }
   }
 
   const cacheKey = generateRecordsCacheKey(walletAddress, limit)
@@ -39,7 +39,7 @@ async function fetchTradingRecordsWithCache(walletAddress: string, limit: number
   if (ongoing) {
     console.log(`⏳ Waiting for ongoing trading records request: ${walletAddress.substring(0, 8)}...`)
     try {
-      return (await ongoing.promise) as any[]
+      return { records: (await ongoing.promise) as any[], fromCache: false }
     } catch (error) {
       ongoingRecordsRequests.delete(cacheKey)
       throw error
@@ -62,7 +62,7 @@ async function fetchTradingRecordsWithCache(walletAddress: string, limit: number
       setCachedRecords(walletAddress, limit, result)
     }
 
-    return result
+    return { records: result, fromCache: false }
   } catch (error) {
     ongoingRecordsRequests.delete(cacheKey)
     throw error
@@ -127,18 +127,18 @@ export async function GET(request: NextRequest) {
       return mismatch
     }
 
-    const records = await fetchTradingRecordsWithCache(walletAddress, limit)
+    const { records, fromCache } = await fetchTradingRecordsWithCache(walletAddress, limit)
 
     const allowedOrigin = resolveAllowedOrigin(request)
 
     return NextResponse.json({
       success: true,
       records,
-      cached: getCachedRecords(walletAddress, limit) !== null
+      cached: fromCache
     }, {
       headers: {
         'Cache-Control': 'private, no-cache, no-store, must-revalidate',
-        'X-Cache-Status': getCachedRecords(walletAddress, limit) ? 'HIT' : 'MISS',
+        'X-Cache-Status': fromCache ? 'HIT' : 'MISS',
         ...(allowedOrigin ? { 'Access-Control-Allow-Origin': allowedOrigin } : {}),
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Origin',

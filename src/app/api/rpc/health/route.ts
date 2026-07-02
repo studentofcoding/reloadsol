@@ -1,9 +1,12 @@
 import { NextResponse } from 'next/server'
 import { resolveRpcUrls } from '@/utils/rpc-urls'
+import { cacheGet, cacheSet } from '@/utils/redis-cache'
+
+const RPC_HEALTH_CACHE_KEY = 'rpc:health'
+const RPC_HEALTH_CACHE_TTL_SECONDS = 60
 
 const getRpcUrls = (): string[] => resolveRpcUrls()
 
-// Memoized RPC URLs to avoid repeated parsing
 let cachedRpcUrls: string[] | null = null
 const getCachedRpcUrls = (): string[] => {
   if (!cachedRpcUrls) {
@@ -12,7 +15,6 @@ const getCachedRpcUrls = (): string[] => {
   return cachedRpcUrls
 }
 
-// Enhanced RPC endpoint testing with better error categorization
 const testRpcEndpoint = async (url: string, timeout = 5000): Promise<{ url: string; healthy: boolean; responseTime: number; error?: string; errorType?: string }> => {
   const startTime = Date.now()
 
@@ -92,7 +94,6 @@ const testRpcEndpoint = async (url: string, timeout = 5000): Promise<{ url: stri
   }
 }
 
-// Generate recommendations based on health check results
 function generateRecommendations(results: any[]): string[] {
   const recommendations: string[] = []
   const healthyCount = results.filter(r => r.healthy).length
@@ -129,74 +130,88 @@ function generateRecommendations(results: any[]): string[] {
   return recommendations
 }
 
+async function buildHealthPayload() {
+  const rpcUrls = getCachedRpcUrls()
+
+  const healthResults = await Promise.allSettled(
+    rpcUrls.map(url => testRpcEndpoint(url, 3000))
+  )
+
+  const processedResults = healthResults.map((result, index) => {
+    if (result.status === 'fulfilled') {
+      return result.value
+    }
+    return {
+      url: rpcUrls[index],
+      healthy: false,
+      responseTime: 3000,
+      error: `Health check failed: ${result.reason}`,
+      errorType: 'health_check_failure'
+    }
+  })
+
+  const sortedResults = processedResults.sort((a, b) => {
+    if (a.healthy && !b.healthy) return -1
+    if (!a.healthy && b.healthy) return 1
+    if (a.healthy && b.healthy) return a.responseTime - b.responseTime
+    return 0
+  })
+
+  const healthyCount = processedResults.filter(r => r.healthy).length
+  const totalCount = processedResults.length
+
+  const errorStats = processedResults
+    .filter(r => !r.healthy)
+    .reduce((acc, r) => {
+      const type = r.errorType || 'unknown'
+      acc[type] = (acc[type] || 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+
+  return {
+    status: 'success',
+    timestamp: new Date().toISOString(),
+    summary: {
+      total: totalCount,
+      healthy: healthyCount,
+      unhealthy: totalCount - healthyCount,
+      healthyPercentage: Math.round((healthyCount / totalCount) * 100),
+      averageResponseTime: Math.round(
+        processedResults
+          .filter(r => r.healthy)
+          .reduce((sum, r) => sum + r.responseTime, 0) / (healthyCount || 1)
+      )
+    },
+    endpoints: sortedResults,
+    healthyEndpoints: sortedResults.filter(r => r.healthy).map(r => r.url),
+    errorStats,
+    recommendations: generateRecommendations(processedResults)
+  }
+}
+
 export async function GET() {
   try {
-    const rpcUrls = getCachedRpcUrls()
-
-    // Test all RPC endpoints in parallel with timeout
-    const healthResults = await Promise.allSettled(
-      rpcUrls.map(url => testRpcEndpoint(url, 3000)) // Reduced timeout for faster health checks
+    const cached = await cacheGet<Awaited<ReturnType<typeof buildHealthPayload>>>(
+      RPC_HEALTH_CACHE_KEY,
     )
+    if (cached) {
+      return NextResponse.json(cached, {
+        headers: {
+          'Cache-Control': 'public, max-age=60, stale-while-revalidate=10',
+          'X-Cache-Status': 'HIT',
+        },
+      })
+    }
 
-    // Process results and handle failures
-    const processedResults = healthResults.map((result, index) => {
-      if (result.status === 'fulfilled') {
-        return result.value
-      } else {
-        return {
-          url: rpcUrls[index],
-          healthy: false,
-          responseTime: 3000,
-          error: `Health check failed: ${result.reason}`,
-          errorType: 'health_check_failure'
-        }
-      }
-    })
+    const payload = await buildHealthPayload()
+    await cacheSet(RPC_HEALTH_CACHE_KEY, payload, RPC_HEALTH_CACHE_TTL_SECONDS)
 
-    // Sort by health status (healthy first) then by response time
-    const sortedResults = processedResults.sort((a, b) => {
-      if (a.healthy && !b.healthy) return -1
-      if (!a.healthy && b.healthy) return 1
-      if (a.healthy && b.healthy) return a.responseTime - b.responseTime
-      return 0
-    })
-
-    const healthyCount = processedResults.filter(r => r.healthy).length
-    const totalCount = processedResults.length
-
-    // Calculate error statistics
-    const errorStats = processedResults
-      .filter(r => !r.healthy)
-      .reduce((acc, r) => {
-        const type = r.errorType || 'unknown'
-        acc[type] = (acc[type] || 0) + 1
-        return acc
-      }, {} as Record<string, number>)
-
-    return NextResponse.json({
-      status: 'success',
-      timestamp: new Date().toISOString(),
-      summary: {
-        total: totalCount,
-        healthy: healthyCount,
-        unhealthy: totalCount - healthyCount,
-        healthyPercentage: Math.round((healthyCount / totalCount) * 100),
-        averageResponseTime: Math.round(
-          processedResults
-            .filter(r => r.healthy)
-            .reduce((sum, r) => sum + r.responseTime, 0) / (healthyCount || 1)
-        )
-      },
-      endpoints: sortedResults,
-      healthyEndpoints: sortedResults.filter(r => r.healthy).map(r => r.url),
-      errorStats,
-      recommendations: generateRecommendations(processedResults)
-    }, {
+    return NextResponse.json(payload, {
       headers: {
-        'Cache-Control': 'public, max-age=30, stale-while-revalidate=10'
-      }
+        'Cache-Control': 'public, max-age=60, stale-while-revalidate=10',
+        'X-Cache-Status': 'MISS',
+      },
     })
-
   } catch (error) {
     console.error('Health check error:', error)
     return NextResponse.json(

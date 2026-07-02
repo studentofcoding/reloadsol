@@ -1,4 +1,8 @@
 import { getTokenPrice } from './jupiter-api'
+import { cacheGet, cacheSet } from './redis-cache'
+
+const SOL_PRICE_REDIS_KEY = 'sol:price'
+const SOL_PRICE_REDIS_TTL_SECONDS = 30
 
 // Cache structure for SOL price data
 interface PriceCache {
@@ -165,8 +169,22 @@ async function fetchWithRateLimit(
   }
 }
 
+async function hydrateSolPriceFromRedis(): Promise<void> {
+  const cached = await cacheGet<PriceCache>(SOL_PRICE_REDIS_KEY)
+  if (!cached?.price) return
+  if (cached.expiresAt > Date.now() || cached.price !== DEFAULT_SOL_PRICE_USD) {
+    priceCache = cached
+  }
+}
+
+async function persistSolPriceToRedis(): Promise<void> {
+  await cacheSet(SOL_PRICE_REDIS_KEY, priceCache, SOL_PRICE_REDIS_TTL_SECONDS)
+}
+
 // Enhanced SOL price fetching with parallel requests and intelligent fallback
 export async function getSolPriceUSDCore(): Promise<{ price: number; source: string }> {
+  await hydrateSolPriceFromRedis()
+
   // Check if we can use stale cache to avoid API calls during high load
   const now = Date.now();
   if (priceCache.price && priceCache.price !== DEFAULT_SOL_PRICE_USD &&
@@ -198,6 +216,7 @@ export async function getSolPriceUSDCore(): Promise<{ price: number; source: str
         expiresAt: currentTime + CACHE_TTL_MS,
         originalSource: result.value.source
       };
+      await persistSolPriceToRedis();
       
       return result.value;
     }
@@ -211,6 +230,10 @@ export async function getSolPriceUSDCore(): Promise<{ price: number; source: str
 
   console.warn('All APIs failed, using default price');
   return { price: DEFAULT_SOL_PRICE_USD, source: 'default' };
+}
+
+export async function warmSolPriceCacheFromRedis(): Promise<void> {
+  await hydrateSolPriceFromRedis()
 }
 
 // Get cached price info for API responses

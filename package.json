@@ -93,6 +93,7 @@
     "geist": "^1.4.2",
     "html2canvas": "^1.4.1",
     "https-browserify": "^1.0.0",
+    "ioredis": "^5.11.1",
     "next": "16.2.9",
     "onnxruntime-node": "^1.27.0",
     "ora": "^5.4.1",

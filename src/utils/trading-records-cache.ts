@@ -1,4 +1,6 @@
-/** In-memory cache for GET /api/trading/records (server-side). */
+/** In-memory + Redis cache for GET /api/trading/records (server-side). */
+
+import { cacheDelByPrefix, cacheGet, cacheSet } from '@/utils/redis-cache'
 
 interface TradingRecordsCache {
   data: unknown[]
@@ -18,10 +20,15 @@ interface OngoingRecordsRequest {
 const tradingRecordsCache = new Map<string, TradingRecordsCache>()
 export const ongoingRecordsRequests = new Map<string, OngoingRecordsRequest>()
 
-export const TRADING_RECORDS_CACHE_TTL_MS = 5 * 1000
+export const TRADING_RECORDS_CACHE_TTL_MS = 10 * 1000
+const TRADING_RECORDS_REDIS_TTL_SECONDS = 10
 
 const MAX_CACHE_ENTRIES = 50
 const REQUEST_TIMEOUT = 10000
+
+function recordsRedisKey(walletAddress: string, limit: number): string {
+  return `records:${walletAddress}:${limit}`
+}
 
 function cleanupRecordsCache() {
   const now = Date.now()
@@ -53,20 +60,28 @@ export function generateRecordsCacheKey(
   return `${walletAddress}-${limit}`
 }
 
-export function getCachedRecords(
+export async function getCachedRecords(
   walletAddress: string,
   limit: number,
-): unknown[] | null {
+): Promise<unknown[] | null> {
   const cacheKey = generateRecordsCacheKey(walletAddress, limit)
   const cached = tradingRecordsCache.get(cacheKey)
-  if (!cached) return null
-
-  const now = Date.now()
-  if (now <= cached.expiresAt) {
-    return cached.data
+  if (cached) {
+    const now = Date.now()
+    if (now <= cached.expiresAt) {
+      return cached.data
+    }
+    tradingRecordsCache.delete(cacheKey)
   }
 
-  tradingRecordsCache.delete(cacheKey)
+  const fromRedis = await cacheGet<unknown[]>(
+    recordsRedisKey(walletAddress, limit),
+  )
+  if (fromRedis) {
+    setCachedRecords(walletAddress, limit, fromRedis)
+    return fromRedis
+  }
+
   return null
 }
 
@@ -87,6 +102,12 @@ export function setCachedRecords(
   })
 
   cleanupRecordsCache()
+
+  void cacheSet(
+    recordsRedisKey(walletAddress, limit),
+    data,
+    TRADING_RECORDS_REDIS_TTL_SECONDS,
+  )
 }
 
 export function invalidateTradingRecordsCache(walletAddress: string): number {
@@ -97,5 +118,8 @@ export function invalidateTradingRecordsCache(walletAddress: string): number {
     }
   }
   keysToDelete.forEach((key) => tradingRecordsCache.delete(key))
+
+  void cacheDelByPrefix(`records:${walletAddress}:`)
+
   return keysToDelete.length
 }
