@@ -888,6 +888,7 @@ export default function BulkTokenSeller() {
                 failureCount: sellResult.failedCloses.length,
                 tokenMints: sellResult.successfulCloses,
                 signatures: sellResult.signatures,
+                solAmount: sellResult.successfulCloses.length * 0.00203928,
               },
             );
             console.log(
@@ -1072,6 +1073,7 @@ export default function BulkTokenSeller() {
               failureCount: closeData.failed.length,
               tokenMints: closeData.successful,
               signatures: closeData.signatures,
+              solAmount: closeData.successful.length * 0.00203928,
             },
           );
           console.log(

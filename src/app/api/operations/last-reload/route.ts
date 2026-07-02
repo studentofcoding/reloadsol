@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query, queryOne } from '@/utils/db';
 
+const RENT_PER_CLOSE = 0.00203928;
+
 interface LastReloadResponse {
   walletAddress: string;
   totalSolRecovered: number;
@@ -9,44 +11,93 @@ interface LastReloadResponse {
   shortWallet: string;
 }
 
-export async function GET(request: NextRequest) {
+function shortWallet(address: string): string {
+  return `${address.slice(0, 3)}..${address.slice(-3)}`;
+}
+
+function mapTokenOperation(row: {
+  wallet_address: string;
+  total_sol_recovered: number;
+  close_count: number;
+  last_operation_time: string;
+}): LastReloadResponse {
+  const totalSolRecovered =
+    Number(row.total_sol_recovered) > 0
+      ? Number(row.total_sol_recovered)
+      : (row.close_count || 0) * RENT_PER_CLOSE;
+
+  return {
+    walletAddress: row.wallet_address,
+    totalSolRecovered,
+    lastOperationTime: row.last_operation_time,
+    operationType: 'close',
+    shortWallet: shortWallet(row.wallet_address),
+  };
+}
+
+function mapTradingRecord(row: {
+  wallet_address: string;
+  operation_type: string;
+  timestamp: string;
+  data: unknown;
+}): LastReloadResponse {
+  const data =
+    typeof row.data === 'string'
+      ? (JSON.parse(row.data) as { solAmount?: number; successCount?: number })
+      : (row.data as { solAmount?: number; successCount?: number });
+
+  let totalSolRecovered = Number(data?.solAmount) || 0;
+  if (totalSolRecovered <= 0 && row.operation_type === 'close') {
+    totalSolRecovered = (data?.successCount || 0) * RENT_PER_CLOSE;
+  }
+
+  return {
+    walletAddress: row.wallet_address,
+    totalSolRecovered,
+    lastOperationTime: row.timestamp,
+    operationType: row.operation_type === 'close' ? 'close' : 'swap',
+    shortWallet: shortWallet(row.wallet_address),
+  };
+}
+
+export async function GET() {
   try {
     const { rows: data } = await query<{
       wallet_address: string;
-      sol_balance: number;
-      last_operation_time: string;
+      total_sol_recovered: number;
       close_count: number;
+      last_operation_time: string;
     }>(
-      `SELECT wallet_address, sol_balance, last_operation_time, close_count
+      `SELECT wallet_address, total_sol_recovered, close_count, last_operation_time
        FROM token_operations
        WHERE last_operation_time IS NOT NULL
-         AND close_count > 0
+         AND (close_count > 0 OR total_sol_recovered > 0)
        ORDER BY last_operation_time DESC
        LIMIT 10`,
     );
 
-    if (!data || data.length === 0) {
-      return NextResponse.json(
-        { error: 'No operations found' },
-        { status: 404 }
-      );
+    if (data && data.length > 0) {
+      return NextResponse.json(data.map(mapTokenOperation));
     }
 
-    const operations = data.map((operation) => {
-      const avgSolPerClose = 0.002;
-      const totalSolRecovered = (operation.close_count || 0) * avgSolPerClose;
-      const shortWallet = `${operation.wallet_address.slice(0, 3)}..${operation.wallet_address.slice(-3)}`;
+    const { rows: records } = await query<{
+      wallet_address: string;
+      operation_type: string;
+      timestamp: string;
+      data: unknown;
+    }>(
+      `SELECT wallet_address, operation_type, timestamp, data
+       FROM trading_records
+       WHERE operation_type IN ('close', 'sell')
+       ORDER BY timestamp DESC
+       LIMIT 10`,
+    );
 
-      return {
-        walletAddress: operation.wallet_address,
-        totalSolRecovered,
-        lastOperationTime: operation.last_operation_time,
-        operationType: 'close' as const,
-        shortWallet,
-      };
-    });
+    if (!records || records.length === 0) {
+      return NextResponse.json([]);
+    }
 
-    return NextResponse.json(operations);
+    return NextResponse.json(records.map(mapTradingRecord));
   } catch (error) {
     console.error('Error in last-reload API:', error);
     return NextResponse.json(
@@ -110,6 +161,7 @@ export async function POST(request: NextRequest) {
       walletAddress,
       totalSolRecovered: newTotal,
       addedAmount: solRecovered,
+      operationType,
       message: `Added ${solRecovered} SOL, total now ${newTotal.toFixed(4)} SOL`,
     });
   } catch (error) {

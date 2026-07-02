@@ -77,10 +77,16 @@ export async function trackOperation(
 
     const result: TrackOperationResponse = await response.json();
     
-    // Update total SOL recovered if it's a sell operation with SOL amount
-    if (operationType === 'sell' && options?.solAmount && options.solAmount > 0) {
+    const RENT_PER_CLOSE = 0.00203928;
+    if (options?.solAmount && options.solAmount > 0) {
       try {
         await updateSolRecovered(walletAddress, options.solAmount, operationType);
+      } catch (error) {
+        console.warn('Failed to update SOL recovered, continuing...', error);
+      }
+    } else if (operationType === 'close' && successCount > 0) {
+      try {
+        await updateSolRecovered(walletAddress, successCount * RENT_PER_CLOSE, 'close');
       } catch (error) {
         console.warn('Failed to update SOL recovered, continuing...', error);
       }
@@ -154,6 +160,7 @@ export const trackClose = (
   options?: {
     failureCount?: number;
     solBalance?: number;
+    solAmount?: number;
     tokenMints?: string[];
     signatures?: string[];
   }
