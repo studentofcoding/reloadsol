@@ -129,3 +129,90 @@ export async function sendStrategyReportTelegram(body: string): Promise<boolean>
     chatId,
   })
 }
+
+export function isStrategyTrackTelegramEnabled(): boolean {
+  if (process.env.STRATEGY_TRACK_TELEGRAM_ENABLED === 'false') return false
+  return isTelegramConfigured()
+}
+
+function escapeTelegramHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+export function formatJupiterTokenLink(mint: string): string {
+  return `https://jup.ag/tokens/${mint}`
+}
+
+export function formatMcapUsd(mcap: number | null | undefined): string {
+  if (mcap == null || !Number.isFinite(mcap) || mcap <= 0) return '—'
+  if (mcap >= 1_000_000) return `$${(mcap / 1_000_000).toFixed(2)}M`
+  if (mcap >= 1_000) return `$${(mcap / 1_000).toFixed(1)}K`
+  return `$${mcap.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+}
+
+export async function sendStrategyTrackOpenAlert(params: {
+  strategyId: string
+  strategyName: string
+  domain: string
+  tokenSymbol: string
+  tokenAddress: string
+  marketCap?: number | null
+  isSimulated: boolean
+}): Promise<boolean> {
+  if (!isStrategyTrackTelegramEnabled()) return false
+
+  const mode = params.isSimulated ? 'SIM' : 'LIVE'
+  const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
+  const name = escapeTelegramHtml(params.strategyName)
+  const domain = escapeTelegramHtml(params.domain)
+  const link = formatJupiterTokenLink(params.tokenAddress)
+
+  const text = [
+    `🟢 <b>Strategy OPEN (${mode})</b>`,
+    '',
+    `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
+    `Domain: ${domain}`,
+    `Market Cap: ${formatMcapUsd(params.marketCap)}`,
+    `Token: ${symbol}`,
+    `<a href="${link}">${link}</a>`,
+  ].join('\n')
+
+  return sendTelegramAlert(text, { parseMode: 'HTML' })
+}
+
+export async function sendStrategyTrackCloseAlert(params: {
+  strategyId: string
+  strategyName: string
+  domain: string
+  tokenSymbol: string
+  tokenAddress: string
+  pnlPct: number
+  status: string
+  isSimulated: boolean
+}): Promise<boolean> {
+  if (!isStrategyTrackTelegramEnabled()) return false
+
+  const mode = params.isSimulated ? 'SIM' : 'LIVE'
+  const sign = params.pnlPct >= 0 ? '+' : ''
+  const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
+  const name = escapeTelegramHtml(params.strategyName)
+  const domain = escapeTelegramHtml(params.domain)
+  const result = escapeTelegramHtml((params.status || 'unknown').toUpperCase())
+  const link = formatJupiterTokenLink(params.tokenAddress)
+
+  const text = [
+    `🔴 <b>Strategy CLOSE (${mode})</b>`,
+    '',
+    `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
+    `Domain: ${domain}`,
+    `Token: ${symbol}`,
+    `PnL: ${sign}${params.pnlPct.toFixed(2)}%`,
+    `Result: <b>${result}</b>`,
+    `<a href="${link}">${link}</a>`,
+  ].join('\n')
+
+  return sendTelegramAlert(text, { parseMode: 'HTML' })
+}

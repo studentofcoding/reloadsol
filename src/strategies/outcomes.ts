@@ -3,6 +3,7 @@ import { query, queryOne } from '@/utils/db'
 import { isMissingSchemaError } from '@/utils/db-health'
 import { getAgentConfig } from '@/utils/dlmm/db'
 import type { DlmmPosition } from '@/types/dlmm'
+import { notifyStrategyClose } from './strategy-telegram-notify'
 
 export async function recordTrendingBotOutcome(params: {
   strategyId: string
@@ -48,6 +49,18 @@ export async function recordSignalsOutcome(params: {
     is_simulated: params.isSimulated ?? true,
     features: params.features ?? null,
   })
+
+  if (params.pnlPct != null) {
+    notifyStrategyClose({
+      domain: 'signals',
+      strategyId: params.strategyId,
+      tokenAddress: params.tokenAddress,
+      pnlPct: params.pnlPct,
+      status: params.status,
+      isSimulated: params.isSimulated ?? true,
+      features: params.features,
+    })
+  }
 }
 
 export async function recordDlmmOutcome(params: {
@@ -71,6 +84,18 @@ export async function recordDlmmOutcome(params: {
     is_simulated: params.isSimulated ?? true,
     features: params.features ?? null,
   })
+
+  if (params.pnlPct != null) {
+    notifyStrategyClose({
+      domain: 'dlmm',
+      strategyId: params.strategyId ?? 'dlmm_default',
+      tokenAddress: params.poolAddress,
+      pnlPct: params.pnlPct,
+      status: params.status,
+      isSimulated: params.isSimulated ?? true,
+      features: params.features,
+    })
+  }
 }
 
 export async function recordMcapTrackerOutcome(params: {
@@ -94,6 +119,18 @@ export async function recordMcapTrackerOutcome(params: {
     is_simulated: params.isSimulated ?? true,
     features: params.features ?? null,
   })
+
+  if (params.pnlPct != null) {
+    notifyStrategyClose({
+      domain: 'mcap_tracker',
+      strategyId: params.strategyId,
+      tokenAddress: params.tokenAddress,
+      pnlPct: params.pnlPct,
+      status: params.status,
+      isSimulated: params.isSimulated ?? true,
+      features: params.features,
+    })
+  }
 }
 
 function mapDlmmPositionRow(row: Record<string, unknown>): DlmmPosition {

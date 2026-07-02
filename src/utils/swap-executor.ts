@@ -197,6 +197,99 @@ export async function submitSignedSwap(
   return { signature, via: "rpc" };
 }
 
+const SIGNATURE_CONFIRM_INTERVAL_MS = 2000;
+const SIGNATURE_CONFIRM_TIMEOUT_MS = 60_000;
+
+async function pollSignatureConfirmed(
+  connection: Connection,
+  signature: string,
+  timeoutMs = SIGNATURE_CONFIRM_TIMEOUT_MS,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const response = await connection.getSignatureStatuses([signature], {
+      searchTransactionHistory: true,
+    });
+    const status = response.value[0];
+
+    if (status?.err) {
+      throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
+    }
+
+    const confirmation = status?.confirmationStatus;
+    if (confirmation === "confirmed" || confirmation === "finalized") {
+      return;
+    }
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, SIGNATURE_CONFIRM_INTERVAL_MS),
+    );
+  }
+
+  throw new Error(`Transaction confirmation timeout for ${signature}`);
+}
+
+export type ConfirmSwapSignatureParams = {
+  signature: string;
+  via: SwapProvider | "rpc";
+  connection: Connection;
+  lastValidBlockHeight?: number;
+  blockhash?: string;
+  direct?: boolean;
+};
+
+/** Raptor poll first, then RPC signature-status fallback. */
+export async function confirmSwapSignature(
+  params: ConfirmSwapSignatureParams,
+): Promise<void> {
+  if (params.via === "raptor") {
+    try {
+      await waitForRaptorConfirmation(params.signature, {
+        direct: params.direct,
+        maxAttempts: 45,
+        intervalMs: 2000,
+      });
+      return;
+    } catch (raptorError) {
+      console.warn(
+        "Raptor confirm failed, falling back to RPC signature check:",
+        raptorError,
+      );
+    }
+  }
+
+  if (
+    params.via === "rpc" &&
+    params.blockhash &&
+    params.lastValidBlockHeight != null
+  ) {
+    try {
+      const confirmation = await params.connection.confirmTransaction(
+        {
+          signature: params.signature,
+          blockhash: params.blockhash,
+          lastValidBlockHeight: params.lastValidBlockHeight,
+        },
+        "confirmed",
+      );
+      if (confirmation.value.err) {
+        throw new Error(
+          `Transaction failed: ${JSON.stringify(confirmation.value.err)}`,
+        );
+      }
+      return;
+    } catch (confirmError) {
+      console.warn(
+        "Blockhash confirm failed, falling back to signature poll:",
+        confirmError,
+      );
+    }
+  }
+
+  await pollSignatureConfirmed(params.connection, params.signature);
+}
+
 export type PreparedSwapMeta = PreparedSwap;
 
 export async function prepareBulkSwapTransaction(
@@ -269,12 +362,14 @@ export async function executeClientSwap(
     direct: params.direct,
   });
 
-  if (sendResult.via === "raptor" && params.pollRaptor !== false) {
-    await waitForRaptorConfirmation(sendResult.signature, {
+  if (params.pollRaptor !== false) {
+    await confirmSwapSignature({
+      signature: sendResult.signature,
+      via: sendResult.via,
+      connection: params.connection,
+      lastValidBlockHeight: prepared.lastValidBlockHeight,
       direct: params.direct,
     });
-  } else if (sendResult.via === "rpc") {
-    await params.connection.confirmTransaction(sendResult.signature, "confirmed");
   }
 
   return {

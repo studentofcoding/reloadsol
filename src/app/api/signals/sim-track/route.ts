@@ -119,6 +119,22 @@ async function openSimPosition(params: {
   })
 
   await insertTradingRecord(record)
+
+  const entryMcap =
+    typeof params.entryFeatures.entry_mcap === 'number'
+      ? params.entryFeatures.entry_mcap
+      : typeof params.entryFeatures.first_mcap === 'number'
+        ? params.entryFeatures.first_mcap
+        : null
+  const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
+  notifyStrategyOpen({
+    domain: 'signals',
+    strategyId: params.strategyId,
+    tokenSymbol: params.symbol,
+    tokenAddress: params.mintAddress,
+    marketCap: entryMcap,
+    isSimulated: true,
+  })
 }
 
 async function closeSimPosition(params: {

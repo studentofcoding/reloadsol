@@ -1,6 +1,8 @@
 import { Connection } from '@solana/web3.js';
 
 const SHYFT_RPC_BASE = 'https://rpc.shyft.to';
+export const SOLANATRACKER_RPC_DEFAULT =
+  'https://stark-delta-7166.secure.rpc.solanatracker.io';
 
 export const MAX_RPC_ENDPOINTS = 5;
 
@@ -70,8 +72,8 @@ export function buildEndpointList(urls: string[]): RpcEndpointInfo[] {
   }));
 }
 
-/** Resolve RPC URL list: RPC_URL env first, else build from SHYFT_API_KEY. */
-export function resolveRpcUrls(): string[] {
+/** Resolve fallback RPC URLs from RPC_URL env or SHYFT_API_KEY. */
+function resolveFallbackRpcUrls(): string[] {
   const rpcUrl = process.env.RPC_URL;
   if (rpcUrl) {
     const urls = normalizeRpcUrls(
@@ -86,6 +88,13 @@ export function resolveRpcUrls(): string[] {
   }
 
   return [];
+}
+
+/** Resolve RPC URL list: Solana Tracker internal first, then RPC_URL / Shyft. */
+export function resolveRpcUrls(): string[] {
+  const primary =
+    process.env.SOLANATRACKER_RPC_URL?.trim() || SOLANATRACKER_RPC_DEFAULT;
+  return normalizeRpcUrls([primary, ...resolveFallbackRpcUrls()]);
 }
 
 export function getPrimaryRpcUrl(): string {
@@ -107,6 +116,7 @@ export function getPublicRpcUrl(): string {
 }
 
 export function getRpcProviderType(url: string): string {
+  if (url.includes('solanatracker')) return 'Solana Tracker';
   if (url.includes('shyft')) return 'Shyft';
   if (url.includes('helius')) return 'Helius';
   if (url.includes('extrnode')) return 'Extrnode';

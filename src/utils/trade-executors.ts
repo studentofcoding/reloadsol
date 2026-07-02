@@ -3,8 +3,8 @@ import { logTradeOperation } from '@/utils/logger'
 import {
   prepareSwapTransaction,
   submitSignedSwap,
+  confirmSwapSignature,
 } from '@/utils/swap-executor'
-import { waitForRaptorConfirmation } from '@/utils/solanatracker-raptor'
 
 // -----------------------------------------------------------------------------------
 // Types
@@ -154,11 +154,14 @@ class RealTradeExecutor implements TradeExecutor {
         direct: true,
       })
 
-      if (sendResult.via === 'raptor') {
-        await waitForRaptorConfirmation(sendResult.signature, { direct: true })
-      } else {
-        await this.connection.confirmTransaction(sendResult.signature, 'confirmed')
-      }
+      await confirmSwapSignature({
+        signature: sendResult.signature,
+        via: sendResult.via,
+        connection: this.connection,
+        lastValidBlockHeight: prepared.lastValidBlockHeight,
+        blockhash: signedTx.message.recentBlockhash,
+        direct: true,
+      })
 
       const elapsed = Date.now() - started
       const result: TradeExecutionResult = {

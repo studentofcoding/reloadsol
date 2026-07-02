@@ -5,8 +5,8 @@ import { getSwapQuote } from '@/utils/jupiter'
 import {
   prepareSwapTransaction,
   submitSignedSwap,
+  confirmSwapSignature,
 } from '@/utils/swap-executor'
-import { waitForRaptorConfirmation } from '@/utils/solanatracker-raptor'
 import { notifySlTpTrigger } from './trading-notifications'
 import { getConnection } from '@/utils/solana'
 import { fetchUserTokens } from '@/utils/jupiter'
@@ -803,14 +803,14 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
 
         const signature = sendResult.signature
 
-        if (sendResult.via === 'raptor') {
-            await waitForRaptorConfirmation(signature, { direct: true })
-        } else {
-            const confirmation = await tradingConnection.confirmTransaction(signature, 'confirmed')
-            if (confirmation.value.err) {
-                throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`)
-            }
-        }
+        await confirmSwapSignature({
+          signature,
+          via: sendResult.via,
+          connection: tradingConnection,
+          lastValidBlockHeight: prepared.lastValidBlockHeight,
+          blockhash: transaction.message.recentBlockhash,
+          direct: true,
+        })
 
         // Update position in database
         const updateData: any = {

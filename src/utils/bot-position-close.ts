@@ -6,6 +6,7 @@ import {
 } from '@/utils/trading-records-db'
 import { calculateGainPercentage } from '@/utils/trading-math'
 import { recordTrendingBotOutcome } from '@/strategies/outcomes'
+import { notifyStrategyClose } from '@/strategies/strategy-telegram-notify'
 import {
   mergeEntryFeaturesForOutcome,
   mergeMonitorSnapshots,
@@ -252,7 +253,18 @@ export async function finalizeBotPositionClose(
       sell_percentage: params.sellPercentage,
       initial_price_usd: params.initialPriceUsd,
       exit_price_usd: params.currentPriceUsd,
+      token_symbol: params.tokenSymbol,
       ...mergeEntryFeaturesForOutcome(buyFeatures, closeEntryFeatures),
     },
+  })
+
+  notifyStrategyClose({
+    domain: 'trending_bot',
+    strategyId: params.strategyId,
+    tokenAddress: params.tokenAddress,
+    tokenSymbol: params.tokenSymbol,
+    pnlPct: gainPct,
+    status: finalStatus,
+    isSimulated: params.isSimulated,
   })
 }

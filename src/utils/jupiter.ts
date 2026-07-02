@@ -9,10 +9,8 @@ import { fetchAllDigitalAssetWithTokenByOwner } from "@metaplex-foundation/mpl-t
 import { TOKENS } from './solana'
 import jupiterApiUtils from './jupiter-api'
 import {
-  waitForRaptorConfirmation,
-} from './solanatracker-raptor'
-import {
   prepareBulkSwapTransaction,
+  confirmSwapSignature,
   submitSignedSwap,
   fetchSwapQuote,
   buildSwapTransaction,
@@ -1933,56 +1931,25 @@ export async function executeBulkBuy(
         }
 
         try {
-          if (sendResult.via === 'raptor') {
-            await waitForRaptorConfirmation(sendResult.signature!, {
-              maxAttempts: 30,
-              intervalMs: 2000,
-            })
+          const meta = transactionMetas[sendResult.mintIdx]
+          const signedTx = signedTransactions[sendResult.mintIdx]
 
-            signatures.push(sendResult.signature!)
-            result.successfulPurchases.push({
-              mintAddress: transactionMints[sendResult.mintIdx],
-              amount: amountPerToken,
-            })
-            console.log(`✅ Successfully bought ${transactionMints[sendResult.mintIdx]} via Raptor`)
-            return
-          }
-
-          const { blockhash, lastValidBlockHeight } = await getBlockhash();
-
-          const confirmation = await connection.confirmTransaction({
+          await confirmSwapSignature({
             signature: sendResult.signature!,
-            lastValidBlockHeight,
-            blockhash
-          }, 'confirmed')
+            via: sendResult.via!,
+            connection,
+            lastValidBlockHeight: meta.lastValidBlockHeight,
+            blockhash: signedTx.message.recentBlockhash,
+          })
 
-          if (confirmation.value.err) {
-            console.error(`Transaction failed: ${sendResult.signature}`, confirmation.value.err)
-            result.failedPurchases.push({
-              mintAddress: transactionMints[sendResult.mintIdx],
-              error: `Transaction failed: ${confirmation.value.err}`
-            })
-          } else {
-            // Verify transaction success on chain
-            const txInfo = await connection.getTransaction(sendResult.signature!, {
-              commitment: 'confirmed',
-              maxSupportedTransactionVersion: 0
-            })
-
-            if (txInfo?.meta?.err) {
-              result.failedPurchases.push({
-                mintAddress: transactionMints[sendResult.mintIdx],
-                error: 'Transaction failed on chain'
-              })
-            } else {
-              signatures.push(sendResult.signature!)
-              result.successfulPurchases.push({
-                mintAddress: transactionMints[sendResult.mintIdx],
-                amount: amountPerToken,
-              })
-              console.log(`✅ Successfully bought ${transactionMints[sendResult.mintIdx]}`)
-            }
-          }
+          signatures.push(sendResult.signature!)
+          result.successfulPurchases.push({
+            mintAddress: transactionMints[sendResult.mintIdx],
+            amount: amountPerToken,
+          })
+          console.log(
+            `✅ Successfully bought ${transactionMints[sendResult.mintIdx]} via ${sendResult.via}`,
+          )
         } catch (error: any) {
           console.error(`Confirmation failed for ${sendResult.signature}:`, error)
           result.failedPurchases.push({
@@ -2715,61 +2682,52 @@ export async function executeBulkSellAlt(
               }
 
               try {
-                if (sendResult.via === 'raptor') {
-                  await waitForRaptorConfirmation(sendResult.signature!, {
-                    maxAttempts: 30,
-                    intervalMs: 2000,
-                  });
+                const meta = transactionMetas[sendResult.tokenIdx]
+                const signedTx = signedTransactions[sendResult.tokenIdx]
 
+                await confirmSwapSignature({
+                  signature: sendResult.signature!,
+                  via: sendResult.via!,
+                  connection,
+                  lastValidBlockHeight: meta.lastValidBlockHeight,
+                  blockhash: signedTx.message.recentBlockhash,
+                })
+
+                let solReceived = 0
+                if (sendResult.via === 'raptor') {
                   const amountOutLamports = Number.parseInt(
                     transactionAmountOut[sendResult.tokenIdx] ?? '0',
                     10,
-                  );
-                  const solReceived = Number.isFinite(amountOutLamports)
+                  )
+                  solReceived = Number.isFinite(amountOutLamports)
                     ? amountOutLamports / LAMPORTS_PER_SOL
-                    : 0;
-
-                  swapSignatures.push(sendResult.signature!);
-                  successfulSwaps.push(transactionTokens[sendResult.tokenIdx]);
-                  result.successfulSwaps.push({
-                    mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                    solReceived,
-                  });
-                  result.totalReceived += solReceived;
-                  console.log(`✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress} via Raptor`);
-                  return;
+                    : 0
+                } else {
+                  const txInfo = await connection.getTransaction(sendResult.signature!, {
+                    commitment: 'confirmed',
+                    maxSupportedTransactionVersion: 0,
+                  })
+                  if (txInfo?.meta?.err) {
+                    throw new Error('Transaction failed on-chain')
+                  }
+                  const accountIndex = txInfo?.transaction.message.staticAccountKeys.findIndex(
+                    (key) => key.toBase58() === userPublicKey,
+                  )
+                  const preBalance = txInfo?.meta?.preBalances?.[accountIndex ?? 0] ?? 0
+                  const postBalance = txInfo?.meta?.postBalances?.[accountIndex ?? 0] ?? 0
+                  solReceived = (postBalance - preBalance) / LAMPORTS_PER_SOL
                 }
 
-                const { blockhash, lastValidBlockHeight } = await getBlockhash();
-
-                const confirmation = await connection.confirmTransaction({
-                  signature: sendResult.signature!,
-                  lastValidBlockHeight,
-                  blockhash
-                }, 'confirmed');
-
-                if (confirmation.value.err) {
-                  throw new Error(`Transaction failed confirmation: ${confirmation.value.err}`);
-                }
-
-                const txInfo = await connection.getTransaction(sendResult.signature!, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
-                if (txInfo?.meta?.err) {
-                  throw new Error('Transaction failed on-chain');
-                }
-
-                const accountIndex = txInfo?.transaction.message.staticAccountKeys.findIndex(key => key.toBase58() === userPublicKey);
-                const preBalance = txInfo?.meta?.preBalances?.[accountIndex ?? 0] ?? 0;
-                const postBalance = txInfo?.meta?.postBalances?.[accountIndex ?? 0] ?? 0;
-                const solReceived = (postBalance - preBalance) / LAMPORTS_PER_SOL;
-
-                swapSignatures.push(sendResult.signature!);
-                successfulSwaps.push(transactionTokens[sendResult.tokenIdx]);
+                swapSignatures.push(sendResult.signature!)
+                successfulSwaps.push(transactionTokens[sendResult.tokenIdx])
                 result.successfulSwaps.push({
                   mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                  solReceived: solReceived > 0 ? solReceived : 0
-                });
-                result.totalReceived += solReceived > 0 ? solReceived : 0;
-                console.log(`✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress}`);
+                  solReceived: solReceived > 0 ? solReceived : 0,
+                })
+                result.totalReceived += solReceived > 0 ? solReceived : 0
+                console.log(
+                  `✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress} via ${sendResult.via}`,
+                )
               } catch (error: any) {
                 result.failedSwaps.push({
                   mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,

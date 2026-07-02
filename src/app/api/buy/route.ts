@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prepareSwapTransaction } from '@/utils/swap-executor'
+import { prepareSwapTransaction, confirmSwapSignature } from '@/utils/swap-executor'
 import {
   sendRaptorTransactionDirect,
-  waitForRaptorConfirmation,
 } from '@/utils/solanatracker-raptor'
 import { createRpcConnection } from '@/utils/rpc-urls'
 
@@ -36,7 +35,12 @@ export const POST = async (req: NextRequest) => {
         if (!sendResult.success || !sendResult.signature) {
           throw new Error('Raptor send returned no signature')
         }
-        await waitForRaptorConfirmation(sendResult.signature, { direct: true })
+        await confirmSwapSignature({
+          signature: sendResult.signature,
+          via: 'raptor',
+          connection,
+          direct: true,
+        })
         return NextResponse.json({ success: true, signature: sendResult.signature })
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Failed to submit signed transaction'

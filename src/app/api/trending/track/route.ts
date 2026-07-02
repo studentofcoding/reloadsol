@@ -3,8 +3,7 @@ import { NextRequest } from 'next/server'
 import { query, queryOne } from '@/utils/db'
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote } from '@/utils/jupiter'
-import { prepareSwapTransaction, submitSignedSwap } from '@/utils/swap-executor'
-import { waitForRaptorConfirmation } from '@/utils/solanatracker-raptor'
+import { prepareSwapTransaction, submitSignedSwap, confirmSwapSignature } from '@/utils/swap-executor'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
@@ -583,15 +582,14 @@ class RealTradeExecutor implements TradeExecutor {
 
       const signature = sendResult.signature
 
-      if (sendResult.via === 'raptor') {
-        await waitForRaptorConfirmation(signature, { direct: true })
-      } else {
-        const confirmationPromise = this.connection.confirmTransaction(signature, 'confirmed')
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Transaction confirmation timeout')), 30000),
-        )
-        await Promise.race([confirmationPromise, timeoutPromise])
-      }
+      await confirmSwapSignature({
+        signature,
+        via: sendResult.via,
+        connection: this.connection,
+        lastValidBlockHeight: prepared.lastValidBlockHeight,
+        blockhash: signedTx.message.recentBlockhash,
+        direct: true,
+      })
 
       const responseTime = Date.now() - startTime
 
@@ -2887,6 +2885,18 @@ async function executeBuyOperationWithStrategy(
 
       const { recordTradingSuccess } = await import('@/utils/bot-trading-state')
       await recordTradingSuccess()
+    }
+
+    if (bestResult.success) {
+      const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
+      notifyStrategyOpen({
+        domain: 'trending_bot',
+        strategyId,
+        tokenSymbol: token.token_symbol,
+        tokenAddress: token.token_address,
+        marketCap: token.market_cap,
+        isSimulated,
+      })
     }
 
     return buyOperation

@@ -89,6 +89,25 @@ export async function deployPosition(input: DeployPositionInput): Promise<DlmmAc
     fee_tvl_at_entry: getFeeTvlRatio24h(pool),
   });
 
+  const SOL_MINT = 'So11111111111111111111111111111111111111112';
+  const tokenMint =
+    pool.token_x.address !== SOL_MINT
+      ? pool.token_x.address
+      : pool.token_y.address !== SOL_MINT
+        ? pool.token_y.address
+        : input.poolAddress;
+  const tokenMcap =
+    pool.token_x.market_cap ?? pool.token_y.market_cap ?? pool.tvl ?? null;
+  const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify');
+  notifyStrategyOpen({
+    domain: 'dlmm',
+    strategyId: 'dlmm_default',
+    tokenSymbol: pool.name,
+    tokenAddress: tokenMint,
+    marketCap: tokenMcap,
+    isSimulated: config.dry_run,
+  });
+
   return {
     ...execResult,
     positionId: position.id,
