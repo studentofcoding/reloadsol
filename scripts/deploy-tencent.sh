@@ -101,6 +101,10 @@ cmd_schema() {
   ensure_env
   bash scripts/init-local-db.sh
   bash scripts/verify-schema.sh
+  if docker inspect reloadsol-web >/dev/null 2>&1; then
+    docker restart reloadsol-web 2>/dev/null || true
+    log "Restarted reloadsol-web to clear DB circuit breaker"
+  fi
   log "Schema OK — run: bash scripts/deploy-tencent.sh deploy && bash scripts/deploy-tencent.sh smoke --strict"
 }
 

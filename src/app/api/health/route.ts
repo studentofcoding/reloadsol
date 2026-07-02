@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { isDbConfigured } from '@/utils/db-health'
+import { isDbCircuitOpen, isDbConfigured } from '@/utils/db-health'
 import { queryOne } from '@/utils/db'
 
 export async function HEAD() {
@@ -8,19 +8,24 @@ export async function HEAD() {
 
 export async function GET() {
   try {
-    let db: { ok: boolean; error?: string } = { ok: false }
+    const circuitOpen = isDbCircuitOpen()
+    let db: { ok: boolean; error?: string; circuitOpen: boolean } = {
+      ok: false,
+      circuitOpen,
+    }
     if (isDbConfigured()) {
       try {
         await queryOne('SELECT 1 AS ok', [], { bypassCircuit: true })
-        db = { ok: true }
+        db = { ok: true, circuitOpen: isDbCircuitOpen() }
       } catch (error) {
         db = {
           ok: false,
+          circuitOpen: isDbCircuitOpen(),
           error: error instanceof Error ? error.message : 'Database ping failed',
         }
       }
     } else {
-      db = { ok: false, error: 'DATABASE_URL not configured' }
+      db = { ok: false, circuitOpen, error: 'DATABASE_URL not configured' }
     }
 
     return NextResponse.json({

@@ -88,7 +88,7 @@ services:
       API_HOST: ${API_HOST:-http://web:3000}
       # Workers tab + /api/workers/status (web container → cron service name)
       CRON_SERVICE_URL: ${CRON_SERVICE_URL:-http://cron:8080}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@reloadsol-bouncer:5432/${POSTGRES_DB:-reloadsol_db}
+      # DATABASE_URL from .env (bouncer host; URL-encode password if it contains @ # : %)
     depends_on:
       reloadsol-bouncer:
         condition: service_healthy

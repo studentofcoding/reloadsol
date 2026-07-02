@@ -402,6 +402,15 @@ bash scripts/deploy-tencent.sh migrate
 
 Subcommands: `setup` | `db` | `schema` | `migrate` | `build` | `deploy` | `smoke` | `backup` | `all`
 
+**Cron shows "Database circuit open" (500/409):** the web process tripped an in-memory breaker after DB errors (often before schema apply, or a bad `DATABASE_URL`). After schema is OK:
+
+```bash
+bash scripts/recover-db-circuit.sh
+# or manually: docker restart reloadsol-web && bash scripts/deploy-tencent.sh smoke --strict
+```
+
+Ensure `.env` `DATABASE_URL` uses host `reloadsol-bouncer` and URL-encodes the password if it contains `@`, `#`, `:`, or `%`.
+
 If install still fails:
 
 ```bash

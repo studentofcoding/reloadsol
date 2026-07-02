@@ -37,12 +37,31 @@ export const isSupabaseConfigured = isDbConfigured;
 /** @deprecated use getDbHost */
 export const getSupabaseHost = getDbHost;
 
+const PG_CONNECTIVITY_CODES = new Set([
+  '08000', // connection_exception
+  '08003', // connection_does_not_exist
+  '08006', // connection_failure
+  '08001', // sqlclient_unable_to_establish_sqlconnection
+  '08004', // sqlserver_rejected_establishment_of_sqlconnection
+  '57P03', // cannot_connect_now
+  '28P01', // invalid_password
+  '53300', // too_many_connections
+]);
+
 export function isDbConnectivityError(error: unknown): boolean {
+  if (typeof error === 'object' && error !== null) {
+    const code = (error as { code?: string }).code;
+    if (code && PG_CONNECTIVITY_CODES.has(code)) {
+      return true;
+    }
+  }
+
   const combined = errorTextParts(error);
   return (
     combined.includes('fetch failed') ||
     combined.includes('enotfound') ||
     combined.includes('econnrefused') ||
+    combined.includes('econnreset') ||
     combined.includes('etimedout') ||
     combined.includes('network') ||
     combined.includes('getaddrinfo') ||
@@ -53,9 +72,12 @@ export function isDbConnectivityError(error: unknown): boolean {
     combined.includes('aborted') ||
     combined.includes('connect econnrefused') ||
     combined.includes('connection terminated') ||
+    combined.includes('connection terminated unexpectedly') ||
     combined.includes('password authentication failed') ||
+    combined.includes('28p01') ||
     combined.includes('too many clients') ||
-    combined.includes('53300')
+    combined.includes('53300') ||
+    combined.includes('socket hang up')
   );
 }
 

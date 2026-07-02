@@ -1,6 +1,7 @@
 import { Pool, PoolClient, QueryResultRow } from 'pg';
 import {
   isDbCircuitOpen,
+  isDbConnectivityError,
   recordDbFailure,
   recordDbSuccess,
 } from './db-health';
@@ -40,7 +41,9 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
     recordDbSuccess();
     return { rows: result.rows, rowCount: result.rowCount ?? 0 };
   } catch (error) {
-    recordDbFailure();
+    if (isDbConnectivityError(error)) {
+      recordDbFailure();
+    }
     throw error;
   }
 }
@@ -69,7 +72,9 @@ export async function withTransaction<T>(
     return result;
   } catch (error) {
     await client.query('ROLLBACK');
-    recordDbFailure();
+    if (isDbConnectivityError(error)) {
+      recordDbFailure();
+    }
     throw error;
   } finally {
     client.release();
