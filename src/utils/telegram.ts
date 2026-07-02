@@ -177,6 +177,7 @@ export async function sendStrategyTrackOpenAlert(params: {
     `Domain: ${domain}`,
     `Market Cap: ${formatMcapUsd(params.marketCap)}`,
     `Token: ${symbol}`,
+    ``,
     `<a href="${link}">${link}</a>`,
   ].join('\n')
 
@@ -211,6 +212,7 @@ export async function sendStrategyTrackCloseAlert(params: {
     `Token: ${symbol}`,
     `PnL: ${sign}${params.pnlPct.toFixed(2)}%`,
     `Result: <b>${result}</b>`,
+    ``,
     `<a href="${link}">${link}</a>`,
   ].join('\n')
 
