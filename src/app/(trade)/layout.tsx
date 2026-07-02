@@ -9,6 +9,7 @@ import TradingHistory from "@/components/TradingHistory";
 import PnLTracker from "@/components/PnLTracker";
 import WalletConnectGate from "@/components/WalletConnectGate";
 import DevRouteGate from "@/components/DevRouteGate";
+import TradingDataProvider from "@/components/TradingDataProvider";
 import {
   isDevRoute,
   isWalletRequiredRoute,
@@ -38,6 +39,7 @@ export default function TradeLayout({
   );
 
   return (
+    <TradingDataProvider>
     <main className="min-h-screen bg-black py-8 pb-24 md:pb-8">
       <div className="container mx-auto px-4">
         <NavigationTabs
@@ -86,5 +88,6 @@ export default function TradeLayout({
 
       <Footer />
     </main>
+    </TradingDataProvider>
   );
 }

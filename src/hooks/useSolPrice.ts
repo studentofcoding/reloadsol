@@ -1,29 +1,25 @@
 import { useQuery } from "@tanstack/react-query";
-import { getSolPriceUSD } from "@/utils/solana";
+
+async function fetchSolPriceFromApi(): Promise<number> {
+  const response = await fetch("/api/solprice");
+  const data = await response.json();
+  if (!data.price || data.price <= 0) {
+    throw new Error("Invalid SOL price");
+  }
+  return data.price as number;
+}
 
 export function useSolPrice(refetchInterval = 300_000) {
   return useQuery({
     queryKey: ["sol-price"],
-    queryFn: getSolPriceUSD,
+    queryFn: fetchSolPriceFromApi,
     staleTime: 60_000,
     refetchInterval,
     refetchOnWindowFocus: true,
   });
 }
 
+/** @deprecated Use useSolPrice — same query key and endpoint */
 export function useSolPriceFromApi(refetchInterval = 60_000) {
-  return useQuery({
-    queryKey: ["sol-price-api"],
-    queryFn: async () => {
-      const response = await fetch("/api/solprice");
-      const data = await response.json();
-      if (!data.price || data.price <= 0) {
-        throw new Error("Invalid SOL price");
-      }
-      return data.price as number;
-    },
-    staleTime: 30_000,
-    refetchInterval,
-    refetchOnWindowFocus: true,
-  });
+  return useSolPrice(refetchInterval);
 }

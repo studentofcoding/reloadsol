@@ -1,6 +1,6 @@
 import React, { Suspense } from 'react'
-import BulkTokenSeller from '@/components/BulkTokenSeller'
 import TokenSkeleton from '@/components/TokenSkeleton'
+import SellPageClient from './SellPageClient'
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 export default function SellPage() {
   return (
     <Suspense fallback={<TokenSkeleton count={3} variant="progressive" />}>
-      <BulkTokenSeller />
+      <SellPageClient />
     </Suspense>
   )
 } 

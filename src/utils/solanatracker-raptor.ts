@@ -290,29 +290,67 @@ export async function sendRaptorTransaction(
 
 export async function pollRaptorTransaction(
   signature: string,
-  options?: { maxAttempts?: number; intervalMs?: number },
+  options?: {
+    maxAttempts?: number;
+    intervalMs?: number;
+    direct?: boolean;
+  },
 ): Promise<RaptorTxStatus> {
   const maxAttempts = options?.maxAttempts ?? 30;
   const intervalMs = options?.intervalMs ?? 2000;
+  const useDirect = options?.direct ?? typeof window === "undefined";
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const response = await fetch(
-      `/api/solanatracker/transaction/${encodeURIComponent(signature)}`,
-    );
-    if (response.ok) {
-      const status = (await response.json()) as RaptorTxStatus;
-      if (
-        status.status === "confirmed" ||
-        status.status === "failed" ||
-        status.status === "expired"
-      ) {
-        return status;
-      }
+    const status = useDirect
+      ? await getRaptorTransactionStatusDirect(signature)
+      : await fetchRaptorTransactionStatusClient(signature);
+
+    if (
+      status.status === "confirmed" ||
+      status.status === "failed" ||
+      status.status === "expired"
+    ) {
+      return status;
     }
+
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 
-  return { status: "pending" };
+  throw new RaptorAPIError(
+    `Raptor transaction ${signature} still pending after ${maxAttempts} attempts`,
+    504,
+  );
+}
+
+async function fetchRaptorTransactionStatusClient(
+  signature: string,
+): Promise<RaptorTxStatus> {
+  const response = await fetch(
+    `/api/solanatracker/transaction/${encodeURIComponent(signature)}`,
+  );
+  if (!response.ok) {
+    throw new RaptorAPIError(
+      `Transaction status failed (${response.status})`,
+      response.status,
+    );
+  }
+  return response.json() as Promise<RaptorTxStatus>;
+}
+
+/** Poll until confirmed; throws on failed, expired, or timeout. */
+export async function waitForRaptorConfirmation(
+  signature: string,
+  options?: {
+    maxAttempts?: number;
+    intervalMs?: number;
+    direct?: boolean;
+  },
+): Promise<RaptorTxStatus> {
+  const status = await pollRaptorTransaction(signature, options);
+  if (status.status !== "confirmed") {
+    throw new RaptorAPIError(`Raptor transaction ${status.status}`, 400);
+  }
+  return status;
 }
 
 export async function checkRaptorHealth(): Promise<{

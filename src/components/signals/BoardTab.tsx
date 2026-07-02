@@ -14,13 +14,12 @@ import { useWallet, useConnection } from "@/components/WalletProvider";
 import {
   executeBulkBuy,
   getSwapQuote,
-  getSwapTransaction,
 } from "@/utils/jupiter";
+import { executeClientSwap } from "@/utils/swap-executor";
 import { TOKENS } from "@/utils/solana";
 import {
   LAMPORTS_PER_SOL,
   PublicKey,
-  VersionedTransaction,
 } from "@solana/web3.js";
 import { trackBuy } from "@/utils/operations-api";
 import { useTradingData } from "@/components/TradingDataProvider";
@@ -935,27 +934,20 @@ function ChartsContent() {
         throw new Error("Failed to get swap quote");
       }
 
-      // 3. Get Transaction
-      const swapResult = await getSwapTransaction(quote, publicKey.toString());
-
-      if (!swapResult || !swapResult.swapTransaction) {
-        throw new Error("Failed to create swap transaction");
-      }
-
-      // 4. Sign and Send
-      const swapTransactionBuf = Buffer.from(
-        swapResult.swapTransaction,
-        "base64",
-      );
-      const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
-
-      const signedTx = await signAllTransactions([transaction]);
-      const signature = await connection.sendRawTransaction(
-        signedTx[0].serialize(),
-      );
-
-      setStatus("Confirming sell...");
-      await connection.confirmTransaction(signature, "confirmed");
+      const swapResult = await executeClientSwap({
+        userPublicKey: publicKey.toString(),
+        inputMint: quote.inputMint,
+        outputMint: quote.outputMint,
+        amount: quote.inAmount,
+        slippageBps: quote.slippageBps ?? 200,
+        priorityFeeLamports: 30000,
+        connection,
+        signTransaction: async (tx) => {
+          const [signed] = await signAllTransactions!([tx]);
+          return signed;
+        },
+      });
+      const signature = swapResult.signature;
 
       // 5. Track Operation
       const solReceived = quote.outAmount

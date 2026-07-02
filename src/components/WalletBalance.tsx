@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet, useConnection } from "./WalletProvider";
 import { fetchUserTokens, UserToken } from "@/utils/jupiter";
-import { useSolPriceFromApi } from "@/hooks/useSolPrice";
+import { useSolPrice } from "@/hooks/useSolPrice";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 
 interface WalletBalanceProps {
@@ -30,7 +30,7 @@ export default function WalletBalance({ onBalanceChange }: WalletBalanceProps) {
     enabled: connected && !!publicKey,
   });
 
-  const { data: solPrice = 0 } = useSolPriceFromApi(60_000);
+  const { data: solPrice = 0 } = useSolPrice(60_000);
 
   useEffect(() => {
     if (balance != null) {

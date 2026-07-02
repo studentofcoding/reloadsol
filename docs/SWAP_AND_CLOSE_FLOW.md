@@ -1,48 +1,64 @@
 # Swap and Close Operations
 
-This document summarizes how bulk swaps and token account closures work across the project, including provider integrations, token categorization, fees, and metadata enrichment. It consolidates behavior implemented in `src/utils/jupiter.ts` and the UI flows in `src/components/BulkTokenSeller.tsx` and `src/components/BulkTokenBuyer.tsx`.
+This document summarizes how bulk swaps and token account closures work across the project, including provider integrations, token categorization, fees, and metadata enrichment. It consolidates behavior implemented in `src/utils/swap-executor.ts`, `src/utils/jupiter.ts`, and the UI flows in `BulkTokenSeller.tsx`, `BulkTokenBuyer.tsx`, and signals tabs.
 
 ## Working Stack
 
 | Layer | Service | Files |
 |-------|---------|-------|
 | Wallet tokens | Jupiter Portfolio | `useWalletTokens.ts`, `jupiter-portfolio.ts` |
-| Swaps | Jupiter Ultra order/execute (primary) → Raptor fallback | `jupiter-ultra.ts`, `swap-executor.ts`, `/api/jupiter/ultra/*`, `/api/solanatracker/*` |
-| RPC | Same-origin `/api/rpc` proxy | `RpcContext.tsx`, `/api/rpc/route.ts` |
+| Swaps | **Solana Tracker Raptor** (quote-and-swap + send-transaction) | `solanatracker-raptor.ts`, `swap-executor.ts`, `/api/solanatracker/*` |
+| RPC | Same-origin `/api/rpc` proxy (fallback send only) | `RpcContext.tsx`, `/api/rpc/route.ts` |
 | Prices/metadata | Jupiter APIs (UI support, not swap execution) | `/api/tokens/prices`, `/api/jupiter/metadata` |
-| Charts | GMGN iframe embeds only (`gmgn.cc`) | `BulkTokenBuyer.tsx`, `BulkTokenSeller.tsx`, chart pages |
+| Charts | GMGN iframe embeds only (`gmgn.cc`) | Bulk pages, chart pages |
 | Close accounts | Jupiter `/reclaim/craft` + fixed fee (manual fallback) | `jupiter-reclaim.ts`, `/api/jupiter/reclaim/craft`, `closeTokenAccounts` |
+
+## Raptor Swap Flow (all buy/sell)
+
+Per [Solana Tracker Swap API](https://docs.solanatracker.io/guides/swap-api):
+
+1. **Prepare** — `POST /quote-and-swap` (via `/api/solanatracker/swap`) with `userPublicKey`, mints, amount, slippage, platform fee
+2. **Sign** — wallet signs returned `swapTransaction` (base64 v0 tx)
+3. **Submit** — `POST /send-transaction` (via `/api/solanatracker/send`)
+4. **Confirm** — poll `/transaction/{signature}` until `confirmed` | `failed` | `expired`
+
+### Shared helpers (`src/utils/swap-executor.ts`)
+
+| Helper | Purpose |
+|--------|---------|
+| `prepareSwapTransaction` | Raptor-only quote-and-swap |
+| `submitSignedSwap` | Raptor send → RPC fallback |
+| `executeClientSwap` | Single-tx: prepare → sign → submit → confirm |
+| `signTransactionsWithFallback` | Batch sign; one-by-one fallback on wallet reject |
+| `prepareBulkSwapTransaction` | Bulk buy/sell tx + metadata |
+
+**Do not** call `connection.sendRawTransaction` on Raptor-built txs except via `submitSignedSwap` RPC fallback.
+
+### Call sites
+
+- **Bulk buy/sell** — `executeBulkBuy`, `executeBulkSellAlt` in `jupiter.ts`
+- **Signals** — `LiveTab.tsx`, `BoardTab.tsx` via `executeClientSwap`
+- **Server bots** — `trade-executors.ts`, `sl-tp-tracker.ts`, `/api/trending/track`, `/api/buy`
+- **Chart page buy** — `executeBulkBuy` (tracking via `tradingTracker` directly)
 
 ## Providers and Flow
 
-- **Jupiter Ultra (primary swap execution)**
-  - Order: `POST /api/jupiter/ultra/order` → `POST https://ultra-api.jup.ag/order?…&clientPlatform=jupiter.web.home_page`
-  - Execute: `POST /api/jupiter/ultra/execute` → `POST https://ultra-api.jup.ag/execute?clientPlatform=jupiter.web.home_page` with `{ signedTransaction, requestId }`
-  - Implementation: `prepareSwapTransaction`, `submitSignedSwap` in `src/utils/swap-executor.ts`; used by `executeBulkBuy`, `executeBulkSellAlt`, `getSwapQuote`, `getSwapTransaction`
-
-- **Solana Tracker Raptor (fallback)**
+- **Solana Tracker Raptor (swap execution)**
   - Quote: `GET /api/solanatracker/quote` → Raptor `GET /quote`
   - Swap: `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`
-  - Send: `POST /api/solanatracker/send` → Raptor `POST /send-transaction` (RPC fallback if send fails)
-  - Used when Ultra order/execute fails
+  - Send: `POST /api/solanatracker/send` → Raptor `POST /send-transaction`
+  - Status: `GET /api/solanatracker/transaction/[signature]`
+  - Env: `RAPTOR_API_BASE` (optional), platform fee via `feeAccount` / `feeBps`
+
+- **Jupiter Ultra Reclaim (close only — not swaps)**
+  - Craft: `POST /api/jupiter/reclaim/craft` → reclaim API
+  - User signs once; transaction sent via `/api/rpc`
 
 - **GMGN (charts only)**
-  - Embedded `gmgn.cc` iframes on `/buy` and `/sell` for price charts
-  - No GMGN swap execution in bulk flows
+  - Embedded `gmgn.cc` iframes; no GMGN swap execution
 
-- **Jupiter Reclaim (bulk close)**
-  - Craft: `POST /api/jupiter/reclaim/craft` → `https://ultra-api.jup.ag/reclaim/craft` with `{ owner, mints }`
-  - Returns a base64 transaction; appends fixed **0.001 SOL × account** close fee (+ sell fee when post-swap)
-  - User signs once; transaction sent via `/api/rpc`
-  - Fallback: manual burn + close in `closeTokenAccounts` if craft fails
-
-- **Single-token / signals paths**
-  - `getSwapQuote` uses Raptor quote (for UI previews)
-  - `getSwapTransaction` uses Ultra first, Raptor fallback via `swap-executor.ts`
-  - No lite-api swap execution
-
-- **Single-token UI**
-  - `CatchTheCoinClient.tsx` sells via Jupiter utilities (quote + swap) but does not auto-close the token account after selling. Closing is handled in bulk flows.
+- **Jupiter Terminal (`/swap` page only)**
+  - Widget script loaded on `/swap` only (not global layout)
 
 ## Token Categorization
 
@@ -78,74 +94,3 @@ Implemented in `enrichTokenMetadataAsync` (`src/utils/jupiter.ts`), the system e
 ## Post-Swap Closures
 
 - After swaps: If a token is sold 100%, `closeTokenAccounts` is invoked via Jupiter reclaim (manual fallback on failure).
-
-## Fees
-
-The system implements a centralized fee configuration in `src/utils/jupiter.ts`:
-
-- **Sell Fees:** **0.5%** of the SOL received from the swap.
-- **Buy Fees:** **0.5%** of the SOL budget used for the buy.
-- **Close Fees:** **0.001 SOL** (fixed) per successful close operation.
-- **Distribution:** All fees are currently routed to the **Dev Wallet**. The referral split is set to 0%.
-
-## Edge Cases and Safeguards
-
-- **Frozen tokens**: Automatically excluded from swaps and closes; added to failed lists.
-- **Pump.fun tokens**: Same unified close path as other tokens — burn remaining balance if needed, then close.
-- **Missing accounts**: `getAccountInfo` returns null or RPC "could not find account" → counted as already closed (success).
-- **Account validation**: `closeTokenAccounts` validates account existence and data length, and re-checks frozen state from raw account data.
-- **Batch mechanics**: Bulk flows sign and submit transactions in batches with retries and confirmation checks.
-
-## Operational Guidance
-
-- Use close-only for zero-balance or micro-value tokens (`usdValue < 0.001`) to avoid unnecessary swaps.
-- After swapping valuable tokens, rely on auto-close behavior for 100% sells; otherwise, close-only can be triggered separately.
-- After a 100% Raptor sell, close should succeed even if the ATA was already reclaimed.
-
-## References
-
-- Core logic: `src/utils/jupiter.ts` (`executeBulkSellAlt`, `executeBulkBuy`, `closeTokenAccounts`, `closeZeroBalanceTokens`, `categorizeUserTokens`, `enrichTokenMetadataAsync`).
-- UI integration: `src/components/BulkTokenSeller.tsx` (`handleBulkSell`, `handleCloseOnly`), `src/components/BulkTokenBuyer.tsx` (bulk buy).
-- Single token UI: `src/components/CatchTheCoinClient.tsx` (sell-only path using Jupiter).
-- Swap Tracking: `src/utils/trading-tracker.ts`.
-
-## Code References by Step
-
-- Token Discovery & Categorization
-  - `src/utils/jupiter.ts` — `fetchUserTokens`, `categorizeUserTokens`, `fetchZeroBalanceTokens`.
-  - `src/components/BulkTokenSeller.tsx` — UI selection: `selectedTokens`, `selectedZeroBalanceTokens` management.
-
-- Quote & Route Selection
-  - `src/components/BulkTokenSeller.tsx` — `fetchQuoteForToken` via `/api/solanatracker/quote`; helpers `getQuoteForToken`, `isQuoteValid`.
-  - `src/utils/jupiter.ts` — `executeBulkBuy` uses Raptor quote-and-swap.
-  - `src/components/CatchTheCoinClient.tsx` — `fetchSellQuotes` and hover-driven quoting using `getSwapQuote`.
-
-- Transaction Building
-  - `src/utils/jupiter.ts` — `executeBulkSellAlt`, `executeBulkBuy` via Raptor `/api/solanatracker/*`.
-
-- Fee Calculation & Attachment
-  - `src/utils/jupiter.ts` — `calculateFeeDistribution`, `getFeeForOperation`, `createJupiterFeeInstructions`, `createFeeTransferInstructions`, `getFeeInfo`.
-  - `src/components/CatchTheCoinClient.tsx` — Uses `createFeeTransferInstructions` inside `handleSellToken`.
-
-- Signing, Submission & Confirmation
-  - `src/utils/jupiter.ts` — `executeBulkSellAlt`, `executeBulkBuy`: batch `signAllTransactions`, Raptor send + poll, RPC fallback for send.
-  - `src/components/CatchTheCoinClient.tsx` — `handleSellToken`: `signAllTransactions`, `sendRawTransaction`, `confirmTransaction`.
-
-- Post-Swap Account Closure
-  - `src/utils/jupiter-reclaim.ts` — `craftReclaimTransaction`, `injectInstructionsIntoVersionedTransaction`.
-  - `src/app/api/jupiter/reclaim/craft/route.ts` — server proxy to Jupiter Ultra reclaim API.
-  - `src/utils/jupiter.ts` — `closeTokenAccounts`: Jupiter reclaim primary; manual fallback; missing ATA → success.
-  - `src/utils/jupiter.ts` — `closeZeroBalanceTokens`: same Jupiter-first pattern for unsellable tokens.
-  - `src/components/BulkTokenSeller.tsx` — Auto-close after 100% sells via `executeBulkSellAlt` close path.
-
-- Close-Only Operations
-  - `src/components/BulkTokenSeller.tsx` — `handleCloseOnly`: calls `executeBulkSellAlt` with `tokens: []` and `unsellableTokens`.
-  - `src/utils/jupiter.ts` — `closeZeroBalanceTokens`, `fetchZeroBalanceTokens` for identifying candidates.
-
-- Tracking & History
-  - `src/utils/trading-tracker.ts` — `trackJupiterSwap` for swap history and analytics.
-  - `src/components/BulkTokenSeller.tsx` — `trackClose` invocation after close-only operations; merges close results into bulk sell results.
-
-- Safeguards & Edge Handling
-  - `src/utils/jupiter.ts` — `categorizeUserTokens` for classification; `closeTokenAccounts` for freeze checks and account validation.
-  - `src/utils/jupiter.ts` — Batch construction, timeouts, and retry logic inside bulk flows.

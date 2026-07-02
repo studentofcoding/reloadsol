@@ -1,7 +1,12 @@
 import { query, queryOne } from '@/utils/db'
 import { log } from '@/utils/unified-logger'
 import { Connection, PublicKey, Keypair, VersionedTransaction } from '@solana/web3.js'
-import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
+import { getSwapQuote } from '@/utils/jupiter'
+import {
+  prepareSwapTransaction,
+  submitSignedSwap,
+} from '@/utils/swap-executor'
+import { waitForRaptorConfirmation } from '@/utils/solanatracker-raptor'
 import { notifySlTpTrigger } from './trading-notifications'
 import { getConnection } from '@/utils/solana'
 import { fetchUserTokens } from '@/utils/jupiter'
@@ -774,40 +779,37 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
             throw new Error('Quote failed: No quote returned')
         }
 
-        // Execute swap
-        const swapResult = await getSwapTransaction(
-            quoteResult,
-            tradingKeypair.publicKey.toBase58(),
-            1000000 // 0.001 SOL priority fee
-        )
+        // Execute swap via Raptor
+        const prepared = await prepareSwapTransaction({
+            userPublicKey: tradingKeypair.publicKey.toBase58(),
+            inputMint: position.token_address,
+            outputMint: 'So11111111111111111111111111111111111111112',
+            amount: amountInUnits,
+            slippageBps: 300,
+            priorityFeeLamports: 1000000,
+            direct: true,
+        })
 
-        if (!swapResult || !swapResult.swapTransaction) {
-            throw new Error('Swap failed: No swap result returned')
-        }
-
-        // Deserialize and sign the transaction
-        const swapTransactionBuf = Buffer.from(swapResult.swapTransaction, 'base64')
+        const swapTransactionBuf = Buffer.from(prepared.swapTransaction, 'base64')
         const transaction = VersionedTransaction.deserialize(swapTransactionBuf)
-
-        // Sign the transaction
         transaction.sign([tradingKeypair])
 
-        // Send the transaction
-        const rawTransaction = transaction.serialize()
-        const signature = await tradingConnection.sendRawTransaction(rawTransaction, {
-            skipPreflight: true,
-            maxRetries: 2
+        const sendResult = await submitSignedSwap({
+            signedTx: transaction,
+            prepared,
+            connection: tradingConnection,
+            direct: true,
         })
 
-        // Wait for confirmation
-        const confirmation = await tradingConnection.confirmTransaction({
-            signature,
-            blockhash: transaction.message.recentBlockhash,
-            lastValidBlockHeight: await tradingConnection.getBlockHeight()
-        })
+        const signature = sendResult.signature
 
-        if (confirmation.value.err) {
-            throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`)
+        if (sendResult.via === 'raptor') {
+            await waitForRaptorConfirmation(signature, { direct: true })
+        } else {
+            const confirmation = await tradingConnection.confirmTransaction(signature, 'confirmed')
+            if (confirmation.value.err) {
+                throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`)
+            }
         }
 
         // Update position in database

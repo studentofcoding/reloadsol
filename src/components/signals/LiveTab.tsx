@@ -15,20 +15,19 @@ import { useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useRpc } from "@/contexts/RpcContext";
 import { useTradingData } from "@/components/TradingDataProvider";
+import { useSolPrice } from "@/hooks/useSolPrice";
 import { trackRealBuy, trackRealSell, trackSimBuy, trackSimClose } from "@/utils/trade-tracking";
 import { buildEntryMcapFeatures } from "@/strategies/outcome-features";
 import { useSignalsStrategy } from "@/hooks/useSignalsStrategy";
 import { computeOpenSimCycle } from "@/utils/simulation-trades";
-import { PublicKey, VersionedTransaction } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3.js";
 import { formatNumber, formatCurrency } from "@/utils/formatters";
 import {
   getSwapQuote,
-  getSwapTransaction,
   fetchUserTokens,
   UserToken,
-  createFeeTransferInstructions,
-  FeeOperationType,
 } from "@/utils/jupiter";
+import { executeClientSwap } from "@/utils/swap-executor";
 import { TOKENS } from "@/utils/solana";
 import {
   fetchAxiomTokenInfo,
@@ -110,7 +109,8 @@ export default function LiveTab() {
     useWallet();
   const { connection } = useConnection();
   const { activeRpcUrl } = useRpc();
-  const { records, solPrice: currentSolPrice, trackOperation } = useTradingData();
+  const { records, trackOperation } = useTradingData();
+  const { data: currentSolPrice = 0 } = useSolPrice();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const { isRugged: isTokenRugged, markRug, unmarkRug } = useRugList();
   const walletAddress = connected && publicKey ? publicKey.toString() : null;
@@ -770,46 +770,24 @@ export default function LiveTab() {
     setBuyingTokens((prev) => new Set(prev).add(token.token_address));
 
     try {
-      // Create fee instructions for buy operation
-      const feeInstructions = createFeeTransferInstructions(
-        publicKey,
-        "BUY" as FeeOperationType,
-        1,
-        buyAmount,
-      );
+      const inputAmount = Math.floor(buyAmount * 1e9);
 
-      // Get swap transaction using existing utility
-      const swapTransaction = await getSwapTransaction(
-        quote,
-        publicKey.toString(),
-        30000, // Priority fee
-        feeInstructions,
-      );
+      const swapResult = await executeClientSwap({
+        userPublicKey: publicKey.toString(),
+        inputMint: TOKENS.SOL,
+        outputMint: token.token_address,
+        amount: inputAmount,
+        slippageBps: quote.slippageBps ?? 300,
+        priorityFeeLamports: 30000,
+        connection,
+        signTransaction,
+      });
 
-      if (!swapTransaction) {
-        throw new Error("Failed to create swap transaction");
-      }
-
-      // Deserialize and sign transaction
-      const transaction = VersionedTransaction.deserialize(
-        Buffer.from(swapTransaction.swapTransaction, "base64"),
-      );
-
-      const signedTransaction = await signTransaction(transaction);
-
-      // Send transaction
-      const signature = await connection.sendRawTransaction(
-        signedTransaction.serialize(),
-        {
-          skipPreflight: false,
-          preflightCommitment: "confirmed",
-        },
-      );
-
-      // Wait for confirmation
-      await connection.confirmTransaction(signature, "confirmed");
-
-      const tokenAmount = parseInt(quote.outAmount) / Math.pow(10, 6);
+      const signature = swapResult.signature;
+      const tokenAmount =
+        swapResult.outAmount != null
+          ? parseInt(swapResult.outAmount, 10) / Math.pow(10, 6)
+          : parseInt(quote.outAmount, 10) / Math.pow(10, 6);
 
       await trackRealBuy(trackOperation, {
         walletAddress: publicKey.toString(),
@@ -994,47 +972,23 @@ export default function LiveTab() {
     setSellingTokens((prev) => new Set(prev).add(token.token_address));
 
     try {
-      // Calculate expected SOL received
-      const expectedSol = parseInt(sellQuote.outAmount) / 1e9;
+      const expectedSol = parseInt(sellQuote.outAmount, 10) / 1e9;
 
-      // Create fee instructions for sell operation
-      const feeInstructions = createFeeTransferInstructions(
-        publicKey,
-        "SELL" as FeeOperationType,
-        1,
-        expectedSol,
-      );
-
-      // Get swap transaction using existing utility
-      const swapTransaction = await getSwapTransaction(
-        sellQuote,
-        publicKey.toString(),
-        30000, // Priority fee
-        feeInstructions,
-      );
-
-      if (!swapTransaction) {
-        throw new Error("Failed to create sell transaction");
-      }
-
-      // Deserialize and sign transaction
-      const transaction = VersionedTransaction.deserialize(
-        Buffer.from(swapTransaction.swapTransaction, "base64"),
-      );
-
-      const signedTransactions = await signAllTransactions([transaction]);
-
-      // Send transaction
-      const signature = await connection.sendRawTransaction(
-        signedTransactions[0].serialize(),
-        {
-          skipPreflight: false,
-          preflightCommitment: "confirmed",
+      const swapResult = await executeClientSwap({
+        userPublicKey: publicKey.toString(),
+        inputMint: sellQuote.inputMint,
+        outputMint: sellQuote.outputMint,
+        amount: sellQuote.inAmount,
+        slippageBps: sellQuote.slippageBps ?? 300,
+        priorityFeeLamports: 30000,
+        connection,
+        signTransaction: async (tx) => {
+          const [signed] = await signAllTransactions!([tx]);
+          return signed;
         },
-      );
+      });
 
-      // Wait for confirmation
-      await connection.confirmTransaction(signature, "confirmed");
+      const signature = swapResult.signature;
 
       const tokenSold = ownedInfo.balance || 0;
 
@@ -1249,33 +1203,21 @@ export default function LiveTab() {
     if (!quote || !connected || !publicKey || !signAllTransactions || !connection) return;
     setSidebarSelling((prev) => ({ ...prev, [token.mintAddress]: true }));
     try {
-      const expectedSol = parseInt(quote.outAmount) / 1e9;
-      const feeInstructions = createFeeTransferInstructions(
-        publicKey,
-        "SELL" as FeeOperationType,
-        1,
-        expectedSol,
-      );
-      const swapTransaction = await getSwapTransaction(
-        quote,
-        publicKey.toString(),
-        30000,
-        feeInstructions,
-      );
-      if (!swapTransaction)
-        throw new Error("Failed to create swap transaction");
-      const transaction = VersionedTransaction.deserialize(
-        Buffer.from(swapTransaction.swapTransaction, "base64"),
-      );
-      const signedTransactions = await signAllTransactions([transaction]);
-      const signature = await connection.sendRawTransaction(
-        signedTransactions[0].serialize(),
-        {
-          skipPreflight: false,
-          preflightCommitment: "confirmed",
+      const expectedSol = parseInt(quote.outAmount, 10) / 1e9;
+      const swapResult = await executeClientSwap({
+        userPublicKey: publicKey.toString(),
+        inputMint: quote.inputMint,
+        outputMint: quote.outputMint,
+        amount: quote.inAmount,
+        slippageBps: quote.slippageBps ?? 300,
+        priorityFeeLamports: 30000,
+        connection,
+        signTransaction: async (tx) => {
+          const [signed] = await signAllTransactions!([tx]);
+          return signed;
         },
-      );
-      await connection.confirmTransaction(signature, "confirmed");
+      });
+      const signature = swapResult.signature;
       alert(`Successfully sold ${token.symbol}! Transaction: ${signature}`);
       await refetchTokens();
       await fetchSellQuotes();

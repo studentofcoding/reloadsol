@@ -1,6 +1,6 @@
 import "./globals.css";
 import { WalletProvider } from "@/components/WalletProvider";
-import TradingDataProvider from "@/components/TradingDataProvider";
+import AppQueryClientProvider from "@/components/AppQueryClientProvider";
 import Header from "@/components/Header";
 import { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
@@ -61,22 +61,17 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
         <WalletProvider>
-          <TradingDataProvider>
+          <AppQueryClientProvider>
             <div className="min-h-screen bg-black">
               <Header />
               <main className="flex-1">{children}</main>
             </div>
-          </TradingDataProvider>
+          </AppQueryClientProvider>
         </WalletProvider>
         {isVercelDeployment && <Analytics />}
         <Script
           src="https://scripts.simpleanalyticscdn.com/latest.js"
           strategy="lazyOnload"
-        />
-        <Script
-          src="https://terminal.jup.ag/main-v4.js"
-          strategy="lazyOnload"
-          data-enable-lazy-load
         />
       </body>
     </html>

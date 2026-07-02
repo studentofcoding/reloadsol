@@ -12,7 +12,7 @@ ReloadSOL uses **three execution stacks** for swaps and closes, plus supporting 
 
 | Stack | Core functions | Used for |
 |-------|----------------|----------|
-| **Solana Tracker Raptor** | `executeBulkBuy`, `executeBulkSellAlt`, `fetchRaptorQuoteAndSwap` | Bulk buy/sell; single buy (BoardTab, chart); PnL Fast Sell |
+| **Solana Tracker Raptor** | `executeBulkBuy`, `executeBulkSellAlt`, `executeClientSwap` | Bulk buy/sell; signals (LiveTab, BoardTab); PnL Fast Sell; server bots |
 | **Jupiter Lite API** | `getSwapQuote`, `getSwapTransaction` | Single buy/sell (LiveTab, BoardTab instant sell, SL/TP) |
 | **Jupiter Reclaim + manual SPL close** | `closeTokenAccounts`, `craftReclaimTransaction` | Bulk close; auto-close after 100% sell |
 
@@ -117,7 +117,7 @@ Wallet tokens: `useWalletTokens` → `GET /api/jupiter/portfolio` → `https://w
 3. For each token: `fetchRaptorQuoteAndSwap` → `POST /api/solanatracker/swap` → Raptor `POST /quote-and-swap`.
 4. Wallet signs all swap transactions: `signAllTransactions`.
 5. Send (batches of 6): `sendRaptorTransaction` → `POST /api/solanatracker/send` → Raptor `POST /send-transaction`.
-6. Confirm: `pollRaptorTransaction` → `GET /api/solanatracker/transaction/:signature`; RPC fallback if Raptor send/poll fails.
+6. Confirm: `waitForRaptorConfirmation` (poll until `confirmed`; throws on pending timeout); RPC `confirmTransaction` on RPC fallback only.
 7. Track: `trackBuy` → `POST /api/operations/track`; `trackOperation` → `POST /api/trading/records`.
 8. Refresh token list via `useWalletTokens` / Jupiter Portfolio.
 
@@ -564,7 +564,8 @@ See [architecture.md §9–10](./architecture.md#9-recent-improvements-jun-2026)
 | `src/hooks/useWalletTokens.ts` | Jupiter Portfolio hook |
 | `src/utils/jupiter-portfolio.ts` | Portfolio fetch + mapping |
 | `src/components/signals/LiveTab.tsx` | Single buy/sell (Jupiter Lite) |
-| `src/components/signals/BoardTab.tsx` | Single buy (Raptor), sell (Lite) |
+| `src/components/signals/LiveTab.tsx` | Single buy/sell via `executeClientSwap` |
+| `src/components/signals/BoardTab.tsx` | Single buy (Raptor bulk), sell via `executeClientSwap` |
 | `src/components/PnLTracker.tsx` | Fast Sell (Raptor + close) |
 | `src/app/(trade)/swap/SwapPageClient.tsx` | Jupiter Terminal |
 | `src/app/api/solanatracker/*` | Raptor proxy routes |

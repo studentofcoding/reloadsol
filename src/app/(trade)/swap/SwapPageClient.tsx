@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Script from 'next/script'
 import JupiterTerminal from '@/components/JupiterTerminal'
 
 export default function SwapPageClient() {
@@ -339,6 +340,11 @@ export default function SwapPageClient() {
   
   return (
     <div className="flex flex-col items-center justify-center" style={{ minHeight: '550px' }}>
+      <Script
+        src="https://terminal.jup.ag/main-v4.js"
+        strategy="lazyOnload"
+        data-enable-lazy-load
+      />
       {isPageReady && (
         <JupiterTerminal
           initialInputMint={inputMint}

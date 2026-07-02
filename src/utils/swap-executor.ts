@@ -1,18 +1,4 @@
-import {
-  Connection,
-  PublicKey,
-  TransactionInstruction,
-  VersionedTransaction,
-} from "@solana/web3.js";
-import {
-  fetchUltraOrder,
-  fetchUltraExecute,
-  fetchUltraOrderDirect,
-  fetchUltraExecuteDirect,
-  parseUltraOrderTransaction,
-  parseUltraOutAmount,
-  JupiterUltraError,
-} from "@/utils/jupiter-ultra";
+import { Connection, VersionedTransaction } from "@solana/web3.js";
 import {
   fetchRaptorQuoteAndSwap,
   fetchRaptorQuoteAndSwapDirect,
@@ -20,18 +6,18 @@ import {
   fetchRaptorQuoteDirect,
   sendRaptorTransaction,
   sendRaptorTransactionDirect,
+  waitForRaptorConfirmation,
+  RaptorAPIError,
   type RaptorQuoteAndSwapParams,
   type RaptorQuoteResponse,
 } from "@/utils/solanatracker-raptor";
-import { injectInstructionsIntoVersionedTransaction } from "@/utils/jupiter-reclaim";
 import type { SwapQuote, SwapTransaction } from "@/types";
 
-export type SwapProvider = "ultra" | "raptor";
+export type SwapProvider = "raptor";
 
 export type PreparedSwap = {
   provider: SwapProvider;
   swapTransaction: string;
-  requestId?: string;
   outAmount?: string;
   lastValidBlockHeight?: number;
 };
@@ -45,10 +31,8 @@ export type PrepareSwapParams = {
   priorityFeeLamports?: number;
   feeAccount?: string;
   feeBps?: number;
-  /** Server-side routes set true to call Ultra/Raptor directly */
+  /** Server-side routes set true to call Raptor directly */
   direct?: boolean;
-  /** Optional fee instructions injected into Ultra-built txs */
-  feeInstructions?: TransactionInstruction[];
   connection?: Connection;
 };
 
@@ -66,48 +50,6 @@ function mapRaptorQuoteToSwapQuote(
     slippageBps: quote.slippageBps,
     priceImpactPct: String(quote.priceImpact ?? 0),
     routePlan: (quote.routePlan as unknown[]) ?? [],
-  };
-}
-
-async function prepareUltraSwap(
-  params: PrepareSwapParams,
-): Promise<PreparedSwap> {
-  const orderParams = {
-    inputMint: params.inputMint,
-    outputMint: params.outputMint,
-    amount: String(params.amount),
-    taker: params.userPublicKey,
-    swapMode: "ExactIn" as const,
-    slippageBps: params.slippageBps,
-  };
-
-  const useDirect = params.direct ?? typeof window === "undefined";
-  const orderResponse = useDirect
-    ? await fetchUltraOrderDirect(orderParams)
-    : await fetchUltraOrder(orderParams);
-
-  const { transaction, requestId } = parseUltraOrderTransaction(orderResponse);
-
-  let swapTransaction = transaction;
-  if (
-    params.feeInstructions &&
-    params.feeInstructions.length > 0 &&
-    params.connection
-  ) {
-    const tx = await injectInstructionsIntoVersionedTransaction(
-      params.connection,
-      transaction,
-      params.feeInstructions,
-      new PublicKey(params.userPublicKey),
-    );
-    swapTransaction = Buffer.from(tx.serialize()).toString("base64");
-  }
-
-  return {
-    provider: "ultra",
-    swapTransaction,
-    requestId,
-    outAmount: parseUltraOutAmount(orderResponse),
   };
 }
 
@@ -131,7 +73,7 @@ async function prepareRaptorSwap(
     : await fetchRaptorQuoteAndSwap(raptorParams);
 
   if (!swapResult.swapTransaction) {
-    throw new JupiterUltraError("Raptor returned no swapTransaction");
+    throw new RaptorAPIError("Raptor returned no swapTransaction");
   }
 
   return {
@@ -142,19 +84,14 @@ async function prepareRaptorSwap(
   };
 }
 
-/** Ultra first, Raptor fallback — builds unsigned swap transaction. */
+/** Raptor quote-and-swap — builds unsigned swap transaction. */
 export async function prepareSwapTransaction(
   params: PrepareSwapParams,
 ): Promise<PreparedSwap> {
-  try {
-    return await prepareUltraSwap(params);
-  } catch (ultraError) {
-    console.warn("Ultra swap order failed, falling back to Raptor:", ultraError);
-    return prepareRaptorSwap(params);
-  }
+  return prepareRaptorSwap(params);
 }
 
-/** Quote for UI — Raptor GET /quote (no lite-api). */
+/** Quote for UI — Raptor GET /quote. */
 export async function fetchSwapQuote(
   inputMint: string,
   outputMint: string,
@@ -185,7 +122,13 @@ export async function fetchSwapQuote(
   }
 }
 
-/** Build swap tx — Ultra first, Raptor fallback. */
+export async function buildPreparedSwap(
+  params: PrepareSwapParams,
+): Promise<PreparedSwap> {
+  return prepareSwapTransaction(params);
+}
+
+/** Build swap tx via Raptor. */
 export async function buildSwapTransaction(
   quote: SwapQuote,
   userPublicKey: string,
@@ -194,7 +137,6 @@ export async function buildSwapTransaction(
     direct?: boolean;
     feeAccount?: string;
     feeBps?: number;
-    feeInstructions?: TransactionInstruction[];
     connection?: Connection;
   },
 ): Promise<SwapTransaction | null> {
@@ -209,7 +151,6 @@ export async function buildSwapTransaction(
       feeAccount: options?.feeAccount,
       feeBps: options?.feeBps,
       direct: options?.direct,
-      feeInstructions: options?.feeInstructions,
       connection: options?.connection,
     });
 
@@ -230,35 +171,11 @@ export type SubmitSignedSwapParams = {
   direct?: boolean;
 };
 
-/** Submit signed swap — Ultra execute or Raptor send / RPC fallback. */
+/** Submit signed swap — Raptor send with RPC fallback. */
 export async function submitSignedSwap(
   params: SubmitSignedSwapParams,
 ): Promise<{ signature: string; via: SwapProvider | "rpc" }> {
   const signedBase64 = Buffer.from(params.signedTx.serialize()).toString("base64");
-
-  if (params.prepared.provider === "ultra" && params.prepared.requestId) {
-    const useDirect = params.direct ?? typeof window === "undefined";
-    const executeResult = useDirect
-      ? await fetchUltraExecuteDirect({
-          signedTransaction: signedBase64,
-          requestId: params.prepared.requestId,
-        })
-      : await fetchUltraExecute({
-          signedTransaction: signedBase64,
-          requestId: params.prepared.requestId,
-        });
-
-    const signature =
-      typeof executeResult.signature === "string"
-        ? executeResult.signature
-        : undefined;
-
-    if (!signature) {
-      throw new JupiterUltraError("Ultra execute returned no signature");
-    }
-
-    return { signature, via: "ultra" };
-  }
 
   try {
     const useDirect = params.direct ?? typeof window === "undefined";
@@ -280,7 +197,6 @@ export async function submitSignedSwap(
   return { signature, via: "rpc" };
 }
 
-/** Metadata for bulk flows: attach provider + requestId per signed tx index. */
 export type PreparedSwapMeta = PreparedSwap;
 
 export async function prepareBulkSwapTransaction(
@@ -291,4 +207,79 @@ export async function prepareBulkSwapTransaction(
     Buffer.from(prepared.swapTransaction, "base64"),
   );
   return { tx, meta: prepared, outAmount: prepared.outAmount };
+}
+
+export type SignOneTransaction = (
+  tx: VersionedTransaction,
+) => Promise<VersionedTransaction>;
+
+/** Batch sign with one-by-one fallback when wallet rejects the batch. */
+export async function signTransactionsWithFallback(
+  transactions: VersionedTransaction[],
+  signAllTransactions: (
+    txs: VersionedTransaction[],
+  ) => Promise<VersionedTransaction[]>,
+  signTransaction?: SignOneTransaction,
+): Promise<VersionedTransaction[]> {
+  if (transactions.length === 0) return [];
+
+  try {
+    return await signAllTransactions(transactions);
+  } catch (batchError) {
+    if (!signTransaction) throw batchError;
+    console.warn(
+      "Batch sign rejected, falling back to one-by-one:",
+      batchError,
+    );
+  }
+
+  const signed: VersionedTransaction[] = [];
+  for (const tx of transactions) {
+    signed.push(await signTransaction(tx));
+  }
+  return signed;
+}
+
+export type ExecuteClientSwapParams = PrepareSwapParams & {
+  connection: Connection;
+  signTransaction: SignOneTransaction;
+  /** Skip Raptor poll when submit fell back to RPC (confirm via connection). */
+  pollRaptor?: boolean;
+};
+
+export type ExecuteClientSwapResult = {
+  signature: string;
+  via: SwapProvider | "rpc";
+  outAmount?: string;
+};
+
+/** Single client-side swap: Raptor prepare → sign → submit → confirm. */
+export async function executeClientSwap(
+  params: ExecuteClientSwapParams,
+): Promise<ExecuteClientSwapResult> {
+  const prepared = await prepareSwapTransaction(params);
+  const tx = VersionedTransaction.deserialize(
+    Buffer.from(prepared.swapTransaction, "base64"),
+  );
+  const signedTx = await params.signTransaction(tx);
+  const sendResult = await submitSignedSwap({
+    signedTx,
+    prepared,
+    connection: params.connection,
+    direct: params.direct,
+  });
+
+  if (sendResult.via === "raptor" && params.pollRaptor !== false) {
+    await waitForRaptorConfirmation(sendResult.signature, {
+      direct: params.direct,
+    });
+  } else if (sendResult.via === "rpc") {
+    await params.connection.confirmTransaction(sendResult.signature, "confirmed");
+  }
+
+  return {
+    signature: sendResult.signature,
+    via: sendResult.via,
+    outAmount: prepared.outAmount,
+  };
 }

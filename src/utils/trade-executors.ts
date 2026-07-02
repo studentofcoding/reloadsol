@@ -1,6 +1,10 @@
 import { Connection, VersionedTransaction, Keypair } from '@solana/web3.js'
-import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
 import { logTradeOperation } from '@/utils/logger'
+import {
+  prepareSwapTransaction,
+  submitSignedSwap,
+} from '@/utils/swap-executor'
+import { waitForRaptorConfirmation } from '@/utils/solanatracker-raptor'
 
 // -----------------------------------------------------------------------------------
 // Types
@@ -94,13 +98,12 @@ class SimulationExecutor implements TradeExecutor {
   }
 
   async executeSell(params: TradeExecutionParams): Promise<TradeExecutionResult> {
-    // identical flow for opposite direction
     return this.executeBuy(params)
   }
 }
 
 // -----------------------------------------------------------------------------------
-// Real Trade Executor – sends actual transactions via Jupiter + Shyft RPC
+// Real Trade Executor — Raptor quote-and-swap + send + confirm
 // -----------------------------------------------------------------------------------
 
 class RealTradeExecutor implements TradeExecutor {
@@ -129,56 +132,43 @@ class RealTradeExecutor implements TradeExecutor {
     })
 
     try {
-      const quote = await getSwapQuote(
-        params.inputMint,
-        params.outputMint,
-        params.amount,
-        params.slippageBps
-      )
-      if (!quote) throw new Error('No valid Jupiter quote available')
+      const prepared = await prepareSwapTransaction({
+        userPublicKey: params.userPublicKey,
+        inputMint: params.inputMint,
+        outputMint: params.outputMint,
+        amount: params.amount,
+        slippageBps: params.slippageBps,
+        priorityFeeLamports: params.priorityFee || 0,
+        direct: true,
+      })
 
-      const swapTx = await getSwapTransaction(
-        quote,
-        params.userPublicKey,
-        params.priorityFee || 0,
-        []
+      const tx = VersionedTransaction.deserialize(
+        Buffer.from(prepared.swapTransaction, 'base64'),
       )
-      if (!swapTx) throw new Error('Failed to create Jupiter swap transaction')
-
-      const tx = VersionedTransaction.deserialize(Buffer.from(swapTx.swapTransaction, 'base64'))
       const [signedTx] = await this.signer([tx])
 
-      // retry-send logic
-      let signature: string | undefined
-      let attempts = 0
-      while (attempts < 3) {
-        try {
-          signature = await this.connection.sendTransaction(signedTx, { skipPreflight: false, maxRetries: 1 })
-          break
-        } catch (e) {
-          attempts++
-          if (attempts === 3) throw e
-          await new Promise(r => setTimeout(r, 1000 * attempts))
-        }
-      }
-      if (!signature) throw new Error('Failed to send transaction')
+      const sendResult = await submitSignedSwap({
+        signedTx,
+        prepared,
+        connection: this.connection,
+        direct: true,
+      })
 
-      const confirmPromise = this.connection.confirmTransaction(signature, 'confirmed')
-      const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error('Confirmation timeout')), 30000))
-      await Promise.race([confirmPromise, timeoutPromise])
+      if (sendResult.via === 'raptor') {
+        await waitForRaptorConfirmation(sendResult.signature, { direct: true })
+      } else {
+        await this.connection.confirmTransaction(sendResult.signature, 'confirmed')
+      }
 
       const elapsed = Date.now() - started
       const result: TradeExecutionResult = {
         success: true,
-        signature,
-        inputAmount: quote.inAmount,
-        outputAmount: quote.outAmount,
-        fees: {
-          totalFees: quote.platformFee ? parseInt(quote.platformFee.amount) / 1e9 : 0,
-          feePercentage: quote.platformFee ? quote.platformFee.feeBps / 100 : 0
-        },
-        provider: 'jupiter',
-        rpcUsed: 'shyft',
+        signature: sendResult.signature,
+        inputAmount: String(params.amount),
+        outputAmount: prepared.outAmount ?? '0',
+        fees: { totalFees: 0, feePercentage: 0.5 },
+        provider: 'raptor',
+        rpcUsed: sendResult.via === 'raptor' ? 'raptor' : 'rpc',
         responseTime: elapsed
       }
 
@@ -196,8 +186,8 @@ class RealTradeExecutor implements TradeExecutor {
         inputAmount: params.amount.toString(),
         outputAmount: '0',
         fees: { totalFees: 0, feePercentage: 0 },
-        provider: 'jupiter',
-        rpcUsed: 'shyft',
+        provider: 'raptor',
+        rpcUsed: 'raptor',
         responseTime: elapsed,
         error: error?.message || 'Real trade failed'
       }
@@ -237,4 +227,4 @@ export function createSignerFromKeypair(keypair: Keypair) {
   }
 }
 
-export { SimulationExecutor, RealTradeExecutor } 
+export { SimulationExecutor, RealTradeExecutor }

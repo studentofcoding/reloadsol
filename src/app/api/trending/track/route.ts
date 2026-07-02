@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { query, queryOne } from '@/utils/db'
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
-import { getSwapQuote, getSwapTransaction } from '@/utils/jupiter'
+import { getSwapQuote } from '@/utils/jupiter'
+import { prepareSwapTransaction, submitSignedSwap } from '@/utils/swap-executor'
+import { waitForRaptorConfirmation } from '@/utils/solanatracker-raptor'
 import { compareTradeQuotes, performEnhancedTradeComparison } from '@/utils/trade-comparison'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 import { withUnifiedLogging, log } from '@/utils/unified-logger'
@@ -549,105 +551,68 @@ class RealTradeExecutor implements TradeExecutor {
     })
 
     try {
-      // Get quote first (always use Jupiter for real trades)
-      console.log(`🔄 Getting Jupiter quote for ${direction} ${params.tokenSymbol}...`)
-      const quote = await getSwapQuote(
-        params.inputMint,
-        params.outputMint,
-        params.amount,
-        params.slippageBps
-      )
+      console.log(`🔄 Raptor swap for ${direction} ${params.tokenSymbol}...`)
 
-      if (!quote) {
-        throw new Error('No valid Jupiter quote available')
-      }
+      const prepared = await prepareSwapTransaction({
+        userPublicKey: params.userPublicKey,
+        inputMint: params.inputMint,
+        outputMint: params.outputMint,
+        amount: params.amount,
+        slippageBps: params.slippageBps,
+        priorityFeeLamports: params.priorityFee || 0,
+        direct: true,
+      })
 
-      console.log(`📊 Jupiter quote received: ${quote.inAmount} → ${quote.outAmount}`)
+      console.log(`🔧 Raptor tx prepared, out≈${prepared.outAmount ?? '?'}`)
 
-      // Create transaction
-      console.log(`🔧 Creating swap transaction...`)
-      const swapTransaction = await getSwapTransaction(
-        quote,
-        params.userPublicKey,
-        params.priorityFee || 0,
-        []
-      )
-
-      if (!swapTransaction) {
-        throw new Error('Failed to create Jupiter swap transaction')
-      }
-
-      // Deserialize and sign transaction
-      console.log(`✍️ Signing transaction...`)
       const tx = VersionedTransaction.deserialize(
-        Buffer.from(swapTransaction.swapTransaction, 'base64')
+        Buffer.from(prepared.swapTransaction, 'base64'),
       )
 
+      console.log(`✍️ Signing transaction...`)
       const signedTxs = await this.signer([tx])
       const signedTx = signedTxs[0]
 
-      // Send transaction with retries
-      console.log(`📡 Sending transaction to Shyft RPC...`)
-      let signature: string | undefined
-      let sendAttempts = 0
-      const maxSendAttempts = 3
+      console.log(`📡 Submitting via Raptor...`)
+      const sendResult = await submitSignedSwap({
+        signedTx,
+        prepared,
+        connection: this.connection,
+        direct: true,
+      })
 
-      while (sendAttempts < maxSendAttempts) {
-        try {
-          signature = await this.connection.sendTransaction(signedTx, {
-            skipPreflight: true,
-            maxRetries: 1,
-          })
-          break
-        } catch (error) {
-          sendAttempts++
-          console.warn(`📡 Send attempt ${sendAttempts} failed:`, error)
-          if (sendAttempts >= maxSendAttempts) {
-            throw new Error(`Failed to send transaction after ${maxSendAttempts} attempts: ${error}`)
-          }
-          // Wait before retry
-          await new Promise(resolve => setTimeout(resolve, 1000 * sendAttempts))
-        }
+      const signature = sendResult.signature
+
+      if (sendResult.via === 'raptor') {
+        await waitForRaptorConfirmation(signature, { direct: true })
+      } else {
+        const confirmationPromise = this.connection.confirmTransaction(signature, 'confirmed')
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Transaction confirmation timeout')), 30000),
+        )
+        await Promise.race([confirmationPromise, timeoutPromise])
       }
-
-      if (!signature) {
-        throw new Error('Failed to get transaction signature')
-      }
-
-      console.log(`⏳ Confirming transaction ${signature}...`)
-
-      // Enhanced transaction confirmation with timeout
-      const confirmationPromise = this.connection.confirmTransaction(signature, 'confirmed')
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Transaction confirmation timeout')), 30000)
-      )
-
-      await Promise.race([confirmationPromise, timeoutPromise])
 
       const responseTime = Date.now() - startTime
 
       const result = {
         success: true,
         signature,
-        inputAmount: quote.inAmount,
-        outputAmount: quote.outAmount,
-        fees: {
-          totalFees: quote.platformFee ? parseInt(quote.platformFee.amount) / 1e9 : 0,
-          feePercentage: quote.platformFee ? quote.platformFee.feeBps / 100 : 0
-        },
-        provider: 'jupiter',
-        rpcUsed: 'shyft',
+        inputAmount: String(params.amount),
+        outputAmount: prepared.outAmount ?? '0',
+        fees: { totalFees: 0, feePercentage: 0.5 },
+        provider: 'raptor',
+        rpcUsed: sendResult.via === 'raptor' ? 'raptor' : 'rpc',
         responseTime,
       }
 
-      // Log successful real trade
       logTradeOperation(`Real Trade ${direction.toUpperCase()} SUCCESS`, {
         tokenSymbol: params.tokenSymbol,
         signature,
-        inputAmount: quote.inAmount,
-        outputAmount: quote.outAmount,
+        inputAmount: result.inputAmount,
+        outputAmount: result.outputAmount,
         responseTime,
-        fees: result.fees.totalFees
+        fees: result.fees.totalFees,
       })
 
       return result
@@ -669,8 +634,8 @@ class RealTradeExecutor implements TradeExecutor {
         inputAmount: params.amount.toString(),
         outputAmount: '0',
         fees: { totalFees: 0, feePercentage: 0 },
-        provider: 'jupiter',
-        rpcUsed: 'shyft',
+        provider: 'raptor',
+        rpcUsed: 'raptor',
         responseTime,
         error: error instanceof Error ? error.message : 'Real trade failed'
       }

@@ -9,13 +9,14 @@ import { fetchAllDigitalAssetWithTokenByOwner } from "@metaplex-foundation/mpl-t
 import { TOKENS } from './solana'
 import jupiterApiUtils from './jupiter-api'
 import {
-  pollRaptorTransaction,
+  waitForRaptorConfirmation,
 } from './solanatracker-raptor'
 import {
   prepareBulkSwapTransaction,
   submitSignedSwap,
   fetchSwapQuote,
   buildSwapTransaction,
+  signTransactionsWithFallback,
   type PreparedSwapMeta,
 } from './swap-executor'
 import {
@@ -491,15 +492,16 @@ export async function getSwapQuote(
   return fetchSwapQuote(inputMint, outputMint, amount, slippageBps)
 }
 
-// Get swap transaction — Ultra first, Raptor fallback
+// Get swap transaction — Raptor quote-and-swap
 export async function getSwapTransaction(
   quote: SwapQuote,
   userPublicKey: string,
   priorityFeeLamports: number = 0,
-  additionalInstructions: any[] = []
+  _additionalInstructions: any[] = []
 ): Promise<SwapTransaction | null> {
   return buildSwapTransaction(quote, userPublicKey, priorityFeeLamports, {
-    feeInstructions: additionalInstructions?.length ? additionalInstructions : undefined,
+    feeAccount: FEE_CONFIG.DEV_WALLET,
+    feeBps: 50,
   })
 }
 
@@ -1817,7 +1819,7 @@ export async function executeBulkBuy(
             const inputDecimals = request.inputCurrency === 'USDC' ? 6 : 9
             const divisor = Math.pow(10, inputDecimals)
 
-            console.log(`🔍 Ultra→Raptor swap for ${mint}:`, {
+            console.log(`🔍 Raptor swap for ${mint}:`, {
               inputMint,
               outputMint: mint,
               amount: amountPerToken,
@@ -1878,8 +1880,14 @@ export async function executeBulkBuy(
 
     console.log(`Signing ${transactions.length} transactions...`)
 
-    // Sign all transactions at once
-    const signedTransactions = await signAllTransactions(transactions)
+    const signedTransactions = await signTransactionsWithFallback(
+      transactions,
+      signAllTransactions,
+      async (tx) => {
+        const [signed] = await signAllTransactions([tx])
+        return signed
+      },
+    )
 
     // Send and confirm transactions using batched approach (like sendTransactions)
     const SEND_BATCH_SIZE = 6 // Send 6 transactions at a time
@@ -1926,13 +1934,10 @@ export async function executeBulkBuy(
 
         try {
           if (sendResult.via === 'raptor') {
-            const raptorStatus = await pollRaptorTransaction(sendResult.signature!, {
+            await waitForRaptorConfirmation(sendResult.signature!, {
               maxAttempts: 30,
               intervalMs: 2000,
             })
-            if (raptorStatus.status === 'failed' || raptorStatus.status === 'expired') {
-              throw new Error(`Raptor transaction ${raptorStatus.status}`)
-            }
 
             signatures.push(sendResult.signature!)
             result.successfulPurchases.push({
@@ -1940,16 +1945,6 @@ export async function executeBulkBuy(
               amount: amountPerToken,
             })
             console.log(`✅ Successfully bought ${transactionMints[sendResult.mintIdx]} via Raptor`)
-            return
-          }
-
-          if (sendResult.via === 'ultra') {
-            signatures.push(sendResult.signature!)
-            result.successfulPurchases.push({
-              mintAddress: transactionMints[sendResult.mintIdx],
-              amount: amountPerToken,
-            })
-            console.log(`✅ Successfully bought ${transactionMints[sendResult.mintIdx]} via Ultra`)
             return
           }
 
@@ -2676,7 +2671,14 @@ export async function executeBulkSellAlt(
 
         if (transactions.length > 0) {
           console.log(`Signing ${transactions.length} sell transactions...`);
-          const signedTransactions = await signAllTransactions(transactions);
+          const signedTransactions = await signTransactionsWithFallback(
+            transactions,
+            signAllTransactions,
+            async (tx) => {
+              const [signed] = await signAllTransactions([tx]);
+              return signed;
+            },
+          );
           const swapSignatures: string[] = [];
 
           const SEND_BATCH_SIZE = 6;
@@ -2714,13 +2716,10 @@ export async function executeBulkSellAlt(
 
               try {
                 if (sendResult.via === 'raptor') {
-                  const raptorStatus = await pollRaptorTransaction(sendResult.signature!, {
+                  await waitForRaptorConfirmation(sendResult.signature!, {
                     maxAttempts: 30,
                     intervalMs: 2000,
                   });
-                  if (raptorStatus.status === 'failed' || raptorStatus.status === 'expired') {
-                    throw new Error(`Raptor transaction ${raptorStatus.status}`);
-                  }
 
                   const amountOutLamports = Number.parseInt(
                     transactionAmountOut[sendResult.tokenIdx] ?? '0',
@@ -2738,26 +2737,6 @@ export async function executeBulkSellAlt(
                   });
                   result.totalReceived += solReceived;
                   console.log(`✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress} via Raptor`);
-                  return;
-                }
-
-                if (sendResult.via === 'ultra') {
-                  const amountOutLamports = Number.parseInt(
-                    transactionAmountOut[sendResult.tokenIdx] ?? '0',
-                    10,
-                  );
-                  const solReceived = Number.isFinite(amountOutLamports)
-                    ? amountOutLamports / LAMPORTS_PER_SOL
-                    : 0;
-
-                  swapSignatures.push(sendResult.signature!);
-                  successfulSwaps.push(transactionTokens[sendResult.tokenIdx]);
-                  result.successfulSwaps.push({
-                    mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                    solReceived,
-                  });
-                  result.totalReceived += solReceived;
-                  console.log(`✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress} via Ultra`);
                   return;
                 }
 

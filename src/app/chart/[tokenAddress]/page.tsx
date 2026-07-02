@@ -18,9 +18,7 @@ import {
   isValidMintAddress,
   UserToken,
 } from "@/utils/jupiter";
-import {
-  fetchTokenPricesForTracking,
-} from "@/utils/trading-tracker";
+import { fetchTokenPricesForTracking, tradingTracker } from "@/utils/trading-tracker";
 import {
   SLIPPAGE_OPTIONS,
   PRIORITY_FEE_OPTIONS,
@@ -29,7 +27,6 @@ import {
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
 import { getGmgnKlineUrl } from "@/utils/gmgn";
-import { useTradingData } from "@/components/TradingDataProvider";
 
 interface TokenInfo {
   symbol: string;
@@ -56,7 +53,6 @@ export default function ChartPage() {
   const { publicKey, signAllTransactions, connected } = useWallet();
   const { connection } = useConnection();
   const { activeRpcUrl } = useRpc();
-  const { trackOperation } = useTradingData();
 
   const tokenAddress = params.tokenAddress as string;
   const validTokenAddress =
@@ -298,7 +294,7 @@ export default function ChartPage() {
           ];
 
           // Track via centralized React Query system
-          await trackOperation({
+          await tradingTracker.trackOperation({
             walletAddress: publicKey.toString(),
             operationType: "buy",
             tokens: tokenData.map((token) => ({
@@ -358,7 +354,6 @@ export default function ChartPage() {
     slippage,
     priorityFee,
     tokenInfo,
-    trackOperation,
     refetchTokens,
     refreshBalances,
   ]);

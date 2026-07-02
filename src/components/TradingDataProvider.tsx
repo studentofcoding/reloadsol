@@ -2,8 +2,6 @@
 
 import React, { createContext, useContext, useCallback, useState, useEffect } from "react";
 import {
-  QueryClient,
-  QueryClientProvider,
   useQuery,
   useMutation,
   useQueryClient,
@@ -11,21 +9,8 @@ import {
 import { tradingTracker, TrackingRecord } from "@/utils/trading-tracker";
 import { useWallet, useWalletAddress } from "./WalletProvider";
 import { useWalletSession } from "./WalletSessionContext";
-
-// Create a stable query client instance
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      gcTime: 1000 * 60 * 10, // 10 minutes
-      retry: 2,
-      refetchOnWindowFocus: false,
-    },
-    mutations: {
-      retry: 1,
-    },
-  },
-});
+import { queryClient } from "./AppQueryClientProvider";
+import { useSolPrice } from "@/hooks/useSolPrice";
 
 // Trading data context
 interface TradingDataContextType {
@@ -63,33 +48,7 @@ export function useTradingData() {
 const QUERY_KEYS = {
   tradingRecords: (walletAddress: string) => ["trading-records", walletAddress],
   walletTokens: (walletAddress: string) => ["wallet-tokens", walletAddress],
-  solPrice: ["sol-price"],
 } as const;
-
-// SOL Price hook
-export function useSolPrice() {
-  return useQuery({
-    queryKey: QUERY_KEYS.solPrice,
-    queryFn: async () => {
-      try {
-        // Try to fetch from API
-        if (typeof window !== "undefined") {
-          const response = await fetch("/api/solprice");
-          if (response.ok) {
-            const data = await response.json();
-            return data.price || 0;
-          }
-        }
-        return 0;
-      } catch (error) {
-        console.warn("Failed to fetch SOL price:", error);
-        return 0;
-      }
-    },
-    staleTime: 1000 * 60, // 1 minute
-    refetchInterval: 1000 * 60 * 5, // 5 minutes
-  });
-}
 
 // Trading records hook
 export function useTradingRecords(
@@ -331,18 +290,11 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Main provider that includes QueryClient
+// Main provider — mount under (trade) layout only (SSE + records polling)
 export default function TradingDataProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <TradingDataProviderInner>{children}</TradingDataProviderInner>
-    </QueryClientProvider>
-  );
+  return <TradingDataProviderInner>{children}</TradingDataProviderInner>;
 }
-
-// Export the query client for direct access if needed
-export { queryClient };
