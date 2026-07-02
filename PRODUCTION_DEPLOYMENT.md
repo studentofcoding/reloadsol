@@ -90,6 +90,31 @@ bash scripts/deploy-tencent.sh backup
 
 See also [README.md](../README.md#npm-install-fails-on-tencent-cloud-http-451--xrpl).
 
+## Memory limits
+
+[`docker-compose.yml`](docker-compose.yml) caps each container so one service cannot OOM the whole host (~3.6 GB Tencent VPS):
+
+| Container | Limit |
+|-----------|-------|
+| reloadsol-db | 768M |
+| reloadsol-web | 768M |
+| reloadsol-social-ingest | 256M |
+| reloadsol-cron | 128M |
+| reloadsol-bouncer | 64M |
+
+Limits apply after **recreate** (not `docker restart`):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate
+docker stats --no-stream
+```
+
+Each row should show `MEM USAGE / LIMIT` with its cap (e.g. `91MiB / 768MiB`), not the full host size.
+
+If **reloadsol-web** restarts with OOM in `docker logs reloadsol-web` or `dmesg`, raise web to `896M` or `1G` and optionally lower db to `512M` in compose.
+
+**Deploy/build on &lt;4 GB RAM** still needs swap — run `sudo bash scripts/ensure-swap.sh` before first deploy. Container limits do not cover host-side `npm ci` / `next build`.
+
 ## Environment variables
 
 Copy from [`.env.docker.example`](.env.docker.example). Minimum for production:

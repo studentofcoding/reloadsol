@@ -22,19 +22,19 @@ services:
     command:
       - postgres
       - -c
-      - shared_buffers=256MB
+      - shared_buffers=128MB
       - -c
       - work_mem=16MB
       - -c
       - max_connections=50
       - -c
-      - effective_cache_size=768MB
+      - effective_cache_size=512MB
       - -c
       - maintenance_work_mem=64MB
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 768M
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
@@ -69,6 +69,10 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 64M
     networks:
       - reloadsol
 
@@ -101,6 +105,10 @@ services:
       retries: 5
       start_period: 60s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768M
     networks:
       - reloadsol
 
@@ -127,6 +135,10 @@ services:
       retries: 3
       start_period: 20s
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
     networks:
       - reloadsol
 
@@ -147,6 +159,10 @@ services:
       web:
         condition: service_healthy
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 256M
     networks:
       - reloadsol
 
