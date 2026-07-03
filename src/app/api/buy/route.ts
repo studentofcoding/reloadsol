@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { VersionedTransaction } from '@solana/web3.js'
 import { prepareSwapTransaction, confirmSwapSignature } from '@/utils/swap-executor'
 import {
   sendRaptorTransactionDirect,
@@ -31,6 +32,9 @@ export const POST = async (req: NextRequest) => {
 
     if (signedTxBase64 && typeof signedTxBase64 === 'string') {
       try {
+        const signedTx = VersionedTransaction.deserialize(
+          Buffer.from(signedTxBase64, 'base64'),
+        )
         const sendResult = await sendRaptorTransactionDirect(signedTxBase64)
         if (!sendResult.success || !sendResult.signature) {
           throw new Error('Raptor send returned no signature')
@@ -40,6 +44,7 @@ export const POST = async (req: NextRequest) => {
           via: 'raptor',
           connection,
           direct: true,
+          blockhash: signedTx.message.recentBlockhash,
         })
         return NextResponse.json({ success: true, signature: sendResult.signature })
       } catch (err: unknown) {

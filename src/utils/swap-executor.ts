@@ -6,7 +6,7 @@ import {
   fetchRaptorQuoteDirect,
   sendRaptorTransaction,
   sendRaptorTransactionDirect,
-  waitForRaptorConfirmation,
+  getRaptorTransactionStatusSafe,
   RaptorAPIError,
   type RaptorQuoteAndSwapParams,
   type RaptorQuoteResponse,
@@ -199,11 +199,10 @@ export async function submitSignedSwap(
   return { signature, via: "rpc" };
 }
 
-const SIGNATURE_CONFIRM_INTERVAL_MS = 2000;
-const SIGNATURE_CONFIRM_TIMEOUT_MS = 60_000;
-const BATCH_CONFIRM_TIMEOUT_MS = 90_000;
-const BATCH_STATUS_CHUNK = 50;
-const RAPTOR_CONFIRM_CONCURRENCY = 4;
+const CONFIRM_POLL_INTERVAL_MS = 3000;
+const CONFIRM_DEADLINE_MS = 45_000;
+const RAPTOR_CONFIRM_CONCURRENCY = 2;
+const MAX_CONSECUTIVE_RPC_FAILURES = 3;
 
 export function getTradeSendConcurrency(): number {
   const n = Number(process.env.TRADE_SEND_CONCURRENCY ?? 4);
@@ -232,206 +231,177 @@ export async function runWithConcurrency<T, R>(
   return results;
 }
 
-async function pollSignatureConfirmed(
-  connection: Connection,
-  signature: string,
-  timeoutMs = SIGNATURE_CONFIRM_TIMEOUT_MS,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    await waitForRpcRateLimit();
-    const response = await connection.getSignatureStatuses([signature], {
-      searchTransactionHistory: true,
-    });
-    const status = response.value[0];
-
-    if (status?.err) {
-      throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
-    }
-
-    const confirmation = status?.confirmationStatus;
-    if (confirmation === "confirmed" || confirmation === "finalized") {
-      return;
-    }
-
-    await new Promise((resolve) =>
-      setTimeout(resolve, SIGNATURE_CONFIRM_INTERVAL_MS),
-    );
-  }
-
-  throw new Error(`Transaction confirmation timeout for ${signature}`);
-}
-
 export type ConfirmSwapSignatureParams = {
   signature: string;
   via: SwapProvider | "rpc";
   connection: Connection;
+  /** Unused for confirm (kept for caller compatibility). */
   lastValidBlockHeight?: number;
+  /** Unused for confirm (kept for caller compatibility). */
   blockhash?: string;
   direct?: boolean;
 };
 
-/** Raptor poll first, then RPC signature-status fallback. */
-export async function confirmSwapSignature(
-  params: ConfirmSwapSignatureParams,
-): Promise<void> {
-  if (params.via === "raptor") {
-    try {
-      await waitForRaptorConfirmation(params.signature, {
-        direct: params.direct,
-        maxAttempts: 45,
-        intervalMs: 2000,
-      });
-      return;
-    } catch (raptorError) {
-      console.warn(
-        "Raptor confirm failed, falling back to RPC signature check:",
-        raptorError,
-      );
-    }
-  }
+type ParsedSignatureStatus = "confirmed" | "pending";
 
-  if (
-    params.via === "rpc" &&
-    params.blockhash &&
-    params.lastValidBlockHeight != null
-  ) {
-    try {
-      await waitForRpcRateLimit();
-      const confirmation = await params.connection.confirmTransaction(
-        {
-          signature: params.signature,
-          blockhash: params.blockhash,
-          lastValidBlockHeight: params.lastValidBlockHeight,
-        },
-        "confirmed",
-      );
-      if (confirmation.value.err) {
-        throw new Error(
-          `Transaction failed: ${JSON.stringify(confirmation.value.err)}`,
-        );
-      }
-      return;
-    } catch (confirmError) {
-      console.warn(
-        "Blockhash confirm failed, falling back to signature poll:",
-        confirmError,
-      );
-    }
+/** Throws on on-chain error; `processed` counts as landed. */
+function parseSignatureStatus(
+  status: { err?: unknown; confirmationStatus?: string | null } | null,
+): ParsedSignatureStatus {
+  if (status?.err) {
+    throw new Error(`Transaction failed on-chain: ${JSON.stringify(status.err)}`);
   }
-
-  await pollSignatureConfirmed(params.connection, params.signature);
+  const level = status?.confirmationStatus;
+  return level === "processed" || level === "confirmed" || level === "finalized"
+    ? "confirmed"
+    : "pending";
 }
 
 export type BatchConfirmItem = Omit<ConfirmSwapSignatureParams, "connection">;
 
-/** Batch confirm — Raptor per-sig (concurrency 4), then one RPC poll for all pending. */
+export type ConfirmBatchOptions = {
+  intervalMs?: number;
+  deadlineMs?: number;
+};
+
+/**
+ * Confirm signatures with one shared poll loop:
+ * - Raptor status (RPC-free) is the primary source for `via: 'raptor'` sends.
+ * - One batched getSignatureStatuses call per tick covers everything else.
+ * Returns sig -> null (confirmed) or error message.
+ */
 export async function confirmSwapSignaturesBatch(
   items: BatchConfirmItem[],
   connection: Connection,
+  options?: ConfirmBatchOptions,
 ): Promise<Map<string, string | null>> {
   const results = new Map<string, string | null>();
   if (items.length === 0) return results;
 
-  const pendingRpc = new Map<string, BatchConfirmItem>();
+  const intervalMs = options?.intervalMs ?? CONFIRM_POLL_INTERVAL_MS;
+  const deadline = Date.now() + (options?.deadlineMs ?? CONFIRM_DEADLINE_MS);
 
-  const raptorItems = items.filter((item) => item.via === "raptor");
-  await runWithConcurrency(
-    raptorItems,
-    RAPTOR_CONFIRM_CONCURRENCY,
-    async (item) => {
-      try {
-        await waitForRaptorConfirmation(item.signature, {
-          direct: item.direct,
-          maxAttempts: 45,
-          intervalMs: 2000,
-        });
-        results.set(item.signature, null);
-      } catch (raptorError) {
-        console.warn(
-          `Raptor batch confirm failed for ${item.signature}, will RPC poll:`,
-          raptorError,
-        );
-        pendingRpc.set(item.signature, item);
-      }
-    },
-  );
-
+  const pending = new Map<string, BatchConfirmItem>();
+  const raptorEligible = new Set<string>();
   for (const item of items) {
-    if (item.via === "rpc") {
-      pendingRpc.set(item.signature, item);
-    }
-  }
-  for (const sig of Array.from(results.keys())) {
-    pendingRpc.delete(sig);
+    pending.set(item.signature, item);
+    if (item.via === "raptor") raptorEligible.add(item.signature);
   }
 
-  for (const [sig, item] of Array.from(pendingRpc.entries())) {
-    if (item.blockhash && item.lastValidBlockHeight != null) {
-      try {
-        await waitForRpcRateLimit();
-        const confirmation = await connection.confirmTransaction(
-          {
-            signature: item.signature,
-            blockhash: item.blockhash,
-            lastValidBlockHeight: item.lastValidBlockHeight,
-          },
-          "confirmed",
-        );
-        if (confirmation.value.err) {
-          throw new Error(
-            `Transaction failed: ${JSON.stringify(confirmation.value.err)}`,
-          );
-        }
-        results.set(sig, null);
-        pendingRpc.delete(sig);
-      } catch {
-        // ponytail: fall through to batched signature poll
-      }
-    }
-  }
+  let consecutiveRpcFailures = 0;
 
-  const deadline = Date.now() + BATCH_CONFIRM_TIMEOUT_MS;
-  while (pendingRpc.size > 0 && Date.now() < deadline) {
-    const signatures = Array.from(pendingRpc.keys());
-    for (let i = 0; i < signatures.length; i += BATCH_STATUS_CHUNK) {
-      const chunk = signatures.slice(i, i + BATCH_STATUS_CHUNK);
+  while (pending.size > 0) {
+    // Phase A: Raptor tracks its own sends; poll it first, no RPC budget spent.
+    const raptorItems = Array.from(pending.values()).filter((item) =>
+      raptorEligible.has(item.signature),
+    );
+    if (raptorItems.length > 0) {
+      await runWithConcurrency(
+        raptorItems,
+        RAPTOR_CONFIRM_CONCURRENCY,
+        async (item) => {
+          try {
+            const status = await getRaptorTransactionStatusSafe(item.signature, {
+              direct: item.direct,
+            });
+            if (status === null) {
+              raptorEligible.delete(item.signature);
+            } else if (status.status === "confirmed") {
+              results.set(item.signature, null);
+              pending.delete(item.signature);
+            } else if (
+              status.status === "failed" ||
+              status.status === "expired"
+            ) {
+              results.set(item.signature, `Raptor transaction ${status.status}`);
+              pending.delete(item.signature);
+            }
+          } catch {
+            // Raptor unreachable — fall back to RPC-only for this sig.
+            raptorEligible.delete(item.signature);
+          }
+        },
+      );
+      if (pending.size === 0) break;
+    }
+
+    // Phase B: one batched RPC status check for all still-pending sigs.
+    const pendingSigs = Array.from(pending.keys());
+    try {
       await waitForRpcRateLimit();
-      const response = await connection.getSignatureStatuses(chunk, {
+      const response = await connection.getSignatureStatuses(pendingSigs, {
         searchTransactionHistory: true,
       });
+      consecutiveRpcFailures = 0;
 
-      chunk.forEach((sig, idx) => {
-        const status = response.value[idx];
-        if (status?.err) {
+      pendingSigs.forEach((signature, index) => {
+        try {
+          if (parseSignatureStatus(response.value[index]) === "confirmed") {
+            results.set(signature, null);
+            pending.delete(signature);
+          }
+        } catch (error) {
           results.set(
-            sig,
-            `Transaction failed on-chain: ${JSON.stringify(status.err)}`,
+            signature,
+            error instanceof Error ? error.message : String(error),
           );
-          pendingRpc.delete(sig);
-          return;
-        }
-        const confirmation = status?.confirmationStatus;
-        if (confirmation === "confirmed" || confirmation === "finalized") {
-          results.set(sig, null);
-          pendingRpc.delete(sig);
+          pending.delete(signature);
         }
       });
+    } catch (error) {
+      consecutiveRpcFailures += 1;
+      if (consecutiveRpcFailures >= MAX_CONSECUTIVE_RPC_FAILURES) {
+        const message = error instanceof Error ? error.message : String(error);
+        for (const signature of Array.from(pending.keys())) {
+          results.set(signature, `RPC confirmation unavailable: ${message}`);
+        }
+        return results;
+      }
     }
 
-    if (pendingRpc.size > 0) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, SIGNATURE_CONFIRM_INTERVAL_MS),
-      );
-    }
+    if (pending.size === 0 || Date.now() + intervalMs > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
 
-  for (const sig of Array.from(pendingRpc.keys())) {
-    results.set(sig, `Transaction confirmation timeout for ${sig}`);
+  for (const signature of Array.from(pending.keys())) {
+    results.set(signature, `Transaction confirmation timeout for ${signature}`);
   }
-
   return results;
+}
+
+export type WaitForSwapConfirmationParams = ConfirmSwapSignatureParams & {
+  maxAttempts?: number;
+  intervalMs?: number;
+};
+
+/** Single-signature confirm — delegates to the batch loop. */
+export async function waitForSwapConfirmation(
+  params: WaitForSwapConfirmationParams,
+): Promise<void> {
+  const intervalMs = params.intervalMs ?? CONFIRM_POLL_INTERVAL_MS;
+  const deadlineMs =
+    params.maxAttempts != null ? params.maxAttempts * intervalMs : undefined;
+
+  const { connection, maxAttempts: _max, intervalMs: _int, ...item } = params;
+  const resultMap = await confirmSwapSignaturesBatch([item], connection, {
+    intervalMs,
+    deadlineMs,
+  });
+
+  const error = resultMap.get(params.signature);
+  if (error) {
+    if (error.startsWith("Raptor transaction ")) {
+      throw new RaptorAPIError(error, 400);
+    }
+    throw new Error(error);
+  }
+}
+
+/** Hybrid confirm wrapper for callers. */
+export async function confirmSwapSignature(
+  params: ConfirmSwapSignatureParams,
+): Promise<void> {
+  await waitForSwapConfirmation(params);
 }
 
 export type PreparedSwapMeta = PreparedSwap;
@@ -512,6 +482,7 @@ export async function executeClientSwap(
       via: sendResult.via,
       connection: params.connection,
       lastValidBlockHeight: prepared.lastValidBlockHeight,
+      blockhash: signedTx.message.recentBlockhash,
       direct: params.direct,
     });
   }

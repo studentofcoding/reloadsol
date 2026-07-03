@@ -75,9 +75,14 @@ export default function TokenLocateHub({ initialAddress = "" }: TokenLocateHubPr
   }, []);
 
   useEffect(() => {
-    if (initialAddress && isValidMintAddress(initialAddress.trim())) {
-      void runSearch(initialAddress);
-    }
+    const trimmed = initialAddress.trim();
+    if (!isValidMintAddress(trimmed)) return;
+
+    const timer = window.setTimeout(() => {
+      void runSearch(trimmed);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, [initialAddress, runSearch]);
 
   const handleSubmit = (e: React.FormEvent) => {

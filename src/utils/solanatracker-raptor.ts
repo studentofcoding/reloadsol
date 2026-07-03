@@ -228,6 +228,25 @@ export async function getRaptorTransactionStatusDirect(
   return raptorFetch<RaptorTxStatus>(`/transaction/${encodeURIComponent(signature)}`);
 }
 
+/** Status fetch that returns null when Raptor is not tracking this sig (404/503). */
+export async function getRaptorTransactionStatusSafe(
+  signature: string,
+  options?: { direct?: boolean },
+): Promise<RaptorTxStatus | null> {
+  const useDirect = options?.direct ?? typeof window === "undefined";
+  try {
+    return useDirect
+      ? await getRaptorTransactionStatusDirect(signature)
+      : await fetchRaptorTransactionStatusClient(signature);
+  } catch (error) {
+    if (error instanceof RaptorAPIError) {
+      const code = error.statusCode;
+      if (code === 404 || code === 503) return null;
+    }
+    throw error;
+  }
+}
+
 /** Client-side via Next.js proxy */
 export async function fetchRaptorQuote(
   inputMint: string,
