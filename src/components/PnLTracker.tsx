@@ -12,6 +12,8 @@ import { useTradingData } from "./TradingDataProvider";
 import { useWalletSession } from "./WalletSessionContext";
 import WalletSignInPrompt from "./WalletSignInPrompt";
 import TokenSkeleton from "./TokenSkeleton";
+import AlgoPositions from "./AlgoPositions";
+import { fetchTokenMetadataBatch } from "@/utils/token-metadata-client";
 import { getSolPriceUSD } from "@/utils/solana";
 import {
   fetchUserTokens,
@@ -908,6 +910,55 @@ export default function PnLTracker() {
     },
     enabled: !!walletAddress,
   });
+
+  // Resolve missing token symbols/icons in one batch call
+  const missingMetaMints = useMemo(() => {
+    const mints = new Set<string>();
+    for (const r of pnlRecords) {
+      if (!r.symbol || !r.logoURI) mints.add(r.mintAddress);
+    }
+    for (const p of openPositions) {
+      if (!p.symbol || !p.logoURI) mints.add(p.mintAddress);
+    }
+    return Array.from(mints);
+  }, [pnlRecords, openPositions]);
+
+  const { data: tokenMetaMap } = useQuery({
+    queryKey: ["pnl-token-meta", missingMetaMints.join(",")],
+    queryFn: () => fetchTokenMetadataBatch(missingMetaMints),
+    enabled: missingMetaMints.length > 0,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const displayRecords = useMemo(
+    () =>
+      pnlRecords.map((r) => {
+        const meta = tokenMetaMap?.get(r.mintAddress);
+        if (!meta) return r;
+        return {
+          ...r,
+          symbol: r.symbol || meta.symbol || undefined,
+          name: r.name || meta.name || undefined,
+          logoURI: r.logoURI || meta.logoURI || undefined,
+        };
+      }),
+    [pnlRecords, tokenMetaMap],
+  );
+
+  const displayOpenPositions = useMemo(
+    () =>
+      openPositions.map((p) => {
+        const meta = tokenMetaMap?.get(p.mintAddress);
+        if (!meta) return p;
+        return {
+          ...p,
+          symbol: p.symbol || meta.symbol || undefined,
+          name: p.name || meta.name || undefined,
+          logoURI: p.logoURI || meta.logoURI || undefined,
+        };
+      }),
+    [openPositions, tokenMetaMap],
+  );
 
   // ✅ NEW: Toggle token selection for bulk sell
   const toggleTokenSelection = useCallback(
@@ -2382,7 +2433,7 @@ export default function PnLTracker() {
                   </div>
                 ) : (
                   <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
-                    {pnlRecords.map((record) => {
+                    {displayRecords.map((record) => {
                       // Calculate USD amounts
                       const buyAmountUSD = record.solAmountBought * solPriceUsd;
                       const pnlAmountUSD =
@@ -2495,7 +2546,9 @@ export default function PnLTracker() {
                           <div className="text-xs text-gray-400 mb-1 ml-1">
                             <span className="text-gray-500">Buy Price: </span>
                             <span className="text-gray-300">
-                              ${record.buyPrice.toFixed(6)}
+                              {Number.isFinite(record.buyPrice)
+                                ? `$${record.buyPrice.toFixed(6)}`
+                                : "—"}
                             </span>
                           </div>
 
@@ -2649,7 +2702,7 @@ export default function PnLTracker() {
                         />
                       )}
 
-                      {openPositions.map((position) => {
+                      {displayOpenPositions.map((position) => {
                         const isSelected = selectedTokens.has(position.id);
                         const buyAmountUSD =
                           position.solAmountBought * solPriceUsd;
@@ -2812,12 +2865,14 @@ export default function PnLTracker() {
                                   Buy Price:{" "}
                                 </span>
                                 <span className="text-gray-300">
-                                  $
-                                  {position.buyPriceUsd
-                                    ? position.buyPriceUsd.toFixed(6)
-                                    : (
-                                        buyAmountUSD / position.solAmountBought
-                                      ).toFixed(6)}
+                                  {(() => {
+                                    const price =
+                                      position.buyPriceUsd ??
+                                      buyAmountUSD / position.solAmountBought;
+                                    return Number.isFinite(price)
+                                      ? `$${price.toFixed(6)}`
+                                      : "—";
+                                  })()}
                                 </span>
                               </div>
 
@@ -2954,6 +3009,11 @@ export default function PnLTracker() {
             </p>
           </div>
         )}
+
+        {/* Algo strategy positions (open + closed) */}
+        <div className="mt-6">
+          <AlgoPositions />
+        </div>
       </div>
 
       {/* ✅ NEW: Bulk Sell Overlay */}
