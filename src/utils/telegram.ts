@@ -171,6 +171,8 @@ export async function sendStrategyTrackOpenAlert(params: {
   const link = formatJupiterTokenLink(params.tokenAddress)
 
   const text = [
+    `<a href="${link}">${link}</a>`,
+    '',
     `🟢 <b>Strategy OPEN (${mode})</b>`,
     '',
     `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
@@ -178,7 +180,6 @@ export async function sendStrategyTrackOpenAlert(params: {
     `Market Cap: ${formatMcapUsd(params.marketCap)}`,
     `Token: ${symbol}`,
     ``,
-    `<a href="${link}">${link}</a>`,
   ].join('\n')
 
   return sendTelegramAlert(text, { parseMode: 'HTML' })
@@ -190,6 +191,7 @@ export async function sendStrategyTrackCloseAlert(params: {
   domain: string
   tokenSymbol: string
   tokenAddress: string
+  marketCap?: number | null
   pnlPct: number
   status: string
   isSimulated: boolean
@@ -205,15 +207,16 @@ export async function sendStrategyTrackCloseAlert(params: {
   const link = formatJupiterTokenLink(params.tokenAddress)
 
   const text = [
+    `<a href="${link}">${link}</a>`,
+    '',
     `🔴 <b>Strategy CLOSE (${mode})</b>`,
     '',
     `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
     `Domain: ${domain}`,
     `Token: ${symbol}`,
+    `Market Cap: ${formatMcapUsd(params.marketCap)}`,
     `PnL: ${sign}${params.pnlPct.toFixed(2)}%`,
     `Result: <b>${result}</b>`,
-    ``,
-    `<a href="${link}">${link}</a>`,
   ].join('\n')
 
   return sendTelegramAlert(text, { parseMode: 'HTML' })
