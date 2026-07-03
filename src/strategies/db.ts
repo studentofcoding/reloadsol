@@ -118,6 +118,7 @@ type OutcomeFilterParams = {
   pnlMin?: number
   pnlMax?: number
   entryMcapBand?: string
+  tokenAddress?: string
 }
 
 function buildOutcomeWhereClause(params: OutcomeFilterParams): {
@@ -176,6 +177,10 @@ function buildOutcomeWhereClause(params: OutcomeFilterParams): {
   if (params.entryMcapBand) {
     values.push(params.entryMcapBand)
     conditions.push(`features->>'entry_mcap_band' = $${values.length}`)
+  }
+  if (params.tokenAddress) {
+    values.push(params.tokenAddress)
+    conditions.push(`token_address = $${values.length}`)
   }
 
   const sql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
@@ -507,6 +512,7 @@ export async function listStrategyOutcomes(params: {
   pnlMin?: number
   pnlMax?: number
   entryMcapBand?: string
+  tokenAddress?: string
   trainingClassOnly?: boolean
   trainingClassMin?: number
   recomputeLabels?: boolean

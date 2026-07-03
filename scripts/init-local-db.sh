@@ -36,7 +36,7 @@ DATABASE_URL="$(
   bash scripts/build-database-url.sh
 )"
 
-for f in db/init/00-extensions.sql db/init/01-roles.sql db/init/02-schema.sql; do
+for f in db/init/00-extensions.sql db/init/01-roles.sql db/init/02-schema.sql db/init/03-token-locate-indexes.sql; do
   [[ -f "$f" ]] || fail "Missing $f"
   log "Applying $f ..."
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"

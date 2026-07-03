@@ -134,3 +134,79 @@ export async function fetchTokenMetadataFromJupiter(mintAddress: string, retryCo
 
 // Export the batch fetching function as well for use in route handlers
 export { fetchTokensFromJupiterV2 }
+
+/** Full lite-api v2 search JSON (unmapped) for a single mint. */
+export async function fetchJupiterV2SearchRaw(
+  mintAddress: string,
+  retryCount = 0,
+): Promise<unknown> {
+  const now = Date.now()
+  const timeSinceLastRequest = now - lastRequestTime
+  if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+    await new Promise((resolve) =>
+      setTimeout(resolve, MIN_REQUEST_INTERVAL - timeSinceLastRequest),
+    )
+  }
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT)
+  const url = `https://lite-api.jup.ag/tokens/v2/search?query=${encodeURIComponent(mintAddress)}`
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'ReloadSol-API/1.0',
+      },
+    })
+    lastRequestTime = Date.now()
+    clearTimeout(timeoutId)
+
+    if (response.status === 429 && retryCount < MAX_RETRIES) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, RETRY_DELAYS[retryCount] ?? 1600),
+      )
+      return fetchJupiterV2SearchRaw(mintAddress, retryCount + 1)
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+
+    return response.json()
+  } catch (error) {
+    clearTimeout(timeoutId)
+    if (
+      retryCount < MAX_RETRIES &&
+      error instanceof Error &&
+      (error.message.includes('Network error') ||
+        error.name === 'AbortError' ||
+        error.name === 'TypeError')
+    ) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, RETRY_DELAYS[retryCount] ?? 1600),
+      )
+      return fetchJupiterV2SearchRaw(mintAddress, retryCount + 1)
+    }
+    throw error
+  }
+}
+
+/** datapi.jup.ag assets search — raw JSON for token locate. */
+export async function fetchJupiterDatapiSearchRaw(mintAddress: string): Promise<unknown> {
+  const response = await fetch(
+    `https://datapi.jup.ag/v1/assets/search?query=${encodeURIComponent(mintAddress)}`,
+    {
+      headers: {
+        accept: 'application/json',
+        referer: 'https://jup.ag/',
+        'user-agent': 'ReloadSol-API/1.0',
+      },
+    },
+  )
+  if (!response.ok) {
+    throw new Error(`datapi HTTP ${response.status}`)
+  }
+  return response.json()
+}

@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import ScrollableMenuRow from "@/components/ScrollableMenuRow";
 import WalletBalance from "@/components/WalletBalance";
 import { useDevWalletAccess } from "@/components/WalletProvider";
 import { useIsClient } from "@/hooks/useIsClient";
@@ -39,6 +40,7 @@ export default function NavigationTabs({
     "/dev/dlmm",
     "/dev/social",
     "/dev/strategies",
+    "/dev/token-search",
   ].some((path) => (pathname || "").startsWith(path));
 
   const handleTabClick = (tab: string) => {
@@ -53,8 +55,8 @@ export default function NavigationTabs({
       <div
         className={`hidden md:block ${mounted && isDevUser ? "max-w-6xl" : "max-w-4xl"} mx-auto mb-2`}
       >
-        <div className="flex items-center justify-between h-full mb-4">
-          <div className="flex items-center space-x-2">
+        <div className="flex items-center justify-between h-full mb-4 gap-4">
+          <ScrollableMenuRow className="min-w-0 flex-1" innerClassName="gap-2" bleed={false}>
             {/* Main Trading Tabs */}
             {showMainTabs && (
               <>
@@ -259,13 +261,36 @@ export default function NavigationTabs({
                         />
                       </svg>
                     </Link>
+                    <Link
+                      href="/dev/token-search"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                        isActive("/dev/token-search")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                      }`}
+                      title="Token locate"
+                    >
+                      <svg
+                        className="w-5 h-5"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                        />
+                      </svg>
+                    </Link>
                   </>
                 )}
               </>
             )}
 
             {/* Info Tabs */}
-            <div className="border-l border-gray-600 pl-2 ml-2 flex items-center">
+            <div className="border-l border-gray-600 pl-2 ml-2 flex shrink-0 items-center">
               <button
                 type="button"
                 onClick={() => handleTabClick("history")}
@@ -315,10 +340,10 @@ export default function NavigationTabs({
                 </svg>
               </button>
             </div>
-          </div>
+          </ScrollableMenuRow>
 
           {/* Wallet Balance Display */}
-          <div className="h-full">
+          <div className="h-full shrink-0">
             {mounted && !isMobile && <WalletBalance />}
           </div>
         </div>
@@ -389,11 +414,11 @@ export default function NavigationTabs({
       {/* Mobile Navigation - Bottom Fixed */}
       {showMainTabs && (
         <div className="md:hidden fixed bottom-0 left-0 right-0 bg-black border-t border-gray-800 z-9999">
-          <div className="flex items-center justify-around px-2 py-3">
+          <ScrollableMenuRow className="py-3 px-2" innerClassName="gap-1 mx-auto" bleed={false}>
             {/* Main Trading Tabs Only */}
             <Link
               href="/sell"
-              className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
                 isActive("/sell") ? "bg-white text-black" : "text-gray-400"
               }`}
             >
@@ -415,7 +440,7 @@ export default function NavigationTabs({
 
             <Link
               href="/buy"
-              className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
                 isActive("/buy") ? "bg-white text-black" : "text-gray-400"
               }`}
             >
@@ -437,7 +462,7 @@ export default function NavigationTabs({
 
             <Link
               href="/swap"
-              className={`flex flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
+              className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
                 isActive("/swap") ? "bg-white text-black" : "text-gray-400"
               }`}
             >
@@ -461,7 +486,7 @@ export default function NavigationTabs({
               <>
                 <Link
                   href="/dev/signals"
-                  className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
                     isActive("/dev/signals")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -484,7 +509,7 @@ export default function NavigationTabs({
                 </Link>
                 <Link
                   href="/dev/algo-tester"
-                  className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
                     isActive("/dev/algo-tester")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -507,7 +532,7 @@ export default function NavigationTabs({
                 </Link>
                 <Link
                   href="/dev/dlmm"
-                  className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
                     isActive("/dev/dlmm")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -530,7 +555,7 @@ export default function NavigationTabs({
                 </Link>
                 <Link
                   href="/dev/social"
-                  className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
                     isActive("/dev/social")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -553,7 +578,7 @@ export default function NavigationTabs({
                 </Link>
                 <Link
                   href="/dev/strategies"
-                  className={`flex flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
                     isActive("/dev/strategies")
                       ? "bg-white text-black"
                       : "text-gray-400"
@@ -580,9 +605,32 @@ export default function NavigationTabs({
                   </svg>
                   <span className="text-xs font-medium">Strategies</span>
                 </Link>
+                <Link
+                  href="/dev/token-search"
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                    isActive("/dev/token-search")
+                      ? "bg-white text-black"
+                      : "text-gray-400"
+                  }`}
+                >
+                  <svg
+                    className="w-6 h-6 mb-1"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                    />
+                  </svg>
+                  <span className="text-xs font-medium">Locate</span>
+                </Link>
               </>
             )}
-          </div>
+          </ScrollableMenuRow>
         </div>
       )}
     </div>

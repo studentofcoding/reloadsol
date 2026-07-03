@@ -25,6 +25,7 @@ import OutcomeReviewModal, {
   OutcomeMlBadge,
   OutcomeMlConditionBadge,
 } from "@/components/strategies/OutcomeReviewModal";
+import ScrollableMenuRow from "@/components/ScrollableMenuRow";
 import {
   ENTRY_MCAP_BAND_OPTIONS,
   formatEntryMcap,
@@ -816,29 +817,29 @@ export default function StrategyAdminHub() {
   return (
     <div className="space-y-6">
       <AdminToastBanner toast={toast} onDismiss={dismissToast} />
-      <div className="flex gap-2 border-b border-gray-700 pb-2">
+      <ScrollableMenuRow className="border-b border-gray-700 pb-2">
         <button
           type="button"
           onClick={() => switchTab("config")}
-          className={`px-4 py-2 text-sm rounded-t ${tab === "config" ? "bg-gray-800 text-white" : "text-gray-400"}`}
+          className={`shrink-0 px-4 py-2 text-sm rounded-t ${tab === "config" ? "bg-gray-800 text-white" : "text-gray-400"}`}
         >
           Config
         </button>
         <button
           type="button"
           onClick={() => switchTab("reports")}
-          className={`px-4 py-2 text-sm rounded-t ${tab === "reports" ? "bg-gray-800 text-white" : "text-gray-400"}`}
+          className={`shrink-0 px-4 py-2 text-sm rounded-t ${tab === "reports" ? "bg-gray-800 text-white" : "text-gray-400"}`}
         >
           Reports (A/B)
         </button>
         <button
           type="button"
           onClick={() => switchTab("workers")}
-          className={`px-4 py-2 text-sm rounded-t ${tab === "workers" ? "bg-gray-800 text-white" : "text-gray-400"}`}
+          className={`shrink-0 px-4 py-2 text-sm rounded-t ${tab === "workers" ? "bg-gray-800 text-white" : "text-gray-400"}`}
         >
           Workers
         </button>
-      </div>
+      </ScrollableMenuRow>
 
       {tab === "config" && (
         <>

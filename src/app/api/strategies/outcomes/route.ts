@@ -156,6 +156,7 @@ export async function GET(request: NextRequest) {
     const trainingClassOnly = searchParams.get('training_class_only') === 'true'
     const trainingClassMin = parseOptionalNumber(searchParams.get('training_class_min'))
     const recomputeLabels = searchParams.get('recompute_labels') === 'true'
+    const tokenAddress = searchParams.get('tokenAddress') ?? undefined
     const limit = parseInt(searchParams.get('limit') ?? '500', 10)
     const offset = parseInt(searchParams.get('offset') ?? '0', 10)
 
@@ -174,6 +175,7 @@ export async function GET(request: NextRequest) {
       trainingClassOnly,
       trainingClassMin,
       recomputeLabels,
+      tokenAddress,
       limit: format === 'csv' ? Math.min(limit, 5000) : limit,
       offset,
     })

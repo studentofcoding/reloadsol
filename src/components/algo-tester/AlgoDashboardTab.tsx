@@ -1186,7 +1186,7 @@ export default function AlgoDashboardTab() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex space-x-1 mb-6 bg-gray-800 rounded-lg p-1 overflow-x-auto">
+        <div className="flex space-x-1 mb-6 bg-gray-800 rounded-lg p-1 overflow-x-auto scrollbar-hide flex-nowrap">
           {[
             {
               key: "overview",
@@ -1274,7 +1274,7 @@ export default function AlgoDashboardTab() {
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key as any)}
-              className={`flex items-center justify-center space-x-2 px-4 py-2 text-sm font-medium rounded-md transition-all min-w-max ${
+              className={`flex shrink-0 items-center justify-center space-x-2 px-4 py-2 text-sm font-medium rounded-md transition-all min-w-max ${
                 activeTab === tab.key
                   ? "bg-gray-700 text-white"
                   : "text-gray-400 hover:text-white hover:bg-gray-700/50"

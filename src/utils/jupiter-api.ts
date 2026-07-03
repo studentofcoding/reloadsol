@@ -409,6 +409,21 @@ export async function testApiVersions(tokens: string[]): Promise<{
   }
 }
 
+/** Raw lite-api price v3 JSON for token locate (unmapped). */
+export async function fetchJupiterPriceRaw(token: string): Promise<unknown> {
+  const url = `${JUPITER_API_CONFIG.BASE_URL}/v3?ids=${encodeURIComponent(token)}`
+  const response = await fetch(url, {
+    headers: {
+      accept: 'application/json',
+      'user-agent': 'ReloadSol-API/1.0',
+    },
+  })
+  if (!response.ok) {
+    throw new Error(`price HTTP ${response.status}`)
+  }
+  return response.json()
+}
+
 const jupiterApi = {
   fetchTokenPrices,
   fetchTokenPricesBatch,

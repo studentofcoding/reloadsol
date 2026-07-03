@@ -3,6 +3,7 @@
 import React, { Suspense } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import ScrollableMenuRow from "@/components/ScrollableMenuRow";
 
 const SignalsTab = dynamic(() => import("@/components/signals/SignalsTab"), {
   loading: () => <TabLoading label="Signals" />,
@@ -55,13 +56,13 @@ function SignalsHubContent() {
 
   return (
     <div className="w-full">
-      <div className="mb-6 flex flex-wrap gap-2 border-b border-gray-700 pb-3">
+      <ScrollableMenuRow className="mb-6 border-b border-gray-700 pb-3">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             type="button"
             onClick={() => setTab(tab.id)}
-            className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
+            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
               activeTab === tab.id
                 ? "bg-white text-black"
                 : "bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white"
@@ -70,7 +71,7 @@ function SignalsHubContent() {
             {tab.label}
           </button>
         ))}
-      </div>
+      </ScrollableMenuRow>
 
       {activeTab === "signals" && <SignalsTab />}
       {activeTab === "live" && <LiveTab />}

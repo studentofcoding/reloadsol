@@ -9,6 +9,7 @@ import { useRugList } from '@/hooks/useRugList';
 import type { DlmmPotentialSource, DlmmScreenCandidate } from '@/types/dlmm';
 import type { EnrichedPool } from '@/hooks/useDlmmPools';
 import { getPoolChartMint } from '@/utils/gmgn';
+import ScrollableMenuRow from '@/components/ScrollableMenuRow';
 
 function formatUsd(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
@@ -261,11 +262,11 @@ export default function HunterCandidateTabs({
     <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
         <h2 className="text-xl font-bold text-white">Hunter Candidates</h2>
-        <div className="flex gap-2">
+        <ScrollableMenuRow innerClassName="gap-2" bleed={false}>
           <button
             type="button"
             onClick={() => setTab('general')}
-            className={`rounded-lg px-4 py-2 text-sm font-medium ${
+            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${
               tab === 'general'
                 ? 'bg-white text-black'
                 : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
@@ -276,7 +277,7 @@ export default function HunterCandidateTabs({
           <button
             type="button"
             onClick={() => setTab('potential')}
-            className={`rounded-lg px-4 py-2 text-sm font-medium ${
+            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${
               tab === 'potential'
                 ? 'bg-purple-500 text-white'
                 : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
@@ -284,7 +285,7 @@ export default function HunterCandidateTabs({
           >
             Potential ({visiblePotential.length})
           </button>
-        </div>
+        </ScrollableMenuRow>
       </div>
 
       {tab === 'general' ? (
