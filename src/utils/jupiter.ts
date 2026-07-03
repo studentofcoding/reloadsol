@@ -11,12 +11,16 @@ import jupiterApiUtils from './jupiter-api'
 import {
   prepareBulkSwapTransaction,
   confirmSwapSignature,
+  confirmSwapSignaturesBatch,
+  getTradeSendConcurrency,
+  runWithConcurrency,
   submitSignedSwap,
   fetchSwapQuote,
   buildSwapTransaction,
   signTransactionsWithFallback,
   type PreparedSwapMeta,
 } from './swap-executor'
+import { waitForRpcRateLimit } from './rpc-rate-limit'
 import {
   craftReclaimTransaction,
   extractReclaimTransactionBase64,
@@ -1537,18 +1541,21 @@ async function sendSignedCloseTransaction(
   signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>
 ): Promise<string> {
   const signedTransactions = await signAllTransactions([transaction])
+  const signedTx = signedTransactions[0]
   const signature = await retryWithBackoff(async () => {
-    return await connection.sendTransaction(signedTransactions[0], {
+    return await connection.sendTransaction(signedTx, {
       skipPreflight: false,
       preflightCommitment: 'confirmed',
       maxRetries: 3
     })
   })
 
-  const confirmation = await connection.confirmTransaction(signature, 'confirmed')
-  if (confirmation.value.err) {
-    throw new Error(`Burn/Close transaction failed: ${JSON.stringify(confirmation.value.err)}`)
-  }
+  await confirmSwapSignature({
+    signature,
+    via: 'rpc',
+    connection,
+    blockhash: signedTx.message.recentBlockhash,
+  })
 
   return signature
 }
@@ -1781,14 +1788,6 @@ export async function executeBulkBuy(
 
     console.log(`Executing bulk buy: ${request.tokenMints.length} tokens, ${amountPerToken} ${request.inputCurrency} units per token`)
 
-    let blockhashInfo: { blockhash: string; lastValidBlockHeight: number } | null = null;
-    const getBlockhash = async () => {
-      if (!blockhashInfo) {
-        blockhashInfo = await connection.getLatestBlockhash('confirmed');
-      }
-      return blockhashInfo;
-    };
-
     // Batch transaction creation (similar to Swap function)
     const transactions: VersionedTransaction[] = []
     const transactionMints: string[] = []
@@ -1887,81 +1886,98 @@ export async function executeBulkBuy(
       },
     )
 
-    // Send and confirm transactions using batched approach (like sendTransactions)
-    const SEND_BATCH_SIZE = 6 // Send 6 transactions at a time
+    // Send and confirm transactions using rate-limited batches
+    const SEND_BATCH_SIZE = getTradeSendConcurrency()
     const signatures: string[] = []
 
     for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
       const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE)
-      const batchMints = transactionMints.slice(i, i + SEND_BATCH_SIZE)
 
-      // Send batch transactions in parallel
-      const sendPromises = batch.map(async (tx, idx) => {
-        const globalIdx = i + idx
-        const meta = transactionMetas[globalIdx]
+      const batchEntries = batch.map((tx, idx) => ({
+        tx,
+        globalIdx: i + idx,
+      }))
 
-        try {
-          const sendResult = await submitSignedSwap({
-            signedTx: tx,
-            prepared: meta,
-            connection,
-          })
-          return {
-            success: true,
-            signature: sendResult.signature,
-            mintIdx: globalIdx,
-            via: sendResult.via,
+      const sendResults = await runWithConcurrency(
+        batchEntries,
+        SEND_BATCH_SIZE,
+        async (entry) => {
+          try {
+            const sendResult = await submitSignedSwap({
+              signedTx: entry.tx,
+              prepared: transactionMetas[entry.globalIdx],
+              connection,
+            })
+            return {
+              success: true as const,
+              signature: sendResult.signature,
+              via: sendResult.via,
+              globalIdx: entry.globalIdx,
+            }
+          } catch (error) {
+            console.error(
+              `Failed to send transaction for token ${transactionMints[entry.globalIdx]}:`,
+              error,
+            )
+            return {
+              success: false as const,
+              globalIdx: entry.globalIdx,
+              error,
+            }
           }
-        } catch (error) {
-          console.error(`Failed to send transaction for token ${batchMints[idx]}:`, error)
-          return { success: false, mintIdx: globalIdx, error }
-        }
-      })
+        },
+      )
 
-      const sendResults = await Promise.all(sendPromises)
-
-      // Process confirmations for successful sends in parallel
-      const confirmPromises = sendResults.map(async (sendResult) => {
+      for (const sendResult of sendResults) {
         if (!sendResult.success) {
           result.failedPurchases.push({
-            mintAddress: transactionMints[sendResult.mintIdx],
-            error: sendResult.error instanceof Error ? sendResult.error.message : 'Failed to send transaction'
+            mintAddress: transactionMints[sendResult.globalIdx],
+            error:
+              sendResult.error instanceof Error
+                ? sendResult.error.message
+                : 'Failed to send transaction',
           })
-          return
         }
+      }
 
-        try {
-          const meta = transactionMetas[sendResult.mintIdx]
-          const signedTx = signedTransactions[sendResult.mintIdx]
+      const confirmItems = sendResults
+        .filter((r): r is Extract<typeof r, { success: true }> => r.success)
+        .map((r) => ({
+          signature: r.signature,
+          via: r.via,
+          lastValidBlockHeight: transactionMetas[r.globalIdx].lastValidBlockHeight,
+          blockhash: signedTransactions[r.globalIdx].message.recentBlockhash,
+        }))
 
-          await confirmSwapSignature({
-            signature: sendResult.signature!,
-            via: sendResult.via!,
-            connection,
-            lastValidBlockHeight: meta.lastValidBlockHeight,
-            blockhash: signedTx.message.recentBlockhash,
-          })
+      const confirmResults = await confirmSwapSignaturesBatch(confirmItems, connection)
 
-          signatures.push(sendResult.signature!)
-          result.successfulPurchases.push({
-            mintAddress: transactionMints[sendResult.mintIdx],
-            amount: amountPerToken,
-          })
-          console.log(
-            `✅ Successfully bought ${transactionMints[sendResult.mintIdx]} via ${sendResult.via}`,
-          )
-        } catch (error: any) {
-          console.error(`Confirmation failed for ${sendResult.signature}:`, error)
+      for (const sendResult of sendResults) {
+        if (!sendResult.success) continue
+
+        const confirmError = confirmResults.get(sendResult.signature)
+        if (confirmError) {
+          console.error(`Confirmation failed for ${sendResult.signature}:`, confirmError)
           result.failedPurchases.push({
-            mintAddress: transactionMints[sendResult.mintIdx],
-            error: error.message && error.message.includes('TransactionExpiredBlockheightExceededError')
+            mintAddress: transactionMints[sendResult.globalIdx],
+            error: confirmError.includes('TransactionExpiredBlockheightExceededError')
               ? 'Transaction expired'
-              : `Confirmation failed: ${error.message || 'Unknown error'}`
+              : confirmError.startsWith('Confirmation failed')
+                ? confirmError
+                : `Confirmation failed: ${confirmError}`,
           })
+          continue
         }
-      })
 
-      await Promise.all(confirmPromises)
+        signatures.push(sendResult.signature)
+        result.successfulPurchases.push({
+          mintAddress: transactionMints[sendResult.globalIdx],
+          amount: amountPerToken,
+        })
+        console.log(
+          `✅ Successfully bought ${transactionMints[sendResult.globalIdx]} via ${sendResult.via}`,
+        )
+      }
+
       console.log(`Processed batch ${i / SEND_BATCH_SIZE + 1}/${Math.ceil(signedTransactions.length / SEND_BATCH_SIZE)}`)
     }
 
@@ -2567,14 +2583,6 @@ export async function executeBulkSellAlt(
         const transactionAmountOut: string[] = [];
         const transactionMetas: PreparedSwapMeta[] = [];
 
-        let blockhashInfo: { blockhash: string; lastValidBlockHeight: number } | null = null;
-        const getBlockhash = async () => {
-          if (!blockhashInfo) {
-            blockhashInfo = await connection.getLatestBlockhash('confirmed');
-          }
-          return blockhashInfo;
-        };
-
         const BATCH_SIZE = 10;
         const batches: TokenToSell[][] = [];
         for (let i = 0; i < nonFrozenTokens.length; i += BATCH_SIZE) {
@@ -2648,94 +2656,115 @@ export async function executeBulkSellAlt(
           );
           const swapSignatures: string[] = [];
 
-          const SEND_BATCH_SIZE = 6;
+          const SEND_BATCH_SIZE = getTradeSendConcurrency();
           for (let i = 0; i < signedTransactions.length; i += SEND_BATCH_SIZE) {
             const batch = signedTransactions.slice(i, i + SEND_BATCH_SIZE);
-            const batchTokens = transactionTokens.slice(i, i + SEND_BATCH_SIZE);
 
-            const sendPromises = batch.map(async (tx, idx) => {
-              const globalIdx = i + idx;
-              const meta = transactionMetas[globalIdx];
-              try {
-                const sendResult = await submitSignedSwap({
-                  signedTx: tx,
-                  prepared: meta,
-                  connection,
-                });
-                return {
-                  success: true,
-                  signature: sendResult.signature,
-                  tokenIdx: globalIdx,
-                  via: sendResult.via,
-                };
-              } catch (error) {
-                return { success: false, tokenIdx: globalIdx, error };
-              }
-            });
+            const batchEntries = batch.map((tx, idx) => ({
+              tx,
+              globalIdx: i + idx,
+            }));
 
-            const sendResults = await Promise.all(sendPromises);
-
-            const confirmPromises = sendResults.map(async (sendResult) => {
-              if (!sendResult.success) {
-                result.failedSwaps.push({ mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress, error: 'Failed to send' });
-                return;
-              }
-
-              try {
-                const meta = transactionMetas[sendResult.tokenIdx]
-                const signedTx = signedTransactions[sendResult.tokenIdx]
-
-                await confirmSwapSignature({
-                  signature: sendResult.signature!,
-                  via: sendResult.via!,
-                  connection,
-                  lastValidBlockHeight: meta.lastValidBlockHeight,
-                  blockhash: signedTx.message.recentBlockhash,
-                })
-
-                let solReceived = 0
-                if (sendResult.via === 'raptor') {
-                  const amountOutLamports = Number.parseInt(
-                    transactionAmountOut[sendResult.tokenIdx] ?? '0',
-                    10,
-                  )
-                  solReceived = Number.isFinite(amountOutLamports)
-                    ? amountOutLamports / LAMPORTS_PER_SOL
-                    : 0
-                } else {
-                  const txInfo = await connection.getTransaction(sendResult.signature!, {
-                    commitment: 'confirmed',
-                    maxSupportedTransactionVersion: 0,
-                  })
-                  if (txInfo?.meta?.err) {
-                    throw new Error('Transaction failed on-chain')
-                  }
-                  const accountIndex = txInfo?.transaction.message.staticAccountKeys.findIndex(
-                    (key) => key.toBase58() === userPublicKey,
-                  )
-                  const preBalance = txInfo?.meta?.preBalances?.[accountIndex ?? 0] ?? 0
-                  const postBalance = txInfo?.meta?.postBalances?.[accountIndex ?? 0] ?? 0
-                  solReceived = (postBalance - preBalance) / LAMPORTS_PER_SOL
+            const sendResults = await runWithConcurrency(
+              batchEntries,
+              SEND_BATCH_SIZE,
+              async (entry) => {
+                try {
+                  const sendResult = await submitSignedSwap({
+                    signedTx: entry.tx,
+                    prepared: transactionMetas[entry.globalIdx],
+                    connection,
+                  });
+                  return {
+                    success: true as const,
+                    signature: sendResult.signature,
+                    via: sendResult.via,
+                    globalIdx: entry.globalIdx,
+                  };
+                } catch (error) {
+                  return {
+                    success: false as const,
+                    globalIdx: entry.globalIdx,
+                    error,
+                  };
                 }
+              },
+            );
 
-                swapSignatures.push(sendResult.signature!)
-                successfulSwaps.push(transactionTokens[sendResult.tokenIdx])
-                result.successfulSwaps.push({
-                  mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                  solReceived: solReceived > 0 ? solReceived : 0,
-                })
-                result.totalReceived += solReceived > 0 ? solReceived : 0
-                console.log(
-                  `✅ Successfully sold ${transactionTokens[sendResult.tokenIdx].mintAddress} via ${sendResult.via}`,
-                )
-              } catch (error: any) {
+            for (const sendResult of sendResults) {
+              if (!sendResult.success) {
                 result.failedSwaps.push({
-                  mintAddress: transactionTokens[sendResult.tokenIdx].mintAddress,
-                  error: error.message || 'Confirmation failed'
+                  mintAddress: transactionTokens[sendResult.globalIdx].mintAddress,
+                  error: 'Failed to send',
                 });
               }
-            });
-            await Promise.all(confirmPromises);
+            }
+
+            const confirmItems = sendResults
+              .filter((r): r is Extract<typeof r, { success: true }> => r.success)
+              .map((r) => ({
+                signature: r.signature,
+                via: r.via,
+                connection,
+                lastValidBlockHeight: transactionMetas[r.globalIdx].lastValidBlockHeight,
+                blockhash: signedTransactions[r.globalIdx].message.recentBlockhash,
+              }));
+
+            const confirmResults = await confirmSwapSignaturesBatch(confirmItems, connection);
+
+            for (const sendResult of sendResults) {
+              if (!sendResult.success) continue;
+
+              const confirmError = confirmResults.get(sendResult.signature);
+              if (confirmError) {
+                result.failedSwaps.push({
+                  mintAddress: transactionTokens[sendResult.globalIdx].mintAddress,
+                  error: confirmError,
+                });
+                continue;
+              }
+
+              let solReceived = 0;
+              if (sendResult.via === 'raptor') {
+                const amountOutLamports = Number.parseInt(
+                  transactionAmountOut[sendResult.globalIdx] ?? '0',
+                  10,
+                );
+                solReceived = Number.isFinite(amountOutLamports)
+                  ? amountOutLamports / LAMPORTS_PER_SOL
+                  : 0;
+              } else {
+                await waitForRpcRateLimit();
+                const txInfo = await connection.getTransaction(sendResult.signature, {
+                  commitment: 'confirmed',
+                  maxSupportedTransactionVersion: 0,
+                });
+                if (txInfo?.meta?.err) {
+                  result.failedSwaps.push({
+                    mintAddress: transactionTokens[sendResult.globalIdx].mintAddress,
+                    error: 'Transaction failed on-chain',
+                  });
+                  continue;
+                }
+                const accountIndex = txInfo?.transaction.message.staticAccountKeys.findIndex(
+                  (key) => key.toBase58() === userPublicKey,
+                );
+                const preBalance = txInfo?.meta?.preBalances?.[accountIndex ?? 0] ?? 0;
+                const postBalance = txInfo?.meta?.postBalances?.[accountIndex ?? 0] ?? 0;
+                solReceived = (postBalance - preBalance) / LAMPORTS_PER_SOL;
+              }
+
+              swapSignatures.push(sendResult.signature);
+              successfulSwaps.push(transactionTokens[sendResult.globalIdx]);
+              result.successfulSwaps.push({
+                mintAddress: transactionTokens[sendResult.globalIdx].mintAddress,
+                solReceived: solReceived > 0 ? solReceived : 0,
+              });
+              result.totalReceived += solReceived > 0 ? solReceived : 0;
+              console.log(
+                `✅ Successfully sold ${transactionTokens[sendResult.globalIdx].mintAddress} via ${sendResult.via}`,
+              );
+            }
           }
           result.signatures.push(...swapSignatures);
         }

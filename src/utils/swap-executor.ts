@@ -11,6 +11,7 @@ import {
   type RaptorQuoteAndSwapParams,
   type RaptorQuoteResponse,
 } from "@/utils/solanatracker-raptor";
+import { waitForRpcRateLimit } from "@/utils/rpc-rate-limit";
 import type { SwapQuote, SwapTransaction } from "@/types";
 
 export type SwapProvider = "raptor";
@@ -190,6 +191,7 @@ export async function submitSignedSwap(
     console.warn("Raptor send failed, falling back to RPC:", raptorError);
   }
 
+  await waitForRpcRateLimit();
   const signature = await params.connection.sendTransaction(params.signedTx, {
     skipPreflight: true,
     maxRetries: 2,
@@ -199,6 +201,36 @@ export async function submitSignedSwap(
 
 const SIGNATURE_CONFIRM_INTERVAL_MS = 2000;
 const SIGNATURE_CONFIRM_TIMEOUT_MS = 60_000;
+const BATCH_CONFIRM_TIMEOUT_MS = 90_000;
+const BATCH_STATUS_CHUNK = 50;
+const RAPTOR_CONFIRM_CONCURRENCY = 4;
+
+export function getTradeSendConcurrency(): number {
+  const n = Number(process.env.TRADE_SEND_CONCURRENCY ?? 4);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 4;
+}
+
+/** Run async tasks with a fixed concurrency cap. */
+export async function runWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await fn(items[index], index);
+    }
+  }
+
+  const workers = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+  return results;
+}
 
 async function pollSignatureConfirmed(
   connection: Connection,
@@ -208,6 +240,7 @@ async function pollSignatureConfirmed(
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
+    await waitForRpcRateLimit();
     const response = await connection.getSignatureStatuses([signature], {
       searchTransactionHistory: true,
     });
@@ -265,6 +298,7 @@ export async function confirmSwapSignature(
     params.lastValidBlockHeight != null
   ) {
     try {
+      await waitForRpcRateLimit();
       const confirmation = await params.connection.confirmTransaction(
         {
           signature: params.signature,
@@ -288,6 +322,116 @@ export async function confirmSwapSignature(
   }
 
   await pollSignatureConfirmed(params.connection, params.signature);
+}
+
+export type BatchConfirmItem = Omit<ConfirmSwapSignatureParams, "connection">;
+
+/** Batch confirm — Raptor per-sig (concurrency 4), then one RPC poll for all pending. */
+export async function confirmSwapSignaturesBatch(
+  items: BatchConfirmItem[],
+  connection: Connection,
+): Promise<Map<string, string | null>> {
+  const results = new Map<string, string | null>();
+  if (items.length === 0) return results;
+
+  const pendingRpc = new Map<string, BatchConfirmItem>();
+
+  const raptorItems = items.filter((item) => item.via === "raptor");
+  await runWithConcurrency(
+    raptorItems,
+    RAPTOR_CONFIRM_CONCURRENCY,
+    async (item) => {
+      try {
+        await waitForRaptorConfirmation(item.signature, {
+          direct: item.direct,
+          maxAttempts: 45,
+          intervalMs: 2000,
+        });
+        results.set(item.signature, null);
+      } catch (raptorError) {
+        console.warn(
+          `Raptor batch confirm failed for ${item.signature}, will RPC poll:`,
+          raptorError,
+        );
+        pendingRpc.set(item.signature, item);
+      }
+    },
+  );
+
+  for (const item of items) {
+    if (item.via === "rpc") {
+      pendingRpc.set(item.signature, item);
+    }
+  }
+  for (const sig of Array.from(results.keys())) {
+    pendingRpc.delete(sig);
+  }
+
+  for (const [sig, item] of Array.from(pendingRpc.entries())) {
+    if (item.blockhash && item.lastValidBlockHeight != null) {
+      try {
+        await waitForRpcRateLimit();
+        const confirmation = await connection.confirmTransaction(
+          {
+            signature: item.signature,
+            blockhash: item.blockhash,
+            lastValidBlockHeight: item.lastValidBlockHeight,
+          },
+          "confirmed",
+        );
+        if (confirmation.value.err) {
+          throw new Error(
+            `Transaction failed: ${JSON.stringify(confirmation.value.err)}`,
+          );
+        }
+        results.set(sig, null);
+        pendingRpc.delete(sig);
+      } catch {
+        // ponytail: fall through to batched signature poll
+      }
+    }
+  }
+
+  const deadline = Date.now() + BATCH_CONFIRM_TIMEOUT_MS;
+  while (pendingRpc.size > 0 && Date.now() < deadline) {
+    const signatures = Array.from(pendingRpc.keys());
+    for (let i = 0; i < signatures.length; i += BATCH_STATUS_CHUNK) {
+      const chunk = signatures.slice(i, i + BATCH_STATUS_CHUNK);
+      await waitForRpcRateLimit();
+      const response = await connection.getSignatureStatuses(chunk, {
+        searchTransactionHistory: true,
+      });
+
+      chunk.forEach((sig, idx) => {
+        const status = response.value[idx];
+        if (status?.err) {
+          results.set(
+            sig,
+            `Transaction failed on-chain: ${JSON.stringify(status.err)}`,
+          );
+          pendingRpc.delete(sig);
+          return;
+        }
+        const confirmation = status?.confirmationStatus;
+        if (confirmation === "confirmed" || confirmation === "finalized") {
+          results.set(sig, null);
+          pendingRpc.delete(sig);
+        }
+      });
+    }
+
+    if (pendingRpc.size > 0) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, SIGNATURE_CONFIRM_INTERVAL_MS),
+      );
+    }
+  }
+
+  for (const sig of Array.from(pendingRpc.keys())) {
+    results.set(sig, `Transaction confirmation timeout for ${sig}`);
+  }
+
+  return results;
 }
 
 export type PreparedSwapMeta = PreparedSwap;

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { resolveRpcUrls } from '@/utils/rpc-urls'
+import { rpcRateLimitDelayMs, waitForRpcRateLimit } from '@/utils/rpc-rate-limit'
 
 const getRpcUrls = (): string[] => {
   const urls = resolveRpcUrls()
@@ -123,56 +124,72 @@ const makeRpcRequest = async (body: any, healthyUrls: string[]): Promise<any> =>
   const timeout = 8000 // 8 second timeout
 
   for (const url of healthyUrls) {
-    try {
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), timeout)
+    let rateLimited = false
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      })
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await waitForRpcRateLimit()
 
-      clearTimeout(timeoutId)
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), timeout)
 
-      if (!response.ok) {
-        // Handle rate limiting specifically
-        if (response.status === 429) {
-          console.warn(`Rate limited by ${url}, trying next endpoint`)
-          continue
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        })
+
+        clearTimeout(timeoutId)
+
+        if (!response.ok) {
+          if (response.status === 429) {
+            rateLimited = true
+            if (attempt === 0) {
+              console.warn(`Rate limited by ${url}, retrying after backoff`)
+              await new Promise((resolve) =>
+                setTimeout(resolve, rpcRateLimitDelayMs(1)),
+              )
+              continue
+            }
+            console.warn(`Rate limited by ${url}, trying next endpoint`)
+            break
+          }
+
+          const errorText = await response.text().catch(() => 'Unknown error')
+          throw new Error(`HTTP ${response.status}: ${errorText}`)
         }
 
-        const errorText = await response.text().catch(() => 'Unknown error')
-        throw new Error(`HTTP ${response.status}: ${errorText}`)
-      }
+        const data = await response.json()
 
-      const data = await response.json()
+        if (data.error) {
+          throw new Error(`RPC Error: ${data.error.message || JSON.stringify(data.error)}`)
+        }
 
-      // Validate response structure
-      if (data.error) {
-        throw new Error(`RPC Error: ${data.error.message || JSON.stringify(data.error)}`)
-      }
+        return data
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        console.warn(`RPC request failed for ${url}:`, errorMessage)
+        lastError = error instanceof Error ? error : new Error(errorMessage)
 
-      return data
+        if (
+          !rateLimited &&
+          !errorMessage.includes('aborted') &&
+          !errorMessage.includes('timeout')
+        ) {
+          const index = healthyEndpointsCache.findIndex(ep => ep.url === url)
+          if (index !== -1) {
+            healthyEndpointsCache.splice(index, 1)
+          }
+        }
 
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error)
-      console.warn(`RPC request failed for ${url}:`, errorMessage)
-      lastError = error instanceof Error ? error : new Error(errorMessage)
-
-      // Remove failed endpoint from cache only on non-timeout errors
-      if (!errorMessage.includes('aborted') && !errorMessage.includes('timeout')) {
-        const index = healthyEndpointsCache.findIndex(ep => ep.url === url)
-        if (index !== -1) {
-          healthyEndpointsCache.splice(index, 1)
+        if (!rateLimited || attempt === 1) {
+          break
         }
       }
-
-      continue
     }
   }
 
