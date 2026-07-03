@@ -31,6 +31,9 @@ export type AlgoPosition = {
   logoUrl: string | null
   entryPriceUsd: number | null
   exitPriceUsd: number | null
+  /** mcap_tracker sims use entry/exit mcap, not token price */
+  entryMcap: number | null
+  exitMcap: number | null
   pnlPct: number | null
   entryAt: string | null
   exitAt: string | null
@@ -71,6 +74,8 @@ export function mapOutcomeToAlgoPosition(
     logoUrl: null,
     entryPriceUsd: readFeatureNumber(row.features, 'initial_price_usd'),
     exitPriceUsd: readFeatureNumber(row.features, 'exit_price_usd'),
+    entryMcap: readFeatureNumber(row.features, 'entry_mcap'),
+    exitMcap: readFeatureNumber(row.features, 'exit_mcap'),
     pnlPct: row.pnl_pct,
     entryAt: row.entry_at,
     exitAt: row.exit_at,
@@ -120,6 +125,8 @@ export function mapTrackerRowToAlgoPosition(
     entryPriceUsd:
       toFiniteOrNull(sim.buy_price_usd) ?? toFiniteOrNull(row.initial_price_usd),
     exitPriceUsd: null,
+    entryMcap: null,
+    exitMcap: null,
     pnlPct: toFiniteOrNull(row.current_gain_percentage),
     entryAt,
     exitAt: null,
@@ -144,6 +151,8 @@ export function mapMcapOpenToAlgoPosition(
     logoUrl: null,
     entryPriceUsd: toFiniteOrNull(pos.entryFeatures.initial_price_usd),
     exitPriceUsd: null,
+    entryMcap: pos.entryMcap > 0 ? pos.entryMcap : null,
+    exitMcap: null,
     pnlPct: null,
     entryAt: pos.entryAt,
     exitAt: null,

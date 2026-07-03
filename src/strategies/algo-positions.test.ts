@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  mapMcapOpenToAlgoPosition,
   mapOutcomeToAlgoPosition,
   mapTrackerRowToAlgoPosition,
   type TrackerOpenRow,
@@ -60,6 +61,33 @@ describe('mapOutcomeToAlgoPosition', () => {
     expect(pos.entryPriceUsd).toBeNull()
     expect(pos.tokenSymbol).toBeNull()
   })
+
+  it('maps mcap_tracker closed outcome with entry/exit mcap not price', () => {
+    const row: StrategyOutcomeRow = {
+      id: 'o3',
+      strategy_id: 'mcap_enter_at_80',
+      domain: 'mcap_tracker',
+      token_address: 'Mint333',
+      entry_at: '2026-07-01T00:00:00.000Z',
+      exit_at: '2026-07-01T02:00:00.000Z',
+      pnl_pct: 25,
+      status: 'won',
+      is_simulated: true,
+      features: {
+        token_symbol: 'PEPE',
+        entry_mcap: 50000,
+        exit_mcap: 62500,
+      },
+      created_at: '2026-07-01T02:00:00.000Z',
+    }
+
+    const pos = mapOutcomeToAlgoPosition(row, names)
+    expect(pos.domain).toBe('mcap_tracker')
+    expect(pos.entryMcap).toBe(50000)
+    expect(pos.exitMcap).toBe(62500)
+    expect(pos.entryPriceUsd).toBeNull()
+    expect(pos.exitPriceUsd).toBeNull()
+  })
 })
 
 describe('mapTrackerRowToAlgoPosition', () => {
@@ -104,5 +132,27 @@ describe('mapTrackerRowToAlgoPosition', () => {
       },
     }
     expect(mapTrackerRowToAlgoPosition(closedRow, names)).toBeNull()
+  })
+})
+
+describe('mapMcapOpenToAlgoPosition', () => {
+  it('uses entryMcap from sim position, not initial_price_usd', () => {
+    const pos = mapMcapOpenToAlgoPosition(
+      {
+        mintAddress: 'Mint444',
+        symbol: 'BONK',
+        entryAt: '2026-07-03T00:00:00.000Z',
+        entryMcap: 84000,
+        entryTemplate: 'first_seen',
+        entryFeatures: {},
+      },
+      'mcap_first_seen',
+      new Map([['mcap_first_seen', 'Enter at first seen']]),
+    )
+
+    expect(pos.domain).toBe('mcap_tracker')
+    expect(pos.entryMcap).toBe(84000)
+    expect(pos.entryPriceUsd).toBeNull()
+    expect(pos.strategyName).toBe('Enter at first seen')
   })
 })

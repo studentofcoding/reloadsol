@@ -20,6 +20,14 @@ function formatPrice(value: number | null): string {
   return `$${value < 0.01 ? value.toFixed(6) : value.toFixed(4)}`;
 }
 
+function formatMcap(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  if (value >= 1e9) return `$${(value / 1e9).toFixed(2)}B`;
+  if (value >= 1e6) return `$${(value / 1e6).toFixed(2)}M`;
+  if (value >= 1e3) return `$${(value / 1e3).toFixed(0)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
 function formatPnl(pnlPct: number | null): {
   text: string;
   className: string;
@@ -82,16 +90,37 @@ function PositionCard({
         </span>
       </div>
 
-      {/* Buy price */}
+      {/* Entry: mcap for mcap_tracker, price for everything else */}
       <div className="text-xs text-gray-400 mb-2">
-        <span className="text-gray-500">Buy Price: </span>
-        <span className="text-gray-300">{formatPrice(position.entryPriceUsd)}</span>
-        {position.status === "closed" && position.exitPriceUsd != null && (
+        {position.domain === "mcap_tracker" ? (
           <>
-            <span className="text-gray-500"> → </span>
+            <span className="text-gray-500">Entry MCap: </span>
             <span className="text-gray-300">
-              {formatPrice(position.exitPriceUsd)}
+              {formatMcap(position.entryMcap)}
             </span>
+            {position.status === "closed" && position.exitMcap != null && (
+              <>
+                <span className="text-gray-500"> → </span>
+                <span className="text-gray-300">
+                  {formatMcap(position.exitMcap)}
+                </span>
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <span className="text-gray-500">Buy Price: </span>
+            <span className="text-gray-300">
+              {formatPrice(position.entryPriceUsd)}
+            </span>
+            {position.status === "closed" && position.exitPriceUsd != null && (
+              <>
+                <span className="text-gray-500"> → </span>
+                <span className="text-gray-300">
+                  {formatPrice(position.exitPriceUsd)}
+                </span>
+              </>
+            )}
           </>
         )}
       </div>
