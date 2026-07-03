@@ -12,6 +12,12 @@ import {
   type RaptorQuoteResponse,
 } from "@/utils/solanatracker-raptor";
 import { waitForRpcRateLimit } from "@/utils/rpc-rate-limit";
+import {
+  getConfirmTransport,
+  getConfirmWsUrl,
+  type ConfirmTransport,
+} from "@/utils/confirm-transport";
+import { confirmSignaturesViaWs } from "@/utils/ws-confirm";
 import type { SwapQuote, SwapTransaction } from "@/types";
 
 export type SwapProvider = "raptor";
@@ -262,7 +268,54 @@ export type BatchConfirmItem = Omit<ConfirmSwapSignatureParams, "connection">;
 export type ConfirmBatchOptions = {
   intervalMs?: number;
   deadlineMs?: number;
+  /** Dev toggle: 'ws' tries signatureSubscribe first, then falls back to polling. */
+  transport?: ConfirmTransport;
 };
+
+/** WS-first confirm (dev toggle): resolve what WS can, leave the rest pending. */
+async function tryWsConfirm(
+  pendingItems: Map<string, BatchConfirmItem>,
+  connection: Connection,
+  results: Map<string, string | null>,
+  deadline: number,
+): Promise<void> {
+  const wsUrl = getConfirmWsUrl();
+  if (!wsUrl) return;
+
+  const checkNow = async (sigs: string[]) => {
+    const snapshot = new Map<string, string | null>();
+    await waitForRpcRateLimit();
+    const response = await connection.getSignatureStatuses(sigs, {
+      searchTransactionHistory: true,
+    });
+    sigs.forEach((signature, index) => {
+      try {
+        if (parseSignatureStatus(response.value[index]) === "confirmed") {
+          snapshot.set(signature, null);
+        }
+      } catch (error) {
+        snapshot.set(
+          signature,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    });
+    return snapshot;
+  };
+
+  // Leave ~10s of the deadline for the polling fallback (catches failed/expired).
+  const wsTimeoutMs = Math.max(deadline - Date.now() - 10_000, 5_000);
+  const wsResults = await confirmSignaturesViaWs(
+    Array.from(pendingItems.keys()),
+    wsUrl,
+    { timeoutMs: wsTimeoutMs, checkNow },
+  );
+
+  for (const [signature, error] of Array.from(wsResults.entries())) {
+    results.set(signature, error);
+    pendingItems.delete(signature);
+  }
+}
 
 /**
  * Confirm signatures with one shared poll loop:
@@ -286,6 +339,13 @@ export async function confirmSwapSignaturesBatch(
   for (const item of items) {
     pending.set(item.signature, item);
     if (item.via === "raptor") raptorEligible.add(item.signature);
+  }
+
+  // Dev-only WS transport: signatureSubscribe first, poll only leftovers.
+  const transport = options?.transport ?? getConfirmTransport();
+  if (transport === "ws" && pending.size > 0) {
+    await tryWsConfirm(pending, connection, results, deadline);
+    if (pending.size === 0) return results;
   }
 
   let consecutiveRpcFailures = 0;

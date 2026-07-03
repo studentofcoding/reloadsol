@@ -10,6 +10,7 @@ import { useChartTokenInfo } from "@/hooks/useChartTokenInfo";
 import { useAxiomRisk } from "@/hooks/useAxiomRisk";
 import PhantomWalletButton from "@/components/PhantomWalletButton";
 import RiskAnalysis from "@/components/RiskAnalysis";
+import ConfirmTransportSelect from "@/components/ConfirmTransportSelect";
 import TransactionResultModal from "@/components/TransactionResultModal";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import {
@@ -661,6 +662,9 @@ export default function ChartBuyModal({
                           ))}
                         </select>
                       </div>
+
+                      {/* Dev-only: confirmation transport toggle */}
+                      <ConfirmTransportSelect compact disabled={isBuying} />
                     </div>
                   )}
 

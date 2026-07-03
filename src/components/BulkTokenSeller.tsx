@@ -14,6 +14,7 @@ import { useSolPrice } from "@/hooks/useSolPrice";
 import PhantomWalletButton from "./PhantomWalletButton";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
+import ConfirmTransportSelect from "./ConfirmTransportSelect";
 import ProgressiveTokenItem from "./ProgressiveTokenItem";
 import {
   LAMPORTS_PER_SOL,
@@ -1926,6 +1927,9 @@ export default function BulkTokenSeller() {
                         ))}
                       </select>
                     </div>
+
+                    {/* Dev-only: confirmation transport toggle */}
+                    <ConfirmTransportSelect disabled={isLoading} />
                   </div>
 
                   {/* Quote Controls */}

@@ -34,6 +34,7 @@ import {
 } from "@/utils/solana";
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
+import ConfirmTransportSelect from "./ConfirmTransportSelect";
 import { useTradingData } from "./TradingDataProvider";
 import { usePostBuyRefresh } from "@/hooks/usePostBuyRefresh";
 import {
@@ -1736,6 +1737,9 @@ export default function BulkTokenBuyer() {
                     ))}
                   </select>
                 </div>
+
+                {/* Dev-only: confirmation transport toggle */}
+                <ConfirmTransportSelect disabled={isLoading} />
               </div>
 
               {/* Fee Structure Display */}
