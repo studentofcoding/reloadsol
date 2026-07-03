@@ -44,18 +44,22 @@ async function shyftFetchOnce<T>(
   url: string,
   apiKey: string,
   timeoutMs: number,
+  init?: { method?: 'GET' | 'POST'; body?: string },
 ): Promise<{ result: T; latencyMs: number }> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const start = Date.now()
+  const method = init?.method ?? 'GET'
 
   try {
     const response = await fetch(url, {
-      method: 'GET',
+      method,
       headers: {
         Accept: 'application/json',
         'x-api-key': apiKey,
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       },
+      body: init?.body,
       signal: controller.signal,
     })
 
@@ -124,6 +128,43 @@ export async function shyftFetch<T>(
     await waitForShyftRateLimit()
     try {
       return await shyftFetchOnce<T>(url.toString(), apiKey, timeoutMs)
+    } catch (error) {
+      if (!(error instanceof ShyftAPIError)) {
+        throw error
+      }
+      lastError = error
+      if (error.statusCode === 429 && attempt < maxAttempts - 1) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, shyftRateLimitDelayMs(attempt)),
+        )
+        continue
+      }
+      throw error
+    }
+  }
+
+  throw lastError ?? new ShyftAPIError('Shyft API request failed')
+}
+
+export async function shyftPost<T>(
+  path: string,
+  body: Record<string, unknown>,
+  options?: { apiKey?: string; timeoutMs?: number },
+): Promise<{ result: T; latencyMs: number }> {
+  const apiKey = options?.apiKey ?? requireShyftApiKey()
+  const timeoutMs = options?.timeoutMs ?? 15_000
+  const url = new URL(path, SHYFT_API_BASE).toString()
+
+  const maxAttempts = 3
+  let lastError: ShyftAPIError | undefined
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await waitForShyftRateLimit()
+    try {
+      return await shyftFetchOnce<T>(url, apiKey, timeoutMs, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      })
     } catch (error) {
       if (!(error instanceof ShyftAPIError)) {
         throw error

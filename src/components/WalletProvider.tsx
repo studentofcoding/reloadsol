@@ -14,6 +14,7 @@ import {
 import { WalletNotification } from "@/components/WalletNotification";
 import { WalletSessionProvider } from "@/components/WalletSessionContext";
 import { RpcProvider, useRpc } from "@/contexts/RpcContext";
+import { TradeProviderProvider } from "@/contexts/TradeProviderContext";
 import { isDevWallet, toWalletAddress } from "@/utils/dev-wallet";
 
 type WalletContextState = ReturnType<typeof useUnifiedWallet>;
@@ -47,11 +48,13 @@ function WalletContextBridge({ children }: { children: React.ReactNode }) {
   // Spreading breaks connect/sign methods bound to the adapter instance.
   return (
     <WalletContext.Provider value={wallet}>
-      <RpcProvider>
-        <ConnectionProvider>
-          <WalletSessionProvider>{children}</WalletSessionProvider>
-        </ConnectionProvider>
-      </RpcProvider>
+      <TradeProviderProvider>
+        <RpcProvider>
+          <ConnectionProvider>
+            <WalletSessionProvider>{children}</WalletSessionProvider>
+          </ConnectionProvider>
+        </RpcProvider>
+      </TradeProviderProvider>
     </WalletContext.Provider>
   );
 }

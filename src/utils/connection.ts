@@ -1,5 +1,6 @@
 import { Connection, clusterApiUrl } from '@solana/web3.js'
 import { getPrimaryRpcUrl, getPublicRpcUrl, resolveRpcUrls } from './rpc-urls'
+import { getTradeProvider } from './trade-provider'
 
 const isServer = typeof window === 'undefined'
 
@@ -11,6 +12,25 @@ const getBestRpcUrl = (): string => {
   }
 }
 
+export function getTradeProviderHeaders(): Record<string, string> {
+  if (getTradeProvider() === 'shyft') {
+    return { 'X-Trade-Provider': 'shyft' }
+  }
+  return {}
+}
+
+/** Connection that tags /api/rpc requests with the active trade provider. */
+export function createTradeAwareConnection(endpoint: string): Connection {
+  const providerHeaders = getTradeProviderHeaders()
+  if (Object.keys(providerHeaders).length === 0) {
+    return new Connection(endpoint, 'confirmed')
+  }
+  return new Connection(endpoint, {
+    commitment: 'confirmed',
+    httpHeaders: providerHeaders,
+  })
+}
+
 export const makeRpcRequest = async (body: unknown): Promise<unknown> => {
   if (isServer) {
     throw new Error('makeRpcRequest should only be used on client side. Use direct connection on server.')
@@ -20,6 +40,7 @@ export const makeRpcRequest = async (body: unknown): Promise<unknown> => {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      ...getTradeProviderHeaders(),
     },
     body: JSON.stringify(body),
   })
@@ -29,6 +50,19 @@ export const makeRpcRequest = async (body: unknown): Promise<unknown> => {
   }
 
   return response.json()
+}
+
+/** Fetch RPC diagnostics with trade provider header. */
+export async function fetchRpcDiagnostics(
+  init?: RequestInit,
+): Promise<Response> {
+  return fetch('/api/rpc/diagnostics', {
+    ...init,
+    headers: {
+      ...init?.headers,
+      ...getTradeProviderHeaders(),
+    },
+  })
 }
 
 /** Same-origin RPC proxy for browser clients (avoids CSP and hides API keys). */
@@ -50,7 +84,7 @@ export const createConnection = (network: 'mainnet' | 'devnet' | 'testnet' = 'ma
     network === 'mainnet' && !isServer
       ? getBrowserConnectionEndpoint()
       : RPC_ENDPOINTS[network]
-  return new Connection(endpoint, 'confirmed')
+  return createTradeAwareConnection(endpoint)
 }
 
 let cachedConnection: Connection | null = null

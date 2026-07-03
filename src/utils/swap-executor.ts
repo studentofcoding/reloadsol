@@ -11,6 +11,19 @@ import {
   type RaptorQuoteAndSwapParams,
   type RaptorQuoteResponse,
 } from "@/utils/solanatracker-raptor";
+import {
+  prepareJupiterLiteSwap,
+  fetchJupiterLiteQuote,
+  fetchJupiterLiteQuoteDirect,
+  mapJupiterLiteQuoteToSwapQuote,
+} from "@/utils/jupiter-lite-swap";
+import {
+  sendShyftTransaction,
+  sendShyftTransactionDirect,
+  sendShyftManyTransactions,
+  sendShyftManyTransactionsDirect,
+} from "@/utils/shyft-transaction";
+import { getTradeProvider } from "@/utils/trade-provider";
 import { waitForRpcRateLimit } from "@/utils/rpc-rate-limit";
 import {
   getConfirmTransport,
@@ -20,7 +33,9 @@ import {
 import { confirmSignaturesViaWs } from "@/utils/ws-confirm";
 import type { SwapQuote, SwapTransaction } from "@/types";
 
-export type SwapProvider = "raptor";
+export type SwapProvider = "raptor" | "jupiter_lite";
+
+export type SwapSendVia = "raptor" | "shyft" | "rpc";
 
 export type PreparedSwap = {
   provider: SwapProvider;
@@ -91,14 +106,53 @@ async function prepareRaptorSwap(
   };
 }
 
-/** Raptor quote-and-swap — builds unsigned swap transaction. */
+async function prepareJupiterLiteSwapPrepared(
+  params: PrepareSwapParams,
+): Promise<PreparedSwap> {
+  const lite = await prepareJupiterLiteSwap({
+    userPublicKey: params.userPublicKey,
+    inputMint: params.inputMint,
+    outputMint: params.outputMint,
+    amount: params.amount,
+    slippageBps: params.slippageBps,
+    priorityFeeLamports: params.priorityFeeLamports,
+    direct: params.direct,
+  });
+
+  return {
+    provider: "jupiter_lite",
+    swapTransaction: lite.swapTransaction,
+    outAmount: lite.outAmount,
+    lastValidBlockHeight: lite.lastValidBlockHeight,
+  };
+}
+
+/** Shyft stack: Raptor build first, Jupiter Lite on failure. */
+async function prepareShyftStackSwap(
+  params: PrepareSwapParams,
+): Promise<PreparedSwap> {
+  try {
+    return await prepareRaptorSwap(params);
+  } catch (raptorError) {
+    console.warn(
+      "Raptor build failed on shyft stack, falling back to Jupiter Lite:",
+      raptorError,
+    );
+    return prepareJupiterLiteSwapPrepared(params);
+  }
+}
+
+/** Quote-and-swap — builds unsigned swap transaction. */
 export async function prepareSwapTransaction(
   params: PrepareSwapParams,
 ): Promise<PreparedSwap> {
+  if (getTradeProvider() === "shyft") {
+    return prepareShyftStackSwap(params);
+  }
   return prepareRaptorSwap(params);
 }
 
-/** Quote for UI — Raptor GET /quote. */
+/** Quote for UI. */
 export async function fetchSwapQuote(
   inputMint: string,
   outputMint: string,
@@ -109,6 +163,45 @@ export async function fetchSwapQuote(
   try {
     if (amount <= 0) return null;
     const useDirect = direct ?? typeof window === "undefined";
+
+    if (getTradeProvider() === "shyft") {
+      try {
+        const quote = useDirect
+          ? await fetchRaptorQuoteDirect(
+              inputMint,
+              outputMint,
+              String(amount),
+              slippageBps,
+            )
+          : await fetchRaptorQuote(
+              inputMint,
+              outputMint,
+              String(amount),
+              slippageBps,
+            );
+        return mapRaptorQuoteToSwapQuote(quote, amount);
+      } catch (raptorError) {
+        console.warn(
+          "Raptor quote failed on shyft stack, falling back to Jupiter Lite:",
+          raptorError,
+        );
+        const liteQuote = useDirect
+          ? await fetchJupiterLiteQuoteDirect(
+              inputMint,
+              outputMint,
+              String(amount),
+              slippageBps,
+            )
+          : await fetchJupiterLiteQuote(
+              inputMint,
+              outputMint,
+              String(amount),
+              slippageBps,
+            );
+        return mapJupiterLiteQuoteToSwapQuote(liteQuote);
+      }
+    }
+
     const quote = useDirect
       ? await fetchRaptorQuoteDirect(
           inputMint,
@@ -178,14 +271,35 @@ export type SubmitSignedSwapParams = {
   direct?: boolean;
 };
 
-/** Submit signed swap — Raptor send with RPC fallback. */
+/** Submit signed swap — provider-specific send with RPC fallback. */
 export async function submitSignedSwap(
   params: SubmitSignedSwapParams,
-): Promise<{ signature: string; via: SwapProvider | "rpc" }> {
+): Promise<{ signature: string; via: SwapSendVia }> {
   const signedBase64 = Buffer.from(params.signedTx.serialize()).toString("base64");
+  const useDirect = params.direct ?? typeof window === "undefined";
+
+  if (getTradeProvider() === "shyft") {
+    try {
+      const sendResult = useDirect
+        ? await sendShyftTransactionDirect(signedBase64)
+        : await sendShyftTransaction(signedBase64);
+
+      if (sendResult.success && sendResult.signature) {
+        return { signature: sendResult.signature, via: "shyft" };
+      }
+    } catch (shyftError) {
+      console.warn("Shyft send failed, falling back to RPC:", shyftError);
+    }
+
+    await waitForRpcRateLimit();
+    const signature = await params.connection.sendTransaction(params.signedTx, {
+      skipPreflight: true,
+      maxRetries: 2,
+    });
+    return { signature, via: "rpc" };
+  }
 
   try {
-    const useDirect = params.direct ?? typeof window === "undefined";
     const sendResult = useDirect
       ? await sendRaptorTransactionDirect(signedBase64)
       : await sendRaptorTransaction(signedBase64);
@@ -203,6 +317,139 @@ export async function submitSignedSwap(
     maxRetries: 2,
   });
   return { signature, via: "rpc" };
+}
+
+export type SubmitSignedSwapBatchItem = {
+  signedTx: VersionedTransaction;
+  prepared: PreparedSwap;
+  index: number;
+};
+
+export type SubmitSignedSwapBatchResult =
+  | { index: number; success: true; signature: string; via: SwapSendVia }
+  | { index: number; success: false; error: unknown };
+
+async function rpcSendFallback(
+  signedTx: VersionedTransaction,
+  connection: Connection,
+): Promise<string> {
+  await waitForRpcRateLimit();
+  return connection.sendTransaction(signedTx, {
+    skipPreflight: true,
+    maxRetries: 2,
+  });
+}
+
+async function submitShyftManyBatch(
+  items: SubmitSignedSwapBatchItem[],
+  connection: Connection,
+  useDirect: boolean,
+): Promise<SubmitSignedSwapBatchResult[]> {
+  const encoded = items.map((item) =>
+    Buffer.from(item.signedTx.serialize()).toString("base64"),
+  );
+
+  const resolveItem = async (
+    item: SubmitSignedSwapBatchItem,
+    row: { signature?: string } | undefined,
+    batchError?: unknown,
+  ): Promise<SubmitSignedSwapBatchResult> => {
+    if (row?.signature) {
+      return {
+        index: item.index,
+        success: true,
+        signature: row.signature,
+        via: "shyft",
+      };
+    }
+    try {
+      const signature = await rpcSendFallback(item.signedTx, connection);
+      return { index: item.index, success: true, signature, via: "rpc" };
+    } catch (error) {
+      return {
+        index: item.index,
+        success: false,
+        error: batchError ?? error,
+      };
+    }
+  };
+
+  try {
+    const manyResult = useDirect
+      ? await sendShyftManyTransactionsDirect(encoded)
+      : await sendShyftManyTransactions(encoded);
+
+    return Promise.all(
+      items.map((item, i) => {
+        const row =
+          manyResult.items.find((r) => r.id === i + 1) ?? manyResult.items[i];
+        return resolveItem(item, row);
+      }),
+    );
+  } catch (manyError) {
+    console.warn("Shyft send_many failed, falling back to RPC per tx:", manyError);
+    return Promise.all(
+      items.map((item) => resolveItem(item, undefined, manyError)),
+    );
+  }
+}
+
+/** Batch submit — Shyft uses send_many_txns when count > 1; Raptor uses parallel single sends. */
+export async function submitSignedSwapBatch(
+  items: SubmitSignedSwapBatchItem[],
+  connection: Connection,
+  direct?: boolean,
+): Promise<SubmitSignedSwapBatchResult[]> {
+  if (items.length === 0) return [];
+
+  const useDirect = direct ?? typeof window === "undefined";
+
+  if (getTradeProvider() === "shyft") {
+    if (items.length === 1) {
+      try {
+        const sendResult = await submitSignedSwap({
+          signedTx: items[0].signedTx,
+          prepared: items[0].prepared,
+          connection,
+          direct,
+        });
+        return [
+          {
+            index: items[0].index,
+            success: true,
+            signature: sendResult.signature,
+            via: sendResult.via,
+          },
+        ];
+      } catch (error) {
+        return [{ index: items[0].index, success: false, error }];
+      }
+    }
+    return submitShyftManyBatch(items, connection, useDirect);
+  }
+
+  return runWithConcurrency(
+    items,
+    getTradeSendConcurrency(),
+    async (item) => {
+      try {
+        const sendResult = await submitSignedSwap({
+          signedTx: item.signedTx,
+          prepared: item.prepared,
+          connection,
+          direct,
+        });
+        return {
+          index: item.index,
+          success: true as const,
+          signature: sendResult.signature,
+          via: sendResult.via,
+        };
+      } catch (error) {
+        return { index: item.index, success: false as const, error };
+      }
+    },
+  );
 }
 
 const CONFIRM_POLL_INTERVAL_MS = 3000;
@@ -239,7 +486,7 @@ export async function runWithConcurrency<T, R>(
 
 export type ConfirmSwapSignatureParams = {
   signature: string;
-  via: SwapProvider | "rpc";
+  via: SwapSendVia;
   connection: Connection;
   /** Unused for confirm (kept for caller compatibility). */
   lastValidBlockHeight?: number;
@@ -516,7 +763,7 @@ export type ExecuteClientSwapParams = PrepareSwapParams & {
 
 export type ExecuteClientSwapResult = {
   signature: string;
-  via: SwapProvider | "rpc";
+  via: SwapSendVia;
   outAmount?: string;
 };
 

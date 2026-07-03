@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { VersionedTransaction } from '@solana/web3.js'
-import { prepareSwapTransaction, confirmSwapSignature } from '@/utils/swap-executor'
 import {
-  sendRaptorTransactionDirect,
-} from '@/utils/solanatracker-raptor'
+  prepareSwapTransaction,
+  confirmSwapSignature,
+  submitSignedSwap,
+} from '@/utils/swap-executor'
 import { createRpcConnection } from '@/utils/rpc-urls'
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112'
@@ -35,13 +36,18 @@ export const POST = async (req: NextRequest) => {
         const signedTx = VersionedTransaction.deserialize(
           Buffer.from(signedTxBase64, 'base64'),
         )
-        const sendResult = await sendRaptorTransactionDirect(signedTxBase64)
-        if (!sendResult.success || !sendResult.signature) {
-          throw new Error('Raptor send returned no signature')
-        }
+        const sendResult = await submitSignedSwap({
+          signedTx,
+          prepared: {
+            provider: 'raptor',
+            swapTransaction: signedTxBase64,
+          },
+          connection,
+          direct: true,
+        })
         await confirmSwapSignature({
           signature: sendResult.signature,
-          via: 'raptor',
+          via: sendResult.via,
           connection,
           direct: true,
           blockhash: signedTx.message.recentBlockhash,

@@ -4,15 +4,24 @@ import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import {
   buildEndpointList,
   parseIndexRpcError,
-  resolveRpcUrls,
+  resolveRpcUrlsForProvider,
   type RpcEndpointInfo,
 } from "@/utils/rpc-urls";
+import type { TradeProvider } from "@/utils/trade-provider";
 
 export type { RpcEndpointInfo };
 
-export async function GET() {
+function parseTradeProvider(request: Request): TradeProvider {
+  const header = request.headers.get("x-trade-provider")?.trim();
+  if (header === "shyft") return "shyft";
+  if (header === "raptor") return "raptor";
+  return process.env.TRADE_PROVIDER?.trim() === "raptor" ? "raptor" : "shyft";
+}
+
+export async function GET(request: Request) {
   try {
-    const rpcUrls = resolveRpcUrls();
+    const provider = parseTradeProvider(request);
+    const rpcUrls = resolveRpcUrlsForProvider(provider);
     if (rpcUrls.length === 0) {
       return NextResponse.json(
         { error: "RPC not configured. Set RPC_URL or SHYFT_API_KEY in .env" },
@@ -143,7 +152,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const rpcUrls = resolveRpcUrls();
+    const provider = parseTradeProvider(request);
+    const rpcUrls = resolveRpcUrlsForProvider(provider);
     if (rpcUrls.length === 0) {
       return NextResponse.json(
         { error: "RPC not configured. Set RPC_URL or SHYFT_API_KEY in .env" },

@@ -27,6 +27,7 @@ import {
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
 import { getGmgnKlineUrl } from "@/utils/gmgn";
+import TradeProviderBar from "@/components/TradeProviderBar";
 
 interface TokenInfo {
   symbol: string;
@@ -406,6 +407,9 @@ export default function ChartPage() {
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
+      <div className="max-w-7xl mx-auto px-4 pt-3">
+        <TradeProviderBar />
+      </div>
       {/* Header */}
       <div className="bg-gray-800 border-b border-gray-700 p-4">
         <div className="flex items-center justify-between max-w-7xl mx-auto">

@@ -15,6 +15,7 @@ import {
   getTradeSendConcurrency,
   runWithConcurrency,
   submitSignedSwap,
+  submitSignedSwapBatch,
   fetchSwapQuote,
   buildSwapTransaction,
   signTransactionsWithFallback,
@@ -1898,40 +1899,22 @@ export async function executeBulkBuy(
         globalIdx: i + idx,
       }))
 
-      const sendResults = await runWithConcurrency(
-        batchEntries,
-        SEND_BATCH_SIZE,
-        async (entry) => {
-          try {
-            const sendResult = await submitSignedSwap({
-              signedTx: entry.tx,
-              prepared: transactionMetas[entry.globalIdx],
-              connection,
-            })
-            return {
-              success: true as const,
-              signature: sendResult.signature,
-              via: sendResult.via,
-              globalIdx: entry.globalIdx,
-            }
-          } catch (error) {
-            console.error(
-              `Failed to send transaction for token ${transactionMints[entry.globalIdx]}:`,
-              error,
-            )
-            return {
-              success: false as const,
-              globalIdx: entry.globalIdx,
-              error,
-            }
-          }
-        },
-      )
+      const batchItems = batchEntries.map((entry) => ({
+        signedTx: entry.tx,
+        prepared: transactionMetas[entry.globalIdx],
+        index: entry.globalIdx,
+      }))
+
+      const sendResults = await submitSignedSwapBatch(batchItems, connection)
 
       for (const sendResult of sendResults) {
         if (!sendResult.success) {
+          console.error(
+            `Failed to send transaction for token ${transactionMints[sendResult.index]}:`,
+            sendResult.error,
+          )
           result.failedPurchases.push({
-            mintAddress: transactionMints[sendResult.globalIdx],
+            mintAddress: transactionMints[sendResult.index],
             error:
               sendResult.error instanceof Error
                 ? sendResult.error.message
@@ -1945,8 +1928,8 @@ export async function executeBulkBuy(
         .map((r) => ({
           signature: r.signature,
           via: r.via,
-          lastValidBlockHeight: transactionMetas[r.globalIdx].lastValidBlockHeight,
-          blockhash: signedTransactions[r.globalIdx].message.recentBlockhash,
+          lastValidBlockHeight: transactionMetas[r.index].lastValidBlockHeight,
+          blockhash: signedTransactions[r.index].message.recentBlockhash,
         }))
 
       const confirmResults = await confirmSwapSignaturesBatch(confirmItems, connection)
@@ -1958,7 +1941,7 @@ export async function executeBulkBuy(
         if (confirmError) {
           console.error(`Confirmation failed for ${sendResult.signature}:`, confirmError)
           result.failedPurchases.push({
-            mintAddress: transactionMints[sendResult.globalIdx],
+            mintAddress: transactionMints[sendResult.index],
             error: confirmError.includes('TransactionExpiredBlockheightExceededError')
               ? 'Transaction expired'
               : confirmError.startsWith('Confirmation failed')
@@ -1970,11 +1953,11 @@ export async function executeBulkBuy(
 
         signatures.push(sendResult.signature)
         result.successfulPurchases.push({
-          mintAddress: transactionMints[sendResult.globalIdx],
+          mintAddress: transactionMints[sendResult.index],
           amount: amountPerToken,
         })
         console.log(
-          `✅ Successfully bought ${transactionMints[sendResult.globalIdx]} via ${sendResult.via}`,
+          `✅ Successfully bought ${transactionMints[sendResult.index]} via ${sendResult.via}`,
         )
       }
 
@@ -2665,36 +2648,18 @@ export async function executeBulkSellAlt(
               globalIdx: i + idx,
             }));
 
-            const sendResults = await runWithConcurrency(
-              batchEntries,
-              SEND_BATCH_SIZE,
-              async (entry) => {
-                try {
-                  const sendResult = await submitSignedSwap({
-                    signedTx: entry.tx,
-                    prepared: transactionMetas[entry.globalIdx],
-                    connection,
-                  });
-                  return {
-                    success: true as const,
-                    signature: sendResult.signature,
-                    via: sendResult.via,
-                    globalIdx: entry.globalIdx,
-                  };
-                } catch (error) {
-                  return {
-                    success: false as const,
-                    globalIdx: entry.globalIdx,
-                    error,
-                  };
-                }
-              },
-            );
+            const batchItems = batchEntries.map((entry) => ({
+              signedTx: entry.tx,
+              prepared: transactionMetas[entry.globalIdx],
+              index: entry.globalIdx,
+            }));
+
+            const sendResults = await submitSignedSwapBatch(batchItems, connection);
 
             for (const sendResult of sendResults) {
               if (!sendResult.success) {
                 result.failedSwaps.push({
-                  mintAddress: transactionTokens[sendResult.globalIdx].mintAddress,
+                  mintAddress: transactionTokens[sendResult.index].mintAddress,
                   error: 'Failed to send',
                 });
               }
@@ -2706,8 +2671,8 @@ export async function executeBulkSellAlt(
                 signature: r.signature,
                 via: r.via,
                 connection,
-                lastValidBlockHeight: transactionMetas[r.globalIdx].lastValidBlockHeight,
-                blockhash: signedTransactions[r.globalIdx].message.recentBlockhash,
+                lastValidBlockHeight: transactionMetas[r.index].lastValidBlockHeight,
+                blockhash: signedTransactions[r.index].message.recentBlockhash,
               }));
 
             const confirmResults = await confirmSwapSignaturesBatch(confirmItems, connection);
@@ -2718,7 +2683,7 @@ export async function executeBulkSellAlt(
               const confirmError = confirmResults.get(sendResult.signature);
               if (confirmError) {
                 result.failedSwaps.push({
-                  mintAddress: transactionTokens[sendResult.globalIdx].mintAddress,
+                  mintAddress: transactionTokens[sendResult.index].mintAddress,
                   error: confirmError,
                 });
                 continue;
@@ -2727,7 +2692,7 @@ export async function executeBulkSellAlt(
               let solReceived = 0;
               if (sendResult.via === 'raptor') {
                 const amountOutLamports = Number.parseInt(
-                  transactionAmountOut[sendResult.globalIdx] ?? '0',
+                  transactionAmountOut[sendResult.index] ?? '0',
                   10,
                 );
                 solReceived = Number.isFinite(amountOutLamports)
@@ -2741,7 +2706,7 @@ export async function executeBulkSellAlt(
                 });
                 if (txInfo?.meta?.err) {
                   result.failedSwaps.push({
-                    mintAddress: transactionTokens[sendResult.globalIdx].mintAddress,
+                    mintAddress: transactionTokens[sendResult.index].mintAddress,
                     error: 'Transaction failed on-chain',
                   });
                   continue;
@@ -2755,14 +2720,14 @@ export async function executeBulkSellAlt(
               }
 
               swapSignatures.push(sendResult.signature);
-              successfulSwaps.push(transactionTokens[sendResult.globalIdx]);
+              successfulSwaps.push(transactionTokens[sendResult.index]);
               result.successfulSwaps.push({
-                mintAddress: transactionTokens[sendResult.globalIdx].mintAddress,
+                mintAddress: transactionTokens[sendResult.index].mintAddress,
                 solReceived: solReceived > 0 ? solReceived : 0,
               });
               result.totalReceived += solReceived > 0 ? solReceived : 0;
               console.log(
-                `✅ Successfully sold ${transactionTokens[sendResult.globalIdx].mintAddress} via ${sendResult.via}`,
+                `✅ Successfully sold ${transactionTokens[sendResult.index].mintAddress} via ${sendResult.via}`,
               );
             }
           }

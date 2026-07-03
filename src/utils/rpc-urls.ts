@@ -1,4 +1,6 @@
 import { Connection } from '@solana/web3.js';
+import type { TradeProvider } from '@/utils/trade-provider';
+import { getTradeProvider } from '@/utils/trade-provider';
 
 const SHYFT_RPC_BASE = 'https://rpc.shyft.to';
 export const SOLANATRACKER_RPC_DEFAULT =
@@ -92,13 +94,40 @@ function resolveFallbackRpcUrls(): string[] {
 
 /** Resolve RPC URL list: Solana Tracker internal first, then RPC_URL / Shyft. */
 export function resolveRpcUrls(): string[] {
-  const primary =
+  return resolveRpcUrlsForProvider('raptor');
+}
+
+function isSolanaTrackerRpcUrl(url: string): boolean {
+  const trackerPrimary =
     process.env.SOLANATRACKER_RPC_URL?.trim() || SOLANATRACKER_RPC_DEFAULT;
-  return normalizeRpcUrls([primary, ...resolveFallbackRpcUrls()]);
+  return url.includes('solanatracker') || url === trackerPrimary;
+}
+
+/** Provider-aware RPC list: raptor stack prefers Solana Tracker; shyft stack prefers Shyft RPC. */
+export function resolveRpcUrlsForProvider(provider: TradeProvider): string[] {
+  if (provider === 'raptor') {
+    const primary =
+      process.env.SOLANATRACKER_RPC_URL?.trim() || SOLANATRACKER_RPC_DEFAULT;
+    return normalizeRpcUrls([primary, ...resolveFallbackRpcUrls()]);
+  }
+
+  const urls: string[] = [];
+  const shyftKey = process.env.SHYFT_API_KEY;
+  if (shyftKey && shyftKey !== 'your-shyft-api-key') {
+    urls.push(buildShyftRpcUrl(shyftKey));
+  }
+
+  for (const url of resolveFallbackRpcUrls()) {
+    if (!isSolanaTrackerRpcUrl(url)) {
+      urls.push(url);
+    }
+  }
+
+  return normalizeRpcUrls(urls);
 }
 
 export function getPrimaryRpcUrl(): string {
-  const urls = resolveRpcUrls();
+  const urls = resolveRpcUrlsForProvider(getTradeProvider());
   if (urls.length === 0) {
     throw new Error(
       'RPC not configured. Set RPC_URL or SHYFT_API_KEY in .env (https://rpc.shyft.to?api_key=...)',

@@ -10,6 +10,7 @@ import PnLTracker from "@/components/PnLTracker";
 import WalletConnectGate from "@/components/WalletConnectGate";
 import DevRouteGate from "@/components/DevRouteGate";
 import TradingDataProvider from "@/components/TradingDataProvider";
+import TradeProviderBar from "@/components/TradeProviderBar";
 import {
   isDevRoute,
   isWalletRequiredRoute,
@@ -82,6 +83,7 @@ export default function TradeLayout({
 
           <div className="w-full mb-8">
             <RouteAccessGate>{children}</RouteAccessGate>
+            <TradeProviderBar />
           </div>
         </div>
       </div>

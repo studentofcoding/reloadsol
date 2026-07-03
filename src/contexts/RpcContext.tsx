@@ -10,7 +10,13 @@ import React, {
   useState,
 } from "react";
 import { Connection } from "@solana/web3.js";
-import { getBrowserConnectionEndpoint } from "@/utils/connection";
+import {
+  getBrowserConnectionEndpoint,
+  createTradeAwareConnection,
+  fetchRpcDiagnostics,
+  getTradeProviderHeaders,
+} from "@/utils/connection";
+import { subscribeTradeProvider } from "@/utils/trade-provider";
 import type { RpcDiagnosticRow } from "@/app/api/rpc/diagnostics/route";
 
 const STORAGE_KEY = "reloadsol:rpc-endpoint";
@@ -132,12 +138,17 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
   }, [activeRpcUrl]);
 
   const [connection, setConnection] = useState<Connection | null>(null);
+  const [tradeProviderVersion, setTradeProviderVersion] = useState(0);
+
+  useEffect(() => subscribeTradeProvider(() => {
+    setTradeProviderVersion((v) => v + 1);
+  }), []);
 
   useEffect(() => {
     // Client-only: Turbopack cannot construct Connection during SSR render.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- external Solana RPC client
-    setConnection(new Connection(connectionEndpoint, "confirmed"));
-  }, [connectionEndpoint]);
+    setConnection(createTradeAwareConnection(connectionEndpoint));
+  }, [connectionEndpoint, tradeProviderVersion]);
 
   const refreshHealth = useCallback(async () => {
     const currentEndpoints = endpointsRef.current;
@@ -182,7 +193,7 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
     async function loadEndpoints() {
       setIsLoadingEndpoints(true);
       try {
-        const response = await fetch("/api/rpc/diagnostics");
+        const response = await fetchRpcDiagnostics();
         if (!response.ok) throw new Error("Failed to load RPC endpoints");
         const data = await response.json();
         if (cancelled) return;
@@ -224,7 +235,7 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [refreshHealth]);
+  }, [refreshHealth, tradeProviderVersion]);
 
   useEffect(() => {
     if (endpoints.length === 0) return;
@@ -257,7 +268,10 @@ export function RpcProvider({ children }: { children: React.ReactNode }) {
     try {
       const response = await fetch("/api/rpc/diagnostics", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...getTradeProviderHeaders(),
+        },
         body: JSON.stringify({ walletAddress }),
       });
       if (!response.ok) {

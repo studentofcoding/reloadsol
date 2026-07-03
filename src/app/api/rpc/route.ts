@@ -1,32 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { resolveRpcUrls } from '@/utils/rpc-urls'
+import { resolveRpcUrlsForProvider } from '@/utils/rpc-urls'
+import type { TradeProvider } from '@/utils/trade-provider'
 import { rpcRateLimitDelayMs, waitForRpcRateLimit } from '@/utils/rpc-rate-limit'
 
-const getRpcUrls = (): string[] => {
-  const urls = resolveRpcUrls()
+function parseTradeProvider(request: NextRequest): TradeProvider {
+  const header = request.headers.get('x-trade-provider')?.trim()
+  if (header === 'shyft') return 'shyft'
+  if (header === 'raptor') return 'raptor'
+  return process.env.TRADE_PROVIDER?.trim() === 'raptor' ? 'raptor' : 'shyft'
+}
+
+const getRpcUrls = (provider: TradeProvider): string[] => {
+  const urls = resolveRpcUrlsForProvider(provider)
   if (urls.length === 0) {
     throw new Error('RPC not configured. Set RPC_URL or SHYFT_API_KEY in .env')
   }
   return urls
 }
 
-// Memoized RPC URLs to avoid repeated parsing
-let cachedRpcUrls: string[] | null = null
-const getCachedRpcUrls = (): string[] => {
-  if (!cachedRpcUrls) {
-    cachedRpcUrls = getRpcUrls()
+// Memoized RPC URLs per provider
+const cachedRpcUrls = new Map<TradeProvider, string[]>()
+const getCachedRpcUrls = (provider: TradeProvider): string[] => {
+  if (!cachedRpcUrls.has(provider)) {
+    cachedRpcUrls.set(provider, getRpcUrls(provider))
   }
-  return cachedRpcUrls
+  return cachedRpcUrls.get(provider)!
 }
 
-// In-memory cache for healthy endpoints (with TTL)
+// In-memory cache for healthy endpoints (with TTL) — keyed by provider
 interface HealthyEndpoint {
   url: string
   lastChecked: number
   responseTime: number
 }
 
-const healthyEndpointsCache: HealthyEndpoint[] = []
+const healthyEndpointsCache = new Map<TradeProvider, HealthyEndpoint[]>()
 const CACHE_TTL = 60 * 1000 // 1 minute cache
 
 // Test a single RPC endpoint quickly
@@ -73,25 +81,22 @@ const quickHealthCheck = async (url: string, timeout = 3000): Promise<{ url: str
 }
 
 // Enhanced health check with better error handling and circuit breaker
-const getHealthyEndpoints = async (): Promise<string[]> => {
+const getHealthyEndpoints = async (provider: TradeProvider): Promise<string[]> => {
   const now = Date.now()
+  const cache = healthyEndpointsCache.get(provider) ?? []
 
-  // Check if cache is still valid
-  if (healthyEndpointsCache.length > 0 &&
-    healthyEndpointsCache.every(ep => now - ep.lastChecked < CACHE_TTL)) {
-    return healthyEndpointsCache.map(ep => ep.url)
+  if (cache.length > 0 && cache.every((ep) => now - ep.lastChecked < CACHE_TTL)) {
+    return cache.map((ep) => ep.url)
   }
 
-  // Use cached RPC URLs
-  const rpcUrls = getCachedRpcUrls()
+  const rpcUrls = getCachedRpcUrls(provider)
 
   // Parallel health checks with timeout
   const healthResults = await Promise.allSettled(
     rpcUrls.map(url => quickHealthCheck(url, 2000)) // Reduced timeout for faster response
   )
 
-  // Update cache with healthy endpoints
-  healthyEndpointsCache.length = 0 // Clear cache
+  const nextCache: HealthyEndpoint[] = []
   healthResults
     .filter((result, index) => {
       if (result.status === 'fulfilled' && result.value.healthy) {
@@ -107,19 +112,25 @@ const getHealthyEndpoints = async (): Promise<string[]> => {
       originalIndex: index
     }))
     .sort((a, b) => a.responseTime - b.responseTime) // Sort by response time
-    .forEach(result => {
-      healthyEndpointsCache.push({
+    .forEach((result) => {
+      nextCache.push({
         url: result.url,
         lastChecked: now,
-        responseTime: result.responseTime
+        responseTime: result.responseTime,
       })
     })
 
-  return healthyEndpointsCache.map(ep => ep.url)
+  healthyEndpointsCache.set(provider, nextCache)
+
+  return nextCache.map((ep) => ep.url)
 }
 
 // Enhanced RPC request with better error handling and timeout
-const makeRpcRequest = async (body: any, healthyUrls: string[]): Promise<any> => {
+const makeRpcRequest = async (
+  body: any,
+  healthyUrls: string[],
+  provider: TradeProvider,
+): Promise<any> => {
   let lastError: Error | null = null
   const timeout = 8000 // 8 second timeout
 
@@ -180,9 +191,11 @@ const makeRpcRequest = async (body: any, healthyUrls: string[]): Promise<any> =>
           !errorMessage.includes('aborted') &&
           !errorMessage.includes('timeout')
         ) {
-          const index = healthyEndpointsCache.findIndex(ep => ep.url === url)
+          const cache = healthyEndpointsCache.get(provider) ?? []
+          const index = cache.findIndex((ep) => ep.url === url)
           if (index !== -1) {
-            healthyEndpointsCache.splice(index, 1)
+            cache.splice(index, 1)
+            healthyEndpointsCache.set(provider, cache)
           }
         }
 
@@ -198,16 +211,14 @@ const makeRpcRequest = async (body: any, healthyUrls: string[]): Promise<any> =>
 
 export async function POST(request: NextRequest) {
   try {
-    // Get the request body
+    const provider = parseTradeProvider(request)
     const body = await request.json()
 
-    // Get healthy endpoints with fallback
-    let healthyUrls = await getHealthyEndpoints()
+    let healthyUrls = await getHealthyEndpoints(provider)
 
-    // Fallback to all URLs if no healthy endpoints found
     if (healthyUrls.length === 0) {
       console.warn('No healthy endpoints found, using all configured endpoints')
-      healthyUrls = getCachedRpcUrls()
+      healthyUrls = getCachedRpcUrls(provider)
     }
 
     if (healthyUrls.length === 0) {
@@ -222,14 +233,14 @@ export async function POST(request: NextRequest) {
           headers: {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Accept',
+            'Access-Control-Allow-Headers': 'Content-Type, Accept, X-Trade-Provider',
           },
         }
       )
     }
 
     // Make request with failover
-    const data = await makeRpcRequest(body, healthyUrls)
+    const data = await makeRpcRequest(body, healthyUrls, provider)
 
     // Return successful response
     return NextResponse.json(data, {
@@ -237,7 +248,7 @@ export async function POST(request: NextRequest) {
       headers: {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Accept',
+        'Access-Control-Allow-Headers': 'Content-Type, Accept, X-Trade-Provider',
         'X-RPC-Endpoint': healthyUrls[0], // Indicate which endpoint was used
       },
     })
@@ -254,7 +265,7 @@ export async function POST(request: NextRequest) {
         headers: {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Accept',
+          'Access-Control-Allow-Headers': 'Content-Type, Accept, X-Trade-Provider',
         },
       }
     )
