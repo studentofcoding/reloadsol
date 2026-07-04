@@ -1,0 +1,47 @@
+import { NextRequest, NextResponse } from 'next/server'
+import {
+  listMcapSocialPatterns24h,
+  patternRules,
+  refreshMcapSocialPatterns24h,
+} from '@/strategies/social/mcap-patterns-24h'
+
+export const dynamic = 'force-dynamic'
+export const maxDuration = 120
+
+export async function GET(request: NextRequest) {
+  try {
+    const refresh = request.nextUrl.searchParams.get('refresh') === 'true'
+    const result = refresh
+      ? await refreshMcapSocialPatterns24h()
+      : await listMcapSocialPatterns24h()
+
+    if (result.error && result.winners.length === 0 && result.losers.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: result.error,
+          rules: patternRules(),
+          builtAt: result.builtAt,
+          winners: [],
+          losers: [],
+          neutralCount: result.neutralCount,
+        },
+        { status: result.error.includes('missing') ? 503 : 500 },
+      )
+    }
+
+    return NextResponse.json({
+      success: true,
+      rules: patternRules(),
+      builtAt: result.builtAt,
+      winners: result.winners,
+      losers: result.losers,
+      neutralCount: result.neutralCount,
+      tokenCount: result.tokenCount,
+      refreshed: refresh,
+    })
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    return NextResponse.json({ success: false, error: message }, { status: 500 })
+  }
+}

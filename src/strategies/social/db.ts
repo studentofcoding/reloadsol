@@ -173,6 +173,26 @@ export async function fetchRecentSocialEvents(
   }
 }
 
+export async function fetchSocialEventsForTokenSince(
+  tokenAddress: string,
+  sinceIso: string,
+  limit = 100,
+): Promise<SocialTokenEventRow[]> {
+  try {
+    const { rows } = await query<SocialTokenEventRow>(
+      `SELECT * FROM social_token_events
+       WHERE token_address = $1 AND occurred_at >= $2
+       ORDER BY occurred_at DESC
+       LIMIT $3`,
+      [tokenAddress, sinceIso, limit],
+    )
+    return rows
+  } catch (error) {
+    if (isMissingTableError(error)) return []
+    return []
+  }
+}
+
 export async function fetchRecentSocialEventsFeed(options?: {
   limit?: number
   hours?: number

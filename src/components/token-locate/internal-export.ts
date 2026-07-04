@@ -1,16 +1,15 @@
 import type { RawSection } from "@/strategies/token-locate";
+import {
+  buildCombinedPattern,
+  type CombinedInternalExport,
+} from "@/strategies/social/combined-pattern";
 
 export type InternalExportMeta = {
   tokenAddress: string;
   exportedAt: string;
 };
 
-export type CombinedInternalExport = {
-  tokenAddress: string;
-  exportedAt: string;
-  mcapTracker: unknown | null;
-  socialEvents: unknown | null;
-};
+export type { CombinedInternalExport };
 
 export function findSectionData(
   sections: RawSection[],
@@ -40,12 +39,14 @@ export function buildCombinedInternalExport(
   meta: InternalExportMeta,
   sections: RawSection[],
 ): CombinedInternalExport {
-  return {
+  const mcapTracker = buildMcapExportPayload(meta, sections);
+  const socialRaw = buildSocialExportPayload(meta, sections);
+  return buildCombinedPattern({
     tokenAddress: meta.tokenAddress,
     exportedAt: meta.exportedAt,
-    mcapTracker: buildMcapExportPayload(meta, sections),
-    socialEvents: buildSocialExportPayload(meta, sections),
-  };
+    mcapRow: mcapTracker,
+    socialEvents: Array.isArray(socialRaw) ? socialRaw : null,
+  });
 }
 
 export function shortMintFilename(tokenAddress: string): string {

@@ -1,6 +1,10 @@
 "use client";
 
 import ChartBuyModal from "@/components/ChartBuyModal";
+import {
+  copyJson,
+  downloadJson,
+} from "@/components/token-locate/internal-export";
 import { isValidMintAddress } from "@/utils/jupiter";
 import { useQuery } from "@tanstack/react-query";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -89,6 +93,29 @@ async function fetchSignalChannels(): Promise<SignalChannel[]> {
   return (json.channels ?? []) as SignalChannel[];
 }
 
+type McapPatterns24hData = {
+  builtAt: string;
+  winners: unknown[];
+  losers: unknown[];
+  neutralCount: number;
+  tokenCount?: number;
+  rules?: { winnerMinGrowthPct: number; loserMaxGrowthPct: number };
+};
+
+async function fetchMcapPatterns24h(): Promise<McapPatterns24hData> {
+  const res = await fetch("/api/mcap-patterns/24h");
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error || "Failed to load patterns");
+  return {
+    builtAt: json.builtAt,
+    winners: json.winners ?? [],
+    losers: json.losers ?? [],
+    neutralCount: json.neutralCount ?? 0,
+    tokenCount: json.tokenCount,
+    rules: json.rules,
+  };
+}
+
 async function fetchSocialAdminData(): Promise<SocialAdminData> {
   const [walletsRes, eventsRes] = await Promise.all([
     fetch("/api/social/wallets?rollups_limit=40"),
@@ -152,7 +179,9 @@ function TokenCell({
 }
 
 export default function SocialAdminHub() {
-  const [activeTab, setActiveTab] = useState<"overview" | "crosscheck">("overview");
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "crosscheck" | "patterns"
+  >("overview");
   const [actionError, setActionError] = useState<string | null>(null);
   const [newAddress, setNewAddress] = useState("");
   const [newLabel, setNewLabel] = useState("");
@@ -161,6 +190,7 @@ export default function SocialAdminHub() {
   const [tolerancePct, setTolerancePct] = useState("3");
   const [alertText, setAlertText] = useState("");
   const [verifyLoading, setVerifyLoading] = useState(false);
+  const [patternsRefreshLoading, setPatternsRefreshLoading] = useState(false);
   const [modalTokenAddress, setModalTokenAddress] = useState<string | null>(
     null,
   );
@@ -181,6 +211,13 @@ export default function SocialAdminHub() {
     queryKey: ["signal-crosschecks"],
     queryFn: fetchCrosschecks,
     refetchInterval: activeTab === "crosscheck" ? 15_000 : false,
+  });
+
+  const patternsQuery = useQuery({
+    queryKey: ["mcap-patterns-24h"],
+    queryFn: fetchMcapPatterns24h,
+    enabled: activeTab === "patterns",
+    refetchInterval: activeTab === "patterns" ? 60_000 : false,
   });
 
   const wallets = useMemo(
@@ -326,8 +363,30 @@ export default function SocialAdminHub() {
     setTolerancePct(String(preset.tolerance_pct ?? 3));
   };
 
+  const refreshPatterns = async () => {
+    setPatternsRefreshLoading(true);
+    setActionError(null);
+    try {
+      const res = await fetch("/api/mcap-patterns/24h?refresh=true");
+      const json = await res.json();
+      if (!json.success) {
+        setActionError(json.error || "Pattern refresh failed");
+        return;
+      }
+      await patternsQuery.refetch();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPatternsRefreshLoading(false);
+    }
+  };
+
   const crosschecks = crosscheckQuery.data ?? [];
   const channelPresets = channelsQuery.data ?? [];
+  const patterns = patternsQuery.data;
+  const bothPatterns = patterns
+    ? { winners: patterns.winners, losers: patterns.losers }
+    : null;
 
   if (loading && activeTab === "overview") {
     return <p className="text-sm text-gray-400">Loading social data…</p>;
@@ -357,6 +416,17 @@ export default function SocialAdminHub() {
           onClick={() => setActiveTab("crosscheck")}
         >
           Cross-check
+        </button>
+        <button
+          type="button"
+          className={`rounded px-3 py-1.5 text-sm ${
+            activeTab === "patterns"
+              ? "bg-gray-800 text-white"
+              : "text-gray-400 hover:text-white"
+          }`}
+          onClick={() => setActiveTab("patterns")}
+        >
+          24h Patterns
         </button>
       </div>
 
@@ -527,6 +597,117 @@ export default function SocialAdminHub() {
                 </tbody>
               </table>
             </div>
+          </section>
+        </>
+      ) : activeTab === "patterns" ? (
+        <>
+          <section>
+            <h2 className="mb-2 text-lg font-medium text-white">
+              Mcap + social 24h patterns
+            </h2>
+            <p className="mb-4 text-xs text-gray-500">
+              Auto-built from DB: winners (growth &ge;{" "}
+              {patterns?.rules?.winnerMinGrowthPct ?? 120}%), losers (growth &lt;{" "}
+              {patterns?.rules?.loserMaxGrowthPct ?? 80}%). Each entry is mcap
+              tracker row + social events in the last 24h.
+            </p>
+            {patternsQuery.isLoading ? (
+              <p className="text-sm text-gray-400">Loading patterns…</p>
+            ) : (
+              <>
+                <div className="mb-4 grid grid-cols-3 gap-3 text-sm">
+                  <div className="rounded border border-gray-800 bg-gray-900/60 p-3">
+                    <div className="text-gray-400">Winners</div>
+                    <div className="text-xl font-semibold text-emerald-400">
+                      {patterns?.winners.length ?? 0}
+                    </div>
+                  </div>
+                  <div className="rounded border border-gray-800 bg-gray-900/60 p-3">
+                    <div className="text-gray-400">Losers</div>
+                    <div className="text-xl font-semibold text-red-400">
+                      {patterns?.losers.length ?? 0}
+                    </div>
+                  </div>
+                  <div className="rounded border border-gray-800 bg-gray-900/60 p-3">
+                    <div className="text-gray-400">Neutral (80–119%)</div>
+                    <div className="text-xl font-semibold text-gray-300">
+                      {patterns?.neutralCount ?? 0}
+                    </div>
+                  </div>
+                </div>
+                {patterns?.builtAt ? (
+                  <p className="mb-3 text-xs text-gray-500">
+                    Built {patterns.builtAt}
+                  </p>
+                ) : null}
+                <div className="mb-4 flex flex-wrap gap-2 rounded-lg border border-gray-700 bg-gray-900/40 px-4 py-3">
+                  <button
+                    type="button"
+                    disabled={!patterns?.winners.length}
+                    className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
+                    onClick={() => copyJson(patterns?.winners ?? [])}
+                  >
+                    Copy winners JSON
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!patterns?.losers.length}
+                    className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
+                    onClick={() => copyJson(patterns?.losers ?? [])}
+                  >
+                    Copy losers JSON
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!bothPatterns}
+                    className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
+                    onClick={() => bothPatterns && copyJson(bothPatterns)}
+                  >
+                    Copy both
+                  </button>
+                  <span className="mx-1 hidden h-6 w-px bg-gray-700 sm:inline" />
+                  <button
+                    type="button"
+                    disabled={!patterns?.winners.length}
+                    className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
+                    onClick={() =>
+                      downloadJson("mcap-patterns-winners-24h.json", patterns?.winners ?? [])
+                    }
+                  >
+                    Export winners
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!patterns?.losers.length}
+                    className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
+                    onClick={() =>
+                      downloadJson("mcap-patterns-losers-24h.json", patterns?.losers ?? [])
+                    }
+                  >
+                    Export losers
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!bothPatterns}
+                    className="rounded bg-blue-600 px-3 py-1 text-sm text-white hover:bg-blue-700 disabled:opacity-40"
+                    onClick={() =>
+                      bothPatterns &&
+                      downloadJson("mcap-patterns-both-24h.json", bothPatterns)
+                    }
+                  >
+                    Export both
+                  </button>
+                  <button
+                    type="button"
+                    disabled={patternsRefreshLoading}
+                    className="rounded border border-gray-600 px-3 py-1 text-sm text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+                    onClick={() => void refreshPatterns()}
+                  >
+                    {patternsRefreshLoading ? "Refreshing…" : "Refresh from DB"}
+                  </button>
+                </div>
+              </>
+            )}
           </section>
         </>
       ) : (
