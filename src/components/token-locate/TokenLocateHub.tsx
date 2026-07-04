@@ -1,5 +1,6 @@
 "use client";
 
+import InternalDbSectionGroup from "@/components/token-locate/InternalDbSectionGroup";
 import RawJsonPanel from "@/components/token-locate/RawJsonPanel";
 import { isValidMintAddress } from "@/utils/jupiter";
 import type { RawSection, StrategyPresence, TokenLocateResult } from "@/strategies/token-locate";
@@ -273,7 +274,12 @@ export default function TokenLocateHub({ initialAddress = "" }: TokenLocateHubPr
           ) : null}
 
           {internalSections.length > 0 ? (
-            <SectionGroup title="Internal raw DB + social" sections={internalSections} />
+            <InternalDbSectionGroup
+              title="Internal raw DB + social"
+              sections={internalSections}
+              tokenAddress={result.tokenAddress}
+              exportedAt={result.fetchedAt}
+            />
           ) : null}
 
           {!result.found &&
