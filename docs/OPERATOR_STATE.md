@@ -41,6 +41,21 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 - Weekly loop: `npm run ml:export` → `ml:train-gate` → `ml:check-dataset`; review shadow `ml_gate_p_bad` histogram before setting `ML_GATE_MODE=enforce`
 - Do not gate live on v1 multiclass (overfit); use v2-gate `gate_ready` only
 
+## Pattern ML (24h mcap + social cohorts)
+
+Separate from sim-outcome gate — labels come from `mcap_social_pattern_24h` (winner ≥120% growth, loser &lt;80%).
+
+- Pattern DB refreshes automatically via social rollup cron (~every 5 min).
+- Check counts: `/dev/social` → **24h Patterns** or `GET /api/mcap-patterns/stats`.
+- Target **30+ winners and 30+ losers** before training (`train_ready`).
+- Export: `npm run ml:export-patterns` → `ml/data/pattern/training.parquet`
+- Train: `npm run ml:train-pattern` → `ml/artifacts/pattern-gate/`
+- Check: `npm run ml:check-pattern`
+- Deploy ONNX to web (`ML_PATTERN_ARTIFACT_DIR=ml/artifacts/pattern-gate`); default `ML_PATTERN_MODE=shadow`.
+- Shadow fields on sim buys: `ml_pattern_p_winner`, `ml_pattern_predicted` — review in Strategy Admin → **Pattern ML** and **24h cohort** columns.
+- Do **not** set `ML_PATTERN_MODE=enforce` until `model.meta.json` → `metrics.pattern_ready === true` (macro-F1 ≥ 0.60 on holdout).
+- Weekly: export → train → redeploy web → compare shadow predictions vs 24h cohort labels.
+
 ## Risk / kill switch
 
 - Real trending bot: global circuit breaker in `bot_trading_state` (auto halt on failures).
@@ -51,6 +66,7 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 | Date | Change |
 |------|--------|
+| 2026-07-05 | Pattern ML pipeline: 24h cohort export/train, shadow scorer on mcap sim-track, UI feedback columns |
 | 2026-06-28 | Social TTL cleanup + manual `/dev/social` refresh; `social_overlap` on entry features; L2 enforce wired (default shadow) |
 | 2026-06-28 | Two-stage ML: v2-gate binary + v2-potential tiers; shadow ONNX on mcap sim-track |
 | 2026-06-28 | Fixed signals sim PnL (mcap vs price); symbol backfill from `token_mcap_tracking`; versioned ML export + gate_ready in train meta |

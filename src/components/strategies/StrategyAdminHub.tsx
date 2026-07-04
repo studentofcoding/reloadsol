@@ -24,6 +24,7 @@ import {
 import OutcomeReviewModal, {
   OutcomeMlBadge,
   OutcomeMlConditionBadge,
+  OutcomePatternMlBadge,
 } from "@/components/strategies/OutcomeReviewModal";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
 import {
@@ -434,6 +435,28 @@ export default function StrategyAdminHub() {
       outcomesOffset,
     ],
   );
+
+  const patternCohortQuery = useQuery({
+    queryKey: ["pattern-cohort-map"],
+    queryFn: async () => {
+      const res = await fetch("/api/mcap-patterns/24h");
+      const json = await res.json();
+      const map = new Map<string, "winner" | "loser">();
+      if (json.success) {
+        for (const row of json.winners ?? []) {
+          const addr = (row as { tokenAddress?: string }).tokenAddress;
+          if (addr) map.set(addr, "winner");
+        }
+        for (const row of json.losers ?? []) {
+          const addr = (row as { tokenAddress?: string }).tokenAddress;
+          if (addr) map.set(addr, "loser");
+        }
+      }
+      return map;
+    },
+    enabled: tab === "reports",
+    staleTime: 60_000,
+  });
 
   const strategiesQuery = useQuery({
     queryKey: strategyAdminQueryKey,
@@ -1537,6 +1560,12 @@ export default function StrategyAdminHub() {
                         <th className="p-2">PnL%</th>
                         <th className="p-2">Status</th>
                         <th className="p-2">ML</th>
+                        <th className="p-2" title="Pattern-gate shadow score at entry">
+                          Pattern ML
+                        </th>
+                        <th className="p-2" title="24h mcap growth cohort if token appears in pattern DB">
+                          24h cohort
+                        </th>
                         <th className="p-2">Condition</th>
                       </tr>
                     </thead>
@@ -1624,6 +1653,26 @@ export default function StrategyAdminHub() {
                                 <span className="inline-block w-3 h-3 border border-gray-400 border-t-transparent rounded-full animate-spin" />
                               )}
                             </div>
+                          </td>
+                          <td className="p-2">
+                            <OutcomePatternMlBadge features={o.features} />
+                          </td>
+                          <td className="p-2">
+                            {o.token_address &&
+                            patternCohortQuery.data?.get(o.token_address) ? (
+                              <span
+                                className={
+                                  patternCohortQuery.data.get(o.token_address) ===
+                                  "winner"
+                                    ? "text-emerald-400"
+                                    : "text-red-400"
+                                }
+                              >
+                                {patternCohortQuery.data.get(o.token_address)}
+                              </span>
+                            ) : (
+                              <span className="text-gray-600">—</span>
+                            )}
                           </td>
                           <td className="p-2">
                             <OutcomeMlConditionBadge features={o.features} />

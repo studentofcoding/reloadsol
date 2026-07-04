@@ -591,3 +591,36 @@ export function OutcomeMlConditionBadge({
     </span>
   );
 }
+
+export function OutcomePatternMlBadge({
+  features,
+}: {
+  features: Record<string, unknown> | null | undefined;
+}) {
+  const pWinner =
+    features?.ml_pattern_p_winner != null
+      ? Number(features.ml_pattern_p_winner)
+      : null;
+  const predicted = features?.ml_pattern_predicted;
+  if (pWinner == null || !Number.isFinite(pWinner)) {
+    return <span className="text-gray-600">—</span>;
+  }
+  const label =
+    predicted === "winner" || predicted === "loser"
+      ? String(predicted)
+      : pWinner >= 0.5
+        ? "winner"
+        : "loser";
+  const styles =
+    label === "winner"
+      ? "bg-emerald-900/50 text-emerald-300"
+      : "bg-red-900/50 text-red-300";
+  return (
+    <span
+      className={`text-[10px] px-2 py-0.5 rounded uppercase ${styles}`}
+      title={`p_winner=${pWinner.toFixed(3)}`}
+    >
+      {label} {(pWinner * 100).toFixed(0)}%
+    </span>
+  );
+}

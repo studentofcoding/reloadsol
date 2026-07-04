@@ -116,6 +116,29 @@ async function fetchMcapPatterns24h(): Promise<McapPatterns24hData> {
   };
 }
 
+type PatternMlStats = {
+  winnerCount: number;
+  loserCount: number;
+  exportableRows: number;
+  trainReady: boolean;
+  patternModelReady: boolean;
+  patternModelVersion: string | null;
+};
+
+async function fetchPatternMlStats(): Promise<PatternMlStats> {
+  const res = await fetch("/api/mcap-patterns/stats");
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error || "Failed to load pattern ML stats");
+  return {
+    winnerCount: json.winnerCount ?? 0,
+    loserCount: json.loserCount ?? 0,
+    exportableRows: json.exportableRows ?? 0,
+    trainReady: json.trainReady === true,
+    patternModelReady: json.patternModelReady === true,
+    patternModelVersion: json.patternModelVersion ?? null,
+  };
+}
+
 async function fetchSocialAdminData(): Promise<SocialAdminData> {
   const [walletsRes, eventsRes] = await Promise.all([
     fetch("/api/social/wallets?rollups_limit=40"),
@@ -216,6 +239,13 @@ export default function SocialAdminHub() {
   const patternsQuery = useQuery({
     queryKey: ["mcap-patterns-24h"],
     queryFn: fetchMcapPatterns24h,
+    enabled: activeTab === "patterns",
+    refetchInterval: activeTab === "patterns" ? 60_000 : false,
+  });
+
+  const patternMlStatsQuery = useQuery({
+    queryKey: ["mcap-patterns-ml-stats"],
+    queryFn: fetchPatternMlStats,
     enabled: activeTab === "patterns",
     refetchInterval: activeTab === "patterns" ? 60_000 : false,
   });
@@ -639,6 +669,32 @@ export default function SocialAdminHub() {
                   <p className="mb-3 text-xs text-gray-500">
                     Built {patterns.builtAt}
                   </p>
+                ) : null}
+                {patternMlStatsQuery.data ? (
+                  <div className="mb-4 rounded border border-gray-800 bg-gray-900/40 p-3 text-xs text-gray-400">
+                    <div className="font-medium text-gray-300 mb-1">
+                      Pattern ML training
+                    </div>
+                    <div>
+                      Exportable rows: {patternMlStatsQuery.data.exportableRows}{" "}
+                      (win {patternMlStatsQuery.data.winnerCount} / lose{" "}
+                      {patternMlStatsQuery.data.loserCount})
+                    </div>
+                    <div>
+                      Train ready (30+ each cohort):{" "}
+                      {patternMlStatsQuery.data.trainReady ? "yes" : "no"}
+                    </div>
+                    <div>
+                      Model:{" "}
+                      {patternMlStatsQuery.data.patternModelReady
+                        ? `ready (${patternMlStatsQuery.data.patternModelVersion ?? "pattern-gate"})`
+                        : "not deployed or not ready — run npm run ml:export-patterns && ml:train-pattern"}
+                    </div>
+                    <div className="mt-1 text-gray-500">
+                      Shadow scores appear on sim opens as Pattern ML in Strategy
+                      Admin outcomes.
+                    </div>
+                  </div>
                 ) : null}
                 <div className="mb-4 flex flex-wrap gap-2 rounded-lg border border-gray-700 bg-gray-900/40 px-4 py-3">
                   <button

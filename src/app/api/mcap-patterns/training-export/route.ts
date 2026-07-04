@@ -1,0 +1,44 @@
+import { NextRequest, NextResponse } from 'next/server'
+import {
+  listPatternTrainingRows,
+  patternTrainingCsvHeader,
+  patternTrainingRowToCsv,
+} from '@/strategies/social/pattern-training-export'
+import { isSocialRollupAuthorized } from '@/utils/social/config'
+
+export const dynamic = 'force-dynamic'
+
+export async function GET(request: NextRequest) {
+  const key =
+    request.nextUrl.searchParams.get('key') ??
+    request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')
+
+  if (!isSocialRollupAuthorized(key)) {
+    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const format = request.nextUrl.searchParams.get('format') ?? 'json'
+  const { rows, skipped, error } = await listPatternTrainingRows()
+
+  if (error && rows.length === 0) {
+    return NextResponse.json({ success: false, error, rows: [], skipped }, { status: 503 })
+  }
+
+  if (format === 'csv') {
+    const lines = [patternTrainingCsvHeader(), ...rows.map(patternTrainingRowToCsv)]
+    return new NextResponse(lines.join('\n'), {
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="pattern-training.csv"',
+      },
+    })
+  }
+
+  return NextResponse.json({
+    success: true,
+    rowCount: rows.length,
+    skipped,
+    rows,
+    error,
+  })
+}

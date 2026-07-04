@@ -121,3 +121,17 @@ export function readMonitorSnapshotCount(
   const raw = features?.monitor_snapshots
   return Array.isArray(raw) ? raw.length : 0
 }
+
+export function readMlPatternPWinner(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_pattern_p_winner')
+}
+
+export function readMlPatternPredicted(
+  features: Record<string, unknown> | null | undefined,
+): 'winner' | 'loser' | null {
+  const v = features?.ml_pattern_predicted
+  if (v === 'winner' || v === 'loser') return v
+  return null
+}
