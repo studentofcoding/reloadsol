@@ -31,9 +31,9 @@ type McapTrackingRow = {
   mcap_growth_percent: number
   first_seen_at: string
   last_updated_at: string
-  when_reach_80mc?: string | null
-  when_reach_120mc?: string | null
-  when_reach_200mc?: string | null
+  when_reach_80pct?: string | null
+  when_reach_120pct?: string | null
+  when_reach_200pct?: string | null
   is_tracking_stuck?: boolean
 }
 
@@ -50,9 +50,9 @@ function rowToScoredSignal(
     mcap_growth_percent: row.mcap_growth_percent,
     first_seen_at: row.first_seen_at,
     last_updated_at: row.last_updated_at,
-    when_reach_80mc: row.when_reach_80mc,
-    when_reach_120mc: row.when_reach_120mc,
-    when_reach_200mc: row.when_reach_200mc,
+    when_reach_80pct: row.when_reach_80pct,
+    when_reach_120pct: row.when_reach_120pct,
+    when_reach_200pct: row.when_reach_200pct,
     is_tracking_stuck: row.is_tracking_stuck,
     in_tracking_range: isInTrackingRange(row.current_mcap),
   })
@@ -72,9 +72,9 @@ export function rescoreScoredSignal(
     mcap_growth_percent: signal.mcap_growth_percent,
     first_seen_at: signal.first_seen_at,
     last_updated_at: signal.last_updated_at,
-    when_reach_80mc: signal.when_reach_80mc,
-    when_reach_120mc: signal.when_reach_120mc,
-    when_reach_200mc: signal.when_reach_200mc,
+    when_reach_80pct: signal.when_reach_80pct,
+    when_reach_120pct: signal.when_reach_120pct,
+    when_reach_200pct: signal.when_reach_200pct,
     is_tracking_stuck: signal.is_tracking_stuck,
     in_tracking_range: isInTrackingRange(signal.current_mcap),
   })
@@ -200,8 +200,8 @@ export async function fetchAndScoreSignals(
 
   const { rows } = await query<McapTrackingRow>(
     `SELECT token_address, token_symbol, first_mcap, current_mcap, mcap_growth_percent,
-            first_seen_at, last_updated_at, when_reach_80mc, when_reach_120mc,
-            when_reach_200mc, is_tracking_stuck
+            first_seen_at, last_updated_at, when_reach_80pct, when_reach_120pct,
+            when_reach_200pct, is_tracking_stuck
      FROM token_mcap_tracking
      WHERE ${conditions.join(' AND ')}
      ORDER BY mcap_growth_percent DESC

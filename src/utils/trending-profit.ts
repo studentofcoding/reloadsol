@@ -4,17 +4,14 @@ export type SummaryToken = {
   status?: string | null
 }
 
-/** Per-token gain % for 24h summary cohort (matches algo-tester leaderboard display). */
+/** Realized/mark-to-market PnL: last price vs tracking start. Never peak. */
 export function getSummaryTokenGainPct(token: SummaryToken): number {
-  const currentGain = Number(
-    token.current_gain_percentage ?? token.peak_gain_percentage ?? 0,
-  )
-  const isLoser =
-    currentGain < -50 || token.status === 'lost'
-  if (isLoser) {
-    return currentGain
-  }
-  return Number(token.peak_gain_percentage ?? currentGain)
+  return Number(token.current_gain_percentage ?? 0)
+}
+
+/** Peak gain during tracking (informational only, not profit). */
+export function getPeakGainPct(token: SummaryToken): number {
+  return Number(token.peak_gain_percentage ?? token.current_gain_percentage ?? 0)
 }
 
 export function sumSummaryTokenProfitPct(tokens: SummaryToken[]): {

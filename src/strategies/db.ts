@@ -1,7 +1,7 @@
 import { query, queryOne } from '@/utils/db'
 import { isMissingSchemaError } from '@/utils/db-health'
-import { getTrackingHealthStats } from '@/utils/mcap-tracker'
-import { countOpenMcapSimPositions } from '@/utils/mcap-sim-track'
+import { getTrackingHealthStats, computeMcapSimPnlPct } from '@/utils/mcap-tracker'
+import { countOpenMcapSimPositions, getOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol, readTrainingClass } from './outcome-features'
 import { dedupeStrategyOutcomeRows, mcapSimClosedOutcomeKey } from './outcome-dedupe'
 import { applyAutoOutcomeLabels } from './outcome-labeling'
@@ -38,6 +38,7 @@ import type {
   OutcomeChartPoint,
   MlLabelStats,
   McapTrackerMilestoneBucket,
+  McapOpenSimReportRow,
   McapTrackerReportStats,
 } from './types'
 
@@ -1017,6 +1018,70 @@ function bucketMcapOutcomeStats(
   }
 }
 
+export async function buildOpenMcapSimReportPositions(): Promise<McapOpenSimReportRow[]> {
+  const mcapSimWallet =
+    process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim'
+  const [defRows, records] = await Promise.all([
+    loadStrategyDefinitionRows('mcap_tracker'),
+    fetchTradingRecordsForWallet(mcapSimWallet),
+  ])
+
+  const positions: McapOpenSimReportRow[] = []
+  const mints = new Set<string>()
+
+  for (const def of defRows) {
+    if (def.domain !== 'mcap_tracker') continue
+    for (const pos of getOpenMcapSimPositions(records, def.id)) {
+      mints.add(pos.mintAddress)
+      positions.push({
+        strategy_id: def.id,
+        token_address: pos.mintAddress,
+        token_symbol: pos.symbol,
+        entry_mcap: pos.entryMcap,
+        entry_at: pos.entryAt,
+        current_mcap: null,
+        unrealized_pnl_pct: null,
+      })
+    }
+  }
+
+  if (positions.length === 0) return positions
+
+  const currentByMint = new Map<string, number>()
+  try {
+    const { rows: trackingRows } = await query<{
+      token_address: string
+      current_mcap: number
+    }>(
+      `SELECT token_address, current_mcap FROM token_mcap_tracking
+       WHERE token_address = ANY($1::text[])`,
+      [Array.from(mints)],
+    )
+    for (const row of trackingRows) {
+      currentByMint.set(row.token_address, Number(row.current_mcap))
+    }
+  } catch (error) {
+    if (!isMissingSchemaError(error)) {
+      console.warn(
+        '[strategies/db] open mcap sim current_mcap lookup failed:',
+        errorMessage(error),
+      )
+    }
+  }
+
+  for (const pos of positions) {
+    const current = currentByMint.get(pos.token_address)
+    if (current != null && Number.isFinite(current)) {
+      pos.current_mcap = current
+      pos.unrealized_pnl_pct = computeMcapSimPnlPct(pos.entry_mcap, current)
+    }
+  }
+
+  return positions.sort((a, b) =>
+    (b.entry_at ?? '').localeCompare(a.entry_at ?? ''),
+  )
+}
+
 export async function buildMcapTrackerReportStats(
   rows: StrategyOutcomeRow[],
   breakdown: StrategyReportBreakdown[],
@@ -1062,6 +1127,7 @@ export async function buildMcapTrackerReportStats(
     milestone_buckets,
     timeline_inconsistent_count: health.timelineInconsistentCount,
     total_tracked_tokens: health.totalTokens,
+    open_sim_positions: await buildOpenMcapSimReportPositions(),
   }
 }
 
@@ -1085,6 +1151,7 @@ export async function aggregateStrategyReports(params: {
     milestone_buckets: [],
     timeline_inconsistent_count: 0,
     total_tracked_tokens: 0,
+    open_sim_positions: [],
   }
 
   const { sql: whereSql, values } = buildOutcomeWhereClause(params)

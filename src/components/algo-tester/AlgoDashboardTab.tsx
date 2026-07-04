@@ -1138,7 +1138,7 @@ export default function AlgoDashboardTab() {
           {/* Best Performer */}
           <div className="bg-gray-800 rounded-xl p-3 md:p-6">
             <h3 className="text-sm md:text-lg font-semibold mb-2">
-              Top Performer
+              Top Performer (open)
             </h3>
             {stats.current_tracking.statistics.top_performer ? (
               <>
@@ -1146,6 +1146,13 @@ export default function AlgoDashboardTab() {
                   {stats.current_tracking.statistics.top_performer.token_symbol}
                 </p>
                 <p className="text-xs md:text-sm">
+                  {formatPercentage(
+                    stats.current_tracking.statistics.top_performer
+                      .current_gain_percentage,
+                  )}
+                </p>
+                <p className="text-xs text-gray-500">
+                  Peak{" "}
                   {formatPercentage(
                     stats.current_tracking.statistics.top_performer
                       .peak_gain_percentage,
@@ -1332,10 +1339,11 @@ export default function AlgoDashboardTab() {
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                     {historyData.tokens.map((token: any) => {
-                      const isWinner = token.peak_gain_percentage > 0;
-                      const currentGain =
-                        token.current_gain_percentage ??
-                        token.peak_gain_percentage;
+                      const currentGain = Number(
+                        token.current_gain_percentage ?? 0,
+                      );
+                      const isWinner =
+                        currentGain > 0 || token.status === "won";
                       const isLoser =
                         currentGain < -50 ||
                         (token.status && token.status === "lost");
@@ -1639,18 +1647,17 @@ export default function AlgoDashboardTab() {
                       ) : (
                         <div className="space-y-2">
                           {(activeSummary.top_winners || [])
-                            .filter((w: TopWinner) => w.peak_gain_percentage > 0)
+                            .filter(
+                              (w: TopWinner) => getSummaryTokenGainPct(w) > 0,
+                            )
                             .slice(0, 5)
                             .map((token: TopWinner, index: number, arr: TopWinner[]) => {
-                          const isWinner = token.peak_gain_percentage > 0;
-                          const currentGain =
-                            token.current_gain_percentage ??
-                            token.peak_gain_percentage;
+                          const displayGain = getSummaryTokenGainPct(token);
+                          const isWinner = displayGain > 0;
                           const isLoser =
-                            currentGain < -50 ||
+                            displayGain < -50 ||
                             (token.status && token.status === "lost");
                           const isManualSell = token.status === "manual_sell";
-                          const displayGain = getSummaryTokenGainPct(token);
 
                           return (
                             <div
@@ -2339,15 +2346,18 @@ export default function AlgoDashboardTab() {
                           {formatPrice(token.last_price_usd)}
                         </div>
                         <div className="text-xs text-green-400">
-                          +{token.peak_gain_percentage.toFixed(2)}%
+                          {formatPercentage(
+                            token.current_gain_percentage ?? 0,
+                            true,
+                          )}
                         </div>
                       </div>
                     </div>
                     <div className="flex justify-between text-xs mt-2">
                       <div>
-                        <span className="text-gray-400">Final: </span>
+                        <span className="text-gray-400">Peak: </span>
                         <span className="text-green-400">
-                          +{token.current_gain_percentage.toFixed(2)}%
+                          +{token.peak_gain_percentage.toFixed(2)}%
                         </span>
                       </div>
                       <div>

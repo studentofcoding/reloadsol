@@ -246,9 +246,9 @@ CREATE TABLE IF NOT EXISTS token_mcap_tracking (
   first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   mcap_growth_percent NUMERIC,
-  when_reach_80mc TIMESTAMPTZ,
-  when_reach_120mc TIMESTAMPTZ,
-  when_reach_200mc TIMESTAMPTZ,
+  when_reach_80pct TIMESTAMPTZ,
+  when_reach_120pct TIMESTAMPTZ,
+  when_reach_200pct TIMESTAMPTZ,
   is_tracking_stuck BOOLEAN NOT NULL DEFAULT false,
   label TEXT CHECK (label IN ('valid', 'traded_live', 'potential', 'rugged', 'watching'))
 );

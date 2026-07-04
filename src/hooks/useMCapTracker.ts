@@ -21,9 +21,9 @@ export interface McapTrackingData {
   first_seen_at: string;
   last_updated_at: string;
   mcap_growth_percent: number;
-  when_reach_80mc: string | null;
-  when_reach_120mc: string | null;
-  when_reach_200mc: string | null;
+  when_reach_80pct: string | null;
+  when_reach_120pct: string | null;
+  when_reach_200pct: string | null;
   solPerToken: {
     first: number;
     current: number;

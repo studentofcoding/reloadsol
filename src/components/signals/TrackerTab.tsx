@@ -487,9 +487,9 @@ export default function TrackerTab() {
       token.solPerToken.growth,
       dateFmt(token.first_seen_at),
       dateFmt(token.last_updated_at),
-      dateFmt(token.when_reach_80mc),
-      dateFmt(token.when_reach_120mc),
-      dateFmt(token.when_reach_200mc),
+      dateFmt(token.when_reach_80pct),
+      dateFmt(token.when_reach_120pct),
+      dateFmt(token.when_reach_200pct),
     ]);
 
     const csvContent = [headers, ...csvData]
@@ -2257,29 +2257,29 @@ export default function TrackerTab() {
                   </div>
                 )}
 
-                {token.when_reach_80mc && (
+                {token.when_reach_80pct && (
                   <div>
                     <span className="text-gray-400">Reached +80%:</span>
                     <span className="ml-2 text-green-400" suppressHydrationWarning>
-                      {dateFmt(token.when_reach_80mc)}
+                      {dateFmt(token.when_reach_80pct)}
                     </span>
                   </div>
                 )}
 
-                {token.when_reach_120mc && (
+                {token.when_reach_120pct && (
                   <div>
                     <span className="text-gray-400">Reached +120%:</span>
                     <span className="ml-2 text-green-400" suppressHydrationWarning>
-                      {dateFmt(token.when_reach_120mc)}
+                      {dateFmt(token.when_reach_120pct)}
                     </span>
                   </div>
                 )}
 
-                {token.when_reach_200mc && (
+                {token.when_reach_200pct && (
                   <div>
                     <span className="text-gray-400">Reached +200%:</span>
                     <span className="ml-2 text-green-400" suppressHydrationWarning>
-                      {dateFmt(token.when_reach_200mc)}
+                      {dateFmt(token.when_reach_200pct)}
                     </span>
                   </div>
                 )}

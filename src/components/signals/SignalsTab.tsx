@@ -863,13 +863,13 @@ export default function SignalsTab() {
                           {dateFmt(s.last_updated_at)}
                         </td>
                         <td className="border-b p-2">
-                          {dateFmt(s.when_reach_80mc)}
+                          {dateFmt(s.when_reach_80pct)}
                         </td>
                         <td className="border-b p-2">
-                          {dateFmt(s.when_reach_120mc)}
+                          {dateFmt(s.when_reach_120pct)}
                         </td>
                         <td className="border-b p-2">
-                          {dateFmt(s.when_reach_200mc)}
+                          {dateFmt(s.when_reach_200pct)}
                         </td>
                         <td className="border-b p-2">
                           {s.is_tracking_stuck ? "Yes" : "No"}

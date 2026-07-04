@@ -11,9 +11,9 @@ export type SignalScoringItem = {
   mcap_growth_percent: number
   first_seen_at: string
   last_updated_at: string
-  when_reach_80mc?: string | null
-  when_reach_120mc?: string | null
-  when_reach_200mc?: string | null
+  when_reach_80pct?: string | null
+  when_reach_120pct?: string | null
+  when_reach_200pct?: string | null
   is_tracking_stuck?: boolean
   in_tracking_range: boolean
   trend_age_minutes: number
@@ -78,7 +78,7 @@ export function computeScoreAndDecision(
   const trendAge = minutesBetween(item.first_seen_at, nowIso) || 0
   const timeTo80 =
     item.time_to_80_minutes ??
-    computeTimeTo80Minutes(item.first_seen_at, item.when_reach_80mc)
+    computeTimeTo80Minutes(item.first_seen_at, item.when_reach_80pct)
   const w = strategyConfig.scoring
   const template = strategyConfig.template
   const enterFloor = strategyConfig.enterScoreFloor
@@ -92,13 +92,13 @@ export function computeScoreAndDecision(
     Math.max(0, (recencyMinutes - trendAge) / recencyMinutes) * w.recencyBoostMax
   score += recencyBoost
 
-  if (item.when_reach_80mc && milestoneBonusEligible(growth, MILESTONE_GROWTH_THRESHOLDS.milestone80)) {
+  if (item.when_reach_80pct && milestoneBonusEligible(growth, MILESTONE_GROWTH_THRESHOLDS.milestone80)) {
     score += w.milestone80
   }
-  if (item.when_reach_120mc && milestoneBonusEligible(growth, MILESTONE_GROWTH_THRESHOLDS.milestone120)) {
+  if (item.when_reach_120pct && milestoneBonusEligible(growth, MILESTONE_GROWTH_THRESHOLDS.milestone120)) {
     score += w.milestone120
   }
-  if (item.when_reach_200mc && milestoneBonusEligible(growth, MILESTONE_GROWTH_THRESHOLDS.milestone200)) {
+  if (item.when_reach_200pct && milestoneBonusEligible(growth, MILESTONE_GROWTH_THRESHOLDS.milestone200)) {
     score += w.milestone200
   }
 
@@ -135,7 +135,7 @@ export function computeScoreAndDecision(
   let decision: SignalScoreResult['decision'] = 'skip'
   const rationale: string[] = []
 
-  const reached80Now = !!item.when_reach_80mc && milestoneBonusEligible(growth, MILESTONE_GROWTH_THRESHOLDS.milestone80)
+  const reached80Now = !!item.when_reach_80pct && milestoneBonusEligible(growth, MILESTONE_GROWTH_THRESHOLDS.milestone80)
 
   if (growth <= STOP_LOSS_THRESHOLD || isStuck) {
     decision = 'exit'
@@ -176,9 +176,9 @@ export function buildSignalScoringItem(input: {
   mcap_growth_percent: number
   first_seen_at: string
   last_updated_at: string
-  when_reach_80mc?: string | null
-  when_reach_120mc?: string | null
-  when_reach_200mc?: string | null
+  when_reach_80pct?: string | null
+  when_reach_120pct?: string | null
+  when_reach_200pct?: string | null
   is_tracking_stuck?: boolean
   in_tracking_range: boolean
 }): SignalScoringItem {
@@ -186,7 +186,7 @@ export function buildSignalScoringItem(input: {
   return {
     ...input,
     trend_age_minutes: minutesBetween(input.first_seen_at, nowIso) || 0,
-    time_to_80_minutes: computeTimeTo80Minutes(input.first_seen_at, input.when_reach_80mc),
+    time_to_80_minutes: computeTimeTo80Minutes(input.first_seen_at, input.when_reach_80pct),
   }
 }
 

@@ -134,11 +134,22 @@ type McapTrackerMilestoneBucket = {
   avg_pnl_pct: number;
 };
 
+type McapOpenSimReportRow = {
+  strategy_id: string;
+  token_address: string;
+  token_symbol: string;
+  entry_mcap: number;
+  entry_at: string | null;
+  current_mcap: number | null;
+  unrealized_pnl_pct: number | null;
+};
+
 type McapTrackerReportStats = {
   strategies: ReportBreakdown[];
   milestone_buckets: McapTrackerMilestoneBucket[];
   timeline_inconsistent_count: number;
   total_tracked_tokens: number;
+  open_sim_positions?: McapOpenSimReportRow[];
 };
 
 type StrategyAdminQueryData = {
@@ -1143,7 +1154,7 @@ export default function StrategyAdminHub() {
                     <th className="p-2">Active</th>
                     <th className="p-2">Mode</th>
                     <th className="p-2">SIM trades</th>
-                    <th className="p-2">Open (tracker)</th>
+                    <th className="p-2">Open positions</th>
                     <th className="p-2">Last exit</th>
                     <th className="p-2">Avg PnL (SIM)</th>
                     <th className="p-2">ML unlabeled</th>
@@ -1170,7 +1181,7 @@ export default function StrategyAdminHub() {
                       <td className="p-2 text-xs">{c.execution_mode}</td>
                       <td className="p-2">{c.sim_trade_count}</td>
                       <td className="p-2">
-                        {c.domain === "trending_bot"
+                        {c.domain === "trending_bot" || c.domain === "mcap_tracker"
                           ? c.open_tracker_count ?? 0
                           : "—"}
                       </td>
@@ -1335,6 +1346,68 @@ export default function StrategyAdminHub() {
                     ))}
                   </tbody>
                 </table>
+                {(reports.mcap_tracker_stats.open_sim_positions?.length ?? 0) >
+                0 ? (
+                  <>
+                    <h4 className="text-sm font-semibold text-white mb-2">
+                      Open sim positions (not yet in outcomes)
+                    </h4>
+                    <table className="w-full text-sm mb-6">
+                      <thead>
+                        <tr className="text-gray-400 border-b border-gray-700">
+                          <th className="p-2 text-left">Strategy</th>
+                          <th className="p-2 text-left">Token</th>
+                          <th className="p-2">Entry mcap</th>
+                          <th className="p-2">Current mcap</th>
+                          <th className="p-2">Unrealized PnL</th>
+                          <th className="p-2">Entry at</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reports.mcap_tracker_stats.open_sim_positions!.map(
+                          (p: McapOpenSimReportRow) => (
+                            <tr
+                              key={`${p.strategy_id}-${p.token_address}`}
+                              className="border-b border-gray-800 text-gray-300"
+                            >
+                              <td className="p-2">{p.strategy_id}</td>
+                              <td className="p-2">
+                                <Link
+                                  href={`/dev/signals?tab=tracker&search=${encodeURIComponent(p.token_address)}`}
+                                  className="text-blue-400 underline"
+                                >
+                                  {p.token_symbol || p.token_address.slice(0, 8)}
+                                </Link>
+                              </td>
+                              <td className="p-2 text-center">
+                                {p.entry_mcap.toLocaleString()}
+                              </td>
+                              <td className="p-2 text-center">
+                                {p.current_mcap != null
+                                  ? p.current_mcap.toLocaleString()
+                                  : "—"}
+                              </td>
+                              <td className="p-2 text-center">
+                                {p.unrealized_pnl_pct != null
+                                  ? `${p.unrealized_pnl_pct.toFixed(2)}%`
+                                  : "—"}
+                              </td>
+                              <td className="p-2">
+                                {formatAppDateTime(p.entry_at) || "—"}
+                              </td>
+                            </tr>
+                          ),
+                        )}
+                      </tbody>
+                    </table>
+                  </>
+                ) : (
+                  <p className="text-gray-500 text-xs mb-6">
+                    No open mcap sim positions — tracked tokens appear here after
+                    the sim worker opens a paper trade, before close writes an
+                    outcome.
+                  </p>
+                )}
               </>
             ) : (
               <p className="text-gray-500 text-sm mb-6">No mcap tracker stats yet.</p>
@@ -1342,9 +1415,10 @@ export default function StrategyAdminHub() {
 
             <h3 className="text-lg font-semibold text-white mb-2">A/B comparison</h3>
             <p className="text-gray-500 text-xs mb-2">
-              Signals and DLMM honor per-strategy execution_mode. Trending bot uses global
-              keypair for live; ab_parallel does not dual-buy on trending. Only signals/DLMM
-              strategies appear below.
+              Signals and DLMM honor per-strategy execution_mode. MCap tracker sim
+              results are in the section above (not A/B). Trending bot uses global
+              keypair for live; ab_parallel does not dual-buy on trending. Only
+              signals/DLMM strategies appear below.
             </p>
             {reports?.ab_pairs?.length ? (
               <table className="w-full text-sm mb-6">

@@ -79,4 +79,4 @@ The metrics rely on the following fields from `token_mcap_tracking`:
 
 - **Composite Scores:** Calculate normalized `RewardScore` and `RiskScore` (0-100) based on the raw metrics.
 - **Bucket Boundary Fix:** Close the gap at `first_mcap = 50,000`.
-- **Time-Based Metrics:** Fully integrate `avgTimeTo80`, `avgTimeTo120` using `when_reach_XXmc` timestamps (currently partially implemented in PnL windows).
+- **Time-Based Metrics:** Fully integrate `avgTimeTo80`, `avgTimeTo120` using `when_reach_XXpct` timestamps (currently partially implemented in PnL windows).

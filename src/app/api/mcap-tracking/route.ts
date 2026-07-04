@@ -221,13 +221,13 @@ export async function GET(request: NextRequest) {
         first_mcap: number
         first_seen_at: string
         last_updated_at: string
-        when_reach_80mc: string | null
-        when_reach_120mc: string | null
-        when_reach_200mc: string | null
+        when_reach_80pct: string | null
+        when_reach_120pct: string | null
+        when_reach_200pct: string | null
         is_tracking_stuck: boolean
       }>(
         `SELECT mcap_growth_percent, current_mcap, first_mcap, first_seen_at, last_updated_at,
-                when_reach_80mc, when_reach_120mc, when_reach_200mc, is_tracking_stuck
+                when_reach_80pct, when_reach_120pct, when_reach_200pct, is_tracking_stuck
          FROM token_mcap_tracking ${statsWhere}
          LIMIT 100000`,
         statsValues,

@@ -35,9 +35,9 @@ function scoringItem(overrides: Partial<ReturnType<typeof buildSignalScoringItem
     mcap_growth_percent: 100,
     first_seen_at: new Date(Date.now() - 30 * 60_000).toISOString(),
     last_updated_at: new Date().toISOString(),
-    when_reach_80mc: new Date(Date.now() - 20 * 60_000).toISOString(),
-    when_reach_120mc: null,
-    when_reach_200mc: null,
+    when_reach_80pct: new Date(Date.now() - 20 * 60_000).toISOString(),
+    when_reach_120pct: null,
+    when_reach_200pct: null,
     is_tracking_stuck: false,
     in_tracking_range: true,
     ...overrides,
@@ -89,7 +89,7 @@ describe('computeScoreAndDecision', () => {
   it('enter requires growth >= minGrowth and score >= enterFloor', () => {
     const item = scoringItem({
       mcap_growth_percent: -1.18,
-      when_reach_80mc: new Date().toISOString(),
+      when_reach_80pct: new Date().toISOString(),
     })
     const result = computeScoreAndDecision(item, baseConfig)
     expect(result.decision).not.toBe('enter')
@@ -100,10 +100,10 @@ describe('computeScoreAndDecision', () => {
     const withMilestones = scoringItem({
       mcap_growth_percent: 10,
       first_seen_at: ts,
-      when_reach_80mc: ts,
-      when_reach_120mc: ts,
+      when_reach_80pct: ts,
+      when_reach_120pct: ts,
     })
-    const withoutMilestones = scoringItem({ mcap_growth_percent: 10, when_reach_80mc: null })
+    const withoutMilestones = scoringItem({ mcap_growth_percent: 10, when_reach_80pct: null })
 
     const scoredWith = computeScoreAndDecision(withMilestones, baseConfig)
     const scoredWithout = computeScoreAndDecision(withoutMilestones, baseConfig)
@@ -114,11 +114,11 @@ describe('computeScoreAndDecision', () => {
 
   it('hold requires growth at or above holdGrowthFloor when minGrowth is 0', () => {
     const weak = computeScoreAndDecision(
-      scoringItem({ mcap_growth_percent: 2, when_reach_80mc: null }),
+      scoringItem({ mcap_growth_percent: 2, when_reach_80pct: null }),
       baseConfig,
     )
     const moderate = computeScoreAndDecision(
-      scoringItem({ mcap_growth_percent: 15, when_reach_80mc: null }),
+      scoringItem({ mcap_growth_percent: 15, when_reach_80pct: null }),
       baseConfig,
     )
 
@@ -140,7 +140,7 @@ describe('applyScoreToItem (rug-validation rescore path)', () => {
         ...scoringItem(),
         mcap_growth_percent: -1.18,
         current_mcap: 98_820,
-        when_reach_80mc: stale.when_reach_80mc,
+        when_reach_80pct: stale.when_reach_80pct,
         in_tracking_range: true,
       }),
       baseConfig,

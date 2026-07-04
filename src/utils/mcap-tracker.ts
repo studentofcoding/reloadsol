@@ -23,9 +23,9 @@ export interface McapSnapshot {
   first_seen_at: string
   last_updated_at: string
   mcap_growth_percent: number
-  when_reach_80mc?: string | null
-  when_reach_120mc?: string | null
-  when_reach_200mc?: string | null
+  when_reach_80pct?: string | null
+  when_reach_120pct?: string | null
+  when_reach_200pct?: string | null
   is_tracking_stuck?: boolean
   label?: TokenLabel | null
   stop_reason?: string | null
@@ -90,13 +90,13 @@ function normalizeMarketCap(mcap: number): number {
 }
 
 // Helper function to get threshold column name
-type ThresholdColumnName = 'when_reach_80mc' | 'when_reach_120mc' | 'when_reach_200mc'
+type ThresholdColumnName = 'when_reach_80pct' | 'when_reach_120pct' | 'when_reach_200pct'
 
 function getThresholdColumnName(threshold: number): ThresholdColumnName {
   switch (threshold) {
-    case 80: return 'when_reach_80mc'
-    case 120: return 'when_reach_120mc'
-    case 200: return 'when_reach_200mc'
+    case 80: return 'when_reach_80pct'
+    case 120: return 'when_reach_120pct'
+    case 200: return 'when_reach_200pct'
     default: throw new Error(`Unknown threshold: ${threshold}`)
   }
 }
@@ -219,9 +219,9 @@ export function resetTrackingSession(
   record.first_seen_at = nowIso
   record.last_updated_at = nowIso
   record.mcap_growth_percent = 0
-  record.when_reach_80mc = null
-  record.when_reach_120mc = null
-  record.when_reach_200mc = null
+  record.when_reach_80pct = null
+  record.when_reach_120pct = null
+  record.when_reach_200pct = null
   record.is_tracking_stuck = false
   log.info('price_tracking', 'Reset tracking session', {
     tokenAddress: record.token_address,
@@ -246,16 +246,16 @@ export function fixTrackingTimeline(record: McapSnapshot, persist = false): Mcap
     void query(
       `UPDATE token_mcap_tracking SET
          first_seen_at = $2,
-         when_reach_80mc = $3,
-         when_reach_120mc = $4,
-         when_reach_200mc = $5
+         when_reach_80pct = $3,
+         when_reach_120pct = $4,
+         when_reach_200pct = $5
        WHERE token_address = $1`,
       [
         record.token_address,
         record.first_seen_at,
-        record.when_reach_80mc,
-        record.when_reach_120mc,
-        record.when_reach_200mc,
+        record.when_reach_80pct,
+        record.when_reach_120pct,
+        record.when_reach_200pct,
       ],
     ).catch((error) => {
       log.warn('price_tracking', 'Failed to persist timeline repair', {
@@ -775,9 +775,9 @@ export async function trackTokenMcap(
         first_seen_at: currentTime,
         last_updated_at: currentTime,
         mcap_growth_percent: 0,
-        when_reach_80mc: null,
-        when_reach_120mc: null,
-        when_reach_200mc: null,
+        when_reach_80pct: null,
+        when_reach_120pct: null,
+        when_reach_200pct: null,
         is_tracking_stuck: false,
       }
 
@@ -969,7 +969,7 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
       `INSERT INTO token_mcap_tracking (
          token_address, token_symbol, first_mcap, current_mcap,
          first_seen_at, last_updated_at, mcap_growth_percent,
-         when_reach_80mc, when_reach_120mc, when_reach_200mc, is_tracking_stuck
+         when_reach_80pct, when_reach_120pct, when_reach_200pct, is_tracking_stuck
        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         record.token_address,
@@ -979,9 +979,9 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
         record.first_seen_at,
         record.last_updated_at,
         record.mcap_growth_percent,
-        record.when_reach_80mc,
-        record.when_reach_120mc,
-        record.when_reach_200mc,
+        record.when_reach_80pct,
+        record.when_reach_120pct,
+        record.when_reach_200pct,
         record.is_tracking_stuck === true,
       ],
     )
@@ -1036,19 +1036,19 @@ async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boo
     if (repairedTimeline) {
       sets.push(`first_seen_at = $${paramIdx++}`)
       params.push(record.first_seen_at)
-      sets.push(`when_reach_80mc = $${paramIdx++}`)
-      params.push(record.when_reach_80mc)
-      sets.push(`when_reach_120mc = $${paramIdx++}`)
-      params.push(record.when_reach_120mc)
-      sets.push(`when_reach_200mc = $${paramIdx++}`)
-      params.push(record.when_reach_200mc)
+      sets.push(`when_reach_80pct = $${paramIdx++}`)
+      params.push(record.when_reach_80pct)
+      sets.push(`when_reach_120pct = $${paramIdx++}`)
+      params.push(record.when_reach_120pct)
+      sets.push(`when_reach_200pct = $${paramIdx++}`)
+      params.push(record.when_reach_200pct)
     } else if (includeThresholds) {
-      sets.push(`when_reach_80mc = $${paramIdx++}`)
-      params.push(record.when_reach_80mc)
-      sets.push(`when_reach_120mc = $${paramIdx++}`)
-      params.push(record.when_reach_120mc)
-      sets.push(`when_reach_200mc = $${paramIdx++}`)
-      params.push(record.when_reach_200mc)
+      sets.push(`when_reach_80pct = $${paramIdx++}`)
+      params.push(record.when_reach_80pct)
+      sets.push(`when_reach_120pct = $${paramIdx++}`)
+      params.push(record.when_reach_120pct)
+      sets.push(`when_reach_200pct = $${paramIdx++}`)
+      params.push(record.when_reach_200pct)
     }
 
     await query(
@@ -1218,23 +1218,23 @@ export function buildMcapOutcomeFeatures(params: {
 }): Record<string, unknown> {
   const { snapshot, entryTemplate, entryMcap, exitMcap } = params
   normalizeTrackingTimeline(snapshot)
-  const reached80 = !!snapshot.when_reach_80mc
-  const reached120 = !!snapshot.when_reach_120mc
-  const reached200 = !!snapshot.when_reach_200mc
+  const reached80 = !!snapshot.when_reach_80pct
+  const reached120 = !!snapshot.when_reach_120pct
+  const reached200 = !!snapshot.when_reach_200pct
 
   return {
     token_symbol: snapshot.token_symbol,
     entry_template: entryTemplate,
     first_seen_at: snapshot.first_seen_at,
-    when_reach_80mc: snapshot.when_reach_80mc ?? null,
-    when_reach_120mc: snapshot.when_reach_120mc ?? null,
-    when_reach_200mc: snapshot.when_reach_200mc ?? null,
+    when_reach_80pct: snapshot.when_reach_80pct ?? null,
+    when_reach_120pct: snapshot.when_reach_120pct ?? null,
+    when_reach_200pct: snapshot.when_reach_200pct ?? null,
     reached_80: reached80,
     reached_120: reached120,
     reached_200: reached200,
-    time_to_80_minutes: minutesBetween(snapshot.first_seen_at, snapshot.when_reach_80mc),
-    time_to_120_minutes: minutesBetween(snapshot.first_seen_at, snapshot.when_reach_120mc),
-    time_to_200_minutes: minutesBetween(snapshot.first_seen_at, snapshot.when_reach_200mc),
+    time_to_80_minutes: minutesBetween(snapshot.first_seen_at, snapshot.when_reach_80pct),
+    time_to_120_minutes: minutesBetween(snapshot.first_seen_at, snapshot.when_reach_120pct),
+    time_to_200_minutes: minutesBetween(snapshot.first_seen_at, snapshot.when_reach_200pct),
     entry_mcap: entryMcap,
     exit_mcap: exitMcap,
     mcap_growth_at_exit: computeMcapSimPnlPct(entryMcap, exitMcap),
@@ -1271,6 +1271,41 @@ export async function fetchRecentMcapTrackingRows(params: {
   })
 }
 
+/** Union recent + high-growth rows for mcap sim-track (deduped by token_address). */
+export async function fetchMcapSimCandidateRows(params: {
+  recencyMinutes?: number
+  recentLimit?: number
+  growthLimit?: number
+  minGrowthPercent?: number
+}): Promise<McapSnapshot[]> {
+  const recencyMinutes = params.recencyMinutes ?? 240
+  const recentLimit = params.recentLimit ?? 300
+  const growthLimit = params.growthLimit ?? 100
+  const minGrowth = params.minGrowthPercent ?? 80
+  const cutoff = new Date(Date.now() - recencyMinutes * 60 * 1000).toISOString()
+
+  const { rows } = await query<McapSnapshot>(
+    `(SELECT * FROM token_mcap_tracking
+      WHERE last_updated_at >= $1
+      ORDER BY last_updated_at DESC
+      LIMIT $2)
+     UNION ALL
+     (SELECT * FROM token_mcap_tracking
+      WHERE last_updated_at >= $1
+        AND mcap_growth_percent >= $3
+      ORDER BY mcap_growth_percent DESC
+      LIMIT $4)`,
+    [cutoff, recentLimit, minGrowth, growthLimit],
+  )
+
+  const byAddress = new Map<string, McapSnapshot>()
+  for (const row of rows ?? []) {
+    normalizeTrackingTimeline(row)
+    byAddress.set(row.token_address, row)
+  }
+  return Array.from(byAddress.values())
+}
+
 // Add this new function for monitoring tracking health
 export async function getTrackingHealthStats(): Promise<{
   totalTokens: number
@@ -1287,12 +1322,12 @@ export async function getTrackingHealthStats(): Promise<{
       first_seen_at: string
       last_updated_at: string
       is_tracking_stuck: boolean
-      when_reach_80mc: string | null
-      when_reach_120mc: string | null
-      when_reach_200mc: string | null
+      when_reach_80pct: string | null
+      when_reach_120pct: string | null
+      when_reach_200pct: string | null
     }>(
       `SELECT mcap_growth_percent, first_seen_at, last_updated_at, is_tracking_stuck,
-              when_reach_80mc, when_reach_120mc, when_reach_200mc
+              when_reach_80pct, when_reach_120pct, when_reach_200pct
        FROM token_mcap_tracking`,
     )
 

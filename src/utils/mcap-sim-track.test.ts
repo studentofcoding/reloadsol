@@ -32,9 +32,9 @@ function row(overrides: Partial<McapSnapshot> = {}): McapSnapshot {
     first_seen_at: oneHourAgo,
     last_updated_at: new Date().toISOString(),
     mcap_growth_percent: 292,
-    when_reach_80mc: null,
-    when_reach_120mc: null,
-    when_reach_200mc: null,
+    when_reach_80pct: null,
+    when_reach_120pct: null,
+    when_reach_200pct: null,
     is_tracking_stuck: false,
     ...overrides,
   }
@@ -45,7 +45,7 @@ describe('mcap sim entry helpers', () => {
   const firstSeen = MCAP_TRACKER_STRATEGIES.mcap_enter_first_seen
 
   it('allows milestone_80 entry when growth >= 80 without milestone column', () => {
-    const snapshot = row({ when_reach_80mc: null, mcap_growth_percent: 292 })
+    const snapshot = row({ when_reach_80pct: null, mcap_growth_percent: 292 })
     expect(shouldOpenMcapSim(at80, snapshot, new Set())).toBe(true)
     const entry = resolveMcapSimEntry(at80, snapshot)
     expect(entry?.entryMcap).toBe(Math.round(35_000 * 1.8))
@@ -53,7 +53,7 @@ describe('mcap sim entry helpers', () => {
   })
 
   it('skips milestone_80 when growth below threshold and no milestone', () => {
-    const snapshot = row({ when_reach_80mc: null, mcap_growth_percent: 50 })
+    const snapshot = row({ when_reach_80pct: null, mcap_growth_percent: 50 })
     expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBe('no_milestone')
   })
 
@@ -65,15 +65,25 @@ describe('mcap sim entry helpers', () => {
     )
   })
 
-  it('skips out_of_range tokens', () => {
-    const snapshot = row({ current_mcap: 5_000 })
+  it('skips out_of_range tokens by entry mcap', () => {
+    const snapshot = row({ first_mcap: 5_000, current_mcap: 5_000, mcap_growth_percent: 292 })
     expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBe('out_of_range')
+  })
+
+  it('allows open when current mcap exceeds max but entry mcap is in range', () => {
+    const snapshot = row({
+      first_mcap: 60_000,
+      current_mcap: 2_500_000,
+      mcap_growth_percent: 4000,
+      when_reach_80pct: new Date().toISOString(),
+    })
+    expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBeNull()
   })
 
   it('skips when a closed outcome already exists for token+entryAt', () => {
     const entryAt = new Date(Date.now() - 30 * 60_000).toISOString()
     const snapshot = row({
-      when_reach_80mc: entryAt,
+      when_reach_80pct: entryAt,
       mcap_growth_percent: 292,
     })
     const closedKeys = new Set([`mint1|${entryAt}`])

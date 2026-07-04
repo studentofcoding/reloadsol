@@ -205,11 +205,22 @@ export interface McapTrackerMilestoneBucket {
   avg_pnl_pct: number
 }
 
+export interface McapOpenSimReportRow {
+  strategy_id: string
+  token_address: string
+  token_symbol: string
+  entry_mcap: number
+  entry_at: string | null
+  current_mcap: number | null
+  unrealized_pnl_pct: number | null
+}
+
 export interface McapTrackerReportStats {
   strategies: StrategyReportBreakdown[]
   milestone_buckets: McapTrackerMilestoneBucket[]
   timeline_inconsistent_count: number
   total_tracked_tokens: number
+  open_sim_positions: McapOpenSimReportRow[]
 }
 
 export interface StrategyDefinitionRow {

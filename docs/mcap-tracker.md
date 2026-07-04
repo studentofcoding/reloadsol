@@ -78,7 +78,7 @@
 ## Data Model (Supabase — `token_mcap_tracking`)
 
 - Core fields: `token_address`, `token_symbol`, `first_mcap`, `current_mcap`, `mcap_growth_percent`, `first_seen_at`, `last_updated_at`.
-- Milestones: `when_reach_80mc`, `when_reach_120mc`, `when_reach_200mc`.
+- Milestones: `when_reach_80pct`, `when_reach_120pct`, `when_reach_200pct`.
 - Status: `is_tracking_stuck` and inferred finished state (via API based on `MAX_TRACKING_AGE_MS`).
 
 ## Notifications

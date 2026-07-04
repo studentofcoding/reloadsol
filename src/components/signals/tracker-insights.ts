@@ -69,7 +69,7 @@ function liquidityLabelFromVolToMcap(volToMcapPct: number | null): string {
 export function isTrackingTimelineInconsistentClient(token: McapTrackingData): boolean {
   const firstMs = new Date(token.first_seen_at).getTime()
   if (!Number.isFinite(firstMs)) return false
-  for (const col of ['when_reach_80mc', 'when_reach_120mc', 'when_reach_200mc'] as const) {
+  for (const col of ['when_reach_80pct', 'when_reach_120pct', 'when_reach_200pct'] as const) {
     const v = token[col]
     if (!v) continue
     const m = new Date(v).getTime()
@@ -83,9 +83,9 @@ export function deriveTrackerTokenInsights(
   analytics?: EnrichedTokenData,
 ): TrackerTokenInsights {
   const milestoneDefs = [
-    { label: '80%', col: 'when_reach_80mc' as const, minGrowth: 80 },
-    { label: '120%', col: 'when_reach_120mc' as const, minGrowth: 120 },
-    { label: '200%', col: 'when_reach_200mc' as const, minGrowth: 200 },
+    { label: '80%', col: 'when_reach_80pct' as const, minGrowth: 80 },
+    { label: '120%', col: 'when_reach_120pct' as const, minGrowth: 120 },
+    { label: '200%', col: 'when_reach_200pct' as const, minGrowth: 200 },
   ]
   const growth = token.mcap_growth_percent || 0
   const reached = milestoneDefs.filter(

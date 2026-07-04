@@ -93,11 +93,11 @@ export function resolveMcapSimEntry(
 
   const growth = snapshot.mcap_growth_percent ?? 0
   if (!snapshot.first_mcap || snapshot.first_mcap <= 0) return null
-  if (!snapshot.when_reach_80mc && growth < 80) return null
+  if (!snapshot.when_reach_80pct && growth < 80) return null
 
   const entryMcap = Math.round(snapshot.first_mcap * 1.8)
   const entryAt =
-    snapshot.when_reach_80mc ??
+    snapshot.when_reach_80pct ??
     snapshot.last_updated_at ??
     snapshot.first_seen_at
   return { entryMcap, entryAt }
@@ -111,9 +111,6 @@ export function getMcapSimOpenSkipReason(
 ): McapSimOpenSkipReason | null {
   if (openMintSet.has(snapshot.token_address)) return 'already_open'
   if (snapshot.label === 'rugged') return 'rugged'
-  if (!isInTrackingRange(snapshot.current_mcap, strategy.config.entry)) {
-    return 'out_of_range'
-  }
 
   const entryFilters = strategy.config.entry
   if (
@@ -138,10 +135,19 @@ export function getMcapSimOpenSkipReason(
     }
   } else {
     const growth = snapshot.mcap_growth_percent ?? 0
-    if (!snapshot.when_reach_80mc && growth < 80) return 'no_milestone'
+    if (!snapshot.when_reach_80pct && growth < 80) return 'no_milestone'
   }
 
   const entry = resolveMcapSimEntry(strategy, snapshot)
+  const entryMcapForRange = entry?.entryMcap ?? snapshot.first_mcap
+  if (
+    !entryMcapForRange ||
+    entryMcapForRange <= 0 ||
+    !isInTrackingRange(entryMcapForRange, strategy.config.entry)
+  ) {
+    return 'out_of_range'
+  }
+
   if (
     entry &&
     closedOutcomeKeys.has(`${snapshot.token_address}|${entry.entryAt}`)

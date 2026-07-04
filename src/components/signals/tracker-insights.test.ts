@@ -27,9 +27,9 @@ describe('deriveTrackerTokenInsights', () => {
     first_seen_at: new Date(Date.now() - 60 * 60_000).toISOString(),
     last_updated_at: new Date().toISOString(),
     mcap_growth_percent: 292,
-    when_reach_80mc: new Date(Date.now() - 30 * 60_000).toISOString(),
-    when_reach_120mc: new Date(Date.now() - 20 * 60_000).toISOString(),
-    when_reach_200mc: null,
+    when_reach_80pct: new Date(Date.now() - 30 * 60_000).toISOString(),
+    when_reach_120pct: new Date(Date.now() - 20 * 60_000).toISOString(),
+    when_reach_200pct: null,
     solPerToken: { first: 1, current: 2, growth: 100 },
   }
 

@@ -32,7 +32,7 @@ import {
   buildMcapOutcomeFeatures,
   computeMcapSimPnlPct,
   fetchMcapTrackingRow,
-  fetchRecentMcapTrackingRows,
+  fetchMcapSimCandidateRows,
   getMcapSimCloseReason,
   type McapSnapshot,
 } from '@/utils/mcap-tracker'
@@ -307,9 +307,10 @@ export async function POST(request: NextRequest) {
       240,
       ...strategies.map((s) => s.config.query.recencyMinutes),
     )
-    const trackingRows = await fetchRecentMcapTrackingRows({
+    const trackingRows = await fetchMcapSimCandidateRows({
       recencyMinutes: maxRecency,
-      limit: 300,
+      recentLimit: 300,
+      growthLimit: 100,
     })
     const trackingByMint = new Map(trackingRows.map((r) => [r.token_address, r]))
 
