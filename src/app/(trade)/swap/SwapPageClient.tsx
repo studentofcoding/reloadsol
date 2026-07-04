@@ -1,13 +1,76 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Script from 'next/script'
 import JupiterTerminal from '@/components/JupiterTerminal'
+import { TOKENS } from '@/utils/solana'
+
+type SwapPreset = {
+  key: string
+  label: string
+  inputMint: string
+  outputMint: string
+}
 
 export default function SwapPageClient() {
-  // Fixed trading pair: SOL -> USDC
-  const inputMint = 'So11111111111111111111111111111111111111112' // SOL
-  const outputMint = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' // USDC
+  const searchParams = useSearchParams()
+  const requestedTokenMint = searchParams.get('tokenMint')?.trim() ?? ''
+  const tokenMint =
+    requestedTokenMint &&
+    requestedTokenMint !== TOKENS.SOL &&
+    requestedTokenMint !== TOKENS.USDC
+      ? requestedTokenMint
+      : null
+  const swapPresets = useMemo<SwapPreset[]>(
+    () =>
+      tokenMint
+        ? [
+            {
+              key: 'sol-to-token',
+              label: 'SOL -> Token',
+              inputMint: TOKENS.SOL,
+              outputMint: tokenMint,
+            },
+            {
+              key: 'usdc-to-token',
+              label: 'USDC -> Token',
+              inputMint: TOKENS.USDC,
+              outputMint: tokenMint,
+            },
+            {
+              key: 'token-to-sol',
+              label: 'Token -> SOL',
+              inputMint: tokenMint,
+              outputMint: TOKENS.SOL,
+            },
+            {
+              key: 'token-to-usdc',
+              label: 'Token -> USDC',
+              inputMint: tokenMint,
+              outputMint: TOKENS.USDC,
+            },
+          ]
+        : [
+            {
+              key: 'sol-to-usdc',
+              label: 'SOL -> USDC',
+              inputMint: TOKENS.SOL,
+              outputMint: TOKENS.USDC,
+            },
+            {
+              key: 'usdc-to-sol',
+              label: 'USDC -> SOL',
+              inputMint: TOKENS.USDC,
+              outputMint: TOKENS.SOL,
+            },
+          ],
+    [tokenMint],
+  )
+  const [selectedPresetKey, setSelectedPresetKey] = useState<string | null>(null)
+  const activePreset =
+    swapPresets.find((preset) => preset.key === selectedPresetKey) ??
+    swapPresets[0]
   const [isPageReady, setIsPageReady] = useState(false)
 
   // Ensure page is ready before rendering Jupiter Terminal
@@ -208,7 +271,7 @@ export default function SwapPageClient() {
           const spans = root.querySelectorAll('span');
           console.log(`📊 Found ${spans.length} span elements in ${rootName}`);
           
-          spans.forEach((span, index) => {
+          spans.forEach((span) => {
             const htmlSpan = span as HTMLElement;
             const text = span.textContent?.trim() || '';
             
@@ -244,7 +307,7 @@ export default function SwapPageClient() {
           // 3. Remove Jupiter logo images entirely
           const jupiterImages = root.querySelectorAll('img[alt*="Jupiter"], img[src*="jupiter"]');
           console.log(`🖼️ Found ${jupiterImages.length} Jupiter images in ${rootName}`);
-          jupiterImages.forEach((img, index) => {
+          jupiterImages.forEach((img) => {
             const htmlImg = img as HTMLElement;
             // Skip if this is search-related
             if (isSearchRelated(img)) {
@@ -260,7 +323,7 @@ export default function SwapPageClient() {
           // 4. Remove Jupiter links entirely
           const jupiterLinks = root.querySelectorAll('a[href*="jup.ag"]');
           console.log(`🔗 Found ${jupiterLinks.length} Jupiter links in ${rootName}`);
-          jupiterLinks.forEach((link, index) => {
+          jupiterLinks.forEach((link) => {
             const htmlLink = link as HTMLElement;
             // Skip if this is search-related
             if (isSearchRelated(link)) {
@@ -339,7 +402,30 @@ export default function SwapPageClient() {
   }, [isPageReady]);
   
   return (
-    <div className="flex flex-col items-center justify-center" style={{ minHeight: '550px' }}>
+    <div
+      className="flex flex-col items-center justify-center gap-4"
+      style={{ minHeight: '550px' }}
+    >
+      <div className="flex w-full max-w-2xl flex-wrap justify-center gap-2">
+        {swapPresets.map((preset) => {
+          const isActive = preset.key === activePreset.key
+
+          return (
+            <button
+              key={preset.key}
+              type="button"
+              onClick={() => setSelectedPresetKey(preset.key)}
+              className={`rounded-full border px-4 py-2 text-sm transition ${
+                isActive
+                  ? 'border-white bg-white text-black'
+                  : 'border-gray-700 bg-gray-900 text-gray-300 hover:border-gray-500 hover:text-white'
+              }`}
+            >
+              {preset.label}
+            </button>
+          )
+        })}
+      </div>
       <Script
         src="https://terminal.jup.ag/main-v4.js"
         strategy="lazyOnload"
@@ -347,8 +433,9 @@ export default function SwapPageClient() {
       />
       {isPageReady && (
         <JupiterTerminal
-          initialInputMint={inputMint}
-          initialOutputMint={outputMint}
+          key={`${activePreset.inputMint}-${activePreset.outputMint}`}
+          initialInputMint={activePreset.inputMint}
+          initialOutputMint={activePreset.outputMint}
         />
       )}
     </div>

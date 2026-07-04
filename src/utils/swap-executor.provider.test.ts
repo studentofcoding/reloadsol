@@ -143,7 +143,7 @@ describe("swap-executor shyft provider", () => {
   it("submitSignedSwapBatch uses send_many for shyft when batch size > 1", async () => {
     vi.mocked(sendShyftManyTransactionsDirect).mockResolvedValue({
       success: true,
-      items: [
+      results: [
         { id: 1, signature: "sig-a", status: "confirmed" },
         { id: 2, signature: "sig-b", status: "confirmed" },
       ],

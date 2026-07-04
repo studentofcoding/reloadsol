@@ -97,13 +97,9 @@ Key files: [`src/utils/trade-provider.ts`](src/utils/trade-provider.ts), [`src/u
 
 ## Everything tried that failed or is still broken
 
-### 1. Shyft bulk send type mismatch (known bug, not fixed)
+### 1. Shyft bulk send type mismatch — FIXED
 
-`ShyftManySendResponse` uses field **`results`**, but [`swap-executor.ts`](src/utils/swap-executor.ts) reads **`manyResult.items`** (~line 385). This causes TypeScript errors and would break Shyft batch submit at runtime.
-
-Same mismatch in [`shyft-transaction.test.ts`](src/utils/shyft-transaction.test.ts) and [`swap-executor.provider.test.ts`](src/utils/swap-executor.provider.test.ts).
-
-**Fix:** Use `manyResult.results` everywhere (or add alias — prefer one field name).
+`ShyftManySendResponse` uses **`results`**; [`swap-executor.ts`](src/utils/swap-executor.ts) now reads `manyResult.results` (tests updated too).
 
 ### 2. Pauly / high-growth token not in Strategy Reports (diagnosed, not a code bug alone)
 
@@ -111,9 +107,13 @@ Token visible on `/dev/signals` (from `token_mcap_tracking`) but not in outcomes
 
 Possible skip reasons before open: ML gate, max open positions, `already_closed`, worker not scheduled, token outside sim candidate batch (less likely after `fetchMcapSimCandidateRows` fix).
 
-### 3. DB column rename on live server (not verified applied)
+### 3. DB column rename on live server (migration added)
 
-Code expects `when_reach_*pct`. If production still has `when_reach_*mc`, queries fail until:
+Code expects `when_reach_*pct`. Apply on production:
+
+- [`db/init/04-rename-milestone-growth-pct-columns.sql`](db/init/04-rename-milestone-growth-pct-columns.sql) (idempotent `DO` block)
+
+Or manually:
 
 ```sql
 ALTER TABLE token_mcap_tracking RENAME COLUMN when_reach_80mc TO when_reach_80pct;
@@ -134,8 +134,8 @@ ALTER TABLE token_mcap_tracking RENAME COLUMN when_reach_200mc TO when_reach_200
 
 ## Next steps (recommended order)
 
-1. **Server: apply milestone column rename** if not already done (before or with deploy).
-2. **Fix Shyft batch bug** — `swap-executor.ts` + tests: `items` → `results`.
+1. **Server: apply milestone column rename** — run [`db/init/04-rename-milestone-growth-pct-columns.sql`](db/init/04-rename-milestone-growth-pct-columns.sql) if not already done.
+2. ~~**Fix Shyft batch bug**~~ — done (`results` field).
 3. **Server: confirm `mcap_tracker_sim_track` worker** is running; manually trigger `POST /trigger/mcap-tracker-sim-track` and check response `skipped` array for Pauly-like tokens.
 4. **Verify Telegram** — ensure bot token/chat env set; expect `Strategy OPEN (SIM)` / `Strategy CLOSE (SIM)` for mcap_tracker domain.
 5. **Smoke test end-to-end:**
@@ -188,9 +188,9 @@ flowchart LR
 
 ## Server checklist (copy-paste)
 
-- [ ] Apply `when_reach_*mc` → `when_reach_*pct` migration on production DB
+- [ ] Apply milestone rename via [`db/init/04-rename-milestone-growth-pct-columns.sql`](db/init/04-rename-milestone-growth-pct-columns.sql)
 - [ ] Deploy latest code
 - [ ] `SHYFT_API_KEY` set if using default Shyft stack
 - [ ] `mcap_tracker_sim_track` worker healthy
 - [ ] Telegram env + `STRATEGY_TRACK_TELEGRAM_ENABLED` not false
-- [ ] Fix `swap-executor` Shyft `results` vs `items` before relying on bulk Shyft sends
+- [x] Fix `swap-executor` Shyft `results` vs `items` (done)

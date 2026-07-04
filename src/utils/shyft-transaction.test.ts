@@ -68,7 +68,7 @@ describe("sendShyftManyTransactionsDirect", () => {
         encoded_transactions: ["tx1", "tx2"],
       },
     );
-    expect(result.items).toHaveLength(2);
-    expect(result.items[0].signature).toBe("sig-1");
+    expect(result.results).toHaveLength(2);
+    expect(result.results[0].signature).toBe("sig-1");
   });
 });

@@ -382,7 +382,7 @@ async function submitShyftManyBatch(
     return Promise.all(
       items.map((item, i) => {
         const row =
-          manyResult.items.find((r) => r.id === i + 1) ?? manyResult.items[i];
+          manyResult.results.find((r) => r.id === i + 1) ?? manyResult.results[i];
         return resolveItem(item, row);
       }),
     );
