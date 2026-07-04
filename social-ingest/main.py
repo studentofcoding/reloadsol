@@ -15,6 +15,7 @@ import aiohttp
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
 
+from alert_parser import has_crosscheck_fields
 from parsers import (
     build_source_lookup,
     extract_cas,
@@ -53,12 +54,26 @@ INGEST_SECRET = os.getenv(
     "SOCIAL_INGEST_SECRET",
     os.getenv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending"),
 )
+CROSSCHECK_URL = os.getenv(
+    "SIGNAL_CROSSCHECK_URL",
+    INGEST_URL.replace("/api/social/ingest", "/api/social/crosscheck"),
+)
 
 
 def session_path() -> str:
     base = Path(SESSION_DIR)
     base.mkdir(parents=True, exist_ok=True)
     return str(base / SESSION_NAME)
+
+
+async def post_crosscheck(session: aiohttp.ClientSession, payload: dict) -> None:
+    url = f"{CROSSCHECK_URL}?key={INGEST_SECRET}"
+    async with session.post(url, json=payload) as resp:
+        body = await resp.text()
+        if resp.status >= 400:
+            logging.error("Crosscheck failed (%s): %s", resp.status, body[:500])
+        else:
+            logging.info("Crosscheck OK (%s)", resp.status)
 
 
 async def post_events(session: aiohttp.ClientSession, events_payload: list[dict]) -> None:
@@ -171,6 +186,19 @@ async def main() -> None:
                 return
 
             text = event.message.raw_text or ""
+            if has_crosscheck_fields(text):
+                occurred_at = event.message.date.astimezone(timezone.utc).isoformat()
+                await post_crosscheck(
+                    http,
+                    {
+                        "raw_message": text,
+                        "channel_id": str(event.chat_id),
+                        "external_message_id": str(event.message.id),
+                        "occurred_at": occurred_at,
+                    },
+                )
+                return
+
             payload = await build_events(http, event.message, source, event.chat_id)
 
             if not payload:

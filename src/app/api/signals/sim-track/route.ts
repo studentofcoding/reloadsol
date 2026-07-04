@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getActiveSignalsForSim } from '@/strategies/load-signals'
+import { openSignalsSimPosition, SIGNALS_SIM_WALLET } from '@/strategies/telegram-alpha-sim'
 import { scoreSignalsForStrategy } from '@/strategies/signals-pipeline'
 import { recordSignalsOutcome } from '@/strategies/outcomes'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
@@ -18,8 +19,7 @@ import { isAuthorizedRequest } from '@/utils/dlmm/config'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-const SIGNALS_SIM_WALLET =
-  process.env.SIGNALS_SIM_WALLET_ADDRESS || 'signals-strategy-sim'
+const SIGNALS_SIM_WALLET_LOCAL = SIGNALS_SIM_WALLET
 
 function getSimTrackSecret(): string {
   return (
@@ -72,71 +72,6 @@ function getOpenPositionsForStrategy(
   return open
 }
 
-async function openSimPosition(params: {
-  strategyId: string
-  mintAddress: string
-  symbol: string
-  solAmount: number
-  priceUsd: number
-  entryFeatures: Record<string, unknown>
-}): Promise<void> {
-  const solPrice = await getSolPriceUSD()
-  const tokenAmount =
-    params.priceUsd > 0 && solPrice > 0
-      ? (params.solAmount * solPrice) / params.priceUsd
-      : params.solAmount * 1000
-
-  const record = buildTradingRecord({
-    walletAddress: SIGNALS_SIM_WALLET,
-    operationType: 'buy',
-    is_simulation: true,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategyId,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount,
-        solAmount: params.solAmount,
-        priceUsd: params.priceUsd,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount: params.solAmount,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    totalUsdValue: solPrice ? params.solAmount * solPrice : undefined,
-    signatures: [`signals-sim-${Date.now()}`],
-    status: 'tracking',
-    trading_simulation: {
-      strategy_id: params.strategyId,
-      entry_at: new Date().toISOString(),
-      entry_features: params.entryFeatures,
-    },
-  })
-
-  await insertTradingRecord(record)
-
-  const entryMcap =
-    typeof params.entryFeatures.entry_mcap === 'number'
-      ? params.entryFeatures.entry_mcap
-      : typeof params.entryFeatures.first_mcap === 'number'
-        ? params.entryFeatures.first_mcap
-        : null
-  const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
-  notifyStrategyOpen({
-    domain: 'signals',
-    strategyId: params.strategyId,
-    tokenSymbol: params.symbol,
-    tokenAddress: params.mintAddress,
-    marketCap: entryMcap,
-    isSimulated: true,
-  })
-}
-
 async function closeSimPosition(params: {
   strategyId: string
   mintAddress: string
@@ -146,7 +81,7 @@ async function closeSimPosition(params: {
   exitMcap?: number | null
   exitGrowthPercent?: number | null
 }): Promise<number> {
-  const records = await fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET)
+  const records = await fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET_LOCAL)
   const cycle = computeOpenSimCycle(records, params.mintAddress)
   if (!cycle) return 0
 
@@ -179,7 +114,7 @@ async function closeSimPosition(params: {
   }
 
   const record = buildTradingRecord({
-    walletAddress: SIGNALS_SIM_WALLET,
+    walletAddress: SIGNALS_SIM_WALLET_LOCAL,
     operationType: 'sell',
     is_simulation: true,
     simulation_type: 'strategy',
@@ -258,7 +193,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const strategies = await getActiveSignalsForSim()
-    const records = await fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET)
+    const records = await fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET_LOCAL)
     const results: Array<{
       strategyId: string
       opened: number
@@ -304,7 +239,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const refreshedRecords = await fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET)
+      const refreshedRecords = await fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET_LOCAL)
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 
@@ -360,7 +295,7 @@ export async function POST(request: NextRequest) {
         )
         const entryFeatures = annotateEntryFeatures(baseFeatures, socialCtx)
 
-        await openSimPosition({
+        await openSignalsSimPosition({
           strategyId: strategy.id,
           mintAddress: signal.token_address,
           symbol,
@@ -377,7 +312,7 @@ export async function POST(request: NextRequest) {
 
     log.info('mcap_tracker', 'Sim track cycle complete', { results })
 
-    return NextResponse.json({ success: true, wallet: SIGNALS_SIM_WALLET, results })
+    return NextResponse.json({ success: true, wallet: SIGNALS_SIM_WALLET_LOCAL, results })
   } catch (error) {
     log.error('error_handling', 'Sim track failed', error as Error)
     return NextResponse.json(
