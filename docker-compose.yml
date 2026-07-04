@@ -112,7 +112,11 @@ services:
       API_HOST: ${API_HOST:-http://web:3000}
       # Workers tab + /api/workers/status (web container → cron service name)
       CRON_SERVICE_URL: ${CRON_SERVICE_URL:-http://cron:8080}
+      # Pattern/v2-gate ONNX — host-trained artifacts mounted at /app/ml/artifacts (see volumes)
+      ML_PATTERN_ARTIFACT_DIR: ${ML_PATTERN_ARTIFACT_DIR:-/app/ml/artifacts/pattern-gate}
       # DATABASE_URL from .env (bouncer host; URL-encode password if it contains @ # : %)
+    volumes:
+      - ./ml/artifacts:/app/ml/artifacts:ro
     depends_on:
       redis:
         condition: service_healthy
