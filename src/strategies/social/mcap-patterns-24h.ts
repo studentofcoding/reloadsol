@@ -1,4 +1,5 @@
 import { query } from '@/utils/db'
+import { toUtcIso } from '@/utils/datetime'
 import {
   WINNER_MIN_GROWTH_PCT,
   LOSER_MAX_GROWTH_PCT,
@@ -175,7 +176,9 @@ export async function refreshMcapSocialPatterns24h(
       socialEvents,
     })
 
-    const firstSeenAt = String(mcapRow.first_seen_at ?? sinceIso)
+    const rawFirstSeen = mcapRow.first_seen_at ?? sinceIso
+    const firstSeenAt =
+      rawFirstSeen instanceof Date ? toUtcIso(rawFirstSeen) : String(rawFirstSeen)
 
     await query(
       `INSERT INTO mcap_social_pattern_24h (
