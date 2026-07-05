@@ -38,6 +38,7 @@ def resolve_row_to_vector(version: str):
 def fetch_from_api(
     base_url: str,
     domain: str | None,
+    secret: str | None,
     *,
     training_class_min: int | None = None,
 ) -> pd.DataFrame:
@@ -51,6 +52,8 @@ def fetch_from_api(
         params["domain"] = domain
     if training_class_min is not None:
         params["training_class_min"] = training_class_min
+    if secret:
+        params["key"] = secret
 
     url = f"{base_url.rstrip('/')}/api/strategies/outcomes"
     response = requests.get(url, params=params, timeout=120)
@@ -62,8 +65,12 @@ def load_source_csv(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
-def build_training_frame(raw: pd.DataFrame, recompute: bool = True, version: str = "v1") -> pd.DataFrame:
-    row_to_vector = resolve_row_to_vector(version)
+def build_training_frame(
+    raw: pd.DataFrame,
+    recompute: bool = True,
+    features: str = "v1",
+) -> pd.DataFrame:
+    row_to_vector = resolve_row_to_vector(features)
     records: list[dict] = []
     skipped_incomplete = 0
     skipped_label = 0
@@ -116,8 +123,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--api-base",
-        default=os.environ.get("API_BASE_URL", "http://localhost:3000"),
-        help="App base URL for API export",
+        default=os.environ.get("API_BASE_URL", "http://127.0.0.1"),
+        help="App base URL (prod host: http://127.0.0.1 via nginx, not :3000)",
+    )
+    parser.add_argument(
+        "--secret",
+        default=os.environ.get("TRENDING_TRACKER_SECRET"),
+        help="Service auth for /api/strategies/outcomes (?key=)",
     )
     parser.add_argument(
         "--domain",
@@ -131,38 +143,47 @@ def main() -> None:
         help="Only export win tiers >= N (1–4)",
     )
     parser.add_argument(
-        "--version",
-        default="v1",
+        "--features",
+        default=os.environ.get("ML_EXPORT_FEATURES", "v1"),
         choices=["v1", "v2"],
-        help="Feature spec version (v2 includes social/telegram features)",
+        help="Feature columns: v1=entry-only, v2=+social/telegram (gate train still uses v1 cols)",
+    )
+    parser.add_argument(
+        "--version",
+        dest="features",
+        choices=["v1", "v2"],
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=None,
-        help="Output parquet path (default: data/{version}/training.parquet)",
+        default=Path("data/v2/training.parquet"),
+        help="Output parquet (default: data/v2/training.parquet — v2 gate pipeline, not feature v2)",
     )
     args = parser.parse_args()
-
-    if args.output is None:
-        args.output = Path("data") / args.version / "training.parquet"
 
     if args.source == "csv":
         if not args.csv:
             parser.error("--csv required when --source csv")
         raw = load_source_csv(args.csv)
     else:
+        if not args.secret:
+            print(
+                "WARNING: TRENDING_TRACKER_SECRET unset — API may return 401 "
+                "(set env or pass --secret)"
+            )
         raw = fetch_from_api(
             args.api_base,
             args.domain,
+            args.secret,
             training_class_min=args.training_class_min,
         )
 
-    df = build_training_frame(raw, version=args.version)
+    df = build_training_frame(raw, features=args.features)
     if df.empty:
         raise SystemExit("No training rows — check dataset stats API or CSV filters")
 
-    feature_columns = resolve_feature_columns(args.version)
+    feature_columns = resolve_feature_columns(args.features)
     missing_cols = [c for c in feature_columns if c not in df.columns]
     if missing_cols:
         raise SystemExit(f"Missing feature columns: {missing_cols}")
@@ -180,7 +201,8 @@ def main() -> None:
         else {}
     )
     manifest = {
-        "version": args.version,
+        "features": args.features,
+        "pipeline": "v2-gate",
         "rows": len(df),
         "feature_columns": feature_columns,
         "domain": args.domain,

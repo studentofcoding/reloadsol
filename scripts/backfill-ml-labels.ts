@@ -2,7 +2,8 @@
 /**
  * Backfill auto ML labels (skip/interesting + training_class 0–4) on strategy_outcomes.
  *
- * Run:
+ * Run on host (VPS): uses DATABASE_URL_DIRECT or rewrites Docker hostnames → 127.0.0.1
+ *
  *   npx tsx scripts/backfill-ml-labels.ts [--dry-run] [--domain=trending_bot] [--strategy-id=att]
  *   npm run ml:backfill-labels -- --dry-run
  */
@@ -13,12 +14,34 @@ import { resolve } from 'path'
 loadEnv({ path: resolve(__dirname, '../.env.local') })
 loadEnv({ path: resolve(__dirname, '../.env') })
 
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SECRET_KEY) {
-  console.error('❌ Missing Supabase environment variables')
-  console.error('   SUPABASE_URL')
-  console.error('   SUPABASE_SECRET_KEY')
-  process.exit(1)
+/** Host-side scripts cannot resolve reloadsol-bouncer / reloadsol-db Docker DNS. */
+function resolveHostDatabaseUrl(): void {
+  const direct = process.env.DATABASE_URL_DIRECT?.trim()
+  if (direct) {
+    process.env.DATABASE_URL = direct
+    return
+  }
+
+  const url = process.env.DATABASE_URL?.trim()
+  if (!url) {
+    console.error('Set DATABASE_URL or DATABASE_URL_DIRECT in .env / .env.local')
+    process.exit(1)
+  }
+
+  if (/reloadsol-(bouncer|db)/.test(url)) {
+    try {
+      const parsed = new URL(url)
+      parsed.hostname = '127.0.0.1'
+      process.env.DATABASE_URL = parsed.toString()
+      console.log('Host run: using DATABASE_URL via 127.0.0.1 (not Docker service name)')
+    } catch {
+      console.error('Invalid DATABASE_URL — cannot rewrite for host access')
+      process.exit(1)
+    }
+  }
 }
+
+resolveHostDatabaseUrl()
 
 type CliArgs = {
   dryRun: boolean

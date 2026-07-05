@@ -59,8 +59,8 @@ def main() -> None:
     parser.add_argument("--csv", type=Path, help="Local CSV when --source csv")
     parser.add_argument(
         "--api-base",
-        default=os.environ.get("API_BASE_URL", "http://localhost:3000"),
-        help="App base URL",
+        default=os.environ.get("API_BASE_URL", "http://127.0.0.1"),
+        help="App base URL (prod host: http://127.0.0.1 via nginx)",
     )
     parser.add_argument(
         "--secret",

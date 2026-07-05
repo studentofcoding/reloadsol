@@ -61,7 +61,7 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 ## Data hygiene (sim-outcome gate — secondary)
 
 - Run `npm run ml:backfill-labels` after tier label changes.
-- Export versioned data: `npm run ml:export` → `ml/data/v2/training.parquet` + `dataset_manifest.json`.
+- Export versioned data: `API_BASE_URL=http://127.0.0.1 TRENDING_TRACKER_SECRET=... npm run ml:export` → `ml/data/v2/training.parquet` + `dataset_manifest.json`.
 - Train gate: `npm run ml:train-gate` → `ml/artifacts/v2-gate/`
 - Train potential (advisory): `npm run ml:train-potential` → `ml/artifacts/v2-potential/`
 - Check: `npm run ml:check-dataset` / `npm run ml:check-potential`

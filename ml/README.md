@@ -84,10 +84,25 @@ Use **Python 3.10–3.12** (not 3.14 — SciPy/LightGBM stacks conflict with `nu
 
 ML runs on the **host** (or a separate CI job), not in web/cron containers. Node shadow scoring uses `onnxruntime-node` in the **web** container — redeploy web after scorer changes.
 
+## Naming (avoid confusion)
+
+| Term | Meaning |
+|------|---------|
+| **`--features v1/v2`** (Python export) | Feature columns in parquet (v2 adds social) |
+| **`ml:export-v1-features`** | npm script → features v1 → `data/v2/training.parquet` |
+| **`ml:export-v2-social-experimental`** | npm script → features v2 → `training_experimental.parquet` |
+| **`ml:export`** | Alias for `ml:export-v1-features` |
+| **`data/v2/`** | Dataset path for the **v2 gate pipeline** (not “feature v2”) |
+| **`v2-gate` / `v2-potential`** | Model artifact folders (train.py `--version`) |
+| **`pattern-gate`** | Separate Pattern ML track |
+
 ## Phase 0 — Check dataset (app running)
 
 ```bash
-curl -s 'http://localhost:3000/api/strategies/ml/dataset-stats?domain=mcap_tracker' | jq
+export API_BASE_URL=http://127.0.0.1   # prod VPS: nginx :80, not :3000
+export TRENDING_TRACKER_SECRET=...
+
+curl -s "${API_BASE_URL}/api/strategies/ml/dataset-stats?domain=mcap_tracker&key=${TRENDING_TRACKER_SECRET}" | jq
 ```
 
 Response includes `by_gate_class` and `potential_tier_counts`. Target: ≥ 200 labeled rows for gate training.
@@ -95,24 +110,32 @@ Response includes `by_gate_class` and `potential_tier_counts`. Target: ≥ 200 l
 ## Phase 1 — Export & train (v2 two-stage)
 
 ```bash
-export API_BASE_URL=http://localhost:3000
+export API_BASE_URL=http://127.0.0.1
+export TRENDING_TRACKER_SECRET=...
 
-# → ml/data/v2/training.parquet + dataset_manifest.json (gate_class, potential_tier columns)
-npm run ml:export
-
+# → ml/data/v2/training.parquet (features v1; gate train uses v1 columns)
+npm run ml:backfill-labels   # optional: refresh training_class on outcomes first
+npm run ml:export              # alias → ml:export-v1-features
 npm run ml:check-dataset
 npm run ml:train-gate
 npm run ml:train-potential   # needs ≥30 gate=1 rows, ≥2 tiers
 npm run ml:check-potential
 ```
 
+Optional export **with social feature columns** (not used by v2-gate scorer yet):
+
+```bash
+npm run ml:export-v2-social-experimental   # → data/v2/training_experimental.parquet
+```
+
 Manual equivalents:
 
 ```bash
 cd ml
-python train.py --stage gate --input data/v2/training.parquet --version v2-gate
-python train.py --stage potential --input data/v2/training.parquet --version v2-potential
-python train.py --stage multiclass --input data/v2/training.parquet --version v1  # legacy
+python3 export_training_data.py --features v1 --domain mcap_tracker
+python3 train.py --stage gate --input data/v2/training.parquet --version v2-gate
+python3 train.py --stage potential --input data/v2/training.parquet --version v2-potential
+python3 train.py --stage multiclass --input data/v2/training.parquet --version v1  # legacy
 ```
 
 ## Labels
