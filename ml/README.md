@@ -1,4 +1,60 @@
-# ML training pipeline (Layer 2)
+# ML training pipeline
+
+**Primary focus: Pattern ML** (24h mcap + social cohort labels). **Secondary:** sim-outcome gate (Layer 2) below.
+
+Production DB: Docker Postgres **`reloadsol_db`** only. Train on **host**, not in web/cron containers.
+
+---
+
+## Pattern ML (primary)
+
+Labels from `mcap_social_pattern_24h` (winner ≥120% growth, loser &lt;80%). Shadow scores mcap sim entries (`ml_pattern_p_winner`, `ml_pattern_predicted`).
+
+Full ops: [docs/OPERATOR_STATE.md](../docs/OPERATOR_STATE.md), [docs/ARCHITECTURE_SUMMARY.md](../docs/ARCHITECTURE_SUMMARY.md).
+
+### Setup
+
+Same venv as below (`cd ml && python3 -m venv venv && pip install -r requirements.txt`). Also install `packaging` if ONNX export fails.
+
+### Export & train (host — prod uses nginx :80)
+
+```bash
+export API_BASE_URL=http://127.0.0.1
+export TRENDING_TRACKER_SECRET=...
+
+npm run ml:export-patterns   # → ml/data/pattern/training.parquet
+npm run ml:check-pattern
+npm run ml:train-pattern     # → ml/artifacts/pattern-gate/
+npm run docker:deploy:web    # volume mount picks up ONNX
+```
+
+Docker env: `ML_PATTERN_MODE=shadow`, `ML_PATTERN_ARTIFACT_DIR=/app/ml/artifacts/pattern-gate`.
+
+### Artifacts
+
+| Path | Purpose |
+|------|---------|
+| `artifacts/pattern-gate/model.onnx` | Pattern gate — shadow + future enforce |
+| `artifacts/pattern-gate/model.meta.json` | `metrics.pattern_ready`, class counts, feature importance |
+
+Enforce when `pattern_ready === true` (macro-F1 ≥ **0.60**).
+
+### Current baseline (Jul 2026)
+
+| Metric | Value |
+|--------|-------|
+| `macro_f1` | **0.468** → `pattern_ready: false` |
+| Class 1 test recall | **0** (n=8) |
+| Train class counts | `{0: 280, 1: 50}` |
+| Top features | `log_first_mcap`, `log_mention_count_30m`, `minutes_to_first_mention` |
+
+Stay **shadow-only** until class-1 recall improves. Collect more winner cohort rows before enforce.
+
+Features mirror [`src/strategies/social/pattern-features.ts`](../src/strategies/social/pattern-features.ts).
+
+---
+
+## Sim-outcome gate (Layer 2 — secondary)
 
 Two-stage entry models on closed `strategy_outcomes`:
 

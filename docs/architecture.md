@@ -13,7 +13,7 @@ Related docs:
 
 ## 1. System topology
 
-ReloadSOL is a **two-container** stack plus **Supabase Postgres**:
+ReloadSOL is a **Docker Compose** stack with **Postgres `reloadsol_db`** (Supabase cut off):
 
 ```mermaid
 flowchart TB
@@ -22,21 +22,25 @@ flowchart TB
   end
 
   subgraph docker [Docker Compose network reloadsol]
-    Web[reloadsol-web\nNext.js 16 + API routes\n:3000]
+    Nginx[reloadsol-nginx :80]
+    Web[reloadsol-web\nNext.js 16 + API routes]
     Cron[reloadsol-cron\nGo scheduler\n:8080]
+    DB[(reloadsol-db Postgres 16)]
+    Bouncer[reloadsol-bouncer PgBouncer]
+    SocialIngest[reloadsol-social-ingest]
   end
 
   subgraph external [External]
-    Supabase[(Supabase Postgres)]
     Jupiter[Jupiter APIs]
     Raptor[Solana Tracker Raptor]
     Shyft[Shyft RPC]
     Discord[Discord webhooks]
   end
 
-  Browser -->|HTTPS| Web
+  Browser -->|HTTPS| Nginx --> Web
   Cron -->|API_BASE_URL http://web:3000| Web
-  Web --> Supabase
+  Web --> Bouncer --> DB
+  SocialIngest -->|POST /api/social/ingest| Web
   Web --> Jupiter
   Web --> Raptor
   Web --> Shyft
@@ -46,9 +50,10 @@ flowchart TB
 
 | Component | Image / process | Role |
 |-----------|-----------------|------|
-| **web** | `Dockerfile.web` → `reloadsol-web` | Next.js App Router, ~50 API routes, SSR UI |
+| **web** | `Dockerfile.web` → `reloadsol-web` | Next.js App Router, ~50 API routes, SSR UI, ONNX shadow scorers |
 | **cron** | `Dockerfile.cron` → `reloadsol-cron` | Go cron + `/trigger/*` + worker telemetry |
-| **Supabase** | Hosted Postgres | Persistence, strategy outcomes, tracking tables |
+| **postgres + pgbouncer** | `reloadsol-db` + `reloadsol-bouncer` | All app data; init from `db/init/*.sql` |
+| **social-ingest** | Telethon sidecar | Telegram → `/api/social/ingest` |
 
 **Critical wiring**
 
@@ -60,7 +65,7 @@ flowchart TB
 
 ## 2. Product domains
 
-The app has three layers that share Supabase and wallet infrastructure but differ in execution model.
+The app has three layers that share Postgres and wallet infrastructure but differ in execution model.
 
 ```mermaid
 flowchart LR
@@ -88,7 +93,7 @@ flowchart LR
   manual --> Raptor[Raptor / Jupiter Lite]
   dev --> API[Next.js /api/*]
   auto --> API
-  API --> Supabase
+  API --> Postgres[(reloadsol_db)]
 ```
 
 ### 2.1 Manual trading (wallet-signed)
@@ -111,6 +116,7 @@ Go cron triggers Next.js maintenance endpoints on a schedule. See [algo_overview
 |--------|-------------|--------------|
 | **trending_bot** | `POST /api/trending/track` | `att`, `lowcap_moonbag`, `scalper`, `hodl` |
 | **signals** | `POST /api/signals/sim-track` | `signals_default`, `signals_sell_over_100` |
+| **mcap_tracker** | `POST /api/mcap-tracking/sim-track` | `mcap_enter_first_seen`, `mcap_enter_at_80` |
 | **dlmm** | `POST /api/dlmm/screen`, `/manage` | `dlmm_default` |
 
 Outcomes land in `strategy_outcomes` only on **full position close**.
@@ -163,7 +169,7 @@ sequenceDiagram
   participant Track as POST /api/trending/track
   participant Strat as load-strategy.ts
   participant Jup as Jupiter trending API
-  participant DB as Supabase trending_token_tracker
+  participant DB as reloadsol_db trending_token_tracker
   participant Wallet as TRADING_KEYPAIR_JSON
 
   Cron->>Track: key + User-Agent reloadsol-cron-service
@@ -202,11 +208,15 @@ Wallet session: `WALLET_SESSION_SECRET` cookie after SIWS-style sign-in.
 
 ## 6. Data layer (Docker Postgres)
 
-Schema source: [`supabase/schema.sql`](../supabase/schema.sql) (applied via [`db/init/`](../db/init/) on first `docker compose up`).
+Schema source: [`db/init/02-schema.sql`](../db/init/02-schema.sql) + numbered migrations `04`–`06` (applied on first `docker compose up` or via `deploy-tencent.sh schema`). [`supabase/schema.sql`](../supabase/schema.sql) is a **legacy mirror only** — do not use Supabase dashboard.
 
 Stack: `reloadsol-db` (Postgres 16, 1GB cap) → `reloadsol-bouncer` (PgBouncer transaction pool) → Next.js `pg` pool (`DATABASE_URL`).
 
-Migrate from hosted Supabase: `bash scripts/migrate-from-supabase.sh` (pgcopydb, public schema).
+Apply SQL on running server:
+
+```bash
+docker exec -it reloadsol-db psql -U reloadsol -d reloadsol_db
+```
 
 ### Core trading
 
@@ -241,6 +251,17 @@ Required columns for track route include `volume_5m`, `waiting_started_at`, `tra
 | `dlmm_candidates` | Screen results |
 | `dlmm_positions` | Open LP positions |
 | `dlmm_lessons` | Post-mortem notes |
+
+### Social / Pattern ML
+
+| Table | Purpose |
+|-------|---------|
+| `social_token_events` | Raw Telegram/social ingest events |
+| `social_token_rollups` | Aggregated mentions, channels, wallet buys |
+| `mcap_social_pattern_24h` | 24h winner/loser cohort snapshots for Pattern ML |
+| `token_mcap_tracking` | Live mcap milestones, growth % (feeds patterns) |
+
+Pattern ML shadow fields on mcap sim entries: `entry_features.ml_pattern_p_winner`, `ml_pattern_predicted`. Artifacts: `ml/artifacts/pattern-gate/` (bind-mounted into web).
 
 ### Legacy / optional
 
@@ -288,7 +309,8 @@ Env: see [`.env.docker.example`](../.env.docker.example) and README environment 
 |------|--------|
 | **Workers** | Real `last_success_at` / errors from Go [`worker_tracker.go`](../worker_tracker.go); Workers tab + Run now |
 | **PnL cron auth** | Unified `PNL_UPDATE_SECRET` + query key + Bearer in `/api/pnl/update` |
-| **Trending track** | Jupiter API fallback mirror; `volume_5m` schema patch on Supabase |
+| **Trending track** | Jupiter API fallback mirror; schema via `db/init/` migrations |
+| **Pattern ML** | 24h cohort export/train, shadow scorer on mcap sim-track (Jul 2026) |
 | **Cron slim-down** | Removed `ohlc_update`, `price_monitor` (11 workers) |
 | **Charts** | GMGN-only; local OHLC stack removed |
 | **Docker** | Selective web/cron rebuild (`docker-scope.sh`, `docker-deploy.sh`) |
@@ -333,5 +355,6 @@ Set `TRENDING_LIST_DISCORD_VIA_CRON=false` for local dev without cron (re-enable
 | `src/utils/jupiter.ts` | Swap/close execution |
 | `src/app/api/trending/track/route.ts` | Trending bot brain |
 | `src/components/strategies/StrategyAdminHub.tsx` | Admin UI |
-| `docker-compose.yml` | Web + cron services |
-| `supabase/schema.sql` | Database DDL + patches |
+| `docker-compose.yml` | Web + cron + postgres services |
+| `db/init/*.sql` | Canonical database DDL + migrations |
+| `supabase/schema.sql` | Legacy mirror (do not apply via Supabase) |

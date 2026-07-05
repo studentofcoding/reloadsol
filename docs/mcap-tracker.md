@@ -40,7 +40,7 @@
 ## API Behavior (`route.ts`)
 
 - `GET?action=list`
-  - Reads from Supabase (`token_mcap_tracking`) with filters: `search`, `sortBy`, `sortOrder`, `minGrowth`, `maxGrowth`, `minMcap`, `maxMcap`, `excludeZeroPnl`, `timeFilter`, `performanceFilter`.
+  - Reads from Postgres `token_mcap_tracking` with filters: `search`, `sortBy`, `sortOrder`, `minGrowth`, `maxGrowth`, `minMcap`, `maxMcap`, `excludeZeroPnl`, `timeFilter`, `performanceFilter`.
   - **Limit:** Explicitly sets a high limit of **100,000** records for statistics queries to ensure comprehensive analysis.
   - **Stats:** Calculates enhanced statistics including:
     - PnL Time Windows (Peak buy/sell hours).
@@ -75,11 +75,19 @@
   - Body: `{ tokens: Array<{ address, symbol, mcap }> }` plus optional query `pnlThreshold` (min) and `maxPnl`.
   - Loops over tokens and calls `trackTokenMcap(...)` for each (DB writes), returns per-token results and toasts.
 
-## Data Model (Supabase — `token_mcap_tracking`)
+## Data Model (Postgres — `token_mcap_tracking`)
 
 - Core fields: `token_address`, `token_symbol`, `first_mcap`, `current_mcap`, `mcap_growth_percent`, `first_seen_at`, `last_updated_at`.
 - Milestones: `when_reach_80pct`, `when_reach_120pct`, `when_reach_200pct`.
 - Status: `is_tracking_stuck` and inferred finished state (via API based on `MAX_TRACKING_AGE_MS`).
+
+## Pattern ML + sim-track
+
+- **24h cohort labels:** social rollup cron (~5m) writes `mcap_social_pattern_24h` (winner ≥120%, loser &lt;80%).
+- **Training export:** `GET /api/mcap-patterns/training-export` (auth: `TRENDING_TRACKER_SECRET`).
+- **Stats:** `GET /api/mcap-patterns/stats` — cohort counts, `patternModelReady`.
+- **Sim worker:** `POST /api/mcap-tracking/sim-track` (cron `mcap_tracker_sim_track`) — paper trades + Pattern ML shadow (`ml_pattern_*` on entry).
+- **Ops:** see [OPERATOR_STATE.md](./OPERATOR_STATE.md), [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md).
 
 ## Notifications
 

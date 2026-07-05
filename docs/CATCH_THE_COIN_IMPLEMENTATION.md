@@ -1,5 +1,7 @@
 # 🎯 Catch the Coin - Gamified Trading Implementation
 
+> **Note (Jul 2026):** Production DB is Postgres `reloadsol_db` (Docker). Supabase is no longer used. For current ops see [OPERATOR_STATE.md](./OPERATOR_STATE.md).
+
 ## 🎮 Overview
 
 **Catch the Coin** is a gamified trading feature integrated into the ReloadSOL platform. It transforms trending token trading into an engaging, competitive experience where users compete to "catch" (buy) trending tokens at the optimal moment.
@@ -17,7 +19,7 @@
 
 ### 2. **Real-time Leaderboards**
 - **PnL Rankings**: Top performers by profit/loss percentage.
-- **Data Source**: Uses `trading_history` table in Supabase.
+- **Data Source**: Uses `trading_history` table in Postgres `reloadsol_db`.
 
 ## 🔧 Technical Architecture
 

@@ -1,5 +1,7 @@
 # Strategy Implementation Plan: Algo Attribution & Shadow Portfolio
 
+> **Note (Jul 2026):** Production DB is Postgres `reloadsol_db` (Docker). Supabase is no longer used. For current ops see [OPERATOR_STATE.md](./OPERATOR_STATE.md) and Pattern ML in [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md).
+
 ## Goal
 To transition **ReloadSOL** from a manual/bulk execution tool into an algorithm-verified trading system. This plan involves tagging trades by their source (Manual vs. Algo) and creating a "Shadow Portfolio" to test strategies without risking capital.
 
@@ -36,7 +38,9 @@ export interface Trade {
 }
 ```
 
-### 1.2 Supabase Schema Migration
+### 1.2 Postgres schema
+
+Apply via [`db/init/`](../db/init/) or `bash scripts/deploy-tencent.sh schema`.
 Run a migration to add these columns to your existing trades table.
 
 ```sql
@@ -143,7 +147,7 @@ export const usePaperTrading = () => {
 
 ## 6. Development Checklist
 
-1.  [ ] **DB**: Run Supabase SQL migration.
+1.  [ ] **DB**: Apply schema via `db/init/` or deploy script.
 2.  [ ] **Core**: Update `BulkTokenBuyer` to accept tags.
 3.  [ ] **UI**: Update `ChartBuyModal` for `activeStrategy`.
 4.  [ ] **Feature**: Build `usePaperTrading` hook.

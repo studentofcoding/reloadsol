@@ -1,5 +1,7 @@
 # Fix for Database Constraint Violation and Unhandled Promise Rejection
 
+> **Note (Jul 2026):** Production DB is Postgres `reloadsol_db` (Docker). Supabase is no longer used. Apply fixes via `docker exec reloadsol-db psql -U reloadsol -d reloadsol_db`.
+
 ## Issues Fixed
 
 ### 1. Database Constraint Violation (Error Code 23514)
@@ -29,10 +31,13 @@ This SQL script:
 - Adds missing columns for the waiting system
 - Creates performance indexes
 
-**To Apply**: Run this SQL script in your Supabase SQL Editor:
-```sql
--- Copy and paste the contents of scripts/fix-status-constraint.sql
+**To Apply**: Run via psql on `reloadsol_db`:
+
+```bash
+docker exec -i reloadsol-db psql -U reloadsol -d reloadsol_db < scripts/fix-status-constraint.sql
 ```
+
+Or paste contents of `scripts/fix-status-constraint.sql` in an interactive psql session.
 
 ### 2. Code Error Handling Improvements
 **File**: `src/app/api/trending/track/route.ts`
@@ -69,7 +74,7 @@ The database now supports these status values:
 ## Testing
 
 To test the fixes:
-1. Run the SQL migration in Supabase
+1. Run the SQL migration via psql (see above)
 2. Deploy the updated code
 3. Monitor logs for the absence of constraint violation errors
 4. Verify that tokens with 'waiting' status are being inserted successfully

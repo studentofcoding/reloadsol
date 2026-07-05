@@ -1,5 +1,7 @@
 # ReloadSOL Application Overview
 
+> **Note (Jul 2026):** Production DB is Postgres `reloadsol_db` (Docker). Supabase is no longer used. For current ops see [OPERATOR_STATE.md](./OPERATOR_STATE.md) and Pattern ML in [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md).
+
 **ReloadSOL** is a comprehensive Solana trading dashboard focused on bulk operations, profit tracking, and market analysis. It allows users to efficiently manage their portfolios by buying and selling tokens in bulk, tracking profit and loss, and analyzing market trends.
 
 ## 1. Core Trading Features
@@ -71,5 +73,5 @@
   - Automatic health checks and reconnection logic.
   - Intelligent error handling for transient states (preventing "clashing" connections).
   - Exponential backoff for reliability.
-- **Data Providers**: Uses **Jupiter API** for swaps/pricing and **Supabase** (via API routes) for storing tracking data.
+- **Data Providers**: Uses **Jupiter API** for swaps/pricing and **Postgres** (via API routes) for storing tracking data.
 - **Dev Tools**: A suite of developer tools under `src/app/(trade)/dev/` for internal monitoring and testing.

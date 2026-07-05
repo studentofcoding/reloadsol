@@ -51,6 +51,19 @@ npm run docker:up
 
 Open [http://localhost:3000](http://localhost:3000). Cron health: [http://localhost:8080/health](http://localhost:8080/health).
 
+### Documentation
+
+| Doc | Use when |
+|-----|----------|
+| [handoff.md](handoff.md) | Session handoff — Pattern ML focus, ops checklist |
+| [docs/ARCHITECTURE_SUMMARY.md](docs/ARCHITECTURE_SUMMARY.md) | Whole picture — algo, Pattern ML, next steps |
+| [docs/algo_overview.md](docs/algo_overview.md) | Per-strategy capture/calculate/result, workers |
+| [docs/OPERATOR_STATE.md](docs/OPERATOR_STATE.md) | Live ops, retrain loops, model constraints |
+| [docs/architecture.md](docs/architecture.md) | System topology, tables, deploy model |
+| [ml/README.md](ml/README.md) | Pattern ML export/train on host |
+
+Production DB: Docker Postgres **`reloadsol_db`** only (Supabase cut off). Schema: [`db/init/`](db/init/).
+
 ---
 
 ## Full setup from git clone
@@ -91,23 +104,14 @@ See [Environment variables](#environment-variables) for the full list.
 
 **Fresh Docker setup:** schema is applied automatically on first `docker compose up` via [`db/init/`](db/init/) (extensions + full app schema in `02-schema.sql`).
 
-**Existing volume or no Supabase:** apply schema from the repo (empty tables, no historical data):
+**Existing volume or fresh redeploy:** apply schema from the repo (empty tables, no historical data):
 
 ```bash
 bash scripts/deploy-tencent.sh db
 bash scripts/deploy-tencent.sh schema    # idempotent — safe to re-run
 ```
 
-**Optional — migrate from hosted Supabase** (when available):
-
-```bash
-# Stop writes first (cron + social-ingest)
-SOURCE_DATABASE_URL='postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres' \
-TARGET_DATABASE_URL='postgresql://postgres:pass@localhost:5432/reloadsol_db' \
-bash scripts/migrate-from-supabase.sh
-```
-
-Use Supabase **direct** connection (port 5432), not the transaction pooler. pgcopydb connects to `reloadsol-db` directly, not PgBouncer.
+**Historical note:** production has migrated off hosted Supabase to Docker `reloadsol_db`. One-time migration script: `bash scripts/migrate-from-supabase.sh` (pgcopydb; connect to `reloadsol-db` directly, not PgBouncer).
 
 Tables include: `token_operations`, `trading_records`, `trading_signals`, `sl_tp_positions`, `trending_token_tracker`, `token_mcap_tracking`, DLMM tables, social signal tables, and bot lock tables.
 
@@ -360,7 +364,7 @@ node scripts/test-trending-tracker.js all
 - Jupiter Universal Wallet Kit — 20+ wallets via Wallet Standard
 - DLMM Agent Dashboard (`/dev/dlmm`) — Hunter + Healer, Telegram, dry-run
 - Docker stack — `npm run docker:up` runs web + Go cron
-- Consolidated Supabase schema — single [`supabase/schema.sql`](supabase/schema.sql)
+- Consolidated Postgres schema — [`db/init/`](db/init/) (canonical); [`supabase/schema.sql`](supabase/schema.sql) legacy mirror
 - GMGN kline charts on DLMM Hunter candidates
 
 **Changed**
@@ -370,8 +374,8 @@ node scripts/test-trending-tracker.js all
 
 **Fixed**
 - Docker web OOM during in-container builds
-- DLMM dashboard graceful fallbacks when Supabase is unreachable
-- Supabase schema ordering for existing databases (`label` column patches)
+- DLMM dashboard graceful fallbacks when Postgres is unreachable
+- Schema ordering for existing databases (`label` column patches via `db/init/`)
 
 See [CHANGELOG.md](./CHANGELOG.md) for complete release notes.
 
@@ -383,7 +387,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for complete release notes.
 
 - Confirm `DATABASE_URL` points at `reloadsol-bouncer` (not `reloadsol-db`) for the app
 - Fresh install: `docker compose up` applies `db/init/*.sql` on empty volume
-- Migrate: `bash scripts/migrate-from-supabase.sh` with direct Supabase URL
+- Re-apply schema: `bash scripts/deploy-tencent.sh schema` or `docker exec reloadsol-db psql -U reloadsol -d reloadsol_db`
 - Rebuild: `npm run docker:down && npm run docker:up`
 
 ### DLMM manage returns `skipped`
@@ -413,21 +417,13 @@ bash scripts/deploy-tencent.sh all
 bash scripts/deploy-tencent.sh smoke --strict
 ```
 
-**Step-by-step (no Supabase):**
+**Step-by-step:**
 
 ```bash
 bash scripts/deploy-tencent.sh db
 bash scripts/deploy-tencent.sh schema
 bash scripts/deploy-tencent.sh deploy
 bash scripts/deploy-tencent.sh smoke --strict
-```
-
-**Optional — migrate from Supabase** (when available):
-
-```bash
-export SOURCE_DATABASE_URL='postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres'
-export USE_PGCOPYDB_DOCKER=1
-bash scripts/deploy-tencent.sh migrate
 ```
 
 Subcommands: `setup` | `db` | `schema` | `migrate` | `build` | `deploy` | `smoke` | `backup` | `all`
@@ -478,10 +474,11 @@ src/
 ├── components/           # UI + WalletProvider
 ├── hooks/                # React Query hooks
 ├── types/                # TypeScript types
-└── utils/                # Jupiter, DLMM, Supabase, RPC helpers
+└── utils/                # Jupiter, DLMM, Postgres, RPC helpers
 
-supabase/
-└── schema.sql            # Full database schema (run once in SQL Editor)
+db/init/                  # Canonical Postgres schema (applied on docker compose up)
+supabase/schema.sql       # Legacy mirror only — do not use Supabase dashboard
+ml/artifacts/             # Pattern ML ONNX (bind-mounted into web container)
 
 main.go                   # Go cron scheduler
 docker-compose.yml        # web + cron services

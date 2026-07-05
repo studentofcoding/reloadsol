@@ -1,5 +1,7 @@
 # ML Gate Plan — Layer 2 (ML) → Layer 3 (LLM) → Paper Trading
 
+> **Note (Jul 2026):** Primary ML focus is **Pattern ML** (24h mcap + social cohort labels). See [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md) and [OPERATOR_STATE.md](./OPERATOR_STATE.md). This document covers the **sim-outcome gate** (Layer 2 secondary track) and planned LLM gate (Layer 3).
+
 Three-layer entry gating for memecoin strategies: **rule filters (L1, done)** → **LightGBM confidence (L2)** → **regime-aware LLM gate (L3)** → **paper validation before live capital**.
 
 See also: [STRATEGY_ARCHITECTURE.md](./STRATEGY_ARCHITECTURE.md), [algo_overview.md](./algo_overview.md).

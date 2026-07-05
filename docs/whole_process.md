@@ -2,7 +2,7 @@
 
 Comprehensive reference for **single** and **bulk** buy, sell, and close operations: UI entry points, core functions, internal `/api/*` routes, external services, and step-by-step process flows.
 
-**Architecture & automation:** [architecture.md](./architecture.md) (system topology, workers, Supabase) · [algo_overview.md](./algo_overview.md) (strategy domains, cron) · [API_ARCHITECTURE_SUMMARY.md](./API_ARCHITECTURE_SUMMARY.md) (API route catalog)
+**Architecture & automation:** [architecture.md](./architecture.md) (system topology, workers, Postgres `reloadsol_db`) · [algo_overview.md](./algo_overview.md) (strategy domains, Pattern ML, cron) · [API_ARCHITECTURE_SUMMARY.md](./API_ARCHITECTURE_SUMMARY.md) (API route catalog)
 
 ---
 
@@ -368,7 +368,7 @@ Same widget as buy; Token → SOL classified as sell in `handleSwapSuccess`. **N
 ```
 runSLTPMonitor → getSwapQuote → getSwapTransaction
   → tradingKeypair.sign → sendRawTransaction
-  → Supabase sl_tp_positions update
+  → Postgres `sl_tp_positions` update
 ```
 
 Server-side Jupiter Lite with configured keypair; not triggered from UI buttons.
@@ -516,7 +516,7 @@ flowchart LR
   Cron --> Sim["POST /api/signals/sim-track"]
   Cron --> DLMM["POST /api/dlmm/screen + /manage"]
   Cron --> Infra["SL/TP, PnL, daily summary"]
-  Track --> Supabase[(trending_token_tracker)]
+  Track --> Postgres[(trending_token_tracker)]
   Sim --> Outcomes[(strategy_outcomes)]
   DLMM --> Outcomes
 ```
@@ -573,4 +573,4 @@ See [architecture.md §9–10](./architecture.md#9-recent-improvements-jun-2026)
 | `src/app/api/jupiter/portfolio/route.ts` | Portfolio proxy |
 | `src/app/api/rpc/route.ts` | RPC proxy |
 | `src/contexts/RpcContext.tsx` | Browser connection → `/api/rpc` |
-| [architecture.md](./architecture.md) | System topology, workers, Supabase, deploy, roadmap |
+| [architecture.md](./architecture.md) | System topology, workers, Postgres, deploy, roadmap |

@@ -1,5 +1,7 @@
 # Signals Pipeline — Core Summary
 
+> **Note (Jul 2026):** Production DB is Postgres `reloadsol_db` (Docker). Supabase is no longer used. See [algo_overview.md](./algo_overview.md) for current strategy flows.
+
 ## Overview
 - Combines tracked market-cap data with price feeds to produce actionable signals.
 - Uses statistical anomaly detection and technical momentum rules; not machine learning.
@@ -13,7 +15,7 @@
 - `trading-signals`: Computes actionable buy/sell signals based on growth, recency, and specific strategies (e.g., "sell_over_100").
 
 ## Data Sources
-- `Supabase` mcap snapshots for historical and latest tracking.
+- Postgres `token_mcap_tracking` for historical and latest tracking.
 - `Jupiter` price API (`/v4/price`) for live USD prices and optional volume.
 - `Trending API`: Used for real-time market cap verification during rug pull checks.
 

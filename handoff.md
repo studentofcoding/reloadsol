@@ -1,196 +1,112 @@
 # Session Handoff
 
-Last updated: 2026-07-04
+Last updated: 2026-07-05
 
-## Goal we're working towards
+## Primary focus
 
-Build a **dual trade-provider stack** (Shyft vs Solana Tracker + Raptor) with a universal UI toggle, Shyft bulk send (`send_many_txns`), and a reliable **mcap tracker → sim trades → strategy outcomes → Telegram** pipeline.
+**Pattern ML** — train on 24h mcap + social cohort labels, shadow-score mcap sim entries, review in Strategy Admin / Social Admin. **Do not enforce** until `pattern_ready` in model meta.
 
-Secondary goals completed or in progress this session:
-
-1. **Shyft first** — default provider and dropdown order (Shyft first, Raptor second).
-2. **Milestone naming** — `when_reach_*mc` columns renamed to `when_reach_*pct` (80/120/200% growth, not market cap).
-3. **Algo tester PnL** — profit/summary uses **realized** gain (`current_gain_percentage`), not peak.
-4. **Strategy Reports visibility** — mcap tracker sim outcomes, open positions, and clearer separation from A/B (signals/DLMM only).
+**Data layer:** all production data lives in Docker Postgres **`reloadsol_db`**. Supabase is **cut off** — no dashboard, no egress, no fallback. Schema source: [`db/init/`](db/init/) (`02-schema.sql` + migrations `04`–`06`). [`supabase/schema.sql`](supabase/schema.sql) is a legacy mirror only.
 
 ---
 
-## Current state of the code
+## Current Pattern ML baseline
 
-### Trade provider (done, committed)
+From `ml/artifacts/pattern-gate/model.meta.json` (330 train / 66 test):
 
-| Layer | Shyft | Raptor |
-|-------|-------|--------|
-| Default (no pref) | yes | only if explicit |
-| RPC | Shyft primary | Solana Tracker |
-| Swap build | Raptor → Jupiter Lite fallback | Raptor |
-| Bulk send | `send_many_txns` (2+ txs) | parallel single sends |
-| UI | [`TradeProviderBar.tsx`](src/components/TradeProviderBar.tsx) on all trade pages | same |
+| Metric | Value | Notes |
+|--------|-------|-------|
+| `macro_f1` | **0.468** | Below `min_macro_f1_pattern` (0.60) → `pattern_ready: false` |
+| `accuracy` | 0.879 | Misleading — model predicts almost all as class 0 |
+| Class 0 (loser) test | P/R/F1 = 0.88 / 1.0 / 0.94 (n=58) | Majority class dominates |
+| Class 1 (winner) test | P/R/F1 = **0 / 0 / 0** (n=8) | Never predicts winners on holdout |
+| Train class counts | `{0: 280, 1: 50}` | ~15% winners — severe imbalance |
+| Top feature importance | `log_first_mcap` (22.8), `log_mention_count_30m` (8.4), `minutes_to_first_mention` (1.5) | Social/wallet features currently **0** |
 
-Key files: [`src/utils/trade-provider.ts`](src/utils/trade-provider.ts), [`src/utils/swap-executor.ts`](src/utils/swap-executor.ts), [`src/utils/shyft-transaction.ts`](src/utils/shyft-transaction.ts), [`src/app/api/rpc/route.ts`](src/app/api/rpc/route.ts).
-
-### MCap tracker milestones (done in code, DB migration may be pending on server)
-
-- Schema uses `when_reach_80pct`, `when_reach_120pct`, `when_reach_200pct` in [`db/init/02-schema.sql`](db/init/02-schema.sql) and [`supabase/schema.sql`](supabase/schema.sql).
-- Logic unchanged: timestamps set when `mcap_growth_percent` crosses 80 / 120 / 200.
-- **Production DB** may still have `when_reach_*mc` until `ALTER TABLE ... RENAME COLUMN` is applied.
-
-### Algo tester profit (done)
-
-- [`src/utils/trending-profit.ts`](src/utils/trending-profit.ts) — `getSummaryTokenGainPct()` returns `current_gain_percentage` only.
-- [`src/components/algo-tester/AlgoDashboardTab.tsx`](src/components/algo-tester/AlgoDashboardTab.tsx) — Winners tab, history cards, leaderboard use realized PnL; peak kept as secondary metric.
-- Tests: [`src/utils/trending-profit.test.ts`](src/utils/trending-profit.test.ts) (4 tests passing).
-
-### MCap sim → Reports (done in code)
-
-- Sim open uses **entry mcap** for range check, not pumped `current_mcap` — [`src/utils/mcap-sim-track.ts`](src/utils/mcap-sim-track.ts).
-- Sim batch unions recent + high-growth rows — [`fetchMcapSimCandidateRows`](src/utils/mcap-tracker.ts) used by [`sim-track/route.ts`](src/app/api/mcap-tracking/sim-track/route.ts).
-- Reports API includes `open_sim_positions` — [`buildOpenMcapSimReportPositions`](src/strategies/db.ts).
-- UI: coverage shows open count for `mcap_tracker`; Reports tab has open sim positions table — [`StrategyAdminHub.tsx`](src/components/strategies/StrategyAdminHub.tsx).
-
-### Telegram (already wired, conditional)
-
-- **Open**: `notifyStrategyOpen` on sim open in sim-track route.
-- **Close**: `notifyStrategyClose` via `recordMcapTrackerOutcome` in [`src/strategies/outcomes.ts`](src/strategies/outcomes.ts).
-- Requires Telegram env configured and `STRATEGY_TRACK_TELEGRAM_ENABLED !== 'false'`.
-- **Does not fire** for tokens only on signals/tracker — only when sim worker opens/closes a paper trade.
-
-### Git / deploy
-
-- Working tree was clean at handoff (`git status` empty).
-- Recent commits include Shyft trade provider, mcap fixes, algo PnL (`15c992f`, `9dbdae5`, `5bd4688`, `caab957`).
+**Ops:** `ML_PATTERN_MODE=shadow` only. Improve minority-class recall / collect more winner cohort rows before enforce.
 
 ---
 
-## Files actively edited this session
+## Runtime stack (Docker on VPS)
 
-### Trade provider (earlier in session)
+| Service | Container | Notes |
+|---------|-----------|-------|
+| Web | `reloadsol-web` | Next.js API + UI; ONNX shadow scorers |
+| Cron | `reloadsol-cron` | Go scheduler → POST web API |
+| DB | `reloadsol-db` | Postgres 16, database `reloadsol_db` |
+| Pool | `reloadsol-bouncer` | PgBouncer; `DATABASE_URL` points here |
+| Edge | `reloadsol-nginx` | Public `:80` → web (host `:3000` not exposed in prod) |
+| Social | `reloadsol-social-ingest` | Telegram sidecar (check restart loop) |
 
-- [`src/components/TradeProviderBar.tsx`](src/components/TradeProviderBar.tsx)
-- [`src/utils/trade-provider.ts`](src/utils/trade-provider.ts)
-- [`src/app/api/rpc/route.ts`](src/app/api/rpc/route.ts)
-- [`src/app/api/rpc/diagnostics/route.ts`](src/app/api/rpc/diagnostics/route.ts)
-- `.env.docker.example`
-
-### MCap milestones + sim + reports
-
-- [`src/utils/mcap-tracker.ts`](src/utils/mcap-tracker.ts)
-- [`src/utils/mcap-sim-track.ts`](src/utils/mcap-sim-track.ts)
-- [`src/app/api/mcap-tracking/sim-track/route.ts`](src/app/api/mcap-tracking/sim-track/route.ts)
-- [`src/strategies/db.ts`](src/strategies/db.ts)
-- [`src/strategies/types.ts`](src/strategies/types.ts)
-- [`src/strategies/signals-scoring.ts`](src/strategies/signals-scoring.ts)
-- [`src/strategies/signals-pipeline.ts`](src/strategies/signals-pipeline.ts)
-- [`src/components/signals/TrackerTab.tsx`](src/components/signals/TrackerTab.tsx)
-- [`src/components/signals/SignalsTab.tsx`](src/components/signals/SignalsTab.tsx)
-- [`src/components/signals/tracker-insights.ts`](src/components/signals/tracker-insights.ts)
-- [`src/components/strategies/StrategyAdminHub.tsx`](src/components/strategies/StrategyAdminHub.tsx)
-- [`db/init/02-schema.sql`](db/init/02-schema.sql), [`supabase/schema.sql`](supabase/schema.sql)
-- Test files: `mcap-tracker-timeline`, `mcap-sim-track`, `signals-scoring`, `tracker-insights`, `trending-profit`
-
-### Algo tester
-
-- [`src/utils/trending-profit.ts`](src/utils/trending-profit.ts)
-- [`src/components/algo-tester/AlgoDashboardTab.tsx`](src/components/algo-tester/AlgoDashboardTab.tsx)
+ML artifacts: `./ml/artifacts:/app/ml/artifacts:ro`, `ML_PATTERN_ARTIFACT_DIR=/app/ml/artifacts/pattern-gate`.
 
 ---
 
-## Everything tried that failed or is still broken
+## Pattern ML pipeline
 
-### 1. Shyft bulk send type mismatch — FIXED
-
-`ShyftManySendResponse` uses **`results`**; [`swap-executor.ts`](src/utils/swap-executor.ts) now reads `manyResult.results` (tests updated too).
-
-### 2. Pauly / high-growth token not in Strategy Reports (diagnosed, not a code bug alone)
-
-Token visible on `/dev/signals` (from `token_mcap_tracking`) but not in outcomes until **`mcap_tracker_sim_track`** worker opens + closes a sim trade. User must verify worker runs on server.
-
-Possible skip reasons before open: ML gate, max open positions, `already_closed`, worker not scheduled, token outside sim candidate batch (less likely after `fetchMcapSimCandidateRows` fix).
-
-### 3. DB column rename on live server (migration added)
-
-Code expects `when_reach_*pct`. Apply on production:
-
-- [`db/init/04-rename-milestone-growth-pct-columns.sql`](db/init/04-rename-milestone-growth-pct-columns.sql) (idempotent `DO` block)
-
-Or manually:
-
-```sql
-ALTER TABLE token_mcap_tracking RENAME COLUMN when_reach_80mc TO when_reach_80pct;
-ALTER TABLE token_mcap_tracking RENAME COLUMN when_reach_120mc TO when_reach_120pct;
-ALTER TABLE token_mcap_tracking RENAME COLUMN when_reach_200mc TO when_reach_200pct;
+```mermaid
+flowchart LR
+  Rollup[social rollup cron ~5m] --> Pat24[mcap_social_pattern_24h]
+  Pat24 --> Export[GET /api/mcap-patterns/training-export]
+  Export --> Train[ml/train_pattern.py on host]
+  Train --> ONNX[ml/artifacts/pattern-gate/]
+  ONNX --> Shadow[entry-pattern-scorer shadow]
+  SimTrack[POST /api/mcap-tracking/sim-track] --> Shadow
+  Shadow --> UI[Strategy Admin Pattern ML columns]
 ```
 
-### 4. A/B Results confusion (clarified, not a bug)
+1. **Labels:** winner ≥120% mcap growth, loser &lt;80% (`first_seen_at` in last 24h).
+2. **Export (host):** `API_BASE_URL=http://127.0.0.1 TRENDING_TRACKER_SECRET=... npm run ml:export-patterns`
+3. **Train (host):** `npm run ml:train-pattern` → `ml/artifacts/pattern-gate/`
+4. **Deploy:** `npm run docker:deploy:web` (volume mount picks up ONNX without rebuild).
+5. **Review:** `/dev/strategies` → Pattern ML + 24h cohort columns; `/dev/social` → 24h Patterns.
 
-`mcap_tracker` strategies are `sim_only` — they never appear in A/B comparison. Look at **MCap tracker sim outcomes** and **Outcomes (ML feed)** sections instead.
+Check readiness: `curl -s http://127.0.0.1/api/mcap-patterns/stats | jq`.
 
-### 5. Tests / tsc
+---
 
-- Milestone + profit unit tests pass (28 tests in targeted run).
-- Full `tsc` may still fail on Shyft `items` vs `results` mismatch (unrelated to mcap work).
+## DB migrations (verify on server)
+
+Apply via psql if not already done:
+
+```bash
+docker exec -i reloadsol-db psql -U reloadsol -d reloadsol_db < db/init/04-rename-milestone-growth-pct-columns.sql
+docker exec -i reloadsol-db psql -U reloadsol -d reloadsol_db < db/init/05-signal-crosscheck.sql
+docker exec -i reloadsol-db psql -U reloadsol -d reloadsol_db < db/init/06-mcap-social-patterns-24h.sql
+```
+
+Or: `bash scripts/deploy-tencent.sh schema` (idempotent).
 
 ---
 
 ## Next steps (recommended order)
 
-1. **Server: apply milestone column rename** — run [`db/init/04-rename-milestone-growth-pct-columns.sql`](db/init/04-rename-milestone-growth-pct-columns.sql) if not already done.
-2. ~~**Fix Shyft batch bug**~~ — done (`results` field).
-3. **Server: confirm `mcap_tracker_sim_track` worker** is running; manually trigger `POST /trigger/mcap-tracker-sim-track` and check response `skipped` array for Pauly-like tokens.
-4. **Verify Telegram** — ensure bot token/chat env set; expect `Strategy OPEN (SIM)` / `Strategy CLOSE (SIM)` for mcap_tracker domain.
-5. **Smoke test end-to-end:**
-   - Fresh browser → Shyft selected first on trade pages.
-   - Bulk buy on Shyft uses `send_many_txns` (after step 2 fix).
-   - Algo tester: token that peaked then dropped shows current gain in profit totals.
-   - Strategies Reports: open sim positions table + closed outcomes after sim cycle.
-6. **Optional:** Add worker skip-reason visibility on Workers tab or persist last sim-track result for debugging.
+1. **Stay shadow** — do not set `ML_PATTERN_MODE=enforce` (class-1 recall 0 on test).
+2. **Fix social-ingest** if container is restart-looping (Telegram session/config).
+3. **Collect more winner cohort rows** — imbalance is the main blocker, not just retrain cadence.
+4. **Weekly retrain:** export → train → `docker:deploy:web` → compare shadow vs 24h cohort in Strategy Admin.
+5. **Sim-outcome gate (secondary):** keep `ML_GATE_MODE=shadow`; see [ML_GATE_PLAN.md](docs/ML_GATE_PLAN.md).
 
 ---
 
-## Architecture quick reference
+## Doc map
 
-```mermaid
-flowchart TB
-  subgraph tracking [MCap tracking]
-    TMT[token_mcap_tracking]
-    Signals["/dev/signals"]
-    TMT --> Signals
-  end
-
-  subgraph sim [Sim pipeline]
-    Worker[mcap_tracker_sim_track]
-    SimTrack["POST /api/mcap-tracking/sim-track"]
-    Wallet[mcap-tracker-sim wallet]
-    Outcomes[strategy_outcomes]
-    TG[Telegram alerts]
-    Worker --> SimTrack
-    SimTrack --> Wallet
-    SimTrack --> Outcomes
-    SimTrack --> TG
-  end
-
-  TMT --> Worker
-  Outcomes --> Reports["/dev/strategies Reports"]
-```
-
-```mermaid
-flowchart LR
-  subgraph trade [Trade provider toggle]
-    Bar[TradeProviderBar]
-    Shyft[Shyft RPC + send_many_txns]
-    Raptor[Solana Tracker + Raptor]
-    Bar --> Shyft
-    Bar --> Raptor
-  end
-```
+| Doc | Use when |
+|-----|----------|
+| [docs/ARCHITECTURE_SUMMARY.md](docs/ARCHITECTURE_SUMMARY.md) | Whole picture — algo, Pattern ML, next steps |
+| [docs/algo_overview.md](docs/algo_overview.md) | Per-strategy capture/calculate/result, workers, gap diagnosis |
+| [docs/OPERATOR_STATE.md](docs/OPERATOR_STATE.md) | Live ops, retrain loops, constraints |
+| [docs/architecture.md](docs/architecture.md) | System topology, tables, deploy model |
+| [ml/README.md](ml/README.md) | Python setup, Pattern ML train commands |
 
 ---
 
-## Server checklist (copy-paste)
+## Server checklist
 
-- [ ] Apply milestone rename via [`db/init/04-rename-milestone-growth-pct-columns.sql`](db/init/04-rename-milestone-growth-pct-columns.sql)
-- [ ] Deploy latest code
-- [ ] `SHYFT_API_KEY` set if using default Shyft stack
-- [ ] `mcap_tracker_sim_track` worker healthy
-- [ ] Telegram env + `STRATEGY_TRACK_TELEGRAM_ENABLED` not false
-- [x] Fix `swap-executor` Shyft `results` vs `items` (done)
+- [ ] Migrations `04`–`06` applied on `reloadsol_db`
+- [ ] `ML_PATTERN_MODE=shadow`, artifacts mounted at `/app/ml/artifacts/pattern-gate`
+- [ ] Host export uses `API_BASE_URL=http://127.0.0.1` (nginx :80, not `:3000`)
+- [ ] `TRENDING_TRACKER_SECRET` set for training-export auth
+- [ ] `mcap_tracker_sim_track` + `social_rollup` workers healthy
+- [ ] `reloadsol-social-ingest` not restart-looping
+- [ ] Review Pattern ML vs 24h cohort weekly before considering enforce

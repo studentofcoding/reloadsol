@@ -14,7 +14,9 @@ Related deep dives: [architecture.md](./architecture.md), [algo_overview.md](./a
 - **Automated strategies** — trending bot, signals paper trading, DLMM liquidity agent
 - **Research loop** — paper sims → labeled outcomes → ML shadow scoring → (future) enforce gates
 
-**North star:** strict checker over brilliant maker. Primary thesis is **`mcap_enter_at_80`** paper sim at the 80% mcap milestone; everything else compounds that safely.
+**North star:** strict checker over brilliant maker. Primary thesis is **`mcap_enter_at_80`** paper sim at the 80% mcap milestone; **Pattern ML** (24h cohort labels) is the primary ML focus.
+
+**Data layer:** Docker Postgres **`reloadsol_db`** only. Supabase is **cut off**. Schema source: [`db/init/`](../db/init/) (`02-schema.sql` + migrations `04`–`06`). [`supabase/schema.sql`](../supabase/schema.sql) is a legacy mirror.
 
 ### Runtime stack (Docker on server)
 
@@ -130,24 +132,11 @@ Workers tab: `/dev/strategies` → Workers (needs `CRON_SERVICE_URL`).
 
 ## 3. ML
 
+**Primary focus: Pattern ML (Track B).** Sim-outcome gate (Track A) is secondary.
+
 Two **parallel** ML tracks — different labels, same entry-feature philosophy (no leakage).
 
-### Track A — Sim-outcome gate (Layer 2)
-
-**Question:** “Will this paper trade be worth entering?” (PnL tiers after close)
-
-| Item | Detail |
-|------|--------|
-| Labels | `training_class` 0–4 from closed PnL; `gate_class` binary for v2-gate |
-| Features | Entry mcap, organic, holders, age, volume, template, optional social v2 |
-| Train | `npm run ml:export` → `ml:train-gate` / `ml:train-potential` |
-| Artifacts | `ml/artifacts/v2-gate/`, `v2-potential/` |
-| Runtime | [`entry-ml-scorer.server.ts`](../src/strategies/entry-ml-scorer.server.ts) on mcap sim open |
-| Shadow fields | `ml_gate_p_bad`, `ml_gate_predicted`, `ml_potential_*` |
-| Enforce | `ML_GATE_MODE=enforce` only when `gate_ready` (macro-F1 ≥ 0.65) |
-| Status | Shadow wired; enforce optional; LLM gate (L3) planned |
-
-### Track B — Pattern gate (24h mcap + social cohorts)
+### Track B — Pattern gate (24h mcap + social cohorts) — PRIMARY
 
 **Question:** “Does this token look like past 24h winners or losers?” (growth cohort, not sim PnL)
 
@@ -161,7 +150,22 @@ Two **parallel** ML tracks — different labels, same entry-feature philosophy (
 | Shadow fields | `ml_pattern_p_winner`, `ml_pattern_predicted` |
 | Docker | `./ml/artifacts:/app/ml/artifacts:ro`, `ML_PATTERN_ARTIFACT_DIR=/app/ml/artifacts/pattern-gate` |
 | Enforce | `ML_PATTERN_MODE=enforce` only when `pattern_ready` (macro-F1 ≥ 0.60) |
-| **Current server state** | Model trained (~264 rows); macro-F1 ~0.47 → **shadow only**, not enforce-ready |
+| **Current baseline** | macro-F1 **0.468**, class-1 recall **0** on test (n=8), train `{0:280, 1:50}` → **shadow only** |
+
+### Track A — Sim-outcome gate (Layer 2) — secondary
+
+**Question:** “Will this paper trade be worth entering?” (PnL tiers after close)
+
+| Item | Detail |
+|------|--------|
+| Labels | `training_class` 0–4 from closed PnL; `gate_class` binary for v2-gate |
+| Features | Entry mcap, organic, holders, age, volume, template, optional social v2 |
+| Train | `npm run ml:export` → `ml:train-gate` / `ml:train-potential` |
+| Artifacts | `ml/artifacts/v2-gate/`, `v2-potential/` |
+| Runtime | [`entry-ml-scorer.server.ts`](../src/strategies/entry-ml-scorer.server.ts) on mcap sim open |
+| Shadow fields | `ml_gate_p_bad`, `ml_gate_predicted`, `ml_potential_*` |
+| Enforce | `ML_GATE_MODE=enforce` only when `gate_ready` (macro-F1 ≥ 0.65) |
+| Status | Shadow wired; enforce optional; LLM gate (L3) planned |
 
 ### Feedback UI
 
@@ -235,6 +239,7 @@ docker exec reloadsol-db psql -U reloadsol -d reloadsol_db -c \
 
 | Doc | Use when |
 |-----|----------|
+| [handoff.md](../handoff.md) | Session handoff — Pattern ML ops checklist |
 | [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md) | This page — whole picture |
 | [algo_overview.md](./algo_overview.md) | Workers, outcomes, gap diagnosis |
 | [ML_GATE_PLAN.md](./ML_GATE_PLAN.md) | Layer 2/3 ML phases |

@@ -24,7 +24,7 @@ cp .env.docker.example .env
 # Edit .env — POSTGRES_PASSWORD, DATABASE_URL, SHYFT_API_KEY, WALLET_SESSION_SECRET, cron secrets, Telegram
 
 # Fresh deploy: docker compose applies db/init/*.sql on first start
-# Migrate from Supabase: bash scripts/migrate-from-supabase.sh (see README)
+# Historical: one-time Supabase migration via scripts/migrate-from-supabase.sh (see README)
 bash scripts/bootstrap-social-server.sh
 
 npm run docker:deploy
@@ -79,9 +79,8 @@ cp .env.docker.example .env          # edit POSTGRES_PASSWORD + secrets
 bash scripts/deploy-tencent.sh setup # docker, npm (registry fix), deps
 bash scripts/deploy-tencent.sh db    # postgres + pgbouncer on 127.0.0.1:5432
 
-# Optional: migrate from Supabase
-export SOURCE_DATABASE_URL='postgresql://postgres.[ref]:[pass]@db.[ref].supabase.co:5432/postgres'
-bash scripts/deploy-tencent.sh migrate
+# Historical one-time migration from hosted Supabase (already done on prod):
+# export SOURCE_DATABASE_URL='...' && bash scripts/deploy-tencent.sh migrate
 
 bash scripts/deploy-tencent.sh deploy  # or: bash scripts/deploy-tencent.sh all
 bash scripts/deploy-tencent.sh smoke
@@ -267,7 +266,8 @@ Keep exactly **one** `CRON_PORT=` line in `.env`. `CRON_SERVICE_URL` must stay `
 
 ```bash
 npx tsx scripts/seed-tracked-wallets.ts
-# Remove stale truncated rows in Supabase if duplicates remain (addresses missing suffix)
+# Remove stale truncated rows in Postgres if duplicates remain (addresses missing suffix)
+docker exec reloadsol-db psql -U reloadsol -d reloadsol_db -c "DELETE FROM tracked_wallets WHERE length(address) < 32;"
 ```
 
 **Social wallet poll: stale / Client.Timeout exceeded:** cron default HTTP timeout is 30s but wallet poll can run up to 300s (Shyft rate limit + many wallets). `main.go` uses a 300s client timeout for `/api/social/wallet-poll` — redeploy **cron** after updating: `npm run docker:deploy:cron`.
@@ -280,7 +280,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f social-i
 
 Look for `Ingest OK (200): N events`. After events exist, refresh rollups: `curl -X POST "http://127.0.0.1:${WEB_PORT:-80}/api/social/rollup?key=${TRENDING_TRACKER_SECRET}"`.
 
-**Real trading halted:** check `bot_trading_state` in Supabase; circuit breaker opens after `BOT_TRADING_FAILURE_THRESHOLD` failures.
+**Real trading halted:** check `bot_trading_state` in Postgres (`docker exec reloadsol-db psql -U reloadsol -d reloadsol_db -c 'SELECT * FROM bot_trading_state;'`); circuit breaker opens after `BOT_TRADING_FAILURE_THRESHOLD` failures.
 
 **Build OOM / deploy stops during `npm ci`:** on a **4 GB** VPS, `npm ci` + Puppeteer + `next build` can exceed RAM while the old web container is still running. Deploy mitigations in [`scripts/docker-deploy.sh`](scripts/docker-deploy.sh):
 
@@ -295,6 +295,6 @@ Override heap for larger hosts: `NODE_OPTIONS=--max-old-space-size=4096 npm run 
 
 **Puppeteer capture locally:** `.npmrc` skips Chromium by default; run `PUPPETEER_SKIP_DOWNLOAD=false npm install` when you need `/api/capture`.
 
-**Supabase 522 / HTML errors in web logs:** usually **egress quota exceeded** on Free plan (Dashboard → Usage). The project returns Cloudflare error pages instead of JSON. Mitigations in code: social rollup every 5m, rollup query without `raw_metadata`, 60s Supabase circuit breaker, job locks fail closed when DB is down. **Fix:** upgrade plan or wait for billing cycle reset; redeploy **cron** after changing rollup interval.
+**Postgres connection errors / circuit breaker:** web logs may show DB timeouts when `reloadsol-db` or PgBouncer is down. Mitigations: social rollup every 5m, rollup query without `raw_metadata`, 60s DB circuit breaker, job locks fail closed when DB is down. **Fix:** verify `DATABASE_URL` points at `reloadsol-bouncer`; run `bash scripts/deploy-tencent.sh schema`; `docker restart reloadsol-web`.
 
 See also [`README.md`](README.md) and [`CHANGELOG.md`](CHANGELOG.md).

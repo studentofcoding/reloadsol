@@ -1,5 +1,7 @@
 # Autonomous Trading Implementation
 
+> **Note (Jul 2026):** Production DB is Postgres `reloadsol_db` (Docker). Supabase is no longer used. For current ops see [OPERATOR_STATE.md](./OPERATOR_STATE.md) and Pattern ML in [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md).
+
 ## Overview
 
 The trending tracker has been enhanced to support both **simulation** and **real trading** modes simultaneously. This unified system allows the algorithm to:

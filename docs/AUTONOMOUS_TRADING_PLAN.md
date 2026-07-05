@@ -1,5 +1,7 @@
 # Autonomous Trading System Requirements & Status
 
+> **Note (Jul 2026):** Production DB is Postgres `reloadsol_db` (Docker). Supabase is no longer used. For current ops see [OPERATOR_STATE.md](./OPERATOR_STATE.md) and Pattern ML in [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md).
+
 ## 1. Core Trading Engine
 
 - [x] **Strategy Manager**: A modular system to load and execute different trading strategies.
@@ -33,7 +35,7 @@
 - [x] **Wallet Management**:
   - [x] **Simulation**: Virtual wallet tracking.
   - [x] **Real Trading**: `TRADING_KEYPAIR_JSON` env var for secure server-side signing.
-- [x] **State Persistence**: Supabase (`trending_token_tracker`, `trading_history`).
+- [x] **State Persistence**: Postgres `reloadsol_db` (`trending_token_tracker`, `trading_history`).
 - [x] **Failover Mechanisms**:
   - [x] **RPC Health**: Circuit breaker pattern implemented.
   - [x] **Data Provider**: Fallback logic for price fetches.

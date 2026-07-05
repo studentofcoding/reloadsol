@@ -1,5 +1,7 @@
 # 🎮 Catch the Coin & Charts Page Documentation
 
+> **Note (Jul 2026):** Production DB is Postgres `reloadsol_db` (Docker). Supabase is no longer used. For current ops see [OPERATOR_STATE.md](./OPERATOR_STATE.md) and Pattern ML in [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md).
+
 ## Overview
 
 This module consists of two main interfaces designed for rapid token filtering, tracking, and execution.
@@ -58,7 +60,7 @@ The board is divided into 3 status columns:
 - **Process**:
   1.  **Screenshot**: Uses `html2canvas` to take a picture of the card state.
   2.  **PnL Calculation**: `((Current Price - Initial Price) / Initial Price) * 100`.
-  3.  **Archival**: Saves the JSON result and Image Base64 to Supabase.
+  3.  **Archival**: Saves the JSON result and Image Base64 to Postgres.
 
 ---
 

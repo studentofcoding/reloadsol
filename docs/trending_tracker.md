@@ -1,8 +1,10 @@
 # Trending Tracker Documentation
 
+> **Note (Jul 2026):** Production DB is Postgres `reloadsol_db` (Docker). Supabase is no longer used. For current ops see [OPERATOR_STATE.md](./OPERATOR_STATE.md) and Pattern ML in [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md).
+
 ## Overview
 
-The **Trending Tracker** (`src/app/(trade)/dev/trending-tracker/page.tsx`) is a comprehensive dashboard for monitoring, tracking, and executing trades on trending Solana tokens. It integrates real-time data fetching, strategy-based automation, and detailed performance analytics, backed by Supabase for data persistence.
+The **Trending Tracker** (`src/app/(trade)/dev/trending-tracker/page.tsx`) is a comprehensive dashboard for monitoring, tracking, and executing trades on trending Solana tokens. It integrates real-time data fetching, strategy-based automation, and detailed performance analytics, backed by Postgres `reloadsol_db` for data persistence.
 
 ## Architecture & Workflow
 
@@ -27,7 +29,7 @@ The page serves as the command center with a split workflow for **Analysis** and
 **Endpoint:** `/api/trending/stats`
 
 - **Mechanism**: Uses `React Query` to fetch data every 30 seconds (auto-refresh).
-- **Data Source**: The API aggregates data from Supabase tables:
+- **Data Source**: The API aggregates data from Postgres tables:
   - `trending_token_tracker`: Stores individual token data.
   - `trending_token_summary`: Stores daily performance snapshots.
 - **Enhanced Data**:
@@ -43,7 +45,7 @@ A specialized modal for deep-diving into a token's performance:
 - **Price History Chart**: Renders a line chart using `react-chartjs-2`, visualizing the token's price movement from tracking start to finish.
   - **Visuals**: Uses white dots (`pointRadius: 3`) to highlight specific data points against the blue line.
 - **Data Handling**:
-  - **JSONB Parsing**: Safely parses the `price_history` field from Supabase, which can be a JSON string or an object, ensuring the chart always has valid array data.
+  - **JSONB Parsing**: Safely parses the `price_history` field from Postgres, which can be a JSON string or an object, ensuring the chart always has valid array data.
 - **Performance Metrics**:
   - **Potential Upside**: Peak gain percentage.
   - **Reward Ratio (RnR)**: Calculated as `(Peak Price - Initial Price) / (Initial Price - Lowest Price)` (Upside / Max Drawdown).
@@ -58,7 +60,7 @@ When a token is added to the tracker (manually or via bot):
 
 1.  **Request Handling**: The API accepts the token address and configuration.
 2.  **Strategy Selection**: Supports strategies like `ATT` (Auto-Trending), `lowcap_moonbag`, etc.
-3.  **Supabase Insertion**:
+3.  **Postgres Insertion**:
     - A record is created in `trending_token_tracker` with status `tracking`.
     - Initial price and metadata are recorded.
 4.  **Trade Execution (Real vs. Simulation)**:
@@ -77,17 +79,17 @@ When a token is added to the tracker (manually or via bot):
 
 To keep the dashboard live, a background process (cron job) runs periodically:
 
-1.  **Fetching**: Retrieves all tokens with status `tracking` from Supabase.
+1.  **Fetching**: Retrieves all tokens with status `tracking` from Postgres.
 2.  **Price Updates**: Queries external APIs (e.g., Jupiter, Birdeye) for the latest price and market cap.
-3.  **Supabase Update**:
+3.  **Postgres Update**:
     - Updates `last_price_usd`, `current_gain_percentage`, and `market_cap`.
     - Appends the new price point to the `price_history` JSONB array.
     - Checks for exit conditions (Stop Loss or Take Profit) and updates status if triggered.
 4.  **Resilience**: Includes error handling (try-catch) for network failures (e.g., `ECONNRESET`) to ensure the cron job doesn't crash entirely if one fetch fails.
 
-### 6. Data Persistence (Supabase)
+### 6. Data Persistence (Postgres)
 
-The system uses two primary Supabase tables (environment-aware: `_dev` vs `prod`):
+The system uses two primary Postgres tables (environment-aware: `_dev` vs `prod`):
 
 #### A. `trending_token_tracker`
 
@@ -124,8 +126,8 @@ Separate from the "trending" status, every trade (buy/sell) is recorded for Prof
 
 ## Summary of Data Flow
 
-1.  **User/Bot** -> `POST /api/trending/track` -> **Supabase** (`trending_token_tracker`).
+1.  **User/Bot** -> `POST /api/trending/track` -> **Postgres** (`trending_token_tracker`).
 2.  **System** -> Executes Trade/Sim -> **PnL API** (`/api/trading/records`).
-3.  **Background Job** -> `GET /api/mcap-tracking` -> Updates Prices in **Supabase**.
-4.  **Frontend** -> `useTrendingStats` -> `GET /api/trending/stats` -> **Supabase** (with Price History).
+3.  **Background Job** -> `GET /api/mcap-tracking` -> Updates Prices in **Postgres**.
+4.  **Frontend** -> `useTrendingStats` -> `GET /api/trending/stats` -> **Postgres** (with Price History).
 5.  **User Interaction** -> Click Row -> **TokenDetailsModal** (Analysis) -> Click Buy -> **ChartBuyModal** (Execution).

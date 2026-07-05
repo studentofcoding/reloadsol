@@ -1,5 +1,7 @@
 # Signals & Trading Strategy Overview
 
+> **Note (Jul 2026):** Production DB is Postgres `reloadsol_db` (Docker). Supabase is no longer used. For current ops see [OPERATOR_STATE.md](../docs/OPERATOR_STATE.md) and Pattern ML in [ARCHITECTURE_SUMMARY.md](../docs/ARCHITECTURE_SUMMARY.md).
+
 ## 🎯 Core Objective
 
 The goal is to identify high-potential early-stage Solana tokens (low market cap), track their performance, and execute weighted bulk buys on the most promising candidates.
@@ -8,7 +10,7 @@ The goal is to identify high-potential early-stage Solana tokens (low market cap
 
 ## 📊 Data Structure: `trading_signals`
 
-All signal data is stored in the Supabase `trading_signals` table.
+All signal data is stored in the Postgres `trading_signals` table.
 
 | Field             | Type      | Description                               |
 | ----------------- | --------- | ----------------------------------------- |
@@ -85,7 +87,7 @@ When executing a **Bulk Buy** on the "Potential" column, SOL is allocated based 
 
 ## 🛠 Tech Stack
 
-- **Database**: Supabase (PostgreSQL)
+- **Database**: Postgres `reloadsol_db` (Docker)
 - **API**: Next.js App Router (`/api/signals`)
 - **Execution**: Jupiter V6 Swap API
 - **Visualization**: GMGN.cc Charts (iFrame) + HTML2Canvas (Screenshots)

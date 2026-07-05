@@ -7,7 +7,8 @@ Telethon sidecar that listens to configured Telegram alpha channels and POSTs pa
 ## Prerequisites
 
 - Root `.env` with Telegram credentials (see `.env.docker.example` **Social ingest** section)
-- buy_bulk web + cron running (rollup every 120s, wallet poll every 300s)
+- buy_bulk web + cron running (rollup every ~5m, wallet poll every 300s)
+- Postgres `reloadsol_db` via web API (no Supabase)
 - Telethon session file in `social-ingest/sessions/session_search.session` (copied from dev or created on first login)
 
 ## First-time server bootstrap
@@ -98,7 +99,7 @@ npm run social:seed-wallets -- --file path/to/wallets.txt
 | `SOCIAL_STORE_EXCERPT` | `false` | Omit message excerpt from `raw_metadata` (biggest JSON saver) |
 | `SOCIAL_EXCERPT_MAX` | `120` | Max excerpt length when `SOCIAL_STORE_EXCERPT=true` |
 
-Mentions store `{}` or minimal metadata; `wallet_buy` keeps `sol_amount` when parsed. The ingest API trims any oversized `raw_metadata` before Supabase insert.
+Mentions store `{}` or minimal metadata; `wallet_buy` keeps `sol_amount` when parsed. The ingest API trims any oversized `raw_metadata` before Postgres insert.
 
 Set `SOCIAL_ENRICH_GMGN=true` only if you need `symbol` / `mcp` on first CA per message (one GMGN call).
 
@@ -106,8 +107,8 @@ Set `SOCIAL_ENRICH_GMGN=true` only if you need `symbol` / `mcp` on first CA per 
 
 - Logs: `Listening on N channels`, `Channel … bare=… marked=…`, and `Ingest OK (200)`
 - `Skip message (no token CA)` = channel message received but no parseable Solana address in text
-- Admin UI: `/dev/social`
-- Supabase: `social_token_events` → cron refreshes `social_token_rollups`
+- Admin UI: `/dev/social` → **24h Patterns**
+- Postgres: `social_token_events` → cron refreshes `social_token_rollups` + `mcap_social_pattern_24h`
 
 ## Deploy scope
 
