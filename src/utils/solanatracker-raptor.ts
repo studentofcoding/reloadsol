@@ -6,6 +6,16 @@ export const RAPTOR_DEV_FEE_BPS = 50;
 export const RAPTOR_DEV_FEE_ACCOUNT =
   "3V3N5xh6vUUVU3CnbjMAXoyXendfXzXYKzTVEsFrLkgX";
 
+/** Direct/single-hop only — avoids multi-hop route failures on thin pump tokens. */
+export const RAPTOR_DEFAULT_MAX_HOPS = 1;
+
+export function getRaptorMaxHops(): number {
+  const raw = process.env.RAPTOR_MAX_HOPS?.trim();
+  if (!raw) return RAPTOR_DEFAULT_MAX_HOPS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : RAPTOR_DEFAULT_MAX_HOPS;
+}
+
 export class RaptorAPIError extends Error {
   constructor(
     message: string,
@@ -118,6 +128,7 @@ export function buildRaptorQuoteAndSwapBody(
     slippageBps: params.slippageBps,
     wrapUnwrapSol: true,
     txVersion: "V0",
+    maxHops: getRaptorMaxHops(),
     priorityFee: priority.priorityFee,
     maxPriorityFee: priority.maxPriorityFee,
     feeAccount: params.feeAccount ?? RAPTOR_DEV_FEE_ACCOUNT,
@@ -195,6 +206,7 @@ export async function fetchRaptorQuoteDirect(
     outputMint,
     amount,
     slippageBps: String(slippageBps),
+    maxHops: String(getRaptorMaxHops()),
   });
   return raptorFetch<RaptorQuoteResponse>(`/quote?${params.toString()}`);
 }
@@ -259,6 +271,7 @@ export async function fetchRaptorQuote(
     outputMint,
     amount,
     slippageBps: String(slippageBps),
+    maxHops: String(getRaptorMaxHops()),
   });
   const response = await fetch(`/api/solanatracker/quote?${query.toString()}`);
   if (!response.ok) {
