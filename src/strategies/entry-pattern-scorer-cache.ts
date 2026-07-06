@@ -15,6 +15,7 @@ export type LoadedPatternModel = {
 
 let patternModel: LoadedPatternModel | null | undefined
 let patternLoadAttempted = false
+let patternLoadError: string | null = null
 
 export function getPatternModelCache(): LoadedPatternModel | null | undefined {
   return patternModel
@@ -32,7 +33,16 @@ export function markPatternLoadAttempted(): void {
   patternLoadAttempted = true
 }
 
+export function getPatternLoadError(): string | null {
+  return patternLoadError
+}
+
+export function setPatternLoadError(error: string | null): void {
+  patternLoadError = error
+}
+
 export function resetPatternScorerCache(): void {
   patternModel = undefined
   patternLoadAttempted = false
+  patternLoadError = null
 }

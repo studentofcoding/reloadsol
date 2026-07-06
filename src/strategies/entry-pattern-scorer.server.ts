@@ -11,9 +11,11 @@ import {
   type PatternMlShadowScore,
 } from './entry-pattern-scorer'
 import {
+  getPatternLoadError,
   getPatternModelCache,
   isPatternLoadAttempted,
   markPatternLoadAttempted,
+  setPatternLoadError,
   setPatternModelCache,
   type LoadedPatternModel,
 } from './entry-pattern-scorer-cache'
@@ -54,6 +56,7 @@ async function getPatternModel(): Promise<LoadedPatternModel | null> {
     try {
       const ort = await import('onnxruntime-node')
       const session = await ort.InferenceSession.create(onnxPath)
+      const version = meta.version ?? path.basename(artifactDir)
       setPatternModelCache({
         meta,
         session: session as unknown as LoadedPatternModel['session'],
@@ -119,6 +122,28 @@ export async function getPatternModelVersion(): Promise<string | null> {
   const loaded = await getPatternModel()
   if (!loaded) return null
   return loaded.meta.version ?? path.basename(loaded.artifactDir)
+}
+
+export async function getPatternRuntimeLoadStatus(): Promise<{
+  runtime_loaded: boolean
+  model_version: string | null
+  error: string | null
+}> {
+  const loaded = await getPatternModel()
+  const ready = isPatternModelReady(loaded?.meta)
+  if (loaded && ready) {
+    return {
+      runtime_loaded: true,
+      model_version: loaded.meta.version ?? path.basename(loaded.artifactDir),
+      error: null,
+    }
+  }
+
+  return {
+    runtime_loaded: false,
+    model_version: null,
+    error: getPatternLoadError() ?? 'pattern model not loaded',
+  }
 }
 
 export async function evaluatePatternEnforce(

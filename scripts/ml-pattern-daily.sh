@@ -175,10 +175,27 @@ print(m.get('trained_at', 'null'), metrics.get('macro_f1', 'null'), metrics.get(
       log "Model trained_at=$TRAINED_AT macro_f1=$MACRO_F1 pattern_ready=$PATTERN_READY"
 
       RELOAD_URL="${API_BASE_URL%/}/api/ml/pattern/reload?key=${TRENDING_TRACKER_SECRET}"
-      if curl -sf -X POST "$RELOAD_URL" >/dev/null; then
-        WEB_RELOADED=true
-        log "ONNX scorer reloaded via API"
-        RUN_STATUS="success"
+      RELOAD_BODY="$(curl -sf -X POST "$RELOAD_URL" 2>/dev/null || true)"
+      if [[ -n "$RELOAD_BODY" ]]; then
+        RUNTIME_LOADED="$(python3 -c "
+import json, sys
+try:
+  body = json.load(sys.stdin)
+except json.JSONDecodeError:
+  print('false')
+  raise SystemExit
+print('true' if body.get('runtime_loaded') is True else 'false')
+" <<<"$RELOAD_BODY")"
+        if [[ "$RUNTIME_LOADED" == "true" ]]; then
+          WEB_RELOADED=true
+          log "ONNX scorer reloaded via API (runtime_loaded=true)"
+          RUN_STATUS="success"
+        else
+          log "[WARN] Reload API returned runtime_loaded=false — check docker logs for [ml-pattern]"
+          log "[WARN] Response: $RELOAD_BODY"
+          RUN_STATUS="partial"
+          TRAIN_SKIP_REASON="reload runtime_loaded=false"
+        fi
       elif docker restart reloadsol-web >/dev/null 2>&1; then
         WEB_RELOADED=true
         log "ONNX scorer reloaded via docker restart reloadsol-web"
