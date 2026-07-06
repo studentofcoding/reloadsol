@@ -17,9 +17,27 @@ const nextConfig = {
     ],
   },
   outputFileTracingIncludes: {
-    '/api/mcap-tracking/sim-track': ['./artifacts/**/*', './ml/artifacts/**/*'],
-    '/api/ml/pattern/reload': ['./ml/artifacts/**/*'],
-    '/api/mcap-patterns/stats': ['./ml/artifacts/**/*'],
+    '/api/mcap-tracking/sim-track': [
+      './artifacts/**/*',
+      './ml/artifacts/**/*',
+      './node_modules/onnxruntime-node/bin/**/*',
+      './node_modules/onnxruntime-common/**/*',
+    ],
+    '/api/ml/pattern/reload': [
+      './ml/artifacts/**/*',
+      './node_modules/onnxruntime-node/bin/**/*',
+      './node_modules/onnxruntime-common/**/*',
+    ],
+    '/api/mcap-patterns/stats': [
+      './ml/artifacts/**/*',
+      './node_modules/onnxruntime-node/bin/**/*',
+      './node_modules/onnxruntime-common/**/*',
+    ],
+    '/*': [
+      './node_modules/onnxruntime-node/bin/**/*',
+      './node_modules/onnxruntime-common/**/*',
+      './node_modules/bigint-buffer/**/*',
+    ],
   },
   typescript: {
     ignoreBuildErrors: process.env.SKIP_BUILD_CHECKS === 'true',

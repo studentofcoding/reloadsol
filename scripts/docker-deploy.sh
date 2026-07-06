@@ -241,7 +241,17 @@ verify_standalone_build() {
     return 1
   fi
 
-  log "Standalone build verified (.next/standalone + .next/static)"
+  if ! find .next/standalone/node_modules/onnxruntime-node/bin -name 'libonnxruntime.so*' -print -quit 2>/dev/null | grep -q .; then
+    log "Build output missing onnxruntime native libs — Pattern/entry ML will fail in Docker."
+    return 1
+  fi
+
+  if ! find .next/standalone/node_modules/onnxruntime-node/bin -name 'onnxruntime_binding.node' -print -quit 2>/dev/null | grep -q .; then
+    log "Build output missing onnxruntime_binding.node — Pattern/entry ML will fail in Docker."
+    return 1
+  fi
+
+  log "Standalone build verified (.next/standalone + .next/static + onnxruntime native libs)"
 }
 
 rollback_web_container() {
