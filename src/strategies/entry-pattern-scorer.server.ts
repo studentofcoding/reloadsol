@@ -27,12 +27,18 @@ async function getPatternModel(): Promise<LoadedPatternModel | null> {
     markPatternLoadAttempted()
     const artifactDir = resolvePatternArtifactDir()
     if (!artifactDir) {
+      console.warn(
+        '[ml-pattern] shadow scoring disabled: no artifact dir (ML_PATTERN_ARTIFACT_DIR unset and default missing)',
+      )
       setPatternModelCache(null)
       return null
     }
 
     const meta = await readPatternModelMeta()
     if (!meta) {
+      console.warn(
+        `[ml-pattern] shadow scoring disabled: model.meta.json missing or invalid in ${artifactDir}`,
+      )
       setPatternModelCache(null)
       return null
     }
@@ -40,6 +46,7 @@ async function getPatternModel(): Promise<LoadedPatternModel | null> {
     const fs = await import('node:fs')
     const onnxPath = path.join(artifactDir, 'model.onnx')
     if (!fs.existsSync(onnxPath)) {
+      console.warn(`[ml-pattern] shadow scoring disabled: ${onnxPath} not found`)
       setPatternModelCache(null)
       return null
     }
@@ -52,7 +59,11 @@ async function getPatternModel(): Promise<LoadedPatternModel | null> {
         session: session as unknown as LoadedPatternModel['session'],
         artifactDir,
       })
-    } catch {
+    } catch (error) {
+      console.warn(
+        '[ml-pattern] shadow scoring disabled: ONNX session failed to load —',
+        error instanceof Error ? error.message : String(error),
+      )
       setPatternModelCache(null)
     }
   }

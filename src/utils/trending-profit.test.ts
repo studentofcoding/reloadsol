@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   getSummaryTokenGainPct,
+  isPnlEligibleTrackerToken,
   isSkippedTrackerToken,
   resolveCompletedOutcome,
   countTrackerOutcomeStats,
@@ -100,6 +101,15 @@ describe('trending-profit', () => {
         current_gain_percentage: -6.55,
       }),
     ).toBe('lost')
+  })
+
+  it('isPnlEligibleTrackerToken excludes skipped and waiting only', () => {
+    expect(isPnlEligibleTrackerToken({ status: 'skipped' })).toBe(false)
+    expect(isPnlEligibleTrackerToken({ status: 'waiting' })).toBe(false)
+    expect(isPnlEligibleTrackerToken({ status: 'won' })).toBe(true)
+    expect(isPnlEligibleTrackerToken({ status: 'lost' })).toBe(true)
+    expect(isPnlEligibleTrackerToken({ status: 'tracking' })).toBe(true)
+    expect(isPnlEligibleTrackerToken({ status: 'manual_sell' })).toBe(true)
   })
 
   it('countTrackerOutcomeStats excludes skipped from won/lost', () => {
