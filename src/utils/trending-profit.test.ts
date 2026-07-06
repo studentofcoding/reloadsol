@@ -3,6 +3,8 @@ import {
   getSummaryTokenGainPct,
   isSkippedTrackerToken,
   resolveCompletedOutcome,
+  countTrackerOutcomeStats,
+  getEffectiveDisplayStatus,
   sumSummaryTokenProfitPct,
 } from './trending-profit'
 
@@ -83,5 +85,35 @@ describe('trending-profit', () => {
         current_gain_percentage: 12,
       }),
     ).toBe('won')
+  })
+
+  it('getEffectiveDisplayStatus returns skipped for skipped tokens', () => {
+    expect(getEffectiveDisplayStatus({ status: 'skipped', current_gain_percentage: 86 })).toBe(
+      'skipped',
+    )
+  })
+
+  it('getEffectiveDisplayStatus returns lost for stale won with negative gain', () => {
+    expect(
+      getEffectiveDisplayStatus({
+        status: 'won',
+        current_gain_percentage: -6.55,
+      }),
+    ).toBe('lost')
+  })
+
+  it('countTrackerOutcomeStats excludes skipped from won/lost', () => {
+    const stats = countTrackerOutcomeStats([
+      { status: 'won', current_gain_percentage: 10 },
+      { status: 'won', current_gain_percentage: -6 },
+      { status: 'lost', current_gain_percentage: -20 },
+      { status: 'skipped', current_gain_percentage: 85 },
+      { status: 'tracking', current_gain_percentage: 5 },
+    ])
+    expect(stats.won).toBe(1)
+    expect(stats.lost).toBe(2)
+    expect(stats.skipped).toBe(1)
+    expect(stats.tracking).toBe(1)
+    expect(stats.winRate).toBeCloseTo(33.33, 1)
   })
 })

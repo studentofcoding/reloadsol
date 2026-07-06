@@ -41,6 +41,77 @@ export function resolveCompletedOutcome(token: SummaryToken): 'won' | 'lost' | n
   return gain > 0 ? 'won' : 'lost'
 }
 
+export type TrackerDisplayStatus =
+  | 'skipped'
+  | 'won'
+  | 'lost'
+  | 'tracking'
+  | 'waiting'
+  | 'manual_sell'
+  | 'stopped'
+  | string
+
+/** UI/API label: skipped stays skipped; terminal rows use realized gain. */
+export function getEffectiveDisplayStatus(token: {
+  status?: string | null
+  current_gain_percentage?: number | null
+  peak_gain_percentage?: number | null
+}): TrackerDisplayStatus {
+  if (isSkippedTrackerToken(token)) return 'skipped'
+  const outcome = resolveCompletedOutcome(token)
+  if (outcome) return outcome
+  return token.status ?? 'unknown'
+}
+
+export type TrackerOutcomeStats = {
+  total: number
+  won: number
+  lost: number
+  skipped: number
+  tracking: number
+  waiting: number
+  winRate: number
+}
+
+export function countTrackerOutcomeStats(
+  tokens: Array<{ status?: string | null; current_gain_percentage?: number | null; peak_gain_percentage?: number | null }>,
+): TrackerOutcomeStats {
+  let won = 0
+  let lost = 0
+  let skipped = 0
+  let tracking = 0
+  let waiting = 0
+
+  for (const token of tokens) {
+    if (isSkippedTrackerToken(token)) {
+      skipped += 1
+      continue
+    }
+    if (token.status === 'tracking') {
+      tracking += 1
+      continue
+    }
+    if (token.status === 'waiting') {
+      waiting += 1
+      continue
+    }
+    const outcome = resolveCompletedOutcome(token)
+    if (outcome === 'won') won += 1
+    else if (outcome === 'lost') lost += 1
+  }
+
+  const completed = won + lost
+  return {
+    total: tokens.length,
+    won,
+    lost,
+    skipped,
+    tracking,
+    waiting,
+    winRate: completed > 0 ? (won / completed) * 100 : 0,
+  }
+}
+
 export function sumSummaryTokenProfitPct(tokens: SummaryToken[]): {
   totalProfitPct: number
   averageProfitPct: number

@@ -13,7 +13,7 @@ import { useTrendingStats } from "@/hooks/useTrendingStats";
 import { isSimulatedTrackerPosition } from "@/utils/trading-simulation";
 import { useTokenHistory } from "@/hooks/useTokenHistory";
 import { formatAppDate, formatAppDateTime, formatAppNow, getAppLocalDateString } from "@/utils/datetime";
-import { getSummaryTokenGainPct, isSkippedTrackerToken, resolveCompletedOutcome } from "@/utils/trending-profit";
+import { getSummaryTokenGainPct, getEffectiveDisplayStatus, isSkippedTrackerToken, resolveCompletedOutcome } from "@/utils/trending-profit";
 
 // Use alternate tables in local development to avoid prod collisions
 const TRACKER_TABLE =
@@ -1590,8 +1590,11 @@ export default function AlgoDashboardTab() {
                                     getSummaryTokenGainPct(a),
                                 )
                                 .map((token, index, arr) => {
-                                  const displayGain =
-                                    getSummaryTokenGainPct(token);
+                                  const skipped = isSkippedTrackerToken(token);
+                                  const displayStatus = getEffectiveDisplayStatus(token);
+                                  const displayGain = skipped
+                                    ? null
+                                    : getSummaryTokenGainPct(token);
                                   const sim = token.trading_simulation as
                                     | Record<string, unknown>
                                     | null
@@ -1617,19 +1620,35 @@ export default function AlgoDashboardTab() {
                                           {token.token_address.slice(0, 8)}…
                                         </div>
                                       </td>
-                                      <td className="p-2">
-                                        {token.status ?? "—"}
+                                      <td
+                                        className={`p-2 ${
+                                          displayStatus === "won"
+                                            ? "text-green-400"
+                                            : displayStatus === "lost"
+                                              ? "text-red-400"
+                                              : displayStatus === "skipped"
+                                                ? "text-gray-400"
+                                                : ""
+                                        }`}
+                                      >
+                                        {displayStatus}
                                       </td>
                                       <td className="p-2">
-                                        {formatPercentage(displayGain)}
+                                        {skipped
+                                          ? "—"
+                                          : formatPercentage(displayGain ?? 0)}
                                       </td>
                                       <td className="p-2">
-                                        {token.peak_gain_percentage.toFixed(2)}%
+                                        {skipped
+                                          ? "—"
+                                          : `${token.peak_gain_percentage.toFixed(2)}%`}
                                       </td>
                                       <td className="p-2">
-                                        {token.current_gain_percentage != null
-                                          ? `${token.current_gain_percentage.toFixed(2)}%`
-                                          : "—"}
+                                        {skipped
+                                          ? "—"
+                                          : token.current_gain_percentage != null
+                                            ? `${token.current_gain_percentage.toFixed(2)}%`
+                                            : "—"}
                                       </td>
                                       <td className="p-2">
                                         {token.tracking_duration_hours.toFixed(1)}h
@@ -1656,7 +1675,9 @@ export default function AlgoDashboardTab() {
                         <div className="space-y-2">
                           {(activeSummary.top_winners || [])
                             .filter(
-                              (w: TopWinner) => getSummaryTokenGainPct(w) > 0,
+                              (w: TopWinner) =>
+                                !isSkippedTrackerToken(w) &&
+                                resolveCompletedOutcome(w) === "won",
                             )
                             .slice(0, 5)
                             .map((token: TopWinner, index: number, arr: TopWinner[]) => {

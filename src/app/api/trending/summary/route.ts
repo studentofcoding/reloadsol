@@ -1,7 +1,10 @@
-// Daily summary for the `daily_summary` Go cron worker (`POST /api/trending/summary`)
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
 import { query } from '@/utils/db'
+import {
+  countTrackerOutcomeStats,
+  resolveCompletedOutcome,
+} from '@/utils/trending-profit'
 
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 const SUMMARY_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_summary_dev' : 'trending_token_summary'
@@ -17,7 +20,7 @@ interface TrackedToken {
   peak_price_usd: number
   current_gain_percentage: number
   peak_gain_percentage: number
-  status: 'tracking' | 'won' | 'lost'
+  status: 'tracking' | 'won' | 'lost' | 'skipped' | 'waiting' | 'manual_sell'
   organic_score: number | null
   market_cap: number | null
   volume_1h: number | null
@@ -99,9 +102,38 @@ export async function POST(request: NextRequest) {
     const tokens = allTokens
     console.log(`🔍 Found ${tokens.length} tokens tracked in the last 24 hours`)
 
+    const staleReconcilePromises = tokens
+      .map((token) => {
+        if (
+          token.status === 'skipped' ||
+          token.status === 'tracking' ||
+          token.status === 'waiting'
+        ) {
+          return null
+        }
+        const outcome = resolveCompletedOutcome(token)
+        if (!outcome || outcome === token.status) return null
+        return query(
+          `UPDATE ${TRACKER_TABLE} SET status = $1, status_changed_at = $2 WHERE id = $3`,
+          [outcome, currentTime.toISOString(), token.id],
+        ).then(() => {
+          token.status = outcome
+          token.status_changed_at = currentTime.toISOString()
+        })
+      })
+      .filter(Boolean)
+
+    if (staleReconcilePromises.length > 0) {
+      const reconcileResults = await Promise.allSettled(staleReconcilePromises)
+      const failed = reconcileResults.filter((r) => r.status === 'rejected').length
+      if (failed > 0) {
+        console.error(`⚠️ ${failed} stale status reconcile updates failed`)
+      } else {
+        console.log(`🔧 Reconciled ${staleReconcilePromises.length} stale terminal status row(s)`)
+      }
+    }
+
     const trackingTokens = tokens.filter((t) => t.status === 'tracking')
-    const lostTokens = tokens.filter((t) => t.status === 'lost')
-    const wonTokens = tokens.filter((t) => t.status === 'won')
 
     const newWinners = trackingTokens.filter((t) => t.current_gain_percentage > 0)
     const newLosers = trackingTokens.filter((t) => t.current_gain_percentage <= 0)
@@ -136,15 +168,26 @@ export async function POST(request: NextRequest) {
       .sort((a, b) => b.current_gain_percentage - a.current_gain_percentage)
       .slice(0, 5)
 
-    const totalWon = wonTokens.length + newWinners.length
-    const totalLost = lostTokens.length + newLosers.length
-    const totalCompleted = totalWon + totalLost
-    const winRate = totalCompleted > 0 ? (totalWon / totalCompleted) * 100 : 0
+    const resolvedTokens = tokens.map((token) => {
+      if (token.status !== 'tracking') return token
+      return {
+        ...token,
+        status: token.current_gain_percentage > 0 ? ('won' as const) : ('lost' as const),
+        status_changed_at: currentTime.toISOString(),
+      }
+    })
 
-    const allGains = [...newWinners, ...wonTokens].map((t) => t.current_gain_percentage)
-    const allLosses = [...newLosers, ...lostTokens].map((t) =>
-      Math.abs(t.current_gain_percentage),
-    )
+    const outcomeStats = countTrackerOutcomeStats(resolvedTokens)
+    const totalWon = outcomeStats.won
+    const totalLost = outcomeStats.lost
+    const totalCompleted = totalWon + totalLost
+    const winRate = outcomeStats.winRate
+
+    const wonForMetrics = resolvedTokens.filter((t) => resolveCompletedOutcome(t) === 'won')
+    const lostForMetrics = resolvedTokens.filter((t) => resolveCompletedOutcome(t) === 'lost')
+
+    const allGains = wonForMetrics.map((t) => t.current_gain_percentage)
+    const allLosses = lostForMetrics.map((t) => Math.abs(t.current_gain_percentage))
 
     const avgPeakGain =
       allGains.length > 0 ? allGains.reduce((a, b) => a + b, 0) / allGains.length : 0
@@ -193,12 +236,9 @@ export async function POST(request: NextRequest) {
       ],
     )
 
-    const completedTokenIds = [
-      ...newWinners.map((t) => t.id),
-      ...newLosers.map((t) => t.id),
-      ...wonTokens.map((t) => t.id),
-      ...lostTokens.map((t) => t.id),
-    ]
+    const completedTokenIds = resolvedTokens
+      .filter((t) => resolveCompletedOutcome(t) != null)
+      .map((t) => t.id)
     if (completedTokenIds.length > 0) {
       console.log(`🧹 Cleaning up ${completedTokenIds.length} completed tracking records`)
     }

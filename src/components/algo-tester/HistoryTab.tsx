@@ -24,6 +24,7 @@ import {
 } from "@/hooks/useTrackingHistory";
 import { formatAppDateTime, formatAppDate } from "@/utils/datetime";
 import {
+  getEffectiveDisplayStatus,
   isSkippedTrackerToken,
   resolveCompletedOutcome,
 } from "@/utils/trending-profit";
@@ -529,7 +530,9 @@ export default function HistoryTab() {
 
           {/* Token List */}
           <div className="space-y-4">
-            {tokens.map((token) => (
+            {tokens.map((token) => {
+              const displayStatus = getEffectiveDisplayStatus(token);
+              return (
               <div
                 key={token.id}
                 className="bg-gray-800 rounded-lg p-6 hover:bg-gray-750 transition-colors"
@@ -565,9 +568,9 @@ export default function HistoryTab() {
 
                   <div className="flex items-center space-x-3">
                     <span
-                      className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(token.status)}`}
+                      className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(displayStatus)}`}
                     >
-                      {getStatusIcon(token.status)} {token.status.toUpperCase()}
+                      {getStatusIcon(displayStatus)} {displayStatus.toUpperCase()}
                     </span>
                   </div>
                 </div>
@@ -683,7 +686,8 @@ export default function HistoryTab() {
                   </div>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
 
           {/* Pagination - Use API pagination */}

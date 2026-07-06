@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, queryOne } from '@/utils/db'
+import { countTrackerOutcomeStats } from '@/utils/trending-profit'
 
 // Force dynamic rendering for this route
 export const dynamic = 'force-dynamic'
@@ -177,39 +178,27 @@ export async function GET(request: NextRequest) {
          LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
         listValues,
       ),
-      query<{ status: string; peak_gain_percentage: number | null }>(
-        `SELECT status, peak_gain_percentage FROM ${TRACKER_TABLE}`,
+      query<{ status: string; peak_gain_percentage: number | null; current_gain_percentage: number | null }>(
+        `SELECT status, peak_gain_percentage, current_gain_percentage FROM ${TRACKER_TABLE}`,
       ),
     ])
 
     console.log(`📊 Filtered count: ${count} tokens (unfiltered: ${totalUnfilteredCount})`)
 
+    const statsBase = countTrackerOutcomeStats(allTokens ?? [])
     const stats = {
-      total: 0,
-      won: 0,
-      lost: 0,
-      tracking: 0,
-      waiting: 0,
-      skipped: 0,
-      winRate: 0,
-      avgPeakGain: 0,
-    }
-
-    if (allTokens) {
-      stats.total = allTokens.length
-      stats.won = allTokens.filter((t) => t.status === 'won').length
-      stats.lost = allTokens.filter((t) => t.status === 'lost').length
-      stats.tracking = allTokens.filter((t) => t.status === 'tracking').length
-      stats.waiting = allTokens.filter((t) => t.status === 'waiting').length
-      stats.skipped = allTokens.filter((t) => t.status === 'skipped').length
-
-      const completedTokens = stats.won + stats.lost
-      stats.winRate = completedTokens > 0 ? (stats.won / completedTokens) * 100 : 0
-      stats.avgPeakGain =
-        allTokens.length > 0
+      total: statsBase.total,
+      won: statsBase.won,
+      lost: statsBase.lost,
+      tracking: statsBase.tracking,
+      waiting: statsBase.waiting,
+      skipped: statsBase.skipped,
+      winRate: statsBase.winRate,
+      avgPeakGain:
+        allTokens && allTokens.length > 0
           ? allTokens.reduce((sum, t) => sum + (t.peak_gain_percentage || 0), 0) /
             allTokens.length
-          : 0
+          : 0,
     }
 
     const totalPages = Math.ceil(count / limit)
