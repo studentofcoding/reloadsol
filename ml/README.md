@@ -31,6 +31,8 @@ npm run ml:pattern-daily
 
 Pipeline writes `ml/artifacts/pattern-gate/pipeline_state.json` and reloads ONNX via `POST /api/ml/pattern/reload` (no full web restart). Status in `/dev/social` → **24h Patterns** tab.
 
+Daily cron with fewer than 30 winners per class writes status **`partial`** and skips train — expected until `train_ready`. Export uses `--quiet` (one log line; manifest in `data/pattern/dataset_manifest.json`).
+
 ### Export & train (manual — host, prod uses nginx :80)
 
 ```bash

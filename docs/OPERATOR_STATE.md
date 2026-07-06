@@ -13,8 +13,10 @@ Separate from sim-outcome gate — labels come from `mcap_social_pattern_24h` (w
 - Target **30+ winners and 30+ losers** before training (`train_ready`).
 - **Daily auto-train (03:00 UTC):** host cron runs `npm run ml:pattern-daily` (export → check → train if ready → reload ONNX).
   - Install once on VPS: `bash scripts/install-ml-pattern-cron.sh`
+  - Deploy web after pull so `/api/ml/pattern/reload` is available
   - Manual test: `bash scripts/ml-pattern-daily.sh --dry-run` then `bash scripts/ml-pattern-daily.sh`
   - Logs: `logs/ml-pattern-daily.log`; pipeline state: `ml/artifacts/pattern-gate/pipeline_state.json`
+  - Status **`partial`** when &lt;30 winners or &lt;30 losers is normal — export still runs; train waits for `ready`
 - Manual export/train: `API_BASE_URL=http://127.0.0.1 npm run ml:export-patterns` → `npm run ml:train-pattern`
 - Check: `npm run ml:check-pattern`
 - Deploy ONNX to web (`ML_PATTERN_ARTIFACT_DIR=/app/ml/artifacts/pattern-gate`); default **`ML_PATTERN_MODE=shadow`**.

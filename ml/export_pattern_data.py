@@ -73,6 +73,11 @@ def main() -> None:
         default=Path("data/pattern/training.parquet"),
         help="Output parquet path",
     )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Print one summary line only (manifest still written to dataset_manifest.json)",
+    )
     args = parser.parse_args()
 
     if args.source == "csv":
@@ -98,8 +103,11 @@ def main() -> None:
     manifest_path = args.output.with_name("dataset_manifest.json")
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
 
-    print(f"Exported {len(df)} rows to {args.output}")
-    print(json.dumps(manifest, indent=2))
+    if args.quiet:
+        print(f"Exported {len(df)} rows → {args.output}")
+    else:
+        print(f"Exported {len(df)} rows to {args.output}")
+        print(json.dumps(manifest, indent=2))
 
 
 if __name__ == "__main__":

@@ -2,11 +2,11 @@ import { NextResponse } from 'next/server'
 import { getPatternTrainingStats } from '@/strategies/social/pattern-training-export'
 import { patternRules } from '@/strategies/social/mcap-patterns-24h'
 import {
-  getPatternModelReady,
+  getPatternModelReadyFromMeta,
   getPatternModelStats,
-  getPatternModelVersion,
+  getPatternModelVersionFromMeta,
   getPatternPipelineState,
-} from '@/strategies/entry-pattern-scorer.server'
+} from '@/strategies/pattern-artifact-meta.server'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,8 +14,8 @@ export async function GET() {
   try {
     const stats = await getPatternTrainingStats()
     const [patternReady, modelVersion, pipeline, model] = await Promise.all([
-      getPatternModelReady(),
-      getPatternModelVersion(),
+      getPatternModelReadyFromMeta(),
+      getPatternModelVersionFromMeta(),
       getPatternPipelineState(),
       getPatternModelStats(),
     ])

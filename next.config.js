@@ -18,6 +18,8 @@ const nextConfig = {
   },
   outputFileTracingIncludes: {
     '/api/mcap-tracking/sim-track': ['./artifacts/**/*', './ml/artifacts/**/*'],
+    '/api/ml/pattern/reload': ['./ml/artifacts/**/*'],
+    '/api/mcap-patterns/stats': ['./ml/artifacts/**/*'],
   },
   typescript: {
     ignoreBuildErrors: process.env.SKIP_BUILD_CHECKS === 'true',

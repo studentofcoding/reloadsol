@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { resetPatternScorerCache } from '@/strategies/entry-pattern-scorer.server'
+import { resetPatternScorerCache } from '@/strategies/entry-pattern-scorer-cache'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 
 export const dynamic = 'force-dynamic'

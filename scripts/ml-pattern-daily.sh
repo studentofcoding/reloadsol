@@ -116,7 +116,7 @@ if ! python3 -c "import pandas, lightgbm, requests" 2>/dev/null; then
   exit 1
 fi
 
-if ! (cd "$ROOT/ml" && python3 export_pattern_data.py --output data/pattern/training.parquet); then
+if ! (cd "$ROOT/ml" && python3 export_pattern_data.py --quiet --output data/pattern/training.parquet); then
   log "[ERROR] export_pattern_data.py failed"
   write_state "failed" 0 false "export failed"
   exit 1
@@ -139,7 +139,8 @@ log "Export rows: $EXPORT_ROWS (win=$WINNERS lose=$LOSERS train_ready=$TRAIN_REA
 
 if [[ "$DRY_RUN" == true ]]; then
   log "[dry-run] Skipping train and reload"
-  write_state "partial" "$EXPORT_ROWS" "$TRAIN_READY" "dry-run"
+  write_state "partial" "$EXPORT_ROWS" "$TRAIN_READY" "dry-run (manual test)"
+  log "Done status=partial reason=dry-run (manual test)"
   exit 0
 fi
 
@@ -203,7 +204,11 @@ fi
 
 write_state "$RUN_STATUS" "$EXPORT_ROWS" "$TRAIN_READY" "$TRAIN_SKIP_REASON" \
   "$TRAINED_AT" "$MACRO_F1" "$PATTERN_READY" "$WEB_RELOADED"
-log "Done status=$RUN_STATUS"
+if [[ -n "$TRAIN_SKIP_REASON" ]]; then
+  log "Done status=$RUN_STATUS reason=$TRAIN_SKIP_REASON"
+else
+  log "Done status=$RUN_STATUS"
+fi
 
 if [[ "$RUN_STATUS" == "failed" ]]; then
   exit 1
