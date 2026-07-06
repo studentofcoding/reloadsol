@@ -1,0 +1,30 @@
+{
+  "features": "v1",
+  "pipeline": "v2-gate",
+  "rows": 5,
+  "feature_columns": [
+    "log_entry_mcap",
+    "organic_score",
+    "top_holders_pct",
+    "token_age_hours",
+    "log_volume_at_entry",
+    "entry_template_milestone_80",
+    "band_under50k",
+    "band_51-100k",
+    "band_101-200k",
+    "band_201-500k",
+    "band_501k-1M",
+    "band_over1M"
+  ],
+  "domain": "mcap_tracker",
+  "source": "api",
+  "gate_class_counts": {
+    "1": 5
+  },
+  "potential_tier_counts": {
+    "2": 2,
+    "1": 1,
+    "3": 1,
+    "4": 1
+  }
+}

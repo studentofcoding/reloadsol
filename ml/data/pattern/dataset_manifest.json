@@ -1,0 +1,21 @@
+{
+  "row_count": 285,
+  "by_cohort": {
+    "loser": 255,
+    "winner": 30
+  },
+  "by_pattern_class": {
+    "0": 255,
+    "1": 30
+  },
+  "feature_columns": [
+    "log_first_mcap",
+    "log_mention_count_30m",
+    "unique_channels_30m",
+    "minutes_to_first_mention",
+    "smart_wallet_buy_count_1h",
+    "has_smart_wallet_buy",
+    "source_gmgn_smart_money_fomo"
+  ],
+  "output": "data/pattern/training.parquet"
+}

@@ -1,0 +1,70 @@
+{
+  "version": "pattern-gate",
+  "trained_at": "2026-07-05T12:10:29.259969+00:00",
+  "feature_columns": [
+    "log_first_mcap",
+    "log_mention_count_30m",
+    "unique_channels_30m",
+    "minutes_to_first_mention",
+    "smart_wallet_buy_count_1h",
+    "has_smart_wallet_buy",
+    "source_gmgn_smart_money_fomo"
+  ],
+  "train_rows": 228,
+  "test_rows": 57,
+  "feature_importance": {
+    "log_first_mcap": 14.033812820911407,
+    "log_mention_count_30m": 0.0,
+    "unique_channels_30m": 0.0,
+    "minutes_to_first_mention": 0.0,
+    "smart_wallet_buy_count_1h": 0.0,
+    "has_smart_wallet_buy": 0.0,
+    "source_gmgn_smart_money_fomo": 0.0
+  },
+  "best_iteration": 1,
+  "artifacts": {
+    "lightgbm": "model.lgb.txt",
+    "onnx": "model.onnx"
+  },
+  "model_type": "binary",
+  "stage": "pattern-gate",
+  "num_classes": 2,
+  "label_column": "pattern_class",
+  "class_counts": {
+    "0": 251,
+    "1": 34
+  },
+  "metrics": {
+    "macro_f1": 0.4672897196261682,
+    "accuracy": 0.8771929824561403,
+    "classification_report": {
+      "0": {
+        "precision": 0.8771929824561403,
+        "recall": 1.0,
+        "f1-score": 0.9345794392523364,
+        "support": 50.0
+      },
+      "1": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1-score": 0.0,
+        "support": 7.0
+      },
+      "accuracy": 0.8771929824561403,
+      "macro avg": {
+        "precision": 0.43859649122807015,
+        "recall": 0.5,
+        "f1-score": 0.4672897196261682,
+        "support": 57.0
+      },
+      "weighted avg": {
+        "precision": 0.7694675284702985,
+        "recall": 0.8771929824561403,
+        "f1-score": 0.8198065256599443,
+        "support": 57.0
+      }
+    },
+    "pattern_ready": false,
+    "min_macro_f1_pattern": 0.6
+  }
+}

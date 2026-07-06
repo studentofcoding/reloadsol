@@ -1,0 +1,5 @@
+services:
+  cron:
+    ports:
+      - !override
+      - "127.0.0.1:${CRON_PORT:-8080}:8080"
