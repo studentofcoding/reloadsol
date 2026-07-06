@@ -18,22 +18,11 @@ const nextConfig = {
   },
   outputFileTracingIncludes: {
     '/api/mcap-tracking/sim-track': [
-      './artifacts/**/*',
-      './ml/artifacts/**/*',
       './node_modules/onnxruntime-node/bin/**/*',
       './node_modules/onnxruntime-common/**/*',
+      './node_modules/bigint-buffer/**/*',
     ],
     '/api/ml/pattern/reload': [
-      './ml/artifacts/**/*',
-      './node_modules/onnxruntime-node/bin/**/*',
-      './node_modules/onnxruntime-common/**/*',
-    ],
-    '/api/mcap-patterns/stats': [
-      './ml/artifacts/**/*',
-      './node_modules/onnxruntime-node/bin/**/*',
-      './node_modules/onnxruntime-common/**/*',
-    ],
-    '/*': [
       './node_modules/onnxruntime-node/bin/**/*',
       './node_modules/onnxruntime-common/**/*',
       './node_modules/bigint-buffer/**/*',

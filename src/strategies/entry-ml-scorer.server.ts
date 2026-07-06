@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'path'
 import { extractMlFeatureVector } from './ml-training-features'
 import {
@@ -31,22 +32,19 @@ let gateLoadAttempted = false
 let potentialLoadAttempted = false
 
 /** Resolve artifact dir from env only — avoids Turbopack tracing ml/ during build. */
-function resolveArtifactDir(envKey: string, defaultSubdir: string): string | null {
+function resolveArtifactDir(envKey: string, defaultSubdir: string): string {
   const fromEnv = process.env[envKey]?.trim()
-  if (fromEnv) {
-    return path.isAbsolute(fromEnv)
-      ? fromEnv
-      : path.join(/* turbopackIgnore: true */ process.cwd(), fromEnv)
-  }
-  return path.join(/* turbopackIgnore: true */ process.cwd(), 'artifacts', defaultSubdir)
+  if (fromEnv) return fromEnv
+  return path.join(process.cwd(), 'artifacts', defaultSubdir)
 }
 
 async function readMeta(artifactDir: string): Promise<MlModelMeta | null> {
-  const fs = await import('node:fs')
   const metaPath = path.join(artifactDir, 'model.meta.json')
-  if (!fs.existsSync(metaPath)) return null
+  if (!fs.existsSync(/* turbopackIgnore: true */ metaPath)) return null
   try {
-    const raw = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as MlModelMeta
+    const raw = JSON.parse(
+      fs.readFileSync(/* turbopackIgnore: true */ metaPath, 'utf8'),
+    ) as MlModelMeta
     if (!Array.isArray(raw.feature_columns) || raw.feature_columns.length === 0) return null
     return raw
   } catch {
@@ -64,9 +62,8 @@ async function loadStageModel(
   const meta = await readMeta(artifactDir)
   if (!meta) return null
 
-  const fs = await import('node:fs')
   const onnxPath = path.join(artifactDir, 'model.onnx')
-  if (!fs.existsSync(onnxPath)) return null
+  if (!fs.existsSync(/* turbopackIgnore: true */ onnxPath)) return null
 
   try {
     const ort = await import('onnxruntime-node')

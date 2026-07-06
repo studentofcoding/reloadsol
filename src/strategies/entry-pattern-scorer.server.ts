@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'path'
 import { extractPatternFeaturesFromLiveEntry } from './social/pattern-features'
 import {
@@ -19,24 +20,19 @@ import {
   setPatternModelCache,
   type LoadedPatternModel,
 } from './entry-pattern-scorer-cache'
-import {
-  readPatternModelMeta,
-  resolvePatternArtifactDir,
-} from './pattern-artifact-meta.server'
+
+type PatternArtifactMetaModule = typeof import('./pattern-artifact-meta.server')
+
+function getPatternArtifactMeta(): Promise<PatternArtifactMetaModule> {
+  return import('./pattern-artifact-meta.server')
+}
 
 async function getPatternModel(): Promise<LoadedPatternModel | null> {
   if (!isPatternLoadAttempted()) {
     markPatternLoadAttempted()
-    const artifactDir = resolvePatternArtifactDir()
-    if (!artifactDir) {
-      console.warn(
-        '[ml-pattern] shadow scoring disabled: no artifact dir (ML_PATTERN_ARTIFACT_DIR unset and default missing)',
-      )
-      setPatternModelCache(null)
-      return null
-    }
-
-    const meta = await readPatternModelMeta()
+    const patternMeta = await getPatternArtifactMeta()
+    const artifactDir = patternMeta.resolvePatternArtifactDir()
+    const meta = await patternMeta.readPatternModelMeta()
     if (!meta) {
       console.warn(
         `[ml-pattern] shadow scoring disabled: model.meta.json missing or invalid in ${artifactDir}`,
@@ -45,9 +41,8 @@ async function getPatternModel(): Promise<LoadedPatternModel | null> {
       return null
     }
 
-    const fs = await import('node:fs')
     const onnxPath = path.join(artifactDir, 'model.onnx')
-    if (!fs.existsSync(onnxPath)) {
+    if (!fs.existsSync(/* turbopackIgnore: true */ onnxPath)) {
       console.warn(`[ml-pattern] shadow scoring disabled: ${onnxPath} not found`)
       setPatternModelCache(null)
       return null

@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getPatternRuntimeLoadStatus } from '@/strategies/entry-pattern-scorer.server'
 import { resetPatternScorerCache } from '@/strategies/entry-pattern-scorer-cache'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 
 export const dynamic = 'force-dynamic'
+
+type PatternScorerModule = typeof import('@/strategies/entry-pattern-scorer.server')
+
+function getPatternScorer(): Promise<PatternScorerModule> {
+  return import('@/strategies/entry-pattern-scorer.server')
+}
 
 function getMlSecret(): string {
   return (
@@ -23,7 +28,7 @@ export async function POST(request: NextRequest) {
 
   resetPatternScorerCache()
   const reloadedAt = new Date().toISOString()
-  const runtime = await getPatternRuntimeLoadStatus()
+  const runtime = await (await getPatternScorer()).getPatternRuntimeLoadStatus()
 
   return NextResponse.json({
     success: true,

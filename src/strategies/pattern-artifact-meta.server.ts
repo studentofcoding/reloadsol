@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'path'
 import { isPatternModelReady, type PatternModelMeta } from './entry-pattern-scorer'
 
@@ -31,31 +32,27 @@ type RawPatternMeta = PatternModelMeta & {
   feature_importance?: Record<string, number>
 }
 
-export function resolvePatternArtifactDir(): string | null {
-  const fromEnv = process.env.ML_PATTERN_ARTIFACT_DIR?.trim()
-  if (fromEnv) {
-    return path.isAbsolute(fromEnv)
-      ? fromEnv
-      : path.join(/* turbopackIgnore: true */ process.cwd(), fromEnv)
-  }
-  return path.join(/* turbopackIgnore: true */ process.cwd(), 'ml', 'artifacts', 'pattern-gate')
+const DEFAULT_PATTERN_ARTIFACT_DIR = '/app/ml/artifacts/pattern-gate'
+
+export function resolvePatternArtifactDir(): string {
+  return process.env.ML_PATTERN_ARTIFACT_DIR?.trim() || DEFAULT_PATTERN_ARTIFACT_DIR
 }
 
-async function readArtifactJson<T>(filename: string): Promise<T | null> {
-  const artifactDir = resolvePatternArtifactDir()
-  if (!artifactDir) return null
-  const fs = await import('node:fs')
-  const filePath = path.join(artifactDir, filename)
-  if (!fs.existsSync(filePath)) return null
+function readArtifactJson<T>(filename: string): T | null {
+  const artifactDir = resolvePatternArtifactDir().replace(/\/$/, '')
+  const filePath = `${artifactDir}/${filename}`
+  if (!fs.existsSync(/* turbopackIgnore: true */ filePath)) return null
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T
+    return JSON.parse(
+      fs.readFileSync(/* turbopackIgnore: true */ filePath, 'utf8'),
+    ) as T
   } catch {
     return null
   }
 }
 
 export async function readPatternModelMeta(): Promise<PatternModelMeta | null> {
-  const meta = await readArtifactJson<PatternModelMeta>('model.meta.json')
+  const meta = readArtifactJson<PatternModelMeta>('model.meta.json')
   if (!meta || !Array.isArray(meta.feature_columns) || meta.feature_columns.length === 0) {
     return null
   }
@@ -67,7 +64,7 @@ export async function getPatternPipelineState(): Promise<PatternPipelineState | 
 }
 
 export async function getPatternModelStats(): Promise<PatternModelStats | null> {
-  const meta = await readArtifactJson<RawPatternMeta>('model.meta.json')
+  const meta = readArtifactJson<RawPatternMeta>('model.meta.json')
   if (!meta) return null
 
   const importance = meta.feature_importance ?? {}
