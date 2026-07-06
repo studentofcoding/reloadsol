@@ -28,6 +28,7 @@
     "ml:export-patterns": "sh -c 'test -n \"$TRENDING_TRACKER_SECRET\" || { echo \"[ERROR] TRENDING_TRACKER_SECRET is not set\"; exit 1; }; cd ml && python3 export_pattern_data.py --output data/pattern/training.parquet'",
     "ml:train-pattern": "cd ml && python3 train_pattern.py --input data/pattern/training.parquet --version pattern-gate",
     "ml:check-pattern": "cd ml && python3 check_pattern_dataset.py data/pattern/training.parquet --meta artifacts/pattern-gate/model.meta.json",
+    "ml:pattern-daily": "bash scripts/ml-pattern-daily.sh",
     "test:watch": "vitest",
     "verify:no-raw-useeffect": "node scripts/verify-no-raw-useeffect.js",
     "logs": "node scripts/tail-logs.js",

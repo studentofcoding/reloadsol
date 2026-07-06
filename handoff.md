@@ -84,7 +84,7 @@ Or: `bash scripts/deploy-tencent.sh schema` (idempotent).
 1. **Stay shadow** — do not set `ML_PATTERN_MODE=enforce` (class-1 recall 0 on test).
 2. **Fix social-ingest** if container is restart-looping (Telegram session/config).
 3. **Collect more winner cohort rows** — imbalance is the main blocker, not just retrain cadence.
-4. **Weekly retrain:** export → train → `docker:deploy:web` → compare shadow vs 24h cohort in Strategy Admin.
+4. **Daily retrain (automated):** `bash scripts/install-ml-pattern-cron.sh` on VPS (03:00 UTC) or `npm run ml:pattern-daily` manually — compare shadow vs 24h cohort in `/dev/social` → Patterns.
 5. **Sim-outcome gate (secondary):** keep `ML_GATE_MODE=shadow`; see [ML_GATE_PLAN.md](docs/ML_GATE_PLAN.md).
 
 ---
@@ -107,6 +107,7 @@ Or: `bash scripts/deploy-tencent.sh schema` (idempotent).
 - [ ] `ML_PATTERN_MODE=shadow`, artifacts mounted at `/app/ml/artifacts/pattern-gate`
 - [ ] Host export uses `API_BASE_URL=http://127.0.0.1` (nginx :80, not `:3000`)
 - [ ] `TRENDING_TRACKER_SECRET` set for training-export auth
+- [ ] Daily Pattern ML cron installed: `bash scripts/install-ml-pattern-cron.sh`
 - [ ] `mcap_tracker_sim_track` + `social_rollup` workers healthy
 - [ ] `reloadsol-social-ingest` not restart-looping
 - [ ] Review Pattern ML vs 24h cohort weekly before considering enforce

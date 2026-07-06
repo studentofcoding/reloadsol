@@ -1,16 +1,23 @@
 import { NextResponse } from 'next/server'
 import { getPatternTrainingStats } from '@/strategies/social/pattern-training-export'
 import { patternRules } from '@/strategies/social/mcap-patterns-24h'
-import { getPatternModelReady, getPatternModelVersion } from '@/strategies/entry-pattern-scorer.server'
+import {
+  getPatternModelReady,
+  getPatternModelStats,
+  getPatternModelVersion,
+  getPatternPipelineState,
+} from '@/strategies/entry-pattern-scorer.server'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
     const stats = await getPatternTrainingStats()
-    const [patternReady, modelVersion] = await Promise.all([
+    const [patternReady, modelVersion, pipeline, model] = await Promise.all([
       getPatternModelReady(),
       getPatternModelVersion(),
+      getPatternPipelineState(),
+      getPatternModelStats(),
     ])
 
     return NextResponse.json({
@@ -19,6 +26,8 @@ export async function GET() {
       ...stats,
       patternModelReady: patternReady,
       patternModelVersion: modelVersion,
+      pipeline,
+      model,
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)

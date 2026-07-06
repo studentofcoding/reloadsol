@@ -11,13 +11,16 @@ Separate from sim-outcome gate — labels come from `mcap_social_pattern_24h` (w
 - Pattern DB refreshes automatically via social rollup cron (~every 5 min).
 - Check counts: `/dev/social` → **24h Patterns** or `GET /api/mcap-patterns/stats`.
 - Target **30+ winners and 30+ losers** before training (`train_ready`).
-- Export: `API_BASE_URL=http://127.0.0.1 npm run ml:export-patterns` → `ml/data/pattern/training.parquet`
-- Train: `npm run ml:train-pattern` → `ml/artifacts/pattern-gate/`
+- **Daily auto-train (03:00 UTC):** host cron runs `npm run ml:pattern-daily` (export → check → train if ready → reload ONNX).
+  - Install once on VPS: `bash scripts/install-ml-pattern-cron.sh`
+  - Manual test: `bash scripts/ml-pattern-daily.sh --dry-run` then `bash scripts/ml-pattern-daily.sh`
+  - Logs: `logs/ml-pattern-daily.log`; pipeline state: `ml/artifacts/pattern-gate/pipeline_state.json`
+- Manual export/train: `API_BASE_URL=http://127.0.0.1 npm run ml:export-patterns` → `npm run ml:train-pattern`
 - Check: `npm run ml:check-pattern`
 - Deploy ONNX to web (`ML_PATTERN_ARTIFACT_DIR=/app/ml/artifacts/pattern-gate`); default **`ML_PATTERN_MODE=shadow`**.
 - Shadow fields on sim buys: `ml_pattern_p_winner`, `ml_pattern_predicted` — review in Strategy Admin → **Pattern ML** and **24h cohort** columns.
 - Do **not** set `ML_PATTERN_MODE=enforce` until `model.meta.json` → `metrics.pattern_ready === true` (macro-F1 ≥ 0.60 on holdout).
-- Weekly: export → train → `docker:deploy:web` → compare shadow predictions vs 24h cohort labels.
+- Review shadow predictions vs 24h cohort labels in `/dev/social` → Patterns (daily job status + model metrics).
 
 ### Current model baseline (Jul 2026)
 

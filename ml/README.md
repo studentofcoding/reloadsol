@@ -14,9 +14,24 @@ Full ops: [docs/OPERATOR_STATE.md](../docs/OPERATOR_STATE.md), [docs/ARCHITECTUR
 
 ### Setup
 
-Same venv as below (`cd ml && python3 -m venv venv && pip install -r requirements.txt`). Also install `packaging` if ONNX export fails.
+On VPS use system **python3** (no venv): `pip3 install -r ml/requirements.txt`. Local dev may use a venv if preferred. Also install `packaging` if ONNX export fails.
 
-### Export & train (host — prod uses nginx :80)
+### Daily automation (VPS — 03:00 UTC)
+
+Cohort labels refresh every 5m via `social_rollup`. Export/train runs on the **host** once per day:
+
+```bash
+# One-time install (user crontab)
+bash scripts/install-ml-pattern-cron.sh
+
+# Manual test
+npm run ml:pattern-daily -- --dry-run
+npm run ml:pattern-daily
+```
+
+Pipeline writes `ml/artifacts/pattern-gate/pipeline_state.json` and reloads ONNX via `POST /api/ml/pattern/reload` (no full web restart). Status in `/dev/social` → **24h Patterns** tab.
+
+### Export & train (manual — host, prod uses nginx :80)
 
 ```bash
 export API_BASE_URL=http://127.0.0.1
@@ -25,7 +40,7 @@ export TRENDING_TRACKER_SECRET=...
 npm run ml:export-patterns   # → ml/data/pattern/training.parquet
 npm run ml:check-pattern
 npm run ml:train-pattern     # → ml/artifacts/pattern-gate/
-npm run docker:deploy:web    # volume mount picks up ONNX
+# or: npm run ml:pattern-daily
 ```
 
 Docker env: `ML_PATTERN_MODE=shadow`, `ML_PATTERN_ARTIFACT_DIR=/app/ml/artifacts/pattern-gate`.
@@ -36,6 +51,7 @@ Docker env: `ML_PATTERN_MODE=shadow`, `ML_PATTERN_ARTIFACT_DIR=/app/ml/artifacts
 |------|---------|
 | `artifacts/pattern-gate/model.onnx` | Pattern gate — shadow + future enforce |
 | `artifacts/pattern-gate/model.meta.json` | `metrics.pattern_ready`, class counts, feature importance |
+| `artifacts/pattern-gate/pipeline_state.json` | Last daily job run (status, metrics, log tail) |
 
 Enforce when `pattern_ready === true` (macro-F1 ≥ **0.60**).
 

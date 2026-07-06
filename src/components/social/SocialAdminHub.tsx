@@ -123,7 +123,32 @@ type PatternMlStats = {
   trainReady: boolean;
   patternModelReady: boolean;
   patternModelVersion: string | null;
+  pipeline: {
+    last_run_at?: string;
+    status?: "success" | "partial" | "failed";
+    export_rows?: number;
+    train_ready?: boolean;
+    train_skipped_reason?: string | null;
+    trained_at?: string | null;
+    macro_f1?: number | null;
+    pattern_ready?: boolean | null;
+    web_reloaded?: boolean;
+  } | null;
+  model: {
+    trained_at: string | null;
+    macro_f1: number | null;
+    pattern_ready: boolean | null;
+    class_counts: Record<string, number> | null;
+    top_features: Array<{ name: string; importance: number }>;
+  } | null;
 };
+
+function pipelineStatusClass(status?: string): string {
+  if (status === "success") return "text-green-400";
+  if (status === "failed") return "text-red-400";
+  if (status === "partial") return "text-yellow-400";
+  return "text-gray-500";
+}
 
 async function fetchPatternMlStats(): Promise<PatternMlStats> {
   const res = await fetch("/api/mcap-patterns/stats");
@@ -136,6 +161,8 @@ async function fetchPatternMlStats(): Promise<PatternMlStats> {
     trainReady: json.trainReady === true,
     patternModelReady: json.patternModelReady === true,
     patternModelVersion: json.patternModelVersion ?? null,
+    pipeline: json.pipeline ?? null,
+    model: json.model ?? null,
   };
 }
 
@@ -684,15 +711,56 @@ export default function SocialAdminHub() {
                       Train ready (30+ each cohort):{" "}
                       {patternMlStatsQuery.data.trainReady ? "yes" : "no"}
                     </div>
+                    {patternMlStatsQuery.data.pipeline?.last_run_at ? (
+                      <div>
+                        Daily job:{" "}
+                        <span
+                          className={pipelineStatusClass(
+                            patternMlStatsQuery.data.pipeline.status,
+                          )}
+                        >
+                          {patternMlStatsQuery.data.pipeline.status ?? "unknown"}
+                        </span>
+                        {" · "}
+                        last run {patternMlStatsQuery.data.pipeline.last_run_at}
+                        {patternMlStatsQuery.data.pipeline.train_skipped_reason
+                          ? ` — ${patternMlStatsQuery.data.pipeline.train_skipped_reason}`
+                          : null}
+                        {patternMlStatsQuery.data.pipeline.web_reloaded
+                          ? " · ONNX reloaded"
+                          : null}
+                      </div>
+                    ) : (
+                      <div className="text-gray-500">
+                        Daily job: not run yet — install with{" "}
+                        <code className="text-gray-400">
+                          bash scripts/install-ml-pattern-cron.sh
+                        </code>
+                      </div>
+                    )}
                     <div>
                       Model:{" "}
                       {patternMlStatsQuery.data.patternModelReady
                         ? `ready (${patternMlStatsQuery.data.patternModelVersion ?? "pattern-gate"})`
-                        : "not deployed or not ready — run npm run ml:export-patterns && ml:train-pattern"}
+                        : patternMlStatsQuery.data.model?.trained_at
+                          ? `deployed, not ready (${patternMlStatsQuery.data.patternModelVersion ?? "pattern-gate"})`
+                          : "not deployed — run npm run ml:pattern-daily"}
                     </div>
+                    {patternMlStatsQuery.data.model?.macro_f1 != null ? (
+                      <div>
+                        macro-F1: {patternMlStatsQuery.data.model.macro_f1.toFixed(3)}
+                        {patternMlStatsQuery.data.model.pattern_ready != null
+                          ? ` · pattern_ready: ${patternMlStatsQuery.data.model.pattern_ready ? "yes" : "no"}`
+                          : null}
+                        {patternMlStatsQuery.data.model.trained_at
+                          ? ` · trained ${patternMlStatsQuery.data.model.trained_at}`
+                          : null}
+                      </div>
+                    ) : null}
                     <div className="mt-1 text-gray-500">
-                      Shadow scores appear on sim opens as Pattern ML in Strategy
-                      Admin outcomes.
+                      Shadow scores on sim opens even when model is not ready.
+                      Enforce stays off until pattern_ready. Server log:{" "}
+                      <code className="text-gray-400">logs/ml-pattern-daily.log</code>
                     </div>
                   </div>
                 ) : null}

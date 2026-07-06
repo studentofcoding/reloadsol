@@ -168,3 +168,66 @@ export function resetPatternScorerCache(): void {
   patternModel = undefined
   patternLoadAttempted = false
 }
+
+export type PatternPipelineState = {
+  last_run_at?: string
+  status?: 'success' | 'partial' | 'failed'
+  export_rows?: number
+  train_ready?: boolean
+  train_skipped_reason?: string | null
+  trained_at?: string | null
+  macro_f1?: number | null
+  pattern_ready?: boolean | null
+  web_reloaded?: boolean
+  log_tail?: string[]
+}
+
+export type PatternModelStats = {
+  trained_at: string | null
+  macro_f1: number | null
+  pattern_ready: boolean | null
+  class_counts: Record<string, number> | null
+  top_features: Array<{ name: string; importance: number }>
+}
+
+type RawPatternMeta = PatternModelMeta & {
+  trained_at?: string
+  class_counts?: Record<string, number>
+  feature_importance?: Record<string, number>
+}
+
+async function readArtifactJson<T>(filename: string): Promise<T | null> {
+  const artifactDir = resolveArtifactDir()
+  if (!artifactDir) return null
+  const fs = await import('node:fs')
+  const filePath = path.join(artifactDir, filename)
+  if (!fs.existsSync(filePath)) return null
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T
+  } catch {
+    return null
+  }
+}
+
+export async function getPatternPipelineState(): Promise<PatternPipelineState | null> {
+  return readArtifactJson<PatternPipelineState>('pipeline_state.json')
+}
+
+export async function getPatternModelStats(): Promise<PatternModelStats | null> {
+  const meta = await readArtifactJson<RawPatternMeta>('model.meta.json')
+  if (!meta) return null
+
+  const importance = meta.feature_importance ?? {}
+  const top_features = Object.entries(importance)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([name, score]) => ({ name, importance: score }))
+
+  return {
+    trained_at: meta.trained_at ?? null,
+    macro_f1: meta.metrics?.macro_f1 ?? null,
+    pattern_ready: meta.metrics?.pattern_ready ?? null,
+    class_counts: meta.class_counts ?? null,
+    top_features,
+  }
+}
