@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
 import { formatAppDateTime } from "@/utils/datetime";
 import ChartBuyModal from "@/components/ChartBuyModal";
@@ -120,7 +121,23 @@ function parsePnlThresholdKey(key: string): number {
   return match ? parseInt(match[1], 10) : 0;
 }
 
+const DEFAULT_FILTERS: Omit<FilterOptions, "search"> = {
+  sortBy: "last_updated_at",
+  sortOrder: "desc",
+  minGrowth: "",
+  maxGrowth: "",
+  minMcap: "",
+  maxMcap: "",
+  excludeZeroPnl: false,
+  timeFilter: "all",
+  performanceFilter: "all",
+};
+
 export default function TrackerTab() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const urlSearch = searchParams.get("search")?.trim() ?? "";
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(100);
@@ -151,18 +168,18 @@ export default function TrackerTab() {
     setExpandedBuckets((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
-  const [filters, setFilters] = useState<FilterOptions>({
-    search: "",
-    sortBy: "last_updated_at",
-    sortOrder: "desc",
-    minGrowth: "",
-    maxGrowth: "",
-    minMcap: "",
-    maxMcap: "",
-    excludeZeroPnl: false,
-    timeFilter: "all",
-    performanceFilter: "all",
-  });
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+
+  const updateSearch = (value: string) => {
+    setPage(1);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "tracker");
+    const trimmed = value.trim();
+    if (trimmed) params.set("search", trimmed);
+    else params.delete("search");
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname);
+  };
 
   // Compute effective mcap filters
   const effectiveMcapFilters = React.useMemo(() => {
@@ -187,13 +204,18 @@ export default function TrackerTab() {
     return { minMcap: filters.minMcap, maxMcap: filters.maxMcap };
   }, [activeMcapFilter, filters.minMcap, filters.maxMcap]);
 
+  const queryFilters = useMemo<FilterOptions>(
+    () => ({ ...filters, search: urlSearch, ...effectiveMcapFilters }),
+    [filters, urlSearch, effectiveMcapFilters],
+  );
+
   const {
     data: apiResponse,
     isLoading: loading,
     error: queryError,
     refetch,
   } = useMCapTracker({
-    filters: { ...filters, ...effectiveMcapFilters },
+    filters: queryFilters,
     page,
     limit,
   });
@@ -1867,10 +1889,8 @@ export default function TrackerTab() {
             <input
               type="text"
               placeholder="Symbol or address..."
-              value={filters.search}
-              onChange={(e) =>
-                setFilters((prev) => ({ ...prev, search: e.target.value }))
-              }
+              value={urlSearch}
+              onChange={(e) => updateSearch(e.target.value)}
               className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>

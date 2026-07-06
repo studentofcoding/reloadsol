@@ -50,6 +50,9 @@ function SignalsHubContent() {
     if (tab !== "board") {
       params.delete("addresses");
     }
+    if (tab !== "tracker") {
+      params.delete("search");
+    }
     const query = params.toString();
     router.replace(query ? `${pathname}?${query}` : pathname);
   };
