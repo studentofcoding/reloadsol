@@ -8,6 +8,9 @@ export type PatternModelMeta = {
   metrics?: {
     pattern_ready?: boolean
     macro_f1?: number
+    decision_threshold?: number
+    winner_recall?: number
+    winner_precision?: number
   }
 }
 
@@ -41,7 +44,10 @@ export function patternFeatureVectorToTensorInput(
   return arr
 }
 
-export function scorePatternBinary(data: Float32Array): PatternShadowResult {
+export function scorePatternBinary(
+  data: Float32Array,
+  threshold = 0.5,
+): PatternShadowResult {
   let pWinner: number
   if (data.length === 1) {
     pWinner = data[0]
@@ -52,8 +58,20 @@ export function scorePatternBinary(data: Float32Array): PatternShadowResult {
   }
   pWinner = Math.min(1, Math.max(0, pWinner))
   const pLoser = 1 - pWinner
-  const predicted: 'winner' | 'loser' = pWinner >= 0.5 ? 'winner' : 'loser'
+  const cutoff =
+    Number.isFinite(threshold) && threshold > 0 && threshold < 1 ? threshold : 0.5
+  const predicted: 'winner' | 'loser' = pWinner >= cutoff ? 'winner' : 'loser'
   return { pWinner, pLoser, predicted }
+}
+
+export function resolvePatternDecisionThreshold(
+  meta: PatternModelMeta | null | undefined,
+): number {
+  const fromMeta = meta?.metrics?.decision_threshold
+  if (typeof fromMeta === 'number' && Number.isFinite(fromMeta) && fromMeta > 0 && fromMeta < 1) {
+    return fromMeta
+  }
+  return getPatternPWinnerMin()
 }
 
 export function getPatternMlMode(): 'off' | 'shadow' | 'enforce' {

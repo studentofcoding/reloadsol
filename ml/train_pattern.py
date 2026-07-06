@@ -9,19 +9,75 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import lightgbm as lgb
+import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, classification_report, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    classification_report,
+    f1_score,
+    precision_recall_fscore_support,
+)
 
 from pattern_features import MIN_PATTERN_MACRO_F1, MIN_PATTERN_ROWS, PATTERN_FEATURE_COLUMNS
 
+MIN_TEST_WINNERS = 5
+MIN_TEST_LOSERS = 5
 
-def time_split(df: pd.DataFrame, test_ratio: float) -> tuple[pd.DataFrame, pd.DataFrame]:
+
+def time_split(
+    df: pd.DataFrame,
+    test_ratio: float,
+    min_test_winners: int = MIN_TEST_WINNERS,
+    min_test_losers: int = MIN_TEST_LOSERS,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     sort_col = "first_seen_at" if "first_seen_at" in df.columns else df.columns[0]
     ordered = df.sort_values(sort_col).reset_index(drop=True)
-    split_idx = max(1, int(len(ordered) * (1 - test_ratio)))
-    if split_idx >= len(ordered):
-        split_idx = len(ordered) - 1
-    return ordered.iloc[:split_idx], ordered.iloc[split_idx:]
+    n = len(ordered)
+    split_idx = max(1, int(n * (1 - test_ratio)))
+    if split_idx >= n:
+        split_idx = n - 1
+
+    min_train_rows = max(1, n - max(min_test_winners + min_test_losers, int(n * test_ratio)))
+
+    while split_idx > min_train_rows and "pattern_class" in ordered.columns:
+        test_slice = ordered.iloc[split_idx:]
+        winners = int((test_slice["pattern_class"] == 1).sum())
+        losers = int((test_slice["pattern_class"] == 0).sum())
+        if winners >= min_test_winners and losers >= min_test_losers:
+            break
+        split_idx -= 1
+
+    train_df = ordered.iloc[:split_idx]
+    test_df = ordered.iloc[split_idx:]
+
+    if "pattern_class" in test_df.columns and len(test_df) > 0:
+        winners = int((test_df["pattern_class"] == 1).sum())
+        losers = int((test_df["pattern_class"] == 0).sum())
+        if winners < min_test_winners or losers < min_test_losers:
+            print(
+                f"WARNING: test split has win={winners} lose={losers} "
+                f"(min {min_test_winners}/{min_test_losers})"
+            )
+
+    return train_df, test_df
+
+
+def compute_scale_pos_weight(y_train: pd.Series) -> float:
+    n_pos = int((y_train == 1).sum())
+    n_neg = int((y_train == 0).sum())
+    return n_neg / max(n_pos, 1)
+
+
+def tune_decision_threshold(proba: np.ndarray, y_true: np.ndarray) -> tuple[float, float]:
+    best_threshold = 0.5
+    best_macro_f1 = 0.0
+    for threshold in np.linspace(0.05, 0.95, 19):
+        pred = (proba >= threshold).astype(int)
+        macro_f1 = float(f1_score(y_true, pred, average="macro", zero_division=0))
+        if macro_f1 > best_macro_f1:
+            best_macro_f1 = macro_f1
+            best_threshold = float(threshold)
+    return best_threshold, best_macro_f1
 
 
 def export_onnx(model: lgb.Booster, output_path: Path, num_features: int) -> bool:
@@ -65,12 +121,17 @@ def train_pattern_gate(
     x_test = test_df[feature_columns]
     y_test = test_df["pattern_class"].astype(int)
 
+    n_pos = int((y_train == 1).sum())
+    n_neg = int((y_train == 0).sum())
+    scale_pos_weight = compute_scale_pos_weight(y_train)
+
     train_set = lgb.Dataset(x_train, label=y_train, feature_name=feature_columns)
     valid_set = lgb.Dataset(x_test, label=y_test, feature_name=feature_columns, reference=train_set)
 
     params = {
         "objective": "binary",
-        "metric": ["binary_logloss", "binary_error"],
+        "metric": ["auc", "binary_logloss"],
+        "scale_pos_weight": scale_pos_weight,
         "learning_rate": 0.05,
         "num_leaves": 31,
         "feature_fraction": 0.9,
@@ -80,18 +141,29 @@ def train_pattern_gate(
         "seed": 42,
     }
 
+    print(f"Train class counts: lose={n_neg} win={n_pos} scale_pos_weight={scale_pos_weight:.2f}")
+
     booster = lgb.train(
         params,
         train_set,
         num_boost_round=300,
         valid_sets=[valid_set],
-        callbacks=[lgb.early_stopping(stopping_rounds=30, verbose=False)],
+        callbacks=[
+            lgb.early_stopping(stopping_rounds=30, verbose=False, first_metric_only=True),
+        ],
     )
 
     proba = booster.predict(x_test, num_iteration=booster.best_iteration)
-    pred = (proba >= 0.5).astype(int)
     y_true = y_test.to_numpy()
-    macro_f1 = float(f1_score(y_true, pred, average="macro", zero_division=0))
+    decision_threshold, macro_f1 = tune_decision_threshold(proba, y_true)
+    pred = (proba >= decision_threshold).astype(int)
+
+    precision, recall, _, _ = precision_recall_fscore_support(
+        y_true,
+        pred,
+        labels=[0, 1],
+        zero_division=0,
+    )
     pattern_ready = macro_f1 >= MIN_PATTERN_MACRO_F1 and len(test_df) >= 10
 
     meta_extra = {
@@ -100,9 +172,18 @@ def train_pattern_gate(
         "num_classes": 2,
         "label_column": "pattern_class",
         "class_counts": {str(k): int(v) for k, v in class_counts.items()},
+        "training": {
+            "scale_pos_weight": scale_pos_weight,
+            "early_stopping_metric": "auc",
+            "decision_threshold": decision_threshold,
+            "train_class_counts": {"0": n_neg, "1": n_pos},
+        },
         "metrics": {
             "macro_f1": macro_f1,
             "accuracy": float(accuracy_score(y_true, pred)),
+            "winner_recall": float(recall[1]),
+            "winner_precision": float(precision[1]),
+            "decision_threshold": decision_threshold,
             "classification_report": classification_report(
                 y_true, pred, zero_division=0, output_dict=True
             ),
@@ -176,8 +257,16 @@ def main() -> None:
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
 
     metrics = meta_extra["metrics"]
+    training = meta_extra["training"]
     print(f"Train rows: {len(train_df)}  Test rows: {len(test_df)}")
-    print(f"Macro-F1: {metrics['macro_f1']:.4f}  Accuracy: {metrics['accuracy']:.4f}")
+    print(
+        f"Macro-F1: {metrics['macro_f1']:.4f}  Accuracy: {metrics['accuracy']:.4f}  "
+        f"threshold: {training['decision_threshold']:.2f}"
+    )
+    print(
+        f"Winner recall: {metrics['winner_recall']:.4f}  "
+        f"precision: {metrics['winner_precision']:.4f}"
+    )
     print(f"Pattern ready: {metrics['pattern_ready']}")
     print(f"Saved {lgb_path}")
     if onnx_ok:

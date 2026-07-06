@@ -5,6 +5,7 @@ import {
   getPatternPWinnerMin,
   isPatternModelReady,
   patternFeatureVectorToTensorInput,
+  resolvePatternDecisionThreshold,
   scorePatternBinary,
   type PatternEnforceResult,
   type PatternMlShadowScore,
@@ -86,7 +87,8 @@ export async function scorePatternFeaturesShadow(
     const tensor = new ort.Tensor('float32', input, [1, input.length])
     const result = await loaded.session.run({ [inputName]: tensor })
     const out = firstOutputTensor(result)
-    const pattern = scorePatternBinary(out)
+    const threshold = resolvePatternDecisionThreshold(loaded.meta)
+    const pattern = scorePatternBinary(out, threshold)
     return {
       pattern,
       modelVersion: loaded.meta.version ?? path.basename(loaded.artifactDir),

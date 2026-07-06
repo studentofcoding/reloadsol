@@ -18,6 +18,9 @@ export type PatternModelStats = {
   trained_at: string | null
   macro_f1: number | null
   pattern_ready: boolean | null
+  winner_recall: number | null
+  winner_precision: number | null
+  decision_threshold: number | null
   class_counts: Record<string, number> | null
   top_features: Array<{ name: string; importance: number }>
 }
@@ -77,6 +80,9 @@ export async function getPatternModelStats(): Promise<PatternModelStats | null> 
     trained_at: meta.trained_at ?? null,
     macro_f1: meta.metrics?.macro_f1 ?? null,
     pattern_ready: meta.metrics?.pattern_ready ?? null,
+    winner_recall: meta.metrics?.winner_recall ?? null,
+    winner_precision: meta.metrics?.winner_precision ?? null,
+    decision_threshold: meta.metrics?.decision_threshold ?? null,
     class_counts: meta.class_counts ?? null,
     top_features,
   }
