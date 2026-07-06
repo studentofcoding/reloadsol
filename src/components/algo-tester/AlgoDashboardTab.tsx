@@ -81,6 +81,7 @@ interface Summary {
   total_profit_pct?: number;
   average_profit_pct?: number;
   profit_token_count?: number;
+  skipped_tokens?: number;
 }
 
 interface TrendingStats {
@@ -1505,6 +1506,13 @@ export default function AlgoDashboardTab() {
                     <p className="text-white font-semibold">
                       {activeSummary.total_tokens_tracked}
                     </p>
+                    {(activeSummary.skipped_tokens ?? 0) > 0 && (
+                      <p className="text-xs text-gray-500">
+                        {activeSummary.total_tokens_tracked -
+                          (activeSummary.skipped_tokens ?? 0)}{" "}
+                        traded · {activeSummary.skipped_tokens} skipped
+                      </p>
+                    )}
                   </div>
                   <div>
                     <p className="text-sm text-gray-400">Win Rate</p>

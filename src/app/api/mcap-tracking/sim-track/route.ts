@@ -151,7 +151,7 @@ async function openSimPosition(params: {
       ? annotateEntryFeatures(baseFeatures, params.socialCtx)
       : baseFeatures
     const shadow = await (await getMlScorer()).scoreEntryFeaturesShadow(annotated)
-    let scoredEntryFeatures = mergeShadowScoresIntoEntryFeatures(annotated, shadow)
+    scoredEntryFeatures = mergeShadowScoresIntoEntryFeatures(annotated, shadow)
     const patternShadow = await (await getPatternScorer()).scorePatternFeaturesShadow(
       scoredEntryFeatures,
     )

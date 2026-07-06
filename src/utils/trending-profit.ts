@@ -21,6 +21,11 @@ export function isSkippedTrackerToken(token: { status?: string | null }): boolea
   return token.status === 'skipped'
 }
 
+/** Tokens that represent real tracked trades: excludes skipped and waiting. */
+export function isPnlEligibleTrackerToken(token: { status?: string | null }): boolean {
+  return token.status !== 'skipped' && token.status !== 'waiting'
+}
+
 export function hadSimulatedEntry(token: { trading_simulation?: unknown }): boolean {
   const sim = token.trading_simulation
   if (!sim || typeof sim !== 'object') return false

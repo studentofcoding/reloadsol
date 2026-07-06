@@ -11,7 +11,12 @@ import {
   isSimulatedTrackerPosition,
   resolveTrackerStrategyId,
 } from '@/utils/trading-simulation'
-import { sumSummaryTokenProfitPct, resolveCompletedOutcome } from '@/utils/trending-profit'
+import {
+  countTrackerOutcomeStats,
+  isPnlEligibleTrackerToken,
+  resolveCompletedOutcome,
+  sumSummaryTokenProfitPct,
+} from '@/utils/trending-profit'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 const STATS_REDIS_TTL_SECONDS = 60
@@ -135,7 +140,11 @@ function buildEnhancedSummary(
   summary: SummaryRow,
   periodTokens: ReturnType<typeof mapPeriodTokens>,
 ) {
-  const profitStats = sumSummaryTokenProfitPct(periodTokens)
+  // PnL sums exclude skipped/waiting rows (they carry phantom gains but no trade).
+  const eligible = periodTokens.filter(isPnlEligibleTrackerToken)
+  const profitStats = sumSummaryTokenProfitPct(eligible)
+  // Live-recomputed outcome stats override stale stored won/lost/win_rate.
+  const outcomeStats = countTrackerOutcomeStats(periodTokens)
   return {
     ...summary,
     ...coerceSummaryRow(summary),
@@ -143,6 +152,10 @@ function buildEnhancedSummary(
     total_profit_pct: profitStats.totalProfitPct,
     average_profit_pct: profitStats.averageProfitPct,
     profit_token_count: profitStats.tokenCount,
+    won_tokens: outcomeStats.won,
+    lost_tokens: outcomeStats.lost,
+    skipped_tokens: outcomeStats.skipped,
+    win_rate: Math.round(outcomeStats.winRate * 100) / 100,
   }
 }
 
