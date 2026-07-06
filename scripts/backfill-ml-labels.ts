@@ -2,7 +2,13 @@
 /**
  * Backfill auto ML labels (skip/interesting + training_class 0–4) on strategy_outcomes.
  *
- * Run on host (VPS): uses DATABASE_URL_DIRECT or rewrites Docker hostnames → 127.0.0.1
+ * Host CLI needs Postgres on 127.0.0.1:5432 (migrate overlay) or DATABASE_URL_DIRECT
+ * pointing at a reachable host. Prod steady-state compose does not bind :5432 — use one of:
+ *
+ *   - Strategy Admin → Reports → Backfill auto labels (dev wallet session)
+ *   - curl -X POST "http://127.0.0.1/api/strategies/ml/backfill-labels?dry_run=true&key=$TRENDING_TRACKER_SECRET"
+ *   - docker compose -f docker-compose.yml -f docker-compose.migrate.yml up -d reloadsol-db
+ *     then npm run ml:backfill-labels
  *
  *   npx tsx scripts/backfill-ml-labels.ts [--dry-run] [--domain=trending_bot] [--strategy-id=att]
  *   npm run ml:backfill-labels -- --dry-run
@@ -76,6 +82,26 @@ Options:
   return args
 }
 
+function printHostDbConnectionHint(err: unknown): void {
+  const code =
+    err && typeof err === 'object' && 'code' in err
+      ? String((err as NodeJS.ErrnoException).code)
+      : ''
+  if (code !== 'ECONNREFUSED') return
+
+  console.error('')
+  console.error('Postgres is not reachable on the host (prod compose does not bind :5432).')
+  console.error('Options:')
+  console.error('  1) Strategy Admin → Reports → Backfill auto labels (dev wallet session)')
+  console.error(
+    '  2) curl -X POST "http://127.0.0.1/api/strategies/ml/backfill-labels?dry_run=true&key=$TRENDING_TRACKER_SECRET"',
+  )
+  console.error(
+    '  3) docker compose -f docker-compose.yml -f docker-compose.migrate.yml up -d reloadsol-db',
+  )
+  console.error('     then re-run npm run ml:backfill-labels')
+}
+
 async function main(): Promise<void> {
   const { backfillOutcomeLabels } = await import('../src/strategies/db')
   const args = parseArgs(process.argv.slice(2))
@@ -110,5 +136,6 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   console.error(err instanceof Error ? err.message : String(err))
+  printHostDbConnectionHint(err)
   process.exit(1)
 })

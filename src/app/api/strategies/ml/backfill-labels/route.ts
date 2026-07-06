@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { backfillOutcomeLabels } from '@/strategies/db'
+import { requireDevSession } from '@/utils/api-auth'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import type { StrategyDomain } from '@/strategies/types'
 
@@ -14,11 +15,25 @@ function getMlSecret(): string {
   )
 }
 
-export async function POST(request: NextRequest) {
+function isBackfillAuthorized(request: NextRequest): NextResponse | null {
   const key = request.nextUrl.searchParams.get('key')
-  const devBypass = process.env.NODE_ENV === 'development' && !key
-  if (!devBypass && !isAuthorizedRequest(key, getMlSecret())) {
+  if (process.env.NODE_ENV === 'development' && !key) {
+    return null
+  }
+  if (isAuthorizedRequest(key, getMlSecret())) {
+    return null
+  }
+  const devAuth = requireDevSession(request)
+  if (devAuth instanceof NextResponse) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
+  }
+  return null
+}
+
+export async function POST(request: NextRequest) {
+  const authError = isBackfillAuthorized(request)
+  if (authError) {
+    return authError
   }
 
   try {

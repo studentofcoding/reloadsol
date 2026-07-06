@@ -607,7 +607,7 @@ export default function StrategyAdminHub() {
 
       const previewRes = await fetch(
         `/api/strategies/ml/backfill-labels?${params.toString()}`,
-        { method: "POST" },
+        { method: "POST", credentials: "include" },
       );
       const previewJson = (await previewRes.json()) as {
         success?: boolean;
@@ -654,7 +654,7 @@ export default function StrategyAdminHub() {
       params.delete("dry_run");
       const runRes = await fetch(
         `/api/strategies/ml/backfill-labels?${params.toString()}`,
-        { method: "POST" },
+        { method: "POST", credentials: "include" },
       );
       const runJson = (await runRes.json()) as {
         success?: boolean;
