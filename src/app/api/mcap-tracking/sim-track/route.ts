@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getActiveMcapTrackerForSim } from '@/strategies/load-mcap-tracker'
+import { getActiveMcapTrackerStrategies } from '@/strategies/load-mcap-tracker'
 import { recordMcapTrackerOutcome } from '@/strategies/outcomes'
 import {
   appendMonitorSnapshot,
@@ -28,7 +28,22 @@ import {
   resolveTokenMonitorSnapshot,
 } from '@/strategies/sim-monitor-snapshots'
 import { fetchTradingRecordsForWallet, loadMcapSimClosedOutcomeKeys, mcapSimClosedOutcomeKey } from '@/strategies/db'
-import { computeOpenSimCycle } from '@/utils/simulation-trades'
+import {
+  acquireTradeLock,
+  isRealTradingHalted,
+  releaseTradeLock,
+} from '@/utils/bot-trading-state'
+import { resolveMcapExecutionMode } from '@/utils/mcap-execution-mode'
+import {
+  executeMcapRaptorBuy,
+  executeMcapRaptorSell,
+  getMcapLiveWallet,
+  isMcapLiveStrategyAllowed,
+  isMcapLiveTradingAvailable,
+  RAPTOR_OUTPUT_AMOUNT_RAW_KEY,
+  resolveMcapSlippageBps,
+} from '@/utils/mcap-raptor-trade'
+import { computeOpenTradeCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { getSolPriceUSD } from '@/utils/solana'
 import { log } from '@/utils/unified-logger'
@@ -43,7 +58,7 @@ import {
 } from '@/utils/mcap-tracker'
 import {
   getMcapSimOpenSkipReason,
-  getOpenMcapSimPositions,
+  getOpenMcapPositions,
   resolveMcapSimEntry,
   shouldOpenMcapSim,
   type McapSimOpenPosition,
@@ -88,8 +103,9 @@ type OpenPosition = McapSimOpenPosition
 function getOpenPositionsForStrategy(
   records: Awaited<ReturnType<typeof fetchTradingRecordsForWallet>>,
   strategyId: string,
+  isSimulated: boolean,
 ): OpenPosition[] {
-  return getOpenMcapSimPositions(records, strategyId)
+  return getOpenMcapPositions(records, strategyId, isSimulated ? 'sim' : 'live')
 }
 
 async function openSimPosition(params: {
@@ -217,7 +233,7 @@ async function closeSimPosition(params: {
   closeReason: NonNullable<ReturnType<typeof getMcapSimCloseReason>>
 }): Promise<number> {
   const records = await fetchTradingRecordsForWallet(MCAP_TRACKER_SIM_WALLET)
-  const cycle = computeOpenSimCycle(records, params.mintAddress)
+  const cycle = computeOpenTradeCycle(records, params.mintAddress, 'sim')
   if (!cycle) return 0
 
   const exitMcap = params.snapshot.current_mcap
@@ -308,6 +324,201 @@ async function closeSimPosition(params: {
   return pnlPct
 }
 
+async function openLivePosition(params: {
+  walletAddress: string
+  strategyId: string
+  mintAddress: string
+  symbol: string
+  solAmount: number
+  slippageBps: number
+  entryMcap: number
+  entryTemplate: 'first_seen' | 'milestone_80'
+  entryAt: string
+  snapshot: McapSnapshot
+  scoredEntryFeatures?: Record<string, unknown> | null
+}): Promise<void> {
+  const buy = await executeMcapRaptorBuy(
+    params.mintAddress,
+    params.solAmount,
+    params.slippageBps,
+    params.symbol,
+  )
+
+  const solPrice = await getSolPriceUSD()
+  const priceUsd =
+    buy.tokenAmountUi > 0 && params.solAmount > 0 && solPrice > 0
+      ? (params.solAmount * solPrice) / buy.tokenAmountUi
+      : 0.000001
+
+  const scoredEntryFeatures = {
+    ...(params.scoredEntryFeatures ?? {}),
+    [RAPTOR_OUTPUT_AMOUNT_RAW_KEY]: buy.outputAmountRaw,
+    raptor_buy_signature: buy.signature,
+  }
+
+  const record = buildTradingRecord({
+    walletAddress: params.walletAddress,
+    operationType: 'buy',
+    is_simulation: false,
+    simulation_type: 'strategy',
+    bot_strategy: params.strategyId,
+    tokens: [
+      {
+        mintAddress: params.mintAddress,
+        symbol: params.symbol,
+        tokenAmount: buy.tokenAmountUi,
+        solAmount: params.solAmount,
+        priceUsd,
+        solPrice,
+      },
+    ],
+    successCount: 1,
+    failureCount: 0,
+    totalTokens: 1,
+    solAmount: params.solAmount,
+    feesPaid: 0,
+    solPriceUsd: solPrice,
+    totalUsdValue: solPrice ? params.solAmount * solPrice : undefined,
+    signatures: [buy.signature],
+    status: 'tracking',
+    trading_simulation: {
+      strategy_id: params.strategyId,
+      entry_at: params.entryAt,
+      entry_features: scoredEntryFeatures,
+    },
+  })
+
+  await insertTradingRecord(record)
+
+  const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
+  notifyStrategyOpen({
+    domain: 'mcap_tracker',
+    strategyId: params.strategyId,
+    tokenSymbol: params.symbol,
+    tokenAddress: params.mintAddress,
+    marketCap: params.entryMcap,
+    isSimulated: false,
+  })
+}
+
+async function closeLivePosition(params: {
+  walletAddress: string
+  strategyId: string
+  mintAddress: string
+  symbol: string
+  entryAt: string | null
+  entryMcap: number
+  entryTemplate: 'first_seen' | 'milestone_80'
+  snapshot: McapSnapshot
+  closeReason: NonNullable<ReturnType<typeof getMcapSimCloseReason>>
+  slippageBps: number
+}): Promise<number> {
+  const records = await fetchTradingRecordsForWallet(params.walletAddress)
+  const cycle = computeOpenTradeCycle(records, params.mintAddress, 'live')
+  if (!cycle) return 0
+
+  const buyRecord = [...records]
+    .reverse()
+    .find(
+      (rec) =>
+        rec.operationType === 'buy' &&
+        rec.bot_strategy === params.strategyId &&
+        rec.is_simulation === false &&
+        rec.tokens?.some((t) => t.mintAddress === params.mintAddress),
+    )
+  const buyFeatures =
+    buyRecord?.trading_simulation &&
+    typeof buyRecord.trading_simulation === 'object' &&
+    buyRecord.trading_simulation.entry_features &&
+    typeof buyRecord.trading_simulation.entry_features === 'object'
+      ? (buyRecord.trading_simulation.entry_features as Record<string, unknown>)
+      : null
+
+  const amountRaw =
+    typeof buyFeatures?.[RAPTOR_OUTPUT_AMOUNT_RAW_KEY] === 'string'
+      ? (buyFeatures[RAPTOR_OUTPUT_AMOUNT_RAW_KEY] as string)
+      : null
+  if (!amountRaw || amountRaw === '0') {
+    throw new Error(`Missing ${RAPTOR_OUTPUT_AMOUNT_RAW_KEY} for live close`)
+  }
+
+  const sell = await executeMcapRaptorSell(
+    params.mintAddress,
+    amountRaw,
+    params.slippageBps,
+    params.symbol,
+  )
+
+  const solSpent = cycle.totalSolBought
+  const pnlPct =
+    solSpent > 0 ? ((sell.solReceived - solSpent) / solSpent) * 100 : 0
+  const solPrice = await getSolPriceUSD()
+  const remaining = cycle.remainingTokenAmount
+
+  const record = buildTradingRecord({
+    walletAddress: params.walletAddress,
+    operationType: 'sell',
+    is_simulation: false,
+    simulation_type: 'strategy',
+    bot_strategy: params.strategyId,
+    close_position: true,
+    tokens: [
+      {
+        mintAddress: params.mintAddress,
+        symbol: params.symbol,
+        tokenAmount: remaining,
+        solAmount: sell.solReceived,
+        priceUsd: 0.000001,
+        solPrice,
+      },
+    ],
+    successCount: 1,
+    failureCount: 0,
+    totalTokens: 1,
+    solAmount: sell.solReceived,
+    feesPaid: 0,
+    solPriceUsd: solPrice,
+    signatures: [sell.signature],
+    status: pnlPct >= 0 ? 'won' : 'lost',
+  })
+
+  await insertTradingRecord(record)
+
+  const exitMcap = params.snapshot.current_mcap
+  const closeFeatures = buildMcapOutcomeFeatures({
+    snapshot: params.snapshot,
+    entryTemplate: params.entryTemplate,
+    entryMcap: params.entryMcap,
+    exitMcap,
+    closeReason: params.closeReason,
+  })
+  const monitorSnapshots = appendMonitorSnapshot(
+    readMonitorSnapshotsFromFeatures(buyFeatures),
+    {
+      timestamp: new Date().toISOString(),
+      volume_5m: params.snapshot.volume_5m ?? null,
+      market_cap: exitMcap,
+    },
+  )
+
+  await recordMcapTrackerOutcome({
+    strategyId: params.strategyId,
+    tokenAddress: params.mintAddress,
+    entryAt: params.entryAt,
+    exitAt: new Date().toISOString(),
+    pnlPct,
+    status: pnlPct >= 0 ? 'won' : 'lost',
+    isSimulated: false,
+    features: mergeEntryFeaturesForOutcome(buyFeatures, {
+      ...closeFeatures,
+      monitor_snapshots: monitorSnapshots,
+      raptor_sell_signature: sell.signature,
+    }),
+  })
+
+  return pnlPct
+}
+
 export async function POST(request: NextRequest) {
   const key = request.nextUrl.searchParams.get('key')
   if (!isAuthorizedRequest(key, getSimTrackSecret())) {
@@ -315,13 +526,14 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const strategies = await getActiveMcapTrackerForSim()
-    const records = await fetchTradingRecordsForWallet(MCAP_TRACKER_SIM_WALLET)
+    const strategies = await getActiveMcapTrackerStrategies()
+    const liveAvailable = isMcapLiveTradingAvailable()
     const results: Array<{
       strategyId: string
       opened: number
       closed: number
       skipped: string[]
+      mode: 'sim' | 'live'
     }> = []
 
     const maxRecency = Math.max(
@@ -336,7 +548,28 @@ export async function POST(request: NextRequest) {
     const trackingByMint = new Map(trackingRows.map((r) => [r.token_address, r]))
 
     for (const strategy of strategies) {
-      const openPositions = getOpenPositionsForStrategy(records, strategy.id)
+      const execMode = resolveMcapExecutionMode(strategy.execution_mode, liveAvailable)
+      if (!execMode.isSimulated && !isMcapLiveStrategyAllowed(strategy.id)) {
+        results.push({
+          strategyId: strategy.id,
+          opened: 0,
+          closed: 0,
+          skipped: ['live not allowed for this strategy'],
+          mode: 'live',
+        })
+        continue
+      }
+
+      const walletAddress = execMode.isSimulated
+        ? MCAP_TRACKER_SIM_WALLET
+        : getMcapLiveWallet()
+      const slippageBps = resolveMcapSlippageBps(strategy.config.execution.slippageBps)
+      let records = await fetchTradingRecordsForWallet(walletAddress)
+      const openPositions = getOpenPositionsForStrategy(
+        records,
+        strategy.id,
+        execMode.isSimulated,
+      )
       const openMintSet = new Set(openPositions.map((p) => p.mintAddress))
       let opened = 0
       let closed = 0
@@ -379,17 +612,40 @@ export async function POST(request: NextRequest) {
             ).volume_5m,
         }
 
-        await closeSimPosition({
-          strategyId: strategy.id,
-          mintAddress: pos.mintAddress,
-          symbol: pos.symbol,
-          entryAt: pos.entryAt,
-          entryMcap: pos.entryMcap || snapshot.first_mcap,
-          entryTemplate: pos.entryTemplate,
-          snapshot: enrichedSnapshot,
-          closeReason,
-        })
-        closed++
+        try {
+          if (execMode.isSimulated) {
+            await closeSimPosition({
+              strategyId: strategy.id,
+              mintAddress: pos.mintAddress,
+              symbol: pos.symbol,
+              entryAt: pos.entryAt,
+              entryMcap: pos.entryMcap || snapshot.first_mcap,
+              entryTemplate: pos.entryTemplate,
+              snapshot: enrichedSnapshot,
+              closeReason,
+            })
+          } else {
+            await closeLivePosition({
+              walletAddress,
+              strategyId: strategy.id,
+              mintAddress: pos.mintAddress,
+              symbol: pos.symbol,
+              entryAt: pos.entryAt,
+              entryMcap: pos.entryMcap || snapshot.first_mcap,
+              entryTemplate: pos.entryTemplate,
+              snapshot: enrichedSnapshot,
+              closeReason,
+              slippageBps,
+            })
+          }
+          closed++
+        } catch (closeError) {
+          skipped.push(
+            `${pos.symbol}: live_close_failed (${closeError instanceof Error ? closeError.message : String(closeError)})`,
+          )
+          continue
+        }
+
         openMintSet.delete(pos.mintAddress)
         if (pos.entryAt) {
           closedOutcomeKeys.add(
@@ -398,8 +654,12 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const refreshedRecords = await fetchTradingRecordsForWallet(MCAP_TRACKER_SIM_WALLET)
-      const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
+      records = await fetchTradingRecordsForWallet(walletAddress)
+      const currentOpen = getOpenPositionsForStrategy(
+        records,
+        strategy.id,
+        execMode.isSimulated,
+      ).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 
       for (const snapshot of trackingRows) {
@@ -430,6 +690,11 @@ export async function POST(request: NextRequest) {
         const entry = resolveMcapSimEntry(strategy, snapshot)
         if (!entry) {
           skipped.push(`${snapshot.token_symbol}: no_entry_mcap`)
+          continue
+        }
+
+        if (execMode.skipOpen) {
+          skipped.push(`${snapshot.token_symbol}: ${execMode.reason ?? 'live_unavailable'}`)
           continue
         }
 
@@ -515,30 +780,72 @@ export async function POST(request: NextRequest) {
           patternShadow,
         )
 
-        await openSimPosition({
-          strategyId: strategy.id,
-          mintAddress: snapshot.token_address,
-          symbol: snapshot.token_symbol,
-          solAmount: strategy.config.execution.simBuySol,
-          entryMcap: entry.entryMcap,
-          entryTemplate: strategy.config.entryTemplate,
-          entryAt: entry.entryAt,
-          snapshot,
-          socialCtx,
-          scoredEntryFeatures,
-        })
+        if (!execMode.isSimulated) {
+          const halted = await isRealTradingHalted()
+          if (halted.halted) {
+            skipped.push(`${snapshot.token_symbol}: trading_halted`)
+            break
+          }
+          const lock = await acquireTradeLock(snapshot.token_address, strategy.id)
+          if (!lock.acquired) {
+            skipped.push(`${snapshot.token_symbol}: trade_lock`)
+            continue
+          }
+          try {
+            await openLivePosition({
+              walletAddress,
+              strategyId: strategy.id,
+              mintAddress: snapshot.token_address,
+              symbol: snapshot.token_symbol,
+              solAmount: strategy.config.execution.simBuySol,
+              slippageBps,
+              entryMcap: entry.entryMcap,
+              entryTemplate: strategy.config.entryTemplate,
+              entryAt: entry.entryAt,
+              snapshot,
+              scoredEntryFeatures,
+            })
+          } catch (openError) {
+            skipped.push(
+              `${snapshot.token_symbol}: live_buy_failed (${openError instanceof Error ? openError.message : String(openError)})`,
+            )
+            continue
+          } finally {
+            await releaseTradeLock(snapshot.token_address, strategy.id)
+          }
+        } else {
+          await openSimPosition({
+            strategyId: strategy.id,
+            mintAddress: snapshot.token_address,
+            symbol: snapshot.token_symbol,
+            solAmount: strategy.config.execution.simBuySol,
+            entryMcap: entry.entryMcap,
+            entryTemplate: strategy.config.entryTemplate,
+            entryAt: entry.entryAt,
+            snapshot,
+            socialCtx,
+            scoredEntryFeatures,
+          })
+        }
+
         opened++
         openMintSet.add(snapshot.token_address)
       }
 
-      results.push({ strategyId: strategy.id, opened, closed, skipped })
+      results.push({
+        strategyId: strategy.id,
+        opened,
+        closed,
+        skipped,
+        mode: execMode.isSimulated ? 'sim' : 'live',
+      })
     }
 
     log.info('mcap_tracker', 'MCap tracker sim track cycle complete', { results })
 
     return NextResponse.json({
       success: true,
-      wallet: MCAP_TRACKER_SIM_WALLET,
+      live_available: liveAvailable,
       results,
     })
   } catch (error) {

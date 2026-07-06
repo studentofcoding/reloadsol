@@ -1,6 +1,6 @@
 import type { McapTrackerStrategy } from '@/strategies/types'
 import { isInTrackingRange, type McapSnapshot } from '@/utils/mcap-tracker'
-import { computeOpenSimCycle } from '@/utils/simulation-trades'
+import { computeOpenTradeCycle } from '@/utils/simulation-trades'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 
 export type McapSimOpenPosition = {
@@ -23,23 +23,26 @@ function readEntryTemplate(
   return features.entry_template === 'milestone_80' ? 'milestone_80' : 'first_seen'
 }
 
-export function getOpenMcapSimPositions(
+export function getOpenMcapPositions(
   records: TrackingRecord[],
   strategyId: string,
+  mode: 'sim' | 'live',
 ): McapSimOpenPosition[] {
+  const isSim = mode === 'sim'
   const seen = new Set<string>()
   const open: McapSimOpenPosition[] = []
 
   for (const r of records) {
-    if (!r.is_simulation || r.bot_strategy !== strategyId) continue
+    if (r.is_simulation !== isSim || r.bot_strategy !== strategyId) continue
     for (const t of r.tokens ?? []) {
       if (seen.has(t.mintAddress)) continue
-      const cycle = computeOpenSimCycle(records, t.mintAddress)
+      const cycle = computeOpenTradeCycle(records, t.mintAddress, mode)
       if (!cycle || cycle.simulationType !== 'strategy') continue
       const buyRecord = records.find(
         (rec) =>
           rec.operationType === 'buy' &&
           rec.bot_strategy === strategyId &&
+          rec.is_simulation === isSim &&
           rec.tokens?.some((tk) => tk.mintAddress === t.mintAddress),
       )
       if (!buyRecord) continue
@@ -61,6 +64,13 @@ export function getOpenMcapSimPositions(
   }
 
   return open
+}
+
+export function getOpenMcapSimPositions(
+  records: TrackingRecord[],
+  strategyId: string,
+): McapSimOpenPosition[] {
+  return getOpenMcapPositions(records, strategyId, 'sim')
 }
 
 export function countOpenMcapSimPositions(

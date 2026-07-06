@@ -162,6 +162,7 @@ export interface McapTrackerStrategyConfig {
   execution: {
     simBuySol: number
     maxOpenPositions: number
+    slippageBps?: number
   }
   exit: {
     stopLossPct: number

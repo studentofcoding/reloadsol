@@ -39,13 +39,20 @@ export async function getMergedMcapTrackerRegistry(): Promise<Record<string, Mca
   return merged
 }
 
-export async function getActiveMcapTrackerForSim(): Promise<McapTrackerStrategy[]> {
+export async function getActiveMcapTrackerStrategies(): Promise<McapTrackerStrategy[]> {
   const registry = await getMergedMcapTrackerRegistry()
   return Object.values(registry).filter(
     (s) =>
       s.is_active &&
-      (s.execution_mode === 'sim_only' || s.execution_mode === 'ab_parallel'),
+      (s.execution_mode === 'sim_only' ||
+        s.execution_mode === 'ab_parallel' ||
+        s.execution_mode === 'live_only'),
   )
+}
+
+/** @deprecated use getActiveMcapTrackerStrategies */
+export async function getActiveMcapTrackerForSim(): Promise<McapTrackerStrategy[]> {
+  return getActiveMcapTrackerStrategies()
 }
 
 export function resolveExecutionMode(
