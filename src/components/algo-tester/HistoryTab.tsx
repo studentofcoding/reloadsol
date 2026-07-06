@@ -23,6 +23,10 @@ import {
   type TrackedTokenHistory,
 } from "@/hooks/useTrackingHistory";
 import { formatAppDateTime, formatAppDate } from "@/utils/datetime";
+import {
+  isSkippedTrackerToken,
+  resolveCompletedOutcome,
+} from "@/utils/trending-profit";
 
 // Register Chart.js components
 ChartJS.register(
@@ -592,12 +596,16 @@ export default function HistoryTab() {
                     <div className="text-sm text-gray-400">Current Gain</div>
                     <div
                       className={`text-lg font-bold ${
-                        token.current_gain_percentage >= 0
-                          ? "text-green-400"
-                          : "text-red-400"
+                        isSkippedTrackerToken(token)
+                          ? "text-gray-400"
+                          : token.current_gain_percentage >= 0
+                            ? "text-green-400"
+                            : "text-red-400"
                       }`}
                     >
-                      {formatPercentage(token.current_gain_percentage)}
+                      {isSkippedTrackerToken(token)
+                        ? "—"
+                        : formatPercentage(token.current_gain_percentage)}
                     </div>
                   </div>
 
@@ -796,9 +804,18 @@ export default function HistoryTab() {
                           <div>
                             <span className="text-gray-400">Status:</span>{" "}
                             <span
-                              className={`font-medium ${getStatusColor(selectedToken.status)}`}
+                              className={`font-medium ${getStatusColor(
+                                isSkippedTrackerToken(selectedToken)
+                                  ? "skipped"
+                                  : (resolveCompletedOutcome(selectedToken) ??
+                                    selectedToken.status),
+                              )}`}
                             >
-                              {selectedToken.status.toUpperCase()}
+                              {(isSkippedTrackerToken(selectedToken)
+                                ? "skipped"
+                                : (resolveCompletedOutcome(selectedToken) ??
+                                  selectedToken.status)
+                              ).toUpperCase()}
                             </span>
                           </div>
                         </div>
@@ -833,14 +850,18 @@ export default function HistoryTab() {
                             <span className="text-gray-400">Current Gain:</span>{" "}
                             <span
                               className={
-                                selectedToken.current_gain_percentage >= 0
-                                  ? "text-green-400"
-                                  : "text-red-400"
+                                isSkippedTrackerToken(selectedToken)
+                                  ? "text-gray-400"
+                                  : selectedToken.current_gain_percentage >= 0
+                                    ? "text-green-400"
+                                    : "text-red-400"
                               }
                             >
-                              {formatPercentage(
-                                selectedToken.current_gain_percentage,
-                              )}
+                              {isSkippedTrackerToken(selectedToken)
+                                ? "—"
+                                : formatPercentage(
+                                    selectedToken.current_gain_percentage,
+                                  )}
                             </span>
                           </div>
                           <div>

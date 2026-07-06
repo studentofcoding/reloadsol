@@ -2,6 +2,11 @@
 
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useMemo, useEffect, useRef } from "react";
+import {
+  hadSimulatedEntry,
+  isSkippedTrackerToken,
+  resolveCompletedOutcome,
+} from "@/utils/trending-profit";
 import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -221,6 +226,15 @@ export default function TokenDetailsModal({
     return `$${price.toFixed(8)}`;
   };
 
+  const skipped = isSkippedTrackerToken(token);
+  const skippedNoEntry = skipped && !hadSimulatedEntry(token);
+  const effectiveOutcome = resolveCompletedOutcome(token);
+  const displayStatus = skipped
+    ? "skipped"
+    : (effectiveOutcome ?? token.status ?? "tracking");
+  const showTradeTimeline = !skippedNoEntry;
+  const showPerformance = !skippedNoEntry;
+
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 overflow-y-auto">
       <div
@@ -325,29 +339,40 @@ export default function TokenDetailsModal({
                 Timeline
               </h3>
               <div className="space-y-3">
-                <div className="flex justify-between items-center border-b border-gray-700 pb-2">
-                  <span className="text-gray-400">Tracking Started (Buy)</span>
-                  <div className="text-right">
-                    <div className="text-white">
-                      {formatTime(token.tracking_started_at)}
+                {showTradeTimeline ? (
+                  <>
+                    <div className="flex justify-between items-center border-b border-gray-700 pb-2">
+                      <span className="text-gray-400">Tracking Started (Buy)</span>
+                      <div className="text-right">
+                        <div className="text-white">
+                          {formatTime(token.tracking_started_at)}
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          @{formatPrice(token.initial_price_usd)}
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-xs text-gray-500">
-                      @{formatPrice(token.initial_price_usd)}
-                    </div>
-                  </div>
-                </div>
-                {token.status_changed_at && (
+                    {token.status_changed_at && effectiveOutcome != null && (
+                      <div className="flex justify-between items-center border-b border-gray-700 pb-2">
+                        <span className="text-gray-400">
+                          Tracking Stopped (Sell)
+                        </span>
+                        <div className="text-right">
+                          <div className="text-white">
+                            {formatTime(token.status_changed_at)}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            @{formatPrice(token.last_price_usd)}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
                   <div className="flex justify-between items-center border-b border-gray-700 pb-2">
-                    <span className="text-gray-400">
-                      Tracking Stopped (Sell)
-                    </span>
-                    <div className="text-right">
-                      <div className="text-white">
-                        {formatTime(token.status_changed_at)}
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        @{formatPrice(token.last_price_usd)}
-                      </div>
+                    <span className="text-gray-400">Outcome</span>
+                    <div className="text-right text-sm text-gray-300">
+                      Waiting ended — skipped (no entry)
                     </div>
                   </div>
                 )}
@@ -355,14 +380,16 @@ export default function TokenDetailsModal({
                   <span className="text-gray-400">Current Status</span>
                   <span
                     className={`px-2 py-0.5 rounded text-xs font-medium uppercase ${
-                      token.status === "won"
+                      displayStatus === "won"
                         ? "bg-green-900/30 text-green-400"
-                        : token.status === "lost"
+                        : displayStatus === "lost"
                           ? "bg-red-900/30 text-red-400"
-                          : "bg-blue-900/30 text-blue-400"
+                          : displayStatus === "skipped"
+                            ? "bg-gray-800/50 text-gray-400"
+                            : "bg-blue-900/30 text-blue-400"
                     }`}
                   >
-                    {token.status}
+                    {displayStatus}
                   </span>
                 </div>
               </div>
@@ -371,63 +398,86 @@ export default function TokenDetailsModal({
 
           {/* Right Column: Stats */}
           <div className="space-y-4">
-            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-              <h3 className="text-sm font-medium text-gray-400 mb-4">
-                Performance Metrics
-              </h3>
+            {showPerformance ? (
+              <>
+                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                  <h3 className="text-sm font-medium text-gray-400 mb-4">
+                    Performance Metrics
+                  </h3>
 
-              <div className="grid grid-cols-1 gap-4">
-                <div className="bg-gray-700/30 p-3 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">
-                    Potential Upside
-                  </div>
-                  <div
-                    className={`text-2xl font-bold ${token.peak_gain_percentage >= 0 ? "text-green-400" : "text-red-400"}`}
-                  >
-                    {token.peak_gain_percentage > 0 ? "+" : ""}
-                    {token.peak_gain_percentage.toFixed(2)}%
-                  </div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    Peak vs Initial
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="bg-gray-700/30 p-3 rounded-lg">
+                      <div className="text-xs text-gray-400 mb-1">
+                        Realized PnL
+                      </div>
+                      <div
+                        className={`text-2xl font-bold ${(token.current_gain_percentage ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}
+                      >
+                        {(token.current_gain_percentage ?? 0) > 0 ? "+" : ""}
+                        {(token.current_gain_percentage ?? 0).toFixed(2)}%
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Last vs initial (not peak)
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-700/30 p-3 rounded-lg">
+                      <div className="text-xs text-gray-400 mb-1">
+                        Peak Upside (info only)
+                      </div>
+                      <div
+                        className={`text-2xl font-bold ${token.peak_gain_percentage >= 0 ? "text-green-400" : "text-red-400"}`}
+                      >
+                        {token.peak_gain_percentage > 0 ? "+" : ""}
+                        {token.peak_gain_percentage.toFixed(2)}%
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Peak vs initial — not profit unless held to peak
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-700/30 p-3 rounded-lg">
+                      <div className="text-xs text-gray-400 mb-1">
+                        Reward Ratio (RnR)
+                      </div>
+                      <div className="text-2xl font-bold text-blue-400">{rnr}x</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Upside / Max Drawdown
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="bg-gray-700/30 p-3 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">
-                    Reward Ratio (RnR)
+                <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">
+                  <h3 className="text-sm font-medium text-gray-400">
+                    Price Points
+                  </h3>
+
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Initial</span>
+                    <span className="font-mono text-white">
+                      {formatPrice(token.initial_price_usd)}
+                    </span>
                   </div>
-                  <div className="text-2xl font-bold text-blue-400">{rnr}x</div>
-                  <div className="text-xs text-gray-500 mt-1">
-                    Upside / Max Drawdown
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Peak</span>
+                    <span className="font-mono text-green-400">
+                      {formatPrice(token.peak_price_usd)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">Last/Current</span>
+                    <span className="font-mono text-white">
+                      {formatPrice(token.last_price_usd)}
+                    </span>
                   </div>
                 </div>
+              </>
+            ) : (
+              <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 text-sm text-gray-400">
+                N/A — not traded (skipped before entry)
               </div>
-            </div>
-
-            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700 space-y-3">
-              <h3 className="text-sm font-medium text-gray-400">
-                Price Points
-              </h3>
-
-              <div className="flex justify-between">
-                <span className="text-gray-400">Initial</span>
-                <span className="font-mono text-white">
-                  {formatPrice(token.initial_price_usd)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Peak</span>
-                <span className="font-mono text-green-400">
-                  {formatPrice(token.peak_price_usd)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400">Last/Current</span>
-                <span className="font-mono text-white">
-                  {formatPrice(token.last_price_usd)}
-                </span>
-              </div>
-            </div>
+            )}
 
             <button
               onClick={onBuy}

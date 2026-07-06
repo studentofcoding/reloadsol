@@ -11,7 +11,7 @@ import {
   isSimulatedTrackerPosition,
   resolveTrackerStrategyId,
 } from '@/utils/trading-simulation'
-import { sumSummaryTokenProfitPct } from '@/utils/trending-profit'
+import { sumSummaryTokenProfitPct, resolveCompletedOutcome } from '@/utils/trending-profit'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 const STATS_REDIS_TTL_SECONDS = 60
@@ -449,8 +449,9 @@ export async function GET(request: NextRequest) {
     }
 
     const recentWinners =
-      recentCompleted?.filter((t) => t.status === 'won') || []
-    const recentLosers = recentCompleted?.filter((t) => t.status === 'lost') || []
+      recentCompleted?.filter((t) => resolveCompletedOutcome(t) === 'won') || []
+    const recentLosers =
+      recentCompleted?.filter((t) => resolveCompletedOutcome(t) === 'lost') || []
 
     const response = {
       success: true,

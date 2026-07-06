@@ -348,15 +348,38 @@ wait_for_cron_health() {
 }
 
 ensure_social_running() {
+  local container="reloadsol-social-ingest"
+  local attempts="${1:-10}"
+  local delay="${2:-3}"
+
   if [[ "$DEPLOY_SOCIAL" != true && "$DEPLOY_WEB" != true ]]; then
     return 0
   fi
+
   log "Ensuring social-ingest is running ..."
-  if ! "${COMPOSE[@]}" up -d social-ingest; then
+  if ! "${COMPOSE[@]}" up -d --force-recreate social-ingest; then
     log "social-ingest failed to start"
     "${COMPOSE[@]}" logs --tail=40 social-ingest || true
     return 1
   fi
+
+  log "Waiting for ${container} to stay running ..."
+  for ((i = 1; i <= attempts; i++)); do
+    local running status
+    running="$(docker inspect --format='{{.State.Running}}' "$container" 2>/dev/null || echo "false")"
+    status="$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "missing")"
+
+    if [[ "$running" == "true" && "$status" != "restarting" ]]; then
+      log "social-ingest OK (status=${status})"
+      return 0
+    fi
+
+    sleep "$delay"
+  done
+
+  log "social-ingest failed health check (last status=${status:-unknown})"
+  "${COMPOSE[@]}" logs --tail=40 social-ingest || true
+  return 1
 }
 
 check_duplicate_env_port() {
@@ -603,9 +626,9 @@ if [[ "$DEPLOY_CRON" == true ]]; then
 fi
 
 if [[ "$DEPLOY_SOCIAL" == true ]]; then
-  ensure_social_running
+  ensure_social_running || exit 1
 elif [[ "$DEPLOY_WEB" == true ]]; then
-  ensure_social_running
+  ensure_social_running || exit 1
 fi
 
 log "Deploy complete (web=${DEPLOY_WEB} cron=${DEPLOY_CRON} social=${DEPLOY_SOCIAL})"

@@ -4655,16 +4655,20 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             // Remove from waiting queue (mark as skipped due to timeout)
             updatesPromises.push(
               (async () => {
+                const waitingInitial = existingToken.waiting_initial_price ?? token.current_price
                 await query(
                   `UPDATE ${TRACKER_TABLE}
                    SET status = $1, status_changed_at = $2, last_price_usd = $3,
-                       current_gain_percentage = $4, updated_at = NOW()
-                   WHERE id = $5`,
+                       initial_price_usd = $4, peak_price_usd = $4,
+                       current_gain_percentage = $5, peak_gain_percentage = $5,
+                       updated_at = NOW()
+                   WHERE id = $6`,
                   [
                     'skipped',
                     currentTime.toISOString(),
                     token.current_price,
-                    calculateGainPercentage(token.current_price, existingToken.waiting_initial_price!),
+                    waitingInitial,
+                    0,
                     existingToken.id,
                   ],
                 )
@@ -5073,7 +5077,7 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                   existingToken.trading_simulation.current_status = 'completed'
                   existingToken.trading_simulation.remaining_token_amount = '0'
 
-                  const finalStatus = finalGain >= 0 ? 'won' : 'lost'
+                  const finalStatus = finalGain > 0 ? 'won' : 'lost'
                   existingToken.status = finalStatus
                   existingToken.status_changed_at = new Date().toISOString()
 

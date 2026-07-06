@@ -35,6 +35,7 @@ interface TopWinner {
   initial_price_usd: number
   peak_price_usd: number
   peak_gain_percentage: number
+  current_gain_percentage?: number
   tracking_duration_hours: number
   status_changed_at: string
 }
@@ -102,33 +103,48 @@ export async function POST(request: NextRequest) {
     const lostTokens = tokens.filter((t) => t.status === 'lost')
     const wonTokens = tokens.filter((t) => t.status === 'won')
 
-    const topPerformers = trackingTokens
-      .filter((token) => token.peak_gain_percentage > 0)
-      .sort((a, b) => b.peak_gain_percentage - a.peak_gain_percentage)
-      .slice(0, 5)
+    const newWinners = trackingTokens.filter((t) => t.current_gain_percentage > 0)
+    const newLosers = trackingTokens.filter((t) => t.current_gain_percentage <= 0)
 
-    console.log(`🏆 Found ${topPerformers.length} top performers to mark as winners`)
-
-    const updatePromises = topPerformers.map((token) =>
-      query(
-        `UPDATE ${TRACKER_TABLE} SET status = 'won', status_changed_at = $1 WHERE id = $2`,
-        [currentTime.toISOString(), token.id],
-      ),
+    console.log(
+      `🏁 Closing ${trackingTokens.length} tracking tokens: ${newWinners.length} won, ${newLosers.length} lost (realized gain)`,
     )
 
-    const results = await Promise.allSettled(updatePromises)
+    const closePromises = [
+      ...newWinners.map((token) =>
+        query(
+          `UPDATE ${TRACKER_TABLE} SET status = 'won', status_changed_at = $1 WHERE id = $2`,
+          [currentTime.toISOString(), token.id],
+        ),
+      ),
+      ...newLosers.map((token) =>
+        query(
+          `UPDATE ${TRACKER_TABLE} SET status = 'lost', status_changed_at = $1 WHERE id = $2`,
+          [currentTime.toISOString(), token.id],
+        ),
+      ),
+    ]
+
+    const results = await Promise.allSettled(closePromises)
     const failedUpdates = results.filter((result) => result.status === 'rejected')
 
     if (failedUpdates.length > 0) {
-      console.error(`⚠️ ${failedUpdates.length} winner updates failed:`, failedUpdates)
+      console.error(`⚠️ ${failedUpdates.length} close updates failed:`, failedUpdates)
     }
 
-    const totalCompleted = lostTokens.length + topPerformers.length + wonTokens.length
-    const totalWon = topPerformers.length + wonTokens.length
+    const topPerformers = [...newWinners]
+      .sort((a, b) => b.current_gain_percentage - a.current_gain_percentage)
+      .slice(0, 5)
+
+    const totalWon = wonTokens.length + newWinners.length
+    const totalLost = lostTokens.length + newLosers.length
+    const totalCompleted = totalWon + totalLost
     const winRate = totalCompleted > 0 ? (totalWon / totalCompleted) * 100 : 0
 
-    const allGains = [...topPerformers, ...wonTokens].map((t) => t.peak_gain_percentage)
-    const allLosses = lostTokens.map((t) => Math.abs(t.current_gain_percentage))
+    const allGains = [...newWinners, ...wonTokens].map((t) => t.current_gain_percentage)
+    const allLosses = [...newLosers, ...lostTokens].map((t) =>
+      Math.abs(t.current_gain_percentage),
+    )
 
     const avgPeakGain =
       allGains.length > 0 ? allGains.reduce((a, b) => a + b, 0) / allGains.length : 0
@@ -149,6 +165,7 @@ export async function POST(request: NextRequest) {
         initial_price_usd: token.initial_price_usd,
         peak_price_usd: token.peak_price_usd,
         peak_gain_percentage: token.peak_gain_percentage,
+        current_gain_percentage: token.current_gain_percentage,
         tracking_duration_hours: Math.round(trackingDuration * 100) / 100,
         status_changed_at: currentTime.toISOString(),
       }
@@ -166,8 +183,8 @@ export async function POST(request: NextRequest) {
         currentTime.toISOString(),
         tokens.length,
         totalWon,
-        lostTokens.length,
-        trackingTokens.length - topPerformers.length,
+        totalLost,
+        0,
         Math.round(winRate * 100) / 100,
         JSON.stringify(topWinnersData),
         Math.round(avgPeakGain * 100) / 100,
@@ -176,7 +193,12 @@ export async function POST(request: NextRequest) {
       ],
     )
 
-    const completedTokenIds = [...topPerformers.map((t) => t.id), ...lostTokens.map((t) => t.id)]
+    const completedTokenIds = [
+      ...newWinners.map((t) => t.id),
+      ...newLosers.map((t) => t.id),
+      ...wonTokens.map((t) => t.id),
+      ...lostTokens.map((t) => t.id),
+    ]
     if (completedTokenIds.length > 0) {
       console.log(`🧹 Cleaning up ${completedTokenIds.length} completed tracking records`)
     }
@@ -192,17 +214,17 @@ export async function POST(request: NextRequest) {
       statistics: {
         total_tokens_tracked: tokens.length,
         won_tokens: totalWon,
-        lost_tokens: lostTokens.length,
-        still_tracking: trackingTokens.length - topPerformers.length,
+        lost_tokens: totalLost,
+        still_tracking: 0,
         win_rate: Math.round(winRate * 100) / 100,
         avg_peak_gain: Math.round(avgPeakGain * 100) / 100,
         max_peak_gain: Math.round(maxPeakGain * 100) / 100,
         avg_loss: Math.round(avgLoss * 100) / 100,
       },
       top_winners: topWinnersData,
-      top_performers_marked: topPerformers.length,
+      top_performers_marked: newWinners.length,
       failed_updates: failedUpdates.length,
-      message: `Summary complete: ${totalWon} wins, ${lostTokens.length} losses, ${winRate.toFixed(1)}% win rate`,
+      message: `Summary complete: ${totalWon} wins, ${totalLost} losses, ${winRate.toFixed(1)}% win rate`,
     }
 
     console.log('✅ 24-hour summary completed:', summary.message)

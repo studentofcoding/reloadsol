@@ -13,7 +13,7 @@ import { useTrendingStats } from "@/hooks/useTrendingStats";
 import { isSimulatedTrackerPosition } from "@/utils/trading-simulation";
 import { useTokenHistory } from "@/hooks/useTokenHistory";
 import { formatAppDate, formatAppDateTime, formatAppNow, getAppLocalDateString } from "@/utils/datetime";
-import { getSummaryTokenGainPct } from "@/utils/trending-profit";
+import { getSummaryTokenGainPct, isSkippedTrackerToken, resolveCompletedOutcome } from "@/utils/trending-profit";
 
 // Use alternate tables in local development to avoid prod collisions
 const TRACKER_TABLE =
@@ -1339,14 +1339,13 @@ export default function AlgoDashboardTab() {
                 <>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                     {historyData.tokens.map((token: any) => {
-                      const currentGain = Number(
-                        token.current_gain_percentage ?? 0,
-                      );
-                      const isWinner =
-                        currentGain > 0 || token.status === "won";
-                      const isLoser =
-                        currentGain < -50 ||
-                        (token.status && token.status === "lost");
+                      const skipped = isSkippedTrackerToken(token);
+                      const outcome = resolveCompletedOutcome(token);
+                      const currentGain = skipped
+                        ? null
+                        : Number(token.current_gain_percentage ?? 0);
+                      const isWinner = outcome === "won";
+                      const isLoser = outcome === "lost";
 
                       return (
                         <div
@@ -1371,15 +1370,18 @@ export default function AlgoDashboardTab() {
                             <div className="text-right">
                               <p
                                 className={`font-bold ${
-                                  currentGain > 0
-                                    ? "text-green-400"
-                                    : currentGain < 0
-                                      ? "text-red-400"
-                                      : "text-gray-400"
+                                  skipped
+                                    ? "text-gray-400"
+                                    : (currentGain ?? 0) > 0
+                                      ? "text-green-400"
+                                      : (currentGain ?? 0) < 0
+                                        ? "text-red-400"
+                                        : "text-gray-400"
                                 }`}
                               >
-                                {currentGain > 0 ? "+" : ""}
-                                {currentGain.toFixed(2)}%
+                                {skipped
+                                  ? "—"
+                                  : `${(currentGain ?? 0) > 0 ? "+" : ""}${(currentGain ?? 0).toFixed(2)}%`}
                               </p>
                               <p className="text-xs text-gray-400">
                                 {formatTime(token.created_at).split(",")[1]}
@@ -1397,17 +1399,23 @@ export default function AlgoDashboardTab() {
                               <span className="block mb-0.5">Status</span>
                               <span
                                 className={`font-medium ${
-                                  token.status === "won"
-                                    ? "text-green-400"
-                                    : token.status === "lost"
-                                      ? "text-red-400"
-                                      : token.status === "manual_sell"
-                                        ? "text-orange-400"
-                                        : "text-blue-400"
+                                  skipped
+                                    ? "text-gray-400"
+                                    : isWinner
+                                      ? "text-green-400"
+                                      : isLoser
+                                        ? "text-red-400"
+                                        : token.status === "manual_sell"
+                                          ? "text-orange-400"
+                                          : "text-blue-400"
                                 }`}
                               >
-                                {token.status.charAt(0).toUpperCase() +
-                                  token.status.slice(1)}
+                                {skipped
+                                  ? "Skipped"
+                                  : outcome
+                                    ? outcome.charAt(0).toUpperCase() + outcome.slice(1)
+                                    : token.status.charAt(0).toUpperCase() +
+                                      token.status.slice(1)}
                               </span>
                             </div>
                           </div>
@@ -1653,10 +1661,8 @@ export default function AlgoDashboardTab() {
                             .slice(0, 5)
                             .map((token: TopWinner, index: number, arr: TopWinner[]) => {
                           const displayGain = getSummaryTokenGainPct(token);
-                          const isWinner = displayGain > 0;
-                          const isLoser =
-                            displayGain < -50 ||
-                            (token.status && token.status === "lost");
+                          const isWinner = resolveCompletedOutcome(token) === "won";
+                          const isLoser = resolveCompletedOutcome(token) === "lost";
                           const isManualSell = token.status === "manual_sell";
 
                           return (
