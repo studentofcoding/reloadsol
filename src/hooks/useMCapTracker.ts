@@ -1,4 +1,5 @@
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import type { McapToast } from '@/types/mcap-toasts';
 
 export interface FilterOptions {
   search: string;
@@ -33,6 +34,8 @@ export interface McapTrackingData {
   finished_at?: string | null;
   is_tracking_stuck?: boolean;
   _live_refresh?: boolean;
+  pattern_p_winner?: number | null;
+  pattern_predicted?: 'winner' | 'loser' | null;
 }
 
 export interface McapTrackerResponse {
@@ -45,23 +48,26 @@ export interface McapTrackerResponse {
     totalPages: number;
   };
   stats: any;
-  toasts?: Array<{
-    type: string;
-    title: string;
-    message: string;
-    items?: Array<{ symbol: string; address: string; growthPercent: number }>;
-  }>;
+  toasts?: McapToast[];
 }
 
 interface UseMCapTrackerParams {
   filters: FilterOptions;
   page: number;
   limit: number;
+  refetchInterval?: number | false;
+  scanPredictive?: boolean;
 }
 
-export function useMCapTracker({ filters, page, limit }: UseMCapTrackerParams) {
+export function useMCapTracker({
+  filters,
+  page,
+  limit,
+  refetchInterval = false,
+  scanPredictive = true,
+}: UseMCapTrackerParams) {
   return useQuery({
-    queryKey: ['mcap-tracker', filters, page, limit],
+    queryKey: ['mcap-tracker', filters, page, limit, scanPredictive],
     queryFn: async () => {
       const params = new URLSearchParams({
         action: 'list',
@@ -73,6 +79,7 @@ export function useMCapTracker({ filters, page, limit }: UseMCapTrackerParams) {
         timeFilter: filters.timeFilter,
         performanceFilter: filters.performanceFilter,
         excludeZeroPnl: filters.excludeZeroPnl.toString(),
+        scanPredictive: scanPredictive ? 'true' : 'false',
       });
 
       if (filters.minGrowth) params.append('minGrowth', filters.minGrowth);
@@ -88,5 +95,6 @@ export function useMCapTracker({ filters, page, limit }: UseMCapTrackerParams) {
     },
     placeholderData: keepPreviousData,
     staleTime: 30000,
+    refetchInterval,
   });
 }
