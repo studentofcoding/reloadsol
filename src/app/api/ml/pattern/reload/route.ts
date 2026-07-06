@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getPatternRuntimeLoadStatus } from '@/strategies/entry-pattern-scorer.server'
 import { resetPatternScorerCache } from '@/strategies/entry-pattern-scorer-cache'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 
@@ -22,9 +23,13 @@ export async function POST(request: NextRequest) {
 
   resetPatternScorerCache()
   const reloadedAt = new Date().toISOString()
+  const runtime = await getPatternRuntimeLoadStatus()
 
   return NextResponse.json({
     success: true,
     reloaded_at: reloadedAt,
+    runtime_loaded: runtime.runtime_loaded,
+    model_version: runtime.model_version,
+    ...(runtime.error ? { error: runtime.error } : {}),
   })
 }

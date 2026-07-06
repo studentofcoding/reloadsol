@@ -11,9 +11,11 @@ import {
   type PatternMlShadowScore,
 } from './entry-pattern-scorer'
 import {
+  getPatternLoadError,
   getPatternModelCache,
   isPatternLoadAttempted,
   markPatternLoadAttempted,
+  setPatternLoadError,
   setPatternModelCache,
   type LoadedPatternModel,
 } from './entry-pattern-scorer-cache'
@@ -27,18 +29,19 @@ async function getPatternModel(): Promise<LoadedPatternModel | null> {
     markPatternLoadAttempted()
     const artifactDir = resolvePatternArtifactDir()
     if (!artifactDir) {
-      console.warn(
-        '[ml-pattern] shadow scoring disabled: no artifact dir (ML_PATTERN_ARTIFACT_DIR unset and default missing)',
-      )
+      const message =
+        'no artifact dir (ML_PATTERN_ARTIFACT_DIR unset and default missing)'
+      console.warn(`[ml-pattern] shadow scoring disabled: ${message}`)
+      setPatternLoadError(message)
       setPatternModelCache(null)
       return null
     }
 
     const meta = await readPatternModelMeta()
     if (!meta) {
-      console.warn(
-        `[ml-pattern] shadow scoring disabled: model.meta.json missing or invalid in ${artifactDir}`,
-      )
+      const message = `model.meta.json missing or invalid in ${artifactDir}`
+      console.warn(`[ml-pattern] shadow scoring disabled: ${message}`)
+      setPatternLoadError(message)
       setPatternModelCache(null)
       return null
     }
@@ -46,7 +49,9 @@ async function getPatternModel(): Promise<LoadedPatternModel | null> {
     const fs = await import('node:fs')
     const onnxPath = path.join(artifactDir, 'model.onnx')
     if (!fs.existsSync(onnxPath)) {
-      console.warn(`[ml-pattern] shadow scoring disabled: ${onnxPath} not found`)
+      const message = `${onnxPath} not found`
+      console.warn(`[ml-pattern] shadow scoring disabled: ${message}`)
+      setPatternLoadError(message)
       setPatternModelCache(null)
       return null
     }
@@ -54,16 +59,21 @@ async function getPatternModel(): Promise<LoadedPatternModel | null> {
     try {
       const ort = await import('onnxruntime-node')
       const session = await ort.InferenceSession.create(onnxPath)
+      const version = meta.version ?? path.basename(artifactDir)
       setPatternModelCache({
         meta,
         session: session as unknown as LoadedPatternModel['session'],
         artifactDir,
       })
+      setPatternLoadError(null)
+      console.info(`[ml-pattern] model loaded: ${version} from ${artifactDir}`)
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
       console.warn(
         '[ml-pattern] shadow scoring disabled: ONNX session failed to load —',
-        error instanceof Error ? error.message : String(error),
+        message,
       )
+      setPatternLoadError(`ONNX session failed to load — ${message}`)
       setPatternModelCache(null)
     }
   }
@@ -119,6 +129,28 @@ export async function getPatternModelVersion(): Promise<string | null> {
   const loaded = await getPatternModel()
   if (!loaded) return null
   return loaded.meta.version ?? path.basename(loaded.artifactDir)
+}
+
+export async function getPatternRuntimeLoadStatus(): Promise<{
+  runtime_loaded: boolean
+  model_version: string | null
+  error: string | null
+}> {
+  const loaded = await getPatternModel()
+  const ready = isPatternModelReady(loaded?.meta)
+  if (loaded && ready) {
+    return {
+      runtime_loaded: true,
+      model_version: loaded.meta.version ?? path.basename(loaded.artifactDir),
+      error: null,
+    }
+  }
+
+  return {
+    runtime_loaded: false,
+    model_version: null,
+    error: getPatternLoadError() ?? 'pattern model not loaded',
+  }
 }
 
 export async function evaluatePatternEnforce(
