@@ -382,6 +382,24 @@ ensure_social_running() {
   return 1
 }
 
+ensure_cron_running() {
+  if [[ "$DEPLOY_CRON" == true ]]; then
+    return 0
+  fi
+  if ! "${COMPOSE[@]}" config --services 2>/dev/null | grep -qx cron; then
+    return 0
+  fi
+
+  log "Ensuring cron is running ..."
+  if ! "${COMPOSE[@]}" up -d cron; then
+    log "cron failed to start"
+    "${COMPOSE[@]}" logs --tail=40 cron || true
+    return 1
+  fi
+
+  wait_for_cron_health 30 3
+}
+
 check_duplicate_env_port() {
   local key count
   key="$1"
@@ -446,8 +464,16 @@ prepare_low_memory_deploy() {
   local avail_mb
   avail_mb="$(free -m | awk '/^Mem:/ {print $7}')"
   if [[ "${avail_mb:-0}" -lt 2048 ]]; then
-    log "Low memory (${avail_mb}MB available) — stopping app containers (DB stays up) ..."
-    docker stop reloadsol-web reloadsol-cron reloadsol-social-ingest 2>/dev/null || true
+    log "Low memory (${avail_mb}MB available) — stopping containers in deploy scope (DB stays up) ..."
+    if [[ "$DEPLOY_WEB" == true ]]; then
+      docker stop reloadsol-web 2>/dev/null || true
+    fi
+    if [[ "$DEPLOY_CRON" == true ]]; then
+      docker stop reloadsol-cron 2>/dev/null || true
+    fi
+    if should_build_social; then
+      docker stop reloadsol-social-ingest 2>/dev/null || true
+    fi
   fi
 }
 
@@ -624,6 +650,8 @@ fi
 if [[ "$DEPLOY_CRON" == true ]]; then
   wait_for_cron_health 30 3 || true
 fi
+
+ensure_cron_running || exit 1
 
 if [[ "$DEPLOY_SOCIAL" == true ]]; then
   ensure_social_running || exit 1
