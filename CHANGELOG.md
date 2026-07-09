@@ -8,6 +8,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Engine spine: canonical params/features + ML shadow on all memecoin opens
+
+- **`StrategyParameterSet`** adapters for trending / signals / mcap / DLMM; `canonical` on `GET /api/strategies`.
+- **`CanonicalEntryFeatures`** (`feature_schema_version: 1`) + `toCanonicalEntryFeatures` on outcome insert; ML extractors read aliases (`first_mcap`, telegram social names).
+- **`attachMlEntryShadow`** — shared ML1 gate + ML2 potential + Pattern shadow; wired on mcap (enforce unchanged), signals sim-track, trending buy features.
+- **DLMM** outcomes prefer mint as `token_address` with `pool_address` + `instrument: dlmm_lp`; skip token ML until mint+core features present.
+
 ### Added — Stage-1 Pattern ML shadow score
 
 - **Display-only Pattern ML** on Early Enter: `p_winner` / `predicted` via [`scorePredictivePattern`](src/strategies/social/predictive-pattern-alert.ts) + 5m cache ([`signals-early-pattern-cache.ts`](src/strategies/signals-early-pattern-cache.ts)).

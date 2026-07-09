@@ -9,14 +9,9 @@ import {
 import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
 import { getMlGatePBadMax } from '@/strategies/entry-ml-scorer'
 import { getPatternPWinnerMin } from '@/strategies/entry-pattern-scorer'
-import {
-  logMlGateCounterfactual,
-  mergeShadowScoresIntoEntryFeatures,
-} from '@/strategies/ml-shadow-log'
-import {
-  logPatternGateCounterfactual,
-  mergePatternShadowIntoEntryFeatures,
-} from '@/strategies/pattern-shadow-log'
+import { logMlGateCounterfactual } from '@/strategies/ml-shadow-log'
+import { logPatternGateCounterfactual } from '@/strategies/pattern-shadow-log'
+import { attachMlEntryShadow } from '@/strategies/ml-entry-shadow'
 import {
   annotateEntryFeatures,
   evaluateSocialGateFromContext,
@@ -69,25 +64,6 @@ export const maxDuration = 120
 
 const MCAP_TRACKER_SIM_WALLET =
   process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim'
-
-type MlScorerModule = typeof import('@/strategies/entry-ml-scorer.server')
-type PatternScorerModule = typeof import('@/strategies/entry-pattern-scorer.server')
-let mlScorerPromise: Promise<MlScorerModule> | null = null
-let patternScorerPromise: Promise<PatternScorerModule> | null = null
-
-function getMlScorer(): Promise<MlScorerModule> {
-  if (!mlScorerPromise) {
-    mlScorerPromise = import('@/strategies/entry-ml-scorer.server')
-  }
-  return mlScorerPromise
-}
-
-function getPatternScorer(): Promise<PatternScorerModule> {
-  if (!patternScorerPromise) {
-    patternScorerPromise = import('@/strategies/entry-pattern-scorer.server')
-  }
-  return patternScorerPromise
-}
 
 function getSimTrackSecret(): string {
   return (
@@ -166,15 +142,8 @@ async function openSimPosition(params: {
     const annotated = params.socialCtx
       ? annotateEntryFeatures(baseFeatures, params.socialCtx)
       : baseFeatures
-    const shadow = await (await getMlScorer()).scoreEntryFeaturesShadow(annotated)
-    scoredEntryFeatures = mergeShadowScoresIntoEntryFeatures(annotated, shadow)
-    const patternShadow = await (await getPatternScorer()).scorePatternFeaturesShadow(
-      scoredEntryFeatures,
-    )
-    scoredEntryFeatures = mergePatternShadowIntoEntryFeatures(
-      scoredEntryFeatures,
-      patternShadow,
-    )
+    const ml = await attachMlEntryShadow(annotated, { enforce: false })
+    scoredEntryFeatures = ml.features
   }
 
   const record = buildTradingRecord({
@@ -770,45 +739,34 @@ export async function POST(request: NextRequest) {
           },
         )
         const annotated = annotateEntryFeatures(baseFeatures, socialCtx)
-        const shadow = await (await getMlScorer()).scoreEntryFeaturesShadow(annotated)
-        const gateDecision = await (await getMlScorer()).evaluateMlGateEnforce(shadow)
-        if (gateDecision.reject) {
-          if (gateDecision.pBad != null) {
+        const ml = await attachMlEntryShadow(annotated, { enforce: true })
+        if (ml.gateReject) {
+          if (ml.pBad != null) {
             logMlGateCounterfactual({
               mintAddress: snapshot.token_address,
               strategyId: strategy.id,
-              pBad: gateDecision.pBad,
+              pBad: ml.pBad,
               threshold: getMlGatePBadMax(),
-              reason: gateDecision.reason ?? 'ml_gate_reject',
+              reason: ml.gateReason ?? 'ml_gate_reject',
             })
           }
           skipped.push(`${snapshot.token_symbol}: ml_gate_reject`)
           continue
         }
-        let scoredEntryFeatures = mergeShadowScoresIntoEntryFeatures(annotated, shadow)
-        const patternShadow = await (
-          await getPatternScorer()
-        ).scorePatternFeaturesShadow(scoredEntryFeatures)
-        const patternDecision = await (
-          await getPatternScorer()
-        ).evaluatePatternEnforce(patternShadow)
-        if (patternDecision.reject) {
-          if (patternDecision.pWinner != null) {
+        if (ml.patternReject) {
+          if (ml.pWinner != null) {
             logPatternGateCounterfactual({
               mintAddress: snapshot.token_address,
               strategyId: strategy.id,
-              pWinner: patternDecision.pWinner,
+              pWinner: ml.pWinner,
               threshold: getPatternPWinnerMin(),
-              reason: patternDecision.reason ?? 'ml_pattern_reject',
+              reason: ml.patternReason ?? 'ml_pattern_reject',
             })
           }
           skipped.push(`${snapshot.token_symbol}: ml_pattern_reject`)
           continue
         }
-        scoredEntryFeatures = mergePatternShadowIntoEntryFeatures(
-          scoredEntryFeatures,
-          patternShadow,
-        )
+        const scoredEntryFeatures = ml.features
 
         if (!execMode.isSimulated) {
           const halted = await isRealTradingHalted()

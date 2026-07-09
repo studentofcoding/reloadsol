@@ -6,27 +6,36 @@ export function mergeMcapTrackerStrategy(
   isActiveOverride?: boolean | null,
 ): McapTrackerStrategy {
   const o = override ?? {}
+  const config: McapTrackerStrategy['config'] = {
+    entryTemplate: o.entryTemplate ?? base.config.entryTemplate,
+    query: {
+      ...base.config.query,
+      ...(o.query ?? {}),
+    },
+    execution: {
+      ...base.config.execution,
+      ...(o.execution ?? {}),
+    },
+    exit: {
+      ...base.config.exit,
+      ...(o.exit ?? {}),
+    },
+    entry: {
+      ...base.config.entry,
+      ...(o.entry ?? {}),
+    },
+  }
+
+  if (base.config.social || o.social) {
+    config.social = {
+      ...(base.config.social ?? {}),
+      ...(o.social ?? {}),
+    }
+  }
+
   return {
     ...base,
     is_active: isActiveOverride ?? base.is_active,
-    config: {
-      entryTemplate: o.entryTemplate ?? base.config.entryTemplate,
-      query: {
-        ...base.config.query,
-        ...(o.query ?? {}),
-      },
-      execution: {
-        ...base.config.execution,
-        ...(o.execution ?? {}),
-      },
-      exit: {
-        ...base.config.exit,
-        ...(o.exit ?? {}),
-      },
-      entry: {
-        ...base.config.entry,
-        ...(o.entry ?? {}),
-      },
-    },
+    config,
   }
 }

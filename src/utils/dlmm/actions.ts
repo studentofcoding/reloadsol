@@ -215,17 +215,21 @@ export async function removePosition(id: string): Promise<DlmmActionResult> {
 
   let poolVolume: number | null = null
   let feeTvl24h: number | null = null
+  let mintAddress: string | null = null
   try {
     const pool = await fetchMeteoraPool(position.pool_address)
     poolVolume = getPoolVolume24h(pool)
     feeTvl24h = getFeeTvlRatio24h(pool)
+    const { resolveDlmmMintFromPoolTokens } = await import('@/strategies/canonical-features')
+    mintAddress = resolveDlmmMintFromPoolTokens(pool.token_x, pool.token_y)
   } catch {
-    // pool metrics optional for outcome features
+    // pool metrics / mint optional for outcome features
   }
 
   await recordDlmmOutcome({
     strategyId: 'dlmm_default',
     poolAddress: position.pool_address,
+    mintAddress,
     entryAt: position.created_at ?? null,
     exitAt: new Date().toISOString(),
     pnlPct: position.pnl_pct,
@@ -241,7 +245,7 @@ export async function removePosition(id: string): Promise<DlmmActionResult> {
       fee_tvl_ratio_24h: feeTvl24h,
       initial_price_usd: position.entry_value_usd > 0 ? position.entry_value_usd : null,
       exit_price_usd: position.current_value_usd > 0 ? position.current_value_usd : null,
-      volume_at_entry: poolVolume,
+      ml_skipped: mintAddress ? undefined : 'incomplete_token_features',
     },
   });
 

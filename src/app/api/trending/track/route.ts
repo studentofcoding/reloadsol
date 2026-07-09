@@ -91,7 +91,13 @@ async function attachBuyEntryFeatures(
     skipJupiter:
       token.organic_score != null && token.top_holders_pct != null,
   })
-  ;(simulation as unknown as Record<string, unknown>).entry_features = entryFeatures
+  try {
+    const { attachMlEntryShadow } = await import('@/strategies/ml-entry-shadow')
+    const ml = await attachMlEntryShadow(entryFeatures, { enforce: false })
+    ;(simulation as unknown as Record<string, unknown>).entry_features = ml.features
+  } catch {
+    ;(simulation as unknown as Record<string, unknown>).entry_features = entryFeatures
+  }
 }
 
 

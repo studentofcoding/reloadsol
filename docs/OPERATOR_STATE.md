@@ -4,6 +4,10 @@ Living notes for regime awareness and rule changes. Production DB: Docker Postgr
 
 Update after significant sim batches or when disabling a strategy.
 
+## Engine spine (Phase A)
+
+Canonical params/features + ML1/ML2/Pattern **shadow** on mcap, signals, and trending opens (`attachMlEntryShadow`). DLMM mint-keyed when resolvable. No live TP/SL rewrite yet — see [reloadsol_engine_strategies_and_ml.md](./reloadsol_engine_strategies_and_ml.md).
+
 ## Pattern ML (primary focus — 24h mcap + social cohorts)
 
 Separate from sim-outcome gate — labels come from `mcap_social_pattern_24h` (winner ≥120% growth, loser &lt;80%).

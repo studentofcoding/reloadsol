@@ -475,6 +475,19 @@ export async function insertStrategyOutcome(params: {
   }
   features = applyAutoOutcomeLabels(features, params.pnl_pct, params.status)
 
+  const { toCanonicalEntryFeatures } = await import('./canonical-features')
+  const mintFromFeatures =
+    typeof features.mint_address === 'string' ? features.mint_address : null
+  const poolFromFeatures =
+    typeof features.pool_address === 'string' ? features.pool_address : null
+  features = toCanonicalEntryFeatures(features, params.domain, {
+    mintAddress:
+      params.domain === 'dlmm' ? mintFromFeatures : params.token_address,
+    poolAddress:
+      poolFromFeatures ??
+      (params.domain === 'dlmm' && !mintFromFeatures ? params.token_address : null),
+  })
+
   try {
     await query(
       `INSERT INTO strategy_outcomes (

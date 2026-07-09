@@ -14,6 +14,8 @@ Three dev surfaces share data but historically used separate strategy config. v1
 | DLMM | `/dev/dlmm` | `POST /api/dlmm/screen`, `/api/dlmm/manage` cron | registry + `dlmm_agent_config` |
 | Social / Pattern ML | `/dev/social` | social rollup cron → 24h patterns | `mcap_social_pattern_24h`, rollups |
 
+**Shared engine spine:** all domains adapt to `StrategyParameterSet` + `CanonicalEntryFeatures` ([`canonical-params.ts`](../src/strategies/canonical-params.ts), [`canonical-features.ts`](../src/strategies/canonical-features.ts)). Memecoin opens use [`attachMlEntryShadow`](../src/strategies/ml-entry-shadow.ts) (ML1/ML2 + Pattern shadow). Read-only `canonical` on `GET /api/strategies`. Full plan: [reloadsol_engine_strategies_and_ml.md](./reloadsol_engine_strategies_and_ml.md).
+
 ## Trending bot flow
 
 1. Cron calls `POST /api/trending/track`.

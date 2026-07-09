@@ -293,7 +293,9 @@ export async function POST(request: NextRequest) {
             initial_price_usd: priceUsd,
           },
         )
-        const entryFeatures = annotateEntryFeatures(baseFeatures, socialCtx)
+        const annotated = annotateEntryFeatures(baseFeatures, socialCtx)
+        const { attachMlEntryShadow } = await import('@/strategies/ml-entry-shadow')
+        const ml = await attachMlEntryShadow(annotated, { enforce: false })
 
         await openSignalsSimPosition({
           strategyId: strategy.id,
@@ -301,7 +303,7 @@ export async function POST(request: NextRequest) {
           symbol,
           solAmount: strategy.config.execution.simBuySol,
           priceUsd,
-          entryFeatures,
+          entryFeatures: ml.features,
         })
         opened++
         openMintSet.add(signal.token_address)

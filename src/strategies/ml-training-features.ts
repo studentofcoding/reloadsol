@@ -1,5 +1,6 @@
 import { computeTrainingClass, gateClassFromTrainingClass, potentialTierFromTrainingClass } from './outcome-labeling'
 import { isLabeledTrainingClass, readTrainingClass } from './outcome-features'
+import { toCanonicalEntryFeatures } from './canonical-features'
 import type { StrategyDomain, StrategyOutcomeRow, TrainingClass } from './types'
 
 /** Minimum labeled outcomes before ML gate enforce mode is recommended. */
@@ -134,10 +135,17 @@ export function capMinutesSinceFirstMention(
 }
 
 function readSocialFeatures(features: Record<string, unknown>): Record<string, number> {
-  const mentions = readFeatureNumber(features, 'telegram_mention_count_30m') ?? 0
-  const channels = readFeatureNumber(features, 'telegram_unique_channels_30m') ?? 0
+  const mentions =
+    readFeatureNumber(features, 'telegram_mention_count_30m') ??
+    readFeatureNumber(features, 'mention_count_30m') ??
+    0
+  const channels =
+    readFeatureNumber(features, 'telegram_unique_channels_30m') ??
+    readFeatureNumber(features, 'unique_channels_30m') ??
+    0
   const minutes = capMinutesSinceFirstMention(
-    readFeatureNumber(features, 'minutes_since_first_mention'),
+    readFeatureNumber(features, 'minutes_since_first_mention') ??
+      readFeatureNumber(features, 'minutes_to_first_mention'),
   )
   const walletBuys = readFeatureNumber(features, 'smart_wallet_buy_count_1h') ?? 0
   const hasWallet =
@@ -186,16 +194,23 @@ export function extractMlFeatureVector(
 
 export function extractMlFeatureVectorV1(
   features: Record<string, unknown> | null | undefined,
+  domain: StrategyDomain = 'mcap_tracker',
 ): Record<string, number> | null {
   if (!features) return null
+  const canon = toCanonicalEntryFeatures(features, domain)
 
-  const entryMcap = readFeatureNumber(features, 'entry_mcap')
-  const organic = readFeatureNumber(features, 'organic_score')
-  const holders = readFeatureNumber(features, 'top_holders_pct')
-  const age = capTokenAgeHours(readFeatureNumber(features, 'token_age_hours'))
+  // Skip pool-only DLMM rows without mint for spot-token training
+  if (canon.instrument === 'dlmm_lp' && !canon.mint_address) {
+    return null
+  }
+
+  const entryMcap = readFeatureNumber(canon, 'entry_mcap')
+  const organic = readFeatureNumber(canon, 'organic_score')
+  const holders = readFeatureNumber(canon, 'top_holders_pct')
+  const age = capTokenAgeHours(readFeatureNumber(canon, 'token_age_hours'))
   const volume =
-    readFeatureNumber(features, 'volume_at_entry') ??
-    readFeatureNumber(features, 'volume_5m')
+    readFeatureNumber(canon, 'volume_at_entry') ??
+    readFeatureNumber(canon, 'volume_5m')
 
   const logMcap = log1p(entryMcap)
   const logVol = log1p(volume)
@@ -203,14 +218,14 @@ export function extractMlFeatureVectorV1(
     return null
   }
 
-  const band = features.entry_mcap_band
+  const band = canon.entry_mcap_band
   const vector: Record<string, number> = {
     log_entry_mcap: logMcap,
     organic_score: organic,
     top_holders_pct: holders,
     token_age_hours: age,
     log_volume_at_entry: logVol,
-    entry_template_milestone_80: readEntryTemplate(features) === 'milestone_80' ? 1 : 0,
+    entry_template_milestone_80: readEntryTemplate(canon) === 'milestone_80' ? 1 : 0,
   }
 
   for (const bandId of ENTRY_MCAP_BANDS) {
@@ -223,12 +238,15 @@ export function extractMlFeatureVectorV1(
 /** Entry-time vector including social/telegram features (ML v2). */
 export function extractMlFeatureVectorV2(
   features: Record<string, unknown> | null | undefined,
+  domain: StrategyDomain = 'mcap_tracker',
 ): Record<string, number> | null {
-  const base = extractMlFeatureVectorV1(features)
+  if (!features) return null
+  const canon = toCanonicalEntryFeatures(features, domain)
+  const base = extractMlFeatureVectorV1(canon, domain)
   if (!base) return null
   return {
     ...base,
-    ...readSocialFeatures(features ?? {}),
+    ...readSocialFeatures(canon),
   }
 }
 
@@ -240,7 +258,7 @@ export function extractMlTrainingRowV2(
   if (!isLabeledTrainingClass(trainingClass)) return null
   if (!row.entry_at) return null
 
-  const features = extractMlFeatureVectorV2(row.features)
+  const features = extractMlFeatureVectorV2(row.features, row.domain)
   if (!features) return null
 
   return {
@@ -261,7 +279,7 @@ export function extractMlTrainingRow(
   if (!isLabeledTrainingClass(trainingClass)) return null
   if (!row.entry_at) return null
 
-  const features = extractMlFeatureVector(row.features)
+  const features = extractMlFeatureVectorV1(row.features, row.domain)
   if (!features) return null
 
   return {

@@ -17,10 +17,17 @@ export function mergeSignalsStrategy(
       ...base.config.scoring,
       ...(o.scoring ?? {}),
     },
+    social: {
+      ...(base.config.social ?? {}),
+      ...(o.social ?? {}),
+    },
     execution: {
       ...base.config.execution,
       ...(o.execution ?? {}),
     },
+  }
+  if (!base.config.social && !o.social) {
+    delete (mergedConfig as { social?: unknown }).social
   }
 
   return {

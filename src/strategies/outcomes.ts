@@ -66,6 +66,8 @@ export async function recordSignalsOutcome(params: {
 export async function recordDlmmOutcome(params: {
   strategyId?: string
   poolAddress: string
+  /** Token mint when known; falls back to poolAddress for legacy rows */
+  mintAddress?: string | null
   entryAt?: string | null
   exitAt?: string | null
   pnlPct?: number | null
@@ -73,27 +75,50 @@ export async function recordDlmmOutcome(params: {
   isSimulated?: boolean
   features?: Record<string, unknown> | null
 }): Promise<void> {
+  const mint = params.mintAddress?.trim() || null
+  const features: Record<string, unknown> = {
+    ...(params.features ?? {}),
+    instrument: 'dlmm_lp',
+    pool_address: params.poolAddress,
+    mint_address: mint,
+  }
+  if (typeof features.pool_volume === 'number') {
+    const domainBag =
+      features.domain_features && typeof features.domain_features === 'object'
+        ? { ...(features.domain_features as Record<string, unknown>) }
+        : {}
+    domainBag.dlmm = {
+      ...(typeof domainBag.dlmm === 'object' && domainBag.dlmm
+        ? (domainBag.dlmm as Record<string, unknown>)
+        : {}),
+      pool_volume_24h: features.pool_volume,
+      fee_tvl_ratio_24h: features.fee_tvl_ratio_24h ?? null,
+    }
+    features.domain_features = domainBag
+  }
+
   await insertStrategyOutcome({
     strategy_id: params.strategyId ?? 'dlmm_default',
     domain: 'dlmm',
-    token_address: params.poolAddress,
+    // Prefer mint for token-centric spine; keep pool in features.pool_address
+    token_address: mint || params.poolAddress,
     entry_at: params.entryAt ?? null,
     exit_at: params.exitAt ?? new Date().toISOString(),
     pnl_pct: params.pnlPct ?? null,
     status: params.status ?? null,
     is_simulated: params.isSimulated ?? true,
-    features: params.features ?? null,
+    features,
   })
 
   if (params.pnlPct != null) {
     notifyStrategyClose({
       domain: 'dlmm',
       strategyId: params.strategyId ?? 'dlmm_default',
-      tokenAddress: params.poolAddress,
+      tokenAddress: mint || params.poolAddress,
       pnlPct: params.pnlPct,
       status: params.status,
       isSimulated: params.isSimulated ?? true,
-      features: params.features,
+      features,
     })
   }
 }
@@ -220,12 +245,24 @@ export async function syncMissingDlmmOutcomesFromPositions(
   const config = await getAgentConfig()
   let synced = 0
 
+  const { fetchMeteoraPool } = await import('@/utils/meteora')
+  const { resolveDlmmMintFromPoolTokens } = await import('./canonical-features')
+
   for (const position of positions) {
     if (await dlmmOutcomeExistsForPosition(position.id)) continue
+
+    let mintAddress: string | null = null
+    try {
+      const pool = await fetchMeteoraPool(position.pool_address)
+      mintAddress = resolveDlmmMintFromPoolTokens(pool.token_x, pool.token_y)
+    } catch {
+      /* mint optional on backfill */
+    }
 
     await recordDlmmOutcome({
       strategyId: 'dlmm_default',
       poolAddress: position.pool_address,
+      mintAddress,
       entryAt: position.created_at,
       exitAt: position.closed_at ?? new Date().toISOString(),
       pnlPct: position.pnl_pct,
@@ -243,6 +280,7 @@ export async function syncMissingDlmmOutcomesFromPositions(
         exit_price_usd:
           position.current_value_usd > 0 ? position.current_value_usd : null,
         backfilled: true,
+        ml_skipped: mintAddress ? undefined : 'incomplete_token_features',
       },
     })
     synced++

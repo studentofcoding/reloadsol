@@ -29,7 +29,7 @@ flowchart TD
 
 Separate from ML gating — notifications for **manual copy trading**.
 
-- **Pattern ML** (`ML_PATTERN_MODE=shadow` default) scores candidates on sim-track entry; it does **not** drive UI toasts.
+- **Pattern ML** (`ML_PATTERN_MODE=shadow` default) scores candidates on sim-track entry via shared [`attachMlEntryShadow`](../src/strategies/ml-entry-shadow.ts) (mcap / signals / trending); it does **not** drive UI toasts. See [reloadsol_engine_strategies_and_ml.md](./reloadsol_engine_strategies_and_ml.md).
 - **Stage 1 — Early Enter:** when Signals scores `enter` and growth &lt; 100% (`signals-early-alerts` + `sendSignalsEarlyEnterAlert`). Earliest actionable alert; does **not** open a sim position.
 - **Stage 1 Pattern ML shadow:** same request scores Pattern ML (`p_winner`) for display on Telegram / toast / Signals **ML** column. **Never gates** Stage-1 until `pattern_ready` + explicit enforce wiring.
 - **Stage 2 — Sim open:** when `mcap_enter_first_seen` / `mcap_enter_at_80` paper-open succeeds (`mcap-sim-open-alerts` + `sendMcapSimManualTradeAlert`). Confirm after gates.

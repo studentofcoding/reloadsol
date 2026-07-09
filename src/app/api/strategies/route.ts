@@ -10,6 +10,7 @@ import { getMergedSignalsRegistry } from '@/strategies/load-signals'
 import { getMergedMcapTrackerRegistry } from '@/strategies/load-mcap-tracker'
 import { getMergedDlmmStrategy } from '@/strategies/load-dlmm'
 import { TRENDING_BOT_STRATEGIES } from '@/strategies/registry'
+import { mapRegistryToCanonical } from '@/strategies/canonical-params'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,8 +32,16 @@ export async function GET() {
       /* env fallback */
     }
 
+    const canonical = mapRegistryToCanonical({
+      trending: registry,
+      signals: signalsRegistry,
+      mcap: mcapTrackerRegistry,
+      dlmm: dlmmStrategy,
+    })
+
     return NextResponse.json({
       success: true,
+      canonical,
       trending_bot: {
         defaults: TRENDING_BOT_STRATEGIES,
         effective: registry,
