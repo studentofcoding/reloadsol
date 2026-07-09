@@ -64,7 +64,7 @@ export function useMCapTracker({
   page,
   limit,
   refetchInterval = false,
-  scanPredictive = true,
+  scanPredictive = false,
 }: UseMCapTrackerParams) {
   return useQuery({
     queryKey: ['mcap-tracker', filters, page, limit, scanPredictive],

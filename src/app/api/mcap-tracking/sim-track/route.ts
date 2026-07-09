@@ -211,15 +211,43 @@ async function openSimPosition(params: {
 
   await insertTradingRecord(record)
 
-  const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
-  notifyStrategyOpen({
-    domain: 'mcap_tracker',
-    strategyId: params.strategyId,
-    tokenSymbol: params.symbol,
-    tokenAddress: params.mintAddress,
-    marketCap: params.entryMcap,
-    isSimulated: true,
-  })
+  const {
+    isMcapManualTradeStrategy,
+    recordSimOpenAlert,
+    strategyLabelForManualTrade,
+  } = await import('@/strategies/mcap-sim-open-alerts')
+
+  if (isMcapManualTradeStrategy(params.strategyId)) {
+    recordSimOpenAlert({
+      strategyId: params.strategyId,
+      tokenAddress: params.mintAddress,
+      tokenSymbol: params.symbol,
+      entryMcap: params.entryMcap,
+      entryAt: params.entryAt,
+      entryTemplate: params.entryTemplate,
+    })
+    const { sendMcapSimManualTradeAlert } = await import('@/utils/telegram')
+    void sendMcapSimManualTradeAlert({
+      strategyId: params.strategyId,
+      strategyName: strategyLabelForManualTrade(params.strategyId),
+      tokenSymbol: params.symbol,
+      tokenAddress: params.mintAddress,
+      entryMcap: params.entryMcap,
+      entryAt: params.entryAt,
+    }).catch((err) => {
+      console.error('[mcap-sim-open] telegram alert failed:', err)
+    })
+  } else {
+    const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
+    notifyStrategyOpen({
+      domain: 'mcap_tracker',
+      strategyId: params.strategyId,
+      tokenSymbol: params.symbol,
+      tokenAddress: params.mintAddress,
+      marketCap: params.entryMcap,
+      isSimulated: true,
+    })
+  }
 }
 
 async function closeSimPosition(params: {

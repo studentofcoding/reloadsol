@@ -38,6 +38,16 @@ From `ml/artifacts/pattern-gate/model.meta.json` (330 train / 66 test):
 
 **Next:** collect more winner cohort rows + address class imbalance before enforce. Shadow-only until class-1 recall improves.
 
+## Sim open copy-trade alerts
+
+When mcap sim-track opens a paper position for **`mcap_enter_first_seen`** or **`mcap_enter_at_80`**:
+
+- **Telegram:** `sendMcapSimManualTradeAlert` — requires `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false`. Message includes reloadSOL chart/buy links and Jupiter link.
+- **UI:** keep `/dev/signals` open; `useMcapSimOpenAlerts` polls every 15s. Toast **top-right** (`z-index: 9999`) with strategy badge, entry mcap, and **Buy** button (wallet must be connected).
+- **Dedup:** one alert per strategy+mint per 24h (in-memory buffer; resets on server restart).
+- **Worker:** `mcap_tracker_sim_track` must be running (`MCAP_TRACKER_SIM_INTERVAL`, default 300s).
+- Predictive Pattern ML UI toasts removed; Pattern ML still runs as shadow gate on sim-track entry only.
+
 ## North star
 
 **Strict checker over brilliant maker.** Primary thesis: `mcap_enter_at_80` sim (milestone entry). Pattern ML compounds that with 24h cohort labels.
@@ -85,6 +95,7 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 | Date | Change |
 |------|--------|
+| 2026-07-09 | Sim open copy-trade toasts + Telegram for `mcap_enter_first_seen` / `mcap_enter_at_80`; predictive ML UI toasts removed |
 | 2026-07-05 | Pattern ML pipeline: 24h cohort export/train, shadow scorer on mcap sim-track, UI feedback columns; Supabase cut off, reloadsol_db only |
 | 2026-06-28 | Social TTL cleanup + manual `/dev/social` refresh; `social_overlap` on entry features; L2 enforce wired (default shadow) |
 | 2026-06-28 | Two-stage ML: v2-gate binary + v2-potential tiers; shadow ONNX on mcap sim-track |

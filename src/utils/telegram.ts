@@ -30,11 +30,15 @@ export function isTelegramAdmin(chatId: number | string): boolean {
   return admins.includes(String(chatId));
 }
 
+type TelegramInlineButton =
+  | { text: string; callback_data: string }
+  | { text: string; url: string }
+
 export async function sendTelegramAlert(
   text: string,
   options?: {
     chatId?: string;
-    inlineKeyboard?: Array<Array<{ text: string; callback_data: string }>>;
+    inlineKeyboard?: Array<Array<TelegramInlineButton>>;
     parseMode?: 'HTML' | 'Markdown';
   },
 ): Promise<boolean> {
@@ -183,6 +187,71 @@ export async function sendStrategyTrackOpenAlert(params: {
   ].join('\n')
 
   return sendTelegramAlert(text, { parseMode: 'HTML' })
+}
+
+export function formatReloadsolChartLink(mint: string): string {
+  return `https://reloadsol.app/chart/${mint}`
+}
+
+export function formatReloadsolBuyLink(mint: string, solAmount = 0.1): string {
+  return `https://reloadsol.app/buy?sol=${solAmount}&mints=${mint}`
+}
+
+export function buildMcapSimManualTradeAlertText(params: {
+  strategyId: string
+  strategyName: string
+  tokenSymbol: string
+  tokenAddress: string
+  entryMcap: number
+  entryAt?: string | null
+}): string {
+  const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
+  const name = escapeTelegramHtml(params.strategyName)
+  const chartLink = formatReloadsolChartLink(params.tokenAddress)
+  const buyLink = formatReloadsolBuyLink(params.tokenAddress)
+  const jupLink = formatJupiterTokenLink(params.tokenAddress)
+  const entryAt =
+    typeof params.entryAt === 'string' && params.entryAt
+      ? escapeTelegramHtml(params.entryAt)
+      : null
+
+  return [
+    `🟢 <b>Mcap Sim OPEN — copy trade</b>`,
+    '',
+    `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
+    `Token: <b>${symbol}</b>`,
+    `Entry mcap: ${formatMcapUsd(params.entryMcap)}`,
+    entryAt ? `Entry at: ${entryAt}` : null,
+    '',
+    `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a> · <a href="${jupLink}">Jupiter</a>`,
+    `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
+  ]
+    .filter((line): line is string => line != null)
+    .join('\n')
+}
+
+export async function sendMcapSimManualTradeAlert(params: {
+  strategyId: string
+  strategyName: string
+  tokenSymbol: string
+  tokenAddress: string
+  entryMcap: number
+  entryAt?: string | null
+}): Promise<boolean> {
+  if (!isStrategyTrackTelegramEnabled()) return false
+
+  const chartLink = formatReloadsolChartLink(params.tokenAddress)
+  const buyLink = formatReloadsolBuyLink(params.tokenAddress)
+
+  return sendTelegramAlert(buildMcapSimManualTradeAlertText(params), {
+    parseMode: 'HTML',
+    inlineKeyboard: [
+      [
+        { text: 'Chart', url: chartLink },
+        { text: 'Buy', url: buyLink },
+      ],
+    ],
+  })
 }
 
 export async function sendStrategyTrackCloseAlert(params: {

@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
 import McapTrackerToasts from "@/components/signals/McapTrackerToasts";
-import { useMCapTracker, type FilterOptions } from "@/hooks/useMCapTracker";
+import { useMcapSimOpenAlerts } from "@/hooks/useMcapSimOpenAlerts";
 
 const SignalsTab = dynamic(() => import("@/components/signals/SignalsTab"), {
   loading: () => <TabLoading label="Signals" />,
@@ -39,19 +39,6 @@ function TabLoading({ label }: { label: string }) {
   );
 }
 
-const TOAST_POLL_FILTERS: FilterOptions = {
-  search: "",
-  sortBy: "first_seen_at",
-  sortOrder: "desc",
-  minGrowth: "",
-  maxGrowth: "",
-  minMcap: "",
-  maxMcap: "",
-  excludeZeroPnl: false,
-  timeFilter: "1h",
-  performanceFilter: "all",
-};
-
 function SignalsHubContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -72,18 +59,11 @@ function SignalsHubContent() {
     router.replace(query ? `${pathname}?${query}` : pathname);
   };
 
-  const { data: toastPollData } = useMCapTracker({
-    filters: TOAST_POLL_FILTERS,
-    page: 1,
-    limit: 30,
-    refetchInterval: 30_000,
-    scanPredictive: true,
+  const { data: simOpenAlerts } = useMcapSimOpenAlerts({
+    refetchInterval: 15_000,
   });
 
-  const toasts = useMemo(
-    () => toastPollData?.toasts ?? [],
-    [toastPollData?.toasts],
-  );
+  const toasts = useMemo(() => simOpenAlerts ?? [], [simOpenAlerts]);
 
   return (
     <div className="w-full">

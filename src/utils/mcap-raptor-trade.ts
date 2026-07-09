@@ -128,7 +128,7 @@ export async function executeMcapRaptorSell(
 ): Promise<McapRaptorSellResult> {
   const { connection, keypair, executor } = getMcapRaptorExecutor()
   const amount = BigInt(amountRaw)
-  if (amount <= 0n) {
+  if (amount <= BigInt(0)) {
     throw new Error('Sell amount must be positive')
   }
 
@@ -165,7 +165,7 @@ export async function fetchTokenBalanceRaw(
     { mint: new PublicKey(mint) },
   )
 
-  let total = 0n
+  let total = BigInt(0)
   for (const account of accounts.value) {
     const parsed = account.account.data.parsed
     if (parsed?.type !== 'account') continue

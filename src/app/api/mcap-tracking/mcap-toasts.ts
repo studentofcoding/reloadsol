@@ -214,12 +214,6 @@ export async function buildTrackActionToasts(params: {
       },
       dedupKey,
     )
-
-    await appendPredictiveToastForToken(toasts, {
-      tokenAddress: params.tokenAddress,
-      symbol,
-      growthPercent: growth,
-    })
   }
 
   if (growth >= params.pnlThreshold) {

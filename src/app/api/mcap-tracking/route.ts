@@ -720,7 +720,7 @@ export async function GET(request: NextRequest) {
         })
       }
 
-      const scanPredictive = searchParams.get('scanPredictive') !== 'false'
+      const scanPredictive = searchParams.get('scanPredictive') === 'true'
       let listData = enhancedData
       if (scanPredictive) {
         const scanned = await scanListForPredictiveAlerts(enhancedData)

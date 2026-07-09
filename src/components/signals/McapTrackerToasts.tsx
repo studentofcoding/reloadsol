@@ -6,10 +6,12 @@ import type { McapToast } from "@/types/mcap-toasts";
 import { useFastBuy } from "@/hooks/useFastBuy";
 
 const TOAST_AUTO_DISMISS_MS = 12_000;
+const SIM_OPEN_AUTO_DISMISS_MS = 20_000;
 const MAX_VISIBLE = 4;
+const TOAST_Z_INDEX = 9999;
 
 function toastStyles(type: McapToast["type"], category?: McapToast["category"]) {
-  if (category === "predictive") {
+  if (category === "sim_open") {
     return "border-emerald-600 bg-emerald-950/95 text-emerald-50";
   }
   switch (type) {
@@ -20,6 +22,23 @@ function toastStyles(type: McapToast["type"], category?: McapToast["category"]) 
     default:
       return "border-blue-700 bg-blue-900/95 text-blue-100";
   }
+}
+
+function formatEntryMcap(value?: number): string | null {
+  if (value == null || !Number.isFinite(value) || value <= 0) return null;
+  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `$${(value / 1_000).toFixed(1)}K`;
+  return `$${value.toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+}
+
+function strategyBadgeLabel(strategyId?: string, entryTemplate?: string): string | null {
+  if (strategyId === "mcap_enter_at_80" || entryTemplate === "milestone_80") {
+    return "Enter at 80%";
+  }
+  if (strategyId === "mcap_enter_first_seen" || entryTemplate === "first_seen") {
+    return "First seen";
+  }
+  return null;
 }
 
 type ActiveToast = McapToast & { id: string };
@@ -46,11 +65,11 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
   }, []);
 
   const scheduleDismiss = useCallback(
-    (id: string) => {
+    (id: string, ms: number = TOAST_AUTO_DISMISS_MS) => {
       if (pausedRef.current.has(id)) return;
       const existing = timersRef.current.get(id);
       if (existing) clearTimeout(existing);
-      const timer = setTimeout(() => dismiss(id), TOAST_AUTO_DISMISS_MS);
+      const timer = setTimeout(() => dismiss(id), ms);
       timersRef.current.set(id, timer);
     },
     [dismiss],
@@ -61,7 +80,8 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
 
     const incoming: ActiveToast[] = [];
     for (const toast of toasts) {
-      const dedupKey = toast.key ?? `${toast.category ?? toast.type}:${toast.title}:${toast.message}`;
+      const dedupKey =
+        toast.key ?? `${toast.category ?? toast.type}:${toast.title}:${toast.message}`;
       if (seenKeysRef.current.has(dedupKey)) continue;
       seenKeysRef.current.add(dedupKey);
       incoming.push({ ...toast, id: `${dedupKey}:${Date.now()}` });
@@ -69,30 +89,39 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
 
     if (incoming.length === 0) return;
 
-    setActive((prev) => {
-      const merged = [...incoming, ...prev].slice(0, MAX_VISIBLE);
-      return merged;
-    });
+    const frame = window.setTimeout(() => {
+      setActive((prev) => [...incoming, ...prev].slice(0, MAX_VISIBLE));
+      for (const toast of incoming) {
+        const ms =
+          toast.category === "sim_open" ? SIM_OPEN_AUTO_DISMISS_MS : TOAST_AUTO_DISMISS_MS;
+        scheduleDismiss(toast.id, ms);
+      }
+    }, 0);
 
-    for (const toast of incoming) {
-      scheduleDismiss(toast.id);
-    }
+    return () => clearTimeout(frame);
   }, [toasts, scheduleDismiss]);
 
   useEffect(() => {
+    const timers = timersRef.current;
     return () => {
-      timersRef.current.forEach((timer) => clearTimeout(timer));
-      timersRef.current.clear();
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
     };
   }, []);
 
   if (active.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-[70] flex w-full max-w-sm flex-col gap-2 pointer-events-none">
+    <div
+      className="fixed top-4 right-4 flex w-full max-w-sm flex-col gap-2 pointer-events-none"
+      style={{ zIndex: TOAST_Z_INDEX }}
+    >
       {active.map((toast) => {
-        const isPredictive = toast.category === "predictive";
+        const isSimOpen = toast.category === "sim_open";
         const item = toast.items?.[0];
+        const badge = strategyBadgeLabel(item?.strategyId, item?.entryTemplate);
+        const entryMcapLabel = formatEntryMcap(item?.entryMcap);
+        const dismissMs = isSimOpen ? SIM_OPEN_AUTO_DISMISS_MS : TOAST_AUTO_DISMISS_MS;
 
         return (
           <div
@@ -109,7 +138,7 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
             }}
             onMouseLeave={() => {
               pausedRef.current.delete(toast.id);
-              scheduleDismiss(toast.id);
+              scheduleDismiss(toast.id, dismissMs);
             }}
           >
             <div className="flex items-start justify-between gap-3">
@@ -118,9 +147,14 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                 <p className="mt-1 text-xs opacity-90 break-words">{toast.message}</p>
                 {item && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {isPredictive && item.pWinner != null && (
+                    {badge && (
                       <span className="rounded bg-black/25 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">
-                        {Math.round(item.pWinner * 100)}% winner
+                        {badge}
+                      </span>
+                    )}
+                    {entryMcapLabel && (
+                      <span className="text-[10px] opacity-75">
+                        Entry {entryMcapLabel}
                       </span>
                     )}
                     <Link
@@ -129,11 +163,6 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                     >
                       {item.symbol}
                     </Link>
-                    {typeof item.growthPercent === "number" && (
-                      <span className="text-[10px] opacity-75">
-                        {item.growthPercent.toFixed(1)}% growth
-                      </span>
-                    )}
                   </div>
                 )}
               </div>
@@ -147,7 +176,7 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
               </button>
             </div>
 
-            {isPredictive && item && (
+            {isSimOpen && item && (
               <div className="mt-3 flex items-center gap-2">
                 <button
                   type="button"

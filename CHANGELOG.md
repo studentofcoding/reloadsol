@@ -8,6 +8,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Sim open copy-trade alerts (mcap_tracker)
+
+- **`mcap_enter_first_seen` / `mcap_enter_at_80` sim opens** — when either strategy opens a paper position, [`recordSimOpenAlert`](src/strategies/mcap-sim-open-alerts.ts) queues a UI alert and [`sendMcapSimManualTradeAlert`](src/utils/telegram.ts) sends Telegram with reloadSOL Chart / Buy / Jupiter links.
+- **[`GET /api/mcap-tracking/sim-open-alerts`](src/app/api/mcap-tracking/sim-open-alerts/route.ts)** — drains pending alerts for client poll (deduped 24h per strategy+mint, in-memory).
+- **`/dev/signals`** — [`McapTrackerToasts`](src/components/signals/McapTrackerToasts.tsx) polls every 15s via [`useMcapSimOpenAlerts`](src/hooks/useMcapSimOpenAlerts.ts); shows strategy badge, entry mcap, and **Buy** button ([`useFastBuy`](src/hooks/useFastBuy.ts)). Toast fixed **top-right**, `z-index: 9999`.
+- **Predictive Pattern ML list toasts** — disabled by default (`scanPredictive=true` opt-in only on mcap list API).
+
 ### Security — npm audit remediation
 
 - **Next.js 16.2.9**, **postcss 8.5.x**, **@solana/web3.js 1.98.x** — addresses reported Next/postcss/uuid advisories.

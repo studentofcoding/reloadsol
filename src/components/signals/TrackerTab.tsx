@@ -2089,15 +2089,6 @@ export default function TrackerTab() {
                     <h3 className="text-lg font-semibold text-white truncate">
                       {token.token_symbol}
                     </h3>
-                    {token.pattern_predicted === "winner" &&
-                      token.pattern_p_winner != null && (
-                        <span
-                          className="shrink-0 rounded bg-emerald-700/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-50"
-                          title={`Pattern ML winner (${Math.round(token.pattern_p_winner * 100)}% confidence)`}
-                        >
-                          Predictive
-                        </span>
-                      )}
                     <span
                       className={`text-2xl ${getGrowthColor(token.mcap_growth_percent)}`}
                     >
