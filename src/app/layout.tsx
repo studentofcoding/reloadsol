@@ -2,6 +2,7 @@ import "./globals.css";
 import { WalletProvider } from "@/components/WalletProvider";
 import AppQueryClientProvider from "@/components/AppQueryClientProvider";
 import Header from "@/components/Header";
+import McapSimOpenToastHost from "@/components/signals/McapSimOpenToastHost";
 import { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import Script from "next/script";
@@ -66,6 +67,7 @@ export default function RootLayout({
               <Header />
               <main className="flex-1">{children}</main>
             </div>
+            <McapSimOpenToastHost />
           </AppQueryClientProvider>
         </WalletProvider>
         {isVercelDeployment && <Analytics />}

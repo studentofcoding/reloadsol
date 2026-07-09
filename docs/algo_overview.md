@@ -90,7 +90,8 @@ Each subsection: **Capture** (what triggers entry) → **Calculate** (filters/sc
 - **Calculate:** `entryTemplate: first_seen`; entry mcap band 30k–2M; L1 rules in `mcap-sim-track.ts`; optional social L1 + ML shadow gates.
 - **Result:** SL -50%, TP 200%, max hold 96h, sim buy 0.01 SOL → `recordMcapTrackerOutcome`. Sim wallet: `mcap-tracker-sim`.
 - **Pattern ML hook:** shadow scores `ml_pattern_p_winner`, `ml_pattern_predicted` on entry (`entry-pattern-scorer`).
-- **Manual copy-trade alert:** on sim open → Telegram (`sendMcapSimManualTradeAlert`) + UI toast on `/dev/signals` (poll `GET /api/mcap-tracking/sim-open-alerts`). Deduped 24h per strategy+mint.
+- **Manual copy-trade alert (Stage 2):** on sim open → Telegram (`sendMcapSimManualTradeAlert`) + UI toast (poll `GET /api/mcap-tracking/sim-open-alerts`). Deduped 24h per strategy+mint.
+- **Early alert (Stage 1):** Signals `enter` + growth &lt;100% → `sendSignalsEarlyEnterAlert` + Early Enter toast (independent of sim open).
 
 ### `mcap_enter_at_80` (mcap_tracker — primary thesis)
 
@@ -98,7 +99,7 @@ Each subsection: **Capture** (what triggers entry) → **Calculate** (filters/sc
 - **Calculate:** `entryTemplate: milestone_80` — enter when token hits 80% mcap growth milestone.
 - **Result:** same exit defaults as `mcap_enter_first_seen`.
 - **Pattern ML hook:** same shadow fields on entry.
-- **Manual copy-trade alert:** same as `mcap_enter_first_seen` (Telegram + `/dev/signals` toast with Buy CTA).
+- **Manual copy-trade alert:** Stage 2 same as `mcap_enter_first_seen`; Stage 1 may have already fired from Signals scoring.
 
 ### `dlmm_default` (dlmm)
 
@@ -204,8 +205,9 @@ Partial TP sells do not write outcomes until 100% closed.
 1. Cron `POST /api/mcap-tracking/sim-track` (via `mcap_tracker_sim_track` worker).
 2. Loads active mcap strategies; evaluates entry templates (`first_seen`, `milestone_80`).
 3. L1 rules → social L1 → sim-outcome ML shadow → **Pattern ML shadow** → paper buy.
-4. On sim open for `mcap_enter_first_seen` / `mcap_enter_at_80`: `recordSimOpenAlert` + `sendMcapSimManualTradeAlert` (Telegram); `/dev/signals` polls `GET /api/mcap-tracking/sim-open-alerts` for UI toast + Buy CTA.
-5. On close → `recordMcapTrackerOutcome`.
+4. **Stage 1:** `GET /api/trading/signals` (UI + `signals_refresh`) emits Early Enter toast/Telegram when `enter` and growth &lt;100%.
+5. **Stage 2:** On sim open for `mcap_enter_first_seen` / `mcap_enter_at_80`: `recordSimOpenAlert` + `sendMcapSimManualTradeAlert`; toast host polls `GET /api/mcap-tracking/sim-open-alerts`.
+6. On close → `recordMcapTrackerOutcome`.
 
 ### DLMM
 

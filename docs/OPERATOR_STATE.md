@@ -38,15 +38,27 @@ From `ml/artifacts/pattern-gate/model.meta.json` (330 train / 66 test):
 
 **Next:** collect more winner cohort rows + address class imbalance before enforce. Shadow-only until class-1 recall improves.
 
-## Sim open copy-trade alerts
+## Two-stage copy-trade alerts
 
-When mcap sim-track opens a paper position for **`mcap_enter_first_seen`** or **`mcap_enter_at_80`**:
+**Stage 1 — Early Enter** (before growth hits 100%):
 
-- **Telegram:** `sendMcapSimManualTradeAlert` — requires `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false`. Message includes reloadSOL chart/buy links and Jupiter link.
-- **UI:** keep `/dev/signals` open; `useMcapSimOpenAlerts` polls every 15s. Toast **top-right** (`z-index: 9999`) with strategy badge, entry mcap, and **Buy** button (wallet must be connected).
-- **Dedup:** one alert per strategy+mint per 24h (in-memory buffer; resets on server restart).
-- **Worker:** `mcap_tracker_sim_track` must be running (`MCAP_TRACKER_SIM_INTERVAL`, default 300s).
-- Predictive Pattern ML UI toasts removed; Pattern ML still runs as shadow gate on sim-track entry only.
+- Fired from `GET /api/trading/signals` when `decision=enter` and growth &lt; 100% (not stuck / not `rugged`).
+- Telegram: `sendSignalsEarlyEnterAlert`. Toast category `signals_enter` (**Early Enter**).
+- Dedup: one per mint per 24h (`signals_enter:{mint}`).
+
+**Stage 2 — Mcap Sim Open** (confirm after paper open):
+
+- When mcap sim-track opens for **`mcap_enter_first_seen`** or **`mcap_enter_at_80`**.
+- Telegram: `sendMcapSimManualTradeAlert`. Toast category `sim_open` (**Mcap Sim Open**).
+- Dedup: one per strategy+mint per 24h. Still fires even if Stage 1 already alerted.
+
+Shared:
+
+- **UI:** `McapSimOpenToastHost` in root layout; polls `GET /api/mcap-tracking/sim-open-alerts` every 15s; toast **top-right** (`z-index: 9999`) with **Buy**.
+- **Telegram env:** `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false`.
+- **Workers:** `signals_refresh` (~60s) helps Stage 1; `mcap_tracker_sim_track` for Stage 2.
+- **`mcap_enter_at_80` freshness:** skips `milestone_too_old` outside `recencyMinutes` (default 240). Timely opens book `first_mcap × 1.8`; else live `current_mcap`.
+- **DB:** apply [`db/init/07-mcap-drop-peak.sql`](../db/init/07-mcap-drop-peak.sql) for `-40%`/`-80%` drop stamps + peak profit columns (auto `rugged` / `potential` labels).
 
 ## North star
 
@@ -95,7 +107,8 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 | Date | Change |
 |------|--------|
-| 2026-07-09 | Sim open copy-trade toasts + Telegram for `mcap_enter_first_seen` / `mcap_enter_at_80`; predictive ML UI toasts removed |
+| 2026-07-09 | Two-stage alerts (Early Enter + Sim Open); drop -40/-80 + peak profit milestones; auto rugged/potential labels |
+| 2026-07-09 | Global sim-open toasts; at_80 skips stale milestones + uses live entry mcap when late; predictive ML UI toasts removed |
 | 2026-07-05 | Pattern ML pipeline: 24h cohort export/train, shadow scorer on mcap sim-track, UI feedback columns; Supabase cut off, reloadsol_db only |
 | 2026-06-28 | Social TTL cleanup + manual `/dev/social` refresh; `social_overlap` on entry features; L2 enforce wired (default shadow) |
 | 2026-06-28 | Two-stage ML: v2-gate binary + v2-potential tiers; shadow ONNX on mcap sim-track |

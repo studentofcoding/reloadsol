@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server'
 import { drainSimOpenAlerts } from '@/strategies/mcap-sim-open-alerts'
+import { drainSignalsEarlyAlerts } from '@/strategies/signals-early-alerts'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    const alerts = drainSimOpenAlerts()
+    // Stage-1 early enter first, then Stage-2 sim-open confirms
+    const alerts = [...drainSignalsEarlyAlerts(), ...drainSimOpenAlerts()]
     return NextResponse.json(
       { success: true, alerts },
       { headers: { 'Cache-Control': 'no-store' } },

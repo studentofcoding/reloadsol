@@ -125,6 +125,26 @@ describe('computeScoreAndDecision', () => {
     expect(weak.decision).toBe('skip')
     expect(moderate.decision).toBe('hold')
   })
+
+  it('exits on rug drop -40% milestone or growth', () => {
+    const byGrowth = computeScoreAndDecision(
+      scoringItem({ mcap_growth_percent: -42, when_reach_80pct: null }),
+      baseConfig,
+    )
+    expect(byGrowth.decision).toBe('exit')
+    expect(byGrowth.rationale).toContain('Rug drop')
+
+    const byStamp = computeScoreAndDecision(
+      scoringItem({
+        mcap_growth_percent: 10,
+        when_reach_80pct: null,
+        when_drop_40pct: new Date().toISOString(),
+      }),
+      baseConfig,
+    )
+    expect(byStamp.decision).toBe('exit')
+    expect(byStamp.rationale).toContain('-40%')
+  })
 })
 
 describe('applyScoreToItem (rug-validation rescore path)', () => {

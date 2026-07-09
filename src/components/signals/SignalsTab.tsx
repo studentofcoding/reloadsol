@@ -54,6 +54,30 @@ const percentFmt = (p?: number) => {
 
 const dateFmt = (iso?: string | null) => formatAppDateTime(iso);
 
+const peakFmt = (growth?: number | null, seenAt?: string | null) => {
+  if (growth == null || !Number.isFinite(growth) || growth <= 0) return "—";
+  const pct = percentFmt(growth);
+  const when = seenAt ? dateFmt(seenAt) : null;
+  if (!when || when === "—") return pct;
+  // Compact: "+142% @ 12:06" — take time portion when full datetime is long
+  const timePart = when.includes(" ") ? when.split(" ").slice(-1)[0] : when;
+  return `${pct} @ ${timePart}`;
+};
+
+const labelBadge = (label?: string | null) => {
+  if (!label || label === "valid") return null;
+  const base = "px-1.5 py-0.5 rounded text-[10px] font-medium uppercase";
+  if (label === "rugged") {
+    return <span className={`${base} bg-red-100 text-red-700`}>rug</span>;
+  }
+  if (label === "potential") {
+    return (
+      <span className={`${base} bg-amber-100 text-amber-800`}>potential</span>
+    );
+  }
+  return null;
+};
+
 function loadChartsFromStorage(): FloatingChart[] {
   try {
     const saved = localStorage.getItem("tradingSignals_floatingCharts");
@@ -796,6 +820,9 @@ export default function SignalsTab() {
                     <th className="border-b p-2">80%</th>
                     <th className="border-b p-2">120%</th>
                     <th className="border-b p-2">200%</th>
+                    <th className="border-b p-2">-40%</th>
+                    <th className="border-b p-2">-80%</th>
+                    <th className="border-b p-2">Peak</th>
                     <th className="border-b p-2">Stuck</th>
                     <th className="border-b p-2">Actions</th>
                   </tr>
@@ -803,7 +830,7 @@ export default function SignalsTab() {
                 <tbody>
                   {signals.length === 0 && !loading ? (
                     <tr>
-                      <td className="p-4 text-center text-sm" colSpan={13}>
+                      <td className="p-4 text-center text-sm" colSpan={16}>
                         No signals
                       </td>
                     </tr>
@@ -818,6 +845,7 @@ export default function SignalsTab() {
                             <span className="font-medium">
                               {s.token_symbol || "UNKNOWN"}
                             </span>
+                            {labelBadge(s.label)}
                             <button
                               onClick={() =>
                                 handleOpenChart(s.token_address, s.token_symbol)
@@ -870,6 +898,15 @@ export default function SignalsTab() {
                         </td>
                         <td className="border-b p-2">
                           {dateFmt(s.when_reach_200pct)}
+                        </td>
+                        <td className="border-b p-2 text-red-600">
+                          {dateFmt(s.when_drop_40pct)}
+                        </td>
+                        <td className="border-b p-2 text-red-700">
+                          {dateFmt(s.when_drop_80pct)}
+                        </td>
+                        <td className="border-b p-2 text-emerald-700">
+                          {peakFmt(s.peak_growth_percent, s.peak_seen_at)}
                         </td>
                         <td className="border-b p-2">
                           {s.is_tracking_stuck ? "Yes" : "No"}

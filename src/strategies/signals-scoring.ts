@@ -14,6 +14,12 @@ export type SignalScoringItem = {
   when_reach_80pct?: string | null
   when_reach_120pct?: string | null
   when_reach_200pct?: string | null
+  when_drop_40pct?: string | null
+  when_drop_80pct?: string | null
+  peak_mcap?: number | null
+  peak_growth_percent?: number | null
+  peak_seen_at?: string | null
+  label?: string | null
   is_tracking_stuck?: boolean
   in_tracking_range: boolean
   trend_age_minutes: number
@@ -136,8 +142,16 @@ export function computeScoreAndDecision(
   const rationale: string[] = []
 
   const reached80Now = !!item.when_reach_80pct && milestoneBonusEligible(growth, MILESTONE_GROWTH_THRESHOLDS.milestone80)
+  const hitRugDrop = !!item.when_drop_40pct || growth <= -40
 
-  if (growth <= STOP_LOSS_THRESHOLD || isStuck) {
+  if (hitRugDrop) {
+    decision = 'exit'
+    rationale.push(
+      item.when_drop_80pct || growth <= -80
+        ? 'Rug drop ≤-80% — exit'
+        : 'Rug drop ≤-40% — exit',
+    )
+  } else if (growth <= STOP_LOSS_THRESHOLD || isStuck) {
     decision = 'exit'
     rationale.push('Stop-loss or stuck triggered')
   } else if (template === 'sell_over_100' && growth >= 100) {
@@ -179,6 +193,12 @@ export function buildSignalScoringItem(input: {
   when_reach_80pct?: string | null
   when_reach_120pct?: string | null
   when_reach_200pct?: string | null
+  when_drop_40pct?: string | null
+  when_drop_80pct?: string | null
+  peak_mcap?: number | null
+  peak_growth_percent?: number | null
+  peak_seen_at?: string | null
+  label?: string | null
   is_tracking_stuck?: boolean
   in_tracking_range: boolean
 }): SignalScoringItem {

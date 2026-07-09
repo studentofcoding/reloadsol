@@ -1,11 +1,9 @@
 "use client";
 
-import React, { Suspense, useMemo } from "react";
+import React, { Suspense } from "react";
 import dynamic from "next/dynamic";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
-import McapTrackerToasts from "@/components/signals/McapTrackerToasts";
-import { useMcapSimOpenAlerts } from "@/hooks/useMcapSimOpenAlerts";
 
 const SignalsTab = dynamic(() => import("@/components/signals/SignalsTab"), {
   loading: () => <TabLoading label="Signals" />,
@@ -59,15 +57,8 @@ function SignalsHubContent() {
     router.replace(query ? `${pathname}?${query}` : pathname);
   };
 
-  const { data: simOpenAlerts } = useMcapSimOpenAlerts({
-    refetchInterval: 15_000,
-  });
-
-  const toasts = useMemo(() => simOpenAlerts ?? [], [simOpenAlerts]);
-
   return (
     <div className="w-full">
-      <McapTrackerToasts toasts={toasts} />
       <ScrollableMenuRow className="mb-6 border-b border-gray-700 pb-3">
         {TABS.map((tab) => (
           <button

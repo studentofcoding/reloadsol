@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { log } from '@/utils/unified-logger'
 import { fetchAndScoreSignals } from '@/strategies/signals-pipeline'
+import { emitSignalsEarlyAlertsFromScored } from '@/strategies/signals-early-alerts'
 import type { SignalsStrategyConfig } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
@@ -47,15 +48,33 @@ export async function GET(request: NextRequest) {
 
     const signals = await fetchAndScoreSignals(strategyConfig)
 
+    // Stage-1 copy-trade alerts: enter + growth < 100% (24h dedup; safe on UI + worker polls)
+    const earlyAlerts = emitSignalsEarlyAlertsFromScored(signals)
+    if (earlyAlerts.length > 0) {
+      const { sendSignalsEarlyEnterAlert } = await import('@/utils/telegram')
+      for (const alert of earlyAlerts) {
+        void sendSignalsEarlyEnterAlert({
+          tokenSymbol: alert.tokenSymbol,
+          tokenAddress: alert.tokenAddress,
+          entryMcap: alert.entryMcap,
+          growthPercent: alert.growthPercent,
+          score: alert.score,
+          rationale: alert.rationale,
+          entryAt: alert.entryAt,
+        })
+      }
+    }
+
     log.info('mcap_tracker', 'Generated trading signals', {
       count: signals.length,
+      earlyAlerts: earlyAlerts.length,
       params: { limit, recencyMinutes, minGrowth, includeStuck, maxAgeMinutes, strategy: strategyTemplate },
     })
 
     return NextResponse.json({
       success: true,
       params: { limit, recencyMinutes, minGrowth, includeStuck, maxAgeMinutes, strategy: strategyTemplate },
-      stats: { returnedSignals: signals.length },
+      stats: { returnedSignals: signals.length, earlyAlerts: earlyAlerts.length },
       signals,
     })
   } catch (error) {

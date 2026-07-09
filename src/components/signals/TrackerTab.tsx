@@ -496,6 +496,11 @@ export default function TrackerTab() {
       "80%",
       "120%",
       "200%",
+      "-40%",
+      "-80%",
+      "Peak Growth %",
+      "Peak Seen",
+      "Label",
     ];
 
     const csvData = tokens.map((token) => [
@@ -512,6 +517,11 @@ export default function TrackerTab() {
       dateFmt(token.when_reach_80pct),
       dateFmt(token.when_reach_120pct),
       dateFmt(token.when_reach_200pct),
+      dateFmt(token.when_drop_40pct),
+      dateFmt(token.when_drop_80pct),
+      token.peak_growth_percent ?? "",
+      dateFmt(token.peak_seen_at),
+      token.label ?? "",
     ]);
 
     const csvContent = [headers, ...csvData]
@@ -2221,7 +2231,7 @@ export default function TrackerTab() {
                 Momentum: {insights.momentumLabel}
               </span>
               <span className="rounded bg-gray-700 px-2 py-1 text-gray-200">
-                Milestones: {insights.milestonesReached}/3
+                Milestones: {insights.milestonesReached}
               </span>
               <span className="rounded bg-gray-700 px-2 py-1 text-gray-200">
                 Age: {formatTrackingAge(insights.trackingAgeHours)}
@@ -2303,6 +2313,37 @@ export default function TrackerTab() {
                     </span>
                   </div>
                 )}
+
+                {token.when_drop_40pct && (
+                  <div>
+                    <span className="text-gray-400">Dropped -40% (rug):</span>
+                    <span className="ml-2 text-red-400" suppressHydrationWarning>
+                      {dateFmt(token.when_drop_40pct)}
+                    </span>
+                  </div>
+                )}
+
+                {token.when_drop_80pct && (
+                  <div>
+                    <span className="text-gray-400">Dropped -80% (rug):</span>
+                    <span className="ml-2 text-red-400" suppressHydrationWarning>
+                      {dateFmt(token.when_drop_80pct)}
+                    </span>
+                  </div>
+                )}
+
+                {token.peak_growth_percent != null &&
+                  token.peak_growth_percent > 0 && (
+                    <div>
+                      <span className="text-gray-400">Peak profit:</span>
+                      <span className="ml-2 text-emerald-400" suppressHydrationWarning>
+                        +{token.peak_growth_percent.toFixed(1)}%
+                        {token.peak_seen_at
+                          ? ` @ ${dateFmt(token.peak_seen_at)}`
+                          : ""}
+                      </span>
+                    </div>
+                  )}
 
                 <div>
                   <span className="text-gray-400">Last Updated:</span>

@@ -39,4 +39,15 @@ describe('deriveTrackerTokenInsights', () => {
     expect(insights.riskLabel).toBe(riskLabelFromScore(insights.riskScore))
     expect(formatTrackingAge(insights.trackingAgeHours)).toMatch(/h|m/)
   })
+
+  it('includes drop and peak labels in milestone list', () => {
+    const insights = deriveTrackerTokenInsights({
+      ...token,
+      when_drop_40pct: new Date().toISOString(),
+      peak_growth_percent: 150,
+      peak_seen_at: new Date().toISOString(),
+    })
+    expect(insights.milestoneLabels).toContain('-40%')
+    expect(insights.milestoneLabels.some((l) => l.startsWith('peak'))).toBe(true)
+  })
 })

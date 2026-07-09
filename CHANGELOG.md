@@ -8,12 +8,26 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Two-stage copy-trade alerts + rug/peak milestones
+
+- **Stage 1 (Early Enter)** — when Signals scores `decision=enter` and growth still **&lt;100%**, [`emitSignalsEarlyAlertsFromScored`](src/strategies/signals-early-alerts.ts) queues a toast and [`sendSignalsEarlyEnterAlert`](src/utils/telegram.ts) fires Telegram (24h dedup per mint). Emitted from [`GET /api/trading/signals`](src/app/api/trading/signals/route.ts) so UI poll + `signals_refresh` worker both work.
+- **Stage 2 (Mcap Sim Open)** — unchanged confirm path for `mcap_enter_first_seen` / `mcap_enter_at_80` sim opens ([`mcap-sim-open-alerts.ts`](src/strategies/mcap-sim-open-alerts.ts)).
+- **Drain API** — [`GET /api/mcap-tracking/sim-open-alerts`](src/app/api/mcap-tracking/sim-open-alerts/route.ts) returns Stage-1 then Stage-2 toasts; UI distinguishes **Early Enter** vs **Mcap Sim Open**.
+- **Drop milestones** — `when_drop_40pct` / `when_drop_80pct` on `token_mcap_tracking` ([`07-mcap-drop-peak.sql`](db/init/07-mcap-drop-peak.sql)); auto-label **`rugged`**.
+- **Peak profit** — `peak_mcap`, `peak_growth_percent`, `peak_seen_at`; auto-label **`potential`** when peak growth &gt; 0 (does not overwrite `traded_live` / `rugged`).
+- **Signals table** — columns **-40%**, **-80%**, **Peak**; rug/potential badges on token name.
+
 ### Added — Sim open copy-trade alerts (mcap_tracker)
 
 - **`mcap_enter_first_seen` / `mcap_enter_at_80` sim opens** — when either strategy opens a paper position, [`recordSimOpenAlert`](src/strategies/mcap-sim-open-alerts.ts) queues a UI alert and [`sendMcapSimManualTradeAlert`](src/utils/telegram.ts) sends Telegram with reloadSOL Chart / Buy / Jupiter links.
 - **[`GET /api/mcap-tracking/sim-open-alerts`](src/app/api/mcap-tracking/sim-open-alerts/route.ts)** — drains pending alerts for client poll (deduped 24h per strategy+mint, in-memory).
-- **`/dev/signals`** — [`McapTrackerToasts`](src/components/signals/McapTrackerToasts.tsx) polls every 15s via [`useMcapSimOpenAlerts`](src/hooks/useMcapSimOpenAlerts.ts); shows strategy badge, entry mcap, and **Buy** button ([`useFastBuy`](src/hooks/useFastBuy.ts)). Toast fixed **top-right**, `z-index: 9999`.
+- **App-wide toasts** — [`McapSimOpenToastHost`](src/components/signals/McapSimOpenToastHost.tsx) mounted in root [`layout.tsx`](src/app/layout.tsx); polls every 15s on **any page**. Toast **top-right**, `z-index: 9999`, with **Buy** ([`useFastBuy`](src/hooks/useFastBuy.ts)).
 - **Predictive Pattern ML list toasts** — disabled by default (`scanPredictive=true` opt-in only on mcap list API).
+
+### Fixed — mcap_enter_at_80 late / fake entry mcap
+
+- **Stale opens skipped** — `milestone_too_old` when `when_reach_80pct` (or growth-only `first_seen_at`) is outside `recencyMinutes` (default 240). Prevents 12h-late opens that booked `first_mcap × 1.8` while live chart was far higher.
+- **Entry mcap** — timely milestone still uses `first_mcap × 1.8`; late-but-allowed opens use **`current_mcap`** so Telegram/toast match a real buy price. Optional **Live mcap** line when it differs from entry.
 
 ### Security — npm audit remediation
 

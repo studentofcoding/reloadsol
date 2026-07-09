@@ -44,12 +44,29 @@ describe('mcap sim entry helpers', () => {
   const at80 = MCAP_TRACKER_STRATEGIES.mcap_enter_at_80
   const firstSeen = MCAP_TRACKER_STRATEGIES.mcap_enter_first_seen
 
-  it('allows milestone_80 entry when growth >= 80 without milestone column', () => {
-    const snapshot = row({ when_reach_80pct: null, mcap_growth_percent: 292 })
+  it('timely milestone_80 with recent when_reach_80pct uses first_mcap * 1.8', () => {
+    const milestoneAt = new Date(Date.now() - 30 * 60_000).toISOString()
+    const snapshot = row({
+      when_reach_80pct: milestoneAt,
+      mcap_growth_percent: 95,
+      current_mcap: 200_000,
+    })
     expect(shouldOpenMcapSim(at80, snapshot, new Set())).toBe(true)
     const entry = resolveMcapSimEntry(at80, snapshot)
     expect(entry?.entryMcap).toBe(Math.round(35_000 * 1.8))
-    expect(entry?.entryAt).toBeTruthy()
+    expect(entry?.entryAt).toBe(milestoneAt)
+  })
+
+  it('within recency, no milestone stamp: entry uses current_mcap', () => {
+    const snapshot = row({
+      when_reach_80pct: null,
+      mcap_growth_percent: 292,
+      current_mcap: 138_000,
+      first_seen_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+    })
+    expect(shouldOpenMcapSim(at80, snapshot, new Set())).toBe(true)
+    const entry = resolveMcapSimEntry(at80, snapshot)
+    expect(entry?.entryMcap).toBe(138_000)
   })
 
   it('skips milestone_80 when growth below threshold and no milestone', () => {
@@ -65,12 +82,47 @@ describe('mcap sim entry helpers', () => {
     )
   })
 
+  it('skips stale milestone_80 when when_reach_80pct is older than recency', () => {
+    const oldMilestone = new Date(Date.now() - 12 * 60 * 60_000).toISOString()
+    const snapshot = row({
+      when_reach_80pct: oldMilestone,
+      mcap_growth_percent: 292,
+      current_mcap: 500_000,
+      first_seen_at: new Date(Date.now() - 13 * 60 * 60_000).toISOString(),
+    })
+    expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBe(
+      'milestone_too_old',
+    )
+    expect(shouldOpenMcapSim(at80, snapshot, new Set())).toBe(false)
+  })
+
+  it('skips late growth-only open when first_seen is older than recency (SAPIJIJU case)', () => {
+    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60_000).toISOString()
+    const snapshot = row({
+      when_reach_80pct: null,
+      mcap_growth_percent: 292,
+      first_mcap: 75_200,
+      current_mcap: 478_000,
+      first_seen_at: twelveHoursAgo,
+    })
+    expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBe(
+      'milestone_too_old',
+    )
+    // Would have been fake first*1.8 ≈ 135K — must not open
+    expect(shouldOpenMcapSim(at80, snapshot, new Set())).toBe(false)
+  })
+
   it('skips out_of_range tokens by entry mcap', () => {
-    const snapshot = row({ first_mcap: 5_000, current_mcap: 5_000, mcap_growth_percent: 292 })
+    const snapshot = row({
+      first_mcap: 5_000,
+      current_mcap: 5_000,
+      mcap_growth_percent: 292,
+      when_reach_80pct: new Date().toISOString(),
+    })
     expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBe('out_of_range')
   })
 
-  it('allows open when current mcap exceeds max but entry mcap is in range', () => {
+  it('allows open when current mcap exceeds max but timely theoretical entry is in range', () => {
     const snapshot = row({
       first_mcap: 60_000,
       current_mcap: 2_500_000,
@@ -78,13 +130,16 @@ describe('mcap sim entry helpers', () => {
       when_reach_80pct: new Date().toISOString(),
     })
     expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBeNull()
+    expect(resolveMcapSimEntry(at80, snapshot)?.entryMcap).toBe(
+      Math.round(60_000 * 1.8),
+    )
   })
 
   it('skips when a closed outcome already exists for token+entryAt', () => {
     const entryAt = new Date(Date.now() - 30 * 60_000).toISOString()
     const snapshot = row({
       when_reach_80pct: entryAt,
-      mcap_growth_percent: 292,
+      mcap_growth_percent: 95,
     })
     const closedKeys = new Set([`mint1|${entryAt}`])
     expect(

@@ -23,6 +23,12 @@ export interface SignalItem {
   when_reach_80pct?: string | null;
   when_reach_120pct?: string | null;
   when_reach_200pct?: string | null;
+  when_drop_40pct?: string | null;
+  when_drop_80pct?: string | null;
+  peak_mcap?: number | null;
+  peak_growth_percent?: number | null;
+  peak_seen_at?: string | null;
+  label?: string | null;
   is_tracking_stuck?: boolean;
 }
 

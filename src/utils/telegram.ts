@@ -204,6 +204,7 @@ export function buildMcapSimManualTradeAlertText(params: {
   tokenAddress: string
   entryMcap: number
   entryAt?: string | null
+  liveMcap?: number | null
 }): string {
   const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
   const name = escapeTelegramHtml(params.strategyName)
@@ -214,6 +215,13 @@ export function buildMcapSimManualTradeAlertText(params: {
     typeof params.entryAt === 'string' && params.entryAt
       ? escapeTelegramHtml(params.entryAt)
       : null
+  const live =
+    typeof params.liveMcap === 'number' &&
+    Number.isFinite(params.liveMcap) &&
+    params.liveMcap > 0 &&
+    Math.abs(params.liveMcap - params.entryMcap) / Math.max(params.entryMcap, 1) > 0.02
+      ? formatMcapUsd(params.liveMcap)
+      : null
 
   return [
     `🟢 <b>Mcap Sim OPEN — copy trade</b>`,
@@ -221,6 +229,7 @@ export function buildMcapSimManualTradeAlertText(params: {
     `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
     `Token: <b>${symbol}</b>`,
     `Entry mcap: ${formatMcapUsd(params.entryMcap)}`,
+    live ? `Live mcap: ${live}` : null,
     entryAt ? `Entry at: ${entryAt}` : null,
     '',
     `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a> · <a href="${jupLink}">Jupiter</a>`,
@@ -230,6 +239,73 @@ export function buildMcapSimManualTradeAlertText(params: {
     .join('\n')
 }
 
+export function buildSignalsEarlyEnterAlertText(params: {
+  tokenSymbol: string
+  tokenAddress: string
+  entryMcap: number
+  growthPercent: number
+  score: number
+  rationale?: string | null
+  entryAt?: string | null
+}): string {
+  const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
+  const chartLink = formatReloadsolChartLink(params.tokenAddress)
+  const buyLink = formatReloadsolBuyLink(params.tokenAddress)
+  const jupLink = formatJupiterTokenLink(params.tokenAddress)
+  const growth = Number.isFinite(params.growthPercent)
+    ? `${params.growthPercent >= 0 ? '+' : ''}${params.growthPercent.toFixed(1)}%`
+    : 'n/a'
+  const entryAt =
+    typeof params.entryAt === 'string' && params.entryAt
+      ? escapeTelegramHtml(params.entryAt)
+      : null
+  const rationale =
+    typeof params.rationale === 'string' && params.rationale
+      ? escapeTelegramHtml(params.rationale)
+      : null
+
+  return [
+    `🟡 <b>Early Signals Enter — copy trade</b>`,
+    '',
+    `Token: <b>${symbol}</b>`,
+    `Growth: <b>${growth}</b> (before 100%)`,
+    `Score: ${params.score.toFixed(0)}`,
+    `Live mcap: ${formatMcapUsd(params.entryMcap)}`,
+    rationale ? `Rationale: ${rationale}` : null,
+    entryAt ? `Seen at: ${entryAt}` : null,
+    '',
+    `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a> · <a href="${jupLink}">Jupiter</a>`,
+    `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
+  ]
+    .filter((line): line is string => line != null)
+    .join('\n')
+}
+
+export async function sendSignalsEarlyEnterAlert(params: {
+  tokenSymbol: string
+  tokenAddress: string
+  entryMcap: number
+  growthPercent: number
+  score: number
+  rationale?: string | null
+  entryAt?: string | null
+}): Promise<boolean> {
+  if (!isStrategyTrackTelegramEnabled()) return false
+
+  const chartLink = formatReloadsolChartLink(params.tokenAddress)
+  const buyLink = formatReloadsolBuyLink(params.tokenAddress)
+
+  return sendTelegramAlert(buildSignalsEarlyEnterAlertText(params), {
+    parseMode: 'HTML',
+    inlineKeyboard: [
+      [
+        { text: 'Chart', url: chartLink },
+        { text: 'Buy', url: buyLink },
+      ],
+    ],
+  })
+}
+
 export async function sendMcapSimManualTradeAlert(params: {
   strategyId: string
   strategyName: string
@@ -237,6 +313,7 @@ export async function sendMcapSimManualTradeAlert(params: {
   tokenAddress: string
   entryMcap: number
   entryAt?: string | null
+  liveMcap?: number | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 

@@ -26,6 +26,11 @@ export interface McapSnapshot {
   when_reach_80pct?: string | null
   when_reach_120pct?: string | null
   when_reach_200pct?: string | null
+  when_drop_40pct?: string | null
+  when_drop_80pct?: string | null
+  peak_mcap?: number | null
+  peak_growth_percent?: number | null
+  peak_seen_at?: string | null
   is_tracking_stuck?: boolean
   label?: TokenLabel | null
   stop_reason?: string | null
@@ -65,6 +70,8 @@ log.info('mcap_tracker', 'MCap tracker configuration', {
 
 // Growth thresholds for notifications (in percentages)
 const GROWTH_THRESHOLDS = [80, 120, 200]
+/** Drop milestones: first time growth falls to or below these levels. */
+const DROP_THRESHOLDS = [-40, -80] as const
 
 // Discord webhook configuration
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_AUTO_TRADE || process.env.DISCORD_WEBHOOK_URL || ''
@@ -91,6 +98,7 @@ function normalizeMarketCap(mcap: number): number {
 
 // Helper function to get threshold column name
 type ThresholdColumnName = 'when_reach_80pct' | 'when_reach_120pct' | 'when_reach_200pct'
+type DropColumnName = 'when_drop_40pct' | 'when_drop_80pct'
 
 function getThresholdColumnName(threshold: number): ThresholdColumnName {
   switch (threshold) {
@@ -98,6 +106,14 @@ function getThresholdColumnName(threshold: number): ThresholdColumnName {
     case 120: return 'when_reach_120pct'
     case 200: return 'when_reach_200pct'
     default: throw new Error(`Unknown threshold: ${threshold}`)
+  }
+}
+
+function getDropColumnName(threshold: number): DropColumnName {
+  switch (threshold) {
+    case -40: return 'when_drop_40pct'
+    case -80: return 'when_drop_80pct'
+    default: throw new Error(`Unknown drop threshold: ${threshold}`)
   }
 }
 
@@ -166,6 +182,16 @@ export function normalizeTrackingTimeline(record: McapSnapshot): boolean {
     }
   }
 
+  // Drop milestones: clear only if timestamp predates first_seen (keep after recovery)
+  for (const threshold of DROP_THRESHOLDS) {
+    const columnName = getDropColumnName(threshold)
+    const milestoneMs = parseIsoMs(record[columnName])
+    if (milestoneMs != null && milestoneMs < firstMs) {
+      record[columnName] = null
+      changed = true
+    }
+  }
+
   const remainingFirstMs = parseIsoMs(record.first_seen_at)
   if (remainingFirstMs == null) return changed
 
@@ -204,7 +230,16 @@ export function reconcileMilestonesFromGrowth(
       return true
     }
   }
-  return false
+  // Backfill all unmet drop milestones in one pass (crash can skip -40 → -80)
+  let dropChanged = false
+  for (const threshold of DROP_THRESHOLDS) {
+    const columnName = getDropColumnName(threshold)
+    if (growth <= threshold && !record[columnName]) {
+      record[columnName] = milestoneIso
+      dropChanged = true
+    }
+  }
+  return dropChanged
 }
 
 /** Start a fresh tracking session (new baseline, clear milestones). */
@@ -222,6 +257,11 @@ export function resetTrackingSession(
   record.when_reach_80pct = null
   record.when_reach_120pct = null
   record.when_reach_200pct = null
+  record.when_drop_40pct = null
+  record.when_drop_80pct = null
+  record.peak_mcap = normalizedMcap
+  record.peak_growth_percent = 0
+  record.peak_seen_at = nowIso
   record.is_tracking_stuck = false
   log.info('price_tracking', 'Reset tracking session', {
     tokenAddress: record.token_address,
@@ -248,7 +288,9 @@ export function fixTrackingTimeline(record: McapSnapshot, persist = false): Mcap
          first_seen_at = $2,
          when_reach_80pct = $3,
          when_reach_120pct = $4,
-         when_reach_200pct = $5
+         when_reach_200pct = $5,
+         when_drop_40pct = $6,
+         when_drop_80pct = $7
        WHERE token_address = $1`,
       [
         record.token_address,
@@ -256,6 +298,8 @@ export function fixTrackingTimeline(record: McapSnapshot, persist = false): Mcap
         record.when_reach_80pct,
         record.when_reach_120pct,
         record.when_reach_200pct,
+        record.when_drop_40pct,
+        record.when_drop_80pct,
       ],
     ).catch((error) => {
       log.warn('price_tracking', 'Failed to persist timeline repair', {
@@ -287,6 +331,49 @@ export function minutesBetween(
   return (endMs - startMs) / (1000 * 60)
 }
 
+/** Update peak mcap / peak growth when current exceeds prior peak. */
+export function updatePeakMcap(
+  record: McapSnapshot,
+  currentMcap: number,
+  growthPercent: number,
+  nowIso: string,
+): boolean {
+  const normalized = normalizeMarketCap(currentMcap)
+  const priorPeak =
+    typeof record.peak_mcap === 'number' && Number.isFinite(record.peak_mcap)
+      ? record.peak_mcap
+      : null
+  if (priorPeak == null || normalized > priorPeak) {
+    record.peak_mcap = normalized
+    record.peak_growth_percent = growthPercent
+    record.peak_seen_at = nowIso
+    return true
+  }
+  return false
+}
+
+/**
+ * Auto-label from milestones:
+ * - drop -40/-80 → rugged (never overwrite traded_live)
+ * - peak_growth > 0 → potential (never overwrite traded_live / rugged)
+ */
+export function applyAutoLabelsFromMilestones(record: McapSnapshot): boolean {
+  const current = record.label ?? null
+
+  if (record.when_drop_40pct || record.when_drop_80pct) {
+    if (current === 'traded_live' || current === 'rugged') return false
+    record.label = 'rugged'
+    return true
+  }
+
+  const peakGrowth = record.peak_growth_percent ?? 0
+  if (peakGrowth > 0 && (!current || current === 'valid' || current === 'watching')) {
+    record.label = 'potential'
+    return true
+  }
+  return false
+}
+
 // Helper: update threshold timestamp fields when growth crosses thresholds
 function updateThresholdTimestamps(record: McapSnapshot, growthPercent: number, nowIso: string): boolean {
   normalizeTrackingTimeline(record)
@@ -305,7 +392,30 @@ function updateThresholdTimestamps(record: McapSnapshot, growthPercent: number, 
       break
     }
   }
+
+  // Drop milestones: set all crossed levels in one tick (no break)
+  for (const threshold of DROP_THRESHOLDS) {
+    const columnName = getDropColumnName(threshold)
+    if (growthPercent <= threshold && !record[columnName]) {
+      record[columnName] = nowIso
+      changed = true
+    }
+  }
+
   return changed
+}
+
+/** Apply peak + thresholds + auto-labels; returns true if any field changed. */
+export function applyMcapSessionUpdates(
+  record: McapSnapshot,
+  currentMcap: number,
+  growthPercent: number,
+  nowIso: string,
+): boolean {
+  const peakChanged = updatePeakMcap(record, currentMcap, growthPercent, nowIso)
+  const thresholdsChanged = updateThresholdTimestamps(record, growthPercent, nowIso)
+  const labelChanged = applyAutoLabelsFromMilestones(record)
+  return peakChanged || thresholdsChanged || labelChanged
 }
 
 // Function to send Discord notification for growth threshold
@@ -572,8 +682,12 @@ export async function trackTokenMcap(
         cached.last_updated_at = new Date().toISOString()
         cached.mcap_growth_percent = ((normalizedCurrentMcap - cached.first_mcap) / cached.first_mcap) * 100
 
-        // Update threshold timestamps independent of notifications
-        const thresholdsUpdated = updateThresholdTimestamps(cached, cached.mcap_growth_percent, cached.last_updated_at)
+        const sessionUpdated = applyMcapSessionUpdates(
+          cached,
+          cached.current_mcap,
+          cached.mcap_growth_percent,
+          cached.last_updated_at,
+        )
 
         // Compute stuck flag
         const ageMs = now - new Date(cached.first_seen_at).getTime()
@@ -602,7 +716,7 @@ export async function trackTokenMcap(
         )
 
         // Update database asynchronously (include threshold columns if thresholdsUpdated or notifications were sent)
-        updateMcapInDatabase(cached, thresholdsUpdated || notificationSent).catch(console.error)
+        updateMcapInDatabase(cached, sessionUpdated || notificationSent).catch(console.error)
       } else if (timeSinceLastDbUpdate >= HEARTBEAT_INTERVAL_MS) {
         // Heartbeat: update without threshold columns, and record latest currentMcap and growth
         const prev = { current: cached.current_mcap, growth: cached.mcap_growth_percent }
@@ -610,8 +724,12 @@ export async function trackTokenMcap(
         cached.mcap_growth_percent = ((normalizedCurrentMcap - cached.first_mcap) / cached.first_mcap) * 100
         cached.last_updated_at = new Date().toISOString()
 
-        // Update threshold timestamps on heartbeat as well
-        const thresholdsUpdatedHb = updateThresholdTimestamps(cached, cached.mcap_growth_percent, cached.last_updated_at)
+        const thresholdsUpdatedHb = applyMcapSessionUpdates(
+          cached,
+          cached.current_mcap,
+          cached.mcap_growth_percent,
+          cached.last_updated_at,
+        )
 
         // Compute stuck flag on heartbeat
         const ageMs = now - new Date(cached.first_seen_at).getTime()
@@ -778,6 +896,11 @@ export async function trackTokenMcap(
         when_reach_80pct: null,
         when_reach_120pct: null,
         when_reach_200pct: null,
+        when_drop_40pct: null,
+        when_drop_80pct: null,
+        peak_mcap: normalizedCurrentMcap,
+        peak_growth_percent: 0,
+        peak_seen_at: currentTime,
         is_tracking_stuck: false,
       }
 
@@ -835,15 +958,21 @@ export async function trackTokenMcap(
           // Mark token as stopped and remove from cache
           mcapCache.delete(tokenAddress)
 
-          // Optionally update database with final state
-          const stoppedRecord = {
+          // Optionally update database with final state (still stamp drop/peak milestones)
+          const stoppedRecord: McapSnapshot = {
             ...existingRecord,
             current_mcap: normalizedCurrentMcap,
             last_updated_at: new Date().toISOString(),
             mcap_growth_percent: growthPercent,
             is_tracking_stuck: true // Use this flag to indicate stopped tracking
           }
-          updateMcapInDatabase(stoppedRecord, false).catch(console.error)
+          applyMcapSessionUpdates(
+            stoppedRecord,
+            normalizedCurrentMcap,
+            growthPercent,
+            stoppedRecord.last_updated_at,
+          )
+          updateMcapInDatabase(stoppedRecord, true).catch(console.error)
 
           return {
             isFirstTime: false,
@@ -879,8 +1008,12 @@ export async function trackTokenMcap(
         })
       }
 
-      // Update threshold timestamps independent of notifications
-      const thresholdsUpdatedDb = updateThresholdTimestamps(updatedRecord, growthPercent, currentTime)
+      const thresholdsUpdatedDb = applyMcapSessionUpdates(
+        updatedRecord,
+        normalizedCurrentMcap,
+        growthPercent,
+        currentTime,
+      )
 
       // Update cache
       mcapCache.set(tokenAddress, updatedRecord)
@@ -969,8 +1102,11 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
       `INSERT INTO token_mcap_tracking (
          token_address, token_symbol, first_mcap, current_mcap,
          first_seen_at, last_updated_at, mcap_growth_percent,
-         when_reach_80pct, when_reach_120pct, when_reach_200pct, is_tracking_stuck
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         when_reach_80pct, when_reach_120pct, when_reach_200pct,
+         when_drop_40pct, when_drop_80pct,
+         peak_mcap, peak_growth_percent, peak_seen_at,
+         is_tracking_stuck, label
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
       [
         record.token_address,
         record.token_symbol,
@@ -982,7 +1118,13 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
         record.when_reach_80pct,
         record.when_reach_120pct,
         record.when_reach_200pct,
+        record.when_drop_40pct ?? null,
+        record.when_drop_80pct ?? null,
+        record.peak_mcap ?? record.current_mcap,
+        record.peak_growth_percent ?? 0,
+        record.peak_seen_at ?? record.first_seen_at,
         record.is_tracking_stuck === true,
+        record.label ?? null,
       ],
     )
 
@@ -1036,19 +1178,29 @@ async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boo
     if (repairedTimeline) {
       sets.push(`first_seen_at = $${paramIdx++}`)
       params.push(record.first_seen_at)
+    }
+
+    if (repairedTimeline || includeThresholds) {
       sets.push(`when_reach_80pct = $${paramIdx++}`)
       params.push(record.when_reach_80pct)
       sets.push(`when_reach_120pct = $${paramIdx++}`)
       params.push(record.when_reach_120pct)
       sets.push(`when_reach_200pct = $${paramIdx++}`)
       params.push(record.when_reach_200pct)
-    } else if (includeThresholds) {
-      sets.push(`when_reach_80pct = $${paramIdx++}`)
-      params.push(record.when_reach_80pct)
-      sets.push(`when_reach_120pct = $${paramIdx++}`)
-      params.push(record.when_reach_120pct)
-      sets.push(`when_reach_200pct = $${paramIdx++}`)
-      params.push(record.when_reach_200pct)
+      sets.push(`when_drop_40pct = $${paramIdx++}`)
+      params.push(record.when_drop_40pct ?? null)
+      sets.push(`when_drop_80pct = $${paramIdx++}`)
+      params.push(record.when_drop_80pct ?? null)
+      sets.push(`peak_mcap = $${paramIdx++}`)
+      params.push(record.peak_mcap ?? null)
+      sets.push(`peak_growth_percent = $${paramIdx++}`)
+      params.push(record.peak_growth_percent ?? null)
+      sets.push(`peak_seen_at = $${paramIdx++}`)
+      params.push(record.peak_seen_at ?? null)
+      if (record.label != null) {
+        sets.push(`label = $${paramIdx++}`)
+        params.push(record.label)
+      }
     }
 
     await query(

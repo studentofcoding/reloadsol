@@ -249,6 +249,11 @@ CREATE TABLE IF NOT EXISTS token_mcap_tracking (
   when_reach_80pct TIMESTAMPTZ,
   when_reach_120pct TIMESTAMPTZ,
   when_reach_200pct TIMESTAMPTZ,
+  when_drop_40pct TIMESTAMPTZ,
+  when_drop_80pct TIMESTAMPTZ,
+  peak_mcap NUMERIC,
+  peak_growth_percent NUMERIC,
+  peak_seen_at TIMESTAMPTZ,
   is_tracking_stuck BOOLEAN NOT NULL DEFAULT false,
   label TEXT CHECK (label IN ('valid', 'traded_live', 'potential', 'rugged', 'watching'))
 );
@@ -483,6 +488,17 @@ ALTER TABLE trading_signals
 
 ALTER TABLE token_mcap_tracking
   ADD COLUMN IF NOT EXISTS label TEXT;
+
+ALTER TABLE token_mcap_tracking
+  ADD COLUMN IF NOT EXISTS when_drop_40pct TIMESTAMPTZ;
+ALTER TABLE token_mcap_tracking
+  ADD COLUMN IF NOT EXISTS when_drop_80pct TIMESTAMPTZ;
+ALTER TABLE token_mcap_tracking
+  ADD COLUMN IF NOT EXISTS peak_mcap NUMERIC;
+ALTER TABLE token_mcap_tracking
+  ADD COLUMN IF NOT EXISTS peak_growth_percent NUMERIC;
+ALTER TABLE token_mcap_tracking
+  ADD COLUMN IF NOT EXISTS peak_seen_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_token_mcap_label ON token_mcap_tracking(label);
 

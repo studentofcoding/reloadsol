@@ -82,15 +82,16 @@ export function deriveTrackerTokenInsights(
   token: McapTrackingData,
   analytics?: EnrichedTokenData,
 ): TrackerTokenInsights {
-  const milestoneDefs = [
-    { label: '80%', col: 'when_reach_80pct' as const, minGrowth: 80 },
-    { label: '120%', col: 'when_reach_120pct' as const, minGrowth: 120 },
-    { label: '200%', col: 'when_reach_200pct' as const, minGrowth: 200 },
-  ]
   const growth = token.mcap_growth_percent || 0
-  const reached = milestoneDefs.filter(
-    (m) => !!token[m.col] && growth >= m.minGrowth,
-  )
+  const milestoneLabels: string[] = []
+  if (token.when_reach_80pct && growth >= 80) milestoneLabels.push('80%')
+  if (token.when_reach_120pct && growth >= 120) milestoneLabels.push('120%')
+  if (token.when_reach_200pct && growth >= 200) milestoneLabels.push('200%')
+  if (token.when_drop_40pct) milestoneLabels.push('-40%')
+  if (token.when_drop_80pct) milestoneLabels.push('-80%')
+  if (token.peak_growth_percent != null && token.peak_growth_percent > 0) {
+    milestoneLabels.push(`peak +${token.peak_growth_percent.toFixed(0)}%`)
+  }
   const firstMs = new Date(token.first_seen_at).getTime()
   const trackingAgeHours = Number.isFinite(firstMs)
     ? Math.max(0, (Date.now() - firstMs) / (1000 * 60 * 60))
@@ -106,8 +107,8 @@ export function deriveTrackerTokenInsights(
     riskScore,
     riskLabel: riskLabelFromScore(riskScore),
     momentumLabel: analytics?.momentum_category ?? categorizeMomentum(growth),
-    milestonesReached: reached.length,
-    milestoneLabels: reached.map((m) => m.label),
+    milestonesReached: milestoneLabels.length,
+    milestoneLabels,
     trackingAgeHours,
     volToMcapPct,
     liquidityLabel: liquidityLabelFromVolToMcap(volToMcapPct),

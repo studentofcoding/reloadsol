@@ -86,12 +86,38 @@ export type McapSimOpenSkipReason =
   | 'rugged'
   | 'out_of_range'
   | 'first_seen_too_old'
+  | 'milestone_too_old'
   | 'no_milestone'
   | 'no_entry_mcap'
   | 'low_organic'
   | 'high_holders'
   | 'ml_gate_reject'
 
+function recencyWindowMs(strategy: McapTrackerStrategy): number {
+  return strategy.config.query.recencyMinutes * 60 * 1000
+}
+
+function ageMsFromIso(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const ms = new Date(iso).getTime()
+  if (!Number.isFinite(ms)) return null
+  return Date.now() - ms
+}
+
+function isWithinRecency(
+  strategy: McapTrackerStrategy,
+  iso: string | null | undefined,
+): boolean {
+  const ageMs = ageMsFromIso(iso)
+  if (ageMs == null) return false
+  return ageMs <= recencyWindowMs(strategy)
+}
+
+/**
+ * milestone_80 entry:
+ * - Timely (when_reach_80pct within recency): theoretical first_mcap * 1.8
+ * - Otherwise (late / no stamp but still allowed): live current_mcap
+ */
 export function resolveMcapSimEntry(
   strategy: McapTrackerStrategy,
   snapshot: McapSnapshot,
@@ -105,12 +131,22 @@ export function resolveMcapSimEntry(
   if (!snapshot.first_mcap || snapshot.first_mcap <= 0) return null
   if (!snapshot.when_reach_80pct && growth < 80) return null
 
-  const entryMcap = Math.round(snapshot.first_mcap * 1.8)
+  const milestoneFresh = isWithinRecency(strategy, snapshot.when_reach_80pct)
+  if (snapshot.when_reach_80pct && milestoneFresh) {
+    return {
+      entryMcap: Math.round(snapshot.first_mcap * 1.8),
+      entryAt: snapshot.when_reach_80pct,
+    }
+  }
+
+  // Late open or growth-only path: book at live mcap so alerts/PnL match a real buy.
+  if (!snapshot.current_mcap || snapshot.current_mcap <= 0) return null
   const entryAt =
-    snapshot.when_reach_80pct ??
-    snapshot.last_updated_at ??
-    snapshot.first_seen_at
-  return { entryMcap, entryAt }
+    snapshot.last_updated_at ||
+    snapshot.when_reach_80pct ||
+    snapshot.first_seen_at ||
+    new Date().toISOString()
+  return { entryMcap: snapshot.current_mcap, entryAt }
 }
 
 export function getMcapSimOpenSkipReason(
@@ -139,13 +175,21 @@ export function getMcapSimOpenSkipReason(
   }
 
   if (strategy.config.entryTemplate === 'first_seen') {
-    const ageMs = Date.now() - new Date(snapshot.first_seen_at).getTime()
-    if (ageMs > strategy.config.query.recencyMinutes * 60 * 1000) {
+    if (!isWithinRecency(strategy, snapshot.first_seen_at)) {
       return 'first_seen_too_old'
     }
   } else {
     const growth = snapshot.mcap_growth_percent ?? 0
     if (!snapshot.when_reach_80pct && growth < 80) return 'no_milestone'
+
+    if (snapshot.when_reach_80pct) {
+      if (!isWithinRecency(strategy, snapshot.when_reach_80pct)) {
+        return 'milestone_too_old'
+      }
+    } else if (!isWithinRecency(strategy, snapshot.first_seen_at)) {
+      // Growth ≥ 80 but no milestone stamp and first_seen is stale (e.g. 12h late).
+      return 'milestone_too_old'
+    }
   }
 
   const entry = resolveMcapSimEntry(strategy, snapshot)

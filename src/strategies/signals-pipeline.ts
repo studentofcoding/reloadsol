@@ -34,6 +34,12 @@ type McapTrackingRow = {
   when_reach_80pct?: string | null
   when_reach_120pct?: string | null
   when_reach_200pct?: string | null
+  when_drop_40pct?: string | null
+  when_drop_80pct?: string | null
+  peak_mcap?: number | null
+  peak_growth_percent?: number | null
+  peak_seen_at?: string | null
+  label?: string | null
   is_tracking_stuck?: boolean
 }
 
@@ -53,6 +59,12 @@ function rowToScoredSignal(
     when_reach_80pct: row.when_reach_80pct,
     when_reach_120pct: row.when_reach_120pct,
     when_reach_200pct: row.when_reach_200pct,
+    when_drop_40pct: row.when_drop_40pct,
+    when_drop_80pct: row.when_drop_80pct,
+    peak_mcap: row.peak_mcap,
+    peak_growth_percent: row.peak_growth_percent,
+    peak_seen_at: row.peak_seen_at,
+    label: row.label,
     is_tracking_stuck: row.is_tracking_stuck,
     in_tracking_range: isInTrackingRange(row.current_mcap),
   })
@@ -75,6 +87,12 @@ export function rescoreScoredSignal(
     when_reach_80pct: signal.when_reach_80pct,
     when_reach_120pct: signal.when_reach_120pct,
     when_reach_200pct: signal.when_reach_200pct,
+    when_drop_40pct: signal.when_drop_40pct,
+    when_drop_80pct: signal.when_drop_80pct,
+    peak_mcap: signal.peak_mcap,
+    peak_growth_percent: signal.peak_growth_percent,
+    peak_seen_at: signal.peak_seen_at,
+    label: signal.label,
     is_tracking_stuck: signal.is_tracking_stuck,
     in_tracking_range: isInTrackingRange(signal.current_mcap),
   })
@@ -201,7 +219,8 @@ export async function fetchAndScoreSignals(
   const { rows } = await query<McapTrackingRow>(
     `SELECT token_address, token_symbol, first_mcap, current_mcap, mcap_growth_percent,
             first_seen_at, last_updated_at, when_reach_80pct, when_reach_120pct,
-            when_reach_200pct, is_tracking_stuck
+            when_reach_200pct, when_drop_40pct, when_drop_80pct,
+            peak_mcap, peak_growth_percent, peak_seen_at, label, is_tracking_stuck
      FROM token_mcap_tracking
      WHERE ${conditions.join(' AND ')}
      ORDER BY mcap_growth_percent DESC

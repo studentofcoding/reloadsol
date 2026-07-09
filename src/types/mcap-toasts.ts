@@ -6,7 +6,7 @@ export type McapToastItem = {
   predicted?: 'winner' | 'loser'
   strategyId?: string
   entryMcap?: number
-  entryTemplate?: 'first_seen' | 'milestone_80'
+  entryTemplate?: 'first_seen' | 'milestone_80' | 'signals_enter'
 }
 
 export type McapToast = {
@@ -15,5 +15,11 @@ export type McapToast = {
   message: string
   items?: McapToastItem[]
   key?: string
-  category?: 'tracked' | 'threshold' | 'high_performers' | 'predictive' | 'sim_open'
+  category?:
+    | 'tracked'
+    | 'threshold'
+    | 'high_performers'
+    | 'predictive'
+    | 'sim_open'
+    | 'signals_enter'
 }

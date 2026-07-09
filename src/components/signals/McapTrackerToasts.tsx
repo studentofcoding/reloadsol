@@ -14,6 +14,9 @@ function toastStyles(type: McapToast["type"], category?: McapToast["category"]) 
   if (category === "sim_open") {
     return "border-emerald-600 bg-emerald-950/95 text-emerald-50";
   }
+  if (category === "signals_enter") {
+    return "border-sky-600 bg-sky-950/95 text-sky-50";
+  }
   switch (type) {
     case "success":
       return "border-green-700 bg-green-900/95 text-green-100";
@@ -24,6 +27,10 @@ function toastStyles(type: McapToast["type"], category?: McapToast["category"]) 
   }
 }
 
+function isCopyTradeToast(category?: McapToast["category"]): boolean {
+  return category === "sim_open" || category === "signals_enter";
+}
+
 function formatEntryMcap(value?: number): string | null {
   if (value == null || !Number.isFinite(value) || value <= 0) return null;
   if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
@@ -32,6 +39,7 @@ function formatEntryMcap(value?: number): string | null {
 }
 
 function strategyBadgeLabel(strategyId?: string, entryTemplate?: string): string | null {
+  if (entryTemplate === "signals_enter") return "Early enter";
   if (strategyId === "mcap_enter_at_80" || entryTemplate === "milestone_80") {
     return "Enter at 80%";
   }
@@ -92,8 +100,9 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
     const frame = window.setTimeout(() => {
       setActive((prev) => [...incoming, ...prev].slice(0, MAX_VISIBLE));
       for (const toast of incoming) {
-        const ms =
-          toast.category === "sim_open" ? SIM_OPEN_AUTO_DISMISS_MS : TOAST_AUTO_DISMISS_MS;
+        const ms = isCopyTradeToast(toast.category)
+          ? SIM_OPEN_AUTO_DISMISS_MS
+          : TOAST_AUTO_DISMISS_MS;
         scheduleDismiss(toast.id, ms);
       }
     }, 0);
@@ -117,11 +126,11 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
       style={{ zIndex: TOAST_Z_INDEX }}
     >
       {active.map((toast) => {
-        const isSimOpen = toast.category === "sim_open";
+        const isCopyTrade = isCopyTradeToast(toast.category);
         const item = toast.items?.[0];
         const badge = strategyBadgeLabel(item?.strategyId, item?.entryTemplate);
         const entryMcapLabel = formatEntryMcap(item?.entryMcap);
-        const dismissMs = isSimOpen ? SIM_OPEN_AUTO_DISMISS_MS : TOAST_AUTO_DISMISS_MS;
+        const dismissMs = isCopyTrade ? SIM_OPEN_AUTO_DISMISS_MS : TOAST_AUTO_DISMISS_MS;
 
         return (
           <div
@@ -176,7 +185,7 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
               </button>
             </div>
 
-            {isSimOpen && item && (
+            {isCopyTrade && item && (
               <div className="mt-3 flex items-center gap-2">
                 <button
                   type="button"

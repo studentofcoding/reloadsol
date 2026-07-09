@@ -234,6 +234,7 @@ async function openSimPosition(params: {
       tokenAddress: params.mintAddress,
       entryMcap: params.entryMcap,
       entryAt: params.entryAt,
+      liveMcap: params.snapshot.current_mcap,
     }).catch((err) => {
       console.error('[mcap-sim-open] telegram alert failed:', err)
     })
@@ -701,6 +702,7 @@ export async function POST(request: NextRequest) {
           if (
             skipReason !== 'already_open' &&
             skipReason !== 'first_seen_too_old' &&
+            skipReason !== 'milestone_too_old' &&
             skipReason !== 'already_closed'
           ) {
             skipped.push(`${snapshot.token_symbol}: ${skipReason}`)

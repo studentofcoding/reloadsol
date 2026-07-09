@@ -25,14 +25,15 @@ flowchart TD
 
 ---
 
-## Operator alerts (mcap sim open)
+## Operator alerts (two-stage copy trade)
 
-Separate from ML gating — notifications for **manual copy trading** after sim passes all entry gates.
+Separate from ML gating — notifications for **manual copy trading**.
 
 - **Pattern ML** (`ML_PATTERN_MODE=shadow` default) scores candidates on sim-track entry; it does **not** drive UI toasts.
-- **Copy-trade alerts** fire on sim **open** (before close) for `mcap_enter_first_seen` and `mcap_enter_at_80` only — intended for operator manual live entry, not auto-buy.
-- **Layer 2 sim-outcome ML gate** = entry filter (reject bad candidates). **Sim-open toast/Telegram** = operator notification after sim opens successfully.
-- UI: `/dev/signals` polls `GET /api/mcap-tracking/sim-open-alerts` every 15s; toast top-right with Buy button. Telegram via `sendMcapSimManualTradeAlert` when `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID` are set.
+- **Stage 1 — Early Enter:** when Signals scores `enter` and growth &lt; 100% (`signals-early-alerts` + `sendSignalsEarlyEnterAlert`). Earliest actionable alert; does **not** open a sim position.
+- **Stage 2 — Sim open:** when `mcap_enter_first_seen` / `mcap_enter_at_80` paper-open succeeds (`mcap-sim-open-alerts` + `sendMcapSimManualTradeAlert`). Confirm after gates.
+- **Layer 2 sim-outcome ML gate** = entry filter (reject bad candidates). Alerts = operator notification only (not auto-buy).
+- UI: app-wide toast host polls `GET /api/mcap-tracking/sim-open-alerts` every 15s; top-right with Buy. Telegram when `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID` are set.
 
 ---
 
