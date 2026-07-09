@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Stage-1 Pattern ML shadow score
+
+- **Display-only Pattern ML** on Early Enter: `p_winner` / `predicted` via [`scorePredictivePattern`](src/strategies/social/predictive-pattern-alert.ts) + 5m cache ([`signals-early-pattern-cache.ts`](src/strategies/signals-early-pattern-cache.ts)).
+- **Never gates** Stage-1 — alerts still fire on rules (`enter` + growth &lt;100%) even when ML says `loser`.
+- Surfaces: Telegram `Pattern ML (shadow): pW …`, Early Enter toast ML snippet + **shadow** badge, Signals table **ML** column.
+
 ### Added — Two-stage copy-trade alerts + rug/peak milestones
 
 - **Stage 1 (Early Enter)** — when Signals scores `decision=enter` and growth still **&lt;100%**, [`emitSignalsEarlyAlertsFromScored`](src/strategies/signals-early-alerts.ts) queues a toast and [`sendSignalsEarlyEnterAlert`](src/utils/telegram.ts) fires Telegram (24h dedup per mint). Emitted from [`GET /api/trading/signals`](src/app/api/trading/signals/route.ts) so UI poll + `signals_refresh` worker both work.

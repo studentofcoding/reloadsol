@@ -78,8 +78,22 @@ describe('buildSignalsEarlyEnterAlertText', () => {
     expect(text).toContain('before 100%')
     expect(text).toContain('$70.0K')
     expect(text).toContain('Strong momentum and recency')
+    expect(text).toContain('Pattern ML (shadow): n/a')
     expect(text).toContain(
       formatReloadsolChartLink('So11111111111111111111111111111111111111112'),
     )
+  })
+
+  it('includes Pattern ML shadow line when scored', () => {
+    const text = buildSignalsEarlyEnterAlertText({
+      tokenSymbol: 'EARLY',
+      tokenAddress: 'MintABC',
+      entryMcap: 70_000,
+      growthPercent: 35.4,
+      score: 58,
+      pWinner: 0.42,
+      predicted: 'loser',
+    })
+    expect(text).toContain('Pattern ML (shadow): pW 0.42 → loser')
   })
 })

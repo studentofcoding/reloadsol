@@ -1,5 +1,6 @@
 import type { McapToast } from '@/types/mcap-toasts'
 import { formatMcapUsd } from '@/utils/telegram'
+import { formatPatternShadowLabel } from './signals-early-pattern-cache'
 import type { ScoredSignal } from './signals-pipeline'
 
 export type SignalsEarlyAlert = {
@@ -12,6 +13,11 @@ export type SignalsEarlyAlert = {
   entryAt: string
   recordedAt: number
   delivered: boolean
+  /** Pattern ML shadow — display only; never gates Stage-1 */
+  mlShadow: true
+  pWinner: number | null
+  predicted: 'winner' | 'loser' | null
+  mlReason: string | null
 }
 
 const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -54,6 +60,9 @@ export function recordSignalsEarlyAlert(params: {
   score: number
   rationale?: string
   entryAt?: string
+  pWinner?: number | null
+  predicted?: 'winner' | 'loser' | null
+  mlReason?: string | null
 }): SignalsEarlyAlert | null {
   const now = Date.now()
   pruneRecentKeys(now)
@@ -74,6 +83,10 @@ export function recordSignalsEarlyAlert(params: {
     entryAt: params.entryAt || new Date(now).toISOString(),
     recordedAt: now,
     delivered: false,
+    mlShadow: true,
+    pWinner: params.pWinner ?? null,
+    predicted: params.predicted ?? null,
+    mlReason: params.mlReason ?? null,
   }
 
   pending.push(alert)
@@ -82,14 +95,36 @@ export function recordSignalsEarlyAlert(params: {
   return alert
 }
 
+/** Attach Pattern ML shadow fields to an already-recorded alert (mutates pending entry). */
+export function attachPatternShadowToAlert(
+  alert: SignalsEarlyAlert,
+  shadow: {
+    pWinner: number | null
+    predicted: 'winner' | 'loser' | null
+    reason?: string | null
+  },
+): SignalsEarlyAlert {
+  alert.pWinner = shadow.pWinner
+  alert.predicted = shadow.predicted
+  alert.mlReason = shadow.reason ?? null
+  alert.mlShadow = true
+  return alert
+}
+
 export function buildSignalsEarlyToast(alert: SignalsEarlyAlert): McapToast {
   const mcapLabel = formatMcapUsd(alert.entryMcap)
   const growthLabel = `${alert.growthPercent >= 0 ? '+' : ''}${alert.growthPercent.toFixed(1)}%`
+  const mlLabel = formatPatternShadowLabel(alert)
+  const mlSnippet =
+    alert.pWinner != null && Number.isFinite(alert.pWinner)
+      ? ` · ML ${mlLabel}`
+      : ' · ML n/a'
+
   return {
     type: 'info',
     category: 'signals_enter',
     title: 'Early Enter',
-    message: `${alert.tokenSymbol} ${growthLabel} @ ${mcapLabel} — score ${alert.score.toFixed(0)}`,
+    message: `${alert.tokenSymbol} ${growthLabel} @ ${mcapLabel} — score ${alert.score.toFixed(0)}${mlSnippet}`,
     key: signalsEnterDedupKey(alert.tokenAddress),
     items: [
       {
@@ -98,6 +133,8 @@ export function buildSignalsEarlyToast(alert: SignalsEarlyAlert): McapToast {
         growthPercent: alert.growthPercent,
         entryMcap: alert.entryMcap,
         entryTemplate: 'signals_enter',
+        pWinner: alert.pWinner ?? undefined,
+        predicted: alert.predicted ?? undefined,
       },
     ],
   }
@@ -126,6 +163,8 @@ export function emitSignalsEarlyAlertsFromScored(
       score: signal.score,
       rationale: signal.rationale,
       entryAt: signal.last_updated_at || signal.first_seen_at,
+      pWinner: signal.ml_pattern_p_winner ?? null,
+      predicted: signal.ml_pattern_predicted ?? null,
     })
     if (alert) recorded.push(alert)
   }

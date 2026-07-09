@@ -30,6 +30,9 @@ export interface SignalItem {
   peak_seen_at?: string | null;
   label?: string | null;
   is_tracking_stuck?: boolean;
+  /** Pattern ML shadow (Stage-1 display) */
+  ml_pattern_p_winner?: number | null;
+  ml_pattern_predicted?: "winner" | "loser" | null;
 }
 
 export interface SignalsResponse {

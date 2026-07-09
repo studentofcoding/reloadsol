@@ -247,6 +247,8 @@ export function buildSignalsEarlyEnterAlertText(params: {
   score: number
   rationale?: string | null
   entryAt?: string | null
+  pWinner?: number | null
+  predicted?: 'winner' | 'loser' | null
 }): string {
   const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
   const chartLink = formatReloadsolChartLink(params.tokenAddress)
@@ -263,6 +265,10 @@ export function buildSignalsEarlyEnterAlertText(params: {
     typeof params.rationale === 'string' && params.rationale
       ? escapeTelegramHtml(params.rationale)
       : null
+  const mlLine =
+    params.pWinner != null && Number.isFinite(params.pWinner)
+      ? `Pattern ML (shadow): pW ${params.pWinner.toFixed(2)} → ${params.predicted ?? '—'}`
+      : 'Pattern ML (shadow): n/a'
 
   return [
     `🟡 <b>Early Signals Enter — copy trade</b>`,
@@ -271,6 +277,7 @@ export function buildSignalsEarlyEnterAlertText(params: {
     `Growth: <b>${growth}</b> (before 100%)`,
     `Score: ${params.score.toFixed(0)}`,
     `Live mcap: ${formatMcapUsd(params.entryMcap)}`,
+    mlLine,
     rationale ? `Rationale: ${rationale}` : null,
     entryAt ? `Seen at: ${entryAt}` : null,
     '',
@@ -289,6 +296,8 @@ export async function sendSignalsEarlyEnterAlert(params: {
   score: number
   rationale?: string | null
   entryAt?: string | null
+  pWinner?: number | null
+  predicted?: 'winner' | 'loser' | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 

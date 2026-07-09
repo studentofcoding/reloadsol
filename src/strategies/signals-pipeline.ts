@@ -21,6 +21,9 @@ export type ScoredSignal = SignalScoringItem & {
   rationale: string
   socialBoost?: number
   socialNotes?: string[]
+  /** Pattern ML shadow (Stage-1 display); never gates decision */
+  ml_pattern_p_winner?: number | null
+  ml_pattern_predicted?: 'winner' | 'loser' | null
 }
 
 type McapTrackingRow = {

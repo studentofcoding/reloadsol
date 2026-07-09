@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  attachPatternShadowToAlert,
   buildSignalsEarlyToast,
   drainSignalsEarlyAlerts,
   emitSignalsEarlyAlertsFromScored,
@@ -103,7 +104,22 @@ describe('signals-early-alerts', () => {
     expect(recorded.map((a) => a.tokenAddress).sort()).toEqual(['A', 'D'])
   })
 
-  it('builds toast with growth and score', () => {
+  it('still records when Pattern ML predicts loser (shadow never gates)', () => {
+    const recorded = emitSignalsEarlyAlertsFromScored([
+      scored({
+        token_address: 'LoserMint',
+        decision: 'enter',
+        mcap_growth_percent: 40,
+        ml_pattern_p_winner: 0.12,
+        ml_pattern_predicted: 'loser',
+      }),
+    ])
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0].pWinner).toBe(0.12)
+    expect(recorded[0].predicted).toBe('loser')
+  })
+
+  it('builds toast with growth, score, and ML shadow snippet', () => {
     const toast = buildSignalsEarlyToast({
       tokenAddress: 'Mint1',
       tokenSymbol: 'FOO',
@@ -114,10 +130,35 @@ describe('signals-early-alerts', () => {
       entryAt: '2026-07-09T00:00:00.000Z',
       recordedAt: Date.now(),
       delivered: false,
+      mlShadow: true,
+      pWinner: 0.42,
+      predicted: 'loser',
+      mlReason: null,
     })
     expect(toast.message).toContain('FOO')
     expect(toast.message).toContain('+42.5%')
     expect(toast.message).toContain('$85.0K')
     expect(toast.message).toContain('62')
+    expect(toast.message).toContain('ML pW 0.42 → loser')
+    expect(toast.items?.[0]?.pWinner).toBe(0.42)
+    expect(toast.items?.[0]?.predicted).toBe('loser')
+  })
+
+  it('attachPatternShadowToAlert mutates alert for Telegram path', () => {
+    const alert = recordSignalsEarlyAlert({
+      tokenAddress: 'MintAttach',
+      tokenSymbol: 'ATT',
+      entryMcap: 50_000,
+      growthPercent: 30,
+      score: 55,
+    })
+    expect(alert).not.toBeNull()
+    attachPatternShadowToAlert(alert!, {
+      pWinner: 0.71,
+      predicted: 'winner',
+      reason: null,
+    })
+    expect(alert!.pWinner).toBe(0.71)
+    expect(alert!.predicted).toBe('winner')
   })
 })

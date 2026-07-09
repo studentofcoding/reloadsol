@@ -161,6 +161,19 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                         {badge}
                       </span>
                     )}
+                    {toast.category === "signals_enter" && (
+                      <span className="rounded bg-black/25 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide opacity-80">
+                        shadow
+                      </span>
+                    )}
+                    {toast.category === "signals_enter" &&
+                      item.pWinner != null &&
+                      Number.isFinite(item.pWinner) && (
+                        <span className="text-[10px] opacity-80">
+                          pW {item.pWinner.toFixed(2)}
+                          {item.predicted ? ` ${item.predicted}` : ""}
+                        </span>
+                      )}
                     {entryMcapLabel && (
                       <span className="text-[10px] opacity-75">
                         Entry {entryMcapLabel}

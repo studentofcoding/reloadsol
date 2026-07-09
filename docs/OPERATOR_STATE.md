@@ -45,6 +45,7 @@ From `ml/artifacts/pattern-gate/model.meta.json` (330 train / 66 test):
 - Fired from `GET /api/trading/signals` when `decision=enter` and growth &lt; 100% (not stuck / not `rugged`).
 - Telegram: `sendSignalsEarlyEnterAlert`. Toast category `signals_enter` (**Early Enter**).
 - Dedup: one per mint per 24h (`signals_enter:{mint}`).
+- **Pattern ML shadow (display only):** scores `p_winner` / `predicted` on Stage-1 candidates (5m cache). Shown on Telegram, toast, and Signals **ML** column. Does **not** block alerts — stay shadow until `pattern_ready`.
 
 **Stage 2 — Mcap Sim Open** (confirm after paper open):
 
@@ -107,6 +108,7 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 | Date | Change |
 |------|--------|
+| 2026-07-09 | Stage-1 Pattern ML shadow score on Early Enter (Telegram/toast/Signals ML column; never gates) |
 | 2026-07-09 | Two-stage alerts (Early Enter + Sim Open); drop -40/-80 + peak profit milestones; auto rugged/potential labels |
 | 2026-07-09 | Global sim-open toasts; at_80 skips stale milestones + uses live entry mcap when late; predictive ML UI toasts removed |
 | 2026-07-05 | Pattern ML pipeline: 24h cohort export/train, shadow scorer on mcap sim-track, UI feedback columns; Supabase cut off, reloadsol_db only |

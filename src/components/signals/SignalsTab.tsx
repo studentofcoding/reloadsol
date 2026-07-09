@@ -78,6 +78,21 @@ const labelBadge = (label?: string | null) => {
   return null;
 };
 
+const mlShadowFmt = (
+  pWinner?: number | null,
+  predicted?: "winner" | "loser" | null,
+) => {
+  if (pWinner == null || !Number.isFinite(pWinner)) {
+    return <span className="text-gray-400">—</span>;
+  }
+  return (
+    <span className="text-xs text-gray-600" title="Pattern ML shadow (display only)">
+      {pWinner.toFixed(2)} {predicted ?? ""}
+      <span className="ml-1 text-[10px] uppercase opacity-60">shadow</span>
+    </span>
+  );
+};
+
 function loadChartsFromStorage(): FloatingChart[] {
   try {
     const saved = localStorage.getItem("tradingSignals_floatingCharts");
@@ -813,6 +828,7 @@ export default function SignalsTab() {
                     <th className="border-b p-2">Address</th>
                     <th className="border-b p-2">Growth %</th>
                     <th className="border-b p-2">Score</th>
+                    <th className="border-b p-2">ML</th>
                     <th className="border-b p-2">Decision</th>
                     <th className="border-b p-2">Rationale</th>
                     <th className="border-b p-2">First Seen</th>
@@ -830,7 +846,7 @@ export default function SignalsTab() {
                 <tbody>
                   {signals.length === 0 && !loading ? (
                     <tr>
-                      <td className="p-4 text-center text-sm" colSpan={16}>
+                      <td className="p-4 text-center text-sm" colSpan={17}>
                         No signals
                       </td>
                     </tr>
@@ -876,6 +892,12 @@ export default function SignalsTab() {
                           {percentFmt(s.mcap_growth_percent)}
                         </td>
                         <td className="border-b p-2">{numberFmt(s.score)}</td>
+                        <td className="border-b p-2">
+                          {mlShadowFmt(
+                            s.ml_pattern_p_winner,
+                            s.ml_pattern_predicted,
+                          )}
+                        </td>
                         <td className="border-b p-2">
                           {decisionBadge(s.decision)}
                         </td>

@@ -31,6 +31,7 @@ Separate from ML gating — notifications for **manual copy trading**.
 
 - **Pattern ML** (`ML_PATTERN_MODE=shadow` default) scores candidates on sim-track entry; it does **not** drive UI toasts.
 - **Stage 1 — Early Enter:** when Signals scores `enter` and growth &lt; 100% (`signals-early-alerts` + `sendSignalsEarlyEnterAlert`). Earliest actionable alert; does **not** open a sim position.
+- **Stage 1 Pattern ML shadow:** same request scores Pattern ML (`p_winner`) for display on Telegram / toast / Signals **ML** column. **Never gates** Stage-1 until `pattern_ready` + explicit enforce wiring.
 - **Stage 2 — Sim open:** when `mcap_enter_first_seen` / `mcap_enter_at_80` paper-open succeeds (`mcap-sim-open-alerts` + `sendMcapSimManualTradeAlert`). Confirm after gates.
 - **Layer 2 sim-outcome ML gate** = entry filter (reject bad candidates). Alerts = operator notification only (not auto-buy).
 - UI: app-wide toast host polls `GET /api/mcap-tracking/sim-open-alerts` every 15s; top-right with Buy. Telegram when `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID` are set.

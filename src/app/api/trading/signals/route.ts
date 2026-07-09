@@ -1,10 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { log } from '@/utils/unified-logger'
-import { fetchAndScoreSignals } from '@/strategies/signals-pipeline'
-import { emitSignalsEarlyAlertsFromScored } from '@/strategies/signals-early-alerts'
+import { fetchAndScoreSignals, type ScoredSignal } from '@/strategies/signals-pipeline'
+import {
+  attachPatternShadowToAlert,
+  emitSignalsEarlyAlertsFromScored,
+  shouldEmitSignalsEarlyAlert,
+} from '@/strategies/signals-early-alerts'
+import {
+  getCachedStage1PatternScore,
+  scoreStage1PatternBatch,
+} from '@/strategies/signals-early-pattern-cache'
 import type { SignalsStrategyConfig } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
+
+async function enrichSignalsWithPatternShadow(
+  signals: ScoredSignal[],
+): Promise<ScoredSignal[]> {
+  const enterAddrs = signals
+    .filter((s) => shouldEmitSignalsEarlyAlert(s))
+    .map((s) => s.token_address)
+  if (enterAddrs.length === 0) return signals
+
+  const scores = await scoreStage1PatternBatch(enterAddrs, 5)
+  return signals.map((s) => {
+    const shadow = scores.get(s.token_address)
+    if (!shadow) return s
+    return {
+      ...s,
+      ml_pattern_p_winner: shadow.pWinner,
+      ml_pattern_predicted: shadow.predicted,
+    }
+  })
+}
 
 export async function GET(request: NextRequest) {
   const startedAt = Date.now()
@@ -46,13 +74,25 @@ export async function GET(request: NextRequest) {
       execution: { simBuySol: 0.01, maxOpenPositions: 10 },
     }
 
-    const signals = await fetchAndScoreSignals(strategyConfig)
+    const rawSignals = await fetchAndScoreSignals(strategyConfig)
+
+    // Pattern ML shadow on Stage-1 candidates (display only; never gates enter)
+    const signals = await enrichSignalsWithPatternShadow(rawSignals)
 
     // Stage-1 copy-trade alerts: enter + growth < 100% (24h dedup; safe on UI + worker polls)
     const earlyAlerts = emitSignalsEarlyAlertsFromScored(signals)
     if (earlyAlerts.length > 0) {
       const { sendSignalsEarlyEnterAlert } = await import('@/utils/telegram')
       for (const alert of earlyAlerts) {
+        // Ensure shadow is attached (cache hit if enrich already scored)
+        if (alert.pWinner == null) {
+          const shadow = await getCachedStage1PatternScore(alert.tokenAddress)
+          attachPatternShadowToAlert(alert, {
+            pWinner: shadow.pWinner,
+            predicted: shadow.predicted,
+            reason: shadow.reason,
+          })
+        }
         void sendSignalsEarlyEnterAlert({
           tokenSymbol: alert.tokenSymbol,
           tokenAddress: alert.tokenAddress,
@@ -61,6 +101,8 @@ export async function GET(request: NextRequest) {
           score: alert.score,
           rationale: alert.rationale,
           entryAt: alert.entryAt,
+          pWinner: alert.pWinner,
+          predicted: alert.predicted,
         })
       }
     }

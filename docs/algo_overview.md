@@ -91,7 +91,7 @@ Each subsection: **Capture** (what triggers entry) → **Calculate** (filters/sc
 - **Result:** SL -50%, TP 200%, max hold 96h, sim buy 0.01 SOL → `recordMcapTrackerOutcome`. Sim wallet: `mcap-tracker-sim`.
 - **Pattern ML hook:** shadow scores `ml_pattern_p_winner`, `ml_pattern_predicted` on entry (`entry-pattern-scorer`).
 - **Manual copy-trade alert (Stage 2):** on sim open → Telegram (`sendMcapSimManualTradeAlert`) + UI toast (poll `GET /api/mcap-tracking/sim-open-alerts`). Deduped 24h per strategy+mint.
-- **Early alert (Stage 1):** Signals `enter` + growth &lt;100% → `sendSignalsEarlyEnterAlert` + Early Enter toast (independent of sim open).
+- **Early alert (Stage 1):** Signals `enter` + growth &lt;100% → `sendSignalsEarlyEnterAlert` + Early Enter toast (independent of sim open). Pattern ML shadow (`p_winner`) attached for display only.
 
 ### `mcap_enter_at_80` (mcap_tracker — primary thesis)
 
