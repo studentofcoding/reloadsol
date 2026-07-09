@@ -4,9 +4,22 @@ Living notes for regime awareness and rule changes. Production DB: Docker Postgr
 
 Update after significant sim batches or when disabling a strategy.
 
-## Engine spine (Phase A)
+## Engine spine (Phase A + B)
 
-Canonical params/features + ML1/ML2/Pattern **shadow** on mcap, signals, and trending opens (`attachMlEntryShadow`). DLMM mint-keyed when resolvable. No live TP/SL rewrite yet — see [reloadsol_engine_strategies_and_ml.md](./reloadsol_engine_strategies_and_ml.md).
+Canonical params/features + ML1/ML2/Pattern **shadow** on mcap, signals, and trending opens (`attachMlEntryShadow`). DLMM mint-keyed when resolvable.
+
+**Phase B — Potential → TP/SL:** `ML_POTENTIAL_EXIT_MODE=shadow|apply|off` (default **shadow**). Sim mcap/trending can persist `effective_exit` when `apply`; live never. See [reloadsol_engine_strategies_and_ml.md](./reloadsol_engine_strategies_and_ml.md).
+
+### Server checklist (after deploying Phase B)
+
+1. `git pull` → `npm run docker:deploy:web` (cron unchanged unless Go touched)
+2. `.env`: `ML_POTENTIAL_ARTIFACT_DIR=/app/ml/artifacts/v2-potential`, volume `./ml/artifacts:/app/ml/artifacts:ro`, **`ML_POTENTIAL_EXIT_MODE=shadow`** first
+3. Restart web after new potential ONNX: `docker restart reloadsol-web` (no hot-reload for potential)
+4. Workers ok: `mcap_tracker_sim_track`, `trending_tracker` on cron `:8080`
+5. Smoke: trigger mcap sim-track; open buy `entry_features` has `ml_potential_*` + `ml_exit_*`; with `apply`, confirm `effective_exit` and closes use it
+6. Optional retrain: `npm run ml:export` → `ml:train-potential` on host → restart web
+7. Keep `ML_GATE_MODE` / `ML_PATTERN_MODE` at **shadow** until `*_ready`
+8. Only flip `ML_POTENTIAL_EXIT_MODE=apply` after reviewing `[ml-potential-exit:counterfactual]` logs
 
 ## Pattern ML (primary focus — 24h mcap + social cohorts)
 

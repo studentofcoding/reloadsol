@@ -204,7 +204,7 @@ Shadow hook is live in `mcap-tracking/sim-track` (scores every open candidate).
 1. Set `ML_GATE_MODE=enforce` only after `metrics.gate_ready === true` and 200+ labeled closes reviewed
 2. Skip when `ml_gate_p_bad > ML_GATE_P_BAD_MAX` (default 0.5) — skip reason `ml_gate_reject`
 3. Counterfactual log: `[ml-gate:counterfactual]` on rejected-would-be trades
-4. Potential model remains advisory only
+4. Potential model: advisory by default (`ML_POTENTIAL_EXIT_MODE=shadow`); sim TP/SL overlay via [`potential-exit-overlay.ts`](../src/strategies/potential-exit-overlay.ts) when `apply` — see [reloadsol_engine_strategies_and_ml.md](./reloadsol_engine_strategies_and_ml.md)
 
 ---
 

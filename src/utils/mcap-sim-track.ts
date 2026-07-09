@@ -3,6 +3,12 @@ import { isInTrackingRange, type McapSnapshot } from '@/utils/mcap-tracker'
 import { computeOpenTradeCycle } from '@/utils/simulation-trades'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 
+export type McapEffectiveExit = {
+  stopLossPct: number
+  takeProfitPct: number
+  maxHoldHours: number
+}
+
 export type McapSimOpenPosition = {
   mintAddress: string
   symbol: string
@@ -10,6 +16,28 @@ export type McapSimOpenPosition = {
   entryMcap: number
   entryTemplate: 'first_seen' | 'milestone_80'
   entryFeatures: Record<string, unknown>
+  /** Present when ML_POTENTIAL_EXIT_MODE=apply persisted overlay at open */
+  effectiveExit: McapEffectiveExit | null
+}
+
+function readEffectiveExit(sim: Record<string, unknown>): McapEffectiveExit | null {
+  const raw = sim.effective_exit
+  if (!raw || typeof raw !== 'object') return null
+  const e = raw as Record<string, unknown>
+  const stopLossPct =
+    typeof e.stopLossPct === 'number' && Number.isFinite(e.stopLossPct)
+      ? e.stopLossPct
+      : null
+  const takeProfitPct =
+    typeof e.takeProfitPct === 'number' && Number.isFinite(e.takeProfitPct)
+      ? e.takeProfitPct
+      : null
+  const maxHoldHours =
+    typeof e.maxHoldHours === 'number' && Number.isFinite(e.maxHoldHours)
+      ? e.maxHoldHours
+      : null
+  if (stopLossPct == null || takeProfitPct == null || maxHoldHours == null) return null
+  return { stopLossPct, takeProfitPct, maxHoldHours }
 }
 
 function readEntryMcap(features: Record<string, unknown>): number {
@@ -59,6 +87,7 @@ export function getOpenMcapPositions(
         entryMcap: readEntryMcap(entryFeatures),
         entryTemplate: readEntryTemplate(entryFeatures),
         entryFeatures,
+        effectiveExit: readEffectiveExit(sim),
       })
     }
   }

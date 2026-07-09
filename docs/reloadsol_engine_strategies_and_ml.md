@@ -83,7 +83,7 @@ Mcap milestones (tracking truth): `when_reach_80/120/200pct`, `when_drop_40/80pc
 | Head | Check (today) | Adjust (today) | Gap |
 |------|---------------|----------------|-----|
 | **ML1 Filter** | Shared [`attachMlEntryShadow`](../src/strategies/ml-entry-shadow.ts) on **mcap / signals / trending** opens (`ml_gate_*` + Pattern `ml_pattern_*`); Stage-1 displays Pattern shadow | Enforce can **skip** mcap sim open when `gate_ready` + `ML_GATE_MODE=enforce` | Enforce not on signals/trending; Pattern `pattern_ready: false`; Stage-1 never blocks; DLMM skips ONNX until mint+core features (`ml_skipped`) |
-| **ML2 Potential** | Same helper stamps `ml_potential_*` on mcap / signals / trending opens; Pattern `p_winner`; peak / 24h cohort | **Does not** rewrite TP/SL — fixed registry exits | Need `potential → exit params` overlay (Phase B) |
+| **ML2 Potential** | Same helper stamps `ml_potential_*` on opens; [`applyPotentialToExitParams`](../src/strategies/potential-exit-overlay.ts) + `ML_POTENTIAL_EXIT_MODE` | **shadow** (default): audit `ml_exit_*` + counterfactual log; **apply**: sim mcap/trending freeze `effective_exit` / sim TP-SL | Live TP/SL still registry; signals scoring exits not rewritten |
 | **ML3 DLMM bins** | Rules + [`reasoner.ts`](../src/utils/dlmm/reasoner.ts); fixed `bin_range_interval`; outcomes mint-keyed when resolvable (`token_address=mint`, `features.pool_address`) | Manual / rule bin width | No trained bin model yet |
 
 **Artifacts**
@@ -179,7 +179,7 @@ Richest path: **mcap_tracker** sim open (shared helper + optional enforce). Sign
 | Phase | Scope |
 |-------|--------|
 | **A — Normalize** | Canonical params + features; DLMM mint/pool; ML extractors via aliases; docs (this file) |
-| **B — ML2 adjust** | Potential → TP/SL overlay on sim strategies |
+| **B — ML2 adjust** | Potential → TP/SL overlay on sim strategies (`ML_POTENTIAL_EXIT_MODE`; default shadow) — **done** |
 | **C — ML1 broaden** | Enforce filter on more domains when `gate_ready` / `pattern_ready` |
 | **D — ML3** | Train bin/position model on mint-keyed DLMM outcomes |
 
@@ -211,6 +211,7 @@ Richest path: **mcap_tracker** sim open (shared helper + optional enforce). Sign
 | Registry / types | `src/strategies/registry.ts`, `types.ts` |
 | Canonical params / features | `src/strategies/canonical-params.ts`, `canonical-features.ts` |
 | Shared open-path ML shadow | `src/strategies/ml-entry-shadow.ts` |
+| ML2 exit overlay | `src/strategies/potential-exit-overlay.ts` |
 | Outcomes | `src/strategies/outcomes.ts`, `db.ts` |
 | Entry snapshot | `src/strategies/entry-feature-snapshot.ts`, `resolve-entry-snapshot.ts` |
 | Gate / potential scorer | `src/strategies/entry-ml-scorer.server.ts` |

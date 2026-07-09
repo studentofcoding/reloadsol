@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Phase B: ML2 Potential → TP/SL overlay (sim)
+
+- **`applyPotentialToExitParams`** ([`potential-exit-overlay.ts`](src/strategies/potential-exit-overlay.ts)) maps `ml_potential_tier` / moonScore / Pattern `pWinner` → exit TP/SL/hold.
+- Env **`ML_POTENTIAL_EXIT_MODE`**: `shadow` (default) | `apply` | `off`. Shadow stamps `ml_exit_*` audit + counterfactual logs; **apply** persists `trading_simulation.effective_exit` for mcap/trending **sim** closes only.
+- **mcap** sim close prefers frozen `effective_exit`; live always uses registry. **Trending** sim freezes adjusted TP/SL on the simulation object; live `addSLTPPosition` unchanged. **Signals**: audit stamp only (scoring exits unchanged).
+
 ### Added — Engine spine: canonical params/features + ML shadow on all memecoin opens
 
 - **`StrategyParameterSet`** adapters for trending / signals / mcap / DLMM; `canonical` on `GET /api/strategies`.

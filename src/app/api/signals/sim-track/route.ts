@@ -297,13 +297,26 @@ export async function POST(request: NextRequest) {
         const { attachMlEntryShadow } = await import('@/strategies/ml-entry-shadow')
         const ml = await attachMlEntryShadow(annotated, { enforce: false })
 
+        // Phase B: stamp exit-overlay audit only — signals exits stay scoring-driven
+        const { signalsToCanonical } = await import('@/strategies/canonical-params')
+        const { resolveExitOverlayForOpen } = await import(
+          '@/strategies/potential-exit-overlay'
+        )
+        const overlayResult = resolveExitOverlayForOpen({
+          baseExit: signalsToCanonical(strategy).exit,
+          features: ml.features,
+          mintAddress: signal.token_address,
+          strategyId: strategy.id,
+          persistEffectiveExit: false,
+        })
+
         await openSignalsSimPosition({
           strategyId: strategy.id,
           mintAddress: signal.token_address,
           symbol,
           solAmount: strategy.config.execution.simBuySol,
           priceUsd,
-          entryFeatures: ml.features,
+          entryFeatures: overlayResult.features,
         })
         opened++
         openMintSet.add(signal.token_address)

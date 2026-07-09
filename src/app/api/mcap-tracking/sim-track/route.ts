@@ -12,6 +12,9 @@ import { getPatternPWinnerMin } from '@/strategies/entry-pattern-scorer'
 import { logMlGateCounterfactual } from '@/strategies/ml-shadow-log'
 import { logPatternGateCounterfactual } from '@/strategies/pattern-shadow-log'
 import { attachMlEntryShadow } from '@/strategies/ml-entry-shadow'
+import { mcapTrackerToCanonical } from '@/strategies/canonical-params'
+import { resolveExitOverlayForOpen } from '@/strategies/potential-exit-overlay'
+import type { McapTrackerStrategy } from '@/strategies/types'
 import {
   annotateEntryFeatures,
   evaluateSocialGateFromContext,
@@ -95,6 +98,7 @@ async function openSimPosition(params: {
   snapshot: McapSnapshot
   socialCtx?: SocialContext | null
   scoredEntryFeatures?: Record<string, unknown> | null
+  strategy: McapTrackerStrategy
 }): Promise<void> {
   const solPrice = await getSolPriceUSD()
   const priceUsd = 0.000001
@@ -146,6 +150,16 @@ async function openSimPosition(params: {
     scoredEntryFeatures = ml.features
   }
 
+  const baseExit = mcapTrackerToCanonical(params.strategy).exit
+  const overlayResult = resolveExitOverlayForOpen({
+    baseExit,
+    features: scoredEntryFeatures,
+    mintAddress: params.mintAddress,
+    strategyId: params.strategyId,
+    persistEffectiveExit: true,
+  })
+  scoredEntryFeatures = overlayResult.features
+
   const record = buildTradingRecord({
     walletAddress: MCAP_TRACKER_SIM_WALLET,
     operationType: 'buy',
@@ -175,6 +189,9 @@ async function openSimPosition(params: {
       strategy_id: params.strategyId,
       entry_at: params.entryAt,
       entry_features: scoredEntryFeatures,
+      ...(overlayResult.effectiveExit
+        ? { effective_exit: overlayResult.effectiveExit }
+        : {}),
     },
   })
 
@@ -334,6 +351,7 @@ async function openLivePosition(params: {
   entryAt: string
   snapshot: McapSnapshot
   scoredEntryFeatures?: Record<string, unknown> | null
+  strategy: McapTrackerStrategy
 }): Promise<void> {
   const buy = await executeMcapRaptorBuy(
     params.mintAddress,
@@ -348,8 +366,18 @@ async function openLivePosition(params: {
       ? (params.solAmount * solPrice) / buy.tokenAmountUi
       : 0.000001
 
+  // Live: stamp overlay audit only — never persist effective_exit
+  const baseExit = mcapTrackerToCanonical(params.strategy).exit
+  const overlayResult = resolveExitOverlayForOpen({
+    baseExit,
+    features: params.scoredEntryFeatures ?? {},
+    mintAddress: params.mintAddress,
+    strategyId: params.strategyId,
+    persistEffectiveExit: false,
+  })
+
   const scoredEntryFeatures = {
-    ...(params.scoredEntryFeatures ?? {}),
+    ...overlayResult.features,
     [RAPTOR_OUTPUT_AMOUNT_RAW_KEY]: buy.outputAmountRaw,
     raptor_buy_signature: buy.signature,
   }
@@ -591,11 +619,17 @@ export async function POST(request: NextRequest) {
           marketCap: snapshot.current_mcap,
         })
 
-        const closeReason = getMcapSimCloseReason(snapshot, {
-          stopLossPct: strategy.config.exit.stopLossPct,
-          takeProfitPct: strategy.config.exit.takeProfitPct,
-          maxHoldHours: strategy.config.exit.maxHoldHours,
-        })
+        // Sim: prefer frozen effective_exit from open when apply mode persisted it.
+        // Live: always registry exit (ignore effective_exit).
+        const exitForClose =
+          execMode.isSimulated && pos.effectiveExit
+            ? pos.effectiveExit
+            : {
+                stopLossPct: strategy.config.exit.stopLossPct,
+                takeProfitPct: strategy.config.exit.takeProfitPct,
+                maxHoldHours: strategy.config.exit.maxHoldHours,
+              }
+        const closeReason = getMcapSimCloseReason(snapshot, exitForClose)
         if (!closeReason) continue
 
         const enrichedSnapshot = {
@@ -792,6 +826,7 @@ export async function POST(request: NextRequest) {
               entryAt: entry.entryAt,
               snapshot,
               scoredEntryFeatures,
+              strategy,
             })
           } catch (openError) {
             skipped.push(
@@ -813,6 +848,7 @@ export async function POST(request: NextRequest) {
             snapshot,
             socialCtx,
             scoredEntryFeatures,
+            strategy,
           })
         }
 

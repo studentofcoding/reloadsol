@@ -91,13 +91,65 @@ async function attachBuyEntryFeatures(
     skipJupiter:
       token.organic_score != null && token.top_holders_pct != null,
   })
+
+  let features = entryFeatures
   try {
     const { attachMlEntryShadow } = await import('@/strategies/ml-entry-shadow')
     const ml = await attachMlEntryShadow(entryFeatures, { enforce: false })
-    ;(simulation as unknown as Record<string, unknown>).entry_features = ml.features
+    features = ml.features
   } catch {
-    ;(simulation as unknown as Record<string, unknown>).entry_features = entryFeatures
+    /* keep base features */
   }
+
+  // ML2 exit overlay: audit always; apply TP/SL only for sim (never live SL/TP tracker)
+  try {
+    const { trendingBotToCanonical } = await import('@/strategies/canonical-params')
+    const { resolveExitOverlayForOpen } = await import(
+      '@/strategies/potential-exit-overlay'
+    )
+    const simRec = simulation as unknown as Record<string, unknown>
+    const strategyId =
+      typeof simRec.strategy_id === 'string'
+        ? simRec.strategy_id
+        : getCurrentBotStrategySync()
+    const strategy = resolveTradingStrategy(strategyId)
+    const canonical = trendingBotToCanonical(strategy)
+    const overlayResult = resolveExitOverlayForOpen({
+      baseExit: canonical.exit,
+      features,
+      mintAddress: token.token_address,
+      strategyId: strategy.id,
+      persistEffectiveExit: simulation.is_simulated === true,
+    })
+    features = overlayResult.features
+
+    if (overlayResult.effectiveExit && simulation.is_simulated) {
+      const exit = overlayResult.overlay.effective
+      const ladder = exit.takeProfitLadder
+      const tp1 = exit.takeProfitPct
+      const baseTp1 = simulation.take_profit_levels.tp1_percentage
+      const tp2 =
+        ladder && ladder.length > 1
+          ? ladder[1]
+          : simulation.take_profit_levels.tp2_percentage *
+            (tp1 / Math.max(baseTp1, 1))
+      simulation.stop_loss_percentage = exit.stopLossPct
+      simulation.max_hold_hours = exit.maxHoldHours
+      simulation.take_profit_levels = {
+        ...simulation.take_profit_levels,
+        tp1_percentage: tp1,
+        tp2_percentage: tp2,
+        ...(ladder && ladder.length > 2
+          ? { tp3_percentage: ladder[2] }
+          : {}),
+      }
+      simRec.effective_exit = overlayResult.effectiveExit
+    }
+  } catch {
+    /* overlay optional */
+  }
+
+  ;(simulation as unknown as Record<string, unknown>).entry_features = features
 }
 
 
