@@ -4,6 +4,7 @@ import { resolveEffectiveTrainingClass } from '@/strategies/ml-training-features
 import type { StrategyDomain, StrategyOutcomeRow } from '@/strategies/types'
 import {
   readEntryMcap,
+  readFirstSeenAt,
   readMonitorSnapshotCount,
   readOrganicScore,
   readTokenAgeHours,
@@ -70,6 +71,7 @@ function toCsv(rows: StrategyOutcomeRow[], recomputeLabels: boolean): string {
     'top_holders_pct',
     'token_age_hours',
     'volume_at_entry',
+    'first_seen_at',
     'monitor_count',
     'training_class',
     'entry_template',
@@ -105,6 +107,7 @@ function toCsv(rows: StrategyOutcomeRow[], recomputeLabels: boolean): string {
         readTopHoldersPct(r.features) ?? '',
         readTokenAgeHours(r.features) ?? '',
         readVolumeAtEntry(r.features) ?? '',
+        readFirstSeenAt(r.features) ?? '',
         readMonitorSnapshotCount(r.features),
         trainingClass ?? '',
         readFeatureString(r.features, 'entry_template'),

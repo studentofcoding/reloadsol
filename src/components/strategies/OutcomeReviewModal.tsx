@@ -15,7 +15,12 @@ import { formatAppDateTime } from "@/utils/datetime";
 import { getGmgnTokenUrl, pickGmgnIntervalForWindow } from "@/utils/gmgn";
 import {
   formatEntryMcap,
+  formatMlExitOverlaySummary,
   readEntryMcap,
+  readMlGatePBad,
+  readMlGatePredicted,
+  readMlPotentialMoonScore,
+  readMlPotentialTier,
   readTokenSymbol,
   readTrainingClass,
 } from "@/strategies/outcome-features";
@@ -369,6 +374,11 @@ export default function OutcomeReviewModal({
                 </>
               )}
             </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <OutcomeGateMlBadge features={outcome.features} />
+              <OutcomePotentialMlBadge features={outcome.features} />
+              <OutcomeExitOverlayBadge features={outcome.features} />
+            </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             {onNavigate && (
@@ -621,6 +631,72 @@ export function OutcomePatternMlBadge({
       title={`p_winner=${pWinner.toFixed(3)}`}
     >
       {label} {(pWinner * 100).toFixed(0)}%
+    </span>
+  );
+}
+
+export function OutcomeGateMlBadge({
+  features,
+}: {
+  features: Record<string, unknown> | null | undefined;
+}) {
+  const pBad = readMlGatePBad(features);
+  if (pBad == null) return <span className="text-gray-600">—</span>;
+  const predicted = readMlGatePredicted(features);
+  const reject = pBad >= 0.5;
+  const styles = reject
+    ? "bg-red-900/50 text-red-300"
+    : "bg-sky-900/50 text-sky-300";
+  return (
+    <span
+      className={`text-[10px] px-2 py-0.5 rounded ${styles}`}
+      title={`p_bad=${pBad.toFixed(3)}${predicted != null ? ` predicted=${predicted}` : ""}`}
+    >
+      gate {(pBad * 100).toFixed(0)}%
+    </span>
+  );
+}
+
+export function OutcomePotentialMlBadge({
+  features,
+}: {
+  features: Record<string, unknown> | null | undefined;
+}) {
+  const tier = readMlPotentialTier(features);
+  if (tier == null) return <span className="text-gray-600">—</span>;
+  const moon = readMlPotentialMoonScore(features);
+  return (
+    <span
+      className="text-[10px] px-2 py-0.5 rounded bg-violet-900/50 text-violet-300"
+      title={
+        moon != null
+          ? `tier=${tier} moon_score=${moon.toFixed(3)}`
+          : `tier=${tier}`
+      }
+    >
+      T{Math.round(tier)}
+      {moon != null ? ` · ${(moon * 100).toFixed(0)}%` : ""}
+    </span>
+  );
+}
+
+export function OutcomeExitOverlayBadge({
+  features,
+}: {
+  features: Record<string, unknown> | null | undefined;
+}) {
+  const summary = formatMlExitOverlaySummary(features);
+  if (!summary) return <span className="text-gray-600">—</span>;
+  const applied = features?.ml_exit_overlay_applied === true;
+  const styles = applied
+    ? "bg-amber-900/50 text-amber-200"
+    : "bg-gray-800 text-gray-300";
+  return (
+    <span
+      className={`text-[10px] px-2 py-0.5 rounded whitespace-nowrap ${styles}`}
+      title={summary}
+    >
+      {summary}
     </span>
   );
 }

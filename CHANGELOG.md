@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Strategy Admin Gate / Potential / Exit TP/SL badges + export recovery
+
+- Reports table + outcome modal show **Gate**, **Potential**, and **Exit TP/SL** badges from `ml_gate_*` / `ml_potential_*` / `ml_exit_*` (read-only).
+- CSV export + Python `canonicalize_row` accept `first_mcap` / `volume_5m` aliases and derive `token_age_hours` from `first_seen_at` + `entry_at` to recover incomplete training rows.
+- Mcap close rebuilds incomplete buy `entry_features` via `buildFullEntryFeatureSnapshot` before outcome insert.
+
 ### Added — Phase B: ML2 Potential → TP/SL overlay (sim)
 
 - **`applyPotentialToExitParams`** ([`potential-exit-overlay.ts`](src/strategies/potential-exit-overlay.ts)) maps `ml_potential_tier` / moonScore / Pattern `pWinner` → exit TP/SL/hold.

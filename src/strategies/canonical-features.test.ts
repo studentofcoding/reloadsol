@@ -39,6 +39,18 @@ describe('toCanonicalEntryFeatures', () => {
     expect((out.domain_features as Record<string, unknown>).custom_flag).toBe(true)
   })
 
+  it('derives token_age_hours when missing', () => {
+    const out = toCanonicalEntryFeatures(
+      {
+        entry_mcap: 50_000,
+        first_seen_at: '2026-01-01T00:00:00Z',
+      },
+      'mcap_tracker',
+      { entryAt: '2026-01-01T03:00:00Z' },
+    )
+    expect(out.token_age_hours).toBe(3)
+  })
+
   it('keeps ml_* at top level', () => {
     const out = toCanonicalEntryFeatures(
       { ml_gate_p_bad: 0.2, entry_mcap: 1 },

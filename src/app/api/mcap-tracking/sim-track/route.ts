@@ -14,6 +14,7 @@ import { logPatternGateCounterfactual } from '@/strategies/pattern-shadow-log'
 import { attachMlEntryShadow } from '@/strategies/ml-entry-shadow'
 import { mcapTrackerToCanonical } from '@/strategies/canonical-params'
 import { resolveExitOverlayForOpen } from '@/strategies/potential-exit-overlay'
+import { extractMlFeatureVectorV1 } from '@/strategies/ml-training-features'
 import type { McapTrackerStrategy } from '@/strategies/types'
 import {
   annotateEntryFeatures,
@@ -85,6 +86,53 @@ function getOpenPositionsForStrategy(
   isSimulated: boolean,
 ): OpenPosition[] {
   return getOpenMcapPositions(records, strategyId, isSimulated ? 'sim' : 'live')
+}
+
+/**
+ * If buy entry_features lack the five ML numerics, rebuild from entry-time snapshot
+ * inputs so outcomes remain exportable.
+ */
+async function ensureCompleteBuyFeaturesForOutcome(params: {
+  mintAddress: string
+  symbol: string
+  entryAt: string | null
+  entryMcap: number
+  entryTemplate: 'first_seen' | 'milestone_80'
+  snapshot: McapSnapshot
+  buyFeatures: Record<string, unknown> | null
+}): Promise<Record<string, unknown> | null> {
+  const buy = params.buyFeatures
+  if (buy && extractMlFeatureVectorV1(buy) != null) return buy
+
+  try {
+    const rebuilt = await buildFullEntryFeatureSnapshot(
+      params.mintAddress,
+      {
+        entryAt: params.entryAt ?? undefined,
+        firstSeenAt: params.snapshot.first_seen_at,
+        entryMcap: params.entryMcap,
+        organicScore: params.snapshot.organic_score,
+        topHoldersPct: params.snapshot.top_holders_pct,
+        volume5m: params.snapshot.volume_5m ?? null,
+        tokenSymbol: params.symbol,
+        skipJupiter:
+          params.snapshot.organic_score != null &&
+          params.snapshot.top_holders_pct != null,
+      },
+      {
+        entry_template: params.entryTemplate,
+        ...buildMcapOutcomeFeatures({
+          snapshot: params.snapshot,
+          entryTemplate: params.entryTemplate,
+          entryMcap: params.entryMcap,
+          exitMcap: params.snapshot.current_mcap,
+        }),
+      },
+    )
+    return { ...(buy ?? {}), ...rebuilt }
+  } catch {
+    return buy
+  }
 }
 
 async function openSimPosition(params: {
@@ -298,13 +346,22 @@ async function closeSimPosition(params: {
         rec.bot_strategy === params.strategyId &&
         rec.tokens?.some((t) => t.mintAddress === params.mintAddress),
     )
-  const buyFeatures =
+  const buyFeaturesRaw =
     buyRecord?.trading_simulation &&
     typeof buyRecord.trading_simulation === 'object' &&
     buyRecord.trading_simulation.entry_features &&
     typeof buyRecord.trading_simulation.entry_features === 'object'
       ? (buyRecord.trading_simulation.entry_features as Record<string, unknown>)
       : null
+  const buyFeatures = await ensureCompleteBuyFeaturesForOutcome({
+    mintAddress: params.mintAddress,
+    symbol: params.symbol,
+    entryAt: params.entryAt,
+    entryMcap: params.entryMcap,
+    entryTemplate: params.entryTemplate,
+    snapshot: params.snapshot,
+    buyFeatures: buyFeaturesRaw,
+  })
 
   const closeFeatures = buildMcapOutcomeFeatures({
     snapshot: params.snapshot,
@@ -511,6 +568,15 @@ async function closeLivePosition(params: {
   await insertTradingRecord(record)
 
   const exitMcap = params.snapshot.current_mcap
+  const completeBuyFeatures = await ensureCompleteBuyFeaturesForOutcome({
+    mintAddress: params.mintAddress,
+    symbol: params.symbol,
+    entryAt: params.entryAt,
+    entryMcap: params.entryMcap,
+    entryTemplate: params.entryTemplate,
+    snapshot: params.snapshot,
+    buyFeatures,
+  })
   const closeFeatures = buildMcapOutcomeFeatures({
     snapshot: params.snapshot,
     entryTemplate: params.entryTemplate,
@@ -519,7 +585,7 @@ async function closeLivePosition(params: {
     closeReason: params.closeReason,
   })
   const monitorSnapshots = appendMonitorSnapshot(
-    readMonitorSnapshotsFromFeatures(buyFeatures),
+    readMonitorSnapshotsFromFeatures(completeBuyFeatures),
     {
       timestamp: new Date().toISOString(),
       volume_5m: params.snapshot.volume_5m ?? null,
@@ -535,7 +601,7 @@ async function closeLivePosition(params: {
     pnlPct,
     status: pnlPct >= 0 ? 'won' : 'lost',
     isSimulated: false,
-    features: mergeEntryFeaturesForOutcome(buyFeatures, {
+    features: mergeEntryFeaturesForOutcome(completeBuyFeatures, {
       ...closeFeatures,
       monitor_snapshots: monitorSnapshots,
       raptor_sell_signature: sell.signature,

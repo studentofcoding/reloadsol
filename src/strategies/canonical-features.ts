@@ -1,4 +1,5 @@
 import type { StrategyDomain } from './types'
+import { computeTokenAgeHours } from './entry-feature-snapshot'
 
 export const FEATURE_SCHEMA_VERSION = 1 as const
 
@@ -82,6 +83,7 @@ const CORE_KEYS = new Set([
   'pool_name',
   'position_id',
   'amount_sol',
+  'first_seen_at',
 ])
 
 /**
@@ -91,7 +93,11 @@ const CORE_KEYS = new Set([
 export function toCanonicalEntryFeatures(
   raw: Record<string, unknown> | null | undefined,
   domain: StrategyDomain,
-  opts?: { mintAddress?: string | null; poolAddress?: string | null },
+  opts?: {
+    mintAddress?: string | null
+    poolAddress?: string | null
+    entryAt?: string | null
+  },
 ): Record<string, unknown> {
   const features = raw ?? {}
   const existingDomain =
@@ -144,6 +150,16 @@ export function toCanonicalEntryFeatures(
     }
   }
 
+  let tokenAgeHours = readNum(features, 'token_age_hours')
+  if (tokenAgeHours == null) {
+    const entryAt =
+      opts?.entryAt ??
+      (typeof features.entry_at === 'string' ? features.entry_at : null)
+    const firstSeen = readStr(features, 'first_seen_at')
+    tokenAgeHours = computeTokenAgeHours(entryAt, firstSeen)
+    if (tokenAgeHours != null && tokenAgeHours > 168) tokenAgeHours = 168
+  }
+
   const bag: Record<string, unknown> = { ...existingDomain }
   for (const [k, v] of Object.entries(features)) {
     if (CORE_KEYS.has(k)) continue
@@ -171,12 +187,13 @@ export function toCanonicalEntryFeatures(
     entry_mcap_band: readStr(features, 'entry_mcap_band'),
     organic_score: readNum(features, 'organic_score'),
     top_holders_pct: readNum(features, 'top_holders_pct'),
-    token_age_hours: readNum(features, 'token_age_hours'),
+    token_age_hours: tokenAgeHours,
     volume_at_entry: volumeAtEntry,
     volume_5m: volumeAtEntry,
     entry_trigger: entryTrigger,
     entry_template: readStr(features, 'entry_template') ?? entryTrigger,
     pnl_basis: readStr(features, 'pnl_basis'),
+    first_seen_at: readStr(features, 'first_seen_at'),
     // Dual-write social aliases for gate + pattern extractors
     mention_count_30m: mentionCount,
     telegram_mention_count_30m: mentionCount,

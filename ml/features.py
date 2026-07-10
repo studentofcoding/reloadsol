@@ -123,6 +123,60 @@ def _cap_age(hours: float | None) -> float | None:
     return min(hours, 168.0)
 
 
+def _derive_token_age_hours(row: dict[str, Any]) -> float | None:
+    """Mirror TS computeTokenAgeHours(entry_at, first_seen_at)."""
+    entry_raw = row.get("entry_at")
+    first_raw = row.get("first_seen_at")
+    if not entry_raw or not first_raw:
+        return None
+    try:
+        from datetime import datetime
+
+        def _parse(iso: Any) -> float | None:
+            if not isinstance(iso, str) or not iso.strip():
+                return None
+            text = iso.strip().replace("Z", "+00:00")
+            return datetime.fromisoformat(text).timestamp()
+
+        entry_ts = _parse(entry_raw)
+        first_ts = _parse(first_raw)
+        if entry_ts is None or first_ts is None:
+            return None
+        diff = entry_ts - first_ts
+        if diff < 0:
+            return 0.0
+        return round((diff / 3600.0) * 100) / 100
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def canonicalize_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Apply aliases + age derive so Python export matches TS toCanonicalEntryFeatures."""
+    out = dict(row)
+    if _read_number(out, "entry_mcap") is None:
+        first_mcap = _read_number(out, "first_mcap")
+        if first_mcap is not None:
+            out["entry_mcap"] = first_mcap
+    if _read_number(out, "volume_at_entry") is None:
+        vol5 = _read_number(out, "volume_5m")
+        if vol5 is not None:
+            out["volume_at_entry"] = vol5
+    if _read_number(out, "token_age_hours") is None:
+        derived = _derive_token_age_hours(out)
+        if derived is not None:
+            out["token_age_hours"] = derived
+    # Social aliases (Pattern / gate dual-write)
+    if _read_number(out, "telegram_mention_count_30m") is None:
+        mentions = _read_number(out, "mention_count_30m")
+        if mentions is not None:
+            out["telegram_mention_count_30m"] = mentions
+    if _read_number(out, "minutes_since_first_mention") is None:
+        mins = _read_number(out, "minutes_to_first_mention")
+        if mins is not None:
+            out["minutes_since_first_mention"] = mins
+    return out
+
+
 def _cap_minutes(minutes: float | None) -> float:
     if minutes is None or minutes < 0:
         return 0.0
@@ -151,6 +205,7 @@ def row_to_feature_vector(row: dict[str, Any]) -> dict[str, float] | None:
 
 
 def row_to_feature_vector_v1(row: dict[str, Any]) -> dict[str, float] | None:
+    row = canonicalize_row(row)
     log_mcap = _log1p(_read_number(row, "entry_mcap"))
     organic = _read_number(row, "organic_score")
     holders = _read_number(row, "top_holders_pct")

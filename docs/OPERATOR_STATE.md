@@ -21,6 +21,19 @@ Canonical params/features + ML1/ML2/Pattern **shadow** on mcap, signals, and tre
 7. Keep `ML_GATE_MODE` / `ML_PATTERN_MODE` at **shadow** until `*_ready`
 8. Only flip `ML_POTENTIAL_EXIT_MODE=apply` after reviewing `[ml-potential-exit:counterfactual]` logs
 
+### After deploy — re-export training data
+
+Export recovery (aliases + `token_age_hours` derive) is in web + `ml/features.py`. On the VPS host:
+
+```bash
+export API_BASE_URL=http://127.0.0.1 TRENDING_TRACKER_SECRET=...
+npm run ml:export
+npm run ml:check-potential
+# compare skipped_incomplete vs prior run; train only when Ready: True (≥30 gate=1)
+```
+
+Strategy Admin → Reports now shows Gate / Potential / Exit TP/SL on outcomes that stamped ML shadow fields.
+
 ## Pattern ML (primary focus — 24h mcap + social cohorts)
 
 Separate from sim-outcome gate — labels come from `mcap_social_pattern_24h` (winner ≥120% growth, loser &lt;80%).

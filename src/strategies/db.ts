@@ -486,6 +486,7 @@ export async function insertStrategyOutcome(params: {
     poolAddress:
       poolFromFeatures ??
       (params.domain === 'dlmm' && !mintFromFeatures ? params.token_address : null),
+    entryAt: params.entry_at,
   })
 
   try {

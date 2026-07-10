@@ -22,9 +22,12 @@ import {
   parseOptionalFloat,
 } from "@/components/strategies/StrategyConfigFields";
 import OutcomeReviewModal, {
+  OutcomeExitOverlayBadge,
+  OutcomeGateMlBadge,
   OutcomeMlBadge,
   OutcomeMlConditionBadge,
   OutcomePatternMlBadge,
+  OutcomePotentialMlBadge,
 } from "@/components/strategies/OutcomeReviewModal";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
 import {
@@ -1563,6 +1566,18 @@ export default function StrategyAdminHub() {
                         <th className="p-2" title="Pattern-gate shadow score at entry">
                           Pattern ML
                         </th>
+                        <th className="p-2" title="Sim-outcome gate p_bad at entry">
+                          Gate
+                        </th>
+                        <th className="p-2" title="ML2 potential tier / moon score">
+                          Potential
+                        </th>
+                        <th
+                          className="p-2"
+                          title="ML2 exit overlay base→effective TP/SL (shadow or apply)"
+                        >
+                          Exit TP/SL
+                        </th>
                         <th className="p-2" title="24h mcap growth cohort if token appears in pattern DB">
                           24h cohort
                         </th>
@@ -1656,6 +1671,15 @@ export default function StrategyAdminHub() {
                           </td>
                           <td className="p-2">
                             <OutcomePatternMlBadge features={o.features} />
+                          </td>
+                          <td className="p-2">
+                            <OutcomeGateMlBadge features={o.features} />
+                          </td>
+                          <td className="p-2">
+                            <OutcomePotentialMlBadge features={o.features} />
+                          </td>
+                          <td className="p-2">
+                            <OutcomeExitOverlayBadge features={o.features} />
                           </td>
                           <td className="p-2">
                             {o.token_address &&

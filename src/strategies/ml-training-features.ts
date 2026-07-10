@@ -195,9 +195,12 @@ export function extractMlFeatureVector(
 export function extractMlFeatureVectorV1(
   features: Record<string, unknown> | null | undefined,
   domain: StrategyDomain = 'mcap_tracker',
+  opts?: { entryAt?: string | null },
 ): Record<string, number> | null {
   if (!features) return null
-  const canon = toCanonicalEntryFeatures(features, domain)
+  const canon = toCanonicalEntryFeatures(features, domain, {
+    entryAt: opts?.entryAt,
+  })
 
   // Skip pool-only DLMM rows without mint for spot-token training
   if (canon.instrument === 'dlmm_lp' && !canon.mint_address) {
@@ -239,10 +242,13 @@ export function extractMlFeatureVectorV1(
 export function extractMlFeatureVectorV2(
   features: Record<string, unknown> | null | undefined,
   domain: StrategyDomain = 'mcap_tracker',
+  opts?: { entryAt?: string | null },
 ): Record<string, number> | null {
   if (!features) return null
-  const canon = toCanonicalEntryFeatures(features, domain)
-  const base = extractMlFeatureVectorV1(canon, domain)
+  const canon = toCanonicalEntryFeatures(features, domain, {
+    entryAt: opts?.entryAt,
+  })
+  const base = extractMlFeatureVectorV1(canon, domain, opts)
   if (!base) return null
   return {
     ...base,
@@ -258,7 +264,9 @@ export function extractMlTrainingRowV2(
   if (!isLabeledTrainingClass(trainingClass)) return null
   if (!row.entry_at) return null
 
-  const features = extractMlFeatureVectorV2(row.features, row.domain)
+  const features = extractMlFeatureVectorV2(row.features, row.domain, {
+    entryAt: row.entry_at,
+  })
   if (!features) return null
 
   return {
@@ -279,7 +287,9 @@ export function extractMlTrainingRow(
   if (!isLabeledTrainingClass(trainingClass)) return null
   if (!row.entry_at) return null
 
-  const features = extractMlFeatureVectorV1(row.features, row.domain)
+  const features = extractMlFeatureVectorV1(row.features, row.domain, {
+    entryAt: row.entry_at,
+  })
   if (!features) return null
 
   return {

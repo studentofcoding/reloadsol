@@ -33,7 +33,7 @@ export function formatEntryMcap(mcap: number | null | undefined): string {
 }
 
 export function readEntryMcap(features: Record<string, unknown> | null | undefined): number | null {
-  const v = features?.entry_mcap ?? features?.entry_market_cap
+  const v = features?.entry_mcap ?? features?.entry_market_cap ?? features?.first_mcap
   if (typeof v === 'number' && Number.isFinite(v)) return v
   if (typeof v === 'string') {
     const n = Number(v)
@@ -94,7 +94,18 @@ export function readTokenAgeHours(
 export function readVolumeAtEntry(
   features: Record<string, unknown> | null | undefined,
 ): number | null {
-  return readFeatureNumber(features, 'volume_at_entry')
+  return (
+    readFeatureNumber(features, 'volume_at_entry') ??
+    readFeatureNumber(features, 'volume_5m')
+  )
+}
+
+export function readFirstSeenAt(
+  features: Record<string, unknown> | null | undefined,
+): string | null {
+  const v = features?.first_seen_at
+  if (typeof v === 'string' && v.trim()) return v.trim()
+  return null
 }
 
 export function readTrainingClass(
@@ -134,4 +145,94 @@ export function readMlPatternPredicted(
   const v = features?.ml_pattern_predicted
   if (v === 'winner' || v === 'loser') return v
   return null
+}
+
+export function readMlGatePBad(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_gate_p_bad')
+}
+
+export function readMlGatePredicted(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_gate_predicted')
+}
+
+export function readMlPotentialTier(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_potential_tier')
+}
+
+export function readMlPotentialMoonScore(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_potential_moon_score')
+}
+
+export function readMlExitBaseTp(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_exit_base_take_profit_pct')
+}
+
+export function readMlExitBaseSl(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_exit_base_stop_loss_pct')
+}
+
+export function readMlExitBaseHold(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_exit_base_max_hold_hours')
+}
+
+export function readMlExitEffectiveTp(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_exit_effective_take_profit_pct')
+}
+
+export function readMlExitEffectiveSl(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_exit_effective_stop_loss_pct')
+}
+
+export function readMlExitEffectiveHold(
+  features: Record<string, unknown> | null | undefined,
+): number | null {
+  return readFeatureNumber(features, 'ml_exit_effective_max_hold_hours')
+}
+
+export function readMlExitOverlayMode(
+  features: Record<string, unknown> | null | undefined,
+): 'off' | 'shadow' | 'apply' | null {
+  const v = features?.ml_exit_overlay_mode
+  if (v === 'off' || v === 'shadow' || v === 'apply') return v
+  return null
+}
+
+export function readMlExitOverlayApplied(
+  features: Record<string, unknown> | null | undefined,
+): boolean {
+  return features?.ml_exit_overlay_applied === true
+}
+
+/** Compact TP/SL overlay summary for badges (null when no overlay stamped). */
+export function formatMlExitOverlaySummary(
+  features: Record<string, unknown> | null | undefined,
+): string | null {
+  const baseTp = readMlExitBaseTp(features)
+  const effTp = readMlExitEffectiveTp(features)
+  const baseSl = readMlExitBaseSl(features)
+  const effSl = readMlExitEffectiveSl(features)
+  if (baseTp == null || effTp == null || baseSl == null || effSl == null) return null
+  const mode = readMlExitOverlayMode(features)
+  const applied = readMlExitOverlayApplied(features)
+  const suffix =
+    applied && mode === 'apply' ? ' apply' : mode === 'shadow' ? ' shadow' : mode ? ` ${mode}` : ''
+  return `TP ${baseTp}→${effTp} · SL ${baseSl}→${effSl}${suffix}`
 }
