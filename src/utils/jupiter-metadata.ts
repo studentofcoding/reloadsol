@@ -135,19 +135,36 @@ export async function fetchTokenMetadataFromJupiter(mintAddress: string, retryCo
 // Export the batch fetching function as well for use in route handlers
 export { fetchTokensFromJupiterV2 }
 
+export type JupiterVolumeWindow = '5m' | '1h' | '6h' | '24h'
+
 export type JupiterMarketHints = {
   usdPrice: number | null
   volume5m: number | null
   mcap: number | null
+  /** Which Jupiter stats window supplied volume5m (may be longer than 5m). */
+  volumeWindow: JupiterVolumeWindow | null
 }
 
 function finiteOrNull(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+function volumeFromStats(stats: Record<string, unknown> | null): number | null {
+  if (!stats) return null
+  const buy = finiteOrNull(stats.buyVolume)
+  const sell = finiteOrNull(stats.sellVolume)
+  if (buy == null && sell == null) return null
+  return (buy ?? 0) + (sell ?? 0)
 }
 
 /**
- * Parse usdPrice + 5m volume + mcap from lite-api v2 search JSON (array or single object).
- * volume_5m = stats5m.buyVolume + stats5m.sellVolume when either is present.
+ * Parse usdPrice + volume + mcap from lite-api v2 search JSON.
+ * Volume waterfall: stats5m → stats1h → stats6h → stats24h (buy+sell).
  */
 export function parseJupiterV2MarketHints(
   raw: unknown,
@@ -176,18 +193,32 @@ export function parseJupiterV2MarketHints(
 
   const usdPrice = finiteOrNull(token.usdPrice)
   const mcap = finiteOrNull(token.mcap) ?? finiteOrNull(token.fdv)
-  const stats5m =
-    token.stats5m && typeof token.stats5m === 'object'
-      ? (token.stats5m as Record<string, unknown>)
-      : null
-  const buy = finiteOrNull(stats5m?.buyVolume)
-  const sell = finiteOrNull(stats5m?.sellVolume)
-  const volume5m =
-    buy != null || sell != null ? (buy ?? 0) + (sell ?? 0) : null
+
+  const windows: { key: JupiterVolumeWindow; field: string }[] = [
+    { key: '5m', field: 'stats5m' },
+    { key: '1h', field: 'stats1h' },
+    { key: '6h', field: 'stats6h' },
+    { key: '24h', field: 'stats24h' },
+  ]
+
+  let volume5m: number | null = null
+  let volumeWindow: JupiterVolumeWindow | null = null
+  for (const w of windows) {
+    const stats =
+      token[w.field] && typeof token[w.field] === 'object'
+        ? (token[w.field] as Record<string, unknown>)
+        : null
+    const vol = volumeFromStats(stats)
+    if (vol != null) {
+      volume5m = vol
+      volumeWindow = w.key
+      break
+    }
+  }
 
   if (usdPrice == null && volume5m == null && mcap == null) return null
 
-  return { usdPrice, volume5m, mcap }
+  return { usdPrice, volume5m, mcap, volumeWindow }
 }
 
 /** Rate-limited Jupiter v2 search → price + 5m volume for monitor/entry enrichment. */

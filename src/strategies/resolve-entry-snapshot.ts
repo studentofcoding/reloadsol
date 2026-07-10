@@ -1,7 +1,9 @@
 import { queryOne } from '@/utils/db'
+import { fetchDexScreenerVolumeHints } from '@/utils/dexscreener-volume'
 import {
   fetchJupiterMarketHints,
   fetchTokenMetadataFromJupiter,
+  type JupiterVolumeWindow,
 } from '@/utils/jupiter-metadata'
 import { fetchMcapTrackingRow, upsertMcapEntryMeta } from '@/utils/mcap-tracker'
 import {
@@ -40,6 +42,7 @@ type JupiterEntryHints = {
   topHoldersPct: number | null
   volume5m: number | null
   mcap: number | null
+  volumeWindow: JupiterVolumeWindow | null
 }
 
 async function fetchTrackerEntryHints(
@@ -98,6 +101,7 @@ async function fetchJupiterEntryHints(
   let topHoldersPct: number | null = null
   let volume5m: number | null = null
   let mcap: number | null = null
+  let volumeWindow: JupiterVolumeWindow | null = null
 
   const tasks: Promise<void>[] = []
 
@@ -126,6 +130,7 @@ async function fetchJupiterEntryHints(
       fetchJupiterMarketHints(tokenAddress).then((market) => {
         volume5m = market?.volume5m ?? null
         mcap = market?.mcap ?? null
+        volumeWindow = market?.volumeWindow ?? null
       }),
     )
   }
@@ -141,7 +146,7 @@ async function fetchJupiterEntryHints(
     return null
   }
 
-  return { organicScore, topHoldersPct, volume5m, mcap }
+  return { organicScore, topHoldersPct, volume5m, mcap, volumeWindow }
 }
 
 function numOrNull(value: unknown): number | null {
@@ -191,6 +196,18 @@ export async function resolveEntrySnapshotInput(
     liveMonitor?.volume_5m ??
     null
 
+  let volumeSource: string | null =
+    overrides.volume5m != null
+      ? 'override'
+      : numOrNull(mcapRow?.volume_5m) != null
+        ? 'mcap_tracking'
+        : trackerHints?.volume5m != null
+          ? 'tracker'
+          : liveMonitor?.volume_5m != null
+            ? 'monitor'
+            : null
+  let volumeWindow: string | null = null
+
   const needMeta =
     !overrides.skipJupiter && (organicScore == null || topHoldersPct == null)
   const needVolume = !overrides.skipJupiter && volume5m == null
@@ -207,8 +224,21 @@ export async function resolveEntrySnapshotInput(
 
   if (organicScore == null) organicScore = jupiterHints?.organicScore ?? null
   if (topHoldersPct == null) topHoldersPct = jupiterHints?.topHoldersPct ?? null
-  if (volume5m == null) volume5m = jupiterHints?.volume5m ?? null
+  if (volume5m == null && jupiterHints?.volume5m != null) {
+    volume5m = jupiterHints.volume5m
+    volumeSource = 'jupiter'
+    volumeWindow = jupiterHints.volumeWindow
+  }
   if (entryMcap == null) entryMcap = jupiterHints?.mcap ?? null
+
+  if (volume5m == null && !overrides.skipJupiter) {
+    const dex = await fetchDexScreenerVolumeHints(tokenAddress)
+    if (dex) {
+      volume5m = dex.volume
+      volumeSource = 'dexscreener'
+      volumeWindow = dex.window
+    }
+  }
 
   // Best-effort persist meta onto mcap tracking for future opens
   if (organicScore != null || topHoldersPct != null || volume5m != null) {
@@ -235,6 +265,8 @@ export async function resolveEntrySnapshotInput(
     organicScore,
     topHoldersPct,
     volume5m,
+    volumeSource,
+    volumeWindow,
     tokenSymbol: overrides.tokenSymbol ?? null,
     monitorSnapshots,
     social: overrides.social ?? null,

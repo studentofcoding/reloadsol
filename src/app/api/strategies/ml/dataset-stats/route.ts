@@ -31,6 +31,7 @@ export async function GET(request: NextRequest) {
       extractable_labeled: extractableLabeled,
       skipped_incomplete: incomplete.skipped_incomplete,
       incomplete_by_field: incomplete.incomplete_by_field,
+      volume_imputed: incomplete.volume_imputed,
     })
   } catch (error) {
     return NextResponse.json(

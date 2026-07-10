@@ -206,8 +206,11 @@ See [`docs/OPERATOR_STATE.md`](../docs/OPERATOR_STATE.md).
 Mirrors `src/strategies/ml-training-features.ts`:
 
 - `log_entry_mcap`, `organic_score`, `top_holders_pct`, `token_age_hours`, `log_volume_at_entry`
+  - Volume is optional: missing → `log_volume_at_entry=0` (telemetry `volume_imputed`; does not skip the row)
 - `entry_template_milestone_80` (0/1)
 - One-hot `band_*` for entry mcap band
+
+Entry volume sources (runtime): local/monitor → Jupiter `stats5m→1h→6h→24h` → DexScreener `m5→h1→h24`.
 
 ## Retrain
 

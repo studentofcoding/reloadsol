@@ -17,6 +17,9 @@ export type EntryFeatureSnapshotInput = {
   organicScore?: number | null
   topHoldersPct?: number | null
   volume5m?: number | null
+  /** Where volume5m came from (audit). */
+  volumeSource?: string | null
+  volumeWindow?: string | null
   tokenSymbol?: string | null
   monitorSnapshots?: MonitorSnapshot[]
   social?: SocialSnapshot | null
@@ -52,6 +55,12 @@ export function buildEntryFeatureSnapshot(
   }
   if (input.tokenSymbol) {
     snapshot.token_symbol = input.tokenSymbol
+  }
+  if (input.volumeSource) {
+    snapshot.volume_at_entry_source = input.volumeSource
+  }
+  if (input.volumeWindow) {
+    snapshot.volume_at_entry_window = input.volumeWindow
   }
   if (input.social) {
     Object.assign(snapshot, socialSnapshotToFeatureFields(input.social))

@@ -236,9 +236,12 @@ def row_to_feature_vector_v1(row: dict[str, Any]) -> dict[str, float] | None:
     volume = _read_number(row, "volume_at_entry")
     if volume is None:
         volume = _read_number(row, "volume_5m")
+    # Volume optional: impute log1p(0)=0 when missing
     log_vol = _log1p(volume)
+    if log_vol is None:
+        log_vol = 0.0
 
-    if None in (log_mcap, organic, holders, age, log_vol):
+    if None in (log_mcap, organic, holders, age):
         return None
 
     template = row.get("entry_template") or ""
@@ -258,17 +261,17 @@ def row_to_feature_vector_v1(row: dict[str, Any]) -> dict[str, float] | None:
     return vector
 
 
+# Required for completeness (volume optional / imputed)
 ML_CORE_RAW_FIELDS = (
     "entry_mcap",
     "organic_score",
     "top_holders_pct",
     "token_age_hours",
-    "volume_at_entry",
 )
 
 
 def list_incomplete_ml_fields(row: dict[str, Any]) -> list[str]:
-    """Which of the five V1 raw fields fail after canonicalize (telemetry)."""
+    """Which required V1 raw fields fail after canonicalize (volume excluded)."""
     row = canonicalize_row(row)
     missing: list[str] = []
     if _log1p(_read_number(row, "entry_mcap")) is None:
@@ -279,12 +282,15 @@ def list_incomplete_ml_fields(row: dict[str, Any]) -> list[str]:
         missing.append("top_holders_pct")
     if _cap_age(_read_number(row, "token_age_hours")) is None:
         missing.append("token_age_hours")
+    return missing
+
+
+def is_volume_imputed(row: dict[str, Any]) -> bool:
+    row = canonicalize_row(row)
     volume = _read_number(row, "volume_at_entry")
     if volume is None:
         volume = _read_number(row, "volume_5m")
-    if _log1p(volume) is None:
-        missing.append("volume_at_entry")
-    return missing
+    return _log1p(volume) is None
 
 
 def row_to_feature_vector_v2(row: dict[str, Any]) -> dict[str, float] | None:

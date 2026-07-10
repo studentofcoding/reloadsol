@@ -8,6 +8,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — volume_at_entry optional + Jupiter/DexScreener fallbacks
+
+- V1 extract: volume no longer required; missing → `log_volume_at_entry=0`; telemetry `volume_imputed` (TS + Python + dataset-stats/export).
+- Jupiter volume: string coerce + `stats5m→1h→6h→24h` waterfall; stamp `volume_at_entry_window`.
+- DexScreener third source when Jupiter still null (`volume_at_entry_source: dexscreener`).
+- Backfill: monitor_snapshots fill, post-merge missing sample, `volume_filled_from` counts, default `limit=15`.
+- Prefer re-export + retrain after deploy (imputed zeros shift distribution slightly).
+
 ### Fixed — ML incomplete-feature skips (going-forward + backfill)
 
 - Per-field `incomplete_by_field` on `ml:export` and `/api/strategies/ml/dataset-stats`.

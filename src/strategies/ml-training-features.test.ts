@@ -3,8 +3,10 @@ import {
   computeMlDatasetStats,
   countIncompleteMlFields,
   extractMlFeatureVector,
+  extractMlFeatureVectorV1,
   extractMlTrainingRow,
   hasTrainingClass,
+  isVolumeImputed,
   listIncompleteMlFields,
   resolveEffectiveTrainingClass,
 } from './ml-training-features'
@@ -85,44 +87,73 @@ describe('extractMlTrainingRow', () => {
     ).toBeNull()
   })
 
-  it('lists which core fields are missing', () => {
+  it('lists which core fields are missing (volume optional)', () => {
     expect(
       listIncompleteMlFields({
         entry_mcap: 100_000,
         organic_score: 50,
-        // holders / age / volume missing
+        // holders / age / volume missing — volume no longer required
       }),
-    ).toEqual(['top_holders_pct', 'token_age_hours', 'volume_at_entry'])
+    ).toEqual(['top_holders_pct', 'token_age_hours'])
   })
 
-  it('counts incomplete fields across labeled rows', () => {
-    const { skipped_incomplete, incomplete_by_field } = countIncompleteMlFields([
-      outcome({
-        pnl_pct: 40,
-        status: 'won',
-        features: {
-          training_class: 1,
-          entry_mcap: 80_000,
-          organic_score: 40,
-        },
-      }),
-      outcome({
-        id: '2',
-        pnl_pct: 90,
-        status: 'won',
-        features: {
-          training_class: 2,
-          entry_mcap: 80_000,
-          organic_score: 40,
-          top_holders_pct: 20,
-          token_age_hours: 1,
-          volume_at_entry: 1000,
-        },
-      }),
-    ])
+  it('imputes log_volume_at_entry=0 when volume missing', () => {
+    const vector = extractMlFeatureVectorV1({
+      entry_mcap: 80_000,
+      organic_score: 40,
+      top_holders_pct: 20,
+      token_age_hours: 1,
+      // volume_at_entry omitted
+    })
+    expect(vector).not.toBeNull()
+    expect(vector!.log_volume_at_entry).toBe(0)
+    expect(isVolumeImputed({ entry_mcap: 80_000, organic_score: 40 })).toBe(true)
+  })
+
+  it('counts incomplete fields and volume_imputed across labeled rows', () => {
+    const { skipped_incomplete, incomplete_by_field, volume_imputed } =
+      countIncompleteMlFields([
+        outcome({
+          pnl_pct: 40,
+          status: 'won',
+          features: {
+            training_class: 1,
+            entry_mcap: 80_000,
+            organic_score: 40,
+          },
+        }),
+        outcome({
+          id: '2',
+          pnl_pct: 90,
+          status: 'won',
+          features: {
+            training_class: 2,
+            entry_mcap: 80_000,
+            organic_score: 40,
+            top_holders_pct: 20,
+            token_age_hours: 1,
+            volume_at_entry: 1000,
+          },
+        }),
+        outcome({
+          id: '3',
+          pnl_pct: 50,
+          status: 'won',
+          features: {
+            training_class: 1,
+            entry_mcap: 80_000,
+            organic_score: 40,
+            top_holders_pct: 20,
+            token_age_hours: 1,
+            // volume missing → extractable but imputed
+          },
+        }),
+      ])
     expect(skipped_incomplete).toBe(1)
     expect(incomplete_by_field.top_holders_pct).toBe(1)
-    expect(incomplete_by_field.volume_at_entry).toBe(1)
+    expect(incomplete_by_field.token_age_hours).toBe(1)
+    expect(incomplete_by_field.volume_imputed).toBe(1)
+    expect(volume_imputed).toBe(1)
   })
 })
 

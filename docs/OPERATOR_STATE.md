@@ -46,12 +46,17 @@ Export recovery (aliases + `token_age_hours` derive) is in web + `ml/features.py
 
 ```bash
 export API_BASE_URL=http://127.0.0.1 TRENDING_TRACKER_SECRET=...
-# optional: fill null core fields on incomplete outcomes (rate-limited Jupiter)
-curl -X POST "$API_BASE_URL/api/strategies/ml/backfill-features?key=$TRENDING_TRACKER_SECRET&limit=100"
+# optional: enrich null volume/core fields (Jupiter windows → DexScreener; default limit=15 nginx-safe)
+# Prefer docker exec to web:3000 if nginx 504s; chunk until incomplete_total drops
+curl -sS -X POST "$API_BASE_URL/api/strategies/ml/backfill-features?key=$TRENDING_TRACKER_SECRET&limit=15"
 npm run ml:export
 npm run ml:check-potential
-# compare skipped_incomplete / incomplete_by_field vs prior run; train only when Ready: True (≥30 gate=1)
+# compare skipped_incomplete / incomplete_by_field / volume_imputed vs prior run
+# Prefer re-export + retrain gate/potential after volume impute lands (zeros shift distribution)
+# train only when Ready: True (≥30 gate=1)
 ```
+
+**Volume (V1):** `volume_at_entry` is optional. Missing → `log_volume_at_entry=0` at extract. Source order: local/monitor → Jupiter `stats5m→1h→6h→24h` → DexScreener `m5→h1→h24`. Telemetry: `volume_imputed` (not a hard incomplete).
 
 Strategy Admin → Reports now shows Gate / Potential / Exit TP/SL on outcomes that stamped ML shadow fields.
 
@@ -159,6 +164,7 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 | Date | Change |
 |------|--------|
+| 2026-07-10 | V1 volume optional (`log_volume=0`); Jupiter stats window waterfall + DexScreener; backfill `limit=15` + `volume_filled_from` |
 | 2026-07-09 | Stage-1 Pattern ML shadow score on Early Enter (Telegram/toast/Signals ML column; never gates) |
 | 2026-07-09 | Two-stage alerts (Early Enter + Sim Open); drop -40/-80 + peak profit milestones; auto rugged/potential labels |
 | 2026-07-09 | Global sim-open toasts; at_80 skips stale milestones + uses live entry mcap when late; predictive ML UI toasts removed |

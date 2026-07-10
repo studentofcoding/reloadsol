@@ -119,7 +119,7 @@ Rows with `training_class` ∈ {0,1,2,3,4}. Optional `training_class_min=1` for 
 | `organic_score` | raw |
 | `top_holders_pct` | raw |
 | `token_age_hours` | raw, cap 168h |
-| `volume_at_entry` | `log1p` |
+| `volume_at_entry` | `log1p` (optional; missing → `log_volume_at_entry=0`) |
 | `entry_template` | binary (`milestone_80` = 1) |
 
 **Exclude from training:** `monitor_snapshots`, exit mcap/growth, `pnl_pct`, `regime_tag_at_exit` (regime is L3 only).

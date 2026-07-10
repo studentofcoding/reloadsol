@@ -16,6 +16,7 @@ from features import (
     FEATURE_COLUMNS,
     FEATURE_COLUMNS_V2,
     gate_class_from_training_class,
+    is_volume_imputed,
     list_incomplete_ml_fields,
     potential_tier_from_training_class,
     read_training_class,
@@ -80,8 +81,8 @@ def build_training_frame(
         "organic_score": 0,
         "top_holders_pct": 0,
         "token_age_hours": 0,
-        "volume_at_entry": 0,
     }
+    volume_imputed = 0
 
     for _, row in raw.iterrows():
         row_dict = row.to_dict()
@@ -95,6 +96,8 @@ def build_training_frame(
             for field in list_incomplete_ml_fields(row_dict):
                 incomplete_by_field[field] = incomplete_by_field.get(field, 0) + 1
             continue
+        if is_volume_imputed(row_dict):
+            volume_imputed += 1
         gate_class = gate_class_from_training_class(label)
         potential_tier = potential_tier_from_training_class(label)
         records.append(
@@ -116,6 +119,7 @@ def build_training_frame(
         f"(skipped {skipped_label} unlabeled, {skipped_incomplete} incomplete features)"
     )
     print(f"incomplete_by_field={incomplete_by_field}")
+    print(f"volume_imputed={volume_imputed}")
     return df
 
 

@@ -13,7 +13,12 @@ describe('parseJupiterV2MarketHints', () => {
       ],
       'MintA',
     )
-    expect(hints).toEqual({ usdPrice: 0.0012, volume5m: 140, mcap: null })
+    expect(hints).toEqual({
+      usdPrice: 0.0012,
+      volume5m: 140,
+      mcap: null,
+      volumeWindow: '5m',
+    })
   })
 
   it('matches mint when multiple tokens returned', () => {
@@ -28,7 +33,12 @@ describe('parseJupiterV2MarketHints', () => {
       ],
       'MintB',
     )
-    expect(hints).toEqual({ usdPrice: 0.5, volume5m: 15, mcap: null })
+    expect(hints).toEqual({
+      usdPrice: 0.5,
+      volume5m: 15,
+      mcap: null,
+      volumeWindow: '5m',
+    })
   })
 
   it('treats missing buy or sell as zero when the other is present', () => {
@@ -38,14 +48,14 @@ describe('parseJupiterV2MarketHints', () => {
         usdPrice: 1,
         stats5m: { buyVolume: 25 },
       }),
-    ).toEqual({ usdPrice: 1, volume5m: 25, mcap: null })
+    ).toEqual({ usdPrice: 1, volume5m: 25, mcap: null, volumeWindow: '5m' })
 
     expect(
       parseJupiterV2MarketHints({
         id: 'Y',
         stats5m: { sellVolume: 7 },
       }),
-    ).toEqual({ usdPrice: null, volume5m: 7, mcap: null })
+    ).toEqual({ usdPrice: null, volume5m: 7, mcap: null, volumeWindow: '5m' })
   })
 
   it('returns null when neither price nor volume is present', () => {
@@ -60,7 +70,7 @@ describe('parseJupiterV2MarketHints', () => {
         usdPrice: Number.NaN,
         stats5m: { buyVolume: Number.POSITIVE_INFINITY, sellVolume: 3 },
       }),
-    ).toEqual({ usdPrice: null, volume5m: 3, mcap: null })
+    ).toEqual({ usdPrice: null, volume5m: 3, mcap: null, volumeWindow: '5m' })
   })
 
   it('parses mcap from v2 search', () => {
@@ -71,7 +81,12 @@ describe('parseJupiterV2MarketHints', () => {
         mcap: 85_000,
         stats5m: { buyVolume: 1, sellVolume: 1 },
       }),
-    ).toEqual({ usdPrice: 0.01, volume5m: 2, mcap: 85_000 })
+    ).toEqual({
+      usdPrice: 0.01,
+      volume5m: 2,
+      mcap: 85_000,
+      volumeWindow: '5m',
+    })
   })
 })
 
@@ -119,6 +134,7 @@ describe('resolveTokenMonitorSnapshot waterfall', () => {
       usdPrice: 0.0004,
       volume5m: 1200,
       mcap: 50_000,
+      volumeWindow: '5m',
     })
 
     const snap = await resolveTokenMonitorSnapshot('mint2', 50_000)
@@ -139,6 +155,7 @@ describe('resolveTokenMonitorSnapshot waterfall', () => {
       usdPrice: 0.01,
       volume5m: 999,
       mcap: null,
+      volumeWindow: '1h',
     })
 
     const snap = await resolveTokenMonitorSnapshot('mint3', null)
