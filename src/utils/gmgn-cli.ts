@@ -1,5 +1,6 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import * as gmgnApi from './gmgn-api'
 
 const execFileAsync = promisify(execFile)
 
@@ -17,6 +18,8 @@ export class GmgnCliError extends Error {
   }
 }
 
+export { GmgnApiError } from './gmgn-api'
+
 export type GmgnTrackRow = {
   transaction_hash?: string
   maker?: string
@@ -31,6 +34,10 @@ export type GmgnTrackRow = {
 }
 
 export type GmgnTrackResponse = { list?: GmgnTrackRow[] }
+
+function useCliTransport(): boolean {
+  return process.env.GMGN_TRANSPORT?.trim().toLowerCase() === 'cli'
+}
 
 function getCliBin(): string {
   return process.env.GMGN_CLI_BIN?.trim() || 'gmgn-cli'
@@ -77,9 +84,7 @@ export async function gmgnCliRaw(args: string[], timeoutMs = DEFAULT_TIMEOUT_MS)
       try {
         return JSON.parse(trimmed) as unknown
       } catch {
-        throw new GmgnCliError(
-          `Invalid JSON from gmgn-cli: ${trimmed.slice(0, 200)}`,
-        )
+        throw new GmgnCliError(`Invalid JSON from gmgn-cli: ${trimmed.slice(0, 200)}`)
       }
     } catch (error) {
       const err = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string }
@@ -111,7 +116,7 @@ export async function gmgnCliRaw(args: string[], timeoutMs = DEFAULT_TIMEOUT_MS)
   throw new GmgnCliError('gmgn-cli failed after retries')
 }
 
-export async function trackSmartMoney(params: {
+async function trackSmartMoneyCli(params: {
   chain: string
   side?: 'buy' | 'sell'
   limit?: number
@@ -125,14 +130,12 @@ export async function trackSmartMoney(params: {
     String(params.limit ?? 20),
     '--raw',
   ]
-  if (params.side) {
-    args.push('--side', params.side)
-  }
+  if (params.side) args.push('--side', params.side)
   const raw = (await gmgnCliRaw(args)) as GmgnTrackResponse
   return raw.list ?? []
 }
 
-export async function trackKol(params: {
+async function trackKolCli(params: {
   chain: string
   side?: 'buy' | 'sell'
   limit?: number
@@ -146,14 +149,12 @@ export async function trackKol(params: {
     String(params.limit ?? 20),
     '--raw',
   ]
-  if (params.side) {
-    args.push('--side', params.side)
-  }
+  if (params.side) args.push('--side', params.side)
   const raw = (await gmgnCliRaw(args)) as GmgnTrackResponse
   return raw.list ?? []
 }
 
-export async function tokenInfo(params: {
+async function tokenInfoCli(params: {
   chain: string
   address: string
 }): Promise<Record<string, unknown>> {
@@ -169,7 +170,7 @@ export async function tokenInfo(params: {
   return raw as Record<string, unknown>
 }
 
-export async function tokenSecurity(params: {
+async function tokenSecurityCli(params: {
   chain: string
   address: string
 }): Promise<Record<string, unknown>> {
@@ -183,6 +184,40 @@ export async function tokenSecurity(params: {
     '--raw',
   ])
   return raw as Record<string, unknown>
+}
+
+export async function trackSmartMoney(params: {
+  chain: string
+  side?: 'buy' | 'sell'
+  limit?: number
+}): Promise<GmgnTrackRow[]> {
+  if (useCliTransport()) return trackSmartMoneyCli(params)
+  return gmgnApi.trackSmartMoney(params)
+}
+
+export async function trackKol(params: {
+  chain: string
+  side?: 'buy' | 'sell'
+  limit?: number
+}): Promise<GmgnTrackRow[]> {
+  if (useCliTransport()) return trackKolCli(params)
+  return gmgnApi.trackKol(params)
+}
+
+export async function tokenInfo(params: {
+  chain: string
+  address: string
+}): Promise<Record<string, unknown>> {
+  if (useCliTransport()) return tokenInfoCli(params)
+  return gmgnApi.tokenInfo(params)
+}
+
+export async function tokenSecurity(params: {
+  chain: string
+  address: string
+}): Promise<Record<string, unknown>> {
+  if (useCliTransport()) return tokenSecurityCli(params)
+  return gmgnApi.tokenSecurity(params)
 }
 
 export function isSolMemeTokenAddress(address: string | undefined): boolean {

@@ -10,6 +10,7 @@ import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { getSolPriceUSD } from '@/utils/solana'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
+import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
 import type { GmgnStrategy } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
@@ -296,6 +297,14 @@ export async function POST(request: NextRequest) {
           : ({} as Record<string, number>)
 
       for (const pos of openPositions) {
+        await checkGmgnLiveBoostForOpenPosition({
+          walletAddress: GMGN_SIM_WALLET,
+          strategyId: strategy.id,
+          mintAddress: pos.mintAddress,
+          entryAt: pos.entryAt,
+          symbol: pos.symbol,
+        })
+
         const currentPrice = prices[pos.mintAddress] ?? pos.entryPriceUsd
         const { close, reason } = shouldClosePosition({
           entryPriceUsd: pos.entryPriceUsd,

@@ -313,6 +313,28 @@ export const GMGN_STRATEGIES: Record<string, import('./types').GmgnStrategy> = {
       exit: { ...DEFAULT_GMGN_EXIT },
     },
   },
+  gmgn_sm_kol_combined: {
+    id: 'gmgn_sm_kol_combined',
+    name: 'GMGN SM + KOL Combined',
+    description: 'Score-sorted discovery from smart money and KOL feeds (60m activity window)',
+    is_active: false,
+    execution_mode: 'sim_only',
+    config: {
+      discovery: {
+        source: 'both',
+        chain: 'sol',
+        side: 'buy',
+        limit: 50,
+        minAmountUsd: 25,
+        maxTradeAgeMinutes: 60,
+        clusterMinWallets: 2,
+        cooldownHours: 24,
+      },
+      security: { ...DEFAULT_GMGN_SECURITY },
+      execution: { simBuySol: 0.02, maxOpenPositions: 5 },
+      exit: { ...DEFAULT_GMGN_EXIT },
+    },
+  },
 }
 
 export const DLMM_STRATEGY_DEFAULTS: import('./types').DlmmStrategy = {

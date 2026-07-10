@@ -30,4 +30,15 @@ describe('annotateEntryFeatures', () => {
     expect(out.social_boost_score).toBe(15)
     expect(out.telegram_mention_count_30m).toBe(3)
   })
+
+  it('adds gmgn_live_boost_score to social_boost_score', () => {
+    const ctx = {
+      snapshot: { ...EMPTY_SOCIAL_SNAPSHOT },
+      isActive: false,
+      overlap: false,
+      socialBoostScore: 10,
+    }
+    const out = annotateEntryFeatures({ gmgn_live_boost_score: 25 }, ctx)
+    expect(out.social_boost_score).toBe(35)
+  })
 })

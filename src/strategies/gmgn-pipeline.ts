@@ -1,5 +1,10 @@
 import type { GmgnStrategy } from './types'
 import {
+  gmgnScoreToFeatureFields,
+  scoreGmgnActivity,
+  type GmgnActivityMetrics,
+} from './gmgn-activity-score'
+import {
   normalizeTrackRows,
   tokenInfo,
   tokenSecurity,
@@ -17,6 +22,9 @@ export type GmgnDiscoveryCandidate = {
   source: 'smartmoney' | 'kol'
   walletTags: string[]
   clusterWalletCount: number
+  activityScore: number
+  activityMetrics: GmgnActivityMetrics
+  discoverySources: Array<'smartmoney' | 'kol'>
 }
 
 export type GmgnGatedCandidate = GmgnDiscoveryCandidate & {
@@ -30,7 +38,7 @@ export async function fetchGmgnDiscoveryCandidates(
   strategy: GmgnStrategy,
 ): Promise<GmgnDiscoveryCandidate[]> {
   const { discovery } = strategy.config
-  const rows: GmgnDiscoveryCandidate[] = []
+  const normalized: ReturnType<typeof normalizeTrackRows> = []
 
   if (discovery.source === 'smartmoney' || discovery.source === 'both') {
     const sm = await trackSmartMoney({
@@ -38,9 +46,7 @@ export async function fetchGmgnDiscoveryCandidates(
       side: discovery.side,
       limit: discovery.limit,
     })
-    for (const row of normalizeTrackRows(sm, 'smartmoney')) {
-      rows.push({ ...row, clusterWalletCount: 1 })
-    }
+    normalized.push(...normalizeTrackRows(sm, 'smartmoney'))
   }
 
   if (discovery.source === 'kol' || discovery.source === 'both') {
@@ -49,20 +55,23 @@ export async function fetchGmgnDiscoveryCandidates(
       side: discovery.side,
       limit: discovery.limit,
     })
-    for (const row of normalizeTrackRows(kol, 'kol')) {
-      rows.push({ ...row, clusterWalletCount: 1 })
-    }
+    normalized.push(...normalizeTrackRows(kol, 'kol'))
   }
 
   const now = Date.now()
   const maxAgeMs = discovery.maxTradeAgeMinutes * 60 * 1000
   const minUsd = discovery.minAmountUsd ?? 0
 
-  const filtered = rows.filter((r) => {
+  const filtered = normalized.filter((r) => {
     if (r.tradeUsd < minUsd) return false
     if (now - r.tradeAt.getTime() > maxAgeMs) return false
     return true
   })
+
+  const scored = scoreGmgnActivity(filtered, {
+    windowMinutes: discovery.maxTradeAgeMinutes,
+  })
+  const scoreByToken = new Map(scored.map((item) => [item.tokenAddress, item]))
 
   const clusterByToken = new Map<string, Set<string>>()
   for (const row of filtered) {
@@ -73,27 +82,38 @@ export async function fetchGmgnDiscoveryCandidates(
   }
 
   const clusterMin = discovery.clusterMinWallets ?? 1
-  const withCluster = filtered.map((row) => ({
-    ...row,
-    clusterWalletCount: clusterByToken.get(row.tokenAddress)?.size ?? 1,
-  }))
-
-  const clusterFiltered =
-    clusterMin > 1
-      ? withCluster.filter((r) => r.clusterWalletCount >= clusterMin)
-      : withCluster
+  const clusterFiltered = filtered.filter((row) => {
+    const count = clusterByToken.get(row.tokenAddress)?.size ?? 1
+    return count >= clusterMin
+  })
 
   const byToken = new Map<string, GmgnDiscoveryCandidate>()
   for (const row of clusterFiltered) {
     const existing = byToken.get(row.tokenAddress)
     if (!existing || row.tradeAt.getTime() > existing.tradeAt.getTime()) {
-      byToken.set(row.tokenAddress, row)
+      const activity = scoreByToken.get(row.tokenAddress)
+      byToken.set(row.tokenAddress, {
+        ...row,
+        clusterWalletCount: clusterByToken.get(row.tokenAddress)?.size ?? 1,
+        activityScore: activity?.score ?? 0,
+        activityMetrics: activity?.metrics ?? {
+          sm_wallet_count_60m: 0,
+          kol_wallet_count_60m: 0,
+          sm_buy_usd_60m: 0,
+          kol_buy_usd_60m: 0,
+          total_trades_60m: 0,
+          latest_trade_at: row.tradeAt.toISOString(),
+          has_sm_kol_overlap: false,
+        },
+        discoverySources: activity?.discoverySources ?? [row.source],
+      })
     }
   }
 
-  return Array.from(byToken.values()).sort(
-    (a, b) => b.tradeAt.getTime() - a.tradeAt.getTime(),
-  )
+  return Array.from(byToken.values()).sort((a, b) => {
+    if (b.activityScore !== a.activityScore) return b.activityScore - a.activityScore
+    return b.tradeAt.getTime() - a.tradeAt.getTime()
+  })
 }
 
 export function filterGmgnCandidatesByCooldown(params: {
@@ -138,6 +158,11 @@ export async function gateGmgnCandidates(params: {
       securityReasons: result.reasons,
       entryFeatures: {
         ...result.features,
+        ...gmgnScoreToFeatureFields({
+          score: candidate.activityScore,
+          metrics: candidate.activityMetrics,
+          discoverySources: candidate.discoverySources,
+        }),
         discovery_source: candidate.source,
         discovery_wallet: candidate.walletAddress,
         discovery_trade_usd: candidate.tradeUsd,

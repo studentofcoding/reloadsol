@@ -110,6 +110,16 @@ Set `SOCIAL_ENRICH_GMGN=true` only if you need `symbol` / `mcp` on first CA per 
 - Admin UI: `/dev/social` → **24h Patterns**
 - Postgres: `social_token_events` → cron refreshes `social_token_rollups` + `mcap_social_pattern_24h`
 
+## GMGN hot tokens (web cron, not Telethon)
+
+High-score GMGN SM+KOL activity is ingested by the **Node** cron worker `gmgn_activity_poll` (~180s), not this Telethon sidecar:
+
+- `POST /api/gmgn/activity-poll` → `social_token_events` with `source = gmgn_hot` (wallet_buy)
+- `raw_metadata` includes `gmgn_activity_score`, wallet counts, USD sums
+- Rollup cron picks up `gmgn_*` sources for `smart_wallet_buy_count_1h`
+
+See [docs/GMGN_STRATEGY.md](../docs/GMGN_STRATEGY.md) for env vars and smoke commands.
+
 ## Deploy scope
 
 Changes under `social-ingest/**` trigger `npm run docker:deploy:social`. Web deploys also restart social-ingest (always-on). See `scripts/docker-scope.sh`.

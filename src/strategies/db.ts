@@ -1511,7 +1511,7 @@ export async function getStrategyDomainHeartbeats(params?: {
     signals: ['signals_sim_track', 'signals_refresh'],
     trending_bot: ['trending_tracker'],
     dlmm: ['dlmm_manage'],
-    gmgn: ['gmgn_sim_track'],
+    gmgn: ['gmgn_sim_track', 'gmgn_activity_poll'],
   }
 
   for (const domain of domains) {

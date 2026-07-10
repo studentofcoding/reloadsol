@@ -30,6 +30,24 @@ function trimRawMetadata(meta: Record<string, unknown>): Record<string, unknown>
   if (typeof meta.mcp === 'number' && Number.isFinite(meta.mcp)) {
     out.mcp = meta.mcp
   }
+  if (typeof meta.gmgn_activity_score === 'number' && Number.isFinite(meta.gmgn_activity_score)) {
+    out.gmgn_activity_score = meta.gmgn_activity_score
+  }
+  for (const key of [
+    'sm_wallet_count_60m',
+    'kol_wallet_count_60m',
+    'sm_buy_usd_60m',
+    'kol_buy_usd_60m',
+  ] as const) {
+    if (typeof meta[key] === 'number' && Number.isFinite(meta[key])) {
+      out[key] = meta[key]
+    }
+  }
+  if (Array.isArray(meta.discovery_sources)) {
+    out.discovery_sources = meta.discovery_sources
+      .filter((s): s is string => typeof s === 'string' && s.length > 0)
+      .slice(0, 8)
+  }
   return out
 }
 

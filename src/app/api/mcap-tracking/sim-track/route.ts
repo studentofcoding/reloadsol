@@ -28,6 +28,7 @@ import {
   appendSimPositionMonitorSnapshot,
   resolveTokenMonitorSnapshot,
 } from '@/strategies/sim-monitor-snapshots'
+import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
 import { fetchTradingRecordsForWallet, loadMcapSimClosedOutcomeKeys, mcapSimClosedOutcomeKey } from '@/strategies/db'
 import {
   acquireTradeLock,
@@ -679,6 +680,14 @@ export async function POST(request: NextRequest) {
           strategyId: strategy.id,
           mintAddress: pos.mintAddress,
           marketCap: snapshot.current_mcap,
+        })
+
+        await checkGmgnLiveBoostForOpenPosition({
+          walletAddress,
+          strategyId: strategy.id,
+          mintAddress: pos.mintAddress,
+          entryAt: pos.entryAt,
+          symbol: pos.symbol,
         })
 
         // Sim: prefer frozen effective_exit from open when apply mode persisted it.

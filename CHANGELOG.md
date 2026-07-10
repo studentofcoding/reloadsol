@@ -8,6 +8,23 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — GMGN HTTP activity score + social bridge
+
+- **HTTP default** for GMGN read paths: `src/utils/gmgn-api.ts` (`openapi.gmgn.ai`, `X-APIKEY` + timestamp/client_id); `gmgn-cli.ts` is barrel + `GMGN_TRANSPORT=cli` fallback.
+- **60m activity score** (`gmgn-activity-score.ts`): SM+KOL cluster/overlap/recency scoring; discovery sorted by score.
+- **`POST /api/gmgn/activity-poll`**: ingests hot tokens (score ≥ threshold) into `social_token_events` as `gmgn_hot` wallet_buy events.
+- Social rollup includes `gmgn_*` sources in `smart_wallet_buy_count_1h`; ingest preserves GMGN score metadata.
+- Strategy **`gmgn_sm_kol_combined`** (both feeds, 60m window); migration `db/init/11-gmgn-sm-kol-combined.sql`.
+- Cron worker **`gmgn_activity_poll`** (~180s) + `/trigger/gmgn-activity-poll`.
+- **ML logging**: `gmgn_activity_score` + 60m metrics stamped on GMGN sim + mcap/signals entry features.
+- **Pattern-gate**: +3 features (`gmgn_activity_score_60m`, `log_gmgn_sm_wallets_60m`, `has_gmgn_hot_before_entry`) in TS + Python (retrain required before enforce).
+
+### Added — GMGN live boost after entry
+
+- **`gmgn-live-boost.ts`**: when `gmgn_hot` arrives after sim open or mcap tracking start, patch open buy `entry_features`, bump `social_boost_score`, optional TP widen + toast.
+- Wired from **activity-poll** (primary) and **mcap/signals/gmgn sim-track** open-position loops (backup).
+- Toasts drained via `GET /api/mcap-tracking/sim-open-alerts`.
+
 ### Added — GMGN smart money strategy domain
 
 - New **`gmgn`** strategy domain: discover via `gmgn-cli track smartmoney/kol`, gate with GMGN token info/security scoring, paper sim via `POST /api/gmgn/sim-track`.

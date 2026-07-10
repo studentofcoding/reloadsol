@@ -52,11 +52,17 @@ export function annotateEntryFeatures(
   features: Record<string, unknown>,
   ctx: SocialContext,
 ): Record<string, unknown> {
+  const gmgnLiveBoost =
+    typeof features.gmgn_live_boost_score === 'number' &&
+    Number.isFinite(features.gmgn_live_boost_score)
+      ? features.gmgn_live_boost_score
+      : 0
+
   return {
     ...features,
     ...socialSnapshotToFeatureFields(ctx.snapshot),
     social_overlap: ctx.overlap,
-    social_boost_score: ctx.socialBoostScore,
+    social_boost_score: ctx.socialBoostScore + gmgnLiveBoost,
   }
 }
 

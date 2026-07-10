@@ -166,6 +166,66 @@ export async function fetchSocialRollups(limit = 100): Promise<SocialTokenRollup
   }
 }
 
+export async function fetchFirstGmgnHotAfter(params: {
+  tokenAddress: string
+  anchorAt: string
+  untilAt?: string | null
+}): Promise<{
+  occurred_at: string
+  raw_metadata: Record<string, unknown>
+} | null> {
+  try {
+    const row = await queryOne<{
+      occurred_at: string
+      raw_metadata: Record<string, unknown>
+    }>(
+      `SELECT occurred_at, raw_metadata FROM social_token_events
+       WHERE token_address = $1
+         AND source = 'gmgn_hot'
+         AND event_type = 'wallet_buy'
+         AND occurred_at > $2
+         AND ($3::timestamptz IS NULL OR occurred_at <= $3)
+       ORDER BY occurred_at ASC
+       LIMIT 1`,
+      [params.tokenAddress, params.anchorAt, params.untilAt ?? null],
+    )
+    if (!row) return null
+    return {
+      occurred_at: row.occurred_at,
+      raw_metadata:
+        row.raw_metadata && typeof row.raw_metadata === 'object'
+          ? row.raw_metadata
+          : {},
+    }
+  } catch (error) {
+    if (isMissingTableError(error)) return null
+    return null
+  }
+}
+
+export async function hasRecentGmgnEvent(
+  tokenAddress: string,
+  cooldownMinutes: number,
+): Promise<boolean> {
+  if (cooldownMinutes <= 0) return false
+  const since = new Date(Date.now() - cooldownMinutes * 60 * 1000).toISOString()
+  try {
+    const row = await queryOne<{ exists: boolean }>(
+      `SELECT EXISTS(
+         SELECT 1 FROM social_token_events
+         WHERE token_address = $1
+           AND occurred_at >= $2
+           AND source LIKE 'gmgn_%'
+       ) AS exists`,
+      [tokenAddress, since],
+    )
+    return row?.exists === true
+  } catch (error) {
+    if (isMissingTableError(error)) return false
+    return false
+  }
+}
+
 export async function fetchRecentSocialEvents(
   tokenAddress: string,
   limit = 20,
@@ -282,7 +342,9 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
       (e: RollupEventRow) =>
         e.event_type === 'wallet_buy' &&
         e.occurred_at >= t60 &&
-        (e.source.includes('wallet') || e.source.includes('GMGN_copy')),
+        (e.source.includes('wallet') ||
+          e.source.includes('GMGN_copy') ||
+          e.source.startsWith('gmgn_')),
     )
 
     const channels30 = new Set(

@@ -11,7 +11,9 @@ import {
   type EntryFeatureSnapshotInput,
   type MonitorSnapshot,
 } from './entry-feature-snapshot'
+import { extractGmgnScoreFieldsFromSocialEvents } from './gmgn-activity-score'
 import { extractMlFeatureVectorV1 } from './ml-training-features'
+import { fetchRecentSocialEvents } from './social/db'
 import { resolveTokenMonitorSnapshot, TRACKER_TABLE } from './sim-monitor-snapshots'
 import type { SocialSnapshot } from './social-snapshot'
 import type { StrategyDomain } from './types'
@@ -279,9 +281,20 @@ export async function buildFullEntryFeatureSnapshot(
   extra?: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const input = await resolveEntrySnapshotInput(tokenAddress, overrides)
+  const base = buildEntryFeatureSnapshot(input)
+
+  let gmgnFields: Record<string, unknown> = {}
+  try {
+    const events = await fetchRecentSocialEvents(tokenAddress, 50)
+    gmgnFields = extractGmgnScoreFieldsFromSocialEvents(events)
+  } catch {
+    gmgnFields = {}
+  }
+
   return {
     ...(extra ?? {}),
-    ...buildEntryFeatureSnapshot(input),
+    ...base,
+    ...gmgnFields,
   }
 }
 

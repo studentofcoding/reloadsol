@@ -121,9 +121,9 @@ Required for extract: mcap, organic, holders, age. Volume optional.
 **PnL → `training_class`:** 0 (&lt;20% / loss), 1 (20–50), 2 (50–100), 3 (100–300), 4 (≥300).  
 `gate_class` = 0 iff class 0 else 1. `potential_tier` = class when gate=1.
 
-### Pattern (7 features)
+### Pattern (10 features)
 
-`log_first_mcap`, mention/channel timing, smart-wallet flags, GMGN FOMO source — see `ml/pattern_features.py`.
+`log_first_mcap`, mention/channel timing, smart-wallet flags, GMGN FOMO source, plus GMGN activity score fields (`gmgn_activity_score_60m`, `log_gmgn_sm_wallets_60m`, `has_gmgn_hot_before_entry`) — see `ml/pattern_features.py`. **Retrain required** after adding GMGN columns; keep `ML_PATTERN_MODE=shadow` until `pattern_ready`.
 
 ---
 

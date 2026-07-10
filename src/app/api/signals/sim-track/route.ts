@@ -10,6 +10,7 @@ import {
 } from '@/strategies/resolve-entry-snapshot'
 import { annotateEntryFeatures, getSocialContext } from '@/strategies/social/context'
 import { appendSimPositionMonitorSnapshot, resolveTokenMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
+import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
@@ -247,6 +248,14 @@ export async function POST(request: NextRequest) {
             typeof pos.entryFeatures.entry_mcap === 'number'
               ? pos.entryFeatures.entry_mcap
               : null,
+        })
+
+        await checkGmgnLiveBoostForOpenPosition({
+          walletAddress: SIGNALS_SIM_WALLET_LOCAL,
+          strategyId: strategy.id,
+          mintAddress: pos.mintAddress,
+          entryAt: pos.entryAt,
+          symbol: pos.symbol,
         })
 
         const signal = scoredByMint.get(pos.mintAddress)

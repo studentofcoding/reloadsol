@@ -10,6 +10,9 @@ export const PATTERN_FEATURE_KEYS = [
   'smart_wallet_buy_count_1h',
   'has_smart_wallet_buy',
   'source_gmgn_smart_money_fomo',
+  'gmgn_activity_score_60m',
+  'log_gmgn_sm_wallets_60m',
+  'has_gmgn_hot_before_entry',
 ] as const
 
 export type PatternFeatureKey = (typeof PATTERN_FEATURE_KEYS)[number]
@@ -41,6 +44,7 @@ type SocialEventLike = {
   source?: unknown
   channel_id?: unknown
   occurred_at?: unknown
+  raw_metadata?: unknown
 }
 
 function parseEvents(raw: unknown): SocialEventLike[] {
@@ -63,6 +67,10 @@ function isMention(event: SocialEventLike): boolean {
   return String(event.event_type ?? '') === 'mention'
 }
 
+function readMetadataNumber(meta: Record<string, unknown>, key: string): number {
+  return readNum(meta[key]) ?? 0
+}
+
 function socialMetricsFromEvents(
   events: SocialEventLike[],
   firstSeenMs: number,
@@ -72,12 +80,18 @@ function socialMetricsFromEvents(
   minutesToFirstMention: number
   walletBuyCount1h: number
   hasGmgnFomo: boolean
+  gmgnActivityScore60m: number
+  maxSmWallets60m: number
+  hasGmgnHotBeforeEntry: boolean
 } {
   const channels = new Set<string>()
   let mentionCount30m = 0
   let walletBuyCount1h = 0
   let firstMentionMs: number | null = null
   let hasGmgnFomo = false
+  let gmgnActivityScore60m = 0
+  let maxSmWallets60m = 0
+  let hasGmgnHotBeforeEntry = false
 
   for (const event of events) {
     const ms = eventMs(event)
@@ -85,11 +99,13 @@ function socialMetricsFromEvents(
     const delta = ms - firstSeenMs
     if (delta < 0) continue
 
+    const source = String(event.source ?? '')
+
     if (isMention(event) && delta <= WINDOW_30M_MS) {
       mentionCount30m++
       const channel = String(event.channel_id ?? '')
       if (channel) channels.add(channel)
-      if (String(event.source ?? '') === PATTERN_TOP_SOURCE_GMGN_FOMO) {
+      if (source === PATTERN_TOP_SOURCE_GMGN_FOMO) {
         hasGmgnFomo = true
       }
       if (firstMentionMs == null || ms < firstMentionMs) {
@@ -99,6 +115,21 @@ function socialMetricsFromEvents(
 
     if (isWalletBuy(event) && delta <= WINDOW_1H_MS) {
       walletBuyCount1h++
+      if (source.startsWith('gmgn_')) {
+        if (source === 'gmgn_hot') hasGmgnHotBeforeEntry = true
+        const meta =
+          event.raw_metadata && typeof event.raw_metadata === 'object'
+            ? (event.raw_metadata as Record<string, unknown>)
+            : {}
+        gmgnActivityScore60m = Math.max(
+          gmgnActivityScore60m,
+          readMetadataNumber(meta, 'gmgn_activity_score'),
+        )
+        maxSmWallets60m = Math.max(
+          maxSmWallets60m,
+          readMetadataNumber(meta, 'sm_wallet_count_60m'),
+        )
+      }
     }
   }
 
@@ -113,6 +144,9 @@ function socialMetricsFromEvents(
     minutesToFirstMention,
     walletBuyCount1h,
     hasGmgnFomo,
+    gmgnActivityScore60m,
+    maxSmWallets60m,
+    hasGmgnHotBeforeEntry,
   }
 }
 
@@ -123,6 +157,9 @@ export function buildPatternFeatureVector(params: {
   minutesToFirstMention: number
   smartWalletBuyCount1h: number
   hasGmgnFomoSource: boolean
+  gmgnActivityScore60m?: number
+  maxSmWallets60m?: number
+  hasGmgnHotBeforeEntry?: boolean
 }): Record<string, number> | null {
   const logFirstMcap = log1p(params.firstMcap)
   if (logFirstMcap == null) return null
@@ -135,6 +172,9 @@ export function buildPatternFeatureVector(params: {
     smart_wallet_buy_count_1h: params.smartWalletBuyCount1h,
     has_smart_wallet_buy: params.smartWalletBuyCount1h > 0 ? 1 : 0,
     source_gmgn_smart_money_fomo: params.hasGmgnFomoSource ? 1 : 0,
+    gmgn_activity_score_60m: params.gmgnActivityScore60m ?? 0,
+    log_gmgn_sm_wallets_60m: log1p(params.maxSmWallets60m ?? 0) ?? 0,
+    has_gmgn_hot_before_entry: params.hasGmgnHotBeforeEntry ? 1 : 0,
   }
 }
 
@@ -159,6 +199,9 @@ export function extractPatternFeaturesFromSnapshot(
     minutesToFirstMention: social.minutesToFirstMention,
     smartWalletBuyCount1h: social.walletBuyCount1h,
     hasGmgnFomoSource: social.hasGmgnFomo,
+    gmgnActivityScore60m: social.gmgnActivityScore60m,
+    maxSmWallets60m: social.maxSmWallets60m,
+    hasGmgnHotBeforeEntry: social.hasGmgnHotBeforeEntry,
   })
 }
 
@@ -183,6 +226,16 @@ export function extractPatternFeaturesFromLiveEntry(
     topSource === PATTERN_TOP_SOURCE_GMGN_FOMO ||
     entryFeatures.source_gmgn_smart_money_fomo === 1
 
+  const gmgnScore =
+    readNum(entryFeatures.gmgn_activity_score) ??
+    readNum(entryFeatures.gmgn_activity_score_60m) ??
+    0
+  const smWallets = readNum(entryFeatures.sm_wallet_count_60m) ?? 0
+  const hasHot =
+    entryFeatures.has_gmgn_hot_signal === 1 ||
+    entryFeatures.has_gmgn_hot_signal === true ||
+    entryFeatures.has_gmgn_hot_before_entry === 1
+
   return buildPatternFeatureVector({
     firstMcap,
     mentionCount30m: mentions,
@@ -190,6 +243,9 @@ export function extractPatternFeaturesFromLiveEntry(
     minutesToFirstMention: minutes,
     smartWalletBuyCount1h: walletBuys,
     hasGmgnFomoSource: hasGmgnFomo,
+    gmgnActivityScore60m: gmgnScore,
+    maxSmWallets60m: smWallets,
+    hasGmgnHotBeforeEntry: hasHot,
   })
 }
 

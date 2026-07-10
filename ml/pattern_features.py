@@ -15,6 +15,9 @@ PATTERN_FEATURE_COLUMNS = [
     "smart_wallet_buy_count_1h",
     "has_smart_wallet_buy",
     "source_gmgn_smart_money_fomo",
+    "gmgn_activity_score_60m",
+    "log_gmgn_sm_wallets_60m",
+    "has_gmgn_hot_before_entry",
 ]
 
 MIN_PATTERN_ROWS = 60
@@ -68,12 +71,19 @@ def _event_ms(event: dict[str, Any]) -> float | None:
     return ms if math.isfinite(ms) else None
 
 
+def _read_metadata_number(meta: dict[str, Any], key: str) -> float:
+    return _read_number(meta.get(key)) or 0.0
+
+
 def social_metrics_from_events(events: list[dict[str, Any]], first_seen_ms: float) -> dict[str, float | bool]:
     channels: set[str] = set()
     mention_count_30m = 0
     wallet_buy_count_1h = 0
     first_mention_ms: float | None = None
     has_gmgn_fomo = False
+    gmgn_activity_score_60m = 0.0
+    max_sm_wallets_60m = 0.0
+    has_gmgn_hot_before_entry = False
 
     for event in events:
         ms = _event_ms(event)
@@ -84,18 +94,33 @@ def social_metrics_from_events(events: list[dict[str, Any]], first_seen_ms: floa
             continue
 
         event_type = str(event.get("event_type") or "")
+        source = str(event.get("source") or "")
+
         if event_type == "mention" and delta <= WINDOW_30M_MS:
             mention_count_30m += 1
             channel = str(event.get("channel_id") or "")
             if channel:
                 channels.add(channel)
-            if str(event.get("source") or "") == PATTERN_TOP_SOURCE_GMGN_FOMO:
+            if source == PATTERN_TOP_SOURCE_GMGN_FOMO:
                 has_gmgn_fomo = True
             if first_mention_ms is None or ms < first_mention_ms:
                 first_mention_ms = ms
 
         if event_type == "wallet_buy" and delta <= WINDOW_1H_MS:
             wallet_buy_count_1h += 1
+            if source.startswith("gmgn_"):
+                if source == "gmgn_hot":
+                    has_gmgn_hot_before_entry = True
+                meta = event.get("raw_metadata")
+                if isinstance(meta, dict):
+                    gmgn_activity_score_60m = max(
+                        gmgn_activity_score_60m,
+                        _read_metadata_number(meta, "gmgn_activity_score"),
+                    )
+                    max_sm_wallets_60m = max(
+                        max_sm_wallets_60m,
+                        _read_metadata_number(meta, "sm_wallet_count_60m"),
+                    )
 
     if first_mention_ms is None:
         minutes_to_first = 720.0
@@ -108,6 +133,9 @@ def social_metrics_from_events(events: list[dict[str, Any]], first_seen_ms: floa
         "minutes_to_first_mention": minutes_to_first,
         "wallet_buy_count_1h": float(wallet_buy_count_1h),
         "has_gmgn_fomo": has_gmgn_fomo,
+        "gmgn_activity_score_60m": gmgn_activity_score_60m,
+        "max_sm_wallets_60m": max_sm_wallets_60m,
+        "has_gmgn_hot_before_entry": has_gmgn_hot_before_entry,
     }
 
 
@@ -119,6 +147,9 @@ def build_pattern_feature_vector(params: dict[str, float | bool]) -> dict[str, f
     mention_count = float(params.get("mention_count_30m") or 0)
     wallet_buys = float(params.get("wallet_buy_count_1h") or 0)
     has_gmgn = bool(params.get("has_gmgn_fomo"))
+    gmgn_score = float(params.get("gmgn_activity_score_60m") or 0)
+    sm_wallets = float(params.get("max_sm_wallets_60m") or 0)
+    has_hot = bool(params.get("has_gmgn_hot_before_entry"))
 
     return {
         "log_first_mcap": log_first,
@@ -128,6 +159,9 @@ def build_pattern_feature_vector(params: dict[str, float | bool]) -> dict[str, f
         "smart_wallet_buy_count_1h": wallet_buys,
         "has_smart_wallet_buy": 1.0 if wallet_buys > 0 else 0.0,
         "source_gmgn_smart_money_fomo": 1.0 if has_gmgn else 0.0,
+        "gmgn_activity_score_60m": gmgn_score,
+        "log_gmgn_sm_wallets_60m": _log1p(sm_wallets) or 0.0,
+        "has_gmgn_hot_before_entry": 1.0 if has_hot else 0.0,
     }
 
 
@@ -157,6 +191,13 @@ def row_to_pattern_features(row: dict[str, Any]) -> dict[str, float] | None:
             "minutes_to_first_mention": _read_number(row.get("minutes_to_first_mention")) or 720,
             "wallet_buy_count_1h": _read_number(row.get("smart_wallet_buy_count_1h")) or 0,
             "has_gmgn_fomo": row.get("source_gmgn_smart_money_fomo") in (1, 1.0, True, "1"),
+            "gmgn_activity_score_60m": _read_number(row.get("gmgn_activity_score_60m")) or 0,
+            "max_sm_wallets_60m": _read_number(row.get("log_gmgn_sm_wallets_60m"))
+            if row.get("log_gmgn_sm_wallets_60m") is not None
+            else _read_number(row.get("sm_wallet_count_60m"))
+            or 0,
+            "has_gmgn_hot_before_entry": row.get("has_gmgn_hot_before_entry")
+            in (1, 1.0, True, "1"),
         }
     )
 

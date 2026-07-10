@@ -75,12 +75,16 @@ New domain — **sim_only by default**. See [GMGN_STRATEGY.md](./GMGN_STRATEGY.m
 
 | Step | Action |
 |------|--------|
-| VPS CLI | `npm install -g gmgn-cli` → `gmgn-cli config --apply <KEY>` |
-| Env | `GMGN_API_KEY=...` in web `.env` |
-| DB | `psql -f db/init/10-gmgn-strategy-domain.sql` on existing volume |
-| Deploy | Rebuild web + cron; worker `gmgn_sim_track` every 120s |
-| Enable | `/dev/strategies` → activate `gmgn_smartmoney_default` |
+| Env | `GMGN_API_KEY=...` in web `.env` (HTTP default; CLI optional via `GMGN_TRANSPORT=cli`) |
+| DB | `psql -f db/init/10-gmgn-strategy-domain.sql` + `11-gmgn-sm-kol-combined.sql` on existing volume |
+| Deploy | Rebuild web + cron; workers `gmgn_sim_track` (120s) + `gmgn_activity_poll` (180s) |
+| Enable | `/dev/strategies` → activate `gmgn_sm_kol_combined` or `gmgn_smartmoney_default` |
+| Smoke | `POST /trigger/gmgn-activity-poll` → check `social_token_events` source `gmgn_hot` |
 | Smoke | `POST /trigger/gmgn-sim-track` → check `trading_records` wallet `gmgn-sim` |
+
+Activity poll ingests **only high-score** tokens into social (default threshold 50). Pattern ML gets 3 new GMGN features — retrain before `ML_PATTERN_MODE=enforce`.
+
+**Live boost after entry:** when `gmgn_hot` arrives after an open sim or tracked token, `gmgn-live-boost.ts` patches `entry_features` and bumps `social_boost_score`. Env: `GMGN_LIVE_BOOST_ENABLED`, `GMGN_LIVE_BOOST_SCORE=25`, `GMGN_LIVE_BOOST_MIN_SCORE=50`, `GMGN_LIVE_BOOST_EXIT=shadow`.
 
 Live swap via `gmgn-cli swap` is stubbed only (`GMGN_PRIVATE_KEY`); keep `execution_mode=sim_only` until sim review.
 
