@@ -180,6 +180,7 @@ Richest path: **mcap_tracker** sim open (shared helper + optional enforce). Sign
 |-------|--------|
 | **A — Normalize** | Canonical params + features; DLMM mint/pool; ML extractors via aliases; docs (this file) |
 | **B — ML2 adjust** | Potential → TP/SL overlay on sim strategies (`ML_POTENTIAL_EXIT_MODE`; default shadow) — **done** |
+| **B.2 / Phase 3 — ML2 ops** | Editable overlay table + admin apply override + `ML_POTENTIAL_MIN_ROWS` — **done** |
 | **C — ML1 broaden** | Enforce filter on more domains when `gate_ready` / `pattern_ready` |
 | **D — ML3** | Train bin/position model on mint-keyed DLMM outcomes |
 
@@ -211,7 +212,8 @@ Richest path: **mcap_tracker** sim open (shared helper + optional enforce). Sign
 | Registry / types | `src/strategies/registry.ts`, `types.ts` |
 | Canonical params / features | `src/strategies/canonical-params.ts`, `canonical-features.ts` |
 | Shared open-path ML shadow | `src/strategies/ml-entry-shadow.ts` |
-| ML2 exit overlay | `src/strategies/potential-exit-overlay.ts` |
+| ML2 exit overlay | `src/strategies/potential-exit-overlay.ts`, `potential-exit-overlay-config.ts` |
+| ML2 admin API | `GET/PATCH /api/strategies/ml/exit-overlay` |
 | Outcomes | `src/strategies/outcomes.ts`, `db.ts` |
 | Entry snapshot | `src/strategies/entry-feature-snapshot.ts`, `resolve-entry-snapshot.ts` |
 | Gate / potential scorer | `src/strategies/entry-ml-scorer.server.ts` |

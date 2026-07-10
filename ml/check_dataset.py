@@ -14,6 +14,7 @@ from features import (
     MIN_LABELED_OUTCOMES,
     MIN_POTENTIAL_OUTCOMES,
     NUM_CLASSES,
+    get_min_potential_outcomes,
 )
 
 
@@ -43,7 +44,9 @@ def main() -> None:
 
     if args.min_rows is None:
         args.min_rows = (
-            MIN_POTENTIAL_OUTCOMES if args.stage == "potential" else MIN_LABELED_OUTCOMES
+            get_min_potential_outcomes()
+            if args.stage == "potential"
+            else MIN_LABELED_OUTCOMES
         )
 
     if args.input.suffix == ".parquet":

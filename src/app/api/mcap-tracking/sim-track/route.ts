@@ -199,7 +199,7 @@ async function openSimPosition(params: {
   }
 
   const baseExit = mcapTrackerToCanonical(params.strategy).exit
-  const overlayResult = resolveExitOverlayForOpen({
+  const overlayResult = await resolveExitOverlayForOpen({
     baseExit,
     features: scoredEntryFeatures,
     mintAddress: params.mintAddress,
@@ -425,7 +425,7 @@ async function openLivePosition(params: {
 
   // Live: stamp overlay audit only — never persist effective_exit
   const baseExit = mcapTrackerToCanonical(params.strategy).exit
-  const overlayResult = resolveExitOverlayForOpen({
+  const overlayResult = await resolveExitOverlayForOpen({
     baseExit,
     features: params.scoredEntryFeatures ?? {},
     mintAddress: params.mintAddress,

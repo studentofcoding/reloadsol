@@ -29,6 +29,7 @@ import OutcomeReviewModal, {
   OutcomePatternMlBadge,
   OutcomePotentialMlBadge,
 } from "@/components/strategies/OutcomeReviewModal";
+import Ml2ExitOverlayPanel from "@/components/strategies/Ml2ExitOverlayPanel";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
 import {
   ENTRY_MCAP_BAND_OPTIONS,
@@ -880,6 +881,12 @@ export default function StrategyAdminHub() {
 
       {tab === "config" && (
         <>
+          <Ml2ExitOverlayPanel
+            onNotify={(kind, title, detail) =>
+              showToast(kind, title, detail ?? "")
+            }
+          />
+
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
             <h2 className="text-xl font-bold text-white mb-2">Trending bot</h2>
             <p className="text-gray-400 text-sm mb-4">

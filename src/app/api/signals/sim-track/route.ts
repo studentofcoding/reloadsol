@@ -302,7 +302,7 @@ export async function POST(request: NextRequest) {
         const { resolveExitOverlayForOpen } = await import(
           '@/strategies/potential-exit-overlay'
         )
-        const overlayResult = resolveExitOverlayForOpen({
+        const overlayResult = await resolveExitOverlayForOpen({
           baseExit: signalsToCanonical(strategy).exit,
           features: ml.features,
           mintAddress: signal.token_address,

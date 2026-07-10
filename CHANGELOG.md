@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Phase 3: ML2 exit ops (editable overlay + apply override + train floor)
+
+- Strategy Admin **Config → ML2 Exit Overlay**: edit tier TP/SL/hold rules, moon/pWinner nudges, reset to defaults.
+- Persist in `strategy_definitions` id `ml2_exit_overlay`; runtime cache; `exitModeOverride` (shadow/apply/off) with confirm for apply (sim only).
+- Env **`ML_POTENTIAL_MIN_ROWS`** (default 30) for potential train/check; warns if &lt; 30.
+
 ### Added — Strategy Admin Gate / Potential / Exit TP/SL badges + export recovery
 
 - Reports table + outcome modal show **Gate**, **Potential**, and **Exit TP/SL** badges from `ml_gate_*` / `ml_potential_*` / `ml_exit_*` (read-only).

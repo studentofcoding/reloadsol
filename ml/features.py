@@ -96,6 +96,29 @@ def potential_tier_from_training_class(training_class: int | None) -> int | None
 
 
 MIN_POTENTIAL_OUTCOMES = 30
+RECOMMENDED_POTENTIAL_OUTCOMES = 30
+
+
+def get_min_potential_outcomes() -> int:
+    """ML_POTENTIAL_MIN_ROWS env (default 30). Values below 30 warn but are allowed."""
+    import os
+
+    raw = os.environ.get("ML_POTENTIAL_MIN_ROWS", "").strip()
+    if not raw:
+        return MIN_POTENTIAL_OUTCOMES
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return MIN_POTENTIAL_OUTCOMES
+    if value <= 0:
+        return MIN_POTENTIAL_OUTCOMES
+    if value < RECOMMENDED_POTENTIAL_OUTCOMES:
+        print(
+            f"WARNING: ML_POTENTIAL_MIN_ROWS={value} is below recommended "
+            f"{RECOMMENDED_POTENTIAL_OUTCOMES}",
+            flush=True,
+        )
+    return value
 
 
 def _read_number(row: dict[str, Any], key: str) -> float | None:

@@ -1,4 +1,10 @@
 import type { StrategyParameterSet } from './canonical-params'
+import {
+  applyTierRule,
+  getDefaultPotentialExitOverlayConfig,
+  loadPotentialExitOverlayConfig,
+  type PotentialExitOverlayConfig,
+} from './potential-exit-overlay-config'
 
 export type PotentialExitMode = 'off' | 'shadow' | 'apply'
 
@@ -19,6 +25,7 @@ export type PotentialExitOverlayMeta = {
   base: CanonicalExit
   effective: CanonicalExit
   applied: boolean
+  configVersion?: number
 }
 
 export type ApplyPotentialToExitParamsResult = {
@@ -26,16 +33,25 @@ export type ApplyPotentialToExitParamsResult = {
   overlay: PotentialExitOverlayMeta
 }
 
-const TP_MIN = 50
-const TP_MAX = 500
-const SL_MIN = -80
-const SL_MAX = -20
-
-export function getMlPotentialExitMode(): PotentialExitMode {
+export function getMlPotentialExitModeFromEnv(): PotentialExitMode {
   const mode = process.env.ML_POTENTIAL_EXIT_MODE?.toLowerCase()
   if (mode === 'apply') return 'apply'
   if (mode === 'off') return 'off'
   return 'shadow'
+}
+
+/** Env mode, optionally overridden by admin config. */
+export function getMlPotentialExitMode(
+  exitModeOverride?: PotentialExitMode | null,
+): PotentialExitMode {
+  if (
+    exitModeOverride === 'apply' ||
+    exitModeOverride === 'off' ||
+    exitModeOverride === 'shadow'
+  ) {
+    return exitModeOverride
+  }
+  return getMlPotentialExitModeFromEnv()
 }
 
 function clamp(n: number, min: number, max: number): number {
@@ -80,7 +96,13 @@ export function readPotentialExitSignals(
 export function applyPotentialToExitParams(
   baseExit: CanonicalExit,
   signals: PotentialExitSignals,
+  opts?: {
+    config?: PotentialExitOverlayConfig
+    mode?: PotentialExitMode
+  },
 ): ApplyPotentialToExitParamsResult {
+  const config = opts?.config ?? getDefaultPotentialExitOverlayConfig()
+  const mode = opts?.mode ?? getMlPotentialExitMode(config.exitModeOverride)
   const base = cloneExit(baseExit)
   const tier =
     signals.tier != null && signals.tier >= 1 && signals.tier <= 4
@@ -95,9 +117,10 @@ export function applyPotentialToExitParams(
       ? signals.pWinner
       : null
 
-  const mode = getMlPotentialExitMode()
+  const promote3 = config.moonScorePromote.tier3
+  const promote4 = config.moonScorePromote.tier4
 
-  if (tier == null && (moonScore == null || moonScore < 0.45)) {
+  if (tier == null && (moonScore == null || moonScore < promote3)) {
     return {
       exit: base,
       overlay: {
@@ -109,47 +132,51 @@ export function applyPotentialToExitParams(
         base,
         effective: cloneExit(base),
         applied: false,
+        configVersion: config.version,
       },
     }
+  }
+
+  let effectiveTier = tier
+  if (effectiveTier == null && moonScore != null) {
+    if (moonScore >= promote4) effectiveTier = 4
+    else if (moonScore >= promote3) effectiveTier = 3
   }
 
   let takeProfitPct = base.takeProfitPct
   let stopLossPct = base.stopLossPct
   let maxHoldHours = base.maxHoldHours
 
-  // Prefer explicit tier; moonScore can promote to 3/4 when tier missing
-  let effectiveTier = tier
-  if (effectiveTier == null && moonScore != null) {
-    if (moonScore >= 0.65) effectiveTier = 4
-    else if (moonScore >= 0.45) effectiveTier = 3
+  if (effectiveTier === 1 || effectiveTier === 2 || effectiveTier === 3 || effectiveTier === 4) {
+    const applied = applyTierRule(
+      takeProfitPct,
+      stopLossPct,
+      maxHoldHours,
+      config.tiers[effectiveTier],
+    )
+    takeProfitPct = applied.takeProfitPct
+    stopLossPct = applied.stopLossPct
+    maxHoldHours = applied.maxHoldHours
   }
 
-  if (effectiveTier === 1) {
-    takeProfitPct = Math.min(base.takeProfitPct, 100)
-    stopLossPct = Math.max(base.stopLossPct, -35)
-  } else if (effectiveTier === 3) {
-    takeProfitPct = Math.max(base.takeProfitPct, 250)
-    maxHoldHours = Math.min(base.maxHoldHours + 24, 120)
-  } else if (effectiveTier === 4) {
-    takeProfitPct = Math.max(base.takeProfitPct, 350)
-    stopLossPct = Math.min(base.stopLossPct, -60)
-    maxHoldHours = Math.min(base.maxHoldHours + 48, 144)
-  }
-  // tier 2 = baseline (unchanged)
-
-  if (pWinner != null && pWinner >= 0.6 && (effectiveTier ?? 0) >= 2) {
-    takeProfitPct += 25
+  const nudge = config.pWinnerNudge
+  if (
+    pWinner != null &&
+    pWinner >= nudge.min &&
+    (effectiveTier ?? 0) >= nudge.minTier
+  ) {
+    takeProfitPct += nudge.tpBonus
   }
 
-  takeProfitPct = clamp(takeProfitPct, TP_MIN, TP_MAX)
-  stopLossPct = clamp(stopLossPct, SL_MIN, SL_MAX)
+  takeProfitPct = clamp(takeProfitPct, config.clamps.tpMin, config.clamps.tpMax)
+  stopLossPct = clamp(stopLossPct, config.clamps.slMin, config.clamps.slMax)
 
   let takeProfitLadder = base.takeProfitLadder
   if (takeProfitLadder && takeProfitLadder.length > 0 && base.takeProfitPct > 0) {
     const scale = takeProfitPct / base.takeProfitPct
     takeProfitLadder = takeProfitLadder.map((level, i) => {
       if (i === 0) return takeProfitPct
-      return clamp(level * scale, TP_MIN, TP_MAX)
+      return clamp(level * scale, config.clamps.tpMin, config.clamps.tpMax)
     })
   }
 
@@ -172,6 +199,7 @@ export function applyPotentialToExitParams(
       base,
       effective: cloneExit(effective),
       applied: false,
+      configVersion: config.version,
     },
   }
 }
@@ -189,6 +217,7 @@ export function mergeExitOverlayIntoEntryFeatures(
     ml_exit_overlay_source: overlay.source,
     ml_exit_overlay_at: new Date().toISOString(),
     ml_exit_overlay_applied: applied,
+    ml_exit_overlay_config_version: overlay.configVersion ?? 1,
     ml_exit_base_stop_loss_pct: overlay.base.stopLossPct,
     ml_exit_base_take_profit_pct: overlay.base.takeProfitPct,
     ml_exit_base_max_hold_hours: overlay.base.maxHoldHours,
@@ -259,19 +288,21 @@ export function readEffectiveExitFromSimulation(
  * Run overlay for open path: stamp audit always; return exit to persist when mode=apply
  * and persistEffectiveExit is true (sim only — never for live).
  */
-export function resolveExitOverlayForOpen(params: {
+export async function resolveExitOverlayForOpen(params: {
   baseExit: CanonicalExit
   features: Record<string, unknown>
   mintAddress: string
   strategyId: string
   /** When false (live), never persist effective_exit even if mode=apply */
   persistEffectiveExit?: boolean
-}): {
+}): Promise<{
   features: Record<string, unknown>
   effectiveExit: EffectiveExitSnapshot | null
   overlay: PotentialExitOverlayMeta
-} {
-  const mode = getMlPotentialExitMode()
+}> {
+  const config = await loadPotentialExitOverlayConfig()
+  const mode = getMlPotentialExitMode(config.exitModeOverride)
+
   if (mode === 'off') {
     return {
       features: params.features,
@@ -285,13 +316,17 @@ export function resolveExitOverlayForOpen(params: {
         base: { ...params.baseExit },
         effective: { ...params.baseExit },
         applied: false,
+        configVersion: config.version,
       },
     }
   }
 
   const canPersist = params.persistEffectiveExit !== false
   const signals = readPotentialExitSignals(params.features)
-  const { exit, overlay } = applyPotentialToExitParams(params.baseExit, signals)
+  const { exit, overlay } = applyPotentialToExitParams(params.baseExit, signals, {
+    config,
+    mode,
+  })
   const applied = mode === 'apply' && canPersist
   const meta: PotentialExitOverlayMeta = { ...overlay, mode, applied }
 

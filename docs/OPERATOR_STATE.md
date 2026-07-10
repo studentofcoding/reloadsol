@@ -19,7 +19,13 @@ Canonical params/features + ML1/ML2/Pattern **shadow** on mcap, signals, and tre
 5. Smoke: trigger mcap sim-track; open buy `entry_features` has `ml_potential_*` + `ml_exit_*`; with `apply`, confirm `effective_exit` and closes use it
 6. Optional retrain: `npm run ml:export` → `ml:train-potential` on host → restart web
 7. Keep `ML_GATE_MODE` / `ML_PATTERN_MODE` at **shadow** until `*_ready`
-8. Only flip `ML_POTENTIAL_EXIT_MODE=apply` after reviewing `[ml-potential-exit:counterfactual]` logs
+8. Only flip `ML_POTENTIAL_EXIT_MODE=apply` after reviewing `[ml-potential-exit:counterfactual]` logs — or use Strategy Admin → Config → **ML2 Exit Overlay** override (requires confirm; sim only)
+
+### Phase 3 — ML2 exit ops
+
+- Edit tier TP/SL table in Admin; saved to `strategy_definitions` / `ml2_exit_overlay`.
+- Optional dry-run train: `ML_POTENTIAL_MIN_ROWS=15` (warns below 30).
+- Apply via Admin override or env after Exit TP/SL badge review.
 
 ### After deploy — re-export training data
 

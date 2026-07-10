@@ -114,7 +114,7 @@ async function attachBuyEntryFeatures(
         : getCurrentBotStrategySync()
     const strategy = resolveTradingStrategy(strategyId)
     const canonical = trendingBotToCanonical(strategy)
-    const overlayResult = resolveExitOverlayForOpen({
+    const overlayResult = await resolveExitOverlayForOpen({
       baseExit: canonical.exit,
       features,
       mintAddress: token.token_address,

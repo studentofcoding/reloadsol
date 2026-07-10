@@ -19,6 +19,7 @@ from features import (
     MIN_LABELED_OUTCOMES,
     MIN_POTENTIAL_OUTCOMES,
     NUM_CLASSES,
+    get_min_potential_outcomes,
 )
 
 
@@ -307,7 +308,11 @@ def main() -> None:
 
     min_rows = args.min_rows
     if min_rows is None:
-        min_rows = MIN_POTENTIAL_OUTCOMES if args.stage == "potential" else MIN_LABELED_OUTCOMES
+        min_rows = (
+            get_min_potential_outcomes()
+            if args.stage == "potential"
+            else MIN_LABELED_OUTCOMES
+        )
 
     feature_columns = resolve_feature_columns(args.version)
     missing = [c for c in feature_columns if c not in df.columns]
