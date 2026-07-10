@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { featureVectorToTensorInput, scoreBinaryGate } from '@/strategies/entry-ml-scorer'
+import {
+  featureVectorToTensorInput,
+  isPotentialModelReady,
+  scoreBinaryGate,
+} from '@/strategies/entry-ml-scorer'
 import { mergeShadowScoresIntoEntryFeatures } from '@/strategies/ml-shadow-log'
 
 describe('featureVectorToTensorInput', () => {
@@ -27,6 +31,24 @@ describe('scoreBinaryGate', () => {
     const result = scoreBinaryGate(new Float32Array([0.3, 0.7]))
     expect(result.pGood).toBeCloseTo(0.7)
     expect(result.predicted).toBe(1)
+  })
+})
+
+describe('isPotentialModelReady', () => {
+  it('reads potential_ready from meta', () => {
+    expect(
+      isPotentialModelReady({ feature_columns: [], metrics: { potential_ready: true } }),
+    ).toBe(true)
+  })
+
+  it('falls back to gate_ready on legacy potential meta', () => {
+    expect(
+      isPotentialModelReady({
+        feature_columns: [],
+        stage: 'potential',
+        metrics: { gate_ready: true },
+      }),
+    ).toBe(true)
   })
 })
 

@@ -30,9 +30,13 @@ function readPotentialReady(): boolean | null {
     const metaPath = path.join(dir, 'model.meta.json')
     if (!existsSync(metaPath)) return null
     const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as {
-      metrics?: { potential_ready?: boolean }
+      metrics?: { potential_ready?: boolean; gate_ready?: boolean }
+      stage?: string
     }
-    return meta.metrics?.potential_ready === true
+    const m = meta.metrics
+    if (m?.potential_ready === true) return true
+    if (meta.stage === 'potential' && m?.gate_ready === true) return true
+    return false
   } catch {
     return null
   }

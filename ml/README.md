@@ -184,7 +184,7 @@ Tier rules (`training_class` / derived columns):
 |------|---------|
 | `artifacts/v2-gate/model.onnx` | Binary gate — shadow + future enforce |
 | `artifacts/v2-potential/model.onnx` | Upside tier — advisory |
-| `*/model.meta.json` | `metrics.gate_ready`, feature order |
+| `*/model.meta.json` | `metrics.gate_ready` / `metrics.potential_ready`, feature order |
 
 Gate ready: macro-F1 ≥ **0.65** (200+ rows). Potential ready: macro-F1 ≥ **0.55** (30+ winners).
 

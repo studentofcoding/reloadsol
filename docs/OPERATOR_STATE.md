@@ -143,6 +143,7 @@ Shared:
 
 - Do not gate live trades on Pattern ML until `pattern_ready === true` (macro-F1 ≥ 0.60).
 - Do not gate live on sim-outcome gate until `gate_ready === true` (macro-F1 ≥ 0.65) — secondary track.
+- Do not set `ML_POTENTIAL_EXIT_MODE=apply` until `potential_ready === true` (macro-F1 ≥ 0.55) **and** counterfactual review — trained ≠ ready.
 - ML checker (Layer 2) must see **entry features only** — never strategy weights or scores (`docs/ML_GATE_PLAN.md`).
 - Target checker rejection **40–60%** of candidates in shadow mode; &gt;90% approval means gates are too loose.
 - LLM gate (Layer 3): ambiguous cases only; economics favor ONNX-only below ~$100k–250k deployed.
@@ -153,7 +154,24 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 ## Data hygiene (sim-outcome gate — secondary)
 
-- Run `npm run ml:backfill-labels` after tier label changes.
+### Tracking “menuju 200” (single source of truth)
+
+Different commands count different things — do not mix them:
+
+| Source | What it counts |
+|--------|----------------|
+| `ml:backfill-labels` preview | Class distribution across outcomes (often **all domains**); not export row count |
+| `ml:export` / `Built N training rows` | **mcap_tracker** (default) closed sims with **auto tier from PnL** + **12 entry features extractable** |
+| `GET /api/strategies/ml/dataset-stats?domain=mcap_tracker` | `stats.labeled` = tier from PnL; **`extractable_labeled`** = rows that pass V1 vector (use this for **200 target**) |
+
+Labels are **recomputed from `pnl_pct` + `status`** on closed sims — `ml_manual` only prevents auto-overwrite, not training eligibility.
+
+```bash
+curl -s "$API_BASE_URL/api/strategies/ml/dataset-stats?domain=mcap_tracker&key=$TRENDING_TRACKER_SECRET" \
+  | jq '{labeled: .stats.labeled, extractable: .extractable_labeled, by_class: .stats.by_class, gate: .stats.by_gate_class}'
+```
+
+- Run `npm run ml:backfill-labels` after tier label rule changes (optional; export also recomputes).
 - Export versioned data: `API_BASE_URL=http://127.0.0.1 TRENDING_TRACKER_SECRET=... npm run ml:export` → `ml/data/v2/training.parquet` + `dataset_manifest.json`.
 - Train gate: `npm run ml:train-gate` → `ml/artifacts/v2-gate/`
 - Train potential (advisory): `npm run ml:train-potential` → `ml/artifacts/v2-potential/`
@@ -173,7 +191,7 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 | Date | Change |
 |------|--------|
-| 2026-07-10 | Slim ML: removed v1 multiclass artifacts/CLI; goal stack pattern-gate + v2-gate + v2-potential; `ml:export-entry-features` |
+| 2026-07-10 | Potential meta uses `potential_ready` (not shared `gate_ready`); OPERATOR_STATE tracking table for 200-row target |
 | 2026-07-09 | Stage-1 Pattern ML shadow score on Early Enter (Telegram/toast/Signals ML column; never gates) |
 | 2026-07-09 | Two-stage alerts (Early Enter + Sim Open); drop -40/-80 + peak profit milestones; auto rugged/potential labels |
 | 2026-07-09 | Global sim-open toasts; at_80 skips stale milestones + uses live entry mcap when late; predictive ML UI toasts removed |

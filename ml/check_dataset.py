@@ -123,12 +123,23 @@ def main() -> None:
         metrics = meta.get("metrics") or {}
         macro_f1 = metrics.get("macro_f1")
         test_rows = meta.get("test_rows")
-        gate = metrics.get("min_macro_f1_gate", 0.65)
-        gate_ready = metrics.get("gate_ready")
+        if args.stage == "potential":
+            min_f1 = metrics.get("min_macro_f1_potential", 0.55)
+            ready_flag = metrics.get("potential_ready")
+            if ready_flag is None:
+                ready_flag = metrics.get("gate_ready")
+            ready_name = "potential_ready"
+        else:
+            min_f1 = metrics.get("min_macro_f1_gate", 0.65)
+            ready_flag = metrics.get("gate_ready")
+            ready_name = "gate_ready"
         if macro_f1 is not None:
-            print(f"Model macro-F1: {macro_f1} (gate ≥ {gate}, gate_ready={gate_ready})")
-            if macro_f1 < gate:
-                print(f"WARNING: macro-F1 below {gate} — not ready to gate live trades")
+            print(
+                f"Model macro-F1: {macro_f1} (need ≥ {min_f1}, {ready_name}={ready_flag})"
+            )
+            if macro_f1 < min_f1:
+                label = "potential" if args.stage == "potential" else "gate"
+                print(f"WARNING: macro-F1 below {min_f1} — not ready for {label} enforce/apply")
             if macro_f1 >= 0.99 and isinstance(test_rows, int) and test_rows < 100:
                 print("WARNING: near-perfect metrics on small holdout — likely overfit / verification rot")
 

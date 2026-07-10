@@ -186,8 +186,8 @@ def train_potential_tier(
     pred = np.argmax(proba, axis=1) + 1  # map 0-3 → tiers 1-4
     y_true = (y_test.to_numpy() + 1)  # back to tiers 1-4 for metrics
     macro_f1 = float(f1_score(y_true, pred, average="macro", zero_division=0))
-    min_f1_gate = 0.55
-    gate_ready = macro_f1 >= min_f1_gate and len(test_df) >= 10
+    min_f1_potential = 0.55
+    potential_ready = macro_f1 >= min_f1_potential and len(test_df) >= 10
 
     meta_extra = {
         "model_type": "potential_tier",
@@ -203,8 +203,8 @@ def train_potential_tier(
             "classification_report": classification_report(
                 y_true, pred, zero_division=0, output_dict=True
             ),
-            "gate_ready": gate_ready,
-            "min_macro_f1_gate": min_f1_gate,
+            "potential_ready": potential_ready,
+            "min_macro_f1_potential": min_f1_potential,
         },
     }
     return booster, train_df, test_df, meta_extra
@@ -293,7 +293,10 @@ def main() -> None:
     print(f"Stage: {args.stage}")
     print(f"Train rows: {len(train_df)}  Test rows: {len(test_df)}")
     print(f"Macro-F1: {metrics['macro_f1']:.4f}  Accuracy: {metrics['accuracy']:.4f}")
-    print(f"Gate ready: {metrics['gate_ready']}")
+    if args.stage == "potential":
+        print(f"Potential ready: {metrics['potential_ready']}")
+    else:
+        print(f"Gate ready: {metrics['gate_ready']}")
     print(f"Saved {lgb_path}")
     if onnx_ok:
         print(f"Saved {onnx_path}")

@@ -32,7 +32,7 @@ flowchart LR
 | Stage | Min rows | Ready if | Meta flag |
 |-------|----------|----------|-----------|
 | Gate | **200** labeled | macro-F1 ≥ **0.65**, test ≥ 20 | `gate_ready` |
-| Potential | **30** gate=1 | macro-F1 ≥ **0.55**, test ≥ 10 | `gate_ready` (shared name) |
+| Potential | **30** gate=1 | macro-F1 ≥ **0.55**, test ≥ 10 | `potential_ready` |
 | Pattern | **60** total, ≥30 per class | macro-F1 ≥ **0.60**, test ≥ 10 | `pattern_ready` |
 
 ### Shadow vs enforce / apply
@@ -84,7 +84,7 @@ Checker/maker rule: models see **entry-time features only** — never exit PnL, 
 3. Leakage: never train on exit mcap, `pnl_pct`, `monitor_snapshots`, post-entry info.
 4. Feature importance (gain) in `model.meta.json` — which inputs the model actually uses.
 
-**Map to repo:** `gate_ready` / `pattern_ready`; OPERATOR_STATE baselines; volume impute (`log_volume_at_entry=0`) shifts distribution.
+**Map to repo:** `gate_ready` / `potential_ready` / `pattern_ready`; OPERATOR_STATE baselines; volume impute (`log_volume_at_entry=0`) shifts distribution.
 
 ### Phase D — Deploy path (ONNX)
 
@@ -194,7 +194,7 @@ Required for extract: mcap, organic, holders, age. Volume optional.
 | Milestone | Meaning |
 |-----------|---------|
 | You can explain gate vs potential vs pattern without notes | Study path working |
-| ≥200 labeled + gate `gate_ready` | First serious gate retrain candidate |
+| ≥200 `extractable_labeled` (mcap_tracker) + gate `gate_ready` | First serious gate retrain / enforce candidate |
 | Potential macro-F1 ≥ 0.55 + good counterfactual review | Consider `ML_POTENTIAL_EXIT_MODE=apply` (sim) |
 | Pattern `pattern_ready` + winner recall not ~0 | Consider pattern enforce |
 

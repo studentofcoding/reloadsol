@@ -13,6 +13,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Removed legacy v1 multiclass model (`ml/artifacts/v1/`) and `--stage multiclass` train/check CLI.
 - Primary export script: `ml:export-entry-features` (`ml:export-v1-features` alias); **entry features** ≠ old model.
 - Goal stack: **pattern-gate** + **v2-gate** + **v2-potential** only.
+- v2-potential `model.meta.json` uses **`potential_ready`** / `min_macro_f1_potential` (legacy meta may still have `gate_ready`).
+- OPERATOR_STATE: single source of truth for tracking toward 200 rows (`extractable_labeled`).
 
 ### Fixed — volume_at_entry optional + Jupiter/DexScreener fallbacks
 

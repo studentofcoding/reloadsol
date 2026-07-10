@@ -8,6 +8,7 @@ export type MlModelMeta = {
   potential_tier_max?: number
   metrics?: {
     gate_ready?: boolean
+    potential_ready?: boolean
     macro_f1?: number
   }
 }
@@ -103,4 +104,11 @@ export function getMlGatePBadMax(): number {
 
 export function isGateModelReady(meta: MlModelMeta | null | undefined): boolean {
   return meta?.metrics?.gate_ready === true
+}
+
+/** v2-potential readiness (legacy meta may only have gate_ready). */
+export function isPotentialModelReady(meta: MlModelMeta | null | undefined): boolean {
+  if (meta?.metrics?.potential_ready === true) return true
+  if (meta?.stage === 'potential' && meta?.metrics?.gate_ready === true) return true
+  return false
 }
