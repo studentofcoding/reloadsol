@@ -152,6 +152,20 @@ GMGN_LIVE_BOOST_TOAST=true
 
 Triggers: **activity poll** (primary) + **sim-track ticks** on mcap/signals/gmgn (backup).
 
+### Smoke test
+
+With an open mcap/signals/gmgn sim position and `DATABASE_URL` set:
+
+```bash
+npm run smoke:gmgn-live-boost
+# optional:
+npx tsx scripts/smoke-gmgn-live-boost.ts --mint=YOUR_MINT
+npx tsx scripts/smoke-gmgn-live-boost.ts --http    # API ingest + sim-track (no direct DB writes)
+npx tsx scripts/smoke-gmgn-live-boost.ts --skip-ingest  # use existing gmgn_hot row
+```
+
+Exits 0 when `has_gmgn_hot_after_entry=1` on the open buy after the run.
+
 ## Live execution (prepared, not enabled v1)
 
 `src/strategies/gmgn-execution.ts` stubs `gmgn-cli swap` behind `GMGN_PRIVATE_KEY`.

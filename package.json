@@ -15,6 +15,7 @@
     "lint:fix": "eslint . --fix",
     "type-check": "tsc --noEmit",
     "test": "vitest run",
+    "smoke:gmgn-live-boost": "npx tsx scripts/smoke-gmgn-live-boost.ts",
     "prebuild": "node scripts/prebuild-strip-local-venvs.js",
     "postbuild": "node scripts/lock-next-env.js",
     "ml:backfill-labels": "npx tsx scripts/backfill-ml-labels.ts",
