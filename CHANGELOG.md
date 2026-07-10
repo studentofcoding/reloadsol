@@ -15,6 +15,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - DexScreener third source when Jupiter still null (`volume_at_entry_source: dexscreener`).
 - Backfill: monitor_snapshots fill, post-merge missing sample, `volume_filled_from` counts, default `limit=15`.
 - Prefer re-export + retrain after deploy (imputed zeros shift distribution slightly).
+- Ops verified: backfill chunk `updated=15` / `still_incomplete=0`; export 79 rows, 0 incomplete, `volume_imputed=39`.
 
 ### Fixed — ML incomplete-feature skips (going-forward + backfill)
 

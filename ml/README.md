@@ -2,6 +2,8 @@
 
 **Primary focus: Pattern ML** (24h mcap + social cohort labels). **Secondary:** sim-outcome gate (Layer 2) below.
 
+**Learning deep dive:** [docs/deep_dive_ml.md](../docs/deep_dive_ml.md) — what we use (LightGBM → ONNX), what to study, references, todos.
+
 Production DB: Docker Postgres **`reloadsol_db`** only. Train on **host**, not in web/cron containers.
 
 ---

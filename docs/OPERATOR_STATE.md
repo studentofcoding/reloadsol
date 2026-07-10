@@ -58,6 +58,15 @@ npm run ml:check-potential
 
 **Volume (V1):** `volume_at_entry` is optional. Missing → `log_volume_at_entry=0` at extract. Source order: local/monitor → Jupiter `stats5m→1h→6h→24h` → DexScreener `m5→h1→h24`. Telemetry: `volume_imputed` (not a hard incomplete).
 
+#### ML volume recovery (Jul 10)
+
+Ops verified after deploy:
+
+- Backfill chunk (`limit=15`): `updated=15`, `still_incomplete=0`, `volume_enriched=12` / `imputed=3`; prior `incomplete_total=51` (volume-only blockers).
+- Export: **79** training rows, **0** incomplete, `volume_imputed=39`.
+- Next: finish remaining chunked backfill (~3–4 more `limit=15` runs) → re-export → retrain gate/potential (keep shadow until ready). Imputed zeros shift distribution vs old ONNX.
+- Historical `monitor_snapshots` charts not rewritten; new ticks use tracker → mcap → Jupiter waterfall.
+
 Strategy Admin → Reports now shows Gate / Potential / Exit TP/SL on outcomes that stamped ML shadow fields.
 
 ## Pattern ML (primary focus — 24h mcap + social cohorts)
@@ -164,7 +173,7 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 | Date | Change |
 |------|--------|
-| 2026-07-10 | V1 volume optional (`log_volume=0`); Jupiter stats window waterfall + DexScreener; backfill `limit=15` + `volume_filled_from` |
+| 2026-07-10 | V1 volume optional + Jupiter/DexScreener; ops: backfill 15/15 updated, export 79 rows / 0 incomplete / `volume_imputed=39` |
 | 2026-07-09 | Stage-1 Pattern ML shadow score on Early Enter (Telegram/toast/Signals ML column; never gates) |
 | 2026-07-09 | Two-stage alerts (Early Enter + Sim Open); drop -40/-80 + peak profit milestones; auto rugged/potential labels |
 | 2026-07-09 | Global sim-open toasts; at_80 skips stale milestones + uses live entry mcap when late; predictive ML UI toasts removed |
