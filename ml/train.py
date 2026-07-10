@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train LightGBM entry models: gate (binary), potential (tier 1-4), or legacy multiclass."""
+"""Train LightGBM entry models: gate (binary) or potential (tier 1-4)."""
 
 from __future__ import annotations
 
@@ -17,8 +17,6 @@ from features import (
     FEATURE_COLUMNS,
     FEATURE_COLUMNS_V2,
     MIN_LABELED_OUTCOMES,
-    MIN_POTENTIAL_OUTCOMES,
-    NUM_CLASSES,
     get_min_potential_outcomes,
 )
 
@@ -212,90 +210,16 @@ def train_potential_tier(
     return booster, train_df, test_df, meta_extra
 
 
-def train_multiclass_legacy(
-    df: pd.DataFrame,
-    feature_columns: list[str],
-    test_ratio: float,
-    min_rows: int,
-) -> tuple[lgb.Booster, pd.DataFrame, pd.DataFrame, dict]:
-    if len(df) < min_rows:
-        raise SystemExit(
-            f"Need at least {min_rows} labeled rows, got {len(df)}."
-        )
-
-    class_counts = df["training_class"].value_counts().to_dict()
-    if len(class_counts) < 2:
-        print(
-            "WARNING: single-class dataset — model will be trivial until more tiers appear.",
-            class_counts,
-        )
-
-    train_df, test_df = time_split(df, test_ratio)
-    x_train = train_df[feature_columns]
-    y_train = train_df["training_class"].astype(int)
-    x_test = test_df[feature_columns]
-    y_test = test_df["training_class"].astype(int)
-
-    train_set = lgb.Dataset(x_train, label=y_train, feature_name=feature_columns)
-    valid_set = lgb.Dataset(x_test, label=y_test, feature_name=feature_columns, reference=train_set)
-
-    params = {
-        "objective": "multiclass",
-        "num_class": NUM_CLASSES,
-        "metric": ["multi_logloss", "multi_error"],
-        "learning_rate": 0.05,
-        "num_leaves": 31,
-        "feature_fraction": 0.9,
-        "bagging_fraction": 0.8,
-        "bagging_freq": 1,
-        "verbose": -1,
-        "seed": 42,
-    }
-
-    booster = lgb.train(
-        params,
-        train_set,
-        num_boost_round=300,
-        valid_sets=[valid_set],
-        callbacks=[lgb.early_stopping(stopping_rounds=30, verbose=False)],
-    )
-
-    proba = booster.predict(x_test, num_iteration=booster.best_iteration)
-    pred = np.argmax(proba, axis=1)
-    y_true = y_test.to_numpy()
-    macro_f1 = float(f1_score(y_true, pred, average="macro", zero_division=0))
-    min_f1_gate = 0.65
-    gate_ready = macro_f1 >= min_f1_gate and len(test_df) >= 20
-
-    meta_extra = {
-        "model_type": "multiclass",
-        "stage": "multiclass",
-        "num_classes": NUM_CLASSES,
-        "label_column": "training_class",
-        "class_counts": {str(k): int(v) for k, v in class_counts.items()},
-        "metrics": {
-            "macro_f1": macro_f1,
-            "accuracy": float(accuracy_score(y_true, pred)),
-            "classification_report": classification_report(
-                y_true, pred, zero_division=0, output_dict=True
-            ),
-            "gate_ready": gate_ready,
-            "min_macro_f1_gate": min_f1_gate,
-        },
-    }
-    return booster, train_df, test_df, meta_extra
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train entry ML model")
     parser.add_argument("--input", type=Path, required=True, help="Training parquet/csv")
     parser.add_argument(
         "--stage",
-        choices=["gate", "potential", "multiclass"],
-        default="multiclass",
-        help="Training stage (default: legacy multiclass)",
+        choices=["gate", "potential"],
+        default="gate",
+        help="Training stage (default: gate)",
     )
-    parser.add_argument("--version", default="v1", help="Artifact version folder")
+    parser.add_argument("--version", default="v2-gate", help="Artifact version folder")
     parser.add_argument("--output-dir", type=Path, help="Override artifact dir")
     parser.add_argument("--test-ratio", type=float, default=0.2, help="Time-based holdout ratio")
     parser.add_argument("--min-rows", type=int, default=None, help="Minimum labeled rows")
@@ -323,12 +247,8 @@ def main() -> None:
         booster, train_df, test_df, meta_extra = train_binary_gate(
             df, feature_columns, args.test_ratio, min_rows
         )
-    elif args.stage == "potential":
-        booster, train_df, test_df, meta_extra = train_potential_tier(
-            df, feature_columns, args.test_ratio, min_rows
-        )
     else:
-        booster, train_df, test_df, meta_extra = train_multiclass_legacy(
+        booster, train_df, test_df, meta_extra = train_potential_tier(
             df, feature_columns, args.test_ratio, min_rows
         )
 

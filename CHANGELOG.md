@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — slim ML to goal stack only
+
+- Removed legacy v1 multiclass model (`ml/artifacts/v1/`) and `--stage multiclass` train/check CLI.
+- Primary export script: `ml:export-entry-features` (`ml:export-v1-features` alias); **entry features** ≠ old model.
+- Goal stack: **pattern-gate** + **v2-gate** + **v2-potential** only.
+
 ### Fixed — volume_at_entry optional + Jupiter/DexScreener fallbacks
 
 - V1 extract: volume no longer required; missing → `log_volume_at_entry=0`; telemetry `volume_imputed` (TS + Python + dataset-stats/export).

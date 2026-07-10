@@ -1,7 +1,7 @@
 export type MlModelMeta = {
   version?: string
-  model_type?: 'binary' | 'potential_tier' | 'multiclass'
-  stage?: 'gate' | 'potential' | 'multiclass'
+  model_type?: 'binary' | 'potential_tier'
+  stage?: 'gate' | 'potential'
   feature_columns: string[]
   num_classes?: number
   potential_tier_min?: number

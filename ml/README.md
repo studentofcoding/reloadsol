@@ -108,13 +108,16 @@ ML runs on the **host** (or a separate CI job), not in web/cron containers. Node
 
 | Term | Meaning |
 |------|---------|
-| **`--features v1/v2`** (Python export) | Feature columns in parquet (v2 adds social) |
-| **`ml:export-v1-features`** | npm script → features v1 → `data/v2/training.parquet` |
-| **`ml:export-v2-social-experimental`** | npm script → features v2 → `training_experimental.parquet` |
-| **`ml:export`** | Alias for `ml:export-v1-features` |
-| **`data/v2/`** | Dataset path for the **v2 gate pipeline** (not “feature v2”) |
-| **`v2-gate` / `v2-potential`** | Model artifact folders (train.py `--version`) |
-| **`pattern-gate`** | Separate Pattern ML track |
+| **Entry features (12 cols)** | Input schema for v2-gate / v2-potential (`--features v1` in Python — not a model name) |
+| **`ml:export-entry-features`** | Primary npm export → `data/v2/training.parquet` |
+| **`ml:export-v1-features`** | Alias for `ml:export-entry-features` (compat) |
+| **`ml:export-v2-social-experimental`** | Experimental +social columns → `training_experimental.parquet` |
+| **`ml:export`** | Alias for `ml:export-entry-features` |
+| **`data/v2/`** | Dataset path for the v2 gate/potential pipeline |
+| **`v2-gate` / `v2-potential`** | Sim-outcome model artifact folders |
+| **`pattern-gate`** | Primary Pattern ML track (24h cohort) |
+
+Legacy **v1 multiclass model** (`artifacts/v1/`, `--stage multiclass`) removed — use v2-gate + v2-potential only.
 
 ## Phase 0 — Check dataset (app running)
 
@@ -133,9 +136,9 @@ Response includes `by_gate_class` and `potential_tier_counts`. Target: ≥ 200 l
 export API_BASE_URL=http://127.0.0.1
 export TRENDING_TRACKER_SECRET=...
 
-# → ml/data/v2/training.parquet (features v1; gate train uses v1 columns)
+# → ml/data/v2/training.parquet (12 entry feature columns)
 npm run ml:backfill-labels   # optional: refresh training_class on outcomes first
-npm run ml:export              # alias → ml:export-v1-features
+npm run ml:export              # alias → ml:export-entry-features
 npm run ml:check-dataset
 npm run ml:train-gate
 npm run ml:train-potential   # needs ≥30 gate=1 rows, ≥2 tiers
@@ -155,14 +158,13 @@ cd ml
 python3 export_training_data.py --features v1 --domain mcap_tracker
 python3 train.py --stage gate --input data/v2/training.parquet --version v2-gate
 python3 train.py --stage potential --input data/v2/training.parquet --version v2-potential
-python3 train.py --stage multiclass --input data/v2/training.parquet --version v1  # legacy
 ```
 
 ## Labels
 
 | Column | Meaning |
 |--------|---------|
-| `training_class` | Legacy tiers 0–4 (UI / backfill) |
+| `training_class` | Tiers 0–4 (UI / backfill / export labels) |
 | `gate_class` | **0** = class 0; **1** = classes 1–4 |
 | `potential_tier` | **1–4** when gate=1; null otherwise |
 

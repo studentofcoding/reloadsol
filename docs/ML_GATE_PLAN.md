@@ -136,7 +136,7 @@ See [`ml/README.md`](../ml/README.md).
 
 **Stage B — Potential (tiers 1–4):** trained on `gate_class === 1` rows only; predicts upside bucket.
 
-Legacy 5-class `training_class` export/train still supported via `--stage multiclass`.
+Legacy 5-class single-head training removed; use `--stage gate` and `--stage potential` only.
 
 ```bash
 npm run ml:export
@@ -182,7 +182,7 @@ npm run ml:check-dataset
 npm run ml:check-potential
 ```
 
-Reject live gating when `model.meta.json` → `metrics.gate_ready` is false (gate macro-F1 &lt; 0.65). v1 multiclass is deprecated for gating. See [`docs/OPERATOR_STATE.md`](OPERATOR_STATE.md).
+Reject live gating when `model.meta.json` → `metrics.gate_ready` is false (gate macro-F1 &lt; 0.65). Use **v2-gate** only (legacy v1 multiclass artifacts removed). See [`docs/OPERATOR_STATE.md`](OPERATOR_STATE.md).
 
 ---
 
@@ -227,7 +227,7 @@ Live capital: same gate on trending track **only after** mcap_tracker paper prov
 |------|---------|
 | `docs/ML_GATE_PLAN.md` | This document |
 | `ml/README.md` | Train/export quick start |
-| `ml/train.py` | LightGBM + ONNX (`--stage gate|potential|multiclass`) |
+| `ml/train.py` | LightGBM + ONNX (`--stage gate|potential`) |
 | `src/strategies/outcome-labeling.ts` | `computeGateClass`, `computePotentialTier` |
 | `src/strategies/entry-ml-scorer.ts` | ONNX shadow scorer (gate + potential) |
 | `src/strategies/ml-shadow-log.ts` | Merge shadow fields into `entry_features` |

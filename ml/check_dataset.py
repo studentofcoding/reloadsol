@@ -12,8 +12,6 @@ import pandas as pd
 from features import (
     FEATURE_COLUMNS,
     MIN_LABELED_OUTCOMES,
-    MIN_POTENTIAL_OUTCOMES,
-    NUM_CLASSES,
     get_min_potential_outcomes,
 )
 
@@ -23,8 +21,8 @@ def main() -> None:
     parser.add_argument("input", type=Path, help="Parquet or CSV training file")
     parser.add_argument(
         "--stage",
-        choices=["gate", "potential", "multiclass"],
-        default="multiclass",
+        choices=["gate", "potential"],
+        default="gate",
         help="Which training stage to validate",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON summary")
@@ -81,14 +79,6 @@ def main() -> None:
             else {}
         )
         distinct = sum(1 for c in by_label.values() if c > 0)
-    else:
-        label_col = "training_class"
-        labeled = len(df)
-        by_label = {
-            str(cls): int((df["training_class"] == cls).sum()) if labeled else 0
-            for cls in range(NUM_CLASSES)
-        }
-        distinct = sum(1 for count in by_label.values() if count > 0)
 
     ready = labeled >= args.min_rows and not missing
     single_class = distinct < 2

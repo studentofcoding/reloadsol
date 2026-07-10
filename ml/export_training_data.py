@@ -161,7 +161,7 @@ def main() -> None:
         "--features",
         default=os.environ.get("ML_EXPORT_FEATURES", "v1"),
         choices=["v1", "v2"],
-        help="Feature columns: v1=entry-only, v2=+social/telegram (gate train still uses v1 cols)",
+        help="Feature schema: v1=12 entry columns (gate/potential); v2=+social experimental export",
     )
     parser.add_argument(
         "--version",

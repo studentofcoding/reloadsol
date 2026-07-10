@@ -21,10 +21,11 @@ flowchart LR
 
 | Track | Problem | Labels | Artifact | Default mode |
 |-------|---------|--------|----------|--------------|
-| **v2-gate** | Binary classification | `gate_class` 0=skip, 1=allow (≥20% win) | `ml/artifacts/v2-gate/` | `ML_GATE_MODE=shadow` |
-| **v2-potential** | Multiclass (4) | `potential_tier` 1–4 on gate=1 only | `ml/artifacts/v2-potential/` | `ML_POTENTIAL_EXIT_MODE=shadow` |
 | **pattern-gate** | Binary classification | winner (≥120% 24h) / loser (&lt;80%) | `ml/artifacts/pattern-gate/` | `ML_PATTERN_MODE=shadow` |
-| **v1 multiclass** | 5-class (legacy) | `training_class` 0–4 | `ml/artifacts/v1/` | Deprecated for gating (overfit) |
+| **v2-gate** | Binary classification | `gate_class` 0=skip, 1=allow (≥20% win) | `ml/artifacts/v2-gate/` | `ML_GATE_MODE=shadow` |
+| **v2-potential** | Multiclass (4 tiers) | `potential_tier` 1–4 on gate=1 only | `ml/artifacts/v2-potential/` | `ML_POTENTIAL_EXIT_MODE=shadow` |
+
+**Entry features (12 columns)** feed gate/potential — exported via `ml:export-entry-features` (`--features v1` flag). This is **not** a model; legacy v1 multiclass model removed.
 
 ### Readiness bars
 

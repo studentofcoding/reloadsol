@@ -161,7 +161,7 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 - Shadow scoring runs on mcap sim opens (`entry_features.ml_gate_*`); **enforce wired but default `ML_GATE_MODE=shadow`**
 - Social TTL cleanup every 30m (Go cron → `/api/social/cleanup`); `/dev/social` is manual refresh only
 - Weekly loop: `npm run ml:export` → `ml:train-gate` → `ml:check-dataset`; review shadow `ml_gate_p_bad` histogram before setting `ML_GATE_MODE=enforce`
-- Do not gate live on v1 multiclass (overfit); use v2-gate `gate_ready` only
+- Use **v2-gate** + **v2-potential** only; legacy v1 multiclass model removed from repo
 
 ## Risk / kill switch
 
@@ -173,7 +173,7 @@ Daily tags: Strategy Admin → Reports → **Market regime** (`market_regime_tag
 
 | Date | Change |
 |------|--------|
-| 2026-07-10 | V1 volume optional + Jupiter/DexScreener; ops: backfill 15/15 updated, export 79 rows / 0 incomplete / `volume_imputed=39` |
+| 2026-07-10 | Slim ML: removed v1 multiclass artifacts/CLI; goal stack pattern-gate + v2-gate + v2-potential; `ml:export-entry-features` |
 | 2026-07-09 | Stage-1 Pattern ML shadow score on Early Enter (Telegram/toast/Signals ML column; never gates) |
 | 2026-07-09 | Two-stage alerts (Early Enter + Sim Open); drop -40/-80 + peak profit milestones; auto rugged/potential labels |
 | 2026-07-09 | Global sim-open toasts; at_80 skips stale milestones + uses live entry mcap when late; predictive ML UI toasts removed |
