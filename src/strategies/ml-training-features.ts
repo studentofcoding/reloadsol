@@ -185,6 +185,87 @@ export function bucketPnl(pnl: number | null | undefined): keyof MlPnlBuckets {
   return 'three_hundred_plus'
 }
 
+export const ML_CORE_RAW_FIELDS = [
+  'entry_mcap',
+  'organic_score',
+  'top_holders_pct',
+  'token_age_hours',
+  'volume_at_entry',
+] as const
+
+export type MlCoreRawField = (typeof ML_CORE_RAW_FIELDS)[number]
+
+export type MlIncompleteFieldCounts = Record<MlCoreRawField, number>
+
+export function emptyIncompleteFieldCounts(): MlIncompleteFieldCounts {
+  return {
+    entry_mcap: 0,
+    organic_score: 0,
+    top_holders_pct: 0,
+    token_age_hours: 0,
+    volume_at_entry: 0,
+  }
+}
+
+/** Which of the five V1 raw fields are missing after canonicalize (for telemetry). */
+export function listIncompleteMlFields(
+  features: Record<string, unknown> | null | undefined,
+  domain: StrategyDomain = 'mcap_tracker',
+  opts?: { entryAt?: string | null },
+): MlCoreRawField[] {
+  if (!features) {
+    return [...ML_CORE_RAW_FIELDS]
+  }
+  const canon = toCanonicalEntryFeatures(features, domain, {
+    entryAt: opts?.entryAt,
+  })
+
+  if (canon.instrument === 'dlmm_lp' && !canon.mint_address) {
+    return [...ML_CORE_RAW_FIELDS]
+  }
+
+  const missing: MlCoreRawField[] = []
+  const entryMcap = readFeatureNumber(canon, 'entry_mcap')
+  const organic = readFeatureNumber(canon, 'organic_score')
+  const holders = readFeatureNumber(canon, 'top_holders_pct')
+  const age = capTokenAgeHours(readFeatureNumber(canon, 'token_age_hours'))
+  const volume =
+    readFeatureNumber(canon, 'volume_at_entry') ??
+    readFeatureNumber(canon, 'volume_5m')
+
+  if (log1p(entryMcap) == null) missing.push('entry_mcap')
+  if (organic == null) missing.push('organic_score')
+  if (holders == null) missing.push('top_holders_pct')
+  if (age == null) missing.push('token_age_hours')
+  if (log1p(volume) == null) missing.push('volume_at_entry')
+  return missing
+}
+
+export function countIncompleteMlFields(
+  rows: StrategyOutcomeRow[],
+  recompute = true,
+): { skipped_incomplete: number; incomplete_by_field: MlIncompleteFieldCounts } {
+  const incomplete_by_field = emptyIncompleteFieldCounts()
+  let skipped_incomplete = 0
+
+  for (const row of rows) {
+    const tc = resolveEffectiveTrainingClass(row, recompute)
+    if (!isLabeledTrainingClass(tc)) continue
+    if (!row.entry_at) continue
+    if (extractMlFeatureVectorV1(row.features, row.domain, { entryAt: row.entry_at }) != null) {
+      continue
+    }
+    skipped_incomplete += 1
+    for (const field of listIncompleteMlFields(row.features, row.domain, {
+      entryAt: row.entry_at,
+    })) {
+      incomplete_by_field[field] += 1
+    }
+  }
+
+  return { skipped_incomplete, incomplete_by_field }
+}
+
 /** Entry-time numeric vector for ML v1 (mirrors ml/features.py). */
 export function extractMlFeatureVector(
   features: Record<string, unknown> | null | undefined,

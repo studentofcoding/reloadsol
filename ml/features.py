@@ -258,6 +258,35 @@ def row_to_feature_vector_v1(row: dict[str, Any]) -> dict[str, float] | None:
     return vector
 
 
+ML_CORE_RAW_FIELDS = (
+    "entry_mcap",
+    "organic_score",
+    "top_holders_pct",
+    "token_age_hours",
+    "volume_at_entry",
+)
+
+
+def list_incomplete_ml_fields(row: dict[str, Any]) -> list[str]:
+    """Which of the five V1 raw fields fail after canonicalize (telemetry)."""
+    row = canonicalize_row(row)
+    missing: list[str] = []
+    if _log1p(_read_number(row, "entry_mcap")) is None:
+        missing.append("entry_mcap")
+    if _read_number(row, "organic_score") is None:
+        missing.append("organic_score")
+    if _read_number(row, "top_holders_pct") is None:
+        missing.append("top_holders_pct")
+    if _cap_age(_read_number(row, "token_age_hours")) is None:
+        missing.append("token_age_hours")
+    volume = _read_number(row, "volume_at_entry")
+    if volume is None:
+        volume = _read_number(row, "volume_5m")
+    if _log1p(volume) is None:
+        missing.append("volume_at_entry")
+    return missing
+
+
 def row_to_feature_vector_v2(row: dict[str, Any]) -> dict[str, float] | None:
     base = row_to_feature_vector_v1(row)
     if base is None:

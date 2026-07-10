@@ -16,6 +16,7 @@ from features import (
     FEATURE_COLUMNS,
     FEATURE_COLUMNS_V2,
     gate_class_from_training_class,
+    list_incomplete_ml_fields,
     potential_tier_from_training_class,
     read_training_class,
     row_to_feature_vector,
@@ -74,6 +75,13 @@ def build_training_frame(
     records: list[dict] = []
     skipped_incomplete = 0
     skipped_label = 0
+    incomplete_by_field: dict[str, int] = {
+        "entry_mcap": 0,
+        "organic_score": 0,
+        "top_holders_pct": 0,
+        "token_age_hours": 0,
+        "volume_at_entry": 0,
+    }
 
     for _, row in raw.iterrows():
         row_dict = row.to_dict()
@@ -81,9 +89,11 @@ def build_training_frame(
         if label is None:
             skipped_label += 1
             continue
-        features = row_to_vector(row_dict)
-        if features is None:
+        feature_vec = row_to_vector(row_dict)
+        if feature_vec is None:
             skipped_incomplete += 1
+            for field in list_incomplete_ml_fields(row_dict):
+                incomplete_by_field[field] = incomplete_by_field.get(field, 0) + 1
             continue
         gate_class = gate_class_from_training_class(label)
         potential_tier = potential_tier_from_training_class(label)
@@ -96,7 +106,7 @@ def build_training_frame(
                 "training_class": label,
                 "gate_class": gate_class,
                 "potential_tier": potential_tier,
-                **features,
+                **feature_vec,
             }
         )
 
@@ -105,6 +115,7 @@ def build_training_frame(
         f"Built {len(df)} training rows "
         f"(skipped {skipped_label} unlabeled, {skipped_incomplete} incomplete features)"
     )
+    print(f"incomplete_by_field={incomplete_by_field}")
     return df
 
 

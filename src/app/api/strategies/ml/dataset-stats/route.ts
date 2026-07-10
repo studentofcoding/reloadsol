@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { loadOutcomesForMlDataset } from '@/strategies/db'
-import { computeMlDatasetStats, extractMlTrainingRow } from '@/strategies/ml-training-features'
+import {
+  computeMlDatasetStats,
+  countIncompleteMlFields,
+  extractMlTrainingRow,
+} from '@/strategies/ml-training-features'
 import type { StrategyDomain } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
@@ -19,11 +23,14 @@ export async function GET(request: NextRequest) {
     const extractableLabeled = rows.filter(
       (row) => extractMlTrainingRow(row, true) != null,
     ).length
+    const incomplete = countIncompleteMlFields(rows, true)
 
     return NextResponse.json({
       success: true,
       stats,
       extractable_labeled: extractableLabeled,
+      skipped_incomplete: incomplete.skipped_incomplete,
+      incomplete_by_field: incomplete.incomplete_by_field,
     })
   } catch (error) {
     return NextResponse.json(

@@ -13,7 +13,7 @@ describe('parseJupiterV2MarketHints', () => {
       ],
       'MintA',
     )
-    expect(hints).toEqual({ usdPrice: 0.0012, volume5m: 140 })
+    expect(hints).toEqual({ usdPrice: 0.0012, volume5m: 140, mcap: null })
   })
 
   it('matches mint when multiple tokens returned', () => {
@@ -28,7 +28,7 @@ describe('parseJupiterV2MarketHints', () => {
       ],
       'MintB',
     )
-    expect(hints).toEqual({ usdPrice: 0.5, volume5m: 15 })
+    expect(hints).toEqual({ usdPrice: 0.5, volume5m: 15, mcap: null })
   })
 
   it('treats missing buy or sell as zero when the other is present', () => {
@@ -38,14 +38,14 @@ describe('parseJupiterV2MarketHints', () => {
         usdPrice: 1,
         stats5m: { buyVolume: 25 },
       }),
-    ).toEqual({ usdPrice: 1, volume5m: 25 })
+    ).toEqual({ usdPrice: 1, volume5m: 25, mcap: null })
 
     expect(
       parseJupiterV2MarketHints({
         id: 'Y',
         stats5m: { sellVolume: 7 },
       }),
-    ).toEqual({ usdPrice: null, volume5m: 7 })
+    ).toEqual({ usdPrice: null, volume5m: 7, mcap: null })
   })
 
   it('returns null when neither price nor volume is present', () => {
@@ -60,7 +60,18 @@ describe('parseJupiterV2MarketHints', () => {
         usdPrice: Number.NaN,
         stats5m: { buyVolume: Number.POSITIVE_INFINITY, sellVolume: 3 },
       }),
-    ).toEqual({ usdPrice: null, volume5m: 3 })
+    ).toEqual({ usdPrice: null, volume5m: 3, mcap: null })
+  })
+
+  it('parses mcap from v2 search', () => {
+    expect(
+      parseJupiterV2MarketHints({
+        id: 'Z',
+        usdPrice: 0.01,
+        mcap: 85_000,
+        stats5m: { buyVolume: 1, sellVolume: 1 },
+      }),
+    ).toEqual({ usdPrice: 0.01, volume5m: 2, mcap: 85_000 })
   })
 })
 
@@ -107,6 +118,7 @@ describe('resolveTokenMonitorSnapshot waterfall', () => {
     vi.mocked(fetchJupiterMarketHints).mockResolvedValueOnce({
       usdPrice: 0.0004,
       volume5m: 1200,
+      mcap: 50_000,
     })
 
     const snap = await resolveTokenMonitorSnapshot('mint2', 50_000)
@@ -126,6 +138,7 @@ describe('resolveTokenMonitorSnapshot waterfall', () => {
     vi.mocked(fetchJupiterMarketHints).mockResolvedValueOnce({
       usdPrice: 0.01,
       volume5m: 999,
+      mcap: null,
     })
 
     const snap = await resolveTokenMonitorSnapshot('mint3', null)

@@ -8,6 +8,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — ML incomplete-feature skips (going-forward + backfill)
+
+- Per-field `incomplete_by_field` on `ml:export` and `/api/strategies/ml/dataset-stats`.
+- Shared `ensureCompleteBuyFeaturesForOutcome` on mcap / signals / trending closes.
+- Jupiter v2 `mcap` fills `entry_mcap` when tracker/mcap miss; persist organic/holders/`volume_5m` on `token_mcap_tracking`.
+- Admin `POST /api/strategies/ml/backfill-features` fills null core fields on historical outcomes.
+- DLMM close builds mint entry snapshot when mint is known.
+
 ### Fixed — Cron rebuild persistence + social_rollup 503 + schedules
 
 - Persist worker last-success/error to Postgres `cron_worker_runtime` via `GET/POST /api/workers/runtime`; cron hydrates on startup so Workers UI survives rebuilds.

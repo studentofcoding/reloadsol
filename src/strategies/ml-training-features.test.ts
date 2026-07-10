@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   computeMlDatasetStats,
+  countIncompleteMlFields,
   extractMlFeatureVector,
   extractMlTrainingRow,
   hasTrainingClass,
+  listIncompleteMlFields,
   resolveEffectiveTrainingClass,
 } from './ml-training-features'
 import type { StrategyOutcomeRow } from './types'
@@ -81,6 +83,46 @@ describe('extractMlTrainingRow', () => {
     expect(
       extractMlTrainingRow(outcome({ pnl_pct: 35, features: { training_class: 1, entry_mcap: 1 } }), true),
     ).toBeNull()
+  })
+
+  it('lists which core fields are missing', () => {
+    expect(
+      listIncompleteMlFields({
+        entry_mcap: 100_000,
+        organic_score: 50,
+        // holders / age / volume missing
+      }),
+    ).toEqual(['top_holders_pct', 'token_age_hours', 'volume_at_entry'])
+  })
+
+  it('counts incomplete fields across labeled rows', () => {
+    const { skipped_incomplete, incomplete_by_field } = countIncompleteMlFields([
+      outcome({
+        pnl_pct: 40,
+        status: 'won',
+        features: {
+          training_class: 1,
+          entry_mcap: 80_000,
+          organic_score: 40,
+        },
+      }),
+      outcome({
+        id: '2',
+        pnl_pct: 90,
+        status: 'won',
+        features: {
+          training_class: 2,
+          entry_mcap: 80_000,
+          organic_score: 40,
+          top_holders_pct: 20,
+          token_age_hours: 1,
+          volume_at_entry: 1000,
+        },
+      }),
+    ])
+    expect(skipped_incomplete).toBe(1)
+    expect(incomplete_by_field.top_holders_pct).toBe(1)
+    expect(incomplete_by_field.volume_at_entry).toBe(1)
   })
 })
 

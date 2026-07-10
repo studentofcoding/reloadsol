@@ -3,14 +3,16 @@ import {
   fetchJupiterMarketHints,
   fetchTokenMetadataFromJupiter,
 } from '@/utils/jupiter-metadata'
-import { fetchMcapTrackingRow } from '@/utils/mcap-tracker'
+import { fetchMcapTrackingRow, upsertMcapEntryMeta } from '@/utils/mcap-tracker'
 import {
   buildEntryFeatureSnapshot,
   type EntryFeatureSnapshotInput,
   type MonitorSnapshot,
 } from './entry-feature-snapshot'
+import { extractMlFeatureVectorV1 } from './ml-training-features'
 import { resolveTokenMonitorSnapshot, TRACKER_TABLE } from './sim-monitor-snapshots'
 import type { SocialSnapshot } from './social-snapshot'
+import type { StrategyDomain } from './types'
 
 export type EntrySnapshotOverrides = {
   entryAt?: string | null
@@ -37,6 +39,7 @@ type JupiterEntryHints = {
   organicScore: number | null
   topHoldersPct: number | null
   volume5m: number | null
+  mcap: number | null
 }
 
 async function fetchTrackerEntryHints(
@@ -87,13 +90,14 @@ async function fetchTrackerEntryHints(
 
 async function fetchJupiterEntryHints(
   tokenAddress: string,
-  opts: { needMeta: boolean; needVolume: boolean },
+  opts: { needMeta: boolean; needVolume: boolean; needMcap: boolean },
 ): Promise<JupiterEntryHints | null> {
-  if (!opts.needMeta && !opts.needVolume) return null
+  if (!opts.needMeta && !opts.needVolume && !opts.needMcap) return null
 
   let organicScore: number | null = null
   let topHoldersPct: number | null = null
   let volume5m: number | null = null
+  let mcap: number | null = null
 
   const tasks: Promise<void>[] = []
 
@@ -117,21 +121,27 @@ async function fetchJupiterEntryHints(
     )
   }
 
-  if (opts.needVolume) {
+  if (opts.needVolume || opts.needMcap) {
     tasks.push(
       fetchJupiterMarketHints(tokenAddress).then((market) => {
         volume5m = market?.volume5m ?? null
+        mcap = market?.mcap ?? null
       }),
     )
   }
 
   await Promise.all(tasks)
 
-  if (organicScore == null && topHoldersPct == null && volume5m == null) {
+  if (
+    organicScore == null &&
+    topHoldersPct == null &&
+    volume5m == null &&
+    mcap == null
+  ) {
     return null
   }
 
-  return { organicScore, topHoldersPct, volume5m }
+  return { organicScore, topHoldersPct, volume5m, mcap }
 }
 
 function numOrNull(value: unknown): number | null {
@@ -157,7 +167,7 @@ export async function resolveEntrySnapshotInput(
     trackerHints?.firstSeenAt ??
     null
 
-  const entryMcap =
+  let entryMcap =
     overrides.entryMcap ??
     numOrNull(mcapRow?.current_mcap) ??
     trackerHints?.entryMcap ??
@@ -183,17 +193,33 @@ export async function resolveEntrySnapshotInput(
 
   const needMeta =
     !overrides.skipJupiter && (organicScore == null || topHoldersPct == null)
-  // liveMonitor already ran Jupiter waterfall for volume when needed
   const needVolume = !overrides.skipJupiter && volume5m == null
+  const needMcap = !overrides.skipJupiter && entryMcap == null
 
   const jupiterHints =
-    needMeta || needVolume
-      ? await fetchJupiterEntryHints(tokenAddress, { needMeta, needVolume })
+    needMeta || needVolume || needMcap
+      ? await fetchJupiterEntryHints(tokenAddress, {
+          needMeta,
+          needVolume,
+          needMcap,
+        })
       : null
 
   if (organicScore == null) organicScore = jupiterHints?.organicScore ?? null
   if (topHoldersPct == null) topHoldersPct = jupiterHints?.topHoldersPct ?? null
   if (volume5m == null) volume5m = jupiterHints?.volume5m ?? null
+  if (entryMcap == null) entryMcap = jupiterHints?.mcap ?? null
+
+  // Best-effort persist meta onto mcap tracking for future opens
+  if (organicScore != null || topHoldersPct != null || volume5m != null) {
+    void upsertMcapEntryMeta(tokenAddress, {
+      organicScore,
+      topHoldersPct,
+      volume5m,
+    }).catch(() => {
+      /* non-fatal */
+    })
+  }
 
   const monitorSnapshots =
     overrides.monitorSnapshots ??
@@ -225,4 +251,69 @@ export async function buildFullEntryFeatureSnapshot(
     ...(extra ?? {}),
     ...buildEntryFeatureSnapshot(input),
   }
+}
+
+/**
+ * If buy entry_features lack the five ML numerics, rebuild from live sources
+ * so outcomes remain exportable. Shared by mcap / signals / trending closes.
+ */
+export async function ensureCompleteBuyFeaturesForOutcome(params: {
+  mintAddress: string
+  buyFeatures: Record<string, unknown> | null | undefined
+  overrides?: EntrySnapshotOverrides
+  extra?: Record<string, unknown>
+  domain?: StrategyDomain
+}): Promise<Record<string, unknown> | null> {
+  const buy = params.buyFeatures ?? null
+  const domain = params.domain ?? 'mcap_tracker'
+  const entryAt = params.overrides?.entryAt ?? null
+  if (buy && extractMlFeatureVectorV1(buy, domain, { entryAt }) != null) {
+    return buy
+  }
+
+  try {
+    const rebuilt = await buildFullEntryFeatureSnapshot(
+      params.mintAddress,
+      params.overrides ?? {},
+      params.extra,
+    )
+    return { ...(buy ?? {}), ...rebuilt }
+  } catch {
+    return buy
+  }
+}
+
+/** Merge rebuilt snapshot into features, filling only null/missing core fields. */
+export function mergeNullCoreFeatures(
+  existing: Record<string, unknown>,
+  rebuilt: Record<string, unknown>,
+): Record<string, unknown> {
+  const coreKeys = [
+    'entry_mcap',
+    'first_mcap',
+    'entry_mcap_band',
+    'organic_score',
+    'top_holders_pct',
+    'token_age_hours',
+    'volume_at_entry',
+    'volume_5m',
+    'first_seen_at',
+  ] as const
+  const out = { ...existing }
+  for (const key of coreKeys) {
+    const cur = out[key]
+    const next = rebuilt[key]
+    const curMissing =
+      cur == null ||
+      (typeof cur === 'number' && !Number.isFinite(cur))
+    if (curMissing && next != null) {
+      out[key] = next
+    }
+  }
+  if (out.ml_skipped === 'incomplete_token_features' || out.ml_skipped === 'no_model_or_incomplete_features') {
+    if (extractMlFeatureVectorV1(out) != null) {
+      delete out.ml_skipped
+    }
+  }
+  return out
 }

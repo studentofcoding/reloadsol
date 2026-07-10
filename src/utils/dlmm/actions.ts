@@ -226,6 +226,30 @@ export async function removePosition(id: string): Promise<DlmmActionResult> {
     // pool metrics / mint optional for outcome features
   }
 
+  let tokenFeatures: Record<string, unknown> = {}
+  let tokenFeaturesComplete = false
+  if (mintAddress) {
+    try {
+      const { buildFullEntryFeatureSnapshot, mergeNullCoreFeatures } = await import(
+        '@/strategies/resolve-entry-snapshot'
+      )
+      const { extractMlFeatureVectorV1 } = await import(
+        '@/strategies/ml-training-features'
+      )
+      const snapshot = await buildFullEntryFeatureSnapshot(mintAddress, {
+        entryAt: position.created_at ?? null,
+        tokenSymbol: position.token_x_symbol ?? position.token_y_symbol ?? null,
+      })
+      tokenFeatures = mergeNullCoreFeatures({}, snapshot)
+      tokenFeaturesComplete =
+        extractMlFeatureVectorV1(tokenFeatures, 'dlmm', {
+          entryAt: position.created_at ?? null,
+        }) != null
+    } catch {
+      // token snapshot optional
+    }
+  }
+
   await recordDlmmOutcome({
     strategyId: 'dlmm_default',
     poolAddress: position.pool_address,
@@ -236,6 +260,7 @@ export async function removePosition(id: string): Promise<DlmmActionResult> {
     status: (position.pnl_pct ?? 0) >= 0 ? 'won' : 'lost',
     isSimulated: config.dry_run,
     features: {
+      ...tokenFeatures,
       pool_name: position.pool_name,
       position_id: id,
       amount_sol: position.amount_sol,
@@ -245,7 +270,9 @@ export async function removePosition(id: string): Promise<DlmmActionResult> {
       fee_tvl_ratio_24h: feeTvl24h,
       initial_price_usd: position.entry_value_usd > 0 ? position.entry_value_usd : null,
       exit_price_usd: position.current_value_usd > 0 ? position.current_value_usd : null,
-      ml_skipped: mintAddress ? undefined : 'incomplete_token_features',
+      ...(mintAddress && tokenFeaturesComplete
+        ? {}
+        : { ml_skipped: mintAddress ? 'no_model_or_incomplete_features' : 'incomplete_token_features' }),
     },
   });
 

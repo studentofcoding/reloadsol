@@ -4,7 +4,10 @@ import { openSignalsSimPosition, SIGNALS_SIM_WALLET } from '@/strategies/telegra
 import { scoreSignalsForStrategy } from '@/strategies/signals-pipeline'
 import { recordSignalsOutcome } from '@/strategies/outcomes'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
-import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
+import {
+  buildFullEntryFeatureSnapshot,
+  ensureCompleteBuyFeaturesForOutcome,
+} from '@/strategies/resolve-entry-snapshot'
 import { annotateEntryFeatures, getSocialContext } from '@/strategies/social/context'
 import { appendSimPositionMonitorSnapshot, resolveTokenMonitorSnapshot } from '@/strategies/sim-monitor-snapshots'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
@@ -150,13 +153,37 @@ async function closeSimPosition(params: {
         rec.bot_strategy === params.strategyId &&
         rec.tokens?.some((t) => t.mintAddress === params.mintAddress),
     )
-  const buyFeatures =
+  const buyFeaturesRaw =
     buyRecord?.trading_simulation &&
     typeof buyRecord.trading_simulation === 'object' &&
     buyRecord.trading_simulation.entry_features &&
     typeof buyRecord.trading_simulation.entry_features === 'object'
       ? (buyRecord.trading_simulation.entry_features as Record<string, unknown>)
       : params.entryFeatures
+
+  const firstSeenAt =
+    typeof buyFeaturesRaw.first_seen_at === 'string'
+      ? buyFeaturesRaw.first_seen_at
+      : null
+  const entryMcapHint =
+    typeof buyFeaturesRaw.entry_mcap === 'number'
+      ? buyFeaturesRaw.entry_mcap
+      : typeof buyFeaturesRaw.first_mcap === 'number'
+        ? buyFeaturesRaw.first_mcap
+        : firstMcap
+
+  const buyFeatures =
+    (await ensureCompleteBuyFeaturesForOutcome({
+      mintAddress: params.mintAddress,
+      buyFeatures: buyFeaturesRaw,
+      domain: 'signals',
+      overrides: {
+        entryAt: params.entryAt,
+        firstSeenAt,
+        entryMcap: entryMcapHint,
+        tokenSymbol: params.symbol,
+      },
+    })) ?? buyFeaturesRaw
 
   await recordSignalsOutcome({
     strategyId: params.strategyId,

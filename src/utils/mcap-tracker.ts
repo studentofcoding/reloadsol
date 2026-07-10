@@ -1098,6 +1098,7 @@ async function fetchMcapRecordByAddress(tokenAddress: string): Promise<McapSnaps
 async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult> {
   try {
     normalizeTrackingTimeline(record)
+    await ensureMcapEntryMetaColumns()
     await query(
       `INSERT INTO token_mcap_tracking (
          token_address, token_symbol, first_mcap, current_mcap,
@@ -1105,8 +1106,9 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
          when_reach_80pct, when_reach_120pct, when_reach_200pct,
          when_drop_40pct, when_drop_80pct,
          peak_mcap, peak_growth_percent, peak_seen_at,
-         is_tracking_stuck, label
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+         is_tracking_stuck, label,
+         organic_score, top_holders_pct, volume_5m
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
       [
         record.token_address,
         record.token_symbol,
@@ -1125,6 +1127,9 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
         record.peak_seen_at ?? record.first_seen_at,
         record.is_tracking_stuck === true,
         record.label ?? null,
+        record.organic_score ?? null,
+        record.top_holders_pct ?? null,
+        record.volume_5m ?? null,
       ],
     )
 
@@ -1159,6 +1164,7 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
 // Helper function to update MCap record
 async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boolean = true): Promise<void> {
   try {
+    await ensureMcapEntryMetaColumns()
     const repairedTimeline = normalizeTrackingTimeline(record)
     const sets = [
       'current_mcap = $2',
@@ -1201,6 +1207,19 @@ async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boo
         sets.push(`label = $${paramIdx++}`)
         params.push(record.label)
       }
+    }
+
+    if (record.organic_score != null) {
+      sets.push(`organic_score = $${paramIdx++}`)
+      params.push(record.organic_score)
+    }
+    if (record.top_holders_pct != null) {
+      sets.push(`top_holders_pct = $${paramIdx++}`)
+      params.push(record.top_holders_pct)
+    }
+    if (record.volume_5m != null) {
+      sets.push(`volume_5m = $${paramIdx++}`)
+      params.push(record.volume_5m)
     }
 
     await query(
@@ -1397,6 +1416,73 @@ export function buildMcapOutcomeFeatures(params: {
 
 export async function fetchMcapTrackingRow(tokenAddress: string): Promise<McapSnapshot | null> {
   return fetchMcapRecordByAddress(tokenAddress)
+}
+
+let ensureMcapMetaPromise: Promise<void> | null = null
+
+async function ensureMcapEntryMetaColumns(): Promise<void> {
+  if (!ensureMcapMetaPromise) {
+    ensureMcapMetaPromise = (async () => {
+      // Run statements one-by-one — pg may not accept multi-statement in one query
+      await query(
+        `ALTER TABLE token_mcap_tracking ADD COLUMN IF NOT EXISTS organic_score NUMERIC`,
+      )
+      await query(
+        `ALTER TABLE token_mcap_tracking ADD COLUMN IF NOT EXISTS top_holders_pct NUMERIC`,
+      )
+      await query(
+        `ALTER TABLE token_mcap_tracking ADD COLUMN IF NOT EXISTS volume_5m NUMERIC`,
+      )
+    })()
+      .then(() => undefined)
+      .catch((err) => {
+        ensureMcapMetaPromise = null
+        throw err
+      })
+  }
+  await ensureMcapMetaPromise
+}
+
+/** Persist organic / holders / volume onto token_mcap_tracking when known. */
+export async function upsertMcapEntryMeta(
+  tokenAddress: string,
+  meta: {
+    organicScore?: number | null
+    topHoldersPct?: number | null
+    volume5m?: number | null
+  },
+): Promise<void> {
+  const organic =
+    typeof meta.organicScore === 'number' && Number.isFinite(meta.organicScore)
+      ? meta.organicScore
+      : null
+  const holders =
+    typeof meta.topHoldersPct === 'number' && Number.isFinite(meta.topHoldersPct)
+      ? meta.topHoldersPct
+      : null
+  const volume =
+    typeof meta.volume5m === 'number' && Number.isFinite(meta.volume5m)
+      ? meta.volume5m
+      : null
+  if (organic == null && holders == null && volume == null) return
+
+  try {
+    await ensureMcapEntryMetaColumns()
+    await query(
+      `UPDATE token_mcap_tracking SET
+         organic_score = COALESCE($2, organic_score),
+         top_holders_pct = COALESCE($3, top_holders_pct),
+         volume_5m = COALESCE($4, volume_5m),
+         last_updated_at = NOW()
+       WHERE token_address = $1`,
+      [tokenAddress, organic, holders, volume],
+    )
+  } catch (error) {
+    log.debug('price_tracking', 'upsertMcapEntryMeta skipped', {
+      tokenAddress,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
 }
 
 export async function fetchRecentMcapTrackingRows(params: {

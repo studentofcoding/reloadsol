@@ -138,6 +138,7 @@ export { fetchTokensFromJupiterV2 }
 export type JupiterMarketHints = {
   usdPrice: number | null
   volume5m: number | null
+  mcap: number | null
 }
 
 function finiteOrNull(value: unknown): number | null {
@@ -145,7 +146,7 @@ function finiteOrNull(value: unknown): number | null {
 }
 
 /**
- * Parse usdPrice + 5m volume from lite-api v2 search JSON (array or single object).
+ * Parse usdPrice + 5m volume + mcap from lite-api v2 search JSON (array or single object).
  * volume_5m = stats5m.buyVolume + stats5m.sellVolume when either is present.
  */
 export function parseJupiterV2MarketHints(
@@ -174,6 +175,7 @@ export function parseJupiterV2MarketHints(
   if (!token) return null
 
   const usdPrice = finiteOrNull(token.usdPrice)
+  const mcap = finiteOrNull(token.mcap) ?? finiteOrNull(token.fdv)
   const stats5m =
     token.stats5m && typeof token.stats5m === 'object'
       ? (token.stats5m as Record<string, unknown>)
@@ -183,9 +185,9 @@ export function parseJupiterV2MarketHints(
   const volume5m =
     buy != null || sell != null ? (buy ?? 0) + (sell ?? 0) : null
 
-  if (usdPrice == null && volume5m == null) return null
+  if (usdPrice == null && volume5m == null && mcap == null) return null
 
-  return { usdPrice, volume5m }
+  return { usdPrice, volume5m, mcap }
 }
 
 /** Rate-limited Jupiter v2 search → price + 5m volume for monitor/entry enrichment. */

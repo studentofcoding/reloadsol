@@ -46,9 +46,11 @@ Export recovery (aliases + `token_age_hours` derive) is in web + `ml/features.py
 
 ```bash
 export API_BASE_URL=http://127.0.0.1 TRENDING_TRACKER_SECRET=...
+# optional: fill null core fields on incomplete outcomes (rate-limited Jupiter)
+curl -X POST "$API_BASE_URL/api/strategies/ml/backfill-features?key=$TRENDING_TRACKER_SECRET&limit=100"
 npm run ml:export
 npm run ml:check-potential
-# compare skipped_incomplete vs prior run; train only when Ready: True (≥30 gate=1)
+# compare skipped_incomplete / incomplete_by_field vs prior run; train only when Ready: True (≥30 gate=1)
 ```
 
 Strategy Admin → Reports now shows Gate / Potential / Exit TP/SL on outcomes that stamped ML shadow fields.

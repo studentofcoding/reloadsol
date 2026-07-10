@@ -12,7 +12,7 @@ import {
   mergeMonitorSnapshots,
   priceHistoryToMonitorSnapshots,
 } from '@/strategies/entry-feature-snapshot'
-import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
+import { buildFullEntryFeatureSnapshot, ensureCompleteBuyFeaturesForOutcome } from '@/strategies/resolve-entry-snapshot'
 import { filterPointsToWindow, parsePriceHistory } from '@/strategies/trade-window-chart-data'
 
 const TRACKER_TABLE =
@@ -219,20 +219,49 @@ export async function finalizeBotPositionClose(
       : []
   const monitorSnapshots = mergeMonitorSnapshots(existingMonitors, clippedHistory)
 
-  const buyFeatures =
+  const buyFeaturesRaw =
     sim.entry_features && typeof sim.entry_features === 'object'
       ? (sim.entry_features as Record<string, unknown>)
       : {}
+
+  const buyFirstSeen =
+    typeof buyFeaturesRaw.first_seen_at === 'string'
+      ? buyFeaturesRaw.first_seen_at
+      : typeof tracker.created_at === 'string'
+        ? tracker.created_at
+        : entryAt
+  const buyHolders =
+    typeof buyFeaturesRaw.top_holders_pct === 'number'
+      ? buyFeaturesRaw.top_holders_pct
+      : null
+
+  const buyFeatures =
+    (await ensureCompleteBuyFeaturesForOutcome({
+      mintAddress: params.tokenAddress,
+      buyFeatures: buyFeaturesRaw,
+      domain: 'trending_bot',
+      overrides: {
+        entryAt,
+        firstSeenAt: buyFirstSeen,
+        entryMcap,
+        organicScore:
+          typeof tracker.organic_score === 'number' ? tracker.organic_score : null,
+        topHoldersPct: buyHolders,
+        volume5m: typeof tracker.volume_5m === 'number' ? tracker.volume_5m : null,
+        tokenSymbol: params.tokenSymbol,
+        monitorSnapshots,
+      },
+    })) ?? buyFeaturesRaw
 
   const closeEntryFeatures = await buildFullEntryFeatureSnapshot(
     params.tokenAddress,
     {
       entryAt,
-      firstSeenAt:
-        typeof tracker.created_at === 'string' ? tracker.created_at : entryAt,
+      firstSeenAt: buyFirstSeen,
       entryMcap,
       organicScore:
         typeof tracker.organic_score === 'number' ? tracker.organic_score : null,
+      topHoldersPct: buyHolders,
       volume5m: typeof tracker.volume_5m === 'number' ? tracker.volume_5m : null,
       tokenSymbol: params.tokenSymbol,
       monitorSnapshots,

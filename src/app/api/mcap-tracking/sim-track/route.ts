@@ -6,7 +6,10 @@ import {
   mergeEntryFeaturesForOutcome,
   readMonitorSnapshotsFromFeatures,
 } from '@/strategies/entry-feature-snapshot'
-import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
+import {
+  buildFullEntryFeatureSnapshot,
+  ensureCompleteBuyFeaturesForOutcome as rebuildIncompleteBuyFeatures,
+} from '@/strategies/resolve-entry-snapshot'
 import { getMlGatePBadMax } from '@/strategies/entry-ml-scorer'
 import { getPatternPWinnerMin } from '@/strategies/entry-pattern-scorer'
 import { logMlGateCounterfactual } from '@/strategies/ml-shadow-log'
@@ -14,7 +17,6 @@ import { logPatternGateCounterfactual } from '@/strategies/pattern-shadow-log'
 import { attachMlEntryShadow } from '@/strategies/ml-entry-shadow'
 import { mcapTrackerToCanonical } from '@/strategies/canonical-params'
 import { resolveExitOverlayForOpen } from '@/strategies/potential-exit-overlay'
-import { extractMlFeatureVectorV1 } from '@/strategies/ml-training-features'
 import type { McapTrackerStrategy } from '@/strategies/types'
 import {
   annotateEntryFeatures,
@@ -101,38 +103,32 @@ async function ensureCompleteBuyFeaturesForOutcome(params: {
   snapshot: McapSnapshot
   buyFeatures: Record<string, unknown> | null
 }): Promise<Record<string, unknown> | null> {
-  const buy = params.buyFeatures
-  if (buy && extractMlFeatureVectorV1(buy) != null) return buy
-
-  try {
-    const rebuilt = await buildFullEntryFeatureSnapshot(
-      params.mintAddress,
-      {
-        entryAt: params.entryAt ?? undefined,
-        firstSeenAt: params.snapshot.first_seen_at,
+  return rebuildIncompleteBuyFeatures({
+    mintAddress: params.mintAddress,
+    buyFeatures: params.buyFeatures,
+    domain: 'mcap_tracker',
+    overrides: {
+      entryAt: params.entryAt ?? undefined,
+      firstSeenAt: params.snapshot.first_seen_at,
+      entryMcap: params.entryMcap,
+      organicScore: params.snapshot.organic_score,
+      topHoldersPct: params.snapshot.top_holders_pct,
+      volume5m: params.snapshot.volume_5m ?? null,
+      tokenSymbol: params.symbol,
+      skipJupiter:
+        params.snapshot.organic_score != null &&
+        params.snapshot.top_holders_pct != null,
+    },
+    extra: {
+      entry_template: params.entryTemplate,
+      ...buildMcapOutcomeFeatures({
+        snapshot: params.snapshot,
+        entryTemplate: params.entryTemplate,
         entryMcap: params.entryMcap,
-        organicScore: params.snapshot.organic_score,
-        topHoldersPct: params.snapshot.top_holders_pct,
-        volume5m: params.snapshot.volume_5m ?? null,
-        tokenSymbol: params.symbol,
-        skipJupiter:
-          params.snapshot.organic_score != null &&
-          params.snapshot.top_holders_pct != null,
-      },
-      {
-        entry_template: params.entryTemplate,
-        ...buildMcapOutcomeFeatures({
-          snapshot: params.snapshot,
-          entryTemplate: params.entryTemplate,
-          entryMcap: params.entryMcap,
-          exitMcap: params.snapshot.current_mcap,
-        }),
-      },
-    )
-    return { ...(buy ?? {}), ...rebuilt }
-  } catch {
-    return buy
-  }
+        exitMcap: params.snapshot.current_mcap,
+      }),
+    },
+  })
 }
 
 async function openSimPosition(params: {
