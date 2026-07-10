@@ -46,8 +46,13 @@ export async function GET() {
   }
 
   const dlmmWorker = workers.find((w) => w.id === 'dlmm_manage')
+  const workerLastSuccessById: Record<string, string | null> = {}
+  for (const w of workers) {
+    workerLastSuccessById[w.id] = w.last_success_at?.trim() || null
+  }
   const domainHeartbeat = await getStrategyDomainHeartbeats({
     dlmmWorkerLastSuccessAt: dlmmWorker?.last_success_at ?? null,
+    workerLastSuccessById,
   })
 
   return NextResponse.json({

@@ -1500,17 +1500,54 @@ async function getDlmmDomainHeartbeat(params?: {
 
 export async function getStrategyDomainHeartbeats(params?: {
   dlmmWorkerLastSuccessAt?: string | null
+  workerLastSuccessById?: Record<string, string | null | undefined>
 }): Promise<StrategyDomainHeartbeat[]> {
   const domains: StrategyDomain[] = ['signals', 'trending_bot', 'dlmm', 'mcap_tracker']
   const results: StrategyDomainHeartbeat[] = []
+  const workerById = params?.workerLastSuccessById ?? {}
+
+  const domainPrimaryWorkers: Record<StrategyDomain, string[]> = {
+    mcap_tracker: ['mcap_tracker_sim_track'],
+    signals: ['signals_sim_track', 'signals_refresh'],
+    trending_bot: ['trending_tracker'],
+    dlmm: ['dlmm_manage'],
+  }
 
   for (const domain of domains) {
     if (domain === 'dlmm') {
-      results.push(await getDlmmDomainHeartbeat(params))
+      results.push(
+        await getDlmmDomainHeartbeat({
+          dlmmWorkerLastSuccessAt:
+            params?.dlmmWorkerLastSuccessAt ?? workerById.dlmm_manage ?? null,
+        }),
+      )
       continue
     }
 
     const outcome = await getLatestOutcomeHeartbeat(domain)
+    if (outcome.last_outcome_at) {
+      results.push({ domain, ...outcome })
+      continue
+    }
+
+    let workerAt: string | null = null
+    for (const workerId of domainPrimaryWorkers[domain] ?? []) {
+      const at = workerById[workerId]?.trim()
+      if (at) {
+        workerAt = at
+        break
+      }
+    }
+
+    if (workerAt) {
+      results.push({
+        domain,
+        last_outcome_at: workerAt,
+        heartbeat_source: 'worker',
+      })
+      continue
+    }
+
     results.push({ domain, ...outcome })
   }
 

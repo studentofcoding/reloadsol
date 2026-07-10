@@ -135,6 +135,71 @@ export async function fetchTokenMetadataFromJupiter(mintAddress: string, retryCo
 // Export the batch fetching function as well for use in route handlers
 export { fetchTokensFromJupiterV2 }
 
+export type JupiterMarketHints = {
+  usdPrice: number | null
+  volume5m: number | null
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/**
+ * Parse usdPrice + 5m volume from lite-api v2 search JSON (array or single object).
+ * volume_5m = stats5m.buyVolume + stats5m.sellVolume when either is present.
+ */
+export function parseJupiterV2MarketHints(
+  raw: unknown,
+  mintAddress?: string,
+): JupiterMarketHints | null {
+  let token: Record<string, unknown> | null = null
+
+  if (Array.isArray(raw)) {
+    const match = mintAddress
+      ? raw.find(
+          (t) =>
+            t &&
+            typeof t === 'object' &&
+            (t as { id?: string }).id === mintAddress,
+        )
+      : raw[0]
+    token =
+      match && typeof match === 'object'
+        ? (match as Record<string, unknown>)
+        : null
+  } else if (raw && typeof raw === 'object') {
+    token = raw as Record<string, unknown>
+  }
+
+  if (!token) return null
+
+  const usdPrice = finiteOrNull(token.usdPrice)
+  const stats5m =
+    token.stats5m && typeof token.stats5m === 'object'
+      ? (token.stats5m as Record<string, unknown>)
+      : null
+  const buy = finiteOrNull(stats5m?.buyVolume)
+  const sell = finiteOrNull(stats5m?.sellVolume)
+  const volume5m =
+    buy != null || sell != null ? (buy ?? 0) + (sell ?? 0) : null
+
+  if (usdPrice == null && volume5m == null) return null
+
+  return { usdPrice, volume5m }
+}
+
+/** Rate-limited Jupiter v2 search → price + 5m volume for monitor/entry enrichment. */
+export async function fetchJupiterMarketHints(
+  mintAddress: string,
+): Promise<JupiterMarketHints | null> {
+  try {
+    const raw = await fetchJupiterV2SearchRaw(mintAddress)
+    return parseJupiterV2MarketHints(raw, mintAddress)
+  } catch {
+    return null
+  }
+}
+
 /** Full lite-api v2 search JSON (unmapped) for a single mint. */
 export async function fetchJupiterV2SearchRaw(
   mintAddress: string,

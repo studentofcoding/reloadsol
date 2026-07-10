@@ -51,6 +51,8 @@ services:
     container_name: reloadsol-redis
     restart: unless-stopped
     command: redis-server --maxmemory 96mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
     deploy:
       resources:
         limits:
@@ -215,3 +217,4 @@ networks:
 volumes:
   postgres_data:
   nginx_cache:
+  redis_data:

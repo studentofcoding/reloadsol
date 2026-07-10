@@ -4,6 +4,19 @@ Living notes for regime awareness and rule changes. Production DB: Docker Postgr
 
 Update after significant sim batches or when disabling a strategy.
 
+## Docker rebuilds — what survives
+
+| State | Survives `docker compose up --build` / `down` + `up`? |
+|-------|------------------------------------------------------|
+| Open/sim positions, SL/TP, DLMM, trackers, outcomes | **Yes** — `postgres_data` volume |
+| Cron Workers UI last-success / errors | **Yes** — `cron_worker_runtime` (hydrated into Go on cron start) |
+| Redis API cache | **Yes** — `redis_data` volume (TTLs still apply) |
+| Cron process uptime / next_run | **No** — recalculated on cron start |
+
+**Do not** run `docker compose down -v` unless you intend to wipe Postgres + Redis volumes.
+
+After first deploy of this change on an existing volume, the web API creates `cron_worker_runtime` on first use (no volume wipe needed). Rebuild **web + cron** so hydrate/persist is live.
+
 ## Engine spine (Phase A + B)
 
 Canonical params/features + ML1/ML2/Pattern **shadow** on mcap, signals, and trending opens (`attachMlEntryShadow`). DLMM mint-keyed when resolvable.

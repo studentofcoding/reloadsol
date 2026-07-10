@@ -8,6 +8,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed — Cron rebuild persistence + social_rollup 503 + schedules
+
+- Persist worker last-success/error to Postgres `cron_worker_runtime` via `GET/POST /api/workers/runtime`; cron hydrates on startup so Workers UI survives rebuilds.
+- Redis named volume `redis_data` keeps cache warm across container recreate.
+- Chunk social rollup/event upserts (200 rows) to fix PgBouncer bind-param 503.
+- Align `social_rollup` registry to 300s; register `social_cleanup`; domain heartbeat falls back to primary worker last-success.
+
+### Fixed — Monitor snapshots null price/volume (Jupiter enrich)
+
+- `resolveTokenMonitorSnapshot` waterfall: trending tracker → mcap `volume_5m` → Jupiter lite-api v2 (`usdPrice` + `stats5m` buy+sell).
+- Entry snapshot fills `volume_at_entry` from Jupiter when local sources miss (so ML gate rows are not skipped).
+- Going-forward only; no rewrite of historical null `monitor_snapshots`.
+
 ### Added — Phase 3: ML2 exit ops (editable overlay + apply override + train floor)
 
 - Strategy Admin **Config → ML2 Exit Overlay**: edit tier TP/SL/hold rules, moon/pWinner nudges, reset to defaults.

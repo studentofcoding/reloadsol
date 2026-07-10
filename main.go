@@ -329,7 +329,11 @@ func NewCronService() *CronService {
 func (cs *CronService) Start() {
 	cs.logger.Info("🚀 Starting Cron Service for reloadsol...")
 	cs.initWorkerRegistry()
-	
+	cs.workers.SetOnChange(func(workerID, event, msg string) {
+		cs.persistWorkerRuntimeEvent(workerID, event, msg)
+	})
+	cs.hydrateWorkerRuntime()
+
 	// Send startup notification
 	if cs.config.DiscordWebhook != "" {
 		cs.logger.SendImmediate(
@@ -1086,6 +1090,109 @@ func (cs *CronService) manualDLMMManageTrigger(w http.ResponseWriter, r *http.Re
         "message":   "DLMM manage triggered manually",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
+}
+
+func parseOptionalRFC3339(s string) *time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t, err = time.Parse(time.RFC3339Nano, s)
+		if err != nil {
+			return nil
+		}
+	}
+	utc := t.UTC()
+	return &utc
+}
+
+func (cs *CronService) hydrateWorkerRuntime() {
+	url := fmt.Sprintf(
+		"%s/api/workers/runtime?key=%s",
+		cs.config.APIBaseURL,
+		cs.config.TrendingSecret,
+	)
+	body, err := cs.makeRequest("GET", url, nil, 15)
+	if err != nil {
+		cs.logger.Info(fmt.Sprintf("Worker runtime hydrate skipped: %v", err))
+		return
+	}
+
+	var payload struct {
+		Success bool `json:"success"`
+		Workers []struct {
+			WorkerID      string `json:"worker_id"`
+			LastStartedAt string `json:"last_started_at"`
+			LastSuccessAt string `json:"last_success_at"`
+			LastErrorAt   string `json:"last_error_at"`
+			LastErrorMsg  string `json:"last_error_msg"`
+		} `json:"workers"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		cs.logger.Info(fmt.Sprintf("Worker runtime hydrate parse failed: %v", err))
+		return
+	}
+	if !payload.Success {
+		return
+	}
+
+	hydrated := 0
+	for _, row := range payload.Workers {
+		if strings.TrimSpace(row.WorkerID) == "" {
+			continue
+		}
+		cs.workers.Hydrate(row.WorkerID, WorkerRuntimeHydrate{
+			LastStartedAt: parseOptionalRFC3339(row.LastStartedAt),
+			LastSuccessAt: parseOptionalRFC3339(row.LastSuccessAt),
+			LastErrorAt:   parseOptionalRFC3339(row.LastErrorAt),
+			LastErrorMsg:  row.LastErrorMsg,
+		})
+		hydrated++
+	}
+	cs.logger.Info(fmt.Sprintf("Hydrated worker runtime for %d workers from Postgres", hydrated))
+}
+
+func (cs *CronService) persistWorkerRuntimeEvent(workerID, event, msg string) {
+	url := fmt.Sprintf(
+		"%s/api/workers/runtime?key=%s",
+		cs.config.APIBaseURL,
+		cs.config.TrendingSecret,
+	)
+	payload := map[string]interface{}{
+		"worker_id": workerID,
+		"event":     event,
+		"at":        time.Now().UTC().Format(time.RFC3339),
+	}
+	if event == "fail" && msg != "" {
+		payload["error_msg"] = msg
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "reloadsol-cron-service/1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		cs.logger.Info(fmt.Sprintf("Worker runtime persist failed (%s/%s): %v", workerID, event, err))
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 300 {
+		cs.logger.Info(fmt.Sprintf(
+			"Worker runtime persist HTTP %d (%s/%s)",
+			resp.StatusCode, workerID, event,
+		))
+	}
 }
 
 func (cs *CronService) makeRequest(method, url string, params map[string]string, timeoutSec ...int) (string, error) {

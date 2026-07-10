@@ -1,5 +1,8 @@
 import { queryOne } from '@/utils/db'
-import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
+import {
+  fetchJupiterMarketHints,
+  fetchTokenMetadataFromJupiter,
+} from '@/utils/jupiter-metadata'
 import { fetchMcapTrackingRow } from '@/utils/mcap-tracker'
 import {
   buildEntryFeatureSnapshot,
@@ -33,6 +36,7 @@ type TrackerEntryHints = {
 type JupiterEntryHints = {
   organicScore: number | null
   topHoldersPct: number | null
+  volume5m: number | null
 }
 
 async function fetchTrackerEntryHints(
@@ -83,23 +87,51 @@ async function fetchTrackerEntryHints(
 
 async function fetchJupiterEntryHints(
   tokenAddress: string,
+  opts: { needMeta: boolean; needVolume: boolean },
 ): Promise<JupiterEntryHints | null> {
-  try {
-    const meta = await fetchTokenMetadataFromJupiter(tokenAddress)
-    return {
-      organicScore:
-        typeof meta.organicScore === 'number' && Number.isFinite(meta.organicScore)
-          ? meta.organicScore
-          : null,
-      topHoldersPct:
-        typeof meta.audit?.topHoldersPercentage === 'number' &&
-        Number.isFinite(meta.audit.topHoldersPercentage)
-          ? meta.audit.topHoldersPercentage
-          : null,
-    }
-  } catch {
+  if (!opts.needMeta && !opts.needVolume) return null
+
+  let organicScore: number | null = null
+  let topHoldersPct: number | null = null
+  let volume5m: number | null = null
+
+  const tasks: Promise<void>[] = []
+
+  if (opts.needMeta) {
+    tasks.push(
+      fetchTokenMetadataFromJupiter(tokenAddress)
+        .then((meta) => {
+          organicScore =
+            typeof meta.organicScore === 'number' && Number.isFinite(meta.organicScore)
+              ? meta.organicScore
+              : null
+          topHoldersPct =
+            typeof meta.audit?.topHoldersPercentage === 'number' &&
+            Number.isFinite(meta.audit.topHoldersPercentage)
+              ? meta.audit.topHoldersPercentage
+              : null
+        })
+        .catch(() => {
+          /* leave nulls */
+        }),
+    )
+  }
+
+  if (opts.needVolume) {
+    tasks.push(
+      fetchJupiterMarketHints(tokenAddress).then((market) => {
+        volume5m = market?.volume5m ?? null
+      }),
+    )
+  }
+
+  await Promise.all(tasks)
+
+  if (organicScore == null && topHoldersPct == null && volume5m == null) {
     return null
   }
+
+  return { organicScore, topHoldersPct, volume5m }
 }
 
 function numOrNull(value: unknown): number | null {
@@ -110,14 +142,9 @@ export async function resolveEntrySnapshotInput(
   tokenAddress: string,
   overrides: EntrySnapshotOverrides = {},
 ): Promise<EntryFeatureSnapshotInput> {
-  const needsJupiter =
-    !overrides.skipJupiter &&
-    (overrides.organicScore == null || overrides.topHoldersPct == null)
-
-  const [trackerHints, mcapRow, jupiterHints, liveMonitor] = await Promise.all([
+  const [trackerHints, mcapRow, liveMonitor] = await Promise.all([
     fetchTrackerEntryHints(tokenAddress),
     fetchMcapTrackingRow(tokenAddress),
-    needsJupiter ? fetchJupiterEntryHints(tokenAddress) : Promise.resolve(null),
     overrides.monitorSnapshots != null
       ? Promise.resolve(null)
       : resolveTokenMonitorSnapshot(tokenAddress, overrides.entryMcap ?? null),
@@ -136,25 +163,37 @@ export async function resolveEntrySnapshotInput(
     trackerHints?.entryMcap ??
     null
 
-  const organicScore =
+  let organicScore =
     overrides.organicScore ??
     numOrNull(mcapRow?.organic_score) ??
     trackerHints?.organicScore ??
-    jupiterHints?.organicScore ??
     null
 
-  const topHoldersPct =
+  let topHoldersPct =
     overrides.topHoldersPct ??
     numOrNull(mcapRow?.top_holders_pct) ??
-    jupiterHints?.topHoldersPct ??
     null
 
-  const volume5m =
+  let volume5m =
     overrides.volume5m ??
     numOrNull(mcapRow?.volume_5m) ??
     trackerHints?.volume5m ??
     liveMonitor?.volume_5m ??
     null
+
+  const needMeta =
+    !overrides.skipJupiter && (organicScore == null || topHoldersPct == null)
+  // liveMonitor already ran Jupiter waterfall for volume when needed
+  const needVolume = !overrides.skipJupiter && volume5m == null
+
+  const jupiterHints =
+    needMeta || needVolume
+      ? await fetchJupiterEntryHints(tokenAddress, { needMeta, needVolume })
+      : null
+
+  if (organicScore == null) organicScore = jupiterHints?.organicScore ?? null
+  if (topHoldersPct == null) topHoldersPct = jupiterHints?.topHoldersPct ?? null
+  if (volume5m == null) volume5m = jupiterHints?.volume5m ?? null
 
   const monitorSnapshots =
     overrides.monitorSnapshots ??

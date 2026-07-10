@@ -34,6 +34,14 @@ type WorkerTracker struct {
 	meta            map[string]WorkerMeta
 	runtime         map[string]*workerRuntime
 	entryIDToWorker map[cron.EntryID]string
+	onChange        func(workerID, event, msg string)
+}
+
+type WorkerRuntimeHydrate struct {
+	LastStartedAt *time.Time
+	LastSuccessAt *time.Time
+	LastErrorAt   *time.Time
+	LastErrorMsg  string
 }
 
 func NewWorkerTracker() *WorkerTracker {
@@ -42,6 +50,20 @@ func NewWorkerTracker() *WorkerTracker {
 		runtime:         make(map[string]*workerRuntime),
 		entryIDToWorker: make(map[cron.EntryID]string),
 	}
+}
+
+func (wt *WorkerTracker) SetOnChange(fn func(workerID, event, msg string)) {
+	wt.mu.Lock()
+	defer wt.mu.Unlock()
+	wt.onChange = fn
+}
+
+func (wt *WorkerTracker) emitChange(id, event, msg string) {
+	fn := wt.onChange
+	if fn == nil {
+		return
+	}
+	go fn(id, event, msg)
 }
 
 func (wt *WorkerTracker) Register(meta WorkerMeta) {
@@ -83,6 +105,7 @@ func (wt *WorkerTracker) Begin(id string) {
 	rt := wt.ensureRuntime(id)
 	now := time.Now().UTC()
 	rt.lastStartedAt = &now
+	wt.emitChange(id, "begin", "")
 }
 
 func (wt *WorkerTracker) Success(id string) {
@@ -92,6 +115,7 @@ func (wt *WorkerTracker) Success(id string) {
 	now := time.Now().UTC()
 	rt.lastSuccessAt = &now
 	rt.lastErrorMsg = ""
+	wt.emitChange(id, "success", "")
 }
 
 func (wt *WorkerTracker) Fail(id string, msg string) {
@@ -101,6 +125,25 @@ func (wt *WorkerTracker) Fail(id string, msg string) {
 	now := time.Now().UTC()
 	rt.lastErrorAt = &now
 	rt.lastErrorMsg = msg
+	wt.emitChange(id, "fail", msg)
+}
+
+func (wt *WorkerTracker) Hydrate(id string, h WorkerRuntimeHydrate) {
+	wt.mu.Lock()
+	defer wt.mu.Unlock()
+	rt := wt.ensureRuntime(id)
+	if h.LastStartedAt != nil {
+		rt.lastStartedAt = h.LastStartedAt
+	}
+	if h.LastSuccessAt != nil {
+		rt.lastSuccessAt = h.LastSuccessAt
+	}
+	if h.LastErrorAt != nil {
+		rt.lastErrorAt = h.LastErrorAt
+	}
+	if h.LastErrorMsg != "" {
+		rt.lastErrorMsg = h.LastErrorMsg
+	}
 }
 
 func (wt *WorkerTracker) ensureRuntime(id string) *workerRuntime {
@@ -181,7 +224,8 @@ func (cs *CronService) initWorkerRegistry() {
 	workers := []WorkerMeta{
 		{ID: "signals_sim_track", Name: "Signals sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.SignalsSimInterval, TriggerPath: "/trigger/signals-sim-track", CanTrigger: true},
 		{ID: "mcap_tracker_sim_track", Name: "MCap tracker sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.McapTrackerSimInterval, TriggerPath: "/trigger/mcap-tracker-sim-track", CanTrigger: true},
-		{ID: "social_rollup", Name: "Social rollup", Domain: "algo", Schedule: "every 120s", IntervalSec: 120, TriggerPath: "/trigger/social-rollup", CanTrigger: true},
+		{ID: "social_rollup", Name: "Social rollup", Domain: "algo", Schedule: "every 300s", IntervalSec: 300, TriggerPath: "/trigger/social-rollup", CanTrigger: true},
+		{ID: "social_cleanup", Name: "Social cleanup", Domain: "algo", Schedule: "every 30m", IntervalSec: 1800, TriggerPath: "/trigger/social-cleanup", CanTrigger: true},
 		{ID: "social_wallet_poll", Name: "Social wallet poll", Domain: "algo", Schedule: "every 300s", IntervalSec: 300, TriggerPath: "/trigger/social-wallet-poll", CanTrigger: true},
 		{ID: "signals_refresh", Name: "Signals refresh", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.SignalRefreshInterval, TriggerPath: "/trigger/signals-refresh", CanTrigger: true},
 		{ID: "trending_tracker", Name: "Trending tracker", Domain: "algo", Schedule: "every 5m", IntervalSec: 300, TriggerPath: "/trigger/trending", CanTrigger: true},

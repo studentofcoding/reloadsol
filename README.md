@@ -174,6 +174,8 @@ Post-deploy, `scripts/warm-cache.sh` hits `/api/solprice`, `/api/trending`, `/ap
 
 **How it works:** `scripts/docker-up.sh` runs `npm ci` first, then builds Next.js on the host for prod (`npm run build` → `.next/standalone`) and packages via `Dockerfile.web`. **`docker:deploy`** uses `scripts/docker-scope.sh` to rebuild only web or cron when possible (frontend-only changes do not restart cron). Dev default is **web only**; use `docker:dev:full` when you need cron locally. Cron calls the web service at `API_HOST=http://web:3000`.
 
+Named volumes: `postgres_data` (positions + worker runtime), `redis_data` (cache), `nginx_cache`. `docker compose down` keeps them; `down -v` wipes them.
+
 First run may take several minutes while dependencies install and Next.js builds.
 
 ### 5. Run without Docker (dev only)

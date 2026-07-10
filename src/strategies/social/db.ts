@@ -55,50 +55,62 @@ export async function insertSocialEvents(
 ): Promise<{ inserted: number; skipped: number; errors: string[] }> {
   if (events.length === 0) return { inserted: 0, skipped: 0, errors: [] }
 
-  const values: unknown[] = []
-  const placeholders: string[] = []
-  let param = 1
+  const ROWS_PER_BATCH = 200
+  let inserted = 0
+  const errors: string[] = []
 
-  for (const e of events) {
-    placeholders.push(
-      `($${param}, $${param + 1}, $${param + 2}, $${param + 3}, $${param + 4}, $${param + 5}, $${param + 6}, $${param + 7}, $${param + 8}, $${param + 9}, $${param + 10})`,
-    )
-    values.push(
-      e.token_address,
-      e.event_type,
-      e.source,
-      e.channel_id ?? null,
-      e.channel_label ?? null,
-      e.wallet_address ?? null,
-      e.wallet_label ?? null,
-      e.external_message_id ?? null,
-      buildDedupeKey(e),
-      e.occurred_at ?? new Date().toISOString(),
-      JSON.stringify(e.raw_metadata ?? {}),
-    )
-    param += 11
-  }
+  for (let i = 0; i < events.length; i += ROWS_PER_BATCH) {
+    const batch = events.slice(i, i + ROWS_PER_BATCH)
+    const values: unknown[] = []
+    const placeholders: string[] = []
+    let param = 1
 
-  try {
-    const { rows } = await query<{ id: string }>(
-      `INSERT INTO social_token_events (
-         token_address, event_type, source, channel_id, channel_label,
-         wallet_address, wallet_label, external_message_id, dedupe_key,
-         occurred_at, raw_metadata
-       ) VALUES ${placeholders.join(', ')}
-       ON CONFLICT (dedupe_key) DO NOTHING
-       RETURNING id`,
-      values,
-    )
-
-    const inserted = rows.length
-    return { inserted, skipped: events.length - inserted, errors: [] }
-  } catch (error) {
-    if (isMissingTableError(error)) {
-      return { inserted: 0, skipped: events.length, errors: [errorMessage(error)] }
+    for (const e of batch) {
+      placeholders.push(
+        `($${param}, $${param + 1}, $${param + 2}, $${param + 3}, $${param + 4}, $${param + 5}, $${param + 6}, $${param + 7}, $${param + 8}, $${param + 9}, $${param + 10})`,
+      )
+      values.push(
+        e.token_address,
+        e.event_type,
+        e.source,
+        e.channel_id ?? null,
+        e.channel_label ?? null,
+        e.wallet_address ?? null,
+        e.wallet_label ?? null,
+        e.external_message_id ?? null,
+        buildDedupeKey(e),
+        e.occurred_at ?? new Date().toISOString(),
+        JSON.stringify(e.raw_metadata ?? {}),
+      )
+      param += 11
     }
-    throw new Error(errorMessage(error))
+
+    try {
+      const { rows } = await query<{ id: string }>(
+        `INSERT INTO social_token_events (
+           token_address, event_type, source, channel_id, channel_label,
+           wallet_address, wallet_label, external_message_id, dedupe_key,
+           occurred_at, raw_metadata
+         ) VALUES ${placeholders.join(', ')}
+         ON CONFLICT (dedupe_key) DO NOTHING
+         RETURNING id`,
+        values,
+      )
+      inserted += rows.length
+    } catch (error) {
+      if (isMissingTableError(error)) {
+        return {
+          inserted: 0,
+          skipped: events.length,
+          errors: [errorMessage(error)],
+        }
+      }
+      errors.push(errorMessage(error))
+      throw new Error(errorMessage(error))
+    }
   }
+
+  return { inserted, skipped: events.length - inserted, errors }
 }
 
 export async function fetchSocialRollup(
@@ -316,55 +328,60 @@ export async function refreshSocialRollups(now = new Date()): Promise<{
     return { tokensUpdated: 0 }
   }
 
-  const values: unknown[] = []
-  const placeholders: string[] = []
-  let param = 1
-
-  for (const r of rollups) {
-    placeholders.push(
-      `($${param}, $${param + 1}, $${param + 2}, $${param + 3}, $${param + 4}, $${param + 5}, $${param + 6}, $${param + 7}, $${param + 8}, $${param + 9}, $${param + 10}, $${param + 11}, $${param + 12})`,
-    )
-    values.push(
-      r.token_address,
-      r.first_seen_at,
-      r.first_source,
-      r.first_channel,
-      r.mention_count_5m,
-      r.mention_count_30m,
-      r.mention_count_24h,
-      r.unique_channel_count_30m,
-      r.smart_wallet_buy_count_1h,
-      r.smart_wallet_buy_sol_1h,
-      r.top_source,
-      r.last_event_at,
-      r.updated_at,
-    )
-    param += 13
-  }
+  const ROWS_PER_BATCH = 200
 
   try {
-    await query(
-      `INSERT INTO social_token_rollups (
-         token_address, first_seen_at, first_source, first_channel,
-         mention_count_5m, mention_count_30m, mention_count_24h,
-         unique_channel_count_30m, smart_wallet_buy_count_1h, smart_wallet_buy_sol_1h,
-         top_source, last_event_at, updated_at
-       ) VALUES ${placeholders.join(', ')}
-       ON CONFLICT (token_address) DO UPDATE SET
-         first_seen_at = EXCLUDED.first_seen_at,
-         first_source = EXCLUDED.first_source,
-         first_channel = EXCLUDED.first_channel,
-         mention_count_5m = EXCLUDED.mention_count_5m,
-         mention_count_30m = EXCLUDED.mention_count_30m,
-         mention_count_24h = EXCLUDED.mention_count_24h,
-         unique_channel_count_30m = EXCLUDED.unique_channel_count_30m,
-         smart_wallet_buy_count_1h = EXCLUDED.smart_wallet_buy_count_1h,
-         smart_wallet_buy_sol_1h = EXCLUDED.smart_wallet_buy_sol_1h,
-         top_source = EXCLUDED.top_source,
-         last_event_at = EXCLUDED.last_event_at,
-         updated_at = EXCLUDED.updated_at`,
-      values,
-    )
+    for (let i = 0; i < rollups.length; i += ROWS_PER_BATCH) {
+      const batch = rollups.slice(i, i + ROWS_PER_BATCH)
+      const values: unknown[] = []
+      const placeholders: string[] = []
+      let param = 1
+
+      for (const r of batch) {
+        placeholders.push(
+          `($${param}, $${param + 1}, $${param + 2}, $${param + 3}, $${param + 4}, $${param + 5}, $${param + 6}, $${param + 7}, $${param + 8}, $${param + 9}, $${param + 10}, $${param + 11}, $${param + 12})`,
+        )
+        values.push(
+          r.token_address,
+          r.first_seen_at,
+          r.first_source,
+          r.first_channel,
+          r.mention_count_5m,
+          r.mention_count_30m,
+          r.mention_count_24h,
+          r.unique_channel_count_30m,
+          r.smart_wallet_buy_count_1h,
+          r.smart_wallet_buy_sol_1h,
+          r.top_source,
+          r.last_event_at,
+          r.updated_at,
+        )
+        param += 13
+      }
+
+      await query(
+        `INSERT INTO social_token_rollups (
+           token_address, first_seen_at, first_source, first_channel,
+           mention_count_5m, mention_count_30m, mention_count_24h,
+           unique_channel_count_30m, smart_wallet_buy_count_1h, smart_wallet_buy_sol_1h,
+           top_source, last_event_at, updated_at
+         ) VALUES ${placeholders.join(', ')}
+         ON CONFLICT (token_address) DO UPDATE SET
+           first_seen_at = EXCLUDED.first_seen_at,
+           first_source = EXCLUDED.first_source,
+           first_channel = EXCLUDED.first_channel,
+           mention_count_5m = EXCLUDED.mention_count_5m,
+           mention_count_30m = EXCLUDED.mention_count_30m,
+           mention_count_24h = EXCLUDED.mention_count_24h,
+           unique_channel_count_30m = EXCLUDED.unique_channel_count_30m,
+           smart_wallet_buy_count_1h = EXCLUDED.smart_wallet_buy_count_1h,
+           smart_wallet_buy_sol_1h = EXCLUDED.smart_wallet_buy_sol_1h,
+           top_source = EXCLUDED.top_source,
+           last_event_at = EXCLUDED.last_event_at,
+           updated_at = EXCLUDED.updated_at`,
+        values,
+      )
+    }
   } catch (upsertError) {
     return { tokensUpdated: 0, error: errorMessage(upsertError) }
   }

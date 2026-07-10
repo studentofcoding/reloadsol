@@ -147,6 +147,8 @@ Target module: `src/strategies/canonical-features.ts` — `feature_schema_versio
 | Core | `entry_mcap`, band, organic, holders, age, **token** volume, unified social names |
 | `domain_features.*` | Domain leftovers (milestones, score, fee/TVL, …) |
 
+**Monitor snapshots / volume:** `resolveTokenMonitorSnapshot` fills `price_usd` + `volume_5m` via tracker → `token_mcap_tracking.volume_5m` → Jupiter v2 (`usdPrice`, `stats5m` buy+sell). Entry `volume_at_entry` uses the same waterfall so V1 gate rows are not skipped for incomplete features. `monitor_snapshots` are path/series data (not V1 gate inputs); do not backfill historical null ticks.
+
 **DLMM fix:** today `recordDlmmOutcome` sets `token_address = poolAddress`. Target: `token_address = mint`, `features.pool_address = pool`, `instrument = dlmm_lp`, plus `buildFullEntryFeatureSnapshot(mint)` when possible. Pool volume stays under `domain_features.dlmm`, not token `volume_at_entry`.
 
 Legacy pool-only rows: exclude from ML1/ML2 spot training unless mint is present.

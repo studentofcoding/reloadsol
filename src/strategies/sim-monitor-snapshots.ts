@@ -1,4 +1,5 @@
 import { queryOne } from '@/utils/db'
+import { fetchJupiterMarketHints } from '@/utils/jupiter-metadata'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import {
   appendMonitorSnapshot,
@@ -16,6 +17,10 @@ export type TrackerTokenMetrics = {
   volume_5m: number | null
   last_price_usd: number | null
   price_history: unknown
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 export async function fetchTrackerTokenMetrics(
@@ -38,14 +43,8 @@ export async function fetchTrackerTokenMetrics(
     if (!data) return null
 
     return {
-      volume_5m:
-        typeof data.volume_5m === 'number' && Number.isFinite(data.volume_5m)
-          ? data.volume_5m
-          : null,
-      last_price_usd:
-        typeof data.last_price_usd === 'number' && Number.isFinite(data.last_price_usd)
-          ? data.last_price_usd
-          : null,
+      volume_5m: finiteOrNull(data.volume_5m),
+      last_price_usd: finiteOrNull(data.last_price_usd),
       price_history: data.price_history,
     }
   } catch {
@@ -53,6 +52,23 @@ export async function fetchTrackerTokenMetrics(
   }
 }
 
+async function fetchMcapVolume5m(tokenAddress: string): Promise<number | null> {
+  try {
+    const data = await queryOne<{ volume_5m: unknown }>(
+      `SELECT volume_5m FROM token_mcap_tracking WHERE token_address = $1 LIMIT 1`,
+      [tokenAddress],
+    )
+    return finiteOrNull(data?.volume_5m)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Monitor tick waterfall: trending tracker → mcap volume_5m → Jupiter v2
+ * (usdPrice + stats5m buy+sell). Jupiter is only called when price or volume
+ * is still missing after local sources.
+ */
 export async function resolveTokenMonitorSnapshot(
   tokenAddress: string,
   marketCap?: number | null,
@@ -61,13 +77,26 @@ export async function resolveTokenMonitorSnapshot(
   const history = parsePriceHistory(metrics?.price_history)
   const lastHistory = history.length > 0 ? history[history.length - 1] : null
 
+  let price_usd =
+    metrics?.last_price_usd ?? lastHistory?.price_usd ?? null
+  let volume_5m = metrics?.volume_5m ?? lastHistory?.volume_5m ?? null
+
+  if (volume_5m == null) {
+    volume_5m = await fetchMcapVolume5m(tokenAddress)
+  }
+
+  if (price_usd == null || volume_5m == null) {
+    const jupiter = await fetchJupiterMarketHints(tokenAddress)
+    if (jupiter) {
+      if (price_usd == null) price_usd = jupiter.usdPrice
+      if (volume_5m == null) volume_5m = jupiter.volume5m
+    }
+  }
+
   return {
     timestamp: new Date().toISOString(),
-    price_usd: metrics?.last_price_usd ?? lastHistory?.price_usd ?? null,
-    volume_5m:
-      metrics?.volume_5m ??
-      lastHistory?.volume_5m ??
-      null,
+    price_usd,
+    volume_5m,
     market_cap: marketCap ?? null,
   }
 }
