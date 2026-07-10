@@ -69,6 +69,21 @@ Ops verified after deploy:
 
 Strategy Admin → Reports now shows Gate / Potential / Exit TP/SL on outcomes that stamped ML shadow fields.
 
+## GMGN smart money (Jul 11)
+
+New domain — **sim_only by default**. See [GMGN_STRATEGY.md](./GMGN_STRATEGY.md).
+
+| Step | Action |
+|------|--------|
+| VPS CLI | `npm install -g gmgn-cli` → `gmgn-cli config --apply <KEY>` |
+| Env | `GMGN_API_KEY=...` in web `.env` |
+| DB | `psql -f db/init/10-gmgn-strategy-domain.sql` on existing volume |
+| Deploy | Rebuild web + cron; worker `gmgn_sim_track` every 120s |
+| Enable | `/dev/strategies` → activate `gmgn_smartmoney_default` |
+| Smoke | `POST /trigger/gmgn-sim-track` → check `trading_records` wallet `gmgn-sim` |
+
+Live swap via `gmgn-cli swap` is stubbed only (`GMGN_PRIVATE_KEY`); keep `execution_mode=sim_only` until sim review.
+
 ## Pattern ML (primary focus — 24h mcap + social cohorts)
 
 Separate from sim-outcome gate — labels come from `mcap_social_pattern_24h` (winner ≥120% growth, loser &lt;80%).
@@ -191,6 +206,7 @@ curl -s "$API_BASE_URL/api/strategies/ml/dataset-stats?domain=mcap_tracker&key=$
 
 | Date | Change |
 |------|--------|
+| 2026-07-11 | GMGN strategy domain: smart money/KOL discovery via gmgn-cli, paper sim `gmgn-sim`, cron `gmgn_sim_track`; see [GMGN_STRATEGY.md](./GMGN_STRATEGY.md) |
 | 2026-07-10 | Potential meta uses `potential_ready` (not shared `gate_ready`); OPERATOR_STATE tracking table for 200-row target |
 | 2026-07-09 | Stage-1 Pattern ML shadow score on Early Enter (Telegram/toast/Signals ML column; never gates) |
 | 2026-07-09 | Two-stage alerts (Early Enter + Sim Open); drop -40/-80 + peak profit milestones; auto rugged/potential labels |

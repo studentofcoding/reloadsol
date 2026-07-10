@@ -249,6 +249,72 @@ export const MCAP_TRACKER_STRATEGIES: Record<string, import('./types').McapTrack
   },
 }
 
+export const DEFAULT_GMGN_SECURITY: import('./types').GmgnStrategyConfig['security'] = {
+  enabled: true,
+  requireRenouncedMint: true,
+  requireRenouncedFreeze: true,
+  maxTop10HolderRate: 0.2,
+  maxRugRatio: 0.3,
+  minSmartWallets: 3,
+  maxSniperCount: 20,
+  requireCreatorClosed: true,
+  minLiquidityUsd: 10_000,
+  maxCandidatesPerTick: 5,
+  minVerdict: 'clean',
+}
+
+export const DEFAULT_GMGN_EXIT = {
+  stopLossPct: -25,
+  takeProfitPct: 50,
+  maxHoldHours: 12,
+}
+
+export const GMGN_STRATEGIES: Record<string, import('./types').GmgnStrategy> = {
+  gmgn_smartmoney_default: {
+    id: 'gmgn_smartmoney_default',
+    name: 'GMGN Smart Money',
+    description: 'Enter on fresh smart-money buys that pass GMGN security gate',
+    is_active: false,
+    execution_mode: 'sim_only',
+    config: {
+      discovery: {
+        source: 'smartmoney',
+        chain: 'sol',
+        side: 'buy',
+        limit: 20,
+        minAmountUsd: 25,
+        maxTradeAgeMinutes: 30,
+        clusterMinWallets: 2,
+        cooldownHours: 24,
+      },
+      security: { ...DEFAULT_GMGN_SECURITY },
+      execution: { simBuySol: 0.02, maxOpenPositions: 5 },
+      exit: { ...DEFAULT_GMGN_EXIT },
+    },
+  },
+  gmgn_kol_momentum: {
+    id: 'gmgn_kol_momentum',
+    name: 'GMGN KOL Momentum',
+    description: 'Enter on fresh KOL buys that pass GMGN security gate',
+    is_active: false,
+    execution_mode: 'sim_only',
+    config: {
+      discovery: {
+        source: 'kol',
+        chain: 'sol',
+        side: 'buy',
+        limit: 20,
+        minAmountUsd: 50,
+        maxTradeAgeMinutes: 30,
+        cooldownHours: 24,
+      },
+      security: { ...DEFAULT_GMGN_SECURITY },
+      execution: { simBuySol: 0.02, maxOpenPositions: 5 },
+      exit: { ...DEFAULT_GMGN_EXIT },
+    },
+  },
+}
+
 export const DLMM_STRATEGY_DEFAULTS: import('./types').DlmmStrategy = {
   id: 'dlmm_default',
   name: 'DLMM Hunter/Healer',

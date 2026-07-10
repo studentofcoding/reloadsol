@@ -8,6 +8,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — GMGN smart money strategy domain
+
+- New **`gmgn`** strategy domain: discover via `gmgn-cli track smartmoney/kol`, gate with GMGN token info/security scoring, paper sim via `POST /api/gmgn/sim-track`.
+- Strategies: `gmgn_smartmoney_default`, `gmgn_kol_momentum` (inactive by default, sim_only).
+- CLI wrapper `src/utils/gmgn-cli.ts`; live swap stub `src/strategies/gmgn-execution.ts` (requires `GMGN_PRIVATE_KEY`, not enabled v1).
+- Cron worker `gmgn_sim_track` (~120s) + manual trigger `/trigger/gmgn-sim-track`.
+- Admin UI: GMGN section on `/dev/strategies`; DB migration `db/init/10-gmgn-strategy-domain.sql`.
+- Ops guide: [docs/GMGN_STRATEGY.md](./docs/GMGN_STRATEGY.md).
+
 ### Changed — slim ML to goal stack only
 
 - Removed legacy v1 multiclass model (`ml/artifacts/v1/`) and `--stage multiclass` train/check CLI.

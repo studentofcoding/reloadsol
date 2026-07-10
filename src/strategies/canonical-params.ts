@@ -1,6 +1,7 @@
 import type {
   DlmmStrategy,
   ExecutionMode,
+  GmgnStrategy,
   McapTrackerStrategy,
   SignalsStrategy,
   SocialGateConfig,
@@ -15,6 +16,8 @@ export type EntryTrigger =
   | 'first_seen'
   | 'milestone_80'
   | 'dlmm_pool_screen'
+  | 'gmgn_smartmoney'
+  | 'gmgn_kol'
 
 export type StrategyParameterSet = {
   domain: StrategyDomain
@@ -135,6 +138,36 @@ export function mcapTrackerToCanonical(s: McapTrackerStrategy): StrategyParamete
   }
 }
 
+export function gmgnToCanonical(s: GmgnStrategy): StrategyParameterSet {
+  const trigger: EntryTrigger =
+    s.config.discovery.source === 'kol'
+      ? 'gmgn_kol'
+      : s.config.discovery.source === 'both'
+        ? 'gmgn_smartmoney'
+        : 'gmgn_smartmoney'
+
+  return {
+    domain: 'gmgn',
+    strategyId: s.id,
+    executionMode: s.execution_mode,
+    positionSizeSol: s.config.execution.simBuySol,
+    maxOpenPositions: s.config.execution.maxOpenPositions,
+    entry: {
+      trigger,
+      recencyMinutes: s.config.discovery.maxTradeAgeMinutes,
+    },
+    exit: {
+      stopLossPct: s.config.exit.stopLossPct,
+      takeProfitPct: s.config.exit.takeProfitPct,
+      maxHoldHours: s.config.exit.maxHoldHours,
+    },
+    extensions: {
+      discovery: s.config.discovery,
+      security: s.config.security,
+    },
+  }
+}
+
 export function dlmmToCanonical(s: DlmmStrategy): StrategyParameterSet {
   return {
     domain: 'dlmm',
@@ -179,6 +212,10 @@ export async function getCanonicalParamsForStrategy(
   const mcap = await getMergedMcapTrackerRegistry()
   if (mcap[strategyId]) return mcapTrackerToCanonical(mcap[strategyId])
 
+  const { getMergedGmgnRegistry } = await import('./load-gmgn')
+  const gmgn = await getMergedGmgnRegistry()
+  if (gmgn[strategyId]) return gmgnToCanonical(gmgn[strategyId])
+
   const { getMergedDlmmStrategy } = await import('./load-dlmm')
   const dlmm = await getMergedDlmmStrategy()
   if (dlmm.id === strategyId) return dlmmToCanonical(dlmm)
@@ -190,6 +227,7 @@ export function mapRegistryToCanonical(params: {
   trending: Record<string, TrendingBotStrategy>
   signals: Record<string, SignalsStrategy>
   mcap: Record<string, McapTrackerStrategy>
+  gmgn: Record<string, GmgnStrategy>
   dlmm: DlmmStrategy
 }): Record<string, StrategyParameterSet> {
   const out: Record<string, StrategyParameterSet> = {}
@@ -201,6 +239,9 @@ export function mapRegistryToCanonical(params: {
   }
   for (const s of Object.values(params.mcap)) {
     out[s.id] = mcapTrackerToCanonical(s)
+  }
+  for (const s of Object.values(params.gmgn)) {
+    out[s.id] = gmgnToCanonical(s)
   }
   out[params.dlmm.id] = dlmmToCanonical(params.dlmm)
   return out

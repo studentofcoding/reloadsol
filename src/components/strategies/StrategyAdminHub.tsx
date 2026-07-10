@@ -7,6 +7,7 @@ import type {
   TrendingBotStrategy,
   SignalsStrategy,
   McapTrackerStrategy,
+  GmgnStrategy,
   DlmmStrategy,
   ExecutionMode,
   TokenFilterConfig,
@@ -84,6 +85,10 @@ type StrategiesResponse = {
   signals?: { effective: Record<string, SignalsStrategy> };
   mcap_tracker?: {
     effective: Record<string, McapTrackerStrategy>;
+    active: string[];
+  };
+  gmgn?: {
+    effective: Record<string, GmgnStrategy>;
     active: string[];
   };
   dlmm?: { effective: DlmmStrategy };
@@ -850,6 +855,7 @@ export default function StrategyAdminHub() {
   const active = data?.trending_bot?.active ?? [];
   const signals = Object.values(data?.signals?.effective ?? {});
   const mcapTracker = Object.values(data?.mcap_tracker?.effective ?? {});
+  const gmgn = Object.values(data?.gmgn?.effective ?? {});
   const dlmm = data?.dlmm?.effective;
 
   return (
@@ -946,6 +952,24 @@ export default function StrategyAdminHub() {
           </section>
 
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+            <h2 className="text-xl font-bold text-white mb-4">GMGN strategies</h2>
+            <p className="text-gray-400 text-sm mb-4">
+              Smart money / KOL discovery via gmgn-cli. Paper sim wallet:{" "}
+              <code className="text-xs">gmgn-sim</code>. Requires GMGN_API_KEY + gmgn-cli on server.
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              {gmgn.map((s) => (
+                <GmgnCard
+                  key={s.id}
+                  strategy={s}
+                  saving={saving === s.id}
+                  onSave={saveStrategy}
+                />
+              ))}
+            </div>
+          </section>
+
+          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
             <h2 className="text-xl font-bold text-white mb-4">DLMM thresholds</h2>
             {dlmm && (
               <DlmmCard
@@ -1028,6 +1052,7 @@ export default function StrategyAdminHub() {
                   <option value="trending_bot">Trending bot</option>
                   <option value="signals">Signals</option>
                   <option value="mcap_tracker">MCap tracker</option>
+                  <option value="gmgn">GMGN</option>
                   <option value="dlmm">DLMM</option>
                 </select>
               </label>
@@ -2438,6 +2463,140 @@ function McapTrackerCard({
                   mcapMax: parseFloat(mcapMax),
                   organicScoreMin: organicMin ? parseFloat(organicMin) : undefined,
                   topHoldersPctMax: holdersMax ? parseFloat(holdersMax) : undefined,
+                },
+              },
+            })
+          }
+          className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() => onSave(strategy.id, { is_active: !strategy.is_active })}
+          className="px-3 py-1.5 bg-gray-700 text-white text-xs rounded"
+        >
+          {strategy.is_active ? "Deactivate" : "Activate"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GmgnCard({
+  strategy,
+  saving,
+  onSave,
+}: {
+  strategy: GmgnStrategy;
+  saving: boolean;
+  onSave: (id: string, patch: Record<string, unknown>) => void;
+}) {
+  const d = strategy.config.discovery;
+  const s = strategy.config.security;
+  const e = strategy.config.execution;
+  const x = strategy.config.exit;
+  const [source, setSource] = useState(d.source);
+  const [limit, setLimit] = useState(String(d.limit));
+  const [minUsd, setMinUsd] = useState(d.minAmountUsd != null ? String(d.minAmountUsd) : "");
+  const [maxAge, setMaxAge] = useState(String(d.maxTradeAgeMinutes));
+  const [clusterMin, setClusterMin] = useState(
+    d.clusterMinWallets != null ? String(d.clusterMinWallets) : "",
+  );
+  const [simBuy, setSimBuy] = useState(String(e.simBuySol));
+  const [maxOpen, setMaxOpen] = useState(String(e.maxOpenPositions));
+  const [stopLoss, setStopLoss] = useState(String(x.stopLossPct));
+  const [takeProfit, setTakeProfit] = useState(String(x.takeProfitPct));
+  const [maxHold, setMaxHold] = useState(String(x.maxHoldHours));
+  const [minSmart, setMinSmart] = useState(String(s.minSmartWallets));
+  const [maxTop10, setMaxTop10] = useState(String(s.maxTop10HolderRate));
+  const [minLiq, setMinLiq] = useState(String(s.minLiquidityUsd));
+  const [maxCandidates, setMaxCandidates] = useState(String(s.maxCandidatesPerTick));
+  const [execMode, setExecMode] = useState(strategy.execution_mode);
+
+  return (
+    <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
+      <h3 className="font-semibold text-white">{strategy.name}</h3>
+      <p className="text-xs text-gray-500 mb-3">
+        {strategy.id} · {source}
+      </p>
+      <label className="text-xs text-gray-400 block mb-2">
+        Execution mode
+        <ExecutionModeSelect value={execMode} onChange={setExecMode} />
+      </label>
+      <label className="text-xs text-gray-400 block mb-2">
+        Discovery source
+        <select
+          className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white text-xs"
+          value={source}
+          onChange={(ev) =>
+            setSource(ev.target.value as "smartmoney" | "kol" | "both")
+          }
+        >
+          <option value="smartmoney">smartmoney</option>
+          <option value="kol">kol</option>
+          <option value="both">both</option>
+        </select>
+      </label>
+      <Section title="Discovery">
+        <FieldGrid>
+          <NumberField label="limit" value={limit} onChange={setLimit} step="1" />
+          <NumberField label="min trade USD" value={minUsd} onChange={setMinUsd} step="1" />
+          <NumberField label="max age (min)" value={maxAge} onChange={setMaxAge} step="1" />
+          <NumberField label="cluster min wallets" value={clusterMin} onChange={setClusterMin} step="1" />
+        </FieldGrid>
+      </Section>
+      <Section title="Security gate">
+        <FieldGrid>
+          <NumberField label="min smart wallets" value={minSmart} onChange={setMinSmart} step="1" />
+          <NumberField label="max top-10 rate" value={maxTop10} onChange={setMaxTop10} step="0.01" />
+          <NumberField label="min liquidity USD" value={minLiq} onChange={setMinLiq} step="1000" />
+          <NumberField label="max candidates/tick" value={maxCandidates} onChange={setMaxCandidates} step="1" />
+        </FieldGrid>
+      </Section>
+      <Section title="Execution">
+        <FieldGrid>
+          <NumberField label="sim buy SOL" value={simBuy} onChange={setSimBuy} step="0.001" />
+          <NumberField label="max open" value={maxOpen} onChange={setMaxOpen} step="1" />
+        </FieldGrid>
+      </Section>
+      <Section title="Exit">
+        <FieldGrid>
+          <NumberField label="stop loss %" value={stopLoss} onChange={setStopLoss} step="1" />
+          <NumberField label="take profit %" value={takeProfit} onChange={setTakeProfit} step="1" />
+          <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" />
+        </FieldGrid>
+      </Section>
+      <div className="flex gap-2 mt-2">
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() =>
+            onSave(strategy.id, {
+              execution_mode: execMode,
+              config: {
+                discovery: {
+                  source,
+                  limit: parseInt(limit, 10),
+                  minAmountUsd: minUsd ? parseFloat(minUsd) : undefined,
+                  maxTradeAgeMinutes: parseInt(maxAge, 10),
+                  clusterMinWallets: clusterMin ? parseInt(clusterMin, 10) : undefined,
+                },
+                security: {
+                  minSmartWallets: parseInt(minSmart, 10),
+                  maxTop10HolderRate: parseFloat(maxTop10),
+                  minLiquidityUsd: parseFloat(minLiq),
+                  maxCandidatesPerTick: parseInt(maxCandidates, 10),
+                },
+                execution: {
+                  simBuySol: parseFloat(simBuy),
+                  maxOpenPositions: parseInt(maxOpen, 10),
+                },
+                exit: {
+                  stopLossPct: parseFloat(stopLoss),
+                  takeProfitPct: parseFloat(takeProfit),
+                  maxHoldHours: parseFloat(maxHold),
                 },
               },
             })

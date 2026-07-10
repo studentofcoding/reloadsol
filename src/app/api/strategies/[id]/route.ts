@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { TRENDING_BOT_STRATEGIES, SIGNALS_STRATEGIES, DLMM_STRATEGY_DEFAULTS, MCAP_TRACKER_STRATEGIES } from '@/strategies/registry'
+import { TRENDING_BOT_STRATEGIES, SIGNALS_STRATEGIES, DLMM_STRATEGY_DEFAULTS, MCAP_TRACKER_STRATEGIES, GMGN_STRATEGIES } from '@/strategies/registry'
 import { mergeStrategyOverride } from '@/strategies/merge'
 import { mergeSignalsStrategy } from '@/strategies/merge-signals'
 import { mergeMcapTrackerStrategy } from '@/strategies/merge-mcap-tracker'
+import { mergeGmgnStrategy } from '@/strategies/merge-gmgn'
 import { mergeDlmmStrategy, dlmmConfigToAgentPatch } from '@/strategies/merge-dlmm'
 import {
   invalidateStrategyCache,
 } from '@/strategies/load-strategy'
 import { invalidateSignalsCache } from '@/strategies/load-signals'
 import { invalidateMcapTrackerCache } from '@/strategies/load-mcap-tracker'
+import { invalidateGmgnCache } from '@/strategies/load-gmgn'
 import { invalidateDlmmStrategyCache } from '@/strategies/load-dlmm'
 import { upsertStrategyDefinition, loadStrategyDefinitionById } from '@/strategies/db'
 import { updateAgentConfig } from '@/utils/dlmm/db'
@@ -17,6 +19,7 @@ import type {
   TrendingBotStrategyOverride,
   SignalsStrategyOverride,
   McapTrackerStrategyOverride,
+  GmgnStrategyOverride,
   DlmmStrategyOverride,
 } from '@/strategies/types'
 
@@ -40,6 +43,9 @@ function resolveStrategyBase(id: string) {
   }
   if (MCAP_TRACKER_STRATEGIES[id]) {
     return { domain: 'mcap_tracker' as const, base: MCAP_TRACKER_STRATEGIES[id] }
+  }
+  if (GMGN_STRATEGIES[id]) {
+    return { domain: 'gmgn' as const, base: GMGN_STRATEGIES[id] }
   }
   if (id === 'dlmm_default') {
     return { domain: 'dlmm' as const, base: DLMM_STRATEGY_DEFAULTS }
@@ -142,6 +148,33 @@ export async function PATCH(
       }
 
       invalidateMcapTrackerCache()
+      return NextResponse.json({ success: true, strategy: merged })
+    }
+
+    if (resolved.domain === 'gmgn') {
+      const configOverride = (body.config ?? {}) as GmgnStrategyOverride
+      const merged = mergeGmgnStrategy(
+        resolved.base as import('@/strategies/types').GmgnStrategy,
+        configOverride,
+        body.is_active ?? null,
+      )
+      if (body.execution_mode) merged.execution_mode = body.execution_mode
+
+      const result = await upsertStrategyDefinition({
+        id,
+        domain: 'gmgn',
+        name: body.name ?? merged.name,
+        description: body.description ?? merged.description,
+        config: configOverride,
+        is_active: body.is_active ?? merged.is_active,
+        execution_mode: body.execution_mode ?? existingRow?.execution_mode ?? merged.execution_mode,
+      })
+
+      if (!result.ok) {
+        return NextResponse.json({ success: false, error: result.error }, { status: 500 })
+      }
+
+      invalidateGmgnCache()
       return NextResponse.json({ success: true, strategy: merged })
     }
 

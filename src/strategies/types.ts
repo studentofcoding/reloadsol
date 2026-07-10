@@ -1,4 +1,9 @@
-export type StrategyDomain = 'trending_bot' | 'signals' | 'dlmm' | 'mcap_tracker'
+export type StrategyDomain =
+  | 'trending_bot'
+  | 'signals'
+  | 'dlmm'
+  | 'mcap_tracker'
+  | 'gmgn'
 
 export type ExecutionMode = 'sim_only' | 'live_only' | 'ab_parallel'
 
@@ -195,6 +200,63 @@ export interface McapTrackerStrategy {
   is_active: boolean
   execution_mode: ExecutionMode
   config: McapTrackerStrategyConfig
+}
+
+export type GmgnDiscoverySource = 'smartmoney' | 'kol' | 'both'
+
+export type GmgnVerdictLevel = 'clean' | 'mixed' | 'reject'
+
+export interface GmgnStrategyConfig {
+  discovery: {
+    source: GmgnDiscoverySource
+    chain: 'sol'
+    side: 'buy'
+    limit: number
+    minAmountUsd?: number
+    maxTradeAgeMinutes: number
+    clusterMinWallets?: number
+    cooldownHours?: number
+  }
+  security: {
+    enabled: boolean
+    requireRenouncedMint: boolean
+    requireRenouncedFreeze: boolean
+    maxTop10HolderRate: number
+    maxRugRatio: number
+    minSmartWallets: number
+    maxSniperCount: number
+    requireCreatorClosed: boolean
+    minLiquidityUsd: number
+    maxCandidatesPerTick: number
+    minVerdict: GmgnVerdictLevel
+  }
+  execution: {
+    simBuySol: number
+    maxOpenPositions: number
+  }
+  exit: {
+    stopLossPct: number
+    takeProfitPct: number
+    maxHoldHours: number
+  }
+}
+
+export type GmgnStrategyOverride = Partial<
+  Omit<GmgnStrategyConfig, 'discovery' | 'security' | 'execution' | 'exit'>
+> & {
+  discovery?: Partial<GmgnStrategyConfig['discovery']>
+  security?: Partial<GmgnStrategyConfig['security']>
+  execution?: Partial<GmgnStrategyConfig['execution']>
+  exit?: Partial<GmgnStrategyConfig['exit']>
+}
+
+export interface GmgnStrategy {
+  id: string
+  name: string
+  description: string
+  is_active: boolean
+  execution_mode: ExecutionMode
+  config: GmgnStrategyConfig
 }
 
 export interface McapTrackerMilestoneBucket {

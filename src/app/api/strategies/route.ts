@@ -8,6 +8,7 @@ import {
 } from '@/strategies/load-strategy'
 import { getMergedSignalsRegistry } from '@/strategies/load-signals'
 import { getMergedMcapTrackerRegistry } from '@/strategies/load-mcap-tracker'
+import { getMergedGmgnRegistry } from '@/strategies/load-gmgn'
 import { getMergedDlmmStrategy } from '@/strategies/load-dlmm'
 import { TRENDING_BOT_STRATEGIES } from '@/strategies/registry'
 import { mapRegistryToCanonical } from '@/strategies/canonical-params'
@@ -16,12 +17,13 @@ export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    const [registry, active, status, signalsRegistry, mcapTrackerRegistry, dlmmStrategy] = await Promise.all([
+    const [registry, active, status, signalsRegistry, mcapTrackerRegistry, gmgnRegistry, dlmmStrategy] = await Promise.all([
       getMergedTrendingBotRegistry(),
       getActiveStrategiesWithState(),
       getStrategyStatusSummary(),
       getMergedSignalsRegistry(),
       getMergedMcapTrackerRegistry(),
+      getMergedGmgnRegistry(),
       getMergedDlmmStrategy(),
     ])
 
@@ -36,6 +38,7 @@ export async function GET() {
       trending: registry,
       signals: signalsRegistry,
       mcap: mcapTrackerRegistry,
+      gmgn: gmgnRegistry,
       dlmm: dlmmStrategy,
     })
 
@@ -58,6 +61,12 @@ export async function GET() {
       mcap_tracker: {
         effective: mcapTrackerRegistry,
         active: Object.values(mcapTrackerRegistry)
+          .filter((s) => s.is_active)
+          .map((s) => s.id),
+      },
+      gmgn: {
+        effective: gmgnRegistry,
+        active: Object.values(gmgnRegistry)
           .filter((s) => s.is_active)
           .map((s) => s.id),
       },

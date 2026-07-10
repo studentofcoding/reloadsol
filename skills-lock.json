@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "skills": {
+    "gmgn-cooking": {
+      "source": "GMGNAI/gmgn-skills",
+      "sourceType": "github",
+      "skillPath": "skills/gmgn-cooking/SKILL.md",
+      "computedHash": "01adae6f680dfb5ea15d4058edc1b617943c83d42f46a2c793c8d5461fe269c8"
+    },
+    "gmgn-market": {
+      "source": "GMGNAI/gmgn-skills",
+      "sourceType": "github",
+      "skillPath": "skills/gmgn-market/SKILL.md",
+      "computedHash": "c96da1d58e63ef8232d337fc160f48e439439a4bb2c4bceffbdeadbc701fa053"
+    },
+    "gmgn-portfolio": {
+      "source": "GMGNAI/gmgn-skills",
+      "sourceType": "github",
+      "skillPath": "skills/gmgn-portfolio/SKILL.md",
+      "computedHash": "3f967b3d2c4b861030f484f24c17be3462739f2e6720adab65fac2274c254ece"
+    },
+    "gmgn-swap": {
+      "source": "GMGNAI/gmgn-skills",
+      "sourceType": "github",
+      "skillPath": "skills/gmgn-swap/SKILL.md",
+      "computedHash": "915cc9a469b8be3828d60804cd20ab6dd4fc58d3e23af449ab8d907914496da5"
+    },
+    "gmgn-token": {
+      "source": "GMGNAI/gmgn-skills",
+      "sourceType": "github",
+      "skillPath": "skills/gmgn-token/SKILL.md",
+      "computedHash": "181467f3aaca27960873ce7f94407a4e6f59a7c05d5eb784204951199e76fd12"
+    },
+    "gmgn-track": {
+      "source": "GMGNAI/gmgn-skills",
+      "sourceType": "github",
+      "skillPath": "skills/gmgn-track/SKILL.md",
+      "computedHash": "052de9ca72ebcbcd3f17eba14d5429f7e6fde7f01a9e0086ad6bce259669c906"
+    }
+  }
+}

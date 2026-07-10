@@ -8,6 +8,7 @@ import {
 } from './canonical-params'
 import {
   DLMM_STRATEGY_DEFAULTS,
+  GMGN_STRATEGIES,
   MCAP_TRACKER_STRATEGIES,
   SIGNALS_STRATEGIES,
   TRENDING_BOT_STRATEGIES,
@@ -52,16 +53,18 @@ describe('strategy param adapters', () => {
     expect(c.positionSizeSol).toBe(1)
   })
 
-  it('mapRegistryToCanonical includes all four domains', () => {
+  it('mapRegistryToCanonical includes all domains', () => {
     const map = mapRegistryToCanonical({
       trending: TRENDING_BOT_STRATEGIES,
       signals: SIGNALS_STRATEGIES,
       mcap: MCAP_TRACKER_STRATEGIES,
+      gmgn: GMGN_STRATEGIES,
       dlmm: DLMM_STRATEGY_DEFAULTS,
     })
     expect(map.att?.domain).toBe('trending_bot')
     expect(map.signals_default?.domain).toBe('signals')
     expect(map.mcap_enter_first_seen?.domain).toBe('mcap_tracker')
+    expect(map.gmgn_smartmoney_default?.domain).toBe('gmgn')
     expect(map.dlmm_default?.domain).toBe('dlmm')
   })
 })
