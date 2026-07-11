@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { discoverAndGateGmgnCandidates } from '@/strategies/gmgn-pipeline'
 import { getActiveGmgnForSim } from '@/strategies/load-gmgn'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
+import {
+  buildFullEntryFeatureSnapshot,
+  ensureCompleteBuyFeaturesForOutcome,
+} from '@/strategies/resolve-entry-snapshot'
 import { recordGmgnOutcome } from '@/strategies/outcomes'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
@@ -26,6 +30,22 @@ function getSimTrackSecret(): string {
     process.env.TRENDING_TRACKER_SECRET ||
     'r3l0ads0l-trending'
   )
+}
+
+function readFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+/** GMGN top_10_holder_rate is often 0..1; canonical features use percent. */
+function gmgnTopHoldersToPct(rate: number | null): number | null {
+  if (rate == null) return null
+  if (rate >= 0 && rate <= 1) return rate * 100
+  return rate
 }
 
 type OpenPosition = {
@@ -188,6 +208,33 @@ async function closeSimPosition(params: {
 
   await insertTradingRecord(record)
 
+  const closeExtras = {
+    token_symbol: params.symbol,
+    exit_price_usd: sellPriceUsd,
+    close_reason: params.closeReason,
+    sol_spent: cycle.totalSolBought,
+    sol_received: solReceived,
+    initial_price_usd:
+      typeof params.entryFeatures.gmgn_price_usd === 'number'
+        ? params.entryFeatures.gmgn_price_usd
+        : cycle.weightedBuyPriceUsd,
+  }
+
+  const completeFeatures = await ensureCompleteBuyFeaturesForOutcome({
+    mintAddress: params.mintAddress,
+    buyFeatures: params.entryFeatures,
+    overrides: {
+      entryAt: params.entryAt,
+      tokenSymbol: params.symbol,
+      entryMcap: readFiniteNumber(params.entryFeatures.gmgn_market_cap_usd),
+      topHoldersPct: gmgnTopHoldersToPct(
+        readFiniteNumber(params.entryFeatures.gmgn_top_10_holder_rate),
+      ),
+    },
+    domain: 'gmgn',
+    extra: closeExtras,
+  })
+
   await recordGmgnOutcome({
     strategyId: params.strategyId,
     tokenAddress: params.mintAddress,
@@ -196,17 +243,7 @@ async function closeSimPosition(params: {
     pnlPct,
     status: pnlPct >= 0 ? 'won' : 'lost',
     isSimulated: true,
-    features: mergeEntryFeaturesForOutcome(params.entryFeatures, {
-      token_symbol: params.symbol,
-      exit_price_usd: sellPriceUsd,
-      close_reason: params.closeReason,
-      sol_spent: cycle.totalSolBought,
-      sol_received: solReceived,
-      initial_price_usd:
-        typeof params.entryFeatures.gmgn_price_usd === 'number'
-          ? params.entryFeatures.gmgn_price_usd
-          : cycle.weightedBuyPriceUsd,
-    }),
+    features: mergeEntryFeaturesForOutcome(completeFeatures ?? params.entryFeatures, closeExtras),
   })
 
   return pnlPct
@@ -226,6 +263,22 @@ async function openSimPosition(params: {
     priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : solAmount * 1_000_000
 
   const entryAt = new Date().toISOString()
+  const entryMcap = readFiniteNumber(params.entryFeatures.gmgn_market_cap_usd)
+  const topHoldersPct = gmgnTopHoldersToPct(
+    readFiniteNumber(params.entryFeatures.gmgn_top_10_holder_rate),
+  )
+
+  const fullFeatures = await buildFullEntryFeatureSnapshot(
+    params.mintAddress,
+    {
+      entryAt,
+      entryMcap,
+      topHoldersPct,
+      tokenSymbol: params.symbol,
+    },
+    params.entryFeatures,
+  )
+
   const record = buildTradingRecord({
     walletAddress: GMGN_SIM_WALLET,
     operationType: 'buy',
@@ -254,7 +307,7 @@ async function openSimPosition(params: {
       entry_at: entryAt,
       entry_price_usd: priceUsd,
       entry_features: {
-        ...params.entryFeatures,
+        ...fullFeatures,
         entry_at: entryAt,
         initial_price_usd: priceUsd,
         token_symbol: params.symbol,
