@@ -35,7 +35,7 @@ export type GmgnTrackRow = {
 
 export type GmgnTrackResponse = { list?: GmgnTrackRow[] }
 
-function useCliTransport(): boolean {
+function preferCliTransport(): boolean {
   return process.env.GMGN_TRANSPORT?.trim().toLowerCase() === 'cli'
 }
 
@@ -191,7 +191,7 @@ export async function trackSmartMoney(params: {
   side?: 'buy' | 'sell'
   limit?: number
 }): Promise<GmgnTrackRow[]> {
-  if (useCliTransport()) return trackSmartMoneyCli(params)
+  if (preferCliTransport()) return trackSmartMoneyCli(params)
   return gmgnApi.trackSmartMoney(params)
 }
 
@@ -200,7 +200,7 @@ export async function trackKol(params: {
   side?: 'buy' | 'sell'
   limit?: number
 }): Promise<GmgnTrackRow[]> {
-  if (useCliTransport()) return trackKolCli(params)
+  if (preferCliTransport()) return trackKolCli(params)
   return gmgnApi.trackKol(params)
 }
 
@@ -208,7 +208,7 @@ export async function tokenInfo(params: {
   chain: string
   address: string
 }): Promise<Record<string, unknown>> {
-  if (useCliTransport()) return tokenInfoCli(params)
+  if (preferCliTransport()) return tokenInfoCli(params)
   return gmgnApi.tokenInfo(params)
 }
 
@@ -216,7 +216,7 @@ export async function tokenSecurity(params: {
   chain: string
   address: string
 }): Promise<Record<string, unknown>> {
-  if (useCliTransport()) return tokenSecurityCli(params)
+  if (preferCliTransport()) return tokenSecurityCli(params)
   return gmgnApi.tokenSecurity(params)
 }
 

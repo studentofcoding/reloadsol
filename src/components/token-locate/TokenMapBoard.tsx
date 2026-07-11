@@ -6,7 +6,7 @@ import {
   TOKEN_MAP_LANES,
   type TokenMapActivityItem,
   type TokenMapDomain,
-} from '@/strategies/token-map-activity'
+} from '@/strategies/token-map-types'
 import { useMemo } from 'react'
 
 function groupPresence(rows: StrategyPresence[]): Map<TokenMapDomain, StrategyPresence[]> {

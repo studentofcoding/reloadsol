@@ -4,7 +4,7 @@ import TokenLocateList from '@/components/token-locate/TokenLocateList'
 import TokenMapBoard from '@/components/token-locate/TokenMapBoard'
 import TokenMapPins from '@/components/token-locate/TokenMapPins'
 import type { TokenLocateResult } from '@/strategies/token-locate'
-import type { TokenMapActivityItem } from '@/strategies/token-map-activity'
+import type { TokenMapActivityItem } from '@/strategies/token-map-types'
 import { isValidMintAddress } from '@/utils/jupiter'
 import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -16,6 +16,7 @@ type Pin = { address: string; symbol?: string | null }
 
 const PINS_KEY = 'token-map-pins'
 const VIEW_PREF_KEY = 'token-map-view'
+const EMPTY_ACTIVITIES: TokenMapActivityItem[] = []
 
 function readViewFromUrl(): TokenView | null {
   if (typeof window === 'undefined') return null
@@ -79,20 +80,20 @@ export default function TokenLocateHub({
 }: TokenLocateHubProps) {
   const [address, setAddress] = useState(initialAddress)
   const [activeMint, setActiveMint] = useState(initialAddress.trim())
-  const [view, setView] = useState<TokenView>(initialView ?? 'list')
+  const [view, setView] = useState<TokenView>(() => initialView ?? readViewPref())
   const viewRef = useRef(view)
   viewRef.current = view
-  const [pins, setPins] = useState<Pin[]>([])
+  const [pins, setPins] = useState<Pin[]>(() => loadPins())
   const [manualLoading, setManualLoading] = useState(false)
   const [manualError, setManualError] = useState<string | null>(null)
   const [manualResult, setManualResult] = useState<LocateResponse | null>(null)
   const seenIdsRef = useRef<Set<string>>(new Set())
-  const [newIds, setNewIds] = useState<Set<string>>(new Set())
+  const [newIds, setNewIds] = useState<Set<string>>(() => new Set())
 
-  useEffect(() => {
-    setView(initialView ?? readViewPref())
-    setPins(loadPins())
-  }, [initialView])
+  const resetActivityHighlight = useCallback(() => {
+    seenIdsRef.current = new Set()
+    setNewIds(new Set())
+  }, [])
 
   const setViewAndPersist = useCallback((next: TokenView) => {
     setView(next)
@@ -122,7 +123,13 @@ export default function TokenLocateHub({
         throw new Error(json.error || 'Lookup failed')
       }
       setManualResult(json)
-      setActiveMint(trimmed)
+      setActiveMint((prev) => {
+        if (prev !== trimmed) {
+          seenIdsRef.current = new Set()
+          queueMicrotask(() => setNewIds(new Set()))
+        }
+        return trimmed
+      })
       setAddress(trimmed)
       syncUrl(trimmed, viewRef.current)
       setPins((prev) => {
@@ -184,7 +191,10 @@ export default function TokenLocateHub({
     staleTime: 10_000,
   })
 
-  const activities = activityQuery.data ?? []
+  const activities = useMemo(
+    () => activityQuery.data ?? EMPTY_ACTIVITIES,
+    [activityQuery.data],
+  )
 
   useEffect(() => {
     if (!freeviewEnabled || activities.length === 0) return
@@ -195,15 +205,14 @@ export default function TokenLocateHub({
       seen.add(item.id)
     }
     if (fresh.size === 0) return
-    setNewIds(fresh)
-    const t = window.setTimeout(() => setNewIds(new Set()), 4000)
-    return () => window.clearTimeout(t)
-  }, [activities, freeviewEnabled, activeMint])
-
-  useEffect(() => {
-    seenIdsRef.current = new Set()
-    setNewIds(new Set())
-  }, [activeMint])
+    // Defer setState so it is not synchronous inside the effect body.
+    const apply = window.setTimeout(() => setNewIds(fresh), 0)
+    const clear = window.setTimeout(() => setNewIds(new Set()), 4000)
+    return () => {
+      window.clearTimeout(apply)
+      window.clearTimeout(clear)
+    }
+  }, [activities, freeviewEnabled])
 
   const result: LocateResponse | null = useMemo(() => {
     if (view === 'freeview') return locateQuery.data ?? manualResult
@@ -246,6 +255,7 @@ export default function TokenLocateHub({
   }
 
   const selectPin = (mint: string) => {
+    if (mint !== activeMint) resetActivityHighlight()
     setAddress(mint)
     setActiveMint(mint)
     syncUrl(mint, view)

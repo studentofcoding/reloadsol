@@ -107,7 +107,7 @@ async function findOpenSimTargets(mintFilter?: string): Promise<OpenSimTarget[]>
       }
     }
 
-    for (const mint of mints) {
+    for (const mint of Array.from(mints)) {
       if (mintFilter && mint !== mintFilter) continue
       const cycle = computeOpenSimCycle(records, mint)
       if (!cycle) continue

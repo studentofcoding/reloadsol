@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { socialDomainAndKind } from './token-map-activity'
+import { socialDomainAndKind } from './token-map-types'
 
 describe('socialDomainAndKind', () => {
   it('routes gmgn_hot to gmgn lane', () => {

@@ -2,7 +2,7 @@
 
 import TokenMapActivityRow from '@/components/token-locate/TokenMapActivityRow'
 import type { StrategyPresence } from '@/strategies/token-locate'
-import type { TokenMapActivityItem, TokenMapDomain } from '@/strategies/token-map-activity'
+import type { TokenMapActivityItem, TokenMapDomain } from '@/strategies/token-map-types'
 
 export default function TokenMapLane({
   domain,

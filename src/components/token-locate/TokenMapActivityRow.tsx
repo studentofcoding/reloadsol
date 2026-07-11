@@ -1,6 +1,6 @@
 'use client'
 
-import type { TokenMapActivityItem } from '@/strategies/token-map-activity'
+import type { TokenMapActivityItem } from '@/strategies/token-map-types'
 
 function formatWhen(iso: string): string {
   const d = new Date(iso)

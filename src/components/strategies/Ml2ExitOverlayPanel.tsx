@@ -68,8 +68,11 @@ export default function Ml2ExitOverlayPanel({ onNotify }: Props) {
   }, [onNotify]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    const t = window.setTimeout(() => {
+      void load()
+    }, 0)
+    return () => window.clearTimeout(t)
+  }, [load])
 
   const save = async (opts?: { reset?: boolean }) => {
     if (!draft && !opts?.reset) return;
