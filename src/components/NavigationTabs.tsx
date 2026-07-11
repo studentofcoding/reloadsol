@@ -268,7 +268,7 @@ export default function NavigationTabs({
                           ? "bg-gray-700 text-white"
                           : "text-gray-400 hover:text-white hover:bg-gray-800"
                       }`}
-                      title="Token locate"
+                      title="Token map"
                     >
                       <svg
                         className="w-5 h-5"

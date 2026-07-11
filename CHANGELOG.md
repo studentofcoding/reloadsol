@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Token map Freeview
+
+- `/dev/token-search`: **Freeview | List** toggle — Freeview is strategy-lane kanban + activity; List keeps the classic locate dump.
+- `GET /api/strategies/token-activity` (read-only social / sim / outcomes feed; does not drain toasts).
+- Pin mints in localStorage; URL `?view=freeview|list&address=…`.
+
 ### Added — GMGN HTTP activity score + social bridge
 
 - **HTTP default** for GMGN read paths: `src/utils/gmgn-api.ts` (`openapi.gmgn.ai`, `X-APIKEY` + timestamp/client_id); `gmgn-cli.ts` is barrel + `GMGN_TRANSPORT=cli` fallback.
