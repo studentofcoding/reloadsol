@@ -333,6 +333,7 @@ export function runDomainSearch(params: {
     holdout: ConfigScore | DomainConfigScore
     train: ConfigScore | DomainConfigScore
     config: McapSearchConfig | (DomainSearchConfig & Record<string, unknown>)
+    beatsBaseline: boolean
   }>
 } {
   if (params.domain === 'mcap_tracker') {

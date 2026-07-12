@@ -213,7 +213,7 @@ export async function pruneLosingSearchStrategies(params: {
     limit: 5000,
     offset: 0,
   })
-  const review = buildStrategyReview(rows, { recentWeekCount: 8 })
+  const review = buildStrategyReview(rows, { weeks: 8 })
   const killed: Array<{ id: string; reason: string }> = []
   const active = await listActiveSearchStrategies(params.domain)
 

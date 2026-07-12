@@ -1,6 +1,6 @@
 /// <reference types="next" />
 /// <reference types="next/image-types/global" />
+import "./.next/types/routes.d.ts";
 
-// Managed by scripts/lock-next-env.js — do not add .next/* imports (they flip between dev and build).
-// Route types: see tsconfig.json ".next/types/**" and ".next/dev/types/**"
-// https://nextjs.org/docs/app/api-reference/config/typescript
+// NOTE: This file should not be edited
+// see https://nextjs.org/docs/app/api-reference/config/typescript for more information.

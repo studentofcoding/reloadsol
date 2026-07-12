@@ -1,7 +1,7 @@
 'use client'
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { StrategyReviewPayload } from '@/strategies/strategy-review'
 
 const LOCAL_NOTES_KEY = 'strategy-review-notes'
@@ -47,7 +47,10 @@ export default function StrategyReviewPanel() {
   const [analyzing, setAnalyzing] = useState(false)
   const migratedRef = useRef(false)
 
-  const queryKey = ['strategy-review', weeks, domain] as const
+  const queryKey = useMemo(
+    () => ['strategy-review', weeks, domain] as const,
+    [weeks, domain],
+  )
 
   const query = useQuery({
     queryKey,

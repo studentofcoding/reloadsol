@@ -145,6 +145,7 @@ describe('mapMcapOpenToAlgoPosition', () => {
         entryMcap: 84000,
         entryTemplate: 'first_seen',
         entryFeatures: {},
+        effectiveExit: null,
       },
       'mcap_first_seen',
       new Map([['mcap_first_seen', 'Enter at first seen']]),
