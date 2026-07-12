@@ -100,4 +100,61 @@ describe('strategy-review', () => {
     })
     expect(patterns.some((p) => /Plan vs behavior/i.test(p))).toBe(true)
   })
+
+  it('scorecard worst is empty when all setups are profitable', () => {
+    const now = new Date('2026-07-13T00:00:00.000Z')
+    const rows = [1, 2, 3].flatMap((i) => [
+      outcome({
+        id: `win-a-${i}`,
+        strategy_id: 'mcap_enter_at_80',
+        domain: 'mcap_tracker',
+        exit_at: `2026-07-0${i}T12:00:00.000Z`,
+        pnl_pct: 100,
+        status: 'won',
+      }),
+      outcome({
+        id: `win-b-${i}`,
+        strategy_id: 'mcap_enter_first_seen',
+        domain: 'mcap_tracker',
+        exit_at: `2026-07-0${i}T14:00:00.000Z`,
+        pnl_pct: 50,
+        status: 'won',
+      }),
+    ])
+    const review = buildStrategyReview(rows, { weeks: 4, now })
+    expect(review.scorecard.best.length).toBeGreaterThan(0)
+    expect(review.scorecard.worst).toEqual([])
+    expect(review.scorecard.best.every((r) => r.totalPnlPct > 0)).toBe(true)
+  })
+
+  it('scorecard worst only includes losing setups', () => {
+    const now = new Date('2026-07-13T00:00:00.000Z')
+    const rows = [
+      ...[1, 2, 3].map((i) =>
+        outcome({
+          id: `win-${i}`,
+          strategy_id: 'winner',
+          domain: 'gmgn',
+          exit_at: `2026-07-0${i}T12:00:00.000Z`,
+          pnl_pct: 40,
+          status: 'won',
+        }),
+      ),
+      ...[1, 2, 3].map((i) =>
+        outcome({
+          id: `lose-${i}`,
+          strategy_id: 'loser',
+          domain: 'gmgn',
+          exit_at: `2026-07-0${i}T14:00:00.000Z`,
+          pnl_pct: -20,
+          status: 'lost',
+        }),
+      ),
+    ]
+    const review = buildStrategyReview(rows, { weeks: 4, now })
+    expect(review.scorecard.best.some((r) => r.strategyId === 'winner')).toBe(true)
+    expect(review.scorecard.worst.map((r) => r.strategyId)).toEqual(['loser'])
+    expect(review.scorecard.worst.every((r) => r.totalPnlPct < 0)).toBe(true)
+    expect(review.scorecard.worst.some((r) => r.strategyId === 'winner')).toBe(false)
+  })
 })

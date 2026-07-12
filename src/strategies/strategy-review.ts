@@ -256,8 +256,9 @@ export function buildStrategyReview(
     streaks: streaks.slice(0, 20),
     scorecard: {
       best: scoreRows.filter((r) => r.tradeCount >= 3).slice(0, 5),
+      // Worst = losing setups only (not "least good among winners")
       worst: [...scoreRows]
-        .filter((r) => r.tradeCount >= 3)
+        .filter((r) => r.tradeCount >= 3 && r.totalPnlPct < 0)
         .sort((a, b) => a.totalPnlPct - b.totalPnlPct)
         .slice(0, 5),
     },

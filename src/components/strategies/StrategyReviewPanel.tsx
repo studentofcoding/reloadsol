@@ -333,7 +333,7 @@ export default function StrategyReviewPanel() {
             <h3 className="text-lg font-semibold text-red-300 mb-2">Worst setups (month)</h3>
             <ul className="text-sm space-y-1">
               {review.scorecard.worst.length === 0 && (
-                <li className="text-gray-500">Need ≥3 trades/month</li>
+                <li className="text-gray-500">No losing setups this month</li>
               )}
               {review.scorecard.worst.map((r) => (
                 <li key={`w-${r.monthKey}-${r.strategyId}`} className="text-gray-300">
