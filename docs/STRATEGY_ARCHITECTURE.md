@@ -12,8 +12,8 @@ Three dev surfaces share data but historically used separate strategy config. v1
 | Signals | `/dev/signals` | Manual buy; `/api/trading/signals` scoring; sim-track cron | registry + DB overrides |
 | MCap tracker | `/dev/strategies`, mcap UI | `POST /api/mcap-tracking/sim-track` cron | registry + DB overrides |
 | DLMM | `/dev/dlmm` | `POST /api/dlmm/screen`, `/api/dlmm/manage` cron | registry + `dlmm_agent_config` |
-| GMGN | `/dev/strategies` | `POST /api/gmgn/sim-track` cron | registry + DB overrides |
-| Social / Pattern ML | `/dev/social` | social rollup cron → 24h patterns | `mcap_social_pattern_24h`, rollups |
+| GMGN | `/dev/strategies` | `POST /api/gmgn/sim-track` + `POST /api/gmgn/activity-poll` | registry + DB overrides; Radar 0–100 (2h accumulate + Early bridge) |
+| Social / Pattern ML | `/dev/social` | social rollup cron → 24h patterns | `mcap_social_pattern_24h`, rollups; `signals_early` + `gmgn_*` events |
 
 **Shared engine spine:** all domains adapt to `StrategyParameterSet` + `CanonicalEntryFeatures` ([`canonical-params.ts`](../src/strategies/canonical-params.ts), [`canonical-features.ts`](../src/strategies/canonical-features.ts)). Memecoin opens use [`attachMlEntryShadow`](../src/strategies/ml-entry-shadow.ts) (ML1/ML2 + Pattern shadow). Read-only `canonical` on `GET /api/strategies`. Full plan: [reloadsol_engine_strategies_and_ml.md](./reloadsol_engine_strategies_and_ml.md).
 

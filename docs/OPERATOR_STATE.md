@@ -79,10 +79,11 @@ New domain — **sim_only by default**. See [GMGN_STRATEGY.md](./GMGN_STRATEGY.m
 | DB | `psql -f db/init/10-gmgn-strategy-domain.sql` + `11-gmgn-sm-kol-combined.sql` on existing volume |
 | Deploy | Rebuild web + cron; workers `gmgn_sim_track` (120s) + `gmgn_activity_poll` (180s) |
 | Enable | `/dev/strategies` → activate `gmgn_sm_kol_combined` or `gmgn_smartmoney_default` |
-| Smoke | `POST /trigger/gmgn-activity-poll` → check `social_token_events` source `gmgn_hot` |
+| Smoke | `POST /trigger/gmgn-activity-poll` → check `social_token_events` source `gmgn_hot` (+ `radar_score` / `radar_sm_peak` in `raw_metadata`) |
+| Smoke | `GET /api/trading/signals` Early Enter → `social_token_events` source `signals_early` (`early_signals_score`) |
 | Smoke | `POST /trigger/gmgn-sim-track` → check `trading_records` wallet `gmgn-sim` |
 
-Activity poll ingests **only high-score** tokens into social (default threshold 50). Pattern ML gets 3 new GMGN features — retrain before `ML_PATTERN_MODE=enforce`.
+Activity poll ingests **only high-score** tokens into social (default threshold 50). **Radar** (separate 0–100 card) accumulates 2h SM/KOL/activity + Early Enter — see [GMGN_STRATEGY.md § Radar](./GMGN_STRATEGY.md#radar-review-telegram--entry-features). Pattern ML gets 3 new GMGN features — retrain before `ML_PATTERN_MODE=enforce`.
 
 **Live boost after entry:** when `gmgn_hot` arrives after an open sim or tracked token, `gmgn-live-boost.ts` patches `entry_features` and bumps `social_boost_score`. Env: `GMGN_LIVE_BOOST_ENABLED`, `GMGN_LIVE_BOOST_SCORE=25`, `GMGN_LIVE_BOOST_MIN_SCORE=50`, `GMGN_LIVE_BOOST_EXIT=shadow`.
 

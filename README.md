@@ -59,6 +59,7 @@ Open [http://localhost:3000](http://localhost:3000). Cron health: [http://localh
 | [docs/ARCHITECTURE_SUMMARY.md](docs/ARCHITECTURE_SUMMARY.md) | Whole picture — algo, Pattern ML, next steps |
 | [docs/algo_overview.md](docs/algo_overview.md) | Per-strategy capture/calculate/result, workers |
 | [docs/OPERATOR_STATE.md](docs/OPERATOR_STATE.md) | Live ops, retrain loops, model constraints |
+| [docs/GMGN_STRATEGY.md](docs/GMGN_STRATEGY.md) | GMGN activity poll, Radar (Early bridge), sim |
 | [docs/architecture.md](docs/architecture.md) | System topology, tables, deploy model |
 | [ml/README.md](ml/README.md) | Pattern ML export/train on host |
 

@@ -9,12 +9,19 @@ Go cron (gmgn_activity_poll, ~180s)
   → POST /api/gmgn/activity-poll?key=...
     → OpenAPI track smartmoney + kol
     → 60m activity score (hot tokens only)
-    → insertSocialEvents (source gmgn_hot) → social rollup → pattern/social gates
+    → 2h Radar accumulator (peak SM/KOL/activity + Early Enter stamps)
+    → Radar review (ENTER / WATCH / SKIP) → Telegram + raw_metadata
+    → insertSocialEvents (source gmgn_hot|gmgn_smartmoney|gmgn_kol) → social rollup
+
+Signals poll (GET /api/trading/signals)
+  → Stage-1 Early Enter (growth < 100%)
+  → insertSocialEvents (source signals_early)  ← Radar reads this in 2h window
+  → Telegram Early Signals Enter
 
 Go cron (gmgn_sim_track, ~120s)
   → POST /api/gmgn/sim-track?key=...
     → OpenAPI track + token info/security
-    → score-sorted discovery → security gate
+    → score-sorted discovery → security gate + same Radar accumulator
     → open/close sim in trading_records (wallet: gmgn-sim)
     → strategy_outcomes on close
 ```
@@ -91,7 +98,46 @@ score =
 + recency bonus (≤15m: +20, ≤60m: +10)
 ```
 
-Only tokens with `score >= GMGN_ACTIVITY_SCORE_THRESHOLD` (default 50) are ingested into the social pipeline as `gmgn_hot` wallet_buy events.
+Only tokens with `score >= GMGN_ACTIVITY_SCORE_THRESHOLD` (default 50) are ingested into the social pipeline as `gmgn_hot` / `gmgn_smartmoney` / `gmgn_kol` wallet_buy events.
+
+## Radar review (Telegram + entry features)
+
+Separate from the **activity score** (used for hot ingest). Radar is a 0–100 decision card: **SKIP &lt;45**, **WATCH 45–77**, **ENTER ≥78**.
+
+### Accumulators (2h per mint)
+
+Before scoring, activity-poll and gmgn-pipeline merge:
+
+| Peak | Source |
+|------|--------|
+| `smPeak` / `kolPeak` | max(current poll, prior `gmgn_*` social events) |
+| `activityScorePeak` | max(current activity score, prior events) |
+| Early Signals | `social_token_events` with `source = signals_early` (stamped on Stage-1 Early Enter) |
+
+### Point budget (then clamp 0–100)
+
+| Component | Max | Notes |
+|-----------|-----|-------|
+| Base | 10 | Always |
+| Accumulated SM | 25 | `min(sm, 10) × 2.5` |
+| Accumulated KOL | 15 | `min(kol, 10) × 1.5` |
+| Activity score | 35 | Map 0→200 → 0→35 |
+| Early Signals | 20 | +20 if early score ≥50; else +8 if growth ≥20% |
+| Quality | 20 | holders / **top10** / buy-sell return only |
+| Soft cap | 35 | If no SM, no KOL, and no early |
+
+**Not scored:** tax, liquidity (dropped by design).
+
+**top10:** GMGN `gmgn_top_10_holder_rate` first; if missing, Jupiter `audit.topHoldersPercentage` (fetch only when about to alert). Telegram line shows e.g. `top10 18% (jup)`.
+
+SKIP copy uses “insufficient confirmation” when SM/KOL alone are weak — it does **not** treat “smart money present” as a risk reason.
+
+### Key files
+
+- `src/strategies/gmgn-radar-accumulate.ts` — 2h peak merge
+- `src/strategies/gmgn-radar-review.ts` — score / action / Telegram HTML
+- `src/app/api/gmgn/activity-poll/route.ts` — accumulator + Jupiter top10 fallback
+- `src/app/api/trading/signals/route.ts` — Early Enter → `signals_early` stamp
 
 ## Security gate (defaults)
 
@@ -120,6 +166,7 @@ Stored on sim buy `entry_features`:
 - `discovery_source`, `discovery_wallet`, `discovery_trade_usd`, `discovery_trade_at`
 - `gmgn_price_usd`, `gmgn_market_cap_usd`, `gmgn_liquidity_usd`
 - `gmgn_smart_wallets`, `gmgn_top_10_holder_rate`, `gmgn_security_verdict`
+- Radar peaks when present: `radar_action`, `radar_score`, `radar_sm_peak`, `radar_kol_peak`, `radar_activity_peak`, `early_signals_score`, `top10_source`
 
 Mcap/signals sim opens also stamp GMGN fields from recent `gmgn_*` social events when present.
 
@@ -182,9 +229,11 @@ Go-live checklist (future):
 - `src/utils/gmgn-api.ts` — OpenAPI HTTP client (default)
 - `src/utils/gmgn-cli.ts` — barrel + CLI fallback (`GMGN_TRANSPORT=cli`)
 - `src/strategies/gmgn-activity-score.ts` — 60m scorer
+- `src/strategies/gmgn-radar-accumulate.ts` — 2h SM/KOL/activity/early peaks
+- `src/strategies/gmgn-radar-review.ts` — Radar 0–100 ENTER/WATCH/SKIP
 - `src/strategies/gmgn-live-boost.ts` — post-entry live boost
-- `src/strategies/gmgn-pipeline.ts` — score-sorted discovery + security gate
-- `src/app/api/gmgn/activity-poll/route.ts` — hot token → social ingest
+- `src/strategies/gmgn-pipeline.ts` — score-sorted discovery + security gate + Radar
+- `src/app/api/gmgn/activity-poll/route.ts` — hot token → Radar + social ingest
 - `src/app/api/gmgn/sim-track/route.ts` — cron sim target
 - `src/strategies/registry.ts` — `GMGN_STRATEGIES` defaults
 - `main.go` — `gmgn_sim_track` + `gmgn_activity_poll` workers

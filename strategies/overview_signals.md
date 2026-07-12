@@ -85,6 +85,14 @@ When executing a **Bulk Buy** on the "Potential" column, SOL is allocated based 
 
 ---
 
+## Early Signals Enter → GMGN Radar
+
+Stage-1 **Early Enter** (`GET /api/trading/signals`, growth &lt; 100%) stamps `social_token_events` with `source = signals_early`. The GMGN **activity-poll Radar** merges those stamps over 2h with peak SM/KOL/activity so Early momentum and GMGN wallets share one ENTER/WATCH/SKIP score.
+
+Details: [docs/GMGN_STRATEGY.md § Radar](../docs/GMGN_STRATEGY.md#radar-review-telegram--entry-features).
+
+---
+
 ## 🛠 Tech Stack
 
 - **Database**: Postgres `reloadsol_db` (Docker)

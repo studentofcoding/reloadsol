@@ -114,11 +114,20 @@ Set `SOCIAL_ENRICH_GMGN=true` only if you need `symbol` / `mcp` on first CA per 
 
 High-score GMGN SM+KOL activity is ingested by the **Node** cron worker `gmgn_activity_poll` (~180s), not this Telethon sidecar:
 
-- `POST /api/gmgn/activity-poll` → `social_token_events` with `source = gmgn_hot` (wallet_buy)
-- `raw_metadata` includes `gmgn_activity_score`, wallet counts, USD sums
+- `POST /api/gmgn/activity-poll` → `social_token_events` with `source = gmgn_hot` / `gmgn_smartmoney` / `gmgn_kol` (wallet_buy)
+- `raw_metadata` includes `gmgn_activity_score`, wallet counts, USD sums, plus **Radar** fields (`radar_score`, `radar_action`, `radar_sm_peak`, …)
 - Rollup cron picks up `gmgn_*` sources for `smart_wallet_buy_count_1h`
 
-See [docs/GMGN_STRATEGY.md](../docs/GMGN_STRATEGY.md) for env vars and smoke commands.
+### Early Signals → Radar bridge
+
+Stage-1 Early Enter (from `GET /api/trading/signals`) also writes:
+
+- `source = signals_early`, `event_type = mention`
+- `raw_metadata.early_signals_score`, `early_growth_pct`
+
+Activity-poll Radar merges those stamps over a **2h** window so Early momentum and GMGN SM/KOL are one accumulative score (not two disconnected Telegram products).
+
+See [docs/GMGN_STRATEGY.md](../docs/GMGN_STRATEGY.md) for Radar calibration and smoke commands.
 
 ## Deploy scope
 

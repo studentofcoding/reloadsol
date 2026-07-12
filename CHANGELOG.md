@@ -8,6 +8,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Radar Early bridge (accumulative GMGN Radar)
+
+- **2h mint accumulator** (`gmgn-radar-accumulate.ts`): peak SM/KOL/activity from poll + prior `gmgn_*` events; Early Enter from `source=signals_early`.
+- **Recalibrated Radar 0–100** (`gmgn-radar-review.ts`): activity + early in score; tax/liquidity removed; thresholds SKIP&lt;45 / WATCH / ENTER≥78; full stack can hit 100.
+- **top10:** GMGN first, else Jupiter `audit.topHoldersPercentage` (alert path only); `top10_source` on metadata.
+- **Early stamp:** `GET /api/trading/signals` writes `signals_early` into `social_token_events` so Radar cron can see Stage-1 enters.
+- Wired in **activity-poll** + **gmgn-pipeline**. Ops: [docs/GMGN_STRATEGY.md](./docs/GMGN_STRATEGY.md#radar-review-telegram--entry-features).
+
 ### Added — Token map Freeview
 
 - `/dev/token-search`: **Freeview | List** toggle — Freeview is strategy-lane kanban + activity; List keeps the classic locate dump.
