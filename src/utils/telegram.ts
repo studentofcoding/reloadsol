@@ -376,3 +376,28 @@ export async function sendStrategyTrackCloseAlert(params: {
 
   return sendTelegramAlert(text, { parseMode: 'HTML' })
 }
+
+export async function sendGmgnRadarAlert(params: {
+  review: import('@/strategies/gmgn-radar-review').GmgnRadarReview
+  symbol?: string | null
+  tokenAddress: string
+  category?: string | null
+  eventLabel?: string | null
+}): Promise<boolean> {
+  if (!isStrategyTrackTelegramEnabled()) return false
+
+  const { formatGmgnRadarTelegramHtml } = await import('@/strategies/gmgn-radar-review')
+  const chartLink = formatReloadsolChartLink(params.tokenAddress)
+  const buyLink = formatReloadsolBuyLink(params.tokenAddress)
+  const text = formatGmgnRadarTelegramHtml(params)
+
+  return sendTelegramAlert(text, {
+    parseMode: 'HTML',
+    inlineKeyboard: [
+      [
+        { text: '📈 Chart', url: chartLink },
+        { text: '🎯 Buy', url: buyLink },
+      ],
+    ],
+  })
+}

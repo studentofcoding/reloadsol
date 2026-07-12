@@ -7,11 +7,13 @@ import {
   gmgnScoreToFeatureFields,
   scoreGmgnActivity,
 } from '@/strategies/gmgn-activity-score'
+import { buildGmgnRadarReview } from '@/strategies/gmgn-radar-review'
 import { hasRecentGmgnEvent, insertSocialEvents } from '@/strategies/social/db'
 import { applyGmgnLiveBoost } from '@/strategies/gmgn-live-boost'
 import type { SocialIngestEvent } from '@/strategies/social/types'
 import { normalizeTrackRows, trackKol, trackSmartMoney } from '@/utils/gmgn-cli'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
+import { sendGmgnRadarAlert } from '@/utils/telegram'
 import { log } from '@/utils/unified-logger'
 
 export const dynamic = 'force-dynamic'
@@ -74,6 +76,10 @@ export async function POST(request: NextRequest) {
       }
 
       const source = resolveIngestSource(item)
+      const radar = buildGmgnRadarReview({
+        sm: item.metrics.sm_wallet_count_60m,
+        kol: item.metrics.kol_wallet_count_60m,
+      })
       events.push({
         token_address: item.tokenAddress,
         event_type: 'wallet_buy',
@@ -88,7 +94,22 @@ export async function POST(request: NextRequest) {
             hasHotSignal: source === 'gmgn_hot',
           }),
           symbol: item.symbol,
+          radar_action: radar.action,
+          radar_score: radar.score,
+          radar_summary: radar.summary,
+          radar_gmgn_line: radar.gmgnLine,
         },
+      })
+
+      // ponytail: fire-and-forget alert; don't block ingest on telegram
+      void sendGmgnRadarAlert({
+        review: radar,
+        symbol: item.symbol,
+        tokenAddress: item.tokenAddress,
+        category: source === 'gmgn_hot' ? 'HOT' : source === 'gmgn_kol' ? 'KOL' : 'SM',
+        eventLabel: `activity score ${item.score}`,
+      }).catch((err) => {
+        console.error('[gmgn-activity-poll] radar telegram failed:', err)
       })
     }
 
@@ -127,11 +148,23 @@ export async function POST(request: NextRequest) {
       skipped,
       ingestErrors: ingestResult.errors,
       liveBoosted,
-      top: hot.slice(0, 10).map((item) => ({
-        symbol: item.symbol,
-        tokenAddress: item.tokenAddress,
-        score: item.score,
-      })),
+      top: hot.slice(0, 10).map((item) => {
+        const radar = buildGmgnRadarReview({
+          sm: item.metrics.sm_wallet_count_60m,
+          kol: item.metrics.kol_wallet_count_60m,
+        })
+        return {
+          symbol: item.symbol,
+          tokenAddress: item.tokenAddress,
+          score: item.score,
+          radar: {
+            action: radar.action,
+            score: radar.score,
+            summary: radar.summary,
+            gmgn: radar.gmgnLine,
+          },
+        }
+      }),
     })
   } catch (error) {
     log.error('error_handling', 'GMGN activity poll failed', error as Error)

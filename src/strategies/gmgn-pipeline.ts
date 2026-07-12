@@ -5,6 +5,10 @@ import {
   type GmgnActivityMetrics,
 } from './gmgn-activity-score'
 import {
+  buildGmgnRadarReview,
+  gmgnRadarInputFromFeatures,
+} from './gmgn-radar-review'
+import {
   normalizeTrackRows,
   tokenInfo,
   tokenSecurity,
@@ -151,6 +155,14 @@ export async function gateGmgnCandidates(params: {
       config: params.strategy.config.security,
     })
 
+    const radar = buildGmgnRadarReview(
+      gmgnRadarInputFromFeatures({
+        sm: candidate.activityMetrics.sm_wallet_count_60m,
+        kol: candidate.activityMetrics.kol_wallet_count_60m,
+        features: result.features,
+      }),
+    )
+
     gated.push({
       ...candidate,
       verdict: result.verdict,
@@ -170,6 +182,10 @@ export async function gateGmgnCandidates(params: {
         discovery_cluster_wallets: candidate.clusterWalletCount,
         gmgn_security_verdict: result.verdict,
         gmgn_security_reasons: result.reasons,
+        radar_action: radar.action,
+        radar_score: radar.score,
+        radar_summary: radar.summary,
+        radar_gmgn_line: radar.gmgnLine,
         strategy_id: params.strategy.id,
         domain: 'gmgn',
       },
