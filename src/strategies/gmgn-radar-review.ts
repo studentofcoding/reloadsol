@@ -110,10 +110,28 @@ export function actionFromRadarScore(score: number): GmgnRadarAction {
   return 'SKIP'
 }
 
-function actionEmoji(action: GmgnRadarAction): string {
+export function actionEmoji(action: GmgnRadarAction): string {
   if (action === 'ENTER') return '🟢'
   if (action === 'WATCH') return '🟡'
   return '🔴'
+}
+
+/** Override action (e.g. price rules) and keep emoji/summary in sync. */
+export function withRadarActionOverride(
+  review: GmgnRadarReview,
+  action: GmgnRadarAction,
+  summaryExtra?: string | null,
+): GmgnRadarReview {
+  const summary =
+    summaryExtra && summaryExtra.trim()
+      ? `${summaryExtra.trim()} — ${review.summary}`
+      : review.summary
+  return {
+    ...review,
+    action,
+    emoji: actionEmoji(action),
+    summary,
+  }
 }
 
 function hasHardRisk(input: GmgnRadarInput): boolean {

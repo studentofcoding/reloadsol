@@ -11,12 +11,21 @@ import {
   RADAR_ACCUMULATE_WINDOW_MS,
   accumulateRadarPeaks,
 } from '@/strategies/gmgn-radar-accumulate'
+import { killAndBanRadarDump } from '@/strategies/gmgn-radar-dump'
+import {
+  applyRadarPriceRules,
+  computeRadarPriceGrowth,
+  extractRadarPriceStateFromEvents,
+} from '@/strategies/gmgn-radar-price'
 import {
   buildGmgnRadarReview,
   resolveRadarTop10,
+  withRadarActionOverride,
   type GmgnRadarInput,
+  type GmgnRadarReview,
 } from '@/strategies/gmgn-radar-review'
 import {
+  fetchRecentSocialEvents,
   fetchSocialEventsForTokenSince,
   hasRecentGmgnEvent,
   insertSocialEvents,
@@ -26,6 +35,8 @@ import type { SocialIngestEvent } from '@/strategies/social/types'
 import { normalizeTrackRows, trackKol, trackSmartMoney } from '@/utils/gmgn-cli'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
+import { isTokenRugged } from '@/utils/rug-list/db'
+import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { sendGmgnRadarAlert } from '@/utils/telegram'
 import { log } from '@/utils/unified-logger'
 
@@ -83,7 +94,6 @@ async function buildAccumulatedRadarInput(params: {
   let jupiterTop10: number | null = null
   const gmgnTop10 = params.gmgnTop10 ?? null
   if (gmgnTop10 == null || !Number.isFinite(gmgnTop10)) {
-    // ponytail: Jupiter only when about to alert and GMGN top10 missing
     jupiterTop10 = await fetchJupiterTop10Pct(params.tokenAddress)
   }
   const top10 = resolveRadarTop10({
@@ -100,6 +110,56 @@ async function buildAccumulatedRadarInput(params: {
     top10: top10.top10,
     top10Source: top10.top10Source,
     tokenAddress: params.tokenAddress,
+  }
+}
+
+async function applyPriceRulesToRadar(params: {
+  tokenAddress: string
+  symbol: string
+  review: GmgnRadarReview
+  priceUsd: number | null
+}): Promise<{
+  review: GmgnRadarReview
+  priceUsd: number | null
+  growthPct: number | null
+  stickyBaselineUsd: number | null
+  banned: boolean
+}> {
+  const priorEvents = await fetchRecentSocialEvents(params.tokenAddress, 30)
+  const { previousPriceUsd, stickyBaselineUsd } =
+    extractRadarPriceStateFromEvents(priorEvents)
+  const growthPct = computeRadarPriceGrowth(params.priceUsd, previousPriceUsd)
+  const rules = applyRadarPriceRules({
+    action: params.review.action,
+    growthPct,
+    stickyBaselineUsd,
+    currentPriceUsd: params.priceUsd,
+    previousPriceUsd,
+  })
+
+  if (rules.banned) {
+    void killAndBanRadarDump({
+      tokenAddress: params.tokenAddress,
+      tokenSymbol: params.symbol,
+      sellPriceUsd: params.priceUsd,
+    }).catch((err) => {
+      console.error('[gmgn-activity-poll] radar dump ban/kill failed:', err)
+    })
+  }
+
+  const extra =
+    rules.reasons.length > 0 ? rules.reasons.join('; ') : null
+  const review =
+    rules.action !== params.review.action || extra
+      ? withRadarActionOverride(params.review, rules.action, extra)
+      : params.review
+
+  return {
+    review,
+    priceUsd: params.priceUsd,
+    growthPct: rules.growthPct,
+    stickyBaselineUsd: rules.stickyBaselineUsd,
+    banned: rules.banned,
   }
 }
 
@@ -129,9 +189,15 @@ export async function POST(request: NextRequest) {
     const scored = scoreGmgnActivity(normalized, { windowMinutes })
     const hot = scored.filter((item) => item.score >= threshold)
 
+    const prices =
+      hot.length > 0
+        ? await fetchTokenPricesForTracking(hot.map((h) => h.tokenAddress))
+        : {}
+
     const events: SocialIngestEvent[] = []
     let skipped = 0
-    const radarByMint = new Map<string, ReturnType<typeof buildGmgnRadarReview>>()
+    let dumpBanned = 0
+    const radarByMint = new Map<string, GmgnRadarReview>()
 
     for (const item of hot) {
       const recent = await hasRecentGmgnEvent(item.tokenAddress, cooldownMin)
@@ -147,7 +213,18 @@ export async function POST(request: NextRequest) {
         kol: item.metrics.kol_wallet_count_60m,
         activityScore: item.score,
       })
-      const radar = buildGmgnRadarReview(radarInput)
+      let radar = buildGmgnRadarReview(radarInput)
+
+      const priceUsd = prices[item.tokenAddress] ?? null
+      const priced = await applyPriceRulesToRadar({
+        tokenAddress: item.tokenAddress,
+        symbol: item.symbol,
+        review: radar,
+        priceUsd: typeof priceUsd === 'number' && priceUsd > 0 ? priceUsd : null,
+      })
+      radar = priced.review
+      if (priced.banned) dumpBanned++
+
       radarByMint.set(item.tokenAddress, radar)
 
       events.push({
@@ -175,18 +252,25 @@ export async function POST(request: NextRequest) {
           top10_source: radarInput.top10Source,
           jupiter_top_holders_pct:
             radarInput.top10Source === 'jupiter' ? radarInput.top10 : undefined,
+          radar_price_usd: priced.priceUsd,
+          radar_growth_pct: priced.growthPct,
+          radar_watch_baseline_usd: priced.stickyBaselineUsd,
+          radar_dump_banned: priced.banned ? 1 : 0,
         },
       })
 
-      void sendGmgnRadarAlert({
-        review: radar,
-        symbol: item.symbol,
-        tokenAddress: item.tokenAddress,
-        category: source === 'gmgn_hot' ? 'HOT' : source === 'gmgn_kol' ? 'KOL' : 'SM',
-        eventLabel: `activity score ${item.score}`,
-      }).catch((err) => {
-        console.error('[gmgn-activity-poll] radar telegram failed:', err)
-      })
+      const rugged = priced.banned || (await isTokenRugged(item.tokenAddress))
+      if (!rugged) {
+        void sendGmgnRadarAlert({
+          review: radar,
+          symbol: item.symbol,
+          tokenAddress: item.tokenAddress,
+          category: source === 'gmgn_hot' ? 'HOT' : source === 'gmgn_kol' ? 'KOL' : 'SM',
+          eventLabel: `activity score ${item.score}`,
+        }).catch((err) => {
+          console.error('[gmgn-activity-poll] radar telegram failed:', err)
+        })
+      }
     }
 
     const ingestResult =
@@ -214,6 +298,7 @@ export async function POST(request: NextRequest) {
       skipped,
       ingestSkipped: ingestResult.skipped,
       liveBoosted,
+      dumpBanned,
     })
 
     return NextResponse.json({
@@ -224,6 +309,7 @@ export async function POST(request: NextRequest) {
       skipped,
       ingestErrors: ingestResult.errors,
       liveBoosted,
+      dumpBanned,
       top: hot.slice(0, 10).map((item) => {
         const radar =
           radarByMint.get(item.tokenAddress) ??

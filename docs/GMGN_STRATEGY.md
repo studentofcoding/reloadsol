@@ -134,11 +134,26 @@ Before scoring, activity-poll and gmgn-pipeline merge:
 
 SKIP copy uses “insufficient confirmation” when SM/KOL alone are weak — it does **not** treat “smart money present” as a risk reason.
 
+### Price growth rules (reappearances)
+
+On each hot Radar pass, fetch USD price and compare to the previous `radar_price_usd` on `social_token_events`:
+
+| Rule | Condition | Effect |
+|------|-----------|--------|
+| Sticky pump WATCH | Growth vs previous **&gt; 50%** | Force **WATCH** (even if score is ENTER); set sticky baseline = previous price |
+| Hold sticky | Current price **&gt; baseline** | Keep **WATCH** until growth vs baseline ≤ 0% |
+| Clear sticky | Current **≤ baseline** | Resume normal Radar action |
+| Dump ban | Growth vs previous **≤ -80%** | Force SKIP; `markTokenRug(source=gmgn-radar)`; close open sims (mcap / signals / gmgn wallets); no Telegram |
+
+Metadata: `radar_price_usd`, `radar_growth_pct`, `radar_watch_baseline_usd`, `radar_dump_banned`.
+
 ### Key files
 
 - `src/strategies/gmgn-radar-accumulate.ts` — 2h peak merge
 - `src/strategies/gmgn-radar-review.ts` — score / action / Telegram HTML
-- `src/app/api/gmgn/activity-poll/route.ts` — accumulator + Jupiter top10 fallback
+- `src/strategies/gmgn-radar-price.ts` — reappearance growth rules
+- `src/strategies/gmgn-radar-dump.ts` — dump ban + sim close
+- `src/app/api/gmgn/activity-poll/route.ts` — accumulator + Jupiter top10 + price rules
 - `src/app/api/trading/signals/route.ts` — Early Enter → `signals_early` stamp
 
 ## Security gate (defaults)
@@ -233,6 +248,8 @@ Go-live checklist (future):
 - `src/strategies/gmgn-activity-score.ts` — 60m scorer
 - `src/strategies/gmgn-radar-accumulate.ts` — 2h SM/KOL/activity/early peaks
 - `src/strategies/gmgn-radar-review.ts` — Radar 0–100 ENTER/WATCH/SKIP
+- `src/strategies/gmgn-radar-price.ts` — reappearance growth → sticky WATCH / dump ban
+- `src/strategies/gmgn-radar-dump.ts` — ban + close open sims on dump
 - `src/strategies/gmgn-live-boost.ts` — post-entry live boost
 - `src/strategies/gmgn-pipeline.ts` — score-sorted discovery + security gate + Radar
 - `src/app/api/gmgn/activity-poll/route.ts` — hot token → Radar + social ingest

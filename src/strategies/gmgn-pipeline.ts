@@ -11,8 +11,15 @@ import {
 import {
   buildGmgnRadarReview,
   gmgnRadarInputFromFeatures,
+  withRadarActionOverride,
 } from './gmgn-radar-review'
-import { fetchSocialEventsForTokenSince } from './social/db'
+import { killAndBanRadarDump } from './gmgn-radar-dump'
+import {
+  applyRadarPriceRules,
+  computeRadarPriceGrowth,
+  extractRadarPriceStateFromEvents,
+} from './gmgn-radar-price'
+import { fetchRecentSocialEvents, fetchSocialEventsForTokenSince } from './social/db'
 import {
   normalizeTrackRows,
   tokenInfo,
@@ -21,6 +28,7 @@ import {
   trackSmartMoney,
 } from '@/utils/gmgn-cli'
 import { evaluateGmgnSecurity } from './gmgn-security-gate'
+import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 
 export type GmgnDiscoveryCandidate = {
   tokenAddress: string
@@ -175,7 +183,7 @@ export async function gateGmgnCandidates(params: {
       events: priorEvents,
     })
 
-    const radar = buildGmgnRadarReview(
+    const radarBase = buildGmgnRadarReview(
       gmgnRadarInputFromFeatures({
         sm: peaks.smPeak,
         kol: peaks.kolPeak,
@@ -190,10 +198,42 @@ export async function gateGmgnCandidates(params: {
       }),
     )
 
+    const priceMap = await fetchTokenPricesForTracking([candidate.tokenAddress])
+    const priceUsd = priceMap[candidate.tokenAddress] ?? null
+    const priceHistory = await fetchRecentSocialEvents(candidate.tokenAddress, 30)
+    const { previousPriceUsd, stickyBaselineUsd } =
+      extractRadarPriceStateFromEvents(priceHistory)
+    const growthPct = computeRadarPriceGrowth(
+      typeof priceUsd === 'number' && priceUsd > 0 ? priceUsd : null,
+      previousPriceUsd,
+    )
+    const priceRules = applyRadarPriceRules({
+      action: radarBase.action,
+      growthPct,
+      stickyBaselineUsd,
+      currentPriceUsd: typeof priceUsd === 'number' && priceUsd > 0 ? priceUsd : null,
+      previousPriceUsd,
+    })
+    if (priceRules.banned) {
+      void killAndBanRadarDump({
+        tokenAddress: candidate.tokenAddress,
+        tokenSymbol: candidate.symbol,
+        sellPriceUsd: typeof priceUsd === 'number' ? priceUsd : null,
+      }).catch(() => {})
+    }
+    const radar =
+      priceRules.action !== radarBase.action || priceRules.reasons.length > 0
+        ? withRadarActionOverride(
+            radarBase,
+            priceRules.action,
+            priceRules.reasons.join('; ') || null,
+          )
+        : radarBase
+
     gated.push({
       ...candidate,
       verdict: result.verdict,
-      pass: result.pass,
+      pass: result.pass && !priceRules.banned,
       securityReasons: result.reasons,
       entryFeatures: {
         ...result.features,
@@ -218,6 +258,10 @@ export async function gateGmgnCandidates(params: {
         radar_activity_peak: peaks.activityScorePeak,
         early_signals_score: peaks.earlySignalsScore,
         early_growth_pct: peaks.earlyGrowthPct,
+        radar_price_usd: typeof priceUsd === 'number' ? priceUsd : null,
+        radar_growth_pct: priceRules.growthPct,
+        radar_watch_baseline_usd: priceRules.stickyBaselineUsd,
+        radar_dump_banned: priceRules.banned ? 1 : 0,
         strategy_id: params.strategy.id,
         domain: 'gmgn',
       },

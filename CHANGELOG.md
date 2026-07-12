@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Radar price growth rules
+
+- Track `radar_price_usd` across reappearances; growth vs previous sighting.
+- **&gt;50% pump** → sticky **WATCH** until price back ≤ baseline; **≤-80% dump** → `token_rug_list` (`gmgn-radar`) + close open sims.
+- Wired in activity-poll + gmgn-pipeline. See [GMGN_STRATEGY.md](./docs/GMGN_STRATEGY.md#price-growth-rules-reappearances).
+
 ### Added — Radar Early bridge (accumulative GMGN Radar)
 
 - **2h mint accumulator** (`gmgn-radar-accumulate.ts`): peak SM/KOL/activity from poll + prior `gmgn_*` events; Early Enter from `source=signals_early`.

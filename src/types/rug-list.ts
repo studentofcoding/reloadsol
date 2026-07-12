@@ -7,7 +7,8 @@ export type TokenRugSource =
   | 'signals-label'
   | 'algo-dashboard'
   | 'algo-history'
-  | 'dlmm-general';
+  | 'dlmm-general'
+  | 'gmgn-radar';
 
 export interface TokenRugEntry {
   id: string;
