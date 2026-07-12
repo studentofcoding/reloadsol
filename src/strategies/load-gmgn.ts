@@ -34,6 +34,25 @@ export async function getMergedGmgnRegistry(): Promise<Record<string, GmgnStrate
     if (row?.execution_mode) merged[id].execution_mode = row.execution_mode
   }
 
+  for (const row of rows) {
+    if (merged[row.id]) continue
+    if (!row.id.startsWith('search_gmgn_')) continue
+    const base = GMGN_STRATEGIES.gmgn_smartmoney_default
+    const cloned: GmgnStrategy = {
+      ...base,
+      id: row.id,
+      name: row.name || row.id,
+      description: row.description ?? base.description,
+      is_active: row.is_active,
+      execution_mode: row.execution_mode ?? 'sim_only',
+    }
+    merged[row.id] = mergeGmgnStrategy(
+      cloned,
+      row.config as import('./types').GmgnStrategyOverride,
+      row.is_active,
+    )
+  }
+
   cached = merged
   cacheLoadedAt = now
   return merged

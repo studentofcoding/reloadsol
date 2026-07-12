@@ -1,4 +1,4 @@
-/** GMGN metrics → Radar review (WATCH / SKIP / ENTER) like Telegram alpha feeds. */
+/** GMGN metrics → Radar review (WATCH / SKIP / ENTER). Recalibrated 0–100 scale. */
 
 export type GmgnRadarAction = 'ENTER' | 'WATCH' | 'SKIP'
 
@@ -8,10 +8,16 @@ export type GmgnRadarInput = {
   holders?: number | null
   /** Top-10 share as percent (14) or fraction (0.14). */
   top10?: number | null
+  top10Source?: 'gmgn' | 'jupiter' | null
+  /** @deprecated not scored — kept for callers that still pass it */
   taxPct?: number | null
   honeypot?: boolean | null
+  /** @deprecated not scored */
   liquidityUsd?: number | null
   buySellReturnPct?: number | null
+  activityScore?: number | null
+  earlySignalsScore?: number | null
+  earlyGrowthPct?: number | null
   symbol?: string | null
   tokenAddress?: string
   category?: string | null
@@ -24,61 +30,75 @@ export type GmgnRadarReview = {
   summary: string
   gmgnLine: string
   reasons: string[]
+  top10Source?: 'gmgn' | 'jupiter' | null
 }
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
 }
 
-function normalizeTop10Pct(top10: number | null | undefined): number | null {
+export function normalizeTop10Pct(top10: number | null | undefined): number | null {
   if (top10 == null || !Number.isFinite(top10)) return null
-  // fraction 0–1 → percent
   if (top10 > 0 && top10 <= 1) return top10 * 100
   return top10
 }
 
-export function scoreGmgnRadar(input: GmgnRadarInput): number {
-  if (input.honeypot) return 10
-
-  let score = 12
-  score += Math.min(Math.max(0, input.sm), 40) * 0.55
-  score += Math.min(Math.max(0, input.kol), 40) * 0.35
-
+/** Quality sub-score ∈ [-25, 20] from holders / top10 / buy-sell return only. */
+function qualityPoints(input: GmgnRadarInput): number {
+  let q = 0
   const holders = input.holders
   if (holders != null && holders > 0) {
-    score += Math.min(Math.log10(holders + 1) * 5, 10)
+    q += Math.min(Math.log10(holders + 1) * 4, 8)
   }
 
   const top10 = normalizeTop10Pct(input.top10)
   if (top10 != null) {
-    if (top10 <= 12) score += 6
-    else if (top10 <= 20) score += 2
-    else if (top10 <= 35) score -= 12
-    else score -= 25
-  }
-
-  const tax = input.taxPct
-  if (tax != null) {
-    if (tax <= 0) score += 6
-    else if (tax <= 2) score -= 5
-    else score -= 25
-  }
-
-  const liq = input.liquidityUsd
-  if (liq != null) {
-    if (liq >= 50_000) score += 4
-    else if (liq >= 10_000) score += 2
-    else if (liq < 3_000) score -= 15
+    if (top10 <= 12) q += 8
+    else if (top10 <= 20) q += 4
+    else if (top10 <= 35) q -= 10
+    else q -= 20
   }
 
   const ret = input.buySellReturnPct
   if (ret != null) {
-    if (ret >= 95) score += 4
-    else if (ret < 80) score -= 20
+    if (ret >= 95) q += 4
+    else if (ret < 80) q -= 15
   }
 
-  if (input.sm <= 0 && input.kol <= 0) {
-    score = Math.min(score, 28)
+  return clamp(q, -25, 20)
+}
+
+/**
+ * Point budget (then clamp 0–100):
+ * base 10 + SM≤25 + KOL≤15 + activity≤35 + early≤20 + quality≤20
+ */
+export function scoreGmgnRadar(input: GmgnRadarInput): number {
+  if (input.honeypot) return 10
+
+  const sm = Math.max(0, input.sm)
+  const kol = Math.max(0, input.kol)
+  const activity = Math.max(0, input.activityScore ?? 0)
+  const earlyScore = input.earlySignalsScore
+  const earlyGrowth = input.earlyGrowthPct
+
+  let score = 10
+  // SM: min(sm,10)*2.5 → SM6=15, SM10=25
+  score += Math.min(sm, 10) * 2.5
+  // KOL: min(kol,10)*1.5 → max 15
+  score += Math.min(kol, 10) * 1.5
+  // Activity 0→200 → 0→35
+  score += (Math.min(activity, 200) / 200) * 35
+
+  if (earlyScore != null && earlyScore >= 50) score += 20
+  else if (earlyGrowth != null && earlyGrowth >= 20) score += 8
+
+  score += qualityPoints(input)
+
+  const hasEarly =
+    (earlyScore != null && earlyScore >= 50) ||
+    (earlyGrowth != null && earlyGrowth >= 20)
+  if (sm <= 0 && kol <= 0 && !hasEarly) {
+    score = Math.min(score, 35)
   }
 
   return Math.round(clamp(score, 0, 100))
@@ -96,6 +116,14 @@ function actionEmoji(action: GmgnRadarAction): string {
   return '🔴'
 }
 
+function hasHardRisk(input: GmgnRadarInput): boolean {
+  if (input.honeypot) return true
+  const top10 = normalizeTop10Pct(input.top10)
+  if (top10 != null && top10 > 35) return true
+  if (input.buySellReturnPct != null && input.buySellReturnPct < 80) return true
+  return false
+}
+
 function buildReasons(input: GmgnRadarInput): string[] {
   const reasons: string[] = []
   if (input.honeypot) {
@@ -104,10 +132,6 @@ function buildReasons(input: GmgnRadarInput): string[] {
   }
   if (input.honeypot === false) reasons.push('no honeypot')
 
-  const tax = input.taxPct
-  if (tax != null && tax <= 0) reasons.push('zero tax')
-  else if (tax != null && tax > 2) reasons.push(`high tax ${tax}%`)
-
   const top10 = normalizeTop10Pct(input.top10)
   if (top10 != null) {
     if (top10 <= 15) reasons.push('moderate holder spread')
@@ -115,15 +139,16 @@ function buildReasons(input: GmgnRadarInput): string[] {
     else reasons.push('high holder concentration')
   }
 
-  if (input.sm <= 0 && input.kol <= 0) reasons.push('no smart money')
-  else if (input.sm > 0 && input.kol > 0) reasons.push('SM+KOL overlap')
+  if (input.sm > 0 && input.kol > 0) reasons.push('SM+KOL overlap')
   else if (input.sm > 0) reasons.push('smart money present')
-  else reasons.push('KOL interest only')
+  else if (input.kol > 0) reasons.push('KOL interest only')
+  else reasons.push('no smart money')
 
-  const liq = input.liquidityUsd
-  if (liq != null) {
-    if (liq >= 50_000) reasons.push('high liquidity depth')
-    else if (liq < 5_000) reasons.push('low liquidity')
+  if (input.activityScore != null && input.activityScore >= 50) {
+    reasons.push('hot activity')
+  }
+  if (input.earlySignalsScore != null && input.earlySignalsScore >= 50) {
+    reasons.push('early signals enter')
   }
 
   const ret = input.buySellReturnPct
@@ -136,12 +161,27 @@ function buildReasons(input: GmgnRadarInput): string[] {
   return reasons
 }
 
-function summarize(action: GmgnRadarAction, reasons: string[]): string {
+function summarize(action: GmgnRadarAction, reasons: string[], input: GmgnRadarInput): string {
   if (reasons.length === 0) {
     return action === 'SKIP'
-      ? 'Insufficient GMGN signal — too risky.'
-      : 'Limited GMGN signal — monitor before sizing up.'
+      ? 'Insufficient confirmation — monitor.'
+      : 'Limited signal — monitor before sizing up.'
   }
+
+  // SKIP without hard risk: don't frame bullish SM/KOL as "too risky"
+  if (action === 'SKIP' && !hasHardRisk(input)) {
+    const soft = reasons.filter(
+      (r) =>
+        r !== 'smart money present' &&
+        r !== 'KOL interest only' &&
+        r !== 'SM+KOL overlap',
+    )
+    if (soft.length === 0) {
+      return 'Insufficient confirmation — SM/KOL alone not enough yet.'
+    }
+    return `${soft.join(', ')} — insufficient confirmation.`
+  }
+
   const body = reasons.join(', ')
   if (action === 'SKIP') return `${body} – too risky.`
   if (action === 'ENTER') return `${body} — setup looks actionable.`
@@ -154,24 +194,49 @@ export function buildGmgnRadarReview(input: GmgnRadarInput): GmgnRadarReview {
   const reasons = buildReasons(input)
   const top10 = normalizeTop10Pct(input.top10)
   const hold = input.holders != null ? String(Math.round(input.holders)) : '—'
-  const top10Str = top10 != null ? `${top10.toFixed(0)}%` : '—'
-  const taxStr = input.taxPct != null ? `${input.taxPct}%` : '—'
+  const top10Src =
+    top10 != null && input.top10Source === 'jupiter'
+      ? `${top10.toFixed(0)}% (jup)`
+      : top10 != null
+        ? `${top10.toFixed(0)}%`
+        : '—'
 
   return {
     action,
     score,
     emoji: actionEmoji(action),
-    summary: summarize(action, reasons),
-    gmgnLine: `SM ${input.sm} · KOL ${input.kol} · hold ${hold} · top10 ${top10Str} · tax ${taxStr}`,
+    summary: summarize(action, reasons, input),
+    gmgnLine: `SM ${input.sm} · KOL ${input.kol} · hold ${hold} · top10 ${top10Src}`,
     reasons,
+    top10Source: input.top10Source ?? null,
   }
 }
 
-/** Map security-gate feature bag + activity counts into radar input. */
+/** Resolve top10: GMGN feature first, else Jupiter percent. */
+export function resolveRadarTop10(params: {
+  gmgnTop10?: number | null
+  jupiterTop10Pct?: number | null
+}): { top10: number | null; top10Source: 'gmgn' | 'jupiter' | null } {
+  const gmgn = params.gmgnTop10
+  if (gmgn != null && Number.isFinite(gmgn)) {
+    return { top10: gmgn, top10Source: 'gmgn' }
+  }
+  const jup = params.jupiterTop10Pct
+  if (jup != null && Number.isFinite(jup)) {
+    return { top10: jup, top10Source: 'jupiter' }
+  }
+  return { top10: null, top10Source: null }
+}
+
+/** Map security-gate feature bag + activity / early into radar input. */
 export function gmgnRadarInputFromFeatures(params: {
   sm: number
   kol: number
   features?: Record<string, unknown>
+  activityScore?: number | null
+  earlySignalsScore?: number | null
+  earlyGrowthPct?: number | null
+  jupiterTop10Pct?: number | null
 }): GmgnRadarInput {
   const f = params.features ?? {}
   const num = (k: string): number | null => {
@@ -179,20 +244,34 @@ export function gmgnRadarInputFromFeatures(params: {
     if (typeof v === 'number' && Number.isFinite(v)) return v
     return null
   }
-  const top10Raw = num('gmgn_top_10_holder_rate')
+  const resolved = resolveRadarTop10({
+    gmgnTop10: num('gmgn_top_10_holder_rate'),
+    jupiterTop10Pct:
+      params.jupiterTop10Pct ??
+      num('jupiter_top_holders_pct') ??
+      num('top_holders_pct'),
+  })
+
   return {
     sm: params.sm,
     kol: params.kol,
     holders: num('gmgn_holder_count'),
-    top10: top10Raw,
-    taxPct: num('buy_tax') ?? num('sell_tax') ?? num('gmgn_tax_pct'),
+    top10: resolved.top10,
+    top10Source: resolved.top10Source,
     honeypot:
       f.gmgn_honeypot === true || f.is_honeypot === true
         ? true
         : f.gmgn_honeypot === false
           ? false
           : null,
-    liquidityUsd: num('gmgn_liquidity_usd'),
+    buySellReturnPct: num('buy_sell_return_pct') ?? num('gmgn_buy_sell_return'),
+    activityScore:
+      params.activityScore ??
+      num('gmgn_activity_score') ??
+      num('gmgn_activity_score_60m'),
+    earlySignalsScore:
+      params.earlySignalsScore ?? num('early_signals_score'),
+    earlyGrowthPct: params.earlyGrowthPct ?? num('early_growth_pct'),
   }
 }
 

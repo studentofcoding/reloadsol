@@ -1,42 +1,138 @@
 import { describe, expect, it } from 'vitest'
+import { accumulateRadarPeaks } from './gmgn-radar-accumulate'
 import {
   buildGmgnRadarReview,
   formatGmgnRadarTelegramHtml,
+  resolveRadarTop10,
   scoreGmgnRadar,
 } from './gmgn-radar-review'
 
-describe('gmgn-radar-review', () => {
-  it('matches screenshot-style WATCH for strong SM+KOL', () => {
+describe('gmgn-radar-accumulate', () => {
+  it('peaks SM/KOL/activity across poll + prior events', () => {
+    const now = new Date('2026-07-13T03:00:00.000Z')
+    const peaks = accumulateRadarPeaks({
+      now,
+      poll: { sm: 6, kol: 0, activityScore: 191 },
+      events: [
+        {
+          source: 'gmgn_smartmoney',
+          event_type: 'wallet_buy',
+          occurred_at: '2026-07-13T01:46:00.000Z',
+          raw_metadata: {
+            sm_wallet_count_60m: 1,
+            kol_wallet_count_60m: 0,
+            gmgn_activity_score: 51,
+          },
+        },
+        {
+          source: 'gmgn_smartmoney',
+          event_type: 'wallet_buy',
+          occurred_at: '2026-07-13T02:15:00.000Z',
+          raw_metadata: {
+            sm_wallet_count_60m: 1,
+            kol_wallet_count_60m: 0,
+            gmgn_activity_score: 92,
+          },
+        },
+        {
+          source: 'signals_early',
+          event_type: 'mention',
+          occurred_at: '2026-07-13T01:36:00.000Z',
+          raw_metadata: {
+            early_signals_score: 54,
+            early_growth_pct: 23.9,
+          },
+        },
+      ],
+    })
+    expect(peaks.smPeak).toBe(6)
+    expect(peaks.activityScorePeak).toBe(191)
+    expect(peaks.earlySignalsScore).toBe(54)
+    expect(peaks.hasEarlyEnter).toBe(true)
+  })
+})
+
+describe('gmgn-radar-review recalibrated', () => {
+  it('cold SM0 stays SKIP under 20', () => {
+    const score = scoreGmgnRadar({ sm: 0, kol: 0 })
+    expect(score).toBeLessThan(20)
+    expect(buildGmgnRadarReview({ sm: 0, kol: 0 }).action).toBe('SKIP')
+  })
+
+  it('BISON-like SM6 + activity191 + early54 → ENTER ≥78', () => {
+    const review = buildGmgnRadarReview({
+      sm: 6,
+      kol: 0,
+      activityScore: 191,
+      earlySignalsScore: 54,
+      earlyGrowthPct: 23.9,
+    })
+    expect(review.score).toBeGreaterThanOrEqual(78)
+    expect(review.action).toBe('ENTER')
+    expect(review.summary.toLowerCase()).not.toMatch(/smart money present.*too risky/)
+  })
+
+  it('full stack can hit 100', () => {
+    const score = scoreGmgnRadar({
+      sm: 10,
+      kol: 5,
+      activityScore: 150,
+      earlySignalsScore: 55,
+      holders: 4000,
+      top10: 12,
+      buySellReturnPct: 98,
+      honeypot: false,
+    })
+    expect(score).toBeGreaterThanOrEqual(95)
+    expect(score).toBeLessThanOrEqual(100)
+  })
+
+  it('strong SM+KOL without activity/early still ≥WATCH', () => {
     const review = buildGmgnRadarReview({
       sm: 37,
       kol: 46,
       holders: 3762,
       top10: 14,
-      taxPct: 0,
       honeypot: false,
-      liquidityUsd: 80_000,
     })
-    expect(review.action).toBe('WATCH')
     expect(review.score).toBeGreaterThanOrEqual(45)
-    expect(review.score).toBeLessThan(75)
-    expect(review.gmgnLine).toContain('SM 37')
-    expect(review.gmgnLine).toContain('KOL 46')
-    expect(review.summary.toLowerCase()).toMatch(/tax|holder|smart|liquidity/)
+    expect(['WATCH', 'ENTER']).toContain(review.action)
   })
 
-  it('matches screenshot-style SKIP for zero SM/KOL', () => {
-    const review = buildGmgnRadarReview({
-      sm: 0,
-      kol: 0,
-      holders: 892,
-      top10: 17,
-      taxPct: 0,
-      liquidityUsd: 2_000,
-      buySellReturnPct: 70,
-    })
+  it('SKIP with SM alone does not say too risky from SM', () => {
+    const review = buildGmgnRadarReview({ sm: 2, kol: 0, activityScore: 10 })
     expect(review.action).toBe('SKIP')
-    expect(review.score).toBeLessThan(45)
-    expect(review.summary.toLowerCase()).toMatch(/smart money|risky|slippage|liquidity/)
+    expect(review.summary.toLowerCase()).toMatch(/insufficient confirmation/)
+    expect(review.summary.toLowerCase()).not.toMatch(/smart money present.*too risky/)
+  })
+
+  it('does not score tax or liquidity', () => {
+    const a = scoreGmgnRadar({ sm: 5, kol: 2, taxPct: 0, liquidityUsd: 100_000 })
+    const b = scoreGmgnRadar({ sm: 5, kol: 2, taxPct: 50, liquidityUsd: 100 })
+    expect(a).toBe(b)
+  })
+
+  it('resolves top10 GMGN first then Jupiter', () => {
+    expect(resolveRadarTop10({ gmgnTop10: 0.14, jupiterTop10Pct: 40 })).toEqual({
+      top10: 0.14,
+      top10Source: 'gmgn',
+    })
+    expect(resolveRadarTop10({ gmgnTop10: null, jupiterTop10Pct: 18 })).toEqual({
+      top10: 18,
+      top10Source: 'jupiter',
+    })
+  })
+
+  it('gmgnLine shows jup tag and omits tax', () => {
+    const review = buildGmgnRadarReview({
+      sm: 3,
+      kol: 1,
+      top10: 18,
+      top10Source: 'jupiter',
+      taxPct: 5,
+    })
+    expect(review.gmgnLine).toContain('top10 18% (jup)')
+    expect(review.gmgnLine.toLowerCase()).not.toContain('tax')
   })
 
   it('accepts top10 as fraction', () => {
@@ -46,7 +142,7 @@ describe('gmgn-radar-review', () => {
   })
 
   it('formats telegram html card', () => {
-    const review = buildGmgnRadarReview({ sm: 37, kol: 46, holders: 3762, top10: 14, taxPct: 0 })
+    const review = buildGmgnRadarReview({ sm: 37, kol: 46, holders: 3762, top10: 14 })
     const html = formatGmgnRadarTelegramHtml({
       review,
       symbol: 'PEPE',

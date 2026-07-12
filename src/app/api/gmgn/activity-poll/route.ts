@@ -7,12 +7,25 @@ import {
   gmgnScoreToFeatureFields,
   scoreGmgnActivity,
 } from '@/strategies/gmgn-activity-score'
-import { buildGmgnRadarReview } from '@/strategies/gmgn-radar-review'
-import { hasRecentGmgnEvent, insertSocialEvents } from '@/strategies/social/db'
+import {
+  RADAR_ACCUMULATE_WINDOW_MS,
+  accumulateRadarPeaks,
+} from '@/strategies/gmgn-radar-accumulate'
+import {
+  buildGmgnRadarReview,
+  resolveRadarTop10,
+  type GmgnRadarInput,
+} from '@/strategies/gmgn-radar-review'
+import {
+  fetchSocialEventsForTokenSince,
+  hasRecentGmgnEvent,
+  insertSocialEvents,
+} from '@/strategies/social/db'
 import { applyGmgnLiveBoost } from '@/strategies/gmgn-live-boost'
 import type { SocialIngestEvent } from '@/strategies/social/types'
 import { normalizeTrackRows, trackKol, trackSmartMoney } from '@/utils/gmgn-cli'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
+import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
 import { sendGmgnRadarAlert } from '@/utils/telegram'
 import { log } from '@/utils/unified-logger'
 
@@ -37,6 +50,57 @@ function resolveIngestSource(result: {
   }
   if (result.discoverySources.includes('kol')) return 'gmgn_kol'
   return 'gmgn_smartmoney'
+}
+
+async function fetchJupiterTop10Pct(tokenAddress: string): Promise<number | null> {
+  try {
+    const meta = await fetchTokenMetadataFromJupiter(tokenAddress)
+    const pct = meta?.audit?.topHoldersPercentage
+    return typeof pct === 'number' && Number.isFinite(pct) ? pct : null
+  } catch {
+    return null
+  }
+}
+
+async function buildAccumulatedRadarInput(params: {
+  tokenAddress: string
+  sm: number
+  kol: number
+  activityScore: number
+  gmgnTop10?: number | null
+}): Promise<GmgnRadarInput> {
+  const since = new Date(Date.now() - RADAR_ACCUMULATE_WINDOW_MS).toISOString()
+  const events = await fetchSocialEventsForTokenSince(params.tokenAddress, since, 80)
+  const peaks = accumulateRadarPeaks({
+    poll: {
+      sm: params.sm,
+      kol: params.kol,
+      activityScore: params.activityScore,
+    },
+    events,
+  })
+
+  let jupiterTop10: number | null = null
+  const gmgnTop10 = params.gmgnTop10 ?? null
+  if (gmgnTop10 == null || !Number.isFinite(gmgnTop10)) {
+    // ponytail: Jupiter only when about to alert and GMGN top10 missing
+    jupiterTop10 = await fetchJupiterTop10Pct(params.tokenAddress)
+  }
+  const top10 = resolveRadarTop10({
+    gmgnTop10,
+    jupiterTop10Pct: jupiterTop10,
+  })
+
+  return {
+    sm: peaks.smPeak,
+    kol: peaks.kolPeak,
+    activityScore: peaks.activityScorePeak,
+    earlySignalsScore: peaks.earlySignalsScore,
+    earlyGrowthPct: peaks.earlyGrowthPct,
+    top10: top10.top10,
+    top10Source: top10.top10Source,
+    tokenAddress: params.tokenAddress,
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -67,6 +131,7 @@ export async function POST(request: NextRequest) {
 
     const events: SocialIngestEvent[] = []
     let skipped = 0
+    const radarByMint = new Map<string, ReturnType<typeof buildGmgnRadarReview>>()
 
     for (const item of hot) {
       const recent = await hasRecentGmgnEvent(item.tokenAddress, cooldownMin)
@@ -76,10 +141,15 @@ export async function POST(request: NextRequest) {
       }
 
       const source = resolveIngestSource(item)
-      const radar = buildGmgnRadarReview({
+      const radarInput = await buildAccumulatedRadarInput({
+        tokenAddress: item.tokenAddress,
         sm: item.metrics.sm_wallet_count_60m,
         kol: item.metrics.kol_wallet_count_60m,
+        activityScore: item.score,
       })
+      const radar = buildGmgnRadarReview(radarInput)
+      radarByMint.set(item.tokenAddress, radar)
+
       events.push({
         token_address: item.tokenAddress,
         event_type: 'wallet_buy',
@@ -98,10 +168,16 @@ export async function POST(request: NextRequest) {
           radar_score: radar.score,
           radar_summary: radar.summary,
           radar_gmgn_line: radar.gmgnLine,
+          radar_sm_peak: radarInput.sm,
+          radar_kol_peak: radarInput.kol,
+          radar_activity_peak: radarInput.activityScore,
+          radar_early_score: radarInput.earlySignalsScore,
+          top10_source: radarInput.top10Source,
+          jupiter_top_holders_pct:
+            radarInput.top10Source === 'jupiter' ? radarInput.top10 : undefined,
         },
       })
 
-      // ponytail: fire-and-forget alert; don't block ingest on telegram
       void sendGmgnRadarAlert({
         review: radar,
         symbol: item.symbol,
@@ -149,10 +225,13 @@ export async function POST(request: NextRequest) {
       ingestErrors: ingestResult.errors,
       liveBoosted,
       top: hot.slice(0, 10).map((item) => {
-        const radar = buildGmgnRadarReview({
-          sm: item.metrics.sm_wallet_count_60m,
-          kol: item.metrics.kol_wallet_count_60m,
-        })
+        const radar =
+          radarByMint.get(item.tokenAddress) ??
+          buildGmgnRadarReview({
+            sm: item.metrics.sm_wallet_count_60m,
+            kol: item.metrics.kol_wallet_count_60m,
+            activityScore: item.score,
+          })
         return {
           symbol: item.symbol,
           tokenAddress: item.tokenAddress,

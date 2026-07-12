@@ -34,6 +34,29 @@ export async function getMergedMcapTrackerRegistry(): Promise<Record<string, Mca
     if (row?.execution_mode) merged[id].execution_mode = row.execution_mode
   }
 
+  // DB-only search experiments (P2 bandit)
+  for (const row of rows) {
+    if (merged[row.id]) continue
+    if (!row.id.startsWith('search_mcap_')) continue
+    const cfg = (row.config ?? {}) as import('./types').McapTrackerStrategyOverride & {
+      entryTemplate?: 'first_seen' | 'milestone_80'
+    }
+    const template = cfg.entryTemplate ?? 'first_seen'
+    const base =
+      template === 'milestone_80'
+        ? MCAP_TRACKER_STRATEGIES.mcap_enter_at_80
+        : MCAP_TRACKER_STRATEGIES.mcap_enter_first_seen
+    const cloned: McapTrackerStrategy = {
+      ...base,
+      id: row.id,
+      name: row.name || row.id,
+      description: row.description ?? base.description,
+      is_active: row.is_active,
+      execution_mode: row.execution_mode ?? 'sim_only',
+    }
+    merged[row.id] = mergeMcapTrackerStrategy(cloned, cfg, row.is_active)
+  }
+
   cached = merged
   cacheLoadedAt = now
   return merged

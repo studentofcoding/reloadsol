@@ -3,14 +3,19 @@ import {
   TRENDING_BOT_STRATEGIES,
   SIGNALS_STRATEGIES,
   DLMM_STRATEGY_DEFAULTS,
+  MCAP_TRACKER_STRATEGIES,
+  GMGN_STRATEGIES,
 } from '@/strategies/registry'
 import { mergeDlmmStrategy, dlmmConfigToAgentPatch } from '@/strategies/merge-dlmm'
 import { invalidateStrategyCache } from '@/strategies/load-strategy'
 import { invalidateSignalsCache } from '@/strategies/load-signals'
 import { invalidateDlmmStrategyCache } from '@/strategies/load-dlmm'
+import { invalidateMcapTrackerCache } from '@/strategies/load-mcap-tracker'
+import { invalidateGmgnCache } from '@/strategies/load-gmgn'
 import { upsertStrategyDefinition, loadStrategyDefinitionById } from '@/strategies/db'
 import { updateAgentConfig } from '@/utils/dlmm/db'
-import type { ExecutionMode } from '@/strategies/types'
+import { isSearchStrategyId } from '@/strategies/strategy-search-bandit'
+import type { ExecutionMode, StrategyDomain } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,11 +24,24 @@ type PromoteBody = {
   confirm_live?: boolean
 }
 
-function resolveStrategyBase(id: string) {
-  if (TRENDING_BOT_STRATEGIES[id]) return { domain: 'trending_bot' as const, id }
-  if (SIGNALS_STRATEGIES[id]) return { domain: 'signals' as const, id }
-  if (id === 'dlmm_default') return { domain: 'dlmm' as const, id }
+function resolveRegistryBase(id: string): { domain: StrategyDomain; id: string } | null {
+  if (TRENDING_BOT_STRATEGIES[id]) return { domain: 'trending_bot', id }
+  if (SIGNALS_STRATEGIES[id]) return { domain: 'signals', id }
+  if (MCAP_TRACKER_STRATEGIES[id]) return { domain: 'mcap_tracker', id }
+  if (GMGN_STRATEGIES[id]) return { domain: 'gmgn', id }
+  if (id === 'dlmm_default') return { domain: 'dlmm', id }
   return null
+}
+
+async function resolveStrategyBase(
+  id: string,
+): Promise<{ domain: StrategyDomain; id: string } | null> {
+  const fromRegistry = resolveRegistryBase(id)
+  if (fromRegistry) return fromRegistry
+  if (!isSearchStrategyId(id)) return null
+  const row = await loadStrategyDefinitionById(id)
+  if (!row) return null
+  return { domain: row.domain as StrategyDomain, id }
 }
 
 export async function POST(
@@ -42,8 +60,8 @@ export async function POST(
       )
     }
 
-    const sourceResolved = resolveStrategyBase(sourceId)
-    const targetResolved = resolveStrategyBase(targetId)
+    const sourceResolved = await resolveStrategyBase(sourceId)
+    const targetResolved = await resolveStrategyBase(targetId)
 
     if (!sourceResolved || !targetResolved) {
       return NextResponse.json(
@@ -67,12 +85,17 @@ export async function POST(
         ? TRENDING_BOT_STRATEGIES[targetId]
         : targetResolved.domain === 'signals'
           ? SIGNALS_STRATEGIES[targetId]
-          : DLMM_STRATEGY_DEFAULTS
+          : targetResolved.domain === 'mcap_tracker'
+            ? MCAP_TRACKER_STRATEGIES[targetId]
+            : targetResolved.domain === 'gmgn'
+              ? GMGN_STRATEGIES[targetId]
+              : DLMM_STRATEGY_DEFAULTS
 
     const targetRow = await loadStrategyDefinitionById(targetId)
     const targetName =
       targetRow?.name ??
-      (targetBase as { name: string }).name
+      (targetBase as { name?: string } | null)?.name ??
+      targetId
 
     const result = await upsertStrategyDefinition({
       id: targetId,
@@ -117,6 +140,10 @@ export async function POST(
       invalidateDlmmStrategyCache()
     } else if (targetResolved.domain === 'trending_bot') {
       invalidateStrategyCache()
+    } else if (targetResolved.domain === 'mcap_tracker') {
+      invalidateMcapTrackerCache()
+    } else if (targetResolved.domain === 'gmgn') {
+      invalidateGmgnCache()
     } else {
       invalidateSignalsCache()
     }

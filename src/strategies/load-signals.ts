@@ -34,6 +34,25 @@ export async function getMergedSignalsRegistry(): Promise<Record<string, Signals
     if (row?.execution_mode) merged[id].execution_mode = row.execution_mode
   }
 
+  for (const row of rows) {
+    if (merged[row.id]) continue
+    if (!row.id.startsWith('search_signals_')) continue
+    const base = SIGNALS_STRATEGIES.signals_default
+    const cloned: SignalsStrategy = {
+      ...base,
+      id: row.id,
+      name: row.name || row.id,
+      description: row.description ?? base.description,
+      is_active: row.is_active,
+      execution_mode: row.execution_mode ?? 'sim_only',
+    }
+    merged[row.id] = mergeSignalsStrategy(
+      cloned,
+      row.config as import('./types').SignalsStrategyOverride,
+      row.is_active,
+    )
+  }
+
   cached = merged
   cacheLoadedAt = now
   return merged

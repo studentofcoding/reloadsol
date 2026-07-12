@@ -83,6 +83,25 @@ export async function GET(request: NextRequest) {
     const earlyAlerts = emitSignalsEarlyAlertsFromScored(signals)
     if (earlyAlerts.length > 0) {
       const { sendSignalsEarlyEnterAlert } = await import('@/utils/telegram')
+      const { insertSocialEvents } = await import('@/strategies/social/db')
+      const earlyEvents = earlyAlerts.map((alert) => ({
+        token_address: alert.tokenAddress,
+        event_type: 'mention' as const,
+        source: 'signals_early',
+        external_message_id: `early:${alert.tokenAddress}:${alert.entryAt}`,
+        occurred_at: alert.entryAt,
+        raw_metadata: {
+          early_signals_score: alert.score,
+          early_growth_pct: alert.growthPercent,
+          symbol: alert.tokenSymbol,
+          entry_mcap: alert.entryMcap,
+          rationale: alert.rationale,
+        },
+      }))
+      void insertSocialEvents(earlyEvents).catch((err) => {
+        console.error('[signals] early stamp ingest failed:', err)
+      })
+
       for (const alert of earlyAlerts) {
         // Ensure shadow is attached (cache hit if enrich already scored)
         if (alert.pWinner == null) {

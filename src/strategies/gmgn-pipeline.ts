@@ -5,9 +5,14 @@ import {
   type GmgnActivityMetrics,
 } from './gmgn-activity-score'
 import {
+  RADAR_ACCUMULATE_WINDOW_MS,
+  accumulateRadarPeaks,
+} from './gmgn-radar-accumulate'
+import {
   buildGmgnRadarReview,
   gmgnRadarInputFromFeatures,
 } from './gmgn-radar-review'
+import { fetchSocialEventsForTokenSince } from './social/db'
 import {
   normalizeTrackRows,
   tokenInfo,
@@ -155,11 +160,33 @@ export async function gateGmgnCandidates(params: {
       config: params.strategy.config.security,
     })
 
-    const radar = buildGmgnRadarReview(
-      gmgnRadarInputFromFeatures({
+    const since = new Date(Date.now() - RADAR_ACCUMULATE_WINDOW_MS).toISOString()
+    const priorEvents = await fetchSocialEventsForTokenSince(
+      candidate.tokenAddress,
+      since,
+      80,
+    )
+    const peaks = accumulateRadarPeaks({
+      poll: {
         sm: candidate.activityMetrics.sm_wallet_count_60m,
         kol: candidate.activityMetrics.kol_wallet_count_60m,
-        features: result.features,
+        activityScore: candidate.activityScore,
+      },
+      events: priorEvents,
+    })
+
+    const radar = buildGmgnRadarReview(
+      gmgnRadarInputFromFeatures({
+        sm: peaks.smPeak,
+        kol: peaks.kolPeak,
+        features: {
+          ...result.features,
+          early_signals_score: peaks.earlySignalsScore,
+          early_growth_pct: peaks.earlyGrowthPct,
+        },
+        activityScore: peaks.activityScorePeak,
+        earlySignalsScore: peaks.earlySignalsScore,
+        earlyGrowthPct: peaks.earlyGrowthPct,
       }),
     )
 
@@ -186,6 +213,11 @@ export async function gateGmgnCandidates(params: {
         radar_score: radar.score,
         radar_summary: radar.summary,
         radar_gmgn_line: radar.gmgnLine,
+        radar_sm_peak: peaks.smPeak,
+        radar_kol_peak: peaks.kolPeak,
+        radar_activity_peak: peaks.activityScorePeak,
+        early_signals_score: peaks.earlySignalsScore,
+        early_growth_pct: peaks.earlyGrowthPct,
         strategy_id: params.strategy.id,
         domain: 'gmgn',
       },
