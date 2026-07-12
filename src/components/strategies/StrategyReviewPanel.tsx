@@ -1,11 +1,19 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { StrategyReviewPayload } from '@/strategies/strategy-review'
 
 const LOCAL_NOTES_KEY = 'strategy-review-notes'
 const LOCAL_MIGRATED_KEY = 'strategy-review-notes-migrated'
+
+type ReviewQueryData = {
+  success: boolean
+  error?: string
+  review?: StrategyReviewPayload
+  notes?: Record<string, string>
+  rowCount?: number
+}
 
 function readLocalNotes(): Record<string, string> {
   if (typeof window === 'undefined') return {}
@@ -27,11 +35,11 @@ function cellColor(n: number): string {
 }
 
 export default function StrategyReviewPanel() {
+  const queryClient = useQueryClient()
   const [weeks, setWeeks] = useState(12)
   const [domain, setDomain] = useState('')
-  const [notes, setNotes] = useState<Record<string, string>>({})
   const [noteWeek, setNoteWeek] = useState('')
-  const [noteText, setNoteText] = useState('')
+  const [draftByWeek, setDraftByWeek] = useState<Record<string, string>>({})
   const [savingNote, setSavingNote] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [patterns, setPatterns] = useState<string[] | null>(null)
@@ -39,19 +47,15 @@ export default function StrategyReviewPanel() {
   const [analyzing, setAnalyzing] = useState(false)
   const migratedRef = useRef(false)
 
+  const queryKey = ['strategy-review', weeks, domain] as const
+
   const query = useQuery({
-    queryKey: ['strategy-review', weeks, domain],
+    queryKey,
     queryFn: async () => {
       const params = new URLSearchParams({ weeks: String(weeks) })
       if (domain) params.set('domain', domain)
       const res = await fetch(`/api/strategies/review?${params}`)
-      const json = (await res.json()) as {
-        success: boolean
-        error?: string
-        review?: StrategyReviewPayload
-        notes?: Record<string, string>
-        rowCount?: number
-      }
+      const json = (await res.json()) as ReviewQueryData
       if (!json.success || !json.review) {
         throw new Error(json.error || 'Failed to load review')
       }
@@ -60,13 +64,9 @@ export default function StrategyReviewPanel() {
   })
 
   const review = query.data?.review
+  const notes = query.data?.notes ?? {}
 
-  useEffect(() => {
-    if (!query.data?.notes) return
-    setNotes(query.data.notes)
-  }, [query.data?.notes])
-
-  // One-shot: push any localStorage notes into DB, then mark migrated
+  // One-shot localStorage → DB; setQueryData only in async callback (not sync in effect)
   useEffect(() => {
     if (migratedRef.current || !query.isSuccess) return
     if (typeof window === 'undefined') return
@@ -93,7 +93,9 @@ export default function StrategyReviewPanel() {
           notes?: Record<string, string>
         }
         if (json.success && json.notes) {
-          setNotes((prev) => ({ ...json.notes, ...prev }))
+          queryClient.setQueryData<ReviewQueryData>(queryKey, (old) =>
+            old ? { ...old, notes: { ...json.notes, ...(old.notes ?? {}) } } : old,
+          )
         }
         localStorage.setItem(LOCAL_MIGRATED_KEY, '1')
         localStorage.removeItem(LOCAL_NOTES_KEY)
@@ -101,9 +103,13 @@ export default function StrategyReviewPanel() {
       .catch(() => {
         migratedRef.current = false
       })
-  }, [query.isSuccess])
+  }, [query.isSuccess, queryClient, queryKey])
 
   const activeNoteWeek = noteWeek || review?.weeks[review.weeks.length - 1]?.weekKey || ''
+  const noteText =
+    activeNoteWeek && Object.prototype.hasOwnProperty.call(draftByWeek, activeNoteWeek)
+      ? draftByWeek[activeNoteWeek]!
+      : (notes[activeNoteWeek] ?? '')
 
   const persistNote = useCallback(async () => {
     if (!activeNoteWeek) return
@@ -122,10 +128,16 @@ export default function StrategyReviewPanel() {
         error?: string
       }
       if (!json.success) throw new Error(json.error || 'Save failed')
-      setNotes((prev) => {
+      queryClient.setQueryData<ReviewQueryData>(queryKey, (old) => {
+        if (!old) return old
+        const nextNotes = { ...(old.notes ?? {}) }
+        if (json.deleted || !noteText.trim()) delete nextNotes[activeNoteWeek]
+        else nextNotes[activeNoteWeek] = json.note ?? noteText.trim()
+        return { ...old, notes: nextNotes }
+      })
+      setDraftByWeek((prev) => {
         const next = { ...prev }
-        if (json.deleted || !noteText.trim()) delete next[activeNoteWeek]
-        else next[activeNoteWeek] = json.note ?? noteText.trim()
+        delete next[activeNoteWeek]
         return next
       })
       setSaveMsg(json.deleted ? 'Cleared' : 'Saved')
@@ -134,11 +146,7 @@ export default function StrategyReviewPanel() {
     } finally {
       setSavingNote(false)
     }
-  }, [activeNoteWeek, noteText])
-
-  useEffect(() => {
-    if (activeNoteWeek) setNoteText(notes[activeNoteWeek] ?? '')
-  }, [activeNoteWeek]) // eslint-disable-line react-hooks/exhaustive-deps -- load note when week changes only
+  }, [activeNoteWeek, noteText, queryClient, queryKey])
 
   async function runAnalyze() {
     if (!review) return
@@ -352,7 +360,6 @@ export default function StrategyReviewPanel() {
                 value={activeNoteWeek}
                 onChange={(e) => {
                   setNoteWeek(e.target.value)
-                  setNoteText(notes[e.target.value] ?? '')
                   setSaveMsg(null)
                 }}
               >
@@ -378,7 +385,12 @@ export default function StrategyReviewPanel() {
             className="w-full min-h-[80px] bg-gray-950 border border-gray-700 rounded p-2 text-sm text-gray-200"
             placeholder="e.g. cut size on gmgn_hot next week"
             value={noteText}
-            onChange={(e) => setNoteText(e.target.value)}
+            onChange={(e) => {
+              const week = activeNoteWeek
+              if (!week) return
+              const value = e.target.value
+              setDraftByWeek((prev) => ({ ...prev, [week]: value }))
+            }}
           />
           <button
             type="button"
