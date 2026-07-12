@@ -1,7 +1,7 @@
 import { loadStrategyDefinitionRows } from './db'
 import { mergeSignalsStrategy } from './merge-signals'
 import { SIGNALS_STRATEGIES } from './registry'
-import type { ExecutionMode, SignalsStrategy } from './types'
+import type { SignalsStrategy } from './types'
 
 let cached: Record<string, SignalsStrategy> | null = null
 let cacheLoadedAt = 0
@@ -51,11 +51,4 @@ export async function getActiveSignalsForSim(): Promise<SignalsStrategy[]> {
 export async function getSignalsStrategy(id: string): Promise<SignalsStrategy | null> {
   const registry = await getMergedSignalsRegistry()
   return registry[id] ?? null
-}
-
-export function resolveExecutionMode(
-  rowMode: ExecutionMode | undefined,
-  fallback: ExecutionMode,
-): ExecutionMode {
-  return rowMode ?? fallback
 }

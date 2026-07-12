@@ -25,3 +25,8 @@ social-ingest/sessions/
 backups/
 *.session
 *.session-journal
+# Graphify knowledge graph (regenerate: graphify update .)
+graphify-out/cache/
+.cursor
+graphify-out/
+.agents

@@ -1,6 +1,6 @@
 'use client'
 
-type Pin = { address: string; symbol?: string | null }
+export type TokenMapPin = { address: string; symbol?: string | null }
 
 function truncateMint(address: string): string {
   if (address.length <= 12) return address
@@ -13,7 +13,7 @@ export default function TokenMapPins({
   onSelect,
   onUnpin,
 }: {
-  pins: Pin[]
+  pins: TokenMapPin[]
   activeAddress: string
   onSelect: (address: string) => void
   onUnpin: (address: string) => void

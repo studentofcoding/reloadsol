@@ -7,7 +7,6 @@ import {
   type TokenMapActivityItem,
   type TokenMapDomain,
 } from '@/strategies/token-map-types'
-import { useMemo } from 'react'
 
 function groupPresence(rows: StrategyPresence[]): Map<TokenMapDomain, StrategyPresence[]> {
   const map = new Map<TokenMapDomain, StrategyPresence[]>()
@@ -45,11 +44,8 @@ export default function TokenMapBoard({
   activities: TokenMapActivityItem[]
   newIds: Set<string>
 }) {
-  const presenceByDomain = useMemo(
-    () => groupPresence(result.strategyPresence ?? []),
-    [result.strategyPresence],
-  )
-  const activityByDomain = useMemo(() => groupActivity(activities), [activities])
+  const presenceByDomain = groupPresence(result.strategyPresence ?? [])
+  const activityByDomain = groupActivity(activities)
 
   return (
     <div className="space-y-3">

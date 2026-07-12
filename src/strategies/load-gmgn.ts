@@ -1,7 +1,7 @@
 import { loadStrategyDefinitionRows } from './db'
 import { mergeGmgnStrategy } from './merge-gmgn'
 import { GMGN_STRATEGIES } from './registry'
-import type { ExecutionMode, GmgnStrategy } from './types'
+import type { GmgnStrategy } from './types'
 
 let cached: Record<string, GmgnStrategy> | null = null
 let cacheLoadedAt = 0
@@ -46,11 +46,4 @@ export async function getActiveGmgnForSim(): Promise<GmgnStrategy[]> {
       s.is_active &&
       (s.execution_mode === 'sim_only' || s.execution_mode === 'ab_parallel'),
   )
-}
-
-export function resolveExecutionMode(
-  rowMode: ExecutionMode | undefined,
-  fallback: ExecutionMode,
-): ExecutionMode {
-  return rowMode ?? fallback
 }

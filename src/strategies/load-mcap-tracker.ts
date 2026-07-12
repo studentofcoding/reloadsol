@@ -1,7 +1,7 @@
 import { loadStrategyDefinitionRows } from './db'
 import { mergeMcapTrackerStrategy } from './merge-mcap-tracker'
 import { MCAP_TRACKER_STRATEGIES } from './registry'
-import type { ExecutionMode, McapTrackerStrategy } from './types'
+import type { McapTrackerStrategy } from './types'
 
 let cached: Record<string, McapTrackerStrategy> | null = null
 let cacheLoadedAt = 0
@@ -53,11 +53,4 @@ export async function getActiveMcapTrackerStrategies(): Promise<McapTrackerStrat
 /** @deprecated use getActiveMcapTrackerStrategies */
 export async function getActiveMcapTrackerForSim(): Promise<McapTrackerStrategy[]> {
   return getActiveMcapTrackerStrategies()
-}
-
-export function resolveExecutionMode(
-  rowMode: ExecutionMode | undefined,
-  fallback: ExecutionMode,
-): ExecutionMode {
-  return rowMode ?? fallback
 }

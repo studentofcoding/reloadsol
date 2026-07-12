@@ -9,13 +9,6 @@ import {
 import { query } from '@/utils/db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 
-export type {
-  TokenMapActivityItem,
-  TokenMapActivityKind,
-  TokenMapDomain,
-} from '@/strategies/token-map-types'
-export { socialDomainAndKind, TOKEN_MAP_LANES } from '@/strategies/token-map-types'
-
 const SIM_WALLETS: { address: string; domain: TokenMapDomain }[] = [
   {
     address: process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim',

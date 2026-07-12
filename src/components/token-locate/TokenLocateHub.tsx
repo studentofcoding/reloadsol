@@ -2,7 +2,9 @@
 
 import TokenLocateList from '@/components/token-locate/TokenLocateList'
 import TokenMapBoard from '@/components/token-locate/TokenMapBoard'
-import TokenMapPins from '@/components/token-locate/TokenMapPins'
+import TokenMapPins, {
+  type TokenMapPin,
+} from '@/components/token-locate/TokenMapPins'
 import type { TokenLocateResult } from '@/strategies/token-locate'
 import type { TokenMapActivityItem } from '@/strategies/token-map-types'
 import { isValidMintAddress } from '@/utils/jupiter'
@@ -11,8 +13,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 type LocateResponse = TokenLocateResult & { success: boolean; error?: string; cached?: boolean }
 type TokenView = 'freeview' | 'list'
-
-type Pin = { address: string; symbol?: string | null }
 
 const PINS_KEY = 'token-map-pins'
 const VIEW_PREF_KEY = 'token-map-view'
@@ -38,12 +38,12 @@ function readViewPref(): TokenView {
   return 'list'
 }
 
-function loadPins(): Pin[] {
+function loadPins(): TokenMapPin[] {
   if (typeof window === 'undefined') return []
   try {
     const raw = localStorage.getItem(PINS_KEY)
     if (!raw) return []
-    const parsed = JSON.parse(raw) as Pin[]
+    const parsed = JSON.parse(raw) as TokenMapPin[]
     return Array.isArray(parsed)
       ? parsed.filter((p) => p && typeof p.address === 'string' && isValidMintAddress(p.address))
       : []
@@ -52,7 +52,7 @@ function loadPins(): Pin[] {
   }
 }
 
-function savePins(pins: Pin[]): void {
+function savePins(pins: TokenMapPin[]): void {
   try {
     localStorage.setItem(PINS_KEY, JSON.stringify(pins))
   } catch {
@@ -83,7 +83,7 @@ export default function TokenLocateHub({
   const [view, setView] = useState<TokenView>(() => initialView ?? readViewPref())
   const viewRef = useRef(view)
   viewRef.current = view
-  const [pins, setPins] = useState<Pin[]>(() => loadPins())
+  const [pins, setPins] = useState<TokenMapPin[]>(() => loadPins())
   const [manualLoading, setManualLoading] = useState(false)
   const [manualError, setManualError] = useState<string | null>(null)
   const [manualResult, setManualResult] = useState<LocateResponse | null>(null)
