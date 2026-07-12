@@ -31,6 +31,7 @@ import OutcomeReviewModal, {
   OutcomePotentialMlBadge,
 } from "@/components/strategies/OutcomeReviewModal";
 import Ml2ExitOverlayPanel from "@/components/strategies/Ml2ExitOverlayPanel";
+import StrategyReviewPanel from "@/components/strategies/StrategyReviewPanel";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
 import {
   ENTRY_MCAP_BAND_OPTIONS,
@@ -73,7 +74,7 @@ async function patchOutcomeTrainingClass(
   return json.outcome;
 }
 
-type TabId = "config" | "reports" | "workers";
+type TabId = "config" | "reports" | "review" | "workers";
 
 type StrategiesResponse = {
   success: boolean;
@@ -281,7 +282,7 @@ function AdminToastBanner({
 }
 
 function parseTabParam(value: string | null): TabId {
-  if (value === "reports" || value === "workers") return value;
+  if (value === "reports" || value === "workers" || value === "review") return value;
   return "config";
 }
 
@@ -875,6 +876,13 @@ export default function StrategyAdminHub() {
           className={`shrink-0 px-4 py-2 text-sm rounded-t ${tab === "reports" ? "bg-gray-800 text-white" : "text-gray-400"}`}
         >
           Reports (A/B)
+        </button>
+        <button
+          type="button"
+          onClick={() => switchTab("review")}
+          className={`shrink-0 px-4 py-2 text-sm rounded-t ${tab === "review" ? "bg-gray-800 text-white" : "text-gray-400"}`}
+        >
+          Review
         </button>
         <button
           type="button"
@@ -1782,6 +1790,8 @@ export default function StrategyAdminHub() {
           </section>
         </>
       )}
+
+      {tab === "review" && <StrategyReviewPanel />}
 
       {tab === "workers" && (
         <WorkersTab
