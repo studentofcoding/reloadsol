@@ -1012,6 +1012,17 @@ export default function BulkTokenSeller() {
       return;
     }
 
+    const hasBalance = selectedTokens.some((t) => (t.balance ?? 0) > 0);
+    if (hasBalance) {
+      const count = selectedTokens.length + selectedZeroBalanceTokens.length;
+      const ok = window.confirm(
+        `Directly close ${count} token account${count !== 1 ? "s" : ""} without selling?\n\n` +
+          `Remaining balance will be BURNED (not swapped to SOL). ` +
+          `You may reclaim ~0.002 SOL rent per closed account.`,
+      );
+      if (!ok) return;
+    }
+
     setIsLoading(true);
     setError("");
     setClosePointsEarned(null);
@@ -2076,12 +2087,12 @@ export default function BulkTokenSeller() {
 
             {/* Action Buttons */}
             <div className="flex flex-col md:flex-row gap-4">
-              {/* Show Sell button only when there are sellable tokens selected */}
+              {/* Sell — only when sellable tokens selected */}
               {selectedTokens.length > 0 && (
                 <button
                   onClick={handleBulkSell}
                   disabled={isLoading}
-                  className={`${selectedZeroBalanceTokens.length > 0 ? "md:w-3/4" : "w-full"} w-full py-4 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
+                  className={`md:w-3/4 w-full py-4 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
                     isLoading
                       ? "bg-gray-600 text-gray-400 cursor-not-allowed"
                       : "bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl"
@@ -2098,7 +2109,9 @@ export default function BulkTokenSeller() {
                         {(() => {
                           const totalSolOutput = selectedTokens.reduce(
                             (total, token) => {
-                              const quote = getQuoteForToken(token.mintAddress);
+                              const quote = getQuoteForToken(
+                                token.mintAddress,
+                              );
                               if (quote && isQuoteValid(quote)) {
                                 return (
                                   total + parseFloat(quote.outAmount) / 1e9
@@ -2157,8 +2170,9 @@ export default function BulkTokenSeller() {
                 </button>
               )}
 
-              {/* Close Only - Show only when there are zero-balance tokens to close */}
-              {selectedZeroBalanceTokens.length > 0 && (
+              {/* Direct close without sell — any selection (burn remaining balance) */}
+              {(selectedTokens.length > 0 ||
+                selectedZeroBalanceTokens.length > 0) && (
                 <button
                   onClick={handleCloseOnly}
                   disabled={isLoading}
@@ -2167,6 +2181,7 @@ export default function BulkTokenSeller() {
                       ? "bg-gray-600 text-gray-400 cursor-not-allowed"
                       : "bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg hover:shadow-xl"
                   }`}
+                  title="Close token accounts without selling — remaining balance is burned"
                 >
                   {isLoading ? (
                     <div className="flex items-center justify-center space-x-3">
