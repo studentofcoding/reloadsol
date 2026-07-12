@@ -2,7 +2,7 @@
 
 import React, { useCallback, useMemo, useState } from "react";
 import { useWallet, useConnection } from "@/components/WalletProvider";
-import PhantomWalletButton from "@/components/PhantomWalletButton";
+import UniversalWalletButton from "@/components/UniversalWalletButton";
 import { useRpc } from "@/contexts/RpcContext";
 import {
   categorizeUserTokens,
@@ -236,7 +236,7 @@ export default function RpcTesterPage() {
             Compare RPC endpoints and filter stages for the connected wallet.
           </p>
         </div>
-        <PhantomWalletButton />
+        <UniversalWalletButton />
       </div>
 
       {!connected || !publicKey ? (

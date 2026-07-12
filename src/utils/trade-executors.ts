@@ -1,5 +1,5 @@
 import { Connection, VersionedTransaction, Keypair } from '@solana/web3.js'
-import { logTradeOperation } from '@/utils/logger'
+import { logTradeOperation } from '@/utils/unified-logger'
 import {
   prepareSwapTransaction,
   submitSignedSwap,

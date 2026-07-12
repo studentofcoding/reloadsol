@@ -1,9 +1,5 @@
 #!/usr/bin/env node
 
-const axios = require('axios');
-const chalk = require('chalk');
-const ora = require('ora');
-
 // Configuration
 const API_HOST = 'https://reloadsol.app';
 const TEST_WALLET = 'DGJqRtDKdBiKfXGwgQbaC5YJW3PGd5TtE2tGmKSLtVwx'; // Example wallet for testing
@@ -17,69 +13,84 @@ const failedEndpoints = [];
 
 // Utility functions
 const log = {
-  success: (msg) => console.log(chalk.green('✓ ' + msg)),
-  error: (msg) => console.log(chalk.red('✗ ' + msg)),
-  info: (msg) => console.log(chalk.blue('ℹ ' + msg)),
-  warning: (msg) => console.log(chalk.yellow('⚠ ' + msg))
+  success: (msg) => console.log('✓ ' + msg),
+  error: (msg) => console.log('✗ ' + msg),
+  info: (msg) => console.log('ℹ ' + msg),
+  warning: (msg) => console.log('⚠ ' + msg)
 };
 
 async function testEndpoint(name, endpoint, options = {}) {
-  const spinner = ora(`Testing ${name}...`).start();
+  console.log(`Testing ${name}...`);
   try {
-    const url = `${API_HOST}${endpoint}`;
-    const response = await axios({
-      url,
-      method: options.method || 'GET',
-      data: options.data,
-      params: options.params,
-      timeout: options.timeout || 10000 // Default 10 second timeout
-    });
+    const url = new URL(`${API_HOST}${endpoint}`);
+    if (options.params) {
+      for (const [k, v] of Object.entries(options.params)) {
+        url.searchParams.set(k, String(v));
+      }
+    }
+    const controller = new AbortController();
+    const timeoutMs = options.timeout || 10000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+    try {
+      response = await fetch(url, {
+        method: options.method || 'GET',
+        headers: options.data ? { 'Content-Type': 'application/json' } : undefined,
+        body: options.data ? JSON.stringify(options.data) : undefined,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const data = await response.json().catch(() => null);
 
     // If we expect an error but got a successful response, that's a failure
     if (options.expectError) {
-      spinner.fail(`${name} - Failed`);
+      if (response.ok) {
+        console.log(`${name} - Failed`);
+        failedTests++;
+        failedEndpoints.push({
+          name,
+          endpoint,
+          error: 'Expected error but got successful response'
+        });
+        log.error(`Error testing ${name}: Expected error but got successful response`);
+        return null;
+      }
+      const expectedStatus = options.expectedStatus || 400;
+      if (response.status === expectedStatus) {
+        console.log(`${name} - OK`);
+        passedTests++;
+        return null;
+      }
+      console.log(`${name} - Failed`);
       failedTests++;
       failedEndpoints.push({
         name,
         endpoint,
-        error: 'Expected error but got successful response'
+        error: `Expected ${expectedStatus} error but got: HTTP ${response.status}`
       });
-      log.error(`Error testing ${name}: Expected error but got successful response`);
+      log.error(`Error testing ${name}: Expected ${expectedStatus} error but got: HTTP ${response.status}`);
       return null;
     }
 
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
     if (options.validator) {
-      const isValid = options.validator(response.data);
+      const isValid = options.validator(data);
       if (!isValid) {
         throw new Error('Response validation failed');
       }
     }
 
-    spinner.succeed(`${name} - OK`);
+    console.log(`${name} - OK`);
     passedTests++;
-    return response.data;
+    return data;
   } catch (error) {
-    // If we expect an error and got one, check if it's the right status code
-    if (options.expectError) {
-      const expectedStatus = options.expectedStatus || 400;
-      if (error.response && error.response.status === expectedStatus) {
-        spinner.succeed(`${name} - OK`);
-        passedTests++;
-        return null;
-      } else {
-        spinner.fail(`${name} - Failed`);
-        failedTests++;
-        failedEndpoints.push({
-          name,
-          endpoint,
-          error: `Expected ${expectedStatus} error but got: ${error.message}`
-        });
-        log.error(`Error testing ${name}: Expected ${expectedStatus} error but got: ${error.message}`);
-        return null;
-      }
-    }
-
-    spinner.fail(`${name} - Failed`);
+    console.log(`${name} - Failed`);
     failedTests++;
     failedEndpoints.push({
       name,

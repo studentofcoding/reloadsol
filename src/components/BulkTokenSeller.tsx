@@ -11,7 +11,7 @@ import { useWallet, useConnection } from "../components/WalletProvider";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens, refreshWalletTokensData, type WalletTokensData } from "@/hooks/useWalletTokens";
 import { useSolPrice } from "@/hooks/useSolPrice";
-import PhantomWalletButton from "./PhantomWalletButton";
+import UniversalWalletButton from "./UniversalWalletButton";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
 import ConfirmTransportSelect from "./ConfirmTransportSelect";
@@ -1356,7 +1356,7 @@ export default function BulkTokenSeller() {
             Sell Bulk & Reload your solana
           </h2>
           <div className="shrink-0">
-            <PhantomWalletButton />
+            <UniversalWalletButton />
           </div>
         </div>
       </div>

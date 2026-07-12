@@ -314,12 +314,6 @@ export async function getTokenPrice(token: string): Promise<number> {
   return prices[token] || 0
 }
 
-// Configuration functions
-export function setJupiterApiVersion(version: 'v2' | 'v3'): void {
-  console.log(`Switching Jupiter API primary version from ${JUPITER_API_CONFIG.PRIMARY_VERSION} to ${version}`)
-  JUPITER_API_CONFIG.PRIMARY_VERSION = version
-}
-
 export function getJupiterApiVersion(): 'v2' | 'v3' {
   return JUPITER_API_CONFIG.PRIMARY_VERSION
 }
@@ -333,80 +327,8 @@ export function setJupiterApiFallbackVersion(version: 'v2' | 'v3'): void {
   console.log(`Jupiter API fallback version set to ${version}`)
 }
 
-export function setAutoFallback(enabled: boolean): void {
-  JUPITER_API_CONFIG.AUTO_FALLBACK = enabled
-  console.log(`Jupiter API auto-fallback ${enabled ? 'enabled' : 'disabled'}`)
-}
-
-export function getFallbackConfig(): {
-  primaryVersion: 'v2' | 'v3'
-  fallbackVersion: 'v2' | 'v3'
-  autoFallback: boolean
-} {
-  return {
-    primaryVersion: JUPITER_API_CONFIG.PRIMARY_VERSION,
-    fallbackVersion: JUPITER_API_CONFIG.FALLBACK_VERSION,
-    autoFallback: JUPITER_API_CONFIG.AUTO_FALLBACK
-  }
-}
-
 export function getJupiterApiConfig(): typeof JUPITER_API_CONFIG {
   return { ...JUPITER_API_CONFIG }
-}
-
-// Migration helper function
-export async function testApiVersions(tokens: string[]): Promise<{
-  v2: Record<string, TokenPriceData>
-  v3: Record<string, TokenPriceData>
-  comparison: {
-    token: string
-    v2Price: number
-    v3Price: number
-    difference: number
-    percentDifference: number
-  }[]
-}> {
-  const testTokens = tokens.slice(0, 5) // Test with first 5 tokens
-
-  // Test v2
-  const originalPrimaryVersion = JUPITER_API_CONFIG.PRIMARY_VERSION
-  const originalAutoFallback = JUPITER_API_CONFIG.AUTO_FALLBACK
-
-  // Disable auto-fallback for testing
-  JUPITER_API_CONFIG.AUTO_FALLBACK = false
-
-  JUPITER_API_CONFIG.PRIMARY_VERSION = 'v2'
-  const v2Results = await fetchTokenPrices(testTokens)
-
-  // Test v3
-  JUPITER_API_CONFIG.PRIMARY_VERSION = 'v3'
-  const v3Results = await fetchTokenPrices(testTokens)
-
-  // Restore original configuration
-  JUPITER_API_CONFIG.PRIMARY_VERSION = originalPrimaryVersion
-  JUPITER_API_CONFIG.AUTO_FALLBACK = originalAutoFallback
-
-  // Compare results
-  const comparison = testTokens.map(token => {
-    const v2Price = v2Results[token]?.price || 0
-    const v3Price = v3Results[token]?.price || 0
-    const difference = v3Price - v2Price
-    const percentDifference = v2Price > 0 ? (difference / v2Price) * 100 : 0
-
-    return {
-      token,
-      v2Price,
-      v3Price,
-      difference,
-      percentDifference
-    }
-  })
-
-  return {
-    v2: v2Results,
-    v3: v3Results,
-    comparison
-  }
 }
 
 /** Raw lite-api price v3 JSON for token locate (unmapped). */
@@ -429,14 +351,10 @@ const jupiterApi = {
   fetchTokenPricesBatch,
   getTokenPrices,
   getTokenPrice,
-  setJupiterApiVersion,
   getJupiterApiVersion,
   getJupiterApiFallbackVersion,
   setJupiterApiFallbackVersion,
-  setAutoFallback,
-  getFallbackConfig,
   getJupiterApiConfig,
-  testApiVersions,
   JupiterAPIError,
 };
 

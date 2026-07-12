@@ -1,9 +1,13 @@
 import { query, queryOne } from '@/utils/db'
 import { log } from '@/utils/unified-logger'
 import { formatAppTimeWithZone } from '@/utils/datetime'
-import { STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker-constants'
 
-export { STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker-constants'
+/** Shared mcap tracker thresholds (no side effects — safe for unit tests). */
+export const STOP_LOSS_THRESHOLD = parseFloat(
+  process.env.MCAP_STOP_LOSS_THRESHOLD ||
+    process.env.NEXT_PUBLIC_MCAP_STOP_LOSS_THRESHOLD ||
+    '-50',
+)
 
 function isUniqueViolation(error: unknown): boolean {
   return (

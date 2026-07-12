@@ -9,11 +9,6 @@ const STORAGE_KEY = "buybulk.tradeProvider";
 
 const listeners = new Set<(provider: TradeProvider) => void>();
 
-/** @deprecated Dev-only gate removed — provider toggle is always available on client. */
-export function isTradeProviderToggleEnabled(): boolean {
-  return true;
-}
-
 function envTradeProvider(): TradeProvider {
   const value = process.env.TRADE_PROVIDER?.trim();
   return value === "raptor" ? "raptor" : "shyft";

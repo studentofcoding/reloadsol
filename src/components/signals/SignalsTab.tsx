@@ -1,18 +1,12 @@
 "use client";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useIsClient } from "@/hooks/useIsClient";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
-import Draggable, { DraggableProps } from "react-draggable";
 import { executeBulkBuy } from "@/utils/jupiter";
 import { trackBuy } from "@/utils/operations-api";
 import type { BulkBuyRequest } from "@/types";
-
-// react-draggable v4.6 types require all props; runtime defaults cover the rest
-const TypedDraggable = Draggable as React.ComponentType<
-  React.PropsWithChildren<Partial<DraggableProps>>
->;
 import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
@@ -26,6 +20,90 @@ import {
   readSignalsStrategyTemplate,
   writeSignalsStrategyTemplate,
 } from "@/utils/signals-strategy-id";
+
+/** ponytail: replace react-draggable — pointer drag on handle selector only */
+function FreeDrag({
+  defaultPosition,
+  onStart,
+  onStop,
+  handle,
+  children,
+}: {
+  defaultPosition: { x: number; y: number }
+  onStart?: () => void
+  onStop?: (_e: PointerEvent, data: { x: number; y: number }) => void
+  handle: string
+  children: React.ReactElement<{ style?: React.CSSProperties }>
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const posRef = useRef(defaultPosition)
+  const [pos, setPos] = useState(defaultPosition)
+  const drag = useRef<{ ox: number; oy: number; px: number; py: number } | null>(null)
+  const onStartRef = useRef(onStart)
+  const onStopRef = useRef(onStop)
+  onStartRef.current = onStart
+  onStopRef.current = onStop
+
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const onDown = (e: PointerEvent) => {
+      const target = e.target as Element
+      if (!target.closest(handle)) return
+      e.preventDefault()
+      onStartRef.current?.()
+      const p = posRef.current
+      drag.current = { ox: e.clientX, oy: e.clientY, px: p.x, py: p.y }
+      el.setPointerCapture(e.pointerId)
+    }
+    const onMove = (e: PointerEvent) => {
+      if (!drag.current) return
+      const next = {
+        x: drag.current.px + (e.clientX - drag.current.ox),
+        y: drag.current.py + (e.clientY - drag.current.oy),
+      }
+      posRef.current = next
+      setPos(next)
+    }
+    const onUp = (e: PointerEvent) => {
+      if (!drag.current) return
+      const next = {
+        x: drag.current.px + (e.clientX - drag.current.ox),
+        y: drag.current.py + (e.clientY - drag.current.oy),
+      }
+      drag.current = null
+      posRef.current = next
+      setPos(next)
+      onStopRef.current?.(e, next)
+    }
+    el.addEventListener('pointerdown', onDown)
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onUp)
+    el.addEventListener('pointercancel', onUp)
+    return () => {
+      el.removeEventListener('pointerdown', onDown)
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onUp)
+      el.removeEventListener('pointercancel', onUp)
+    }
+  }, [handle])
+
+  const zIndex = children.props.style?.zIndex
+
+  return (
+    <div
+      ref={wrapRef}
+      style={{
+        position: 'fixed',
+        left: pos.x,
+        top: pos.y,
+        zIndex: typeof zIndex === 'number' ? zIndex : undefined,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
 
 // Removed local types SignalItem and SignalsResponse as they are now imported
 
@@ -977,15 +1055,15 @@ export default function SignalsTab() {
       {floatingCharts
         .filter((chart) => chart.isDraggable && !chart.isInGrid)
         .map((chart) => (
-          <TypedDraggable
+          <FreeDrag
             key={chart.id}
             defaultPosition={chart.position}
             onStart={() => handleDragStart(chart.id)}
-            onStop={(e, data) => handleDragStop(chart.id, data)}
+            onStop={(_e, data) => handleDragStop(chart.id, data)}
             handle=".drag-handle"
           >
             <div
-              className="fixed bg-white border-2 border-gray-300 rounded-lg shadow-2xl"
+              className="bg-white border-2 border-gray-300 rounded-lg shadow-2xl"
               style={{
                 width: "480px",
                 height: "320px",
@@ -1058,7 +1136,7 @@ export default function SignalsTab() {
                 title={`GMGN Chart - ${chart.tokenAddress}`}
               />
             </div>
-          </TypedDraggable>
+          </FreeDrag>
         ))}{" "}
       {/* Chart Buy Modal */}
       {chartModalTokenAddress && (

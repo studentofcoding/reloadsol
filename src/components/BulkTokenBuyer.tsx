@@ -10,7 +10,7 @@ import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { useTrendingSearch } from "@/hooks/useTrendingSearch";
 import { useQuery } from "@tanstack/react-query";
-import PhantomWalletButton from "./PhantomWalletButton";
+import UniversalWalletButton from "./UniversalWalletButton";
 import TrendingTokens from "./TrendingTokens";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
@@ -913,7 +913,7 @@ export default function BulkTokenBuyer() {
               </p>
             </div>
             <div className="shrink-0">
-              <PhantomWalletButton />
+              <UniversalWalletButton />
             </div>
           </div>
 
@@ -1849,7 +1849,7 @@ export default function BulkTokenBuyer() {
                   Buy any token in bulk, <br />
                   trade faster and smarter with us
                 </p>
-                <PhantomWalletButton />
+                <UniversalWalletButton />
               </div>
             </div>
           )}

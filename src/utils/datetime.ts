@@ -1,5 +1,3 @@
-import { formatDistanceToNow } from 'date-fns'
-
 /** Fixed display timezone for all user-facing timestamps (storage stays UTC). */
 export const APP_TIMEZONE = 'Asia/Bangkok' as const
 
@@ -108,16 +106,6 @@ export function formatAppTimeWithZone(
   const hh = String(parts.hour).padStart(2, '0')
   const mm = String(parts.minute).padStart(2, '0')
   return `${hh}:${mm} GMT+7`
-}
-
-export function formatAppRelative(
-  value: string | number | Date | null | undefined,
-  options?: { addSuffix?: boolean },
-): string {
-  if (value === null || value === undefined || value === '') return '—'
-  const date = parseInstant(value)
-  if (Number.isNaN(date.getTime())) return '—'
-  return formatDistanceToNow(date, { addSuffix: options?.addSuffix ?? true })
 }
 
 export interface AppLocalParts {

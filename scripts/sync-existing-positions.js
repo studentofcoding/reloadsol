@@ -3,21 +3,17 @@
 // Script to sync existing open positions to SL/TP tracker
 // Usage: node scripts/sync-existing-positions.js [wallet_address] [options]
 
-const axios = require('axios');
-const chalk = require('chalk');
-const ora = require('ora');
-
 // Configuration - matches other scripts
 const API_HOST = process.env.API_HOST || 'https://reloadsol.app';
 const LOCAL_API_HOST = 'http://localhost:3000';
 
 // Utility functions for consistent logging
 const log = {
-    success: (msg) => console.log(chalk.green('✅ ' + msg)),
-    error: (msg) => console.log(chalk.red('❌ ' + msg)),
-    info: (msg) => console.log(chalk.blue('ℹ️  ' + msg)),
-    warning: (msg) => console.log(chalk.yellow('⚠️  ' + msg)),
-    header: (msg) => console.log(chalk.cyan.bold('\n' + '='.repeat(50) + '\n' + msg + '\n' + '='.repeat(50)))
+    success: (msg) => console.log('✅ ' + msg),
+    error: (msg) => console.log('❌ ' + msg),
+    info: (msg) => console.log('ℹ️  ' + msg),
+    warning: (msg) => console.log('⚠️  ' + msg),
+    header: (msg) => console.log('\n' + '='.repeat(50) + '\n' + msg + '\n' + '='.repeat(50))
 };
 
 // Validate Solana wallet address format
@@ -53,100 +49,96 @@ async function syncExistingPositions(walletAddress, options = {}) {
     }
 
     const apiHost = useLocal ? LOCAL_API_HOST : API_HOST;
-    const spinner = ora(`Syncing existing positions for wallet: ${walletAddress}`).start();
+    console.log(`Syncing existing positions for wallet: ${walletAddress}...`);
 
     try {
         log.info(`Using API host: ${apiHost}`);
 
         // Construct URL with parameters
-        const url = `${apiHost}/api/sl-tp-monitor`;
-        const params = {
+        const params = new URLSearchParams({
             action: 'sync',
             wallet: walletAddress
-        };
+        });
 
         // Add optional parameters if provided
-        if (defaultStopLossPercentage !== -20) params.defaultStopLossPercentage = defaultStopLossPercentage;
-        if (defaultTakeProfitPercentage !== 50) params.defaultTakeProfitPercentage = defaultTakeProfitPercentage;
-        if (botTp1Percentage !== 10) params.botTp1Percentage = botTp1Percentage;
-        if (botTp1SellPercentage !== 25) params.botTp1SellPercentage = botTp1SellPercentage;
-        if (botTp2Percentage !== 25) params.botTp2Percentage = botTp2Percentage;
-        if (botTp3Percentage !== 50) params.botTp3Percentage = botTp3Percentage;
-        if (!botTp3Enabled) params.botTp3Enabled = false;
+        if (defaultStopLossPercentage !== -20) params.set('defaultStopLossPercentage', String(defaultStopLossPercentage));
+        if (defaultTakeProfitPercentage !== 50) params.set('defaultTakeProfitPercentage', String(defaultTakeProfitPercentage));
+        if (botTp1Percentage !== 10) params.set('botTp1Percentage', String(botTp1Percentage));
+        if (botTp1SellPercentage !== 25) params.set('botTp1SellPercentage', String(botTp1SellPercentage));
+        if (botTp2Percentage !== 25) params.set('botTp2Percentage', String(botTp2Percentage));
+        if (botTp3Percentage !== 50) params.set('botTp3Percentage', String(botTp3Percentage));
+        if (!botTp3Enabled) params.set('botTp3Enabled', 'false');
 
         if (verbose) {
             log.info('Request parameters:');
-            console.log(chalk.gray(JSON.stringify(params, null, 2)));
+            console.log(Object.fromEntries(params));
         }
 
-        const response = await axios({
-            url,
-            method: 'GET',
-            params,
-            timeout: 30000, // 30 second timeout
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30000);
+        let response;
+        try {
+            response = await fetch(`${apiHost}/api/sl-tp-monitor?${params}`, {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
+            });
+        } finally {
+            clearTimeout(timeout);
+        }
 
-        spinner.succeed('API request completed');
+        console.log('API request completed');
 
-        if (response.data.success) {
+        const data = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+            log.error(`HTTP ${response.status}: ${response.statusText}`);
+            if (data?.error) log.error(`Server error: ${data.error}`);
+            if (verbose && data) console.log('Error response:', JSON.stringify(data, null, 2));
+            return false;
+        }
+
+        if (data.success) {
             log.header('Sync Results');
             log.success('Sync completed successfully!');
 
-            const result = response.data.result;
-            console.log(chalk.white(`📊 Summary:`));
-            console.log(chalk.green(`   ✅ Synced: ${result.synced} positions`));
-            console.log(chalk.yellow(`   ⏭️  Skipped: ${result.skipped} positions (already tracked)`));
-            console.log(chalk.red(`   ❌ Errors: ${result.errors} positions`));
+            const result = data.result;
+            console.log(`📊 Summary:`);
+            console.log(`   ✅ Synced: ${result.synced} positions`);
+            console.log(`   ⏭️  Skipped: ${result.skipped} positions (already tracked)`);
+            console.log(`   ❌ Errors: ${result.errors} positions`);
 
-            if (verbose && response.data.details) {
+            if (verbose && data.details) {
                 log.info('Detailed results:');
-                console.log(chalk.gray(JSON.stringify(response.data.details, null, 2)));
+                console.log(JSON.stringify(data.details, null, 2));
             }
 
             return true;
         } else {
-            spinner.fail('Sync failed');
-            log.error(`Sync failed: ${response.data.error || 'Unknown error'}`);
+            log.error(`Sync failed: ${data.error || 'Unknown error'}`);
 
-            if (verbose && response.data) {
-                console.log(chalk.gray('Full response:', JSON.stringify(response.data, null, 2)));
+            if (verbose && data) {
+                console.log('Full response:', JSON.stringify(data, null, 2));
             }
 
             return false;
         }
 
     } catch (error) {
-        spinner.fail('Request failed');
-
-        if (error.response) {
-            // Server responded with error status
-            log.error(`HTTP ${error.response.status}: ${error.response.statusText}`);
-
-            if (error.response.data?.error) {
-                log.error(`Server error: ${error.response.data.error}`);
-            }
-
-            if (verbose && error.response.data) {
-                console.log(chalk.gray('Error response:', JSON.stringify(error.response.data, null, 2)));
-            }
-        } else if (error.request) {
-            // Request was made but no response received
+        if (error.name === 'AbortError') {
+            log.error('No response received from server (timeout)');
+            log.warning('Check if the API server is running and accessible');
+            if (useLocal) log.info('Try running the development server: npm run dev');
+        } else if (error.cause?.code === 'ECONNREFUSED' || /fetch failed/i.test(error.message)) {
             log.error('No response received from server');
             log.warning('Check if the API server is running and accessible');
-
-            if (useLocal) {
-                log.info('Try running the development server: npm run dev');
-            }
+            if (useLocal) log.info('Try running the development server: npm run dev');
         } else {
-            // Something else happened
             log.error(`Request setup error: ${error.message}`);
         }
 
         if (verbose) {
-            console.log(chalk.gray('Full error:', error));
+            console.log('Full error:', error);
         }
 
         return false;
@@ -158,19 +150,19 @@ function parseArguments() {
     const args = process.argv.slice(2);
 
     if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
-        console.log(chalk.cyan.bold('\n📋 SL/TP Position Sync Script'));
-        console.log(chalk.white('\nUsage:'));
-        console.log(chalk.gray('  node scripts/sync-existing-positions.js <wallet_address> [options]'));
-        console.log(chalk.white('\nOptions:'));
-        console.log(chalk.gray('  --local                    Use local API (http://localhost:3000)'));
-        console.log(chalk.gray('  --stop-loss <percentage>   Default stop loss percentage (default: -20)'));
-        console.log(chalk.gray('  --take-profit <percentage> Default take profit percentage (default: 50)'));
-        console.log(chalk.gray('  --verbose                  Show detailed output'));
-        console.log(chalk.gray('  --help, -h                 Show this help message'));
-        console.log(chalk.white('\nExamples:'));
-        console.log(chalk.gray('  node scripts/sync-existing-positions.js DGJqRtDKdBiKfXGwgQbaC5YJW3PGd5TtE2tGmKSLtVwx'));
-        console.log(chalk.gray('  node scripts/sync-existing-positions.js <wallet> --local --verbose'));
-        console.log(chalk.gray('  node scripts/sync-existing-positions.js <wallet> --stop-loss -15 --take-profit 30'));
+        console.log('\n📋 SL/TP Position Sync Script');
+        console.log('\nUsage:');
+        console.log('  node scripts/sync-existing-positions.js <wallet_address> [options]');
+        console.log('\nOptions:');
+        console.log('  --local                    Use local API (http://localhost:3000)');
+        console.log('  --stop-loss <percentage>   Default stop loss percentage (default: -20)');
+        console.log('  --take-profit <percentage> Default take profit percentage (default: 50)');
+        console.log('  --verbose                  Show detailed output');
+        console.log('  --help, -h                 Show this help message');
+        console.log('\nExamples:');
+        console.log('  node scripts/sync-existing-positions.js DGJqRtDKdBiKfXGwgQbaC5YJW3PGd5TtE2tGmKSLtVwx');
+        console.log('  node scripts/sync-existing-positions.js <wallet> --local --verbose');
+        console.log('  node scripts/sync-existing-positions.js <wallet> --stop-loss -15 --take-profit 30');
         process.exit(0);
     }
 

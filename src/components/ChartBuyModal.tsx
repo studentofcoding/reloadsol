@@ -8,7 +8,7 @@ import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { useChartTokenInfo } from "@/hooks/useChartTokenInfo";
 import { useAxiomRisk } from "@/hooks/useAxiomRisk";
-import PhantomWalletButton from "@/components/PhantomWalletButton";
+import UniversalWalletButton from "@/components/UniversalWalletButton";
 import RiskAnalysis from "@/components/RiskAnalysis";
 import ConfirmTransportSelect from "@/components/ConfirmTransportSelect";
 import TransactionResultModal from "@/components/TransactionResultModal";
@@ -589,7 +589,7 @@ export default function ChartBuyModal({
               </div>
 
               {!connected ? (
-                <PhantomWalletButton />
+                <UniversalWalletButton />
               ) : (
                 <>
                   <div className="space-y-2">

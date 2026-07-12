@@ -9,7 +9,7 @@ import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { useChartTokenInfo } from "@/hooks/useChartTokenInfo";
 import { useAxiomRisk } from "@/hooks/useAxiomRisk";
-import PhantomWalletButton from "@/components/PhantomWalletButton";
+import UniversalWalletButton from "@/components/UniversalWalletButton";
 import RiskAnalysis from "@/components/RiskAnalysis";
 import TransactionResultModal from "@/components/TransactionResultModal";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
@@ -477,7 +477,7 @@ export default function ChartPage() {
           {/* Buy Section */}
           <div className="flex items-center space-x-3">
             {!connected ? (
-              <PhantomWalletButton />
+              <UniversalWalletButton />
             ) : (
               <>
                 <div className="flex flex-col">

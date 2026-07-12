@@ -1,6 +1,6 @@
-import { logTradeOperation } from '@/utils/logger'
-import { log } from '@/utils/unified-logger'
+import { log, logTradeOperation } from '@/utils/unified-logger'
 import { formatAppDateTime } from '@/utils/datetime'
+import { formatDetailedRiskForDiscord, type RiskAssessmentResult } from '@/utils/risk-assessment'
 
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_AUTO_TRADE || process.env.DISCORD_WEBHOOK_URL || ''
 
@@ -96,9 +96,14 @@ export async function sendBuyNotificationDiscord(params: {
   responseTime: number
   signature?: string
   totalFees: number
+  marketCap?: number
+  riskAssessment?: RiskAssessmentResult
+  graduatedAt?: string | null
+  launchpad?: string | null
 }) {
   const {
     tokenSymbol,
+    tokenAddress,
     isSimulated,
     amountSOL,
     tokensReceived,
@@ -107,7 +112,11 @@ export async function sendBuyNotificationDiscord(params: {
     rpcUsed,
     responseTime,
     signature,
-    totalFees
+    totalFees,
+    marketCap,
+    riskAssessment,
+    graduatedAt,
+    launchpad,
   } = params
 
   const emoji = isSimulated ? '💻' : '🔥'
@@ -124,8 +133,38 @@ export async function sendBuyNotificationDiscord(params: {
     `⚡ Provider: ${provider}`,
     `🌐 RPC: ${rpcUsed}`,
     `⏱️ Response: ${responseTime}ms`,
-    `💸 Fees: ${totalFees.toFixed(6)} SOL`
+    `💸 Fees: ${totalFees.toFixed(6)} SOL`,
   ]
+
+  if (marketCap && marketCap > 0) {
+    lines.push(`💎 Market Cap: $${marketCap.toLocaleString()}`)
+  }
+
+  if (riskAssessment?.riskLevel) {
+    const riskEmoji =
+      riskAssessment.riskLevel === 'LOW'
+        ? '🟢'
+        : riskAssessment.riskLevel === 'MED'
+          ? '🟡'
+          : '🔴'
+    lines.push(`${riskEmoji} Risk: ${riskAssessment.riskLevel}`)
+    if (riskAssessment.axiomData || riskAssessment.jupiterDetails) {
+      lines.push(
+        `📈 Metrics: ${formatDetailedRiskForDiscord(
+          {
+            token_address: tokenAddress,
+            token_symbol: tokenSymbol || 'UNKNOWN',
+            mcap: marketCap || 0,
+            price: priceUSD,
+          },
+          riskAssessment,
+        )}`,
+      )
+    }
+  }
+
+  if (graduatedAt) lines.push(`🎓 Graduated: ${graduatedAt}`)
+  if (launchpad) lines.push(`From launchpad: ${launchpad}`)
 
   if (signature && !isSimulated) {
     lines.push(`🔗 Signature: \`${signature}\``)
@@ -133,7 +172,7 @@ export async function sendBuyNotificationDiscord(params: {
   }
 
   lines.push(``)
-  lines.push(`⏰ ${new Date().toLocaleString()}`)
+  lines.push(`⏰ ${formatAppDateTime(new Date())}`)
 
   const content = lines.join('\n')
   logTradeOperation('Discord Buy Notification', { tokenSymbol, isSimulated })

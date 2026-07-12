@@ -238,34 +238,6 @@ export class ApiLogger {
   }
 }
 
-// Middleware wrapper for automatic request/response logging
-export function withApiLogging<T>(
-  handler: (request: NextRequest, logger: ApiLogger) => Promise<T>
-) {
-  return async (request: NextRequest): Promise<T> => {
-    const logger = new ApiLogger(request)
-    const startTime = Date.now()
-    
-    // Log request start
-    logger.logRequestStart()
-    
-    try {
-      const result = await handler(request, logger)
-      
-      // If result is a NextResponse, log it
-      if (result instanceof NextResponse) {
-        logger.logResponse(result, startTime)
-      }
-      
-      return result
-    } catch (error) {
-      const duration = Date.now() - startTime
-      logger.error(`Request failed after ${duration}ms`, error as Error)
-      throw error
-    }
-  }
-}
-
 // Utility functions for log retrieval and filtering
 export function getLogs(options?: {
   level?: LogLevel

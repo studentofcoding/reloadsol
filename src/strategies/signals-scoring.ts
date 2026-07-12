@@ -1,4 +1,4 @@
-import { STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker-constants'
+import { STOP_LOSS_THRESHOLD } from '@/utils/mcap-tracker'
 import { applySocialBoostToScore } from './social-scoring'
 import type { SocialSnapshot } from './social/types'
 import type { SignalsScoringWeights, SignalsStrategyConfig } from './types'

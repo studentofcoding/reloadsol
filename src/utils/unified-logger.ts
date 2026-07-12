@@ -323,10 +323,28 @@ export class UnifiedLogger {
     }
 }
 
-// Static utility functions for backward compatibility
+// Static utility — maps legacy operation labels used by discord/trade-executors
 export function logTradeOperation(operation: string, data: any, error?: Error): void {
+    const operationMap: Record<string, TradeOperationType> = {
+        'Token Detection': 'token_detection',
+        'Buy Execution': 'buy_execution',
+        'Sell Execution': 'sell_execution',
+        'Price Tracking': 'price_tracking',
+        'Deviation Alert': 'deviation_alert',
+        'Discord Notification': 'discord_notification',
+        'Discord Status Check': 'discord_notification',
+        'Discord New Token Detection': 'discord_notification',
+        'Discord Buy Notification': 'discord_notification',
+        'Discord Trade Alert': 'discord_notification',
+        'Error Handling': 'error_handling',
+    }
+    const mappedOperation = operationMap[operation] || 'api_request'
     const logger = new UnifiedLogger()
-    logger.logTradeOperation(operation as TradeOperationType, data, error)
+    if (error) {
+        logger.error(mappedOperation, `${operation} failed`, error, data)
+    } else {
+        logger.logTradeOperation(mappedOperation, { ...data, operation })
+    }
 }
 
 // Middleware wrapper for automatic request/response logging
