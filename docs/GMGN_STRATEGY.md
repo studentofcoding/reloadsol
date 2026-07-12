@@ -10,7 +10,7 @@ Go cron (gmgn_activity_poll, ~180s)
     → OpenAPI track smartmoney + kol
     → 60m activity score (hot tokens only)
     → 2h Radar accumulator (peak SM/KOL/activity + Early Enter stamps)
-    → Radar review (ENTER / WATCH / SKIP) → Telegram + raw_metadata
+    → Radar review (ENTER / WATCH / SKIP) → Telegram (WATCH+ENTER only) + raw_metadata
     → insertSocialEvents (source gmgn_hot|gmgn_smartmoney|gmgn_kol) → social rollup
 
 Signals poll (GET /api/trading/signals)
@@ -103,6 +103,8 @@ Only tokens with `score >= GMGN_ACTIVITY_SCORE_THRESHOLD` (default 50) are inges
 ## Radar review (Telegram + entry features)
 
 Separate from the **activity score** (used for hot ingest). Radar is a 0–100 decision card: **SKIP &lt;45**, **WATCH 45–77**, **ENTER ≥78**.
+
+**Telegram:** only **WATCH** and **ENTER** are shared. SKIP is still scored and stored on `raw_metadata` / entry features, but not posted.
 
 ### Accumulators (2h per mint)
 

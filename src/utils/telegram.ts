@@ -385,6 +385,8 @@ export async function sendGmgnRadarAlert(params: {
   eventLabel?: string | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
+  // Only share WATCH / ENTER — SKIP stays in social metadata, not Telegram
+  if (params.review.action === 'SKIP') return false
 
   const { formatGmgnRadarTelegramHtml } = await import('@/strategies/gmgn-radar-review')
   const chartLink = formatReloadsolChartLink(params.tokenAddress)
