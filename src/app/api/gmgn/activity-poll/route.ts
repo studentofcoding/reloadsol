@@ -13,6 +13,7 @@ import {
 } from '@/strategies/gmgn-radar-accumulate'
 import { killAndBanRadarDump } from '@/strategies/gmgn-radar-dump'
 import {
+  applyRadarMcapWatchRug,
   applyRadarPriceRules,
   computeRadarPriceGrowth,
   extractRadarPriceStateFromEvents,
@@ -34,10 +35,12 @@ import { applyGmgnLiveBoost } from '@/strategies/gmgn-live-boost'
 import type { SocialIngestEvent } from '@/strategies/social/types'
 import { normalizeTrackRows, trackKol, trackSmartMoney } from '@/utils/gmgn-cli'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
-import { fetchTokenMetadataFromJupiter } from '@/utils/jupiter-metadata'
+import {
+  fetchJupiterMarketHints,
+  fetchTokenMetadataFromJupiter,
+} from '@/utils/jupiter-metadata'
 import { isTokenRugged } from '@/utils/rug-list/db'
-import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
-import { sendGmgnRadarAlert } from '@/utils/telegram'
+import { sendGmgnRadarAlert, sendGmgnRadarRugAlert } from '@/utils/telegram'
 import { log } from '@/utils/unified-logger'
 
 export const dynamic = 'force-dynamic'
@@ -118,15 +121,20 @@ async function applyPriceRulesToRadar(params: {
   symbol: string
   review: GmgnRadarReview
   priceUsd: number | null
+  mcapUsd: number | null
 }): Promise<{
   review: GmgnRadarReview
   priceUsd: number | null
+  mcapUsd: number | null
+  previousMcapUsd: number | null
   growthPct: number | null
   stickyBaselineUsd: number | null
   banned: boolean
+  isRug: boolean
+  rugReason: string | null
 }> {
   const priorEvents = await fetchRecentSocialEvents(params.tokenAddress, 30)
-  const { previousPriceUsd, stickyBaselineUsd } =
+  const { previousPriceUsd, previousMcapUsd, stickyBaselineUsd } =
     extractRadarPriceStateFromEvents(priorEvents)
   const growthPct = computeRadarPriceGrowth(params.priceUsd, previousPriceUsd)
   const rules = applyRadarPriceRules({
@@ -137,29 +145,53 @@ async function applyPriceRulesToRadar(params: {
     previousPriceUsd,
   })
 
-  if (rules.banned) {
+  let action = rules.action
+  let banned = rules.banned
+  const reasonParts = [...rules.reasons]
+  let isRug = false
+  let rugReason: string | null = null
+
+  if (!banned) {
+    const rug = applyRadarMcapWatchRug({
+      action,
+      previousMcapUsd,
+      currentMcapUsd: params.mcapUsd,
+    })
+    if (rug.isRug) {
+      isRug = true
+      banned = true
+      action = 'SKIP'
+      reasonParts.push(...rug.reasons)
+      rugReason = rug.reasons.join('; ')
+    }
+  }
+
+  if (banned) {
     void killAndBanRadarDump({
       tokenAddress: params.tokenAddress,
       tokenSymbol: params.symbol,
       sellPriceUsd: params.priceUsd,
     }).catch((err) => {
-      console.error('[gmgn-activity-poll] radar dump ban/kill failed:', err)
+      console.error('[gmgn-activity-poll] radar dump/rug ban/kill failed:', err)
     })
   }
 
-  const extra =
-    rules.reasons.length > 0 ? rules.reasons.join('; ') : null
+  const extra = reasonParts.length > 0 ? reasonParts.join('; ') : null
   const review =
-    rules.action !== params.review.action || extra
-      ? withRadarActionOverride(params.review, rules.action, extra)
+    action !== params.review.action || extra
+      ? withRadarActionOverride(params.review, action, extra)
       : params.review
 
   return {
     review,
     priceUsd: params.priceUsd,
+    mcapUsd: params.mcapUsd,
+    previousMcapUsd,
     growthPct: rules.growthPct,
     stickyBaselineUsd: rules.stickyBaselineUsd,
-    banned: rules.banned,
+    banned,
+    isRug,
+    rugReason,
   }
 }
 
@@ -189,14 +221,30 @@ export async function POST(request: NextRequest) {
     const scored = scoreGmgnActivity(normalized, { windowMinutes })
     const hot = scored.filter((item) => item.score >= threshold)
 
-    const prices =
-      hot.length > 0
-        ? await fetchTokenPricesForTracking(hot.map((h) => h.tokenAddress))
-        : {}
+    const marketByMint: Record<
+      string,
+      { priceUsd: number | null; mcapUsd: number | null }
+    > = {}
+    if (hot.length > 0) {
+      await Promise.all(
+        hot.map(async (h) => {
+          const hints = await fetchJupiterMarketHints(h.tokenAddress)
+          marketByMint[h.tokenAddress] = {
+            priceUsd:
+              hints?.usdPrice != null && hints.usdPrice > 0
+                ? hints.usdPrice
+                : null,
+            mcapUsd:
+              hints?.mcap != null && hints.mcap > 0 ? hints.mcap : null,
+          }
+        }),
+      )
+    }
 
     const events: SocialIngestEvent[] = []
     let skipped = 0
     let dumpBanned = 0
+    let rugBanned = 0
     const radarByMint = new Map<string, GmgnRadarReview>()
 
     for (const item of hot) {
@@ -215,15 +263,20 @@ export async function POST(request: NextRequest) {
       })
       let radar = buildGmgnRadarReview(radarInput)
 
-      const priceUsd = prices[item.tokenAddress] ?? null
+      const market = marketByMint[item.tokenAddress] ?? {
+        priceUsd: null,
+        mcapUsd: null,
+      }
       const priced = await applyPriceRulesToRadar({
         tokenAddress: item.tokenAddress,
         symbol: item.symbol,
         review: radar,
-        priceUsd: typeof priceUsd === 'number' && priceUsd > 0 ? priceUsd : null,
+        priceUsd: market.priceUsd,
+        mcapUsd: market.mcapUsd,
       })
       radar = priced.review
-      if (priced.banned) dumpBanned++
+      if (priced.isRug) rugBanned++
+      else if (priced.banned) dumpBanned++
 
       radarByMint.set(item.tokenAddress, radar)
 
@@ -253,23 +306,46 @@ export async function POST(request: NextRequest) {
           jupiter_top_holders_pct:
             radarInput.top10Source === 'jupiter' ? radarInput.top10 : undefined,
           radar_price_usd: priced.priceUsd,
+          radar_mcap_usd: priced.mcapUsd,
           radar_growth_pct: priced.growthPct,
           radar_watch_baseline_usd: priced.stickyBaselineUsd,
-          radar_dump_banned: priced.banned ? 1 : 0,
+          radar_dump_banned: priced.banned && !priced.isRug ? 1 : 0,
+          radar_mcap_rug: priced.isRug ? 1 : 0,
         },
       })
 
-      const rugged = priced.banned || (await isTokenRugged(item.tokenAddress))
-      if (!rugged) {
-        void sendGmgnRadarAlert({
-          review: radar,
+      if (priced.isRug) {
+        void sendGmgnRadarRugAlert({
           symbol: item.symbol,
           tokenAddress: item.tokenAddress,
-          category: source === 'gmgn_hot' ? 'HOT' : source === 'gmgn_kol' ? 'KOL' : 'SM',
-          eventLabel: `activity score ${item.score}`,
+          previousMcapUsd: priced.previousMcapUsd,
+          currentMcapUsd: priced.mcapUsd,
+          priceUsd: priced.priceUsd,
+          reason: priced.rugReason || 'WATCH mcap collapse',
         }).catch((err) => {
-          console.error('[gmgn-activity-poll] radar telegram failed:', err)
+          console.error('[gmgn-activity-poll] radar rug telegram failed:', err)
         })
+      } else {
+        const rugged =
+          priced.banned || (await isTokenRugged(item.tokenAddress))
+        if (!rugged) {
+          void sendGmgnRadarAlert({
+            review: radar,
+            symbol: item.symbol,
+            tokenAddress: item.tokenAddress,
+            category:
+              source === 'gmgn_hot'
+                ? 'HOT'
+                : source === 'gmgn_kol'
+                  ? 'KOL'
+                  : 'SM',
+            eventLabel: `activity score ${item.score}`,
+            priceUsd: priced.priceUsd,
+            mcapUsd: priced.mcapUsd,
+          }).catch((err) => {
+            console.error('[gmgn-activity-poll] radar telegram failed:', err)
+          })
+        }
       }
     }
 
@@ -299,6 +375,7 @@ export async function POST(request: NextRequest) {
       ingestSkipped: ingestResult.skipped,
       liveBoosted,
       dumpBanned,
+      rugBanned,
     })
 
     return NextResponse.json({
@@ -310,6 +387,7 @@ export async function POST(request: NextRequest) {
       ingestErrors: ingestResult.errors,
       liveBoosted,
       dumpBanned,
+      rugBanned,
       top: hot.slice(0, 10).map((item) => {
         const radar =
           radarByMint.get(item.tokenAddress) ??

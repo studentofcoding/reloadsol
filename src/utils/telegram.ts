@@ -383,6 +383,8 @@ export async function sendGmgnRadarAlert(params: {
   tokenAddress: string
   category?: string | null
   eventLabel?: string | null
+  priceUsd?: number | null
+  mcapUsd?: number | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
   // Only share WATCH / ENTER — SKIP stays in social metadata, not Telegram
@@ -401,5 +403,28 @@ export async function sendGmgnRadarAlert(params: {
         { text: '🎯 Buy', url: buyLink },
       ],
     ],
+  })
+}
+
+/** Rug alerts always send (unlike SKIP). */
+export async function sendGmgnRadarRugAlert(params: {
+  symbol?: string | null
+  tokenAddress: string
+  previousMcapUsd: number | null
+  currentMcapUsd: number | null
+  priceUsd?: number | null
+  reason: string
+}): Promise<boolean> {
+  if (!isStrategyTrackTelegramEnabled()) return false
+
+  const { formatGmgnRadarRugTelegramHtml } = await import(
+    '@/strategies/gmgn-radar-review'
+  )
+  const chartLink = formatReloadsolChartLink(params.tokenAddress)
+  const text = formatGmgnRadarRugTelegramHtml(params)
+
+  return sendTelegramAlert(text, {
+    parseMode: 'HTML',
+    inlineKeyboard: [[{ text: '📈 Chart', url: chartLink }]],
   })
 }

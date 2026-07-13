@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyRadarMcapWatchRug,
   applyRadarPriceRules,
   computeRadarPriceGrowth,
   extractRadarPriceStateFromEvents,
@@ -63,12 +64,49 @@ describe('gmgn-radar-price', () => {
     expect(r.stickyBaselineUsd).toBeNull()
   })
 
-  it('extracts previous price and sticky from events', () => {
+  it('extracts previous price, mcap and sticky from events', () => {
     const state = extractRadarPriceStateFromEvents([
-      { raw_metadata: { radar_price_usd: 2, radar_watch_baseline_usd: 1.2 } },
-      { raw_metadata: { radar_price_usd: 1 } },
+      {
+        raw_metadata: {
+          radar_price_usd: 2,
+          radar_mcap_usd: 80_000,
+          radar_watch_baseline_usd: 1.2,
+        },
+      },
+      { raw_metadata: { radar_price_usd: 1, radar_mcap_usd: 40_000 } },
     ])
     expect(state.previousPriceUsd).toBe(2)
+    expect(state.previousMcapUsd).toBe(80_000)
     expect(state.stickyBaselineUsd).toBe(1.2)
+  })
+
+  it('WATCH + prev mcap <100k + cur ≤30k → rug', () => {
+    const r = applyRadarMcapWatchRug({
+      action: 'WATCH',
+      previousMcapUsd: 80_000,
+      currentMcapUsd: 20_000,
+    })
+    expect(r.isRug).toBe(true)
+    expect(r.reasons.length).toBeGreaterThan(0)
+  })
+
+  it('WATCH + prev <100k + cur 50k → not rug', () => {
+    expect(
+      applyRadarMcapWatchRug({
+        action: 'WATCH',
+        previousMcapUsd: 80_000,
+        currentMcapUsd: 50_000,
+      }).isRug,
+    ).toBe(false)
+  })
+
+  it('ENTER at 20k after microcap does not trigger mcap rug', () => {
+    expect(
+      applyRadarMcapWatchRug({
+        action: 'ENTER',
+        previousMcapUsd: 80_000,
+        currentMcapUsd: 20_000,
+      }).isRug,
+    ).toBe(false)
   })
 })

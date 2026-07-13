@@ -1,9 +1,11 @@
-/** Radar reappearance price growth → sticky WATCH / dump ban. */
+/** Radar reappearance price growth → sticky WATCH / dump ban / mcap rug. */
 
 import type { GmgnRadarAction } from './gmgn-radar-review'
 
 export const RADAR_PUMP_WATCH_PCT = 50
 export const RADAR_DUMP_BAN_PCT = -80
+export const RADAR_MICRO_MCAP_MAX = 100_000
+export const RADAR_RUG_MCAP_MAX = 30_000
 
 export function computeRadarPriceGrowth(
   currentUsd: number | null | undefined,
@@ -117,14 +119,51 @@ export function applyRadarPriceRules(input: RadarPriceRuleInput): RadarPriceRule
   }
 }
 
-/** Read last known radar price + sticky baseline from social event metadata (newest first). */
+/**
+ * WATCH + prior mcap &lt;100k + current mcap ≤30k → Rug.
+ */
+export function applyRadarMcapWatchRug(params: {
+  action: GmgnRadarAction
+  previousMcapUsd: number | null
+  currentMcapUsd: number | null
+}): { isRug: boolean; reasons: string[] } {
+  const { action, previousMcapUsd, currentMcapUsd } = params
+  if (action !== 'WATCH') return { isRug: false, reasons: [] }
+  if (
+    previousMcapUsd == null ||
+    currentMcapUsd == null ||
+    !Number.isFinite(previousMcapUsd) ||
+    !Number.isFinite(currentMcapUsd)
+  ) {
+    return { isRug: false, reasons: [] }
+  }
+  if (previousMcapUsd <= 0 || currentMcapUsd <= 0) {
+    return { isRug: false, reasons: [] }
+  }
+  if (previousMcapUsd >= RADAR_MICRO_MCAP_MAX) {
+    return { isRug: false, reasons: [] }
+  }
+  if (currentMcapUsd > RADAR_RUG_MCAP_MAX) {
+    return { isRug: false, reasons: [] }
+  }
+  return {
+    isRug: true,
+    reasons: [
+      `WATCH mcap rug: was $${Math.round(previousMcapUsd).toLocaleString()} (<$${RADAR_MICRO_MCAP_MAX / 1000}k) → now $${Math.round(currentMcapUsd).toLocaleString()} (≤$${RADAR_RUG_MCAP_MAX / 1000}k)`,
+    ],
+  }
+}
+
+/** Read last known radar price / mcap + sticky baseline from social event metadata (newest first). */
 export function extractRadarPriceStateFromEvents(
   events: Array<{ raw_metadata?: Record<string, unknown> | null }>,
 ): {
   previousPriceUsd: number | null
+  previousMcapUsd: number | null
   stickyBaselineUsd: number | null
 } {
   let previousPriceUsd: number | null = null
+  let previousMcapUsd: number | null = null
   let stickyBaselineUsd: number | null = null
 
   for (const event of events) {
@@ -138,14 +177,26 @@ export function extractRadarPriceStateFromEvents(
         previousPriceUsd = p
       }
     }
+    if (previousMcapUsd == null) {
+      const m = meta.radar_mcap_usd
+      if (typeof m === 'number' && Number.isFinite(m) && m > 0) {
+        previousMcapUsd = m
+      }
+    }
     if (stickyBaselineUsd == null) {
       const b = meta.radar_watch_baseline_usd
       if (typeof b === 'number' && Number.isFinite(b) && b > 0) {
         stickyBaselineUsd = b
       }
     }
-    if (previousPriceUsd != null && stickyBaselineUsd != null) break
+    if (
+      previousPriceUsd != null &&
+      previousMcapUsd != null &&
+      stickyBaselineUsd != null
+    ) {
+      break
+    }
   }
 
-  return { previousPriceUsd, stickyBaselineUsd }
+  return { previousPriceUsd, previousMcapUsd, stickyBaselineUsd }
 }

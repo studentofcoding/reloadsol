@@ -293,24 +293,83 @@ export function gmgnRadarInputFromFeatures(params: {
   }
 }
 
+function formatRadarPriceMcapLine(
+  priceUsd?: number | null,
+  mcapUsd?: number | null,
+): string | null {
+  const hasPrice =
+    priceUsd != null && Number.isFinite(priceUsd) && priceUsd > 0
+  const hasMcap = mcapUsd != null && Number.isFinite(mcapUsd) && mcapUsd > 0
+  if (!hasPrice && !hasMcap) return null
+  const pricePart = hasPrice
+    ? `$${priceUsd!.toLocaleString('en-US', { maximumSignificantDigits: 4 })}`
+    : '—'
+  const mcapPart = hasMcap ? formatMcapCompact(mcapUsd!) : '—'
+  return `💰 ${pricePart} · MC ${mcapPart}`
+}
+
+function formatMcapCompact(mcap: number): string {
+  if (mcap >= 1_000_000) return `$${(mcap / 1_000_000).toFixed(2)}M`
+  if (mcap >= 1_000) return `$${(mcap / 1_000).toFixed(1)}K`
+  return `$${mcap.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+}
+
 export function formatGmgnRadarTelegramHtml(params: {
   review: GmgnRadarReview
   symbol?: string | null
   tokenAddress: string
   category?: string | null
   eventLabel?: string | null
+  priceUsd?: number | null
+  mcapUsd?: number | null
 }): string {
   const sym = params.symbol?.trim() || 'UNKNOWN'
   const cat = params.category?.trim() || 'GMGN'
   const event = params.eventLabel?.trim()
+  const pxLine = formatRadarPriceMcapLine(params.priceUsd, params.mcapUsd)
   const lines = [
     `<b>NEW TOKEN</b> · ${cat} · <b>${escapeHtml(sym)}</b>`,
     event ? `<i>${escapeHtml(event)}</i>` : null,
     '',
     `🧠 <b>Radar:</b> ${params.review.emoji} <b>${params.review.action}</b> (${params.review.score}/100)`,
     `<i>${escapeHtml(params.review.summary)}</i>`,
+    pxLine,
     '',
     `📊 <b>GMGN:</b> ${escapeHtml(params.review.gmgnLine)}`,
+    '',
+    `<code>${escapeHtml(params.tokenAddress)}</code>`,
+  ]
+  return lines.filter((l): l is string => l != null).join('\n')
+}
+
+/** Dedicated Rug alert (always shared even though SKIP is not). */
+export function formatGmgnRadarRugTelegramHtml(params: {
+  symbol?: string | null
+  tokenAddress: string
+  previousMcapUsd: number | null
+  currentMcapUsd: number | null
+  priceUsd?: number | null
+  reason: string
+}): string {
+  const sym = params.symbol?.trim() || 'UNKNOWN'
+  const prev =
+    params.previousMcapUsd != null && params.previousMcapUsd > 0
+      ? formatMcapCompact(params.previousMcapUsd)
+      : '—'
+  const cur =
+    params.currentMcapUsd != null && params.currentMcapUsd > 0
+      ? formatMcapCompact(params.currentMcapUsd)
+      : '—'
+  const pxLine = formatRadarPriceMcapLine(
+    params.priceUsd,
+    params.currentMcapUsd,
+  )
+  const lines = [
+    `☠️ <b>RUG</b> · Radar · <b>${escapeHtml(sym)}</b>`,
+    '',
+    `MC ${prev} → ${cur}`,
+    pxLine,
+    `<i>${escapeHtml(params.reason)}</i>`,
     '',
     `<code>${escapeHtml(params.tokenAddress)}</code>`,
   ]

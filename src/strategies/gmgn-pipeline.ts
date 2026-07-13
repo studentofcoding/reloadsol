@@ -15,6 +15,7 @@ import {
 } from './gmgn-radar-review'
 import { killAndBanRadarDump } from './gmgn-radar-dump'
 import {
+  applyRadarMcapWatchRug,
   applyRadarPriceRules,
   computeRadarPriceGrowth,
   extractRadarPriceStateFromEvents,
@@ -28,7 +29,7 @@ import {
   trackSmartMoney,
 } from '@/utils/gmgn-cli'
 import { evaluateGmgnSecurity } from './gmgn-security-gate'
-import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
+import { fetchJupiterMarketHints } from '@/utils/jupiter-metadata'
 
 export type GmgnDiscoveryCandidate = {
   tokenAddress: string
@@ -198,42 +199,60 @@ export async function gateGmgnCandidates(params: {
       }),
     )
 
-    const priceMap = await fetchTokenPricesForTracking([candidate.tokenAddress])
-    const priceUsd = priceMap[candidate.tokenAddress] ?? null
+    const hints = await fetchJupiterMarketHints(candidate.tokenAddress)
+    const priceUsd =
+      hints?.usdPrice != null && hints.usdPrice > 0 ? hints.usdPrice : null
+    const mcapUsd = hints?.mcap != null && hints.mcap > 0 ? hints.mcap : null
     const priceHistory = await fetchRecentSocialEvents(candidate.tokenAddress, 30)
-    const { previousPriceUsd, stickyBaselineUsd } =
+    const { previousPriceUsd, previousMcapUsd, stickyBaselineUsd } =
       extractRadarPriceStateFromEvents(priceHistory)
-    const growthPct = computeRadarPriceGrowth(
-      typeof priceUsd === 'number' && priceUsd > 0 ? priceUsd : null,
-      previousPriceUsd,
-    )
+    const growthPct = computeRadarPriceGrowth(priceUsd, previousPriceUsd)
     const priceRules = applyRadarPriceRules({
       action: radarBase.action,
       growthPct,
       stickyBaselineUsd,
-      currentPriceUsd: typeof priceUsd === 'number' && priceUsd > 0 ? priceUsd : null,
+      currentPriceUsd: priceUsd,
       previousPriceUsd,
     })
-    if (priceRules.banned) {
+
+    let action = priceRules.action
+    let banned = priceRules.banned
+    const reasonParts = [...priceRules.reasons]
+    let isRug = false
+    if (!banned) {
+      const rug = applyRadarMcapWatchRug({
+        action,
+        previousMcapUsd,
+        currentMcapUsd: mcapUsd,
+      })
+      if (rug.isRug) {
+        isRug = true
+        banned = true
+        action = 'SKIP'
+        reasonParts.push(...rug.reasons)
+      }
+    }
+
+    if (banned) {
       void killAndBanRadarDump({
         tokenAddress: candidate.tokenAddress,
         tokenSymbol: candidate.symbol,
-        sellPriceUsd: typeof priceUsd === 'number' ? priceUsd : null,
+        sellPriceUsd: priceUsd,
       }).catch(() => {})
     }
     const radar =
-      priceRules.action !== radarBase.action || priceRules.reasons.length > 0
+      action !== radarBase.action || reasonParts.length > 0
         ? withRadarActionOverride(
             radarBase,
-            priceRules.action,
-            priceRules.reasons.join('; ') || null,
+            action,
+            reasonParts.join('; ') || null,
           )
         : radarBase
 
     gated.push({
       ...candidate,
       verdict: result.verdict,
-      pass: result.pass && !priceRules.banned,
+      pass: result.pass && !banned,
       securityReasons: result.reasons,
       entryFeatures: {
         ...result.features,
@@ -258,10 +277,12 @@ export async function gateGmgnCandidates(params: {
         radar_activity_peak: peaks.activityScorePeak,
         early_signals_score: peaks.earlySignalsScore,
         early_growth_pct: peaks.earlyGrowthPct,
-        radar_price_usd: typeof priceUsd === 'number' ? priceUsd : null,
+        radar_price_usd: priceUsd,
+        radar_mcap_usd: mcapUsd,
         radar_growth_pct: priceRules.growthPct,
         radar_watch_baseline_usd: priceRules.stickyBaselineUsd,
-        radar_dump_banned: priceRules.banned ? 1 : 0,
+        radar_dump_banned: banned && !isRug ? 1 : 0,
+        radar_mcap_rug: isRug ? 1 : 0,
         strategy_id: params.strategy.id,
         domain: 'gmgn',
       },

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { accumulateRadarPeaks } from './gmgn-radar-accumulate'
 import {
   buildGmgnRadarReview,
+  formatGmgnRadarRugTelegramHtml,
   formatGmgnRadarTelegramHtml,
   resolveRadarTop10,
   scoreGmgnRadar,
@@ -141,16 +142,35 @@ describe('gmgn-radar-review recalibrated', () => {
     )
   })
 
-  it('formats telegram html card', () => {
+  it('formats telegram html card with price and mcap', () => {
     const review = buildGmgnRadarReview({ sm: 37, kol: 46, holders: 3762, top10: 14 })
     const html = formatGmgnRadarTelegramHtml({
       review,
       symbol: 'PEPE',
       tokenAddress: 'So11111111111111111111111111111111111111112',
       category: 'WALLET',
+      priceUsd: 0.00012,
+      mcapUsd: 48_200,
     })
     expect(html).toContain('Radar:')
     expect(html).toContain('GMGN:')
     expect(html).toContain('PEPE')
+    expect(html).toContain('MC')
+    expect(html).toContain('$48.2K')
+  })
+
+  it('formats rug telegram html', () => {
+    const html = formatGmgnRadarRugTelegramHtml({
+      symbol: 'RUGME',
+      tokenAddress: 'So11111111111111111111111111111111111111112',
+      previousMcapUsd: 80_000,
+      currentMcapUsd: 20_000,
+      priceUsd: 0.00001,
+      reason: 'WATCH mcap rug',
+    })
+    expect(html).toContain('RUG')
+    expect(html).toContain('$80.0K')
+    expect(html).toContain('$20.0K')
+    expect(html).toContain('WATCH mcap rug')
   })
 })
