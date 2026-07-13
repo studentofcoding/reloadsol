@@ -225,7 +225,8 @@ type Config struct {
     SLTPMonitorInterval  int    // seconds
     SignalRefreshInterval int   // seconds
     SignalsSimInterval   int    // seconds
-    McapTrackerSimInterval int  // seconds
+    McapTrackerSimInterval int  // seconds — manage/close path
+    McapTrackerSimOpenInterval int // seconds — open hot path
     GmgnSimInterval      int    // seconds
     GmgnActivityPollInterval int // seconds
     StrategyReportInterval int  // seconds (0 = disabled)
@@ -240,6 +241,8 @@ type CronService struct {
 	cron    *cron.Cron
 	logger  *DiscordLogger
 	workers *WorkerTracker
+	mcapSimOpenMu   sync.Mutex
+	mcapSimManageMu sync.Mutex
 }
 
 func NewCronService() *CronService {
@@ -278,7 +281,15 @@ func NewCronService() *CronService {
                     return iv
                 }
             }
-            return 120 // default 120s
+            return 120 // manage/close default 120s
+        }(),
+        McapTrackerSimOpenInterval: func() int {
+            if v := os.Getenv("MCAP_TRACKER_SIM_OPEN_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
+                    return iv
+                }
+            }
+            return 15 // open hot path default 15s
         }(),
         GmgnSimInterval: func() int {
             if v := os.Getenv("GMGN_SIM_INTERVAL"); v != "" {
@@ -412,6 +423,14 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(signalsSimEntryID, "signals_sim_track")
 
+    mcapTrackerSimOpenSpec := fmt.Sprintf("@every %ds", cs.config.McapTrackerSimOpenInterval)
+    mcapTrackerSimOpenEntryID, err := cs.cron.AddFunc(mcapTrackerSimOpenSpec, cs.runMcapTrackerSimOpen)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("Failed to add mcap tracker sim open cron job: %v", err))
+        log.Fatal("Failed to add mcap tracker sim open cron job:", err)
+    }
+    cs.workers.BindEntry(mcapTrackerSimOpenEntryID, "mcap_tracker_sim_open")
+
     mcapTrackerSimSpec := fmt.Sprintf("@every %ds", cs.config.McapTrackerSimInterval)
     mcapTrackerSimEntryID, err := cs.cron.AddFunc(mcapTrackerSimSpec, cs.runMcapTrackerSimTrack)
     if err != nil {
@@ -520,6 +539,7 @@ func (cs *CronService) Start() {
 	http.HandleFunc("/trigger/signals-refresh", cs.manualSignalsRefreshTrigger)
     http.HandleFunc("/trigger/signals-sim-track", cs.manualSignalsSimTrackTrigger)
     http.HandleFunc("/trigger/mcap-tracker-sim-track", cs.manualMcapTrackerSimTrackTrigger)
+    http.HandleFunc("/trigger/mcap-tracker-sim-open", cs.manualMcapTrackerSimOpenTrigger)
     http.HandleFunc("/trigger/gmgn-sim-track", cs.manualGmgnSimTrackTrigger)
     http.HandleFunc("/trigger/gmgn-activity-poll", cs.manualGmgnActivityPollTrigger)
     http.HandleFunc("/trigger/social-rollup", cs.manualSocialRollupTrigger)
@@ -539,7 +559,8 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("🛡️ SL/TP monitor: every %d seconds", cs.config.SLTPMonitorInterval))
     cs.logger.Info(fmt.Sprintf("📡 Signals refresh: every %d seconds", cs.config.SignalRefreshInterval))
     cs.logger.Info(fmt.Sprintf("🧪 Signals sim track: every %d seconds", cs.config.SignalsSimInterval))
-    cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim track: every %d seconds", cs.config.McapTrackerSimInterval))
+    cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim open: every %d seconds", cs.config.McapTrackerSimOpenInterval))
+    cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim manage: every %d seconds", cs.config.McapTrackerSimInterval))
     cs.logger.Info(fmt.Sprintf("🐋 GMGN sim track: every %d seconds", cs.config.GmgnSimInterval))
     cs.logger.Info(fmt.Sprintf("🔥 GMGN activity poll: every %d seconds", cs.config.GmgnActivityPollInterval))
     cs.logger.Info("📣 Social rollup: every 300 seconds")
@@ -637,10 +658,57 @@ func (cs *CronService) runSignalsSimTrack() {
     cs.workers.Success("signals_sim_track")
 }
 
+func (cs *CronService) runMcapTrackerSimOpen() {
+    if !cs.mcapSimOpenMu.TryLock() {
+        cs.logger.Info("⏭️ MCap tracker sim open skipped (still running)")
+        return
+    }
+    defer cs.mcapSimOpenMu.Unlock()
+
+    cs.workers.Begin("mcap_tracker_sim_open")
+    cs.logger.Info("📈 Running mcap tracker sim open (phase=open)...")
+    url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=open", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim open failed: %v", err))
+        cs.workers.Fail("mcap_tracker_sim_open", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ MCap tracker sim open completed (%d bytes)", len(resp)))
+    cs.workers.Success("mcap_tracker_sim_open")
+}
+
 func (cs *CronService) runMcapTrackerSimTrack() {
+    if !cs.mcapSimManageMu.TryLock() {
+        cs.logger.Info("⏭️ MCap tracker sim manage skipped (still running)")
+        return
+    }
+    defer cs.mcapSimManageMu.Unlock()
+
     cs.workers.Begin("mcap_tracker_sim_track")
-    cs.logger.Info("📈 Running mcap tracker sim track...")
-    url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    cs.logger.Info("📈 Running mcap tracker sim manage (phase=manage)...")
+    url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=manage", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim manage failed: %v", err))
+        cs.workers.Fail("mcap_tracker_sim_track", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ MCap tracker sim manage completed (%d bytes)", len(resp)))
+    cs.workers.Success("mcap_tracker_sim_track")
+}
+
+func (cs *CronService) runMcapTrackerSimAll() {
+    // Manual full cycle: take manage lock so we do not overlap scheduled manage.
+    if !cs.mcapSimManageMu.TryLock() {
+        cs.logger.Info("⏭️ MCap tracker sim all skipped (manage still running)")
+        return
+    }
+    defer cs.mcapSimManageMu.Unlock()
+
+    cs.workers.Begin("mcap_tracker_sim_track")
+    cs.logger.Info("📈 Running mcap tracker sim track (phase=all)...")
+    url := fmt.Sprintf("%s/api/mcap-tracking/sim-track?key=%s&phase=all", cs.config.APIBaseURL, cs.config.TrendingSecret)
     resp, err := cs.makeRequest("POST", url, nil)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("❌ MCap tracker sim track failed: %v", err))
@@ -754,11 +822,25 @@ func (cs *CronService) manualMcapTrackerSimTrackTrigger(w http.ResponseWriter, r
         http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
         return
     }
-    cs.logger.Info("🔧 Manual mcap tracker sim track trigger")
-    go cs.runMcapTrackerSimTrack()
+    cs.logger.Info("🔧 Manual mcap tracker sim track trigger (phase=all)")
+    go cs.runMcapTrackerSimAll()
     json.NewEncoder(w).Encode(map[string]interface{}{
         "success": true,
-        "message": "MCap tracker sim track triggered",
+        "message": "MCap tracker sim track triggered (phase=all)",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualMcapTrackerSimOpenTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual mcap tracker sim open trigger")
+    go cs.runMcapTrackerSimOpen()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "MCap tracker sim open triggered",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

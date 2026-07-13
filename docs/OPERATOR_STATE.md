@@ -28,7 +28,7 @@ Canonical params/features + ML1/ML2/Pattern **shadow** on mcap, signals, and tre
 1. `git pull` → `npm run docker:deploy:web` (cron unchanged unless Go touched)
 2. `.env`: `ML_POTENTIAL_ARTIFACT_DIR=/app/ml/artifacts/v2-potential`, volume `./ml/artifacts:/app/ml/artifacts:ro`, **`ML_POTENTIAL_EXIT_MODE=shadow`** first
 3. Restart web after new potential ONNX: `docker restart reloadsol-web` (no hot-reload for potential)
-4. Workers ok: `mcap_tracker_sim_track`, `trending_tracker` on cron `:8080`
+4. Workers ok: `mcap_tracker_sim_open`, `mcap_tracker_sim_track`, `trending_tracker` on cron `:8080`
 5. Smoke: trigger mcap sim-track; open buy `entry_features` has `ml_potential_*` + `ml_exit_*`; with `apply`, confirm `effective_exit` and closes use it
 6. Optional retrain: `npm run ml:export` → `ml:train-potential` on host → restart web
 7. Keep `ML_GATE_MODE` / `ML_PATTERN_MODE` at **shadow** until `*_ready`
@@ -146,8 +146,9 @@ Shared:
 
 - **UI:** `McapSimOpenToastHost` in root layout; polls `GET /api/mcap-tracking/sim-open-alerts` every 15s; toast **top-right** (`z-index: 9999`) with **Buy**.
 - **Telegram env:** `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false`.
-- **Workers:** `signals_refresh` (~60s) helps Stage 1; `mcap_tracker_sim_track` for Stage 2.
-- **`mcap_enter_at_80` freshness:** skips `milestone_too_old` outside `recencyMinutes` (default 240). Timely opens book `first_mcap × 1.8`; else live `current_mcap`.
+- **Workers:** `signals_refresh` (~60s) helps Stage 1; **`mcap_tracker_sim_open` (~15s, `phase=open`)** for Stage 2 opens; **`mcap_tracker_sim_track` (~120s, `phase=manage`)** for exits/snapshots. Manual track trigger runs `phase=all`. Skip-if-running on both.
+- **`mcap_enter_at_80` freshness:** skips `milestone_too_old` outside `recencyMinutes` (default 240). **Entry mcap = live `current_mcap` at open** (copy-trade fill); milestone only gates eligibility. Telegram Entry is the buy-now reference.
+- **Env:** `MCAP_TRACKER_SIM_OPEN_INTERVAL` (default 15), `MCAP_TRACKER_SIM_INTERVAL` (default 120 manage).
 - **DB:** apply [`db/init/07-mcap-drop-peak.sql`](../db/init/07-mcap-drop-peak.sql) for `-40%`/`-80%` drop stamps + peak profit columns (auto `rugged` / `potential` labels).
 
 ## North star

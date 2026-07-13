@@ -143,9 +143,8 @@ function isWithinRecency(
 }
 
 /**
- * milestone_80 entry:
- * - Timely (when_reach_80pct within recency): theoretical first_mcap * 1.8
- * - Otherwise (late / no stamp but still allowed): live current_mcap
+ * milestone_80 entry: always book live current_mcap at open time (copy-trade fill).
+ * Milestone/recency only gates eligibility via getMcapSimOpenSkipReason — not the fill.
  */
 export function resolveMcapSimEntry(
   strategy: McapTrackerStrategy,
@@ -159,17 +158,8 @@ export function resolveMcapSimEntry(
   const growth = snapshot.mcap_growth_percent ?? 0
   if (!snapshot.first_mcap || snapshot.first_mcap <= 0) return null
   if (!snapshot.when_reach_80pct && growth < 80) return null
-
-  const milestoneFresh = isWithinRecency(strategy, snapshot.when_reach_80pct)
-  if (snapshot.when_reach_80pct && milestoneFresh) {
-    return {
-      entryMcap: Math.round(snapshot.first_mcap * 1.8),
-      entryAt: snapshot.when_reach_80pct,
-    }
-  }
-
-  // Late open or growth-only path: book at live mcap so alerts/PnL match a real buy.
   if (!snapshot.current_mcap || snapshot.current_mcap <= 0) return null
+
   const entryAt =
     snapshot.last_updated_at ||
     snapshot.when_reach_80pct ||

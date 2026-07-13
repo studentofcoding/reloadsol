@@ -76,11 +76,16 @@ function readMonitorPath(features: Record<string, unknown>): PathPoint[] {
   return points.sort((a, b) => a.at.localeCompare(b.at))
 }
 
-/** Infer first_mcap from entry template + entry_mcap. */
+/**
+ * Infer first_mcap from entry template + entry_mcap.
+ * Prefer stored first_mcap (live-fill opens); /1.8 only for legacy ×1.8 fills.
+ */
 export function inferFirstMcap(
   entryMcap: number,
   entryTemplate: string | null,
+  storedFirstMcap?: number | null,
 ): number {
+  if (storedFirstMcap != null && storedFirstMcap > 0) return storedFirstMcap
   if (entryTemplate === 'milestone_80') return entryMcap / 1.8
   return entryMcap
 }
@@ -93,7 +98,7 @@ function milestonePath(
   exitMcap: number,
 ): PathPoint[] {
   const template = str(features.entry_template)
-  const first = inferFirstMcap(entryMcap, template)
+  const first = inferFirstMcap(entryMcap, template, num(features.first_mcap))
   const points: PathPoint[] = [{ at: entryAt, mcap: entryMcap }]
 
   const milestones: Array<[string, number]> = [

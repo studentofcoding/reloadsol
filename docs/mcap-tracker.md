@@ -86,7 +86,7 @@
 - **24h cohort labels:** social rollup cron (~5m) writes `mcap_social_pattern_24h` (winner ≥120%, loser &lt;80%).
 - **Training export:** `GET /api/mcap-patterns/training-export` (auth: `TRENDING_TRACKER_SECRET`).
 - **Stats:** `GET /api/mcap-patterns/stats` — cohort counts, `patternModelReady`.
-- **Sim worker:** `POST /api/mcap-tracking/sim-track` (cron `mcap_tracker_sim_track`) — paper trades + Pattern ML shadow (`ml_pattern_*` on entry).
+- **Sim workers:** `mcap_tracker_sim_open` → `POST /api/mcap-tracking/sim-track?phase=open` (~15s); `mcap_tracker_sim_track` → `?phase=manage` (~120s). Opens book live `current_mcap`. Pattern ML shadow (`ml_pattern_*`) on entry.
 - **Ops:** see [OPERATOR_STATE.md](./OPERATOR_STATE.md), [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md).
 
 ## Notifications

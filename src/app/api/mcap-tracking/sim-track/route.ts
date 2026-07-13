@@ -614,6 +614,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
 
+  const phaseParam = request.nextUrl.searchParams.get('phase')
+  const phase: 'open' | 'manage' | 'all' =
+    phaseParam === 'open' || phaseParam === 'manage' || phaseParam === 'all'
+      ? phaseParam
+      : 'all'
+  const runManage = phase === 'manage' || phase === 'all'
+  const runOpen = phase === 'open' || phase === 'all'
+
   try {
     const strategies = await getActiveMcapTrackerStrategies()
     const liveAvailable = isMcapLiveTradingAvailable()
@@ -669,6 +677,7 @@ export async function POST(request: NextRequest) {
         trackingRows.map((row) => row.token_address),
       )
 
+      if (runManage) {
       for (const pos of openPositions) {
         const snapshot =
           trackingByMint.get(pos.mintAddress) ??
@@ -756,7 +765,9 @@ export async function POST(request: NextRequest) {
           )
         }
       }
+      }
 
+      if (runOpen) {
       records = await fetchTradingRecordsForWallet(walletAddress)
       const currentOpen = getOpenPositionsForStrategy(
         records,
@@ -926,6 +937,7 @@ export async function POST(request: NextRequest) {
         opened++
         openMintSet.add(snapshot.token_address)
       }
+      }
 
       results.push({
         strategyId: strategy.id,
@@ -936,10 +948,14 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    log.info('mcap_tracker', 'MCap tracker sim track cycle complete', { results })
+    log.info('mcap_tracker', 'MCap tracker sim track cycle complete', {
+      phase,
+      results,
+    })
 
     return NextResponse.json({
       success: true,
+      phase,
       live_available: liveAvailable,
       results,
     })

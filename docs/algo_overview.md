@@ -95,11 +95,11 @@ Each subsection: **Capture** (what triggers entry) → **Calculate** (filters/sc
 
 ### `mcap_enter_at_80` (mcap_tracker — primary thesis)
 
-- **Capture:** same worker.
-- **Calculate:** `entryTemplate: milestone_80` — enter when token hits 80% mcap growth milestone.
+- **Capture:** `mcap_tracker_sim_open` (~15s) for opens; `mcap_tracker_sim_track` (~120s) for manage/exits.
+- **Calculate:** `entryTemplate: milestone_80` — eligible when token hits 80% mcap growth (within `recencyMinutes`). **Fill = live `current_mcap` at open** (copy-trade honest).
 - **Result:** same exit defaults as `mcap_enter_first_seen`.
 - **Pattern ML hook:** same shadow fields on entry.
-- **Manual copy-trade alert:** Stage 2 same as `mcap_enter_first_seen`; Stage 1 may have already fired from Signals scoring.
+- **Manual copy-trade alert:** Stage 2 Telegram Entry mcap = fill at open; Stage 1 may have already fired from Signals scoring.
 
 ### `dlmm_default` (dlmm)
 
@@ -202,7 +202,7 @@ Partial TP sells do not write outcomes until 100% closed.
 
 ### MCap tracker sim
 
-1. Cron `POST /api/mcap-tracking/sim-track` (via `mcap_tracker_sim_track` worker).
+1. Cron: `mcap_tracker_sim_open` → `POST /api/mcap-tracking/sim-track?phase=open` (~15s); `mcap_tracker_sim_track` → `?phase=manage` (~120s). Manual `/trigger/mcap-tracker-sim-track` → `phase=all`.
 2. Loads active mcap strategies; evaluates entry templates (`first_seen`, `milestone_80`).
 3. L1 rules → social L1 → sim-outcome ML shadow → **Pattern ML shadow** → paper buy.
 4. **Stage 1:** `GET /api/trading/signals` (UI + `signals_refresh`) emits Early Enter toast/Telegram when `enter` and growth &lt;100%.
@@ -234,7 +234,8 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `TRENDING_TRACKER_SECRET` | — | Auth for trending/signals/mcap sim |
 | `SIGNALS_SIM_INTERVAL` | 120 | signals sim-track |
 | `SIGNAL_REFRESH_INTERVAL` | 60 | signals refresh |
-| `MCAP_TRACKER_SIM_INTERVAL` | 300 | mcap tracker sim-track |
+| `MCAP_TRACKER_SIM_OPEN_INTERVAL` | 15 | mcap tracker sim open (`phase=open`) |
+| `MCAP_TRACKER_SIM_INTERVAL` | 120 | mcap tracker sim manage (`phase=manage`) |
 | `SOCIAL_ROLLUP_INTERVAL` | 300 | social rollup + 24h patterns |
 | `DLMM_SCREEN_INTERVAL` | 300 | dlmm screen |
 | `DLMM_SIM_TRACK_INTERVAL` | 300 | dlmm sim-track |
@@ -252,7 +253,8 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `GET /health` | Service health + worker snapshot |
 | `GET /workers` | Full worker list with real `last_success_at` |
 | `POST /trigger/signals-sim-track` | Run signals sim now |
-| `POST /trigger/mcap-tracker-sim-track` | Run mcap sim now |
+| `POST /trigger/mcap-tracker-sim-open` | Run mcap sim open now (`phase=open`) |
+| `POST /trigger/mcap-tracker-sim-track` | Run mcap sim full cycle (`phase=all`) |
 | `POST /trigger/trending` | Run trending track now |
 | `POST /trigger/dlmm-screen` | Run DLMM screen now |
 | … | See `main.go` for all `/trigger/*` |
@@ -294,7 +296,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 
 ## Gap diagnosis (e.g. no outcomes after 21 Jun)
 
-1. **Workers tab** — Is cron online? Is `signals_sim_track` or `mcap_tracker_sim_track` stale?
+1. **Workers tab** — Is cron online? Are `mcap_tracker_sim_open` / `mcap_tracker_sim_track` or `signals_sim_track` stale?
 2. **Run now** on the relevant worker — does `last_success_at` update?
 3. **Reports coverage** — last exit per strategy; zero trades ≠ broken recording
 4. **Open positions** — sim wallet may hold positions; outcomes only on close

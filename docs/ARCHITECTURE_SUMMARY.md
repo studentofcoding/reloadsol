@@ -126,7 +126,7 @@ flowchart LR
 
 ### Cron workers (Go → web API)
 
-Examples: `trending_track`, `signals_sim_track`, `mcap_tracker_sim_track`, `social_rollup` (300s), `social_wallet_poll`, `social_cleanup`, DLMM screen/manage.
+Examples: `trending_track`, `signals_sim_track`, `mcap_tracker_sim_open`, `mcap_tracker_sim_track`, `social_rollup` (300s), `social_wallet_poll`, `social_cleanup`, DLMM screen/manage.
 
 Workers tab: `/dev/strategies` → Workers (needs `CRON_SERVICE_URL`).
 

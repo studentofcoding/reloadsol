@@ -1507,7 +1507,7 @@ export async function getStrategyDomainHeartbeats(params?: {
   const workerById = params?.workerLastSuccessById ?? {}
 
   const domainPrimaryWorkers: Record<StrategyDomain, string[]> = {
-    mcap_tracker: ['mcap_tracker_sim_track'],
+    mcap_tracker: ['mcap_tracker_sim_open', 'mcap_tracker_sim_track'],
     signals: ['signals_sim_track', 'signals_refresh'],
     trending_bot: ['trending_tracker'],
     dlmm: ['dlmm_manage'],

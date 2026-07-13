@@ -44,17 +44,19 @@ describe('mcap sim entry helpers', () => {
   const at80 = MCAP_TRACKER_STRATEGIES.mcap_enter_at_80
   const firstSeen = MCAP_TRACKER_STRATEGIES.mcap_enter_first_seen
 
-  it('timely milestone_80 with recent when_reach_80pct uses first_mcap * 1.8', () => {
+  it('timely milestone_80 books live current_mcap at open time', () => {
     const milestoneAt = new Date(Date.now() - 30 * 60_000).toISOString()
+    const lastUpdated = new Date().toISOString()
     const snapshot = row({
       when_reach_80pct: milestoneAt,
       mcap_growth_percent: 95,
       current_mcap: 200_000,
+      last_updated_at: lastUpdated,
     })
     expect(shouldOpenMcapSim(at80, snapshot, new Set())).toBe(true)
     const entry = resolveMcapSimEntry(at80, snapshot)
-    expect(entry?.entryMcap).toBe(Math.round(35_000 * 1.8))
-    expect(entry?.entryAt).toBe(milestoneAt)
+    expect(entry?.entryMcap).toBe(200_000)
+    expect(entry?.entryAt).toBe(lastUpdated)
   })
 
   it('within recency, no milestone stamp: entry uses current_mcap', () => {
@@ -122,26 +124,25 @@ describe('mcap sim entry helpers', () => {
     expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBe('out_of_range')
   })
 
-  it('allows open when current mcap exceeds max but timely theoretical entry is in range', () => {
+  it('skips when live mcap exceeds max even if first*1.8 would be in range', () => {
     const snapshot = row({
       first_mcap: 60_000,
       current_mcap: 2_500_000,
       mcap_growth_percent: 4000,
       when_reach_80pct: new Date().toISOString(),
     })
-    expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBeNull()
-    expect(resolveMcapSimEntry(at80, snapshot)?.entryMcap).toBe(
-      Math.round(60_000 * 1.8),
-    )
+    expect(getMcapSimOpenSkipReason(at80, snapshot, new Set())).toBe('out_of_range')
+    expect(resolveMcapSimEntry(at80, snapshot)?.entryMcap).toBe(2_500_000)
   })
 
   it('skips when a closed outcome already exists for token+entryAt', () => {
-    const entryAt = new Date(Date.now() - 30 * 60_000).toISOString()
+    const lastUpdated = new Date(Date.now() - 30 * 60_000).toISOString()
     const snapshot = row({
-      when_reach_80pct: entryAt,
+      when_reach_80pct: new Date(Date.now() - 30 * 60_000).toISOString(),
+      last_updated_at: lastUpdated,
       mcap_growth_percent: 95,
     })
-    const closedKeys = new Set([`mint1|${entryAt}`])
+    const closedKeys = new Set([`mint1|${lastUpdated}`])
     expect(
       getMcapSimOpenSkipReason(at80, snapshot, new Set(), closedKeys),
     ).toBe('already_closed')

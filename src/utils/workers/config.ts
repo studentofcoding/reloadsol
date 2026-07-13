@@ -1,5 +1,6 @@
 export type WorkerId =
   | 'signals_sim_track'
+  | 'mcap_tracker_sim_open'
   | 'mcap_tracker_sim_track'
   | 'gmgn_sim_track'
   | 'gmgn_activity_poll'
@@ -17,6 +18,7 @@ export type WorkerId =
 
 export const WORKER_TRIGGER_PATHS: Record<WorkerId, string> = {
   signals_sim_track: '/trigger/signals-sim-track',
+  mcap_tracker_sim_open: '/trigger/mcap-tracker-sim-open',
   mcap_tracker_sim_track: '/trigger/mcap-tracker-sim-track',
   gmgn_sim_track: '/trigger/gmgn-sim-track',
   gmgn_activity_poll: '/trigger/gmgn-activity-poll',
