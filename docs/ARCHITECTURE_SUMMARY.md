@@ -16,7 +16,9 @@ Related deep dives: [architecture.md](./architecture.md), [algo_overview.md](./a
 
 **North star:** strict checker over brilliant maker. Primary thesis is **`mcap_enter_at_80`** paper sim at the 80% mcap milestone; **Pattern ML** (24h cohort labels) is the primary ML focus.
 
-**Data layer:** Docker Postgres **`reloadsol_db`** only. Supabase is **cut off**. Schema source: [`db/init/`](../db/init/) (`02-schema.sql` + migrations `04`–`06`). [`supabase/schema.sql`](../supabase/schema.sql) is a legacy mirror.
+**Data layer:** Docker Postgres **`reloadsol_db`** only. Supabase is **cut off**. Schema source: [`db/init/`](../db/init/) (`02-schema.sql` + migrations `04`–`13`). [`supabase/schema.sql`](../supabase/schema.sql) is a legacy mirror.
+
+Related: [GMGN_STRATEGY.md](./GMGN_STRATEGY.md) (Radar live thread + comeback).
 
 ### Runtime stack (Docker on server)
 
@@ -186,6 +188,12 @@ Two **parallel** ML tracks — different labels, same entry-feature philosophy (
 
 ## 4. Next steps
 
+### Immediate product (GMGN Radar — Jul 13)
+
+1. **Build: Strategy Admin GMGN Radar knobs** — `config.radar` / comeback / `singleThread` on `GmgnCard` (backend already merges; UI missing). See [GMGN_STRATEGY.md § Next build](./GMGN_STRATEGY.md#next-build-radar).
+2. Optional: wire `allowSimReopen` on comeback (sim only).
+3. Deploy `13-radar-alert-threads.sql` (or rely on runtime ensure); smoke activity-poll Telegram lifecycle.
+
 ### Immediate (pattern ML on server)
 
 1. **Keep shadow mode** — `ML_PATTERN_MODE=shadow`; do not enforce (F1 &lt; 0.60).
@@ -195,20 +203,24 @@ Two **parallel** ML tracks — different labels, same entry-feature philosophy (
 
 ### Sim-outcome gate (Track A)
 
-1. Target **200+ closed** mcap sim outcomes with balanced tiers.
-2. `npm run ml:backfill-labels` → `ml:export` → `ml:train-gate`.
-3. Review `ml_gate_p_bad` shadow histogram before `ML_GATE_MODE=enforce`.
+1. Target **200+ closed** mcap sim outcomes with balanced tiers (`extractable_labeled`).
+2. Potential (Jul 13): **95** export rows, F1 **0.33** → `potential_ready: false` — keep `ML_POTENTIAL_EXIT_MODE=shadow`.
+3. `npm run ml:export` → `ml:train-gate` / `ml:train-potential` when counts grow.
+4. Review `ml_gate_p_bad` shadow histogram before `ML_GATE_MODE=enforce`.
 
 ### Algo / data collection
 
 1. Keep **`mcap_enter_at_80` rules frozen** until enough labeled sim closes.
 2. Tag daily **market regime** in Strategy Admin → Reports.
-3. Ensure migrations **05–06** applied (`signal crosscheck`, `mcap_social_pattern_24h`).
+3. Ensure migrations **05–06** + **13** (`radar_alert_threads`) applied.
 
 ### Product / architecture (later)
 
 | Item | Status |
 |------|--------|
+| GMGN Radar Admin UI | **Next build** |
+| Comeback → sim reopen (`allowSimReopen`) | Flag only |
+| Sticky TTL / ENTER override on grind | Planned |
 | LLM entry gate (L3) | Planned — [`ML_GATE_PLAN.md`](./ML_GATE_PLAN.md) |
 | ML enforce on pattern + sim gate | After shadow validation + `*_ready` |
 | Wire social v2 features into sim-outcome scorer at runtime | Partial (export exists; scorer uses v1) |

@@ -58,36 +58,40 @@ npm run ml:check-potential
 
 **Volume (V1):** `volume_at_entry` is optional. Missing → `log_volume_at_entry=0` at extract. Source order: local/monitor → Jupiter `stats5m→1h→6h→24h` → DexScreener `m5→h1→h24`. Telemetry: `volume_imputed` (not a hard incomplete).
 
-#### ML volume recovery (Jul 10)
+#### ML volume recovery (Jul 10) → potential retrain (Jul 13)
 
-Ops verified after deploy:
+Ops verified:
 
-- Backfill chunk (`limit=15`): `updated=15`, `still_incomplete=0`, `volume_enriched=12` / `imputed=3`; prior `incomplete_total=51` (volume-only blockers).
-- Export: **79** training rows, **0** incomplete, `volume_imputed=39`.
-- Next: finish remaining chunked backfill (~3–4 more `limit=15` runs) → re-export → retrain gate/potential (keep shadow until ready). Imputed zeros shift distribution vs old ONNX.
+- Export: **95** training rows, **0** incomplete, `volume_imputed=45`.
+- Potential train (`v2-potential`): train 53 / test 14 winners; **macro-F1 0.33**, accuracy 0.57 → **`potential_ready: false`** (need ≥ 0.55).
+- Keep `ML_POTENTIAL_EXIT_MODE=shadow`. Do not `apply`. Continue collecting closed sims toward **200+ extractable** gate rows and more balanced potential tiers.
 - Historical `monitor_snapshots` charts not rewritten; new ticks use tracker → mcap → Jupiter waterfall.
 
 Strategy Admin → Reports now shows Gate / Potential / Exit TP/SL on outcomes that stamped ML shadow fields.
 
-## GMGN smart money (Jul 11)
+## GMGN smart money (Jul 11+)
 
 New domain — **sim_only by default**. See [GMGN_STRATEGY.md](./GMGN_STRATEGY.md).
 
 | Step | Action |
 |------|--------|
 | Env | `GMGN_API_KEY=...` in web `.env` (HTTP default; CLI optional via `GMGN_TRANSPORT=cli`) |
-| DB | `psql -f db/init/10-gmgn-strategy-domain.sql` + `11-gmgn-sm-kol-combined.sql` on existing volume |
+| DB | `psql -f db/init/10-gmgn-strategy-domain.sql` + `11-gmgn-sm-kol-combined.sql` + **`13-radar-alert-threads.sql`** on existing volume |
 | Deploy | Rebuild web + cron; workers `gmgn_sim_track` (120s) + `gmgn_activity_poll` (180s) |
 | Enable | `/dev/strategies` → activate `gmgn_sm_kol_combined` or `gmgn_smartmoney_default` |
-| Smoke | `POST /trigger/gmgn-activity-poll` → check `social_token_events` source `gmgn_hot` (+ `radar_score` / `radar_sm_peak` in `raw_metadata`) |
-| Smoke | `GET /api/trading/signals` Early Enter → `social_token_events` source `signals_early` (`early_signals_score`) |
-| Smoke | `POST /trigger/gmgn-sim-track` → check `trading_records` wallet `gmgn-sim` |
+| Smoke | `POST /trigger/gmgn-activity-poll` → `social_token_events` + Telegram **one card per lifecycle**; `radar_alert_threads` |
+| Smoke | `GET /api/trading/signals` Early Enter → `signals_early` stamps |
+| Smoke | `POST /trigger/gmgn-sim-track` → `trading_records` wallet `gmgn-sim` |
 
-Activity poll ingests **only high-score** tokens into social (default threshold 50). **Radar** (separate 0–100 card) accumulates 2h SM/KOL/activity + Early Enter — see [GMGN_STRATEGY.md § Radar](./GMGN_STRATEGY.md#radar-review-telegram--entry-features). Pattern ML gets 3 new GMGN features — retrain before `ML_PATTERN_MODE=enforce`.
+Activity poll: hot tokens only (default score ≥50). **Radar** uses `config.radar` (sticky/dump/comeback) + **single-thread Telegram** (edit until dead; leave dead card; new message on comeback). Absolute microcap ≤30k is **not** a rug trigger. See [GMGN_STRATEGY.md § Radar](./GMGN_STRATEGY.md#radar-review-telegram--entry-features).
 
-**Live boost after entry:** when `gmgn_hot` arrives after an open sim or tracked token, `gmgn-live-boost.ts` patches `entry_features` and bumps `social_boost_score`. Env: `GMGN_LIVE_BOOST_ENABLED`, `GMGN_LIVE_BOOST_SCORE=25`, `GMGN_LIVE_BOOST_MIN_SCORE=50`, `GMGN_LIVE_BOOST_EXIT=shadow`.
+**Live boost after entry:** `gmgn-live-boost.ts` — env `GMGN_LIVE_BOOST_*`.
 
-Live swap via `gmgn-cli swap` is stubbed only (`GMGN_PRIVATE_KEY`); keep `execution_mode=sim_only` until sim review.
+Live swap stubbed (`GMGN_PRIVATE_KEY`); keep `sim_only` until sim review.
+
+### Strategy Admin PATCH (Jul 13)
+
+`PATCH /api/strategies/[id]` **preserves** existing `strategy_definitions.config` when `config` is omitted (Activate/Deactivate) and deep-merges partial config saves. Fixes trending-bot (and all domains) param wipe. Helper: `mergeStrategyConfigPatch`.
 
 ## Pattern ML (primary focus — 24h mcap + social cohorts)
 
@@ -155,9 +159,17 @@ Shared:
 | Strategy | Status | Notes |
 |----------|--------|-------|
 | `mcap_enter_at_80` | **Primary — FROZEN** | Rules locked for data collection; target **200+ sim closes** before ML enforce or live |
-| `att` | Active | Registry floor **200k mcap** — sub-50k entries should not assign here; bad under50k WR is usually `lowcap_moonbag` or legacy rows |
+| GMGN Radar | **Active product loop** | Live Telegram thread + comeback shipped; **next build = Admin UI for `config.radar`** |
+| `att` | Active | Registry floor **200k mcap** — sub-50k entries should not assign here |
 | `lowcap_moonbag` | Active | 35k–90k band; deactivate if WR stays &lt;10% over 30+ trades |
-| `signals_sell_over_100` | Sim only | Exits on mcap ≥100%; sim PnL now uses mcap basis (fixed price/rug mismatch) |
+| `signals_sell_over_100` | Sim only | Exits on mcap ≥100%; sim PnL uses mcap basis |
+
+## Next to build (Jul 13)
+
+1. **P0 — GMGN Strategy Admin: Radar section** — expose `config.radar` (sticky/dump, comeback knobs, `singleThread`) on `GmgnCard`. Backend merge already works; UI missing.
+2. **P1 — `allowSimReopen` on comeback** — open paper sim when comeback confirms (flag default false).
+3. **Data (not code)** — keep collecting mcap/pattern/potential labels; retrain when counts grow; stay shadow until `*_ready`.
+4. **Later** — sticky TTL / ENTER override during grind; live GMGN only after sim review.
 
 ## Constraints (learned)
 
@@ -211,6 +223,8 @@ curl -s "$API_BASE_URL/api/strategies/ml/dataset-stats?domain=mcap_tracker&key=$
 
 | Date | Change |
 |------|--------|
+| 2026-07-13 | Removed WATCH mcap ≤30k rug rule (false positives on rising microcaps); keep dump ≤-80% + comeback drawdown |
+| 2026-07-13 | Radar live Telegram thread + configurable comeback; `radar_alert_threads`; strategy PATCH preserves/merges config; potential retrain F1 0.33 (not ready) |
 | 2026-07-11 | GMGN strategy domain: smart money/KOL discovery via gmgn-cli, paper sim `gmgn-sim`, cron `gmgn_sim_track`; see [GMGN_STRATEGY.md](./GMGN_STRATEGY.md) |
 | 2026-07-10 | Potential meta uses `potential_ready` (not shared `gate_ready`); OPERATOR_STATE tracking table for 200-row target |
 | 2026-07-09 | Stage-1 Pattern ML shadow score on Early Enter (Telegram/toast/Signals ML column; never gates) |

@@ -9,9 +9,11 @@ Go cron (gmgn_activity_poll, ~180s)
   → POST /api/gmgn/activity-poll?key=...
     → OpenAPI track smartmoney + kol
     → 60m activity score (hot tokens only)
+    → Jupiter market hints (price + mcap)
     → 2h Radar accumulator (peak SM/KOL/activity + Early Enter stamps)
-    → Radar review (ENTER / WATCH / SKIP) → Telegram (WATCH+ENTER only) + raw_metadata
-    → insertSocialEvents (source gmgn_hot|gmgn_smartmoney|gmgn_kol) → social rollup
+    → Radar review + config.radar price/comeback rules
+    → Telegram single-thread card (edit until dead; new msg on comeback)
+    → insertSocialEvents (cooldown) → social rollup
 
 Signals poll (GET /api/trading/signals)
   → Stage-1 Early Enter (growth < 100%)
@@ -61,7 +63,10 @@ GMGN_SIM_WALLET_ADDRESS=gmgn-sim
 ```bash
 psql "$DATABASE_URL" -f db/init/10-gmgn-strategy-domain.sql
 psql "$DATABASE_URL" -f db/init/11-gmgn-sm-kol-combined.sql
+psql "$DATABASE_URL" -f db/init/13-radar-alert-threads.sql
 ```
+
+(`radar_alert_threads` is also auto-created at runtime if missing.)
 
 3. Rebuild web + cron so `gmgn_sim_track` and `gmgn_activity_poll` workers are scheduled.
 
@@ -80,6 +85,8 @@ curl -X POST "http://127.0.0.1:3000/api/gmgn/sim-track?key=$TRENDING_TRACKER_SEC
 
 3. Verify:
    - Hot tokens in `social_token_events` (`source LIKE 'gmgn_%'`, `raw_metadata.gmgn_activity_score`)
+   - Open Telegram lifecycle card (one message edited in place; dead card frozen; comeback = new message)
+   - Rows in `radar_alert_threads` (`status` open/dead)
    - Open buys in `trading_records` (`wallet_address = gmgn-sim`)
    - `entry_features` includes `gmgn_activity_score`, `sm_wallet_count_60m`, etc.
    - Closes write `strategy_outcomes` with `domain = gmgn`
@@ -143,7 +150,8 @@ On each hot Radar pass, fetch USD price + mcap (Jupiter market hints) and compar
 | Sticky pump WATCH | `stickyPumpPct` 50 | Force **WATCH**; sticky baseline = previous price |
 | Hold sticky | price &gt; baseline | Keep **WATCH** until ≤ baseline |
 | Dump ban | `dumpBanPct` -80 | SKIP + `markTokenRug(gmgn-radar)` + close sims |
-| Mcap WATCH rug | `microMcapMax` 100k → `rugMcapMax` 30k | Ban + close sims; death final-edit on live thread |
+
+Low absolute mcap (e.g. staying under $30k after a micro start) is **not** treated as rug — tokens can keep being tracked at any mcap. Soft death still uses comeback drawdown stages.
 
 ### Comeback (configurable)
 
@@ -156,13 +164,13 @@ On each hot Radar pass, fetch USD price + mcap (Jupiter market hints) and compar
 
 When `config.radar.telegram.singleThread` is true (default): one editable card per lifecycle with initial price/MC, now + % vs last, peak SM/KOL. Ingest stays cooldown-gated; **thread refresh** runs every hot poll. Persist in `radar_alert_threads`.
 
-Metadata: `radar_price_usd`, `radar_mcap_usd`, `radar_growth_pct`, `radar_watch_baseline_usd`, `radar_dump_banned`, `radar_mcap_rug`, `radar_thread_action`.
+Metadata: `radar_price_usd`, `radar_mcap_usd`, `radar_growth_pct`, `radar_watch_baseline_usd`, `radar_dump_banned`, `radar_thread_action`.
 
 ### Key files
 
 - `src/strategies/gmgn-radar-accumulate.ts` — 2h peak merge
 - `src/strategies/gmgn-radar-review.ts` — score / action / Telegram HTML (live thread + rug)
-- `src/strategies/gmgn-radar-price.ts` — sticky / dump / mcap rug (config thresholds)
+- `src/strategies/gmgn-radar-price.ts` — sticky / dump (config thresholds)
 - `src/strategies/gmgn-radar-comeback.ts` — drawdown death + comeback evaluators
 - `src/strategies/gmgn-radar-thread-sync.ts` — send/edit lifecycle cards
 - `src/strategies/gmgn-radar-dump.ts` — dump/rug ban + sim close
@@ -261,7 +269,7 @@ Go-live checklist (future):
 - `src/strategies/gmgn-activity-score.ts` — 60m scorer
 - `src/strategies/gmgn-radar-accumulate.ts` — 2h SM/KOL/activity/early peaks
 - `src/strategies/gmgn-radar-review.ts` — Radar 0–100 ENTER/WATCH/SKIP
-- `src/strategies/gmgn-radar-price.ts` — reappearance growth → sticky WATCH / dump ban / mcap WATCH rug
+- `src/strategies/gmgn-radar-price.ts` — reappearance growth → sticky WATCH / dump ban
 - `src/strategies/gmgn-radar-comeback.ts` — configurable drawdown death + comeback
 - `src/strategies/gmgn-radar-thread-sync.ts` — single Telegram card per lifecycle
 - `src/strategies/gmgn-radar-dump.ts` — ban + close open sims on dump/rug
@@ -269,5 +277,16 @@ Go-live checklist (future):
 - `src/strategies/gmgn-pipeline.ts` — score-sorted discovery + security gate + Radar
 - `src/app/api/gmgn/activity-poll/route.ts` — hot token → Radar + social ingest
 - `src/app/api/gmgn/sim-track/route.ts` — cron sim target
-- `src/strategies/registry.ts` — `GMGN_STRATEGIES` defaults
+- `src/strategies/registry.ts` — `GMGN_STRATEGIES` + `DEFAULT_GMGN_RADAR`
+- `src/strategies/gmgn-radar-threads-db.ts` — `radar_alert_threads` persistence
+- `db/init/13-radar-alert-threads.sql` — thread table
 - `main.go` — `gmgn_sim_track` + `gmgn_activity_poll` workers
+
+## Next build (Radar)
+
+| Priority | Item | Why |
+|----------|------|-----|
+| **P0** | Strategy Admin **GMGN → Radar** knobs (`config.radar` + comeback + singleThread) | Knobs exist in registry/DB merge but **GmgnCard UI has no Radar section** — operators cannot tune without raw PATCH |
+| P1 | Wire `allowSimReopen` on comeback (sim open only) | Flag exists; reserved in thread sync |
+| P2 | Sticky TTL / score-override for ENTER during sticky | Still blocks ENTER on grinders like Wukong |
+| — | ML enforce / live GMGN swap | Explicit non-goals until sim review + `*_ready` |

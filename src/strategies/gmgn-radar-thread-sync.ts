@@ -60,7 +60,7 @@ export type RadarThreadSyncInput = {
   kol: number
   priceUsd: number | null
   mcapUsd: number | null
-  /** Hard ban / mcap rug from price rules */
+  /** Hard ban from price dump rules */
   hardDead: boolean
   hardDeadReason: string | null
 }

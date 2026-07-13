@@ -225,8 +225,6 @@ export interface GmgnRadarComebackConfig {
 export interface GmgnRadarConfig {
   stickyPumpPct: number
   dumpBanPct: number
-  microMcapMax: number
-  rugMcapMax: number
   comeback: GmgnRadarComebackConfig
   telegram: {
     /** One editable Telegram card per lifecycle until dead. */

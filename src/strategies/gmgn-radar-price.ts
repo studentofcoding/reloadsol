@@ -1,11 +1,9 @@
-/** Radar reappearance price growth → sticky WATCH / dump ban / mcap rug. */
+/** Radar reappearance price growth → sticky WATCH / dump ban. */
 
 import type { GmgnRadarAction } from './gmgn-radar-review'
 
 export const RADAR_PUMP_WATCH_PCT = 50
 export const RADAR_DUMP_BAN_PCT = -80
-export const RADAR_MICRO_MCAP_MAX = 100_000
-export const RADAR_RUG_MCAP_MAX = 30_000
 
 export function computeRadarPriceGrowth(
   currentUsd: number | null | undefined,
@@ -120,45 +118,6 @@ export function applyRadarPriceRules(input: RadarPriceRuleInput): RadarPriceRule
     banned: false,
     reasons,
     growthPct,
-  }
-}
-
-/**
- * WATCH + prior mcap &lt; microMax + current mcap ≤ rugMax → Rug.
- */
-export function applyRadarMcapWatchRug(params: {
-  action: GmgnRadarAction
-  previousMcapUsd: number | null
-  currentMcapUsd: number | null
-  microMcapMax?: number
-  rugMcapMax?: number
-}): { isRug: boolean; reasons: string[] } {
-  const { action, previousMcapUsd, currentMcapUsd } = params
-  const microMcapMax = params.microMcapMax ?? RADAR_MICRO_MCAP_MAX
-  const rugMcapMax = params.rugMcapMax ?? RADAR_RUG_MCAP_MAX
-  if (action !== 'WATCH') return { isRug: false, reasons: [] }
-  if (
-    previousMcapUsd == null ||
-    currentMcapUsd == null ||
-    !Number.isFinite(previousMcapUsd) ||
-    !Number.isFinite(currentMcapUsd)
-  ) {
-    return { isRug: false, reasons: [] }
-  }
-  if (previousMcapUsd <= 0 || currentMcapUsd <= 0) {
-    return { isRug: false, reasons: [] }
-  }
-  if (previousMcapUsd >= microMcapMax) {
-    return { isRug: false, reasons: [] }
-  }
-  if (currentMcapUsd > rugMcapMax) {
-    return { isRug: false, reasons: [] }
-  }
-  return {
-    isRug: true,
-    reasons: [
-      `WATCH mcap rug: was $${Math.round(previousMcapUsd).toLocaleString()} (<$${Math.round(microMcapMax / 1000)}k) → now $${Math.round(currentMcapUsd).toLocaleString()} (≤$${Math.round(rugMcapMax / 1000)}k)`,
-    ],
   }
 }
 

@@ -272,8 +272,6 @@ export const DEFAULT_GMGN_EXIT = {
 export const DEFAULT_GMGN_RADAR: import('./types').GmgnRadarConfig = {
   stickyPumpPct: 50,
   dumpBanPct: -80,
-  microMcapMax: 100_000,
-  rugMcapMax: 30_000,
   comeback: {
     enabled: true,
     drawdownPct: 70,

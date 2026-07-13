@@ -13,7 +13,6 @@ import {
 } from '@/strategies/gmgn-radar-accumulate'
 import { killAndBanRadarDump } from '@/strategies/gmgn-radar-dump'
 import {
-  applyRadarMcapWatchRug,
   applyRadarPriceRules,
   computeRadarPriceGrowth,
   extractRadarPriceStateFromEvents,
@@ -44,7 +43,7 @@ import {
   fetchTokenMetadataFromJupiter,
 } from '@/utils/jupiter-metadata'
 import { isTokenRugged } from '@/utils/rug-list/db'
-import { sendGmgnRadarAlert, sendGmgnRadarRugAlert } from '@/utils/telegram'
+import { sendGmgnRadarAlert } from '@/utils/telegram'
 import { log } from '@/utils/unified-logger'
 
 export const dynamic = 'force-dynamic'
@@ -131,16 +130,13 @@ async function applyPriceRulesToRadar(params: {
   review: GmgnRadarReview
   priceUsd: number | null
   mcapUsd: number | null
-  previousMcapUsd: number | null
   growthPct: number | null
   stickyBaselineUsd: number | null
   banned: boolean
-  isRug: boolean
-  rugReason: string | null
 }> {
   const cfg = params.radarConfig
   const priorEvents = await fetchRecentSocialEvents(params.tokenAddress, 30)
-  const { previousPriceUsd, previousMcapUsd, stickyBaselineUsd } =
+  const { previousPriceUsd, stickyBaselineUsd } =
     extractRadarPriceStateFromEvents(priorEvents)
   const growthPct = computeRadarPriceGrowth(params.priceUsd, previousPriceUsd)
   const rules = applyRadarPriceRules({
@@ -153,55 +149,29 @@ async function applyPriceRulesToRadar(params: {
     dumpBanPct: cfg.dumpBanPct,
   })
 
-  let action = rules.action
-  let banned = rules.banned
-  const reasonParts = [...rules.reasons]
-  let isRug = false
-  let rugReason: string | null = null
-
-  if (!banned) {
-    const rug = applyRadarMcapWatchRug({
-      action,
-      previousMcapUsd,
-      currentMcapUsd: params.mcapUsd,
-      microMcapMax: cfg.microMcapMax,
-      rugMcapMax: cfg.rugMcapMax,
-    })
-    if (rug.isRug) {
-      isRug = true
-      banned = true
-      action = 'SKIP'
-      reasonParts.push(...rug.reasons)
-      rugReason = rug.reasons.join('; ')
-    }
-  }
-
-  if (banned) {
+  if (rules.banned) {
     void killAndBanRadarDump({
       tokenAddress: params.tokenAddress,
       tokenSymbol: params.symbol,
       sellPriceUsd: params.priceUsd,
     }).catch((err) => {
-      console.error('[gmgn-activity-poll] radar dump/rug ban/kill failed:', err)
+      console.error('[gmgn-activity-poll] radar dump ban/kill failed:', err)
     })
   }
 
-  const extra = reasonParts.length > 0 ? reasonParts.join('; ') : null
+  const extra = rules.reasons.length > 0 ? rules.reasons.join('; ') : null
   const review =
-    action !== params.review.action || extra
-      ? withRadarActionOverride(params.review, action, extra)
+    rules.action !== params.review.action || extra
+      ? withRadarActionOverride(params.review, rules.action, extra)
       : params.review
 
   return {
     review,
     priceUsd: params.priceUsd,
     mcapUsd: params.mcapUsd,
-    previousMcapUsd,
     growthPct: rules.growthPct,
     stickyBaselineUsd: rules.stickyBaselineUsd,
-    banned,
-    isRug,
-    rugReason,
+    banned: rules.banned,
   }
 }
 
@@ -260,7 +230,6 @@ export async function POST(request: NextRequest) {
     const events: SocialIngestEvent[] = []
     let skipped = 0
     let dumpBanned = 0
-    let rugBanned = 0
     let threadsOpened = 0
     let threadsUpdated = 0
     let threadsDied = 0
@@ -291,8 +260,7 @@ export async function POST(request: NextRequest) {
         radarConfig,
       })
       radar = priced.review
-      if (priced.isRug) rugBanned++
-      else if (priced.banned) dumpBanned++
+      if (priced.banned) dumpBanned++
 
       radarByMint.set(item.tokenAddress, radar)
 
@@ -301,11 +269,7 @@ export async function POST(request: NextRequest) {
 
       // Thread refresh even when ingest is on cooldown
       const hardDead = priced.banned
-      const hardDeadReason = priced.isRug
-        ? priced.rugReason
-        : priced.banned
-          ? priced.review.summary
-          : null
+      const hardDeadReason = priced.banned ? priced.review.summary : null
 
       const threadSync = await syncRadarTelegramThread({
         radar: radarConfig,
@@ -329,17 +293,7 @@ export async function POST(request: NextRequest) {
       else if (threadSync.action === 'died') threadsDied++
       else if (threadSync.action === 'comeback') threadsComeback++
       else if (threadSync.action === 'legacy') {
-        // Fallback: old one-shot alerts when singleThread is off
-        if (priced.isRug) {
-          void sendGmgnRadarRugAlert({
-            symbol: item.symbol,
-            tokenAddress: item.tokenAddress,
-            previousMcapUsd: priced.previousMcapUsd,
-            currentMcapUsd: priced.mcapUsd,
-            priceUsd: priced.priceUsd,
-            reason: priced.rugReason || 'WATCH mcap collapse',
-          }).catch(() => {})
-        } else if (!priced.banned && !(await isTokenRugged(item.tokenAddress))) {
+        if (!priced.banned && !(await isTokenRugged(item.tokenAddress))) {
           void sendGmgnRadarAlert({
             review: radar,
             symbol: item.symbol,
@@ -386,8 +340,7 @@ export async function POST(request: NextRequest) {
           radar_mcap_usd: priced.mcapUsd,
           radar_growth_pct: priced.growthPct,
           radar_watch_baseline_usd: priced.stickyBaselineUsd,
-          radar_dump_banned: priced.banned && !priced.isRug ? 1 : 0,
-          radar_mcap_rug: priced.isRug ? 1 : 0,
+          radar_dump_banned: priced.banned ? 1 : 0,
           radar_thread_action: threadSync.action,
         },
       })
@@ -419,7 +372,6 @@ export async function POST(request: NextRequest) {
       ingestSkipped: ingestResult.skipped,
       liveBoosted,
       dumpBanned,
-      rugBanned,
       threadsOpened,
       threadsUpdated,
       threadsDied,
@@ -435,7 +387,6 @@ export async function POST(request: NextRequest) {
       ingestErrors: ingestResult.errors,
       liveBoosted,
       dumpBanned,
-      rugBanned,
       threadsOpened,
       threadsUpdated,
       threadsDied,

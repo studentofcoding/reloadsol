@@ -2,7 +2,7 @@
 
 Living guide for understanding the ML in this repo — not a general ML textbook. Pair with [OPERATOR_STATE.md](./OPERATOR_STATE.md), [ML_GATE_PLAN.md](./ML_GATE_PLAN.md), and [ml/README.md](../ml/README.md).
 
-**Snapshot (Jul 2026):** ~79 sim-outcome training rows (0 incomplete, ~39 volume-imputed); gate blocked until **200** labeled; potential trained but macro-F1 ~**0.37** → not ready; pattern-gate shadow, `pattern_ready: false`. All modes default **shadow**.
+**Snapshot (Jul 13 2026):** ~**95** sim-outcome training rows (0 incomplete, ~45 volume-imputed); gate blocked until **200** labeled; potential trained macro-F1 **0.33** → `potential_ready: false`; pattern-gate shadow, `pattern_ready: false`. All modes default **shadow**.
 
 ---
 

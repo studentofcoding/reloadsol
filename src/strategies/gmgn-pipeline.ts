@@ -15,7 +15,6 @@ import {
 } from './gmgn-radar-review'
 import { killAndBanRadarDump } from './gmgn-radar-dump'
 import {
-  applyRadarMcapWatchRug,
   applyRadarPriceRules,
   computeRadarPriceGrowth,
   extractRadarPriceStateFromEvents,
@@ -204,7 +203,7 @@ export async function gateGmgnCandidates(params: {
       hints?.usdPrice != null && hints.usdPrice > 0 ? hints.usdPrice : null
     const mcapUsd = hints?.mcap != null && hints.mcap > 0 ? hints.mcap : null
     const priceHistory = await fetchRecentSocialEvents(candidate.tokenAddress, 30)
-    const { previousPriceUsd, previousMcapUsd, stickyBaselineUsd } =
+    const { previousPriceUsd, stickyBaselineUsd } =
       extractRadarPriceStateFromEvents(priceHistory)
     const growthPct = computeRadarPriceGrowth(priceUsd, previousPriceUsd)
     const radarCfg = params.strategy.config.radar
@@ -218,25 +217,9 @@ export async function gateGmgnCandidates(params: {
       dumpBanPct: radarCfg?.dumpBanPct,
     })
 
-    let action = priceRules.action
-    let banned = priceRules.banned
+    const action = priceRules.action
+    const banned = priceRules.banned
     const reasonParts = [...priceRules.reasons]
-    let isRug = false
-    if (!banned) {
-      const rug = applyRadarMcapWatchRug({
-        action,
-        previousMcapUsd,
-        currentMcapUsd: mcapUsd,
-        microMcapMax: radarCfg?.microMcapMax,
-        rugMcapMax: radarCfg?.rugMcapMax,
-      })
-      if (rug.isRug) {
-        isRug = true
-        banned = true
-        action = 'SKIP'
-        reasonParts.push(...rug.reasons)
-      }
-    }
 
     if (banned) {
       void killAndBanRadarDump({
@@ -286,8 +269,7 @@ export async function gateGmgnCandidates(params: {
         radar_mcap_usd: mcapUsd,
         radar_growth_pct: priceRules.growthPct,
         radar_watch_baseline_usd: priceRules.stickyBaselineUsd,
-        radar_dump_banned: banned && !isRug ? 1 : 0,
-        radar_mcap_rug: isRug ? 1 : 0,
+        radar_dump_banned: banned ? 1 : 0,
         strategy_id: params.strategy.id,
         domain: 'gmgn',
       },

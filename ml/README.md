@@ -188,6 +188,17 @@ Tier rules (`training_class` / derived columns):
 
 Gate ready: macro-F1 ≥ **0.65** (200+ rows). Potential ready: macro-F1 ≥ **0.55** (30+ winners).
 
+### Latest potential baseline (Jul 13)
+
+| Metric | Value |
+|--------|-------|
+| Export rows | 95 (0 incomplete, `volume_imputed=45`) |
+| Potential train/test | 53 / 14 |
+| Macro-F1 | **0.33** → `potential_ready: false` |
+| Accuracy | 0.57 |
+
+Keep `ML_POTENTIAL_EXIT_MODE=shadow`. Collect more closed sims before `apply`.
+
 ## Shadow runtime (Node)
 
 After training, sim buys on mcap tracker persist shadow scores on `entry_features`:
