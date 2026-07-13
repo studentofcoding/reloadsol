@@ -14,6 +14,7 @@ import { invalidateGmgnCache } from '@/strategies/load-gmgn'
 import { invalidateDlmmStrategyCache } from '@/strategies/load-dlmm'
 import { upsertStrategyDefinition, loadStrategyDefinitionById } from '@/strategies/db'
 import { updateAgentConfig } from '@/utils/dlmm/db'
+import { mergeStrategyConfigPatch } from '@/strategies/merge-strategy-config-patch'
 import type {
   ExecutionMode,
   TrendingBotStrategyOverride,
@@ -70,13 +71,19 @@ export async function PATCH(
 
     const body = (await request.json()) as PatchBody
     const existingRow = await loadStrategyDefinitionById(id)
+    // Omit config → keep DB override; partial config → deep-merge onto existing
+    const configOverride = mergeStrategyConfigPatch(
+      existingRow?.config,
+      body.config,
+    )
+    const nextActive =
+      body.is_active ?? existingRow?.is_active ?? null
 
     if (resolved.domain === 'trending_bot') {
-      const configOverride = (body.config ?? {}) as TrendingBotStrategyOverride
       const merged = mergeStrategyOverride(
         resolved.base as import('@/strategies/types').TrendingBotStrategy,
-        configOverride,
-        body.is_active ?? null,
+        configOverride as TrendingBotStrategyOverride,
+        nextActive,
       )
 
       const result = await upsertStrategyDefinition({
@@ -85,7 +92,7 @@ export async function PATCH(
         name: body.name ?? merged.name,
         description: body.description ?? merged.description,
         config: configOverride,
-        is_active: body.is_active ?? merged.is_active,
+        is_active: body.is_active ?? existingRow?.is_active ?? merged.is_active,
         execution_mode: body.execution_mode ?? existingRow?.execution_mode ?? 'sim_only',
       })
 
@@ -98,11 +105,10 @@ export async function PATCH(
     }
 
     if (resolved.domain === 'signals') {
-      const configOverride = (body.config ?? {}) as SignalsStrategyOverride
       const merged = mergeSignalsStrategy(
         resolved.base as import('@/strategies/types').SignalsStrategy,
-        configOverride,
-        body.is_active ?? null,
+        configOverride as SignalsStrategyOverride,
+        nextActive,
       )
       if (body.execution_mode) merged.execution_mode = body.execution_mode
 
@@ -112,7 +118,7 @@ export async function PATCH(
         name: body.name ?? merged.name,
         description: body.description ?? merged.description,
         config: configOverride,
-        is_active: body.is_active ?? merged.is_active,
+        is_active: body.is_active ?? existingRow?.is_active ?? merged.is_active,
         execution_mode: body.execution_mode ?? existingRow?.execution_mode ?? merged.execution_mode,
       })
 
@@ -125,11 +131,10 @@ export async function PATCH(
     }
 
     if (resolved.domain === 'mcap_tracker') {
-      const configOverride = (body.config ?? {}) as McapTrackerStrategyOverride
       const merged = mergeMcapTrackerStrategy(
         resolved.base as import('@/strategies/types').McapTrackerStrategy,
-        configOverride,
-        body.is_active ?? null,
+        configOverride as McapTrackerStrategyOverride,
+        nextActive,
       )
       if (body.execution_mode) merged.execution_mode = body.execution_mode
 
@@ -139,7 +144,7 @@ export async function PATCH(
         name: body.name ?? merged.name,
         description: body.description ?? merged.description,
         config: configOverride,
-        is_active: body.is_active ?? merged.is_active,
+        is_active: body.is_active ?? existingRow?.is_active ?? merged.is_active,
         execution_mode: body.execution_mode ?? existingRow?.execution_mode ?? merged.execution_mode,
       })
 
@@ -152,11 +157,10 @@ export async function PATCH(
     }
 
     if (resolved.domain === 'gmgn') {
-      const configOverride = (body.config ?? {}) as GmgnStrategyOverride
       const merged = mergeGmgnStrategy(
         resolved.base as import('@/strategies/types').GmgnStrategy,
-        configOverride,
-        body.is_active ?? null,
+        configOverride as GmgnStrategyOverride,
+        nextActive,
       )
       if (body.execution_mode) merged.execution_mode = body.execution_mode
 
@@ -166,7 +170,7 @@ export async function PATCH(
         name: body.name ?? merged.name,
         description: body.description ?? merged.description,
         config: configOverride,
-        is_active: body.is_active ?? merged.is_active,
+        is_active: body.is_active ?? existingRow?.is_active ?? merged.is_active,
         execution_mode: body.execution_mode ?? existingRow?.execution_mode ?? merged.execution_mode,
       })
 
@@ -178,11 +182,10 @@ export async function PATCH(
       return NextResponse.json({ success: true, strategy: merged })
     }
 
-    const configOverride = (body.config ?? {}) as DlmmStrategyOverride
     const merged = mergeDlmmStrategy(
       resolved.base as import('@/strategies/types').DlmmStrategy,
-      configOverride,
-      body.is_active ?? null,
+      configOverride as DlmmStrategyOverride,
+      nextActive,
     )
     if (body.execution_mode) merged.execution_mode = body.execution_mode
 
@@ -192,7 +195,7 @@ export async function PATCH(
       name: body.name ?? merged.name,
       description: body.description ?? merged.description,
       config: configOverride,
-      is_active: body.is_active ?? merged.is_active,
+      is_active: body.is_active ?? existingRow?.is_active ?? merged.is_active,
       execution_mode: body.execution_mode ?? existingRow?.execution_mode ?? merged.execution_mode,
     })
 

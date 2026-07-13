@@ -909,7 +909,7 @@ export default function StrategyAdminHub() {
             <div className="grid gap-4 md:grid-cols-2">
               {Object.values(effective).map((s) => (
                 <TrendingBotCard
-                  key={s.id}
+                  key={`${s.id}-${s.is_active}-${s.buy_amount_sol}-${s.stop_loss_percentage}-${s.take_profit_levels.tp1_percentage}`}
                   strategy={s}
                   isRunning={active.includes(s.id)}
                   allocation={data?.trending_bot?.allocation[s.id]}
