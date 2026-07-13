@@ -207,12 +207,15 @@ export async function gateGmgnCandidates(params: {
     const { previousPriceUsd, previousMcapUsd, stickyBaselineUsd } =
       extractRadarPriceStateFromEvents(priceHistory)
     const growthPct = computeRadarPriceGrowth(priceUsd, previousPriceUsd)
+    const radarCfg = params.strategy.config.radar
     const priceRules = applyRadarPriceRules({
       action: radarBase.action,
       growthPct,
       stickyBaselineUsd,
       currentPriceUsd: priceUsd,
       previousPriceUsd,
+      stickyPumpPct: radarCfg?.stickyPumpPct,
+      dumpBanPct: radarCfg?.dumpBanPct,
     })
 
     let action = priceRules.action
@@ -224,6 +227,8 @@ export async function gateGmgnCandidates(params: {
         action,
         previousMcapUsd,
         currentMcapUsd: mcapUsd,
+        microMcapMax: radarCfg?.microMcapMax,
+        rugMcapMax: radarCfg?.rugMcapMax,
       })
       if (rug.isRug) {
         isRug = true

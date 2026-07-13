@@ -269,6 +269,25 @@ export const DEFAULT_GMGN_EXIT = {
   maxHoldHours: 12,
 }
 
+export const DEFAULT_GMGN_RADAR: import('./types').GmgnRadarConfig = {
+  stickyPumpPct: 50,
+  dumpBanPct: -80,
+  microMcapMax: 100_000,
+  rugMcapMax: 30_000,
+  comeback: {
+    enabled: true,
+    drawdownPct: 70,
+    troughMcapMax: 30_000,
+    recoverMultiple: 1.5,
+    minRadarScore: 45,
+    unbanOnComeback: false,
+    allowSimReopen: false,
+  },
+  telegram: {
+    singleThread: true,
+  },
+}
+
 export const GMGN_STRATEGIES: Record<string, import('./types').GmgnStrategy> = {
   gmgn_smartmoney_default: {
     id: 'gmgn_smartmoney_default',
@@ -290,6 +309,7 @@ export const GMGN_STRATEGIES: Record<string, import('./types').GmgnStrategy> = {
       security: { ...DEFAULT_GMGN_SECURITY },
       execution: { simBuySol: 0.02, maxOpenPositions: 5 },
       exit: { ...DEFAULT_GMGN_EXIT },
+      radar: { ...DEFAULT_GMGN_RADAR, comeback: { ...DEFAULT_GMGN_RADAR.comeback }, telegram: { ...DEFAULT_GMGN_RADAR.telegram } },
     },
   },
   gmgn_kol_momentum: {
@@ -311,6 +331,7 @@ export const GMGN_STRATEGIES: Record<string, import('./types').GmgnStrategy> = {
       security: { ...DEFAULT_GMGN_SECURITY },
       execution: { simBuySol: 0.02, maxOpenPositions: 5 },
       exit: { ...DEFAULT_GMGN_EXIT },
+      radar: { ...DEFAULT_GMGN_RADAR, comeback: { ...DEFAULT_GMGN_RADAR.comeback }, telegram: { ...DEFAULT_GMGN_RADAR.telegram } },
     },
   },
   gmgn_sm_kol_combined: {
@@ -333,6 +354,7 @@ export const GMGN_STRATEGIES: Record<string, import('./types').GmgnStrategy> = {
       security: { ...DEFAULT_GMGN_SECURITY },
       execution: { simBuySol: 0.02, maxOpenPositions: 5 },
       exit: { ...DEFAULT_GMGN_EXIT },
+      radar: { ...DEFAULT_GMGN_RADAR, comeback: { ...DEFAULT_GMGN_RADAR.comeback }, telegram: { ...DEFAULT_GMGN_RADAR.telegram } },
     },
   },
 }

@@ -342,6 +342,71 @@ export function formatGmgnRadarTelegramHtml(params: {
   return lines.filter((l): l is string => l != null).join('\n')
 }
 
+function formatPct(pct: number | null | undefined): string {
+  if (pct == null || !Number.isFinite(pct)) return '—'
+  const sign = pct >= 0 ? '+' : ''
+  return `${sign}${pct.toFixed(1)}%`
+}
+
+function formatPriceCompact(price: number | null | undefined): string {
+  if (price == null || !Number.isFinite(price) || price <= 0) return '—'
+  return `$${price.toLocaleString('en-US', { maximumSignificantDigits: 4 })}`
+}
+
+/** Live Radar card: one message per lifecycle (edited until dead). */
+export function formatGmgnRadarLiveThreadHtml(params: {
+  kind: 'new' | 'comeback' | 'dead'
+  review: GmgnRadarReview
+  symbol?: string | null
+  tokenAddress: string
+  category?: string | null
+  lifecycle: number
+  peakSm: number
+  peakKol: number
+  initialPriceUsd: number | null
+  initialMcapUsd: number | null
+  priceUsd: number | null
+  mcapUsd: number | null
+  pricePctVsLast: number | null
+  mcapPctVsLast: number | null
+  pricePctVsInitial?: number | null
+  mcapPctVsInitial?: number | null
+  deathReason?: string | null
+}): string {
+  const sym = params.symbol?.trim() || 'UNKNOWN'
+  const cat = params.category?.trim() || 'GMGN'
+  const header =
+    params.kind === 'dead'
+      ? `☠️ <b>RUG / DEAD</b> · ${cat} · <b>${escapeHtml(sym)}</b>`
+      : params.kind === 'comeback'
+        ? `♻️ <b>COMEBACK</b> · ${cat} · <b>${escapeHtml(sym)}</b>`
+        : `<b>NEW TOKEN</b> · ${cat} · <b>${escapeHtml(sym)}</b>`
+
+  const lines = [
+    header,
+    `Lifecycle #${params.lifecycle}`,
+    '',
+    `🧠 <b>Radar:</b> ${params.review.emoji} <b>${params.review.action}</b> (${params.review.score}/100)`,
+    `<i>${escapeHtml(params.review.summary)}</i>`,
+    '',
+    `📌 <b>Initial:</b> ${formatPriceCompact(params.initialPriceUsd)} · MC ${params.initialMcapUsd != null && params.initialMcapUsd > 0 ? formatMcapCompact(params.initialMcapUsd) : '—'}`,
+    `💰 <b>Now:</b> ${formatPriceCompact(params.priceUsd)} · MC ${params.mcapUsd != null && params.mcapUsd > 0 ? formatMcapCompact(params.mcapUsd) : '—'}`,
+    `Δ vs last: price ${formatPct(params.pricePctVsLast)} · MC ${formatPct(params.mcapPctVsLast)}`,
+    params.pricePctVsInitial != null || params.mcapPctVsInitial != null
+      ? `Δ vs initial: price ${formatPct(params.pricePctVsInitial ?? null)} · MC ${formatPct(params.mcapPctVsInitial ?? null)}`
+      : null,
+    `👥 <b>SM</b> ${params.peakSm} · <b>KOL</b> ${params.peakKol}`,
+    '',
+    `📊 <b>GMGN:</b> ${escapeHtml(params.review.gmgnLine)}`,
+    params.deathReason
+      ? `<i>${escapeHtml(params.deathReason)}</i>`
+      : null,
+    '',
+    `<code>${escapeHtml(params.tokenAddress)}</code>`,
+  ]
+  return lines.filter((l): l is string => l != null).join('\n')
+}
+
 /** Dedicated Rug alert (always shared even though SKIP is not). */
 export function formatGmgnRadarRugTelegramHtml(params: {
   symbol?: string | null

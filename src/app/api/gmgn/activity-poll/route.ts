@@ -18,6 +18,7 @@ import {
   computeRadarPriceGrowth,
   extractRadarPriceStateFromEvents,
 } from '@/strategies/gmgn-radar-price'
+import { syncRadarTelegramThread } from '@/strategies/gmgn-radar-thread-sync'
 import {
   buildGmgnRadarReview,
   resolveRadarTop10,
@@ -25,6 +26,9 @@ import {
   type GmgnRadarInput,
   type GmgnRadarReview,
 } from '@/strategies/gmgn-radar-review'
+import { getMergedGmgnRegistry } from '@/strategies/load-gmgn'
+import { DEFAULT_GMGN_RADAR } from '@/strategies/registry'
+import type { GmgnRadarConfig } from '@/strategies/types'
 import {
   fetchRecentSocialEvents,
   fetchSocialEventsForTokenSince,
@@ -122,6 +126,7 @@ async function applyPriceRulesToRadar(params: {
   review: GmgnRadarReview
   priceUsd: number | null
   mcapUsd: number | null
+  radarConfig: GmgnRadarConfig
 }): Promise<{
   review: GmgnRadarReview
   priceUsd: number | null
@@ -133,6 +138,7 @@ async function applyPriceRulesToRadar(params: {
   isRug: boolean
   rugReason: string | null
 }> {
+  const cfg = params.radarConfig
   const priorEvents = await fetchRecentSocialEvents(params.tokenAddress, 30)
   const { previousPriceUsd, previousMcapUsd, stickyBaselineUsd } =
     extractRadarPriceStateFromEvents(priorEvents)
@@ -143,6 +149,8 @@ async function applyPriceRulesToRadar(params: {
     stickyBaselineUsd,
     currentPriceUsd: params.priceUsd,
     previousPriceUsd,
+    stickyPumpPct: cfg.stickyPumpPct,
+    dumpBanPct: cfg.dumpBanPct,
   })
 
   let action = rules.action
@@ -156,6 +164,8 @@ async function applyPriceRulesToRadar(params: {
       action,
       previousMcapUsd,
       currentMcapUsd: params.mcapUsd,
+      microMcapMax: cfg.microMcapMax,
+      rugMcapMax: cfg.rugMcapMax,
     })
     if (rug.isRug) {
       isRug = true
@@ -241,19 +251,24 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const registry = await getMergedGmgnRegistry()
+    const radarConfig =
+      registry.gmgn_sm_kol_combined?.config.radar ??
+      registry.gmgn_smartmoney_default?.config.radar ??
+      DEFAULT_GMGN_RADAR
+
     const events: SocialIngestEvent[] = []
     let skipped = 0
     let dumpBanned = 0
     let rugBanned = 0
+    let threadsOpened = 0
+    let threadsUpdated = 0
+    let threadsDied = 0
+    let threadsComeback = 0
     const radarByMint = new Map<string, GmgnRadarReview>()
 
     for (const item of hot) {
       const recent = await hasRecentGmgnEvent(item.tokenAddress, cooldownMin)
-      if (recent) {
-        skipped++
-        continue
-      }
-
       const source = resolveIngestSource(item)
       const radarInput = await buildAccumulatedRadarInput({
         tokenAddress: item.tokenAddress,
@@ -273,12 +288,74 @@ export async function POST(request: NextRequest) {
         review: radar,
         priceUsd: market.priceUsd,
         mcapUsd: market.mcapUsd,
+        radarConfig,
       })
       radar = priced.review
       if (priced.isRug) rugBanned++
       else if (priced.banned) dumpBanned++
 
       radarByMint.set(item.tokenAddress, radar)
+
+      const category =
+        source === 'gmgn_hot' ? 'HOT' : source === 'gmgn_kol' ? 'KOL' : 'SM'
+
+      // Thread refresh even when ingest is on cooldown
+      const hardDead = priced.banned
+      const hardDeadReason = priced.isRug
+        ? priced.rugReason
+        : priced.banned
+          ? priced.review.summary
+          : null
+
+      const threadSync = await syncRadarTelegramThread({
+        radar: radarConfig,
+        review: radar,
+        tokenAddress: item.tokenAddress,
+        symbol: item.symbol,
+        category,
+        sm: radarInput.sm,
+        kol: radarInput.kol,
+        priceUsd: priced.priceUsd,
+        mcapUsd: priced.mcapUsd,
+        hardDead,
+        hardDeadReason,
+      }).catch((err) => {
+        console.error('[gmgn-activity-poll] radar thread sync failed:', err)
+        return { action: 'skipped' as const, thread: null }
+      })
+
+      if (threadSync.action === 'opened') threadsOpened++
+      else if (threadSync.action === 'updated') threadsUpdated++
+      else if (threadSync.action === 'died') threadsDied++
+      else if (threadSync.action === 'comeback') threadsComeback++
+      else if (threadSync.action === 'legacy') {
+        // Fallback: old one-shot alerts when singleThread is off
+        if (priced.isRug) {
+          void sendGmgnRadarRugAlert({
+            symbol: item.symbol,
+            tokenAddress: item.tokenAddress,
+            previousMcapUsd: priced.previousMcapUsd,
+            currentMcapUsd: priced.mcapUsd,
+            priceUsd: priced.priceUsd,
+            reason: priced.rugReason || 'WATCH mcap collapse',
+          }).catch(() => {})
+        } else if (!priced.banned && !(await isTokenRugged(item.tokenAddress))) {
+          void sendGmgnRadarAlert({
+            review: radar,
+            symbol: item.symbol,
+            tokenAddress: item.tokenAddress,
+            category,
+            eventLabel: `activity score ${item.score}`,
+            priceUsd: priced.priceUsd,
+            mcapUsd: priced.mcapUsd,
+          }).catch(() => {})
+        }
+      }
+
+      if (recent) {
+        skipped++
+        continue
+      }
 
       events.push({
         token_address: item.tokenAddress,
@@ -311,42 +388,9 @@ export async function POST(request: NextRequest) {
           radar_watch_baseline_usd: priced.stickyBaselineUsd,
           radar_dump_banned: priced.banned && !priced.isRug ? 1 : 0,
           radar_mcap_rug: priced.isRug ? 1 : 0,
+          radar_thread_action: threadSync.action,
         },
       })
-
-      if (priced.isRug) {
-        void sendGmgnRadarRugAlert({
-          symbol: item.symbol,
-          tokenAddress: item.tokenAddress,
-          previousMcapUsd: priced.previousMcapUsd,
-          currentMcapUsd: priced.mcapUsd,
-          priceUsd: priced.priceUsd,
-          reason: priced.rugReason || 'WATCH mcap collapse',
-        }).catch((err) => {
-          console.error('[gmgn-activity-poll] radar rug telegram failed:', err)
-        })
-      } else {
-        const rugged =
-          priced.banned || (await isTokenRugged(item.tokenAddress))
-        if (!rugged) {
-          void sendGmgnRadarAlert({
-            review: radar,
-            symbol: item.symbol,
-            tokenAddress: item.tokenAddress,
-            category:
-              source === 'gmgn_hot'
-                ? 'HOT'
-                : source === 'gmgn_kol'
-                  ? 'KOL'
-                  : 'SM',
-            eventLabel: `activity score ${item.score}`,
-            priceUsd: priced.priceUsd,
-            mcapUsd: priced.mcapUsd,
-          }).catch((err) => {
-            console.error('[gmgn-activity-poll] radar telegram failed:', err)
-          })
-        }
-      }
     }
 
     const ingestResult =
@@ -376,6 +420,10 @@ export async function POST(request: NextRequest) {
       liveBoosted,
       dumpBanned,
       rugBanned,
+      threadsOpened,
+      threadsUpdated,
+      threadsDied,
+      threadsComeback,
     })
 
     return NextResponse.json({
@@ -388,6 +436,10 @@ export async function POST(request: NextRequest) {
       liveBoosted,
       dumpBanned,
       rugBanned,
+      threadsOpened,
+      threadsUpdated,
+      threadsDied,
+      threadsComeback,
       top: hot.slice(0, 10).map((item) => {
         const radar =
           radarByMint.get(item.tokenAddress) ??

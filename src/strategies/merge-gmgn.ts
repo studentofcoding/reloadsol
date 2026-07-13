@@ -1,4 +1,5 @@
 import type { GmgnStrategy, GmgnStrategyOverride } from './types'
+import { DEFAULT_GMGN_RADAR } from './registry'
 
 export function mergeGmgnStrategy(
   base: GmgnStrategy,
@@ -6,6 +7,8 @@ export function mergeGmgnStrategy(
   isActiveOverride?: boolean | null,
 ): GmgnStrategy {
   const o = override ?? {}
+  const baseRadar = base.config.radar ?? DEFAULT_GMGN_RADAR
+  const oRadar = o.radar
   const config: GmgnStrategy['config'] = {
     discovery: {
       ...base.config.discovery,
@@ -22,6 +25,18 @@ export function mergeGmgnStrategy(
     exit: {
       ...base.config.exit,
       ...(o.exit ?? {}),
+    },
+    radar: {
+      ...baseRadar,
+      ...(oRadar ?? {}),
+      comeback: {
+        ...baseRadar.comeback,
+        ...(oRadar?.comeback ?? {}),
+      },
+      telegram: {
+        ...baseRadar.telegram,
+        ...(oRadar?.telegram ?? {}),
+      },
     },
   }
 

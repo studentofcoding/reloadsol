@@ -34,47 +34,123 @@ type TelegramInlineButton =
   | { text: string; callback_data: string }
   | { text: string; url: string }
 
-export async function sendTelegramAlert(
+export type TelegramSendResult = {
+  ok: boolean
+  messageId: number | null
+  chatId: string | null
+}
+
+export async function sendTelegramMessage(
   text: string,
   options?: {
-    chatId?: string;
-    inlineKeyboard?: Array<Array<TelegramInlineButton>>;
-    parseMode?: 'HTML' | 'Markdown';
+    chatId?: string
+    inlineKeyboard?: Array<Array<TelegramInlineButton>>
+    parseMode?: 'HTML' | 'Markdown'
   },
-): Promise<boolean> {
+): Promise<TelegramSendResult> {
   if (!isTelegramConfigured()) {
-    console.log('[Telegram] Skipped (not configured):', text.slice(0, 120));
-    return false;
+    console.log('[Telegram] Skipped (not configured):', text.slice(0, 120))
+    return { ok: false, messageId: null, chatId: null }
   }
 
   try {
-    const token = getBotToken();
-    const chatId = options?.chatId ?? getAlertChatId();
+    const token = getBotToken()
+    const chatId = options?.chatId ?? getAlertChatId()
     const body: Record<string, unknown> = {
       chat_id: chatId,
       text: text.slice(0, 4096),
       disable_web_page_preview: true,
-    };
-    if (options?.parseMode) body.parse_mode = options.parseMode;
+    }
+    if (options?.parseMode) body.parse_mode = options.parseMode
     if (options?.inlineKeyboard?.length) {
-      body.reply_markup = { inline_keyboard: options.inlineKeyboard };
+      body.reply_markup = { inline_keyboard: options.inlineKeyboard }
     }
 
     const response = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-    });
+    })
 
     if (!response.ok) {
-      const errText = await response.text();
-      console.error('[Telegram] sendMessage failed:', response.status, errText);
-      return false;
+      const errText = await response.text()
+      console.error('[Telegram] sendMessage failed:', response.status, errText)
+      return { ok: false, messageId: null, chatId }
     }
-    return true;
+    const data = (await response.json()) as {
+      ok?: boolean
+      result?: { message_id?: number }
+    }
+    const messageId =
+      typeof data.result?.message_id === 'number' ? data.result.message_id : null
+    return { ok: Boolean(data.ok), messageId, chatId }
   } catch (error) {
-    console.error('[Telegram] sendMessage error:', error);
-    return false;
+    console.error('[Telegram] sendMessage error:', error)
+    return { ok: false, messageId: null, chatId: null }
+  }
+}
+
+export async function editTelegramMessage(params: {
+  chatId: string
+  messageId: number
+  text: string
+  inlineKeyboard?: Array<Array<TelegramInlineButton>>
+  parseMode?: 'HTML' | 'Markdown'
+}): Promise<boolean> {
+  if (!isTelegramConfigured()) return false
+  try {
+    const token = getBotToken()
+    const body: Record<string, unknown> = {
+      chat_id: params.chatId,
+      message_id: params.messageId,
+      text: params.text.slice(0, 4096),
+      disable_web_page_preview: true,
+    }
+    if (params.parseMode) body.parse_mode = params.parseMode
+    if (params.inlineKeyboard?.length) {
+      body.reply_markup = { inline_keyboard: params.inlineKeyboard }
+    }
+
+    const response = await fetch(
+      `${TELEGRAM_API}/bot${token}/editMessageText`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    )
+    if (!response.ok) {
+      const errText = await response.text()
+      // "message is not modified" is fine for idempotent refreshes
+      if (errText.includes('message is not modified')) return true
+      console.error('[Telegram] editMessageText failed:', response.status, errText)
+      return false
+    }
+    return true
+  } catch (error) {
+    console.error('[Telegram] editMessageText error:', error)
+    return false
+  }
+}
+
+export async function sendTelegramAlert(
+  text: string,
+  options?: {
+    chatId?: string
+    inlineKeyboard?: Array<Array<TelegramInlineButton>>
+    parseMode?: 'HTML' | 'Markdown'
+  },
+): Promise<boolean> {
+  const result = await sendTelegramMessage(text, options)
+  return result.ok
+}
+
+export function getTelegramAlertChatId(): string | null {
+  if (!process.env.TELEGRAM_ALERT_CHAT_ID) return null
+  try {
+    return getAlertChatId()
+  } catch {
+    return null
   }
 }
 

@@ -206,6 +206,34 @@ export type GmgnDiscoverySource = 'smartmoney' | 'kol' | 'both'
 
 export type GmgnVerdictLevel = 'clean' | 'mixed' | 'reject'
 
+export interface GmgnRadarComebackConfig {
+  enabled: boolean
+  /** Peak→current mcap drop % that marks near-death (e.g. 70). */
+  drawdownPct: number
+  /** Absolute mcap floor treated as death trough (e.g. 30_000). */
+  troughMcapMax: number
+  /** Current mcap must be ≥ trough × this to confirm comeback. */
+  recoverMultiple: number
+  /** Min Radar score to confirm comeback. */
+  minRadarScore: number
+  /** If true, remove gmgn-radar rug ban when comeback fires. */
+  unbanOnComeback: boolean
+  /** If true, allow sim reopen on comeback (Telegram-first default off). */
+  allowSimReopen: boolean
+}
+
+export interface GmgnRadarConfig {
+  stickyPumpPct: number
+  dumpBanPct: number
+  microMcapMax: number
+  rugMcapMax: number
+  comeback: GmgnRadarComebackConfig
+  telegram: {
+    /** One editable Telegram card per lifecycle until dead. */
+    singleThread: boolean
+  }
+}
+
 export interface GmgnStrategyConfig {
   discovery: {
     source: GmgnDiscoverySource
@@ -239,15 +267,21 @@ export interface GmgnStrategyConfig {
     takeProfitPct: number
     maxHoldHours: number
   }
+  /** Radar price / comeback / Telegram thread knobs. */
+  radar?: GmgnRadarConfig
 }
 
 export type GmgnStrategyOverride = Partial<
-  Omit<GmgnStrategyConfig, 'discovery' | 'security' | 'execution' | 'exit'>
+  Omit<GmgnStrategyConfig, 'discovery' | 'security' | 'execution' | 'exit' | 'radar'>
 > & {
   discovery?: Partial<GmgnStrategyConfig['discovery']>
   security?: Partial<GmgnStrategyConfig['security']>
   execution?: Partial<GmgnStrategyConfig['execution']>
   exit?: Partial<GmgnStrategyConfig['exit']>
+  radar?: Partial<Omit<GmgnRadarConfig, 'comeback' | 'telegram'>> & {
+    comeback?: Partial<GmgnRadarComebackConfig>
+    telegram?: Partial<GmgnRadarConfig['telegram']>
+  }
 }
 
 export interface GmgnStrategy {

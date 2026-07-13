@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { accumulateRadarPeaks } from './gmgn-radar-accumulate'
 import {
   buildGmgnRadarReview,
+  formatGmgnRadarLiveThreadHtml,
   formatGmgnRadarRugTelegramHtml,
   formatGmgnRadarTelegramHtml,
   resolveRadarTop10,
@@ -172,5 +173,59 @@ describe('gmgn-radar-review recalibrated', () => {
     expect(html).toContain('$80.0K')
     expect(html).toContain('$20.0K')
     expect(html).toContain('WATCH mcap rug')
+  })
+
+  it('formats live thread with initial, peaks, and pct vs last', () => {
+    const review = buildGmgnRadarReview({ sm: 10, kol: 5, top10: 14 })
+    const html = formatGmgnRadarLiveThreadHtml({
+      kind: 'new',
+      review,
+      symbol: 'WUKONG',
+      tokenAddress: 'So11111111111111111111111111111111111111112',
+      category: 'HOT',
+      lifecycle: 1,
+      peakSm: 12,
+      peakKol: 8,
+      initialPriceUsd: 0.0001,
+      initialMcapUsd: 37_300,
+      priceUsd: 0.00015,
+      mcapUsd: 50_000,
+      pricePctVsLast: 10,
+      mcapPctVsLast: 8.5,
+      pricePctVsInitial: 50,
+      mcapPctVsInitial: 34.0,
+    })
+    expect(html).toContain('NEW TOKEN')
+    expect(html).toContain('Initial:')
+    expect(html).toContain('$37.3K')
+    expect(html).toContain('SM')
+    expect(html).toContain('12')
+    expect(html).toContain('KOL')
+    expect(html).toContain('+10.0%')
+    expect(html).toContain('Δ vs last')
+  })
+
+  it('formats dead thread without removing lifecycle context', () => {
+    const review = buildGmgnRadarReview({ sm: 3, kol: 1 })
+    const html = formatGmgnRadarLiveThreadHtml({
+      kind: 'dead',
+      review,
+      symbol: 'WUKONG',
+      tokenAddress: 'mint',
+      category: 'HOT',
+      lifecycle: 1,
+      peakSm: 12,
+      peakKol: 8,
+      initialPriceUsd: 0.0001,
+      initialMcapUsd: 80_000,
+      priceUsd: 0.00002,
+      mcapUsd: 15_000,
+      pricePctVsLast: -50,
+      mcapPctVsLast: -60,
+      deathReason: 'drawdown 81%',
+    })
+    expect(html).toContain('RUG / DEAD')
+    expect(html).toContain('drawdown 81%')
+    expect(html).toContain('Lifecycle #1')
   })
 })

@@ -136,27 +136,37 @@ SKIP copy uses “insufficient confirmation” when SM/KOL alone are weak — it
 
 ### Price growth rules (reappearances)
 
-On each hot Radar pass, fetch USD price + mcap (Jupiter market hints) and compare to the previous `radar_price_usd` / `radar_mcap_usd` on `social_token_events`:
+On each hot Radar pass, fetch USD price + mcap (Jupiter market hints) and compare to the previous `radar_price_usd` / `radar_mcap_usd` on `social_token_events`. Thresholds live on strategy `config.radar` (defaults below):
 
-| Rule | Condition | Effect |
-|------|-----------|--------|
-| Sticky pump WATCH | Growth vs previous **&gt; 50%** | Force **WATCH** (even if score is ENTER); set sticky baseline = previous price |
-| Hold sticky | Current price **&gt; baseline** | Keep **WATCH** until growth vs baseline ≤ 0% |
-| Clear sticky | Current **≤ baseline** | Resume normal Radar action |
-| Dump ban | Growth vs previous **≤ -80%** | Force SKIP; `markTokenRug(source=gmgn-radar)`; close open sims; no Telegram |
-| Mcap WATCH rug | Prior mcap **&lt; $100k**, action **WATCH**, current mcap **≤ $30k** (and &gt; 0) | Ban + close sims; send dedicated **RUG** Telegram (exception: Rug is shared even though SKIP is not) |
+| Rule | Default | Effect |
+|------|---------|--------|
+| Sticky pump WATCH | `stickyPumpPct` 50 | Force **WATCH**; sticky baseline = previous price |
+| Hold sticky | price &gt; baseline | Keep **WATCH** until ≤ baseline |
+| Dump ban | `dumpBanPct` -80 | SKIP + `markTokenRug(gmgn-radar)` + close sims |
+| Mcap WATCH rug | `microMcapMax` 100k → `rugMcapMax` 30k | Ban + close sims; death final-edit on live thread |
 
-WATCH / ENTER Telegram cards include a `💰 price · MC …` line. ENTER at ≤30k after a microcap sighting does **not** trigger the mcap rug rule (WATCH only).
+### Comeback (configurable)
 
-Metadata: `radar_price_usd`, `radar_mcap_usd`, `radar_growth_pct`, `radar_watch_baseline_usd`, `radar_dump_banned`, `radar_mcap_rug`.
+`config.radar.comeback` stages (defaults): `drawdownPct` 70, `troughMcapMax` 30k, `recoverMultiple` 1.5, `minRadarScore` 45, `unbanOnComeback` false, `allowSimReopen` false.
+
+- Soft/hard death → final-edit open Telegram to **RUG / DEAD**, freeze that message in chat.
+- Recover after dead lifecycle → **new** COMEBACK message (old dead card stays). Optional unban via `unbanOnComeback`.
+
+### Telegram single thread
+
+When `config.radar.telegram.singleThread` is true (default): one editable card per lifecycle with initial price/MC, now + % vs last, peak SM/KOL. Ingest stays cooldown-gated; **thread refresh** runs every hot poll. Persist in `radar_alert_threads`.
+
+Metadata: `radar_price_usd`, `radar_mcap_usd`, `radar_growth_pct`, `radar_watch_baseline_usd`, `radar_dump_banned`, `radar_mcap_rug`, `radar_thread_action`.
 
 ### Key files
 
 - `src/strategies/gmgn-radar-accumulate.ts` — 2h peak merge
-- `src/strategies/gmgn-radar-review.ts` — score / action / Telegram HTML (incl. Rug)
-- `src/strategies/gmgn-radar-price.ts` — reappearance growth + mcap WATCH rug
+- `src/strategies/gmgn-radar-review.ts` — score / action / Telegram HTML (live thread + rug)
+- `src/strategies/gmgn-radar-price.ts` — sticky / dump / mcap rug (config thresholds)
+- `src/strategies/gmgn-radar-comeback.ts` — drawdown death + comeback evaluators
+- `src/strategies/gmgn-radar-thread-sync.ts` — send/edit lifecycle cards
 - `src/strategies/gmgn-radar-dump.ts` — dump/rug ban + sim close
-- `src/app/api/gmgn/activity-poll/route.ts` — accumulator + Jupiter top10 + price/mcap rules
+- `src/app/api/gmgn/activity-poll/route.ts` — accumulator + thread refresh + ingest
 - `src/app/api/trading/signals/route.ts` — Early Enter → `signals_early` stamp
 
 ## Security gate (defaults)
@@ -252,6 +262,8 @@ Go-live checklist (future):
 - `src/strategies/gmgn-radar-accumulate.ts` — 2h SM/KOL/activity/early peaks
 - `src/strategies/gmgn-radar-review.ts` — Radar 0–100 ENTER/WATCH/SKIP
 - `src/strategies/gmgn-radar-price.ts` — reappearance growth → sticky WATCH / dump ban / mcap WATCH rug
+- `src/strategies/gmgn-radar-comeback.ts` — configurable drawdown death + comeback
+- `src/strategies/gmgn-radar-thread-sync.ts` — single Telegram card per lifecycle
 - `src/strategies/gmgn-radar-dump.ts` — ban + close open sims on dump/rug
 - `src/strategies/gmgn-live-boost.ts` — post-entry live boost
 - `src/strategies/gmgn-pipeline.ts` — score-sorted discovery + security gate + Radar

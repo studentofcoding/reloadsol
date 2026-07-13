@@ -30,6 +30,8 @@ export type RadarPriceRuleInput = {
   currentPriceUsd: number | null
   /** Previous sighting price — used as sticky baseline when pump triggers */
   previousPriceUsd: number | null
+  stickyPumpPct?: number
+  dumpBanPct?: number
 }
 
 export type RadarPriceRuleResult = {
@@ -42,21 +44,23 @@ export type RadarPriceRuleResult = {
 
 /**
  * Apply dump / sticky-pump rules after normal Radar scoring.
- * Dump: growth ≤ -80% → SKIP + banned.
- * Pump: growth > 50% → force WATCH, sticky baseline = previous price until current ≤ baseline.
+ * Dump: growth ≤ dumpBanPct → SKIP + banned.
+ * Pump: growth > stickyPumpPct → force WATCH, sticky baseline = previous price until current ≤ baseline.
  */
 export function applyRadarPriceRules(input: RadarPriceRuleInput): RadarPriceRuleResult {
   const growthPct = input.growthPct
   const current = input.currentPriceUsd
   let sticky = input.stickyBaselineUsd
   const reasons: string[] = []
+  const dumpBanPct = input.dumpBanPct ?? RADAR_DUMP_BAN_PCT
+  const stickyPumpPct = input.stickyPumpPct ?? RADAR_PUMP_WATCH_PCT
 
-  if (growthPct != null && growthPct <= RADAR_DUMP_BAN_PCT) {
+  if (growthPct != null && growthPct <= dumpBanPct) {
     return {
       action: 'SKIP',
       stickyBaselineUsd: null,
       banned: true,
-      reasons: [`price dump ${growthPct.toFixed(1)}% ≤ ${RADAR_DUMP_BAN_PCT}%`],
+      reasons: [`price dump ${growthPct.toFixed(1)}% ≤ ${dumpBanPct}%`],
       growthPct,
     }
   }
@@ -94,12 +98,12 @@ export function applyRadarPriceRules(input: RadarPriceRuleInput): RadarPriceRule
   // New pump vs previous sighting
   if (
     growthPct != null &&
-    growthPct > RADAR_PUMP_WATCH_PCT &&
+    growthPct > stickyPumpPct &&
     input.previousPriceUsd != null &&
     input.previousPriceUsd > 0
   ) {
     reasons.push(
-      `pump ${growthPct.toFixed(1)}% > ${RADAR_PUMP_WATCH_PCT}% — sticky WATCH`,
+      `pump ${growthPct.toFixed(1)}% > ${stickyPumpPct}% — sticky WATCH`,
     )
     return {
       action: 'WATCH',
@@ -120,14 +124,18 @@ export function applyRadarPriceRules(input: RadarPriceRuleInput): RadarPriceRule
 }
 
 /**
- * WATCH + prior mcap &lt;100k + current mcap ≤30k → Rug.
+ * WATCH + prior mcap &lt; microMax + current mcap ≤ rugMax → Rug.
  */
 export function applyRadarMcapWatchRug(params: {
   action: GmgnRadarAction
   previousMcapUsd: number | null
   currentMcapUsd: number | null
+  microMcapMax?: number
+  rugMcapMax?: number
 }): { isRug: boolean; reasons: string[] } {
   const { action, previousMcapUsd, currentMcapUsd } = params
+  const microMcapMax = params.microMcapMax ?? RADAR_MICRO_MCAP_MAX
+  const rugMcapMax = params.rugMcapMax ?? RADAR_RUG_MCAP_MAX
   if (action !== 'WATCH') return { isRug: false, reasons: [] }
   if (
     previousMcapUsd == null ||
@@ -140,16 +148,16 @@ export function applyRadarMcapWatchRug(params: {
   if (previousMcapUsd <= 0 || currentMcapUsd <= 0) {
     return { isRug: false, reasons: [] }
   }
-  if (previousMcapUsd >= RADAR_MICRO_MCAP_MAX) {
+  if (previousMcapUsd >= microMcapMax) {
     return { isRug: false, reasons: [] }
   }
-  if (currentMcapUsd > RADAR_RUG_MCAP_MAX) {
+  if (currentMcapUsd > rugMcapMax) {
     return { isRug: false, reasons: [] }
   }
   return {
     isRug: true,
     reasons: [
-      `WATCH mcap rug: was $${Math.round(previousMcapUsd).toLocaleString()} (<$${RADAR_MICRO_MCAP_MAX / 1000}k) → now $${Math.round(currentMcapUsd).toLocaleString()} (≤$${RADAR_RUG_MCAP_MAX / 1000}k)`,
+      `WATCH mcap rug: was $${Math.round(previousMcapUsd).toLocaleString()} (<$${Math.round(microMcapMax / 1000)}k) → now $${Math.round(currentMcapUsd).toLocaleString()} (≤$${Math.round(rugMcapMax / 1000)}k)`,
     ],
   }
 }
