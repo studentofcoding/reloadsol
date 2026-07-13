@@ -19,6 +19,7 @@ import {
   type RadarAlertThreadKind,
 } from './gmgn-radar-threads-db'
 import type { GmgnRadarConfig } from './types'
+import { maybeOpenGmgnComebackSim } from './gmgn-comeback-sim'
 import {
   editTelegramMessage,
   formatReloadsolBuyLink,
@@ -274,7 +275,30 @@ export async function syncRadarTelegramThread(
           console.error('[radar-thread] unban on comeback failed:', err)
         }
       }
-      // ponytail: allowSimReopen reserved — sim reopen not wired yet
+      if (input.radar.comeback.allowSimReopen) {
+        try {
+          const sim = await maybeOpenGmgnComebackSim({
+            tokenAddress: input.tokenAddress,
+            symbol: input.symbol,
+            priceUsd: input.priceUsd,
+            mcapUsd: input.mcapUsd,
+            review: input.review,
+            sm: peakSm,
+            kol: peakKol,
+          })
+          if (sim.opened) {
+            console.log(
+              `[radar-thread] comeback sim reopen ${input.symbol} strategy=${sim.strategyId}`,
+            )
+          } else {
+            console.log(
+              `[radar-thread] comeback sim skip ${input.symbol}: ${sim.reason}`,
+            )
+          }
+        } catch (err) {
+          console.error('[radar-thread] comeback sim reopen failed:', err)
+        }
+      }
       const thread = await openNewThread({
         kind: 'comeback',
         review: input.review,

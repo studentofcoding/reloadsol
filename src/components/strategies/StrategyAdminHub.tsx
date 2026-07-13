@@ -45,6 +45,7 @@ import {
   readTrainingClass,
   readVolumeAtEntry,
 } from "@/strategies/outcome-features";
+import { DEFAULT_GMGN_RADAR } from "@/strategies/registry";
 
 const OUTCOMES_PAGE_SIZE = 100;
 
@@ -968,7 +969,7 @@ export default function StrategyAdminHub() {
             <div className="grid gap-4 md:grid-cols-2">
               {gmgn.map((s) => (
                 <GmgnCard
-                  key={s.id}
+                  key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.radar?.stickyPumpPct}-${s.config.radar?.dumpBanPct}-${s.config.radar?.comeback?.allowSimReopen}-${s.config.radar?.telegram?.singleThread}`}
                   strategy={s}
                   saving={saving === s.id}
                   onSave={saveStrategy}
@@ -2507,6 +2508,7 @@ function GmgnCard({
   const s = strategy.config.security;
   const e = strategy.config.execution;
   const x = strategy.config.exit;
+  const r = strategy.config.radar ?? DEFAULT_GMGN_RADAR;
   const [source, setSource] = useState(d.source);
   const [limit, setLimit] = useState(String(d.limit));
   const [minUsd, setMinUsd] = useState(d.minAmountUsd != null ? String(d.minAmountUsd) : "");
@@ -2524,6 +2526,16 @@ function GmgnCard({
   const [minLiq, setMinLiq] = useState(String(s.minLiquidityUsd));
   const [maxCandidates, setMaxCandidates] = useState(String(s.maxCandidatesPerTick));
   const [execMode, setExecMode] = useState(strategy.execution_mode);
+  const [stickyPumpPct, setStickyPumpPct] = useState(String(r.stickyPumpPct));
+  const [dumpBanPct, setDumpBanPct] = useState(String(r.dumpBanPct));
+  const [comebackEnabled, setComebackEnabled] = useState(r.comeback.enabled);
+  const [drawdownPct, setDrawdownPct] = useState(String(r.comeback.drawdownPct));
+  const [troughMcapMax, setTroughMcapMax] = useState(String(r.comeback.troughMcapMax));
+  const [recoverMultiple, setRecoverMultiple] = useState(String(r.comeback.recoverMultiple));
+  const [minRadarScore, setMinRadarScore] = useState(String(r.comeback.minRadarScore));
+  const [unbanOnComeback, setUnbanOnComeback] = useState(r.comeback.unbanOnComeback);
+  const [allowSimReopen, setAllowSimReopen] = useState(r.comeback.allowSimReopen);
+  const [singleThread, setSingleThread] = useState(r.telegram.singleThread);
 
   return (
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
@@ -2578,6 +2590,56 @@ function GmgnCard({
           <NumberField label="max hold (h)" value={maxHold} onChange={setMaxHold} step="1" />
         </FieldGrid>
       </Section>
+      <Section title="Radar">
+        <FieldGrid>
+          <NumberField
+            label="sticky pump %"
+            value={stickyPumpPct}
+            onChange={setStickyPumpPct}
+            step="1"
+          />
+          <NumberField label="dump ban %" value={dumpBanPct} onChange={setDumpBanPct} step="1" />
+          <CheckboxField
+            label="comeback enabled"
+            checked={comebackEnabled}
+            onChange={setComebackEnabled}
+          />
+          <CheckboxField
+            label="Telegram single thread"
+            checked={singleThread}
+            onChange={setSingleThread}
+          />
+          <NumberField label="drawdown %" value={drawdownPct} onChange={setDrawdownPct} step="1" />
+          <NumberField
+            label="trough mcap max"
+            value={troughMcapMax}
+            onChange={setTroughMcapMax}
+            step="1000"
+          />
+          <NumberField
+            label="recover multiple"
+            value={recoverMultiple}
+            onChange={setRecoverMultiple}
+            step="0.1"
+          />
+          <NumberField
+            label="min radar score"
+            value={minRadarScore}
+            onChange={setMinRadarScore}
+            step="1"
+          />
+          <CheckboxField
+            label="unban on comeback"
+            checked={unbanOnComeback}
+            onChange={setUnbanOnComeback}
+          />
+          <CheckboxField
+            label="sim reopen on comeback"
+            checked={allowSimReopen}
+            onChange={setAllowSimReopen}
+          />
+        </FieldGrid>
+      </Section>
       <div className="flex gap-2 mt-2">
         <button
           type="button"
@@ -2607,6 +2669,20 @@ function GmgnCard({
                   stopLossPct: parseFloat(stopLoss),
                   takeProfitPct: parseFloat(takeProfit),
                   maxHoldHours: parseFloat(maxHold),
+                },
+                radar: {
+                  stickyPumpPct: parseFloat(stickyPumpPct),
+                  dumpBanPct: parseFloat(dumpBanPct),
+                  comeback: {
+                    enabled: comebackEnabled,
+                    drawdownPct: parseFloat(drawdownPct),
+                    troughMcapMax: parseFloat(troughMcapMax),
+                    recoverMultiple: parseFloat(recoverMultiple),
+                    minRadarScore: parseFloat(minRadarScore),
+                    unbanOnComeback,
+                    allowSimReopen,
+                  },
+                  telegram: { singleThread },
                 },
               },
             })

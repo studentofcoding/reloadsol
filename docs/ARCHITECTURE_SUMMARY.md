@@ -190,9 +190,10 @@ Two **parallel** ML tracks — different labels, same entry-feature philosophy (
 
 ### Immediate product (GMGN Radar — Jul 13)
 
-1. **Build: Strategy Admin GMGN Radar knobs** — `config.radar` / comeback / `singleThread` on `GmgnCard` (backend already merges; UI missing). See [GMGN_STRATEGY.md § Next build](./GMGN_STRATEGY.md#next-build-radar).
-2. Optional: wire `allowSimReopen` on comeback (sim only).
+1. ✅ Strategy Admin GMGN Radar knobs on `GmgnCard` (`config.radar` / comeback / `singleThread` / `allowSimReopen`).
+2. ✅ `allowSimReopen` on comeback → `gmgn-comeback-sim` paper buy (default off).
 3. Deploy `13-radar-alert-threads.sql` (or rely on runtime ensure); smoke activity-poll Telegram lifecycle.
+4. **P2:** sticky TTL / ENTER override during grind.
 
 ### Immediate (pattern ML on server)
 
@@ -218,8 +219,8 @@ Two **parallel** ML tracks — different labels, same entry-feature philosophy (
 
 | Item | Status |
 |------|--------|
-| GMGN Radar Admin UI | **Next build** |
-| Comeback → sim reopen (`allowSimReopen`) | Flag only |
+| GMGN Radar Admin UI | **Shipped** (GmgnCard Radar section) |
+| Comeback → sim reopen (`allowSimReopen`) | **Shipped** (default off; sim only) |
 | Sticky TTL / ENTER override on grind | Planned |
 | LLM entry gate (L3) | Planned — [`ML_GATE_PLAN.md`](./ML_GATE_PLAN.md) |
 | ML enforce on pattern + sim gate | After shadow validation + `*_ready` |

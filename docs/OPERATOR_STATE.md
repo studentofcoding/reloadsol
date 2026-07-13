@@ -159,17 +159,17 @@ Shared:
 | Strategy | Status | Notes |
 |----------|--------|-------|
 | `mcap_enter_at_80` | **Primary — FROZEN** | Rules locked for data collection; target **200+ sim closes** before ML enforce or live |
-| GMGN Radar | **Active product loop** | Live Telegram thread + comeback shipped; **next build = Admin UI for `config.radar`** |
+| GMGN Radar | **Active product loop** | Live Telegram thread + comeback + Admin Radar knobs + optional sim reopen |
 | `att` | Active | Registry floor **200k mcap** — sub-50k entries should not assign here |
 | `lowcap_moonbag` | Active | 35k–90k band; deactivate if WR stays &lt;10% over 30+ trades |
 | `signals_sell_over_100` | Sim only | Exits on mcap ≥100%; sim PnL uses mcap basis |
 
 ## Next to build (Jul 13)
 
-1. **P0 — GMGN Strategy Admin: Radar section** — expose `config.radar` (sticky/dump, comeback knobs, `singleThread`) on `GmgnCard`. Backend merge already works; UI missing.
-2. **P1 — `allowSimReopen` on comeback** — open paper sim when comeback confirms (flag default false).
+1. **Done — GMGN Strategy Admin Radar section** — `GmgnCard` edits `config.radar` (sticky/dump, comeback, `singleThread`, `allowSimReopen`).
+2. **Done — `allowSimReopen` on comeback** — paper sim open via `gmgn-comeback-sim` when flag true (default false).
 3. **Data (not code)** — keep collecting mcap/pattern/potential labels; retrain when counts grow; stay shadow until `*_ready`.
-4. **Later** — sticky TTL / ENTER override during grind; live GMGN only after sim review.
+4. **P2** — sticky TTL / ENTER override during grind; live GMGN only after sim review.
 
 ## Constraints (learned)
 

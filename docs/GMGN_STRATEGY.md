@@ -155,7 +155,7 @@ Low absolute mcap (e.g. staying under $30k after a micro start) is **not** treat
 
 ### Comeback (configurable)
 
-`config.radar.comeback` stages (defaults): `drawdownPct` 70, `troughMcapMax` 30k, `recoverMultiple` 1.5, `minRadarScore` 45, `unbanOnComeback` false, `allowSimReopen` false.
+`config.radar.comeback` stages (defaults): `drawdownPct` 70, `troughMcapMax` 30k, `recoverMultiple` 1.5, `minRadarScore` 45, `unbanOnComeback` false, `allowSimReopen` false (when true → paper reopen via `gmgn-comeback-sim`). Tune in Strategy Admin → GMGN → **Radar**.
 
 - Soft/hard death → final-edit open Telegram to **RUG / DEAD**, freeze that message in chat.
 - Recover after dead lifecycle → **new** COMEBACK message (old dead card stays). Optional unban via `unbanOnComeback`.
@@ -173,6 +173,7 @@ Metadata: `radar_price_usd`, `radar_mcap_usd`, `radar_growth_pct`, `radar_watch_
 - `src/strategies/gmgn-radar-price.ts` — sticky / dump (config thresholds)
 - `src/strategies/gmgn-radar-comeback.ts` — drawdown death + comeback evaluators
 - `src/strategies/gmgn-radar-thread-sync.ts` — send/edit lifecycle cards
+- `src/strategies/gmgn-comeback-sim.ts` — optional paper reopen on comeback (`allowSimReopen`)
 - `src/strategies/gmgn-radar-dump.ts` — dump/rug ban + sim close
 - `src/app/api/gmgn/activity-poll/route.ts` — accumulator + thread refresh + ingest
 - `src/app/api/trading/signals/route.ts` — Early Enter → `signals_early` stamp
@@ -272,6 +273,7 @@ Go-live checklist (future):
 - `src/strategies/gmgn-radar-price.ts` — reappearance growth → sticky WATCH / dump ban
 - `src/strategies/gmgn-radar-comeback.ts` — configurable drawdown death + comeback
 - `src/strategies/gmgn-radar-thread-sync.ts` — single Telegram card per lifecycle
+- `src/strategies/gmgn-comeback-sim.ts` — optional paper reopen on comeback
 - `src/strategies/gmgn-radar-dump.ts` — ban + close open sims on dump/rug
 - `src/strategies/gmgn-live-boost.ts` — post-entry live boost
 - `src/strategies/gmgn-pipeline.ts` — score-sorted discovery + security gate + Radar
@@ -286,7 +288,7 @@ Go-live checklist (future):
 
 | Priority | Item | Why |
 |----------|------|-----|
-| **P0** | Strategy Admin **GMGN → Radar** knobs (`config.radar` + comeback + singleThread) | Knobs exist in registry/DB merge but **GmgnCard UI has no Radar section** — operators cannot tune without raw PATCH |
-| P1 | Wire `allowSimReopen` on comeback (sim open only) | Flag exists; reserved in thread sync |
+| ✅ | Strategy Admin **GMGN → Radar** knobs | `GmgnCard` Radar section saves `config.radar` (sticky/dump/comeback/telegram) |
+| ✅ | Wire `allowSimReopen` on comeback (sim open only) | `gmgn-comeback-sim` + thread-sync; flag default **false** |
 | P2 | Sticky TTL / score-override for ENTER during sticky | Still blocks ENTER on grinders like Wukong |
 | — | ML enforce / live GMGN swap | Explicit non-goals until sim review + `*_ready` |
