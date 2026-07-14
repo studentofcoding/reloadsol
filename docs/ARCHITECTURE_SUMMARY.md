@@ -188,12 +188,12 @@ Two **parallel** ML tracks — different labels, same entry-feature philosophy (
 
 ## 4. Next steps
 
-### Immediate product (GMGN Radar — Jul 13)
+### Immediate product (GMGN Radar — Jul 14)
 
-1. ✅ Strategy Admin GMGN Radar knobs on `GmgnCard` (`config.radar` / comeback / `singleThread` / `allowSimReopen`).
-2. ✅ `allowSimReopen` on comeback → `gmgn-comeback-sim` paper buy (default off).
-3. Deploy `13-radar-alert-threads.sql` (or rely on runtime ensure); smoke activity-poll Telegram lifecycle.
-4. **P2:** sticky TTL / ENTER override during grind.
+1. ✅ Strategy Admin GMGN Radar knobs (`config.radar` including sticky TTL / ENTER override).
+2. ✅ Card stages NEW/TRACKING/SURGE/FADING + Age/Peak MC; sticky TTL 45m + score ≥55 unlock.
+3. ✅ Pinned 24h top-8 digest (`gmgn_radar_digest`, `radar_digest_pins` / migration **14**).
+4. Deploy web + cron; smoke activity-poll + `/trigger/gmgn-radar-digest`.
 
 ### Immediate (pattern ML on server)
 
@@ -213,7 +213,7 @@ Two **parallel** ML tracks — different labels, same entry-feature philosophy (
 
 1. Keep **`mcap_enter_at_80` rules frozen** until enough labeled sim closes.
 2. Tag daily **market regime** in Strategy Admin → Reports.
-3. Ensure migrations **05–06** + **13** (`radar_alert_threads`) applied.
+3. Ensure migrations **05–06** + **13–14** (`radar_alert_threads`, `radar_digest_pins`) applied.
 
 ### Product / architecture (later)
 
@@ -221,7 +221,8 @@ Two **parallel** ML tracks — different labels, same entry-feature philosophy (
 |------|--------|
 | GMGN Radar Admin UI | **Shipped** (GmgnCard Radar section) |
 | Comeback → sim reopen (`allowSimReopen`) | **Shipped** (default off; sim only) |
-| Sticky TTL / ENTER override on grind | Planned |
+| Sticky TTL / ENTER override on grind | **Shipped** (45m / score ≥55) |
+| Card stages + pinned PnL digest | **Shipped** (top 8 closed PnL per active strategy) |
 | LLM entry gate (L3) | Planned — [`ML_GATE_PLAN.md`](./ML_GATE_PLAN.md) |
 | ML enforce on pattern + sim gate | After shadow validation + `*_ready` |
 | Wire social v2 features into sim-outcome scorer at runtime | Partial (export exists; scorer uses v1) |

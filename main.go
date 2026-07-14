@@ -229,6 +229,7 @@ type Config struct {
     McapTrackerSimOpenInterval int // seconds — open hot path
     GmgnSimInterval      int    // seconds
     GmgnActivityPollInterval int // seconds
+    GmgnRadarDigestInterval int // seconds (0 = disabled)
     StrategyReportInterval int  // seconds (0 = disabled)
     DLMMScreenInterval int    // seconds
     DLMMSimTrackInterval int // seconds
@@ -306,6 +307,14 @@ func NewCronService() *CronService {
                 }
             }
             return 180 // default 180s
+        }(),
+        GmgnRadarDigestInterval: func() int {
+            if v := os.Getenv("GMGN_RADAR_DIGEST_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
+                    return iv
+                }
+            }
+            return 86400 // default daily; set 0 to disable
         }(),
         StrategyReportInterval: func() int {
             if v := os.Getenv("STRATEGY_REPORT_INTERVAL"); v != "" {
@@ -455,6 +464,16 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(gmgnActivityPollEntryID, "gmgn_activity_poll")
 
+    if cs.config.GmgnRadarDigestInterval > 0 {
+        gmgnRadarDigestSpec := fmt.Sprintf("@every %ds", cs.config.GmgnRadarDigestInterval)
+        gmgnRadarDigestEntryID, err := cs.cron.AddFunc(gmgnRadarDigestSpec, cs.runGmgnRadarDigest)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add GMGN radar digest cron job: %v", err))
+            log.Fatal("Failed to add GMGN radar digest cron job:", err)
+        }
+        cs.workers.BindEntry(gmgnRadarDigestEntryID, "gmgn_radar_digest")
+    }
+
     socialRollupEntryID, err := cs.cron.AddFunc("@every 300s", cs.runSocialRollup)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add social rollup cron job: %v", err))
@@ -542,6 +561,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/mcap-tracker-sim-open", cs.manualMcapTrackerSimOpenTrigger)
     http.HandleFunc("/trigger/gmgn-sim-track", cs.manualGmgnSimTrackTrigger)
     http.HandleFunc("/trigger/gmgn-activity-poll", cs.manualGmgnActivityPollTrigger)
+    http.HandleFunc("/trigger/gmgn-radar-digest", cs.manualGmgnRadarDigestTrigger)
     http.HandleFunc("/trigger/social-rollup", cs.manualSocialRollupTrigger)
     http.HandleFunc("/trigger/social-cleanup", cs.manualSocialCleanupTrigger)
     http.HandleFunc("/trigger/social-wallet-poll", cs.manualSocialWalletPollTrigger)
@@ -563,6 +583,11 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim manage: every %d seconds", cs.config.McapTrackerSimInterval))
     cs.logger.Info(fmt.Sprintf("🐋 GMGN sim track: every %d seconds", cs.config.GmgnSimInterval))
     cs.logger.Info(fmt.Sprintf("🔥 GMGN activity poll: every %d seconds", cs.config.GmgnActivityPollInterval))
+    if cs.config.GmgnRadarDigestInterval > 0 {
+        cs.logger.Info(fmt.Sprintf("📌 GMGN radar digest: every %d seconds", cs.config.GmgnRadarDigestInterval))
+    } else {
+        cs.logger.Info("📌 GMGN radar digest: disabled (GMGN_RADAR_DIGEST_INTERVAL=0)")
+    }
     cs.logger.Info("📣 Social rollup: every 300 seconds")
     cs.logger.Info("🧹 Social cleanup: every 30 minutes")
     cs.logger.Info("👛 Social wallet poll: every 300 seconds")
@@ -747,6 +772,20 @@ func (cs *CronService) runGmgnActivityPoll() {
     cs.workers.Success("gmgn_activity_poll")
 }
 
+func (cs *CronService) runGmgnRadarDigest() {
+    cs.workers.Begin("gmgn_radar_digest")
+    cs.logger.Info("📌 Running GMGN radar digest...")
+    url := fmt.Sprintf("%s/api/gmgn/radar-digest?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil, 120)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ GMGN radar digest failed: %v", err))
+        cs.workers.Fail("gmgn_radar_digest", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ GMGN radar digest completed (%d bytes)", len(resp)))
+    cs.workers.Success("gmgn_radar_digest")
+}
+
 func (cs *CronService) runSocialRollup() {
     cs.workers.Begin("social_rollup")
     cs.logger.Info("📣 Running social rollup...")
@@ -869,6 +908,20 @@ func (cs *CronService) manualGmgnActivityPollTrigger(w http.ResponseWriter, r *h
     json.NewEncoder(w).Encode(map[string]interface{}{
         "success": true,
         "message": "GMGN activity poll triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualGmgnRadarDigestTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual GMGN radar digest trigger")
+    go cs.runGmgnRadarDigest()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "GMGN radar digest triggered",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

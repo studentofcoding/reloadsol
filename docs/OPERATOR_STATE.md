@@ -77,13 +77,16 @@ New domain — **sim_only by default**. See [GMGN_STRATEGY.md](./GMGN_STRATEGY.m
 |------|--------|
 | Env | `GMGN_API_KEY=...` in web `.env` (HTTP default; CLI optional via `GMGN_TRANSPORT=cli`) |
 | DB | `psql -f db/init/10-gmgn-strategy-domain.sql` + `11-gmgn-sm-kol-combined.sql` + **`13-radar-alert-threads.sql`** on existing volume |
-| Deploy | Rebuild web + cron; workers `gmgn_sim_track` (120s) + `gmgn_activity_poll` (180s) |
+| Deploy | Rebuild web + cron; workers `gmgn_sim_track` (120s) + `gmgn_activity_poll` (180s) + `gmgn_radar_digest` (86400s) |
 | Enable | `/dev/strategies` → activate `gmgn_sm_kol_combined` or `gmgn_smartmoney_default` |
-| Smoke | `POST /trigger/gmgn-activity-poll` → `social_token_events` + Telegram **one card per lifecycle**; `radar_alert_threads` |
+| Smoke | `POST /trigger/gmgn-activity-poll` → `social_token_events` + Telegram **one card per lifecycle** (NEW/TRACKING/SURGE/FADING); `radar_alert_threads` |
+| Smoke | `POST /trigger/gmgn-radar-digest` → pinned Strategy PnL (top 8 per active strategy; `radar_digest_pins`) |
 | Smoke | `GET /api/trading/signals` Early Enter → `signals_early` stamps |
 | Smoke | `POST /trigger/gmgn-sim-track` → `trading_records` wallet `gmgn-sim` |
 
-Activity poll: hot tokens only (default score ≥50). **Radar** uses `config.radar` (sticky/dump/comeback) + **single-thread Telegram** (edit until dead; leave dead card; new message on comeback). Absolute microcap ≤30k is **not** a rug trigger. See [GMGN_STRATEGY.md § Radar](./GMGN_STRATEGY.md#radar-review-telegram--entry-features).
+Activity poll: hot tokens only (default score ≥50). **Radar** uses `config.radar` (sticky/dump/**TTL**/ENTER override/comeback) + **single-thread Telegram** (edit until dead; leave dead card; new message on comeback). Absolute microcap ≤30k is **not** a rug trigger. See [GMGN_STRATEGY.md § Radar](./GMGN_STRATEGY.md#radar-review-telegram--entry-features).
+
+**Radar scan pack (Jul 14):** card trajectory stages + Age/Peak MC; sticky TTL 45m + ENTER override score ≥55. **Pinned digest = Strategy PnL** (top 8 closed `pnl_pct` per active strategy; not Radar MC/SM). Env: `GMGN_RADAR_DIGEST_INTERVAL` (default 86400), optional `GMGN_RADAR_DIGEST_CHAT_ID`. Apply `db/init/14-radar-digest-pins.sql` or rely on runtime ensure.
 
 **Live boost after entry:** `gmgn-live-boost.ts` — env `GMGN_LIVE_BOOST_*`.
 
@@ -165,12 +168,11 @@ Shared:
 | `lowcap_moonbag` | Active | 35k–90k band; deactivate if WR stays &lt;10% over 30+ trades |
 | `signals_sell_over_100` | Sim only | Exits on mcap ≥100%; sim PnL uses mcap basis |
 
-## Next to build (Jul 13)
+## Next to build (Jul 14)
 
-1. **Done — GMGN Strategy Admin Radar section** — `GmgnCard` edits `config.radar` (sticky/dump, comeback, `singleThread`, `allowSimReopen`).
-2. **Done — `allowSimReopen` on comeback** — paper sim open via `gmgn-comeback-sim` when flag true (default false).
-3. **Data (not code)** — keep collecting mcap/pattern/potential labels; retrain when counts grow; stay shadow until `*_ready`.
-4. **P2** — sticky TTL / ENTER override during grind; live GMGN only after sim review.
+1. **Done — Radar scan pack** — card stages (NEW/TRACKING/SURGE/FADING) + Age/Peak MC; sticky TTL + ENTER override; pinned 24h top-8 digest.
+2. **Data (not code)** — keep collecting mcap/pattern/potential labels; retrain when counts grow; stay shadow until `*_ready`.
+3. **Later** — event-driven mcap open; live GMGN only after sim review.
 
 ## Constraints (learned)
 

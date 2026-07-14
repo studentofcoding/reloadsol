@@ -1145,6 +1145,81 @@ export async function buildMcapTrackerReportStats(
   }
 }
 
+export type StrategyPnlLeaderboardSection = {
+  domain: StrategyDomain
+  strategy_id: string
+  name: string
+  trades: StrategyOutcomeRow[]
+}
+
+/** Pure rank: active defs → top `limit` closed trades by pnl_pct (SIM+LIVE mixed). */
+export function rankTopPnlByActiveStrategy(
+  activeDefs: StrategyDefinitionRow[],
+  outcomes: StrategyOutcomeRow[],
+  limit = 8,
+): StrategyPnlLeaderboardSection[] {
+  const active = activeDefs
+    .filter((d) => d.is_active)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
+
+  const byStrategy = new Map<string, StrategyOutcomeRow[]>()
+  for (const row of outcomes) {
+    if (row.pnl_pct == null || !Number.isFinite(Number(row.pnl_pct))) continue
+    const list = byStrategy.get(row.strategy_id) ?? []
+    list.push(row)
+    byStrategy.set(row.strategy_id, list)
+  }
+
+  const sections: StrategyPnlLeaderboardSection[] = []
+  for (const def of active) {
+    const list = byStrategy.get(def.id)
+    if (!list?.length) continue
+    const trades = [...list]
+      .sort((a, b) => Number(b.pnl_pct) - Number(a.pnl_pct))
+      .slice(0, limit)
+    sections.push({
+      domain: def.domain,
+      strategy_id: def.id,
+      name: def.name,
+      trades,
+    })
+  }
+  return sections
+}
+
+/** Closed realized PnL leaderboard: top N per active strategy_definitions row. */
+export async function listTopPnlByActiveStrategy(
+  limit = 8,
+): Promise<StrategyPnlLeaderboardSection[]> {
+  const defs = await loadStrategyDefinitionRows()
+  const active = defs.filter((d) => d.is_active)
+  if (active.length === 0) return []
+
+  const ids = active.map((d) => d.id)
+  let rows: StrategyOutcomeRow[]
+  try {
+    const result = await query<Record<string, unknown>>(
+      `SELECT * FROM strategy_outcomes
+       WHERE strategy_id = ANY($1::text[])
+         AND pnl_pct IS NOT NULL`,
+      [ids],
+    )
+    rows = dedupeStrategyOutcomeRows(result.rows.map(mapStrategyOutcomeRow))
+  } catch (error) {
+    if (isMissingSchemaError(error)) return []
+    throw error
+  }
+
+  const sections = rankTopPnlByActiveStrategy(active, rows, limit)
+  const flat = sections.flatMap((s) => s.trades)
+  const enriched = await enrichOutcomeSymbols(flat)
+  const byId = new Map(enriched.map((r) => [r.id, r]))
+  return sections.map((s) => ({
+    ...s,
+    trades: s.trades.map((t) => byId.get(t.id) ?? t),
+  }))
+}
+
 export async function aggregateStrategyReports(params: {
   domain?: StrategyDomain
   strategyId?: string
@@ -1511,7 +1586,7 @@ export async function getStrategyDomainHeartbeats(params?: {
     signals: ['signals_sim_track', 'signals_refresh'],
     trending_bot: ['trending_tracker'],
     dlmm: ['dlmm_manage'],
-    gmgn: ['gmgn_sim_track', 'gmgn_activity_poll'],
+    gmgn: ['gmgn_sim_track', 'gmgn_activity_poll', 'gmgn_radar_digest'],
   }
 
   for (const domain of domains) {

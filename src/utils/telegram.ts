@@ -133,6 +133,64 @@ export async function editTelegramMessage(params: {
   }
 }
 
+export async function pinTelegramMessage(params: {
+  chatId: string
+  messageId: number
+  disableNotification?: boolean
+}): Promise<boolean> {
+  if (!isTelegramConfigured()) return false
+  try {
+    const token = getBotToken()
+    const response = await fetch(`${TELEGRAM_API}/bot${token}/pinChatMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: params.chatId,
+        message_id: params.messageId,
+        disable_notification: params.disableNotification !== false,
+      }),
+    })
+    if (!response.ok) {
+      const errText = await response.text()
+      console.error('[Telegram] pinChatMessage failed:', response.status, errText)
+      return false
+    }
+    return true
+  } catch (error) {
+    console.error('[Telegram] pinChatMessage error:', error)
+    return false
+  }
+}
+
+export async function unpinTelegramMessage(params: {
+  chatId: string
+  messageId?: number
+}): Promise<boolean> {
+  if (!isTelegramConfigured()) return false
+  try {
+    const token = getBotToken()
+    const body: Record<string, unknown> = { chat_id: params.chatId }
+    if (params.messageId != null) body.message_id = params.messageId
+    const response = await fetch(
+      `${TELEGRAM_API}/bot${token}/unpinChatMessage`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+    )
+    if (!response.ok) {
+      const errText = await response.text()
+      console.error('[Telegram] unpinChatMessage failed:', response.status, errText)
+      return false
+    }
+    return true
+  } catch (error) {
+    console.error('[Telegram] unpinChatMessage error:', error)
+    return false
+  }
+}
+
 export async function sendTelegramAlert(
   text: string,
   options?: {

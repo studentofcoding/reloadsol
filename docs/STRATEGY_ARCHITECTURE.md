@@ -54,6 +54,6 @@ Apply schema via [`db/init/`](../db/init/) (`strategy_definitions`, `strategy_ou
 - Reports tab: A/B sim vs live, CSV export, ranking, Pattern ML + 24h cohort columns.
 - **Pattern ML (primary):** see [ARCHITECTURE_SUMMARY.md](./ARCHITECTURE_SUMMARY.md), [OPERATOR_STATE.md](./OPERATOR_STATE.md).
 - **Sim-outcome ML gate (secondary):** [ML_GATE_PLAN.md](./ML_GATE_PLAN.md) — dataset stats API, training pipeline in `ml/`.
-- **GMGN Radar:** live Telegram thread + comeback + Admin `config.radar` knobs + optional sim reopen — [GMGN_STRATEGY.md](./GMGN_STRATEGY.md). **Next:** sticky TTL / ENTER override on grind.
+- **GMGN Radar:** live Telegram thread + stages + sticky TTL/ENTER override + pinned Strategy PnL leaderboard — [GMGN_STRATEGY.md](./GMGN_STRATEGY.md).
 - `POST /api/strategies/[id]/promote` copies winning config after review.
 - Optional digest: `STRATEGY_REPORT_DISCORD_ENABLED`, `STRATEGY_REPORT_TELEGRAM_ENABLED`, cron `STRATEGY_REPORT_INTERVAL`.

@@ -132,21 +132,26 @@ async function applyPriceRulesToRadar(params: {
   mcapUsd: number | null
   growthPct: number | null
   stickyBaselineUsd: number | null
+  stickySinceIso: string | null
   banned: boolean
 }> {
   const cfg = params.radarConfig
   const priorEvents = await fetchRecentSocialEvents(params.tokenAddress, 30)
-  const { previousPriceUsd, stickyBaselineUsd } =
+  const { previousPriceUsd, stickyBaselineUsd, stickySinceIso } =
     extractRadarPriceStateFromEvents(priorEvents)
   const growthPct = computeRadarPriceGrowth(params.priceUsd, previousPriceUsd)
   const rules = applyRadarPriceRules({
     action: params.review.action,
+    radarScore: params.review.score,
     growthPct,
     stickyBaselineUsd,
+    stickySinceIso,
     currentPriceUsd: params.priceUsd,
     previousPriceUsd,
     stickyPumpPct: cfg.stickyPumpPct,
     dumpBanPct: cfg.dumpBanPct,
+    stickyTtlMinutes: cfg.stickyTtlMinutes,
+    enterOverrideMinScore: cfg.enterOverrideMinScore,
   })
 
   if (rules.banned) {
@@ -171,6 +176,7 @@ async function applyPriceRulesToRadar(params: {
     mcapUsd: params.mcapUsd,
     growthPct: rules.growthPct,
     stickyBaselineUsd: rules.stickyBaselineUsd,
+    stickySinceIso: rules.stickySinceIso,
     banned: rules.banned,
   }
 }
@@ -340,6 +346,7 @@ export async function POST(request: NextRequest) {
           radar_mcap_usd: priced.mcapUsd,
           radar_growth_pct: priced.growthPct,
           radar_watch_baseline_usd: priced.stickyBaselineUsd,
+          radar_sticky_since_iso: priced.stickySinceIso,
           radar_dump_banned: priced.banned ? 1 : 0,
           radar_thread_action: threadSync.action,
         },

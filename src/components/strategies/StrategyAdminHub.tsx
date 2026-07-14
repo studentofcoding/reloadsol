@@ -2528,6 +2528,12 @@ function GmgnCard({
   const [execMode, setExecMode] = useState(strategy.execution_mode);
   const [stickyPumpPct, setStickyPumpPct] = useState(String(r.stickyPumpPct));
   const [dumpBanPct, setDumpBanPct] = useState(String(r.dumpBanPct));
+  const [stickyTtlMinutes, setStickyTtlMinutes] = useState(
+    String(r.stickyTtlMinutes ?? DEFAULT_GMGN_RADAR.stickyTtlMinutes),
+  );
+  const [enterOverrideMinScore, setEnterOverrideMinScore] = useState(
+    String(r.enterOverrideMinScore ?? DEFAULT_GMGN_RADAR.enterOverrideMinScore),
+  );
   const [comebackEnabled, setComebackEnabled] = useState(r.comeback.enabled);
   const [drawdownPct, setDrawdownPct] = useState(String(r.comeback.drawdownPct));
   const [troughMcapMax, setTroughMcapMax] = useState(String(r.comeback.troughMcapMax));
@@ -2599,6 +2605,18 @@ function GmgnCard({
             step="1"
           />
           <NumberField label="dump ban %" value={dumpBanPct} onChange={setDumpBanPct} step="1" />
+          <NumberField
+            label="sticky TTL (min)"
+            value={stickyTtlMinutes}
+            onChange={setStickyTtlMinutes}
+            step="1"
+          />
+          <NumberField
+            label="ENTER override score ≥"
+            value={enterOverrideMinScore}
+            onChange={setEnterOverrideMinScore}
+            step="1"
+          />
           <CheckboxField
             label="comeback enabled"
             checked={comebackEnabled}
@@ -2673,6 +2691,8 @@ function GmgnCard({
                 radar: {
                   stickyPumpPct: parseFloat(stickyPumpPct),
                   dumpBanPct: parseFloat(dumpBanPct),
+                  stickyTtlMinutes: parseInt(stickyTtlMinutes, 10),
+                  enterOverrideMinScore: parseFloat(enterOverrideMinScore),
                   comeback: {
                     enabled: comebackEnabled,
                     drawdownPct: parseFloat(drawdownPct),

@@ -84,6 +84,7 @@ async function renderAndEdit(
     mcapPctVsLast: number | null
     peakSm: number
     peakKol: number
+    peakMcapUsd?: number | null
     deathReason?: string | null
   },
 ): Promise<void> {
@@ -105,6 +106,8 @@ async function renderAndEdit(
     pricePctVsInitial: pctChange(params.priceUsd, thread.initial_price_usd),
     mcapPctVsInitial: pctChange(params.mcapUsd, thread.initial_mcap_usd),
     deathReason: params.deathReason,
+    openedAt: thread.opened_at,
+    peakMcapUsd: params.peakMcapUsd ?? thread.peak_mcap_usd,
   })
   await editTelegramMessage({
     chatId: thread.chat_id,
@@ -147,6 +150,8 @@ async function openNewThread(params: {
     mcapPctVsLast: null,
     pricePctVsInitial: null,
     mcapPctVsInitial: null,
+    openedAt: new Date().toISOString(),
+    peakMcapUsd: params.mcapUsd,
   })
 
   const sent = await sendTelegramMessage(text, {
@@ -221,6 +226,7 @@ export async function syncRadarTelegramThread(
         mcapPctVsLast,
         peakSm,
         peakKol,
+        peakMcapUsd: peakMcap,
         deathReason,
       })
       const closed = await markRadarThreadDead({
@@ -244,6 +250,7 @@ export async function syncRadarTelegramThread(
       mcapPctVsLast,
       peakSm,
       peakKol,
+      peakMcapUsd: peakMcap,
     })
     const updated = await updateOpenRadarThread({
       id: open.id,

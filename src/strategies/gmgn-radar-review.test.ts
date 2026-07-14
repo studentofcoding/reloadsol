@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { accumulateRadarPeaks } from './gmgn-radar-accumulate'
 import {
   buildGmgnRadarReview,
+  deriveRadarThreadStage,
   formatGmgnRadarLiveThreadHtml,
   formatGmgnRadarRugTelegramHtml,
   formatGmgnRadarTelegramHtml,
@@ -194,15 +195,59 @@ describe('gmgn-radar-review recalibrated', () => {
       mcapPctVsLast: 8.5,
       pricePctVsInitial: 50,
       mcapPctVsInitial: 34.0,
+      openedAt: new Date().toISOString(),
+      peakMcapUsd: 55_000,
     })
-    expect(html).toContain('NEW TOKEN')
+    expect(html).toContain('SURGE')
     expect(html).toContain('Initial:')
     expect(html).toContain('$37.3K')
+    expect(html).toContain('Peak MC')
+    expect(html).toContain('Age:')
     expect(html).toContain('SM')
     expect(html).toContain('12')
     expect(html).toContain('KOL')
     expect(html).toContain('+10.0%')
     expect(html).toContain('Δ vs last')
+  })
+
+  it('deriveRadarThreadStage covers fresh tracking surge fade', () => {
+    const now = Date.now()
+    expect(
+      deriveRadarThreadStage({
+        openedAt: new Date(now - 5 * 60_000).toISOString(),
+        mcapPctVsInitial: 0,
+        peakSm: 1,
+        radarAction: 'WATCH',
+        nowMs: now,
+      }),
+    ).toBe('fresh')
+    expect(
+      deriveRadarThreadStage({
+        openedAt: new Date(now - 40 * 60_000).toISOString(),
+        mcapPctVsInitial: 10,
+        peakSm: 2,
+        radarAction: 'WATCH',
+        nowMs: now,
+      }),
+    ).toBe('tracking')
+    expect(
+      deriveRadarThreadStage({
+        openedAt: new Date(now - 5 * 60_000).toISOString(),
+        mcapPctVsInitial: 60,
+        peakSm: 1,
+        radarAction: 'WATCH',
+        nowMs: now,
+      }),
+    ).toBe('surge')
+    expect(
+      deriveRadarThreadStage({
+        openedAt: new Date(now - 40 * 60_000).toISOString(),
+        mcapPctVsInitial: -50,
+        peakSm: 1,
+        radarAction: 'WATCH',
+        nowMs: now,
+      }),
+    ).toBe('fade')
   })
 
   it('formats dead thread without removing lifecycle context', () => {

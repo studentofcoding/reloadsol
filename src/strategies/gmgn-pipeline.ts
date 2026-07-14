@@ -203,18 +203,22 @@ export async function gateGmgnCandidates(params: {
       hints?.usdPrice != null && hints.usdPrice > 0 ? hints.usdPrice : null
     const mcapUsd = hints?.mcap != null && hints.mcap > 0 ? hints.mcap : null
     const priceHistory = await fetchRecentSocialEvents(candidate.tokenAddress, 30)
-    const { previousPriceUsd, stickyBaselineUsd } =
+    const { previousPriceUsd, stickyBaselineUsd, stickySinceIso } =
       extractRadarPriceStateFromEvents(priceHistory)
     const growthPct = computeRadarPriceGrowth(priceUsd, previousPriceUsd)
     const radarCfg = params.strategy.config.radar
     const priceRules = applyRadarPriceRules({
       action: radarBase.action,
+      radarScore: radarBase.score,
       growthPct,
       stickyBaselineUsd,
+      stickySinceIso,
       currentPriceUsd: priceUsd,
       previousPriceUsd,
       stickyPumpPct: radarCfg?.stickyPumpPct,
       dumpBanPct: radarCfg?.dumpBanPct,
+      stickyTtlMinutes: radarCfg?.stickyTtlMinutes,
+      enterOverrideMinScore: radarCfg?.enterOverrideMinScore,
     })
 
     const action = priceRules.action
@@ -269,6 +273,7 @@ export async function gateGmgnCandidates(params: {
         radar_mcap_usd: mcapUsd,
         radar_growth_pct: priceRules.growthPct,
         radar_watch_baseline_usd: priceRules.stickyBaselineUsd,
+        radar_sticky_since_iso: priceRules.stickySinceIso,
         radar_dump_banned: banned ? 1 : 0,
         strategy_id: params.strategy.id,
         domain: 'gmgn',

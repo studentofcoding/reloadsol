@@ -272,6 +272,8 @@ export const DEFAULT_GMGN_EXIT = {
 export const DEFAULT_GMGN_RADAR: import('./types').GmgnRadarConfig = {
   stickyPumpPct: 50,
   dumpBanPct: -80,
+  stickyTtlMinutes: 45,
+  enterOverrideMinScore: 55,
   comeback: {
     enabled: true,
     drawdownPct: 70,

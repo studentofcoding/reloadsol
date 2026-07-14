@@ -148,7 +148,9 @@ On each hot Radar pass, fetch USD price + mcap (Jupiter market hints) and compar
 | Rule | Default | Effect |
 |------|---------|--------|
 | Sticky pump WATCH | `stickyPumpPct` 50 | Force **WATCH**; sticky baseline = previous price |
-| Hold sticky | price &gt; baseline | Keep **WATCH** until ≤ baseline |
+| Hold sticky | price &gt; baseline | Keep **WATCH** until ≤ baseline, **TTL**, or **score override** |
+| Sticky TTL | `stickyTtlMinutes` 45 | After sticky armed this long, allow scored action (clear sticky force) |
+| ENTER override | `enterOverrideMinScore` 55 | While sticky, if Radar score ≥ this, keep scored action (incl ENTER) |
 | Dump ban | `dumpBanPct` -80 | SKIP + `markTokenRug(gmgn-radar)` + close sims |
 
 Low absolute mcap (e.g. staying under $30k after a micro start) is **not** treated as rug — tokens can keep being tracked at any mcap. Soft death still uses comeback drawdown stages.
@@ -162,20 +164,27 @@ Low absolute mcap (e.g. staying under $30k after a micro start) is **not** treat
 
 ### Telegram single thread
 
-When `config.radar.telegram.singleThread` is true (default): one editable card per lifecycle with initial price/MC, now + % vs last, peak SM/KOL. Ingest stays cooldown-gated; **thread refresh** runs every hot poll. Persist in `radar_alert_threads`.
+When `config.radar.telegram.singleThread` is true (default): one editable card per lifecycle with initial price/MC, now + % vs last, peak SM/KOL, **Age**, **Peak MC**. Headers use trajectory stages: **NEW TOKEN** (&lt;20m), **TRACKING**, **SURGE** (MC +50% / SM≥5 / ENTER), **FADING** (MC ≤−40%). Ingest stays cooldown-gated; **thread refresh** runs every hot poll. Persist in `radar_alert_threads`.
 
-Metadata: `radar_price_usd`, `radar_mcap_usd`, `radar_growth_pct`, `radar_watch_baseline_usd`, `radar_dump_banned`, `radar_thread_action`.
+Metadata: `radar_price_usd`, `radar_mcap_usd`, `radar_growth_pct`, `radar_watch_baseline_usd`, `radar_sticky_since_iso`, `radar_dump_banned`, `radar_thread_action`.
+
+### Pinned 24h PnL leaderboard
+
+Cron `gmgn_radar_digest` (default every **86400s**, `GMGN_RADAR_DIGEST_INTERVAL`; `0` disables) posts/edits one pinned **Strategy PnL** message: for each **active** strategy (`strategy_definitions.is_active`), top **8** closed trades by realized `pnl_pct` (SIM + LIVE mixed, tagged). Chat: `GMGN_RADAR_DIGEST_CHAT_ID` or alert chat (env name is historical). State table `radar_digest_pins`. Manual: `POST /trigger/gmgn-radar-digest`. Live Radar cards still use NEW/TRACKING/SURGE/FADING stages — those are not the digest rank.
 
 ### Key files
 
 - `src/strategies/gmgn-radar-accumulate.ts` — 2h peak merge
-- `src/strategies/gmgn-radar-review.ts` — score / action / Telegram HTML (live thread + rug)
-- `src/strategies/gmgn-radar-price.ts` — sticky / dump (config thresholds)
+- `src/strategies/gmgn-radar-review.ts` — score / action / Telegram HTML (live thread + stages + rug)
+- `src/strategies/gmgn-radar-price.ts` — sticky / dump / TTL / ENTER override
 - `src/strategies/gmgn-radar-comeback.ts` — drawdown death + comeback evaluators
 - `src/strategies/gmgn-radar-thread-sync.ts` — send/edit lifecycle cards
+- `src/strategies/gmgn-radar-digest.ts` — pinned Strategy PnL leaderboard
+- `listTopPnlByActiveStrategy` / `rankTopPnlByActiveStrategy` in `src/strategies/db.ts`
 - `src/strategies/gmgn-comeback-sim.ts` — optional paper reopen on comeback (`allowSimReopen`)
 - `src/strategies/gmgn-radar-dump.ts` — dump/rug ban + sim close
 - `src/app/api/gmgn/activity-poll/route.ts` — accumulator + thread refresh + ingest
+- `src/app/api/gmgn/radar-digest/route.ts` — digest publish
 - `src/app/api/trading/signals/route.ts` — Early Enter → `signals_early` stamp
 
 ## Security gate (defaults)
@@ -281,14 +290,19 @@ Go-live checklist (future):
 - `src/app/api/gmgn/sim-track/route.ts` — cron sim target
 - `src/strategies/registry.ts` — `GMGN_STRATEGIES` + `DEFAULT_GMGN_RADAR`
 - `src/strategies/gmgn-radar-threads-db.ts` — `radar_alert_threads` persistence
+- `src/strategies/gmgn-radar-digest.ts` + `gmgn-radar-digest-db.ts` — pinned Strategy PnL leaderboard
+- `listTopPnlByActiveStrategy` in `src/strategies/db.ts`
 - `db/init/13-radar-alert-threads.sql` — thread table
-- `main.go` — `gmgn_sim_track` + `gmgn_activity_poll` workers
+- `db/init/14-radar-digest-pins.sql` — digest pin state
+- `main.go` — `gmgn_sim_track` + `gmgn_activity_poll` + `gmgn_radar_digest` workers
 
 ## Next build (Radar)
 
 | Priority | Item | Why |
 |----------|------|-----|
-| ✅ | Strategy Admin **GMGN → Radar** knobs | `GmgnCard` Radar section saves `config.radar` (sticky/dump/comeback/telegram) |
-| ✅ | Wire `allowSimReopen` on comeback (sim open only) | `gmgn-comeback-sim` + thread-sync; flag default **false** |
-| P2 | Sticky TTL / score-override for ENTER during sticky | Still blocks ENTER on grinders like Wukong |
-| — | ML enforce / live GMGN swap | Explicit non-goals until sim review + `*_ready` |
+| ✅ | Strategy Admin **GMGN → Radar** knobs | sticky/dump/comeback/telegram + sticky TTL / ENTER override |
+| ✅ | Wire `allowSimReopen` on comeback (sim open only) | Flag default **false** |
+| ✅ | Card stages + Age / Peak MC | NEW / TRACKING / SURGE / FADING |
+| ✅ | Sticky TTL + ENTER override | Defaults 45m / score ≥55 |
+| ✅ | Pinned 24h top-8 digest | `gmgn_radar_digest` + `radar_digest_pins` |
+| — | Event-driven mcap open / ML enforce / live GMGN swap | Explicit non-goals for now |

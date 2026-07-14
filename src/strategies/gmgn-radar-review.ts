@@ -353,6 +353,53 @@ function formatPriceCompact(price: number | null | undefined): string {
   return `$${price.toLocaleString('en-US', { maximumSignificantDigits: 4 })}`
 }
 
+export type RadarThreadStage = 'fresh' | 'tracking' | 'surge' | 'fade'
+
+const FRESH_AGE_MS = 20 * 60_000
+
+export function deriveRadarThreadStage(params: {
+  openedAt: string | null | undefined
+  mcapPctVsInitial: number | null | undefined
+  peakSm: number
+  radarAction: GmgnRadarAction
+  nowMs?: number
+}): RadarThreadStage {
+  const now = params.nowMs ?? Date.now()
+  const openedMs = params.openedAt ? Date.parse(params.openedAt) : NaN
+  const ageMs = Number.isFinite(openedMs) ? Math.max(0, now - openedMs) : 0
+  const mcapPct = params.mcapPctVsInitial
+  const surge =
+    params.radarAction === 'ENTER' ||
+    params.peakSm >= 5 ||
+    (mcapPct != null && Number.isFinite(mcapPct) && mcapPct >= 50)
+  if (surge) return 'surge'
+  if (mcapPct != null && Number.isFinite(mcapPct) && mcapPct <= -40) return 'fade'
+  if (ageMs >= FRESH_AGE_MS) return 'tracking'
+  return 'fresh'
+}
+
+function formatAgeCompact(openedAt: string | null | undefined, nowMs = Date.now()): string {
+  const openedMs = openedAt ? Date.parse(openedAt) : NaN
+  if (!Number.isFinite(openedMs)) return '—'
+  const mins = Math.max(0, Math.floor((nowMs - openedMs) / 60_000))
+  if (mins < 60) return `${mins}m`
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return m > 0 ? `${h}h ${m}m` : `${h}h`
+}
+
+function stageHeaderLabel(
+  kind: 'new' | 'comeback' | 'dead',
+  stage: RadarThreadStage,
+): string {
+  if (kind === 'dead') return '☠️ <b>RUG / DEAD</b>'
+  if (kind === 'comeback') return '♻️ <b>COMEBACK</b>'
+  if (stage === 'surge') return '🚀 <b>SURGE</b>'
+  if (stage === 'fade') return '📉 <b>FADING</b>'
+  if (stage === 'tracking') return '👀 <b>TRACKING</b>'
+  return '<b>NEW TOKEN</b>'
+}
+
 /** Live Radar card: one message per lifecycle (edited until dead). */
 export function formatGmgnRadarLiveThreadHtml(params: {
   kind: 'new' | 'comeback' | 'dead'
@@ -372,15 +419,31 @@ export function formatGmgnRadarLiveThreadHtml(params: {
   pricePctVsInitial?: number | null
   mcapPctVsInitial?: number | null
   deathReason?: string | null
+  openedAt?: string | null
+  peakMcapUsd?: number | null
 }): string {
   const sym = params.symbol?.trim() || 'UNKNOWN'
   const cat = params.category?.trim() || 'GMGN'
-  const header =
-    params.kind === 'dead'
-      ? `☠️ <b>RUG / DEAD</b> · ${cat} · <b>${escapeHtml(sym)}</b>`
-      : params.kind === 'comeback'
-        ? `♻️ <b>COMEBACK</b> · ${cat} · <b>${escapeHtml(sym)}</b>`
-        : `<b>NEW TOKEN</b> · ${cat} · <b>${escapeHtml(sym)}</b>`
+  const stage = deriveRadarThreadStage({
+    openedAt: params.openedAt,
+    mcapPctVsInitial: params.mcapPctVsInitial,
+    peakSm: params.peakSm,
+    radarAction: params.review.action,
+  })
+  const header = `${stageHeaderLabel(params.kind, stage)} · ${cat} · <b>${escapeHtml(sym)}</b>`
+
+  const peakMcap = params.peakMcapUsd
+  const peakLine =
+    peakMcap != null && peakMcap > 0
+      ? `📈 <b>Peak MC:</b> ${formatMcapCompact(peakMcap)}${
+          params.mcapUsd != null && params.mcapUsd > 0
+            ? ` (${formatPct(((params.mcapUsd - peakMcap) / peakMcap) * 100)} vs peak)`
+            : ''
+        }`
+      : null
+  const ageLine = params.openedAt
+    ? `⏱ <b>Age:</b> ${formatAgeCompact(params.openedAt)}`
+    : null
 
   const lines = [
     header,
@@ -391,6 +454,8 @@ export function formatGmgnRadarLiveThreadHtml(params: {
     '',
     `📌 <b>Initial:</b> ${formatPriceCompact(params.initialPriceUsd)} · MC ${params.initialMcapUsd != null && params.initialMcapUsd > 0 ? formatMcapCompact(params.initialMcapUsd) : '—'}`,
     `💰 <b>Now:</b> ${formatPriceCompact(params.priceUsd)} · MC ${params.mcapUsd != null && params.mcapUsd > 0 ? formatMcapCompact(params.mcapUsd) : '—'}`,
+    ageLine,
+    peakLine,
     `Δ vs last: price ${formatPct(params.pricePctVsLast)} · MC ${formatPct(params.mcapPctVsLast)}`,
     params.pricePctVsInitial != null || params.mcapPctVsInitial != null
       ? `Δ vs initial: price ${formatPct(params.pricePctVsInitial ?? null)} · MC ${formatPct(params.mcapPctVsInitial ?? null)}`

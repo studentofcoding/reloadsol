@@ -225,6 +225,10 @@ export interface GmgnRadarComebackConfig {
 export interface GmgnRadarConfig {
   stickyPumpPct: number
   dumpBanPct: number
+  /** Minutes after sticky arms before force-WATCH expires (0 = never by TTL). */
+  stickyTtlMinutes: number
+  /** While sticky, allow scored action (incl ENTER) when Radar score ≥ this. */
+  enterOverrideMinScore: number
   comeback: GmgnRadarComebackConfig
   telegram: {
     /** One editable Telegram card per lifecycle until dead. */
