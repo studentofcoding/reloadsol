@@ -133,11 +133,14 @@ Before scoring, activity-poll and gmgn-pipeline merge:
 | Activity score | 35 | Map 0→200 → 0→35 |
 | Early Signals | 20 | +20 if early score ≥50; else +8 if growth ≥20% |
 | Quality | 20 | holders / **top10** / buy-sell return only |
+| SM top10 boost | +15 | When **SM &gt; 0** and top10 **&lt; 20%** (flat; outside quality clamp) |
 | Soft cap | 35 | If no SM, no KOL, and no early |
 
 **Not scored:** tax, liquidity (dropped by design).
 
 **top10:** GMGN `gmgn_top_10_holder_rate` first; if missing, Jupiter `audit.topHoldersPercentage` (fetch only when about to alert). Telegram line shows e.g. `top10 18% (jup)`.
+
+**Telegram raw dump:** cards append a compact `<pre>` of unscored/hidden inputs (`activity`, `early`, `growth`, `buySell`, `honeypot`, `top10Src`, `boost`, …). Same object stamped as `radar_raw_debug` on ingest/`entry_features`.
 
 SKIP copy uses “insufficient confirmation” when SM/KOL alone are weak — it does **not** treat “smart money present” as a risk reason.
 
@@ -214,7 +217,7 @@ Stored on sim buy `entry_features`:
 - `discovery_source`, `discovery_wallet`, `discovery_trade_usd`, `discovery_trade_at`
 - `gmgn_price_usd`, `gmgn_market_cap_usd`, `gmgn_liquidity_usd`
 - `gmgn_smart_wallets`, `gmgn_top_10_holder_rate`, `gmgn_security_verdict`
-- Radar peaks when present: `radar_action`, `radar_score`, `radar_sm_peak`, `radar_kol_peak`, `radar_activity_peak`, `early_signals_score`, `top10_source`
+- Radar peaks when present: `radar_action`, `radar_score`, `radar_sm_peak`, `radar_kol_peak`, `radar_activity_peak`, `early_signals_score`, `top10_source`, `radar_raw_debug`
 
 Mcap/signals sim opens also stamp GMGN fields from recent `gmgn_*` social events when present.
 

@@ -264,6 +264,7 @@ export async function gateGmgnCandidates(params: {
         radar_score: radar.score,
         radar_summary: radar.summary,
         radar_gmgn_line: radar.gmgnLine,
+        radar_raw_debug: radar.rawDebug ?? null,
         radar_sm_peak: peaks.smPeak,
         radar_kol_peak: peaks.kolPeak,
         radar_activity_peak: peaks.activityScorePeak,

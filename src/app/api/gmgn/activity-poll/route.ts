@@ -335,6 +335,7 @@ export async function POST(request: NextRequest) {
           radar_score: radar.score,
           radar_summary: radar.summary,
           radar_gmgn_line: radar.gmgnLine,
+          radar_raw_debug: radar.rawDebug ?? null,
           radar_sm_peak: radarInput.sm,
           radar_kol_peak: radarInput.kol,
           radar_activity_peak: radarInput.activityScore,

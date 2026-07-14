@@ -144,6 +144,27 @@ describe('gmgn-radar-review recalibrated', () => {
     )
   })
 
+  it('boosts +15 when SM present and top10 < 20%', () => {
+    const base = { sm: 5, kol: 0, activityScore: 40, holders: 2000 }
+    const loose = scoreGmgnRadar({ ...base, top10: 25 })
+    const tight = scoreGmgnRadar({ ...base, top10: 14 })
+    // quality: top10≤20 → +4 vs top10≤35 → −10 ⇒ +14 quality delta, plus flat +15 boost
+    expect(tight - loose).toBeGreaterThanOrEqual(15)
+    const review = buildGmgnRadarReview({ ...base, top10: 14 })
+    expect(review.reasons).toContain('top10 spread boost (+15)')
+    expect(review.rawDebug?.boost).toBe(15)
+  })
+
+  it('does not apply SM top10 boost when sm=0 or top10≥20', () => {
+    const noSm = buildGmgnRadarReview({ sm: 0, kol: 5, top10: 14 })
+    expect(noSm.reasons).not.toContain('top10 spread boost (+15)')
+    expect(noSm.rawDebug?.boost).toBe(0)
+
+    const at20 = buildGmgnRadarReview({ sm: 5, kol: 0, top10: 20 })
+    expect(at20.reasons).not.toContain('top10 spread boost (+15)')
+    expect(at20.rawDebug?.boost).toBe(0)
+  })
+
   it('formats telegram html card with price and mcap', () => {
     const review = buildGmgnRadarReview({ sm: 37, kol: 46, holders: 3762, top10: 14 })
     const html = formatGmgnRadarTelegramHtml({
@@ -159,6 +180,8 @@ describe('gmgn-radar-review recalibrated', () => {
     expect(html).toContain('PEPE')
     expect(html).toContain('MC')
     expect(html).toContain('$48.2K')
+    expect(html).toContain('<pre>')
+    expect(html).toMatch(/top10Src=|boost=|holders=/)
   })
 
   it('formats rug telegram html', () => {
@@ -208,6 +231,8 @@ describe('gmgn-radar-review recalibrated', () => {
     expect(html).toContain('KOL')
     expect(html).toContain('+10.0%')
     expect(html).toContain('Δ vs last')
+    expect(html).toContain('<pre>')
+    expect(html).toMatch(/boost=15|top10Pct=/)
   })
 
   it('deriveRadarThreadStage covers fresh tracking surge fade', () => {

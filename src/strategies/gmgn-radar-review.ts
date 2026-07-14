@@ -31,6 +31,8 @@ export type GmgnRadarReview = {
   gmgnLine: string
   reasons: string[]
   top10Source?: 'gmgn' | 'jupiter' | null
+  /** Compact fields not shown in the main Telegram layout. */
+  rawDebug?: Record<string, unknown>
 }
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -68,9 +70,17 @@ function qualityPoints(input: GmgnRadarInput): number {
   return clamp(q, -25, 20)
 }
 
+/** SM present + top10 strictly under 20% → flat +15 (outside quality clamp). */
+export function hasSmTop10SpreadBoost(input: GmgnRadarInput): boolean {
+  if (Math.max(0, input.sm) <= 0) return false
+  const top10 = normalizeTop10Pct(input.top10)
+  return top10 != null && top10 < 20
+}
+
 /**
  * Point budget (then clamp 0–100):
  * base 10 + SM≤25 + KOL≤15 + activity≤35 + early≤20 + quality≤20
+ * + optional SM top10&lt;20% boost (+15)
  */
 export function scoreGmgnRadar(input: GmgnRadarInput): number {
   if (input.honeypot) return 10
@@ -93,6 +103,8 @@ export function scoreGmgnRadar(input: GmgnRadarInput): number {
   else if (earlyGrowth != null && earlyGrowth >= 20) score += 8
 
   score += qualityPoints(input)
+
+  if (hasSmTop10SpreadBoost(input)) score += 15
 
   const hasEarly =
     (earlyScore != null && earlyScore >= 50) ||
@@ -176,7 +188,52 @@ function buildReasons(input: GmgnRadarInput): string[] {
     reasons.push('thin holder base')
   }
 
+  if (hasSmTop10SpreadBoost(input)) {
+    reasons.push('top10 spread boost (+15)')
+  }
+
   return reasons
+}
+
+const RAW_DEBUG_MAX_CHARS = 800
+
+export function buildRadarRawDebug(input: GmgnRadarInput): Record<string, unknown> {
+  const top10 = normalizeTop10Pct(input.top10)
+  const out: Record<string, unknown> = {}
+  const put = (k: string, v: unknown) => {
+    if (v == null || v === '') return
+    out[k] = v
+  }
+  put('activity', input.activityScore)
+  put('early', input.earlySignalsScore)
+  put('growth', input.earlyGrowthPct)
+  put('buySell', input.buySellReturnPct)
+  put('honeypot', input.honeypot)
+  put('tax', input.taxPct)
+  put('liq', input.liquidityUsd)
+  put('top10Pct', top10 != null ? Math.round(top10 * 10) / 10 : null)
+  put('top10Src', input.top10Source)
+  put('holders', input.holders)
+  put('boost', hasSmTop10SpreadBoost(input) ? 15 : 0)
+  put('quality', qualityPoints(input))
+  return out
+}
+
+export function formatRadarRawDebugPre(
+  rawDebug: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!rawDebug || Object.keys(rawDebug).length === 0) return null
+  const parts: string[] = []
+  for (const [k, v] of Object.entries(rawDebug)) {
+    if (v == null) continue
+    parts.push(`${k}=${typeof v === 'number' ? (Number.isInteger(v) ? v : Number(v.toFixed(2))) : v}`)
+  }
+  if (parts.length === 0) return null
+  let body = parts.join(' ')
+  if (body.length > RAW_DEBUG_MAX_CHARS) {
+    body = body.slice(0, RAW_DEBUG_MAX_CHARS - 1) + '…'
+  }
+  return `<pre>${escapeHtml(body)}</pre>`
 }
 
 function summarize(action: GmgnRadarAction, reasons: string[], input: GmgnRadarInput): string {
@@ -227,6 +284,7 @@ export function buildGmgnRadarReview(input: GmgnRadarInput): GmgnRadarReview {
     gmgnLine: `SM ${input.sm} · KOL ${input.kol} · hold ${hold} · top10 ${top10Src}`,
     reasons,
     top10Source: input.top10Source ?? null,
+    rawDebug: buildRadarRawDebug(input),
   }
 }
 
@@ -338,6 +396,7 @@ export function formatGmgnRadarTelegramHtml(params: {
     `📊 <b>GMGN:</b> ${escapeHtml(params.review.gmgnLine)}`,
     '',
     `<code>${escapeHtml(params.tokenAddress)}</code>`,
+    formatRadarRawDebugPre(params.review.rawDebug),
   ]
   return lines.filter((l): l is string => l != null).join('\n')
 }
@@ -468,6 +527,7 @@ export function formatGmgnRadarLiveThreadHtml(params: {
       : null,
     '',
     `<code>${escapeHtml(params.tokenAddress)}</code>`,
+    formatRadarRawDebugPre(params.review.rawDebug),
   ]
   return lines.filter((l): l is string => l != null).join('\n')
 }
