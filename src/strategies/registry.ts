@@ -285,6 +285,7 @@ export const DEFAULT_GMGN_RADAR: import('./types').GmgnRadarConfig = {
   },
   telegram: {
     singleThread: true,
+    minMcapUsd: 20_000,
   },
 }
 

@@ -71,6 +71,25 @@ export type RadarThreadSyncResult = {
   thread: RadarAlertThread | null
 }
 
+const DEFAULT_TELEGRAM_MIN_MCAP_USD = 20_000
+
+/** Skip new/comeback Telegram when known mcap is below configured floor. */
+export function shouldSkipRadarTelegramForMcap(
+  mcapUsd: number | null | undefined,
+  minMcapUsd: number | null | undefined,
+): boolean {
+  const min =
+    minMcapUsd == null || !Number.isFinite(minMcapUsd)
+      ? DEFAULT_TELEGRAM_MIN_MCAP_USD
+      : minMcapUsd
+  // Explicit 0 disables the floor.
+  if (min <= 0) return false
+  if (mcapUsd == null || !Number.isFinite(mcapUsd) || mcapUsd <= 0) {
+    return false
+  }
+  return mcapUsd < min
+}
+
 async function renderAndEdit(
   thread: RadarAlertThread,
   params: {
@@ -183,6 +202,10 @@ export async function syncRadarTelegramThread(
   input: RadarThreadSyncInput,
 ): Promise<RadarThreadSyncResult> {
   if (!isStrategyTrackTelegramEnabled()) {
+    return { action: 'skipped', thread: null }
+  }
+  const { isAnyGmgnRadarStrategyActive } = await import('./load-gmgn')
+  if (!(await isAnyGmgnRadarStrategyActive())) {
     return { action: 'skipped', thread: null }
   }
   if (!input.radar.telegram.singleThread) {
@@ -306,6 +329,14 @@ export async function syncRadarTelegramThread(
           console.error('[radar-thread] comeback sim reopen failed:', err)
         }
       }
+      if (
+        shouldSkipRadarTelegramForMcap(
+          input.mcapUsd,
+          input.radar.telegram.minMcapUsd,
+        )
+      ) {
+        return { action: 'skipped', thread: dead }
+      }
       const thread = await openNewThread({
         kind: 'comeback',
         review: input.review,
@@ -328,6 +359,14 @@ export async function syncRadarTelegramThread(
     return { action: 'skipped', thread: null }
   }
   if (input.review.action === 'SKIP') {
+    return { action: 'skipped', thread: null }
+  }
+  if (
+    shouldSkipRadarTelegramForMcap(
+      input.mcapUsd,
+      input.radar.telegram.minMcapUsd,
+    )
+  ) {
     return { action: 'skipped', thread: null }
   }
 

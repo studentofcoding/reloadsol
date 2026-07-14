@@ -77,8 +77,16 @@ export function accumulateRadarPeaks(params: {
     const eventType = String(event.event_type ?? '')
 
     if (source.startsWith('gmgn_') && eventType === 'wallet_buy') {
-      smPeak = Math.max(smPeak, readMetaNum(meta, 'sm_wallet_count_60m'))
-      kolPeak = Math.max(kolPeak, readMetaNum(meta, 'kol_wallet_count_60m'))
+      smPeak = Math.max(
+        smPeak,
+        readMetaNum(meta, 'sm_wallet_count_60m'),
+        readMetaNum(meta, 'radar_sm_peak'),
+      )
+      kolPeak = Math.max(
+        kolPeak,
+        readMetaNum(meta, 'kol_wallet_count_60m'),
+        readMetaNum(meta, 'radar_kol_peak'),
+      )
       activityScorePeak = Math.max(
         activityScorePeak,
         readMetaNum(meta, 'gmgn_activity_score'),
@@ -111,5 +119,25 @@ export function accumulateRadarPeaks(params: {
     earlySignalsScore,
     earlyGrowthPct,
     hasEarlyEnter,
+  }
+}
+
+/** SM/KOL peaks from recent social events for a mint (for copy-trade alerts). */
+export async function lookupSmKolPeaksForMint(
+  tokenAddress: string,
+  limit = 30,
+): Promise<{ sm: number; kol: number } | null> {
+  try {
+    const { fetchRecentSocialEvents } = await import('./social/db')
+    const events = await fetchRecentSocialEvents(tokenAddress, limit)
+    if (!events.length) return null
+    const peaks = accumulateRadarPeaks({
+      poll: { sm: 0, kol: 0 },
+      events,
+    })
+    if (peaks.smPeak <= 0 && peaks.kolPeak <= 0) return null
+    return { sm: peaks.smPeak, kol: peaks.kolPeak }
+  } catch {
+    return null
   }
 }

@@ -58,6 +58,33 @@ describe('buildMcapSimManualTradeAlertText', () => {
     expect(text).toContain('Entry mcap: $135.4K')
     expect(text).toContain('Live mcap: $478.0K')
   })
+
+  it('includes SM·KOL when shared mint peaks are present', () => {
+    const text = buildMcapSimManualTradeAlertText({
+      strategyId: 'mcap_enter_first_seen',
+      strategyName: 'Enter at first seen',
+      tokenSymbol: 'TEST',
+      tokenAddress: 'MintABC',
+      entryMcap: 85_000,
+      sm: 6,
+      kol: 2,
+    })
+    expect(text).toContain('SM 6 · KOL 2')
+  })
+
+  it('omits SM·KOL when both zero', () => {
+    const text = buildMcapSimManualTradeAlertText({
+      strategyId: 'mcap_enter_first_seen',
+      strategyName: 'Enter at first seen',
+      tokenSymbol: 'TEST',
+      tokenAddress: 'MintABC',
+      entryMcap: 85_000,
+      sm: 0,
+      kol: 0,
+    })
+    expect(text).not.toContain('SM ')
+    expect(text).not.toContain('KOL ')
+  })
 })
 
 describe('buildSignalsEarlyEnterAlertText', () => {
@@ -95,5 +122,18 @@ describe('buildSignalsEarlyEnterAlertText', () => {
       predicted: 'loser',
     })
     expect(text).toContain('Pattern ML (shadow): pW 0.42 → loser')
+  })
+
+  it('includes SM·KOL when shared mint peaks are present', () => {
+    const text = buildSignalsEarlyEnterAlertText({
+      tokenSymbol: 'EARLY',
+      tokenAddress: 'MintABC',
+      entryMcap: 70_000,
+      growthPercent: 35.4,
+      score: 58,
+      sm: 4,
+      kol: 1,
+    })
+    expect(text).toContain('SM 4 · KOL 1')
   })
 })

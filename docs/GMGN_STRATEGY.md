@@ -169,6 +169,12 @@ Low absolute mcap (e.g. staying under $30k after a micro start) is **not** treat
 
 When `config.radar.telegram.singleThread` is true (default): one editable card per lifecycle with initial price/MC, now + % vs last, peak SM/KOL, **Age**, **Peak MC**. Headers use trajectory stages: **NEW TOKEN** (&lt;20m), **TRACKING**, **SURGE** (MC +50% / SM≥5 / ENTER), **FADING** (MC ≤−40%). Ingest stays cooldown-gated; **thread refresh** runs every hot poll. Persist in `radar_alert_threads`.
 
+**Min mcap for new cards:** `config.radar.telegram.minMcapUsd` (default **20_000**) — skip **new/comeback** Telegram opens when known mcap is below the floor (edits/death on open threads still run). Null mcap is allowed (fail-open).
+
+**Strategy toggle:** Radar Telegram (thread sync + legacy cards) runs only when **at least one** GMGN strategy is `is_active` (SM / KOL / combined / search clones). If all are off in Admin, Radar Telegram is off — scoring/ingest may still run.
+
+**Copy-trade alerts:** Early Signals Enter and Mcap Sim OPEN append `SM N · KOL N` when the same mint has recent GMGN `social_token_events` peaks.
+
 Metadata: `radar_price_usd`, `radar_mcap_usd`, `radar_growth_pct`, `radar_watch_baseline_usd`, `radar_sticky_since_iso`, `radar_dump_banned`, `radar_thread_action`.
 
 ### Pinned 24h PnL leaderboard

@@ -249,8 +249,9 @@ async function openSimPosition(params: {
   } = await import('@/strategies/mcap-sim-open-alerts')
 
   if (isMcapManualTradeStrategy(params.strategyId)) {
+    const manualStrategyId = params.strategyId
     recordSimOpenAlert({
-      strategyId: params.strategyId,
+      strategyId: manualStrategyId,
       tokenAddress: params.mintAddress,
       tokenSymbol: params.symbol,
       entryMcap: params.entryMcap,
@@ -258,15 +259,23 @@ async function openSimPosition(params: {
       entryTemplate: params.entryTemplate,
     })
     const { sendMcapSimManualTradeAlert } = await import('@/utils/telegram')
-    void sendMcapSimManualTradeAlert({
-      strategyId: params.strategyId,
-      strategyName: strategyLabelForManualTrade(params.strategyId),
-      tokenSymbol: params.symbol,
-      tokenAddress: params.mintAddress,
-      entryMcap: params.entryMcap,
-      entryAt: params.entryAt,
-      liveMcap: params.snapshot.current_mcap,
-    }).catch((err) => {
+    const { lookupSmKolPeaksForMint } = await import(
+      '@/strategies/gmgn-radar-accumulate'
+    )
+    void (async () => {
+      const peaks = await lookupSmKolPeaksForMint(params.mintAddress)
+      await sendMcapSimManualTradeAlert({
+        strategyId: manualStrategyId,
+        strategyName: strategyLabelForManualTrade(manualStrategyId),
+        tokenSymbol: params.symbol,
+        tokenAddress: params.mintAddress,
+        entryMcap: params.entryMcap,
+        entryAt: params.entryAt,
+        liveMcap: params.snapshot.current_mcap,
+        sm: peaks?.sm ?? null,
+        kol: peaks?.kol ?? null,
+      })
+    })().catch((err) => {
       console.error('[mcap-sim-open] telegram alert failed:', err)
     })
   } else {

@@ -112,17 +112,25 @@ export async function GET(request: NextRequest) {
             reason: shadow.reason,
           })
         }
-        void sendSignalsEarlyEnterAlert({
-          tokenSymbol: alert.tokenSymbol,
-          tokenAddress: alert.tokenAddress,
-          entryMcap: alert.entryMcap,
-          growthPercent: alert.growthPercent,
-          score: alert.score,
-          rationale: alert.rationale,
-          entryAt: alert.entryAt,
-          pWinner: alert.pWinner,
-          predicted: alert.predicted,
-        })
+        void (async () => {
+          const { lookupSmKolPeaksForMint } = await import(
+            '@/strategies/gmgn-radar-accumulate'
+          )
+          const peaks = await lookupSmKolPeaksForMint(alert.tokenAddress)
+          await sendSignalsEarlyEnterAlert({
+            tokenSymbol: alert.tokenSymbol,
+            tokenAddress: alert.tokenAddress,
+            entryMcap: alert.entryMcap,
+            growthPercent: alert.growthPercent,
+            score: alert.score,
+            rationale: alert.rationale,
+            entryAt: alert.entryAt,
+            pWinner: alert.pWinner,
+            predicted: alert.predicted,
+            sm: peaks?.sm ?? null,
+            kol: peaks?.kol ?? null,
+          })
+        })()
       }
     }
 

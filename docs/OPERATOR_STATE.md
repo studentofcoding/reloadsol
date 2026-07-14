@@ -78,7 +78,7 @@ New domain — **sim_only by default**. See [GMGN_STRATEGY.md](./GMGN_STRATEGY.m
 | Env | `GMGN_API_KEY=...` in web `.env` (HTTP default; CLI optional via `GMGN_TRANSPORT=cli`) |
 | DB | `psql -f db/init/10-gmgn-strategy-domain.sql` + `11-gmgn-sm-kol-combined.sql` + **`13-radar-alert-threads.sql`** on existing volume |
 | Deploy | Rebuild web + cron; workers `gmgn_sim_track` (120s) + `gmgn_activity_poll` (180s) + `gmgn_radar_digest` (86400s) |
-| Enable | `/dev/strategies` → activate `gmgn_sm_kol_combined` or `gmgn_smartmoney_default` |
+| Enable | `/dev/strategies` → activate `gmgn_sm_kol_combined` or `gmgn_smartmoney_default` (Radar Telegram follows: all GMGN off ⇒ no Radar cards) |
 | Smoke | `POST /trigger/gmgn-activity-poll` → `social_token_events` + Telegram **one card per lifecycle** (NEW/TRACKING/SURGE/FADING); `radar_alert_threads` |
 | Smoke | `POST /trigger/gmgn-radar-digest` → pinned Strategy PnL (top 8 per active strategy; `radar_digest_pins`) |
 | Smoke | `GET /api/trading/signals` Early Enter → `signals_early` stamps |

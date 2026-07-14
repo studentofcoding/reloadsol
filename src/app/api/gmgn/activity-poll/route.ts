@@ -308,6 +308,7 @@ export async function POST(request: NextRequest) {
             eventLabel: `activity score ${item.score}`,
             priceUsd: priced.priceUsd,
             mcapUsd: priced.mcapUsd,
+            minMcapUsd: radarConfig.telegram.minMcapUsd,
           }).catch(() => {})
         }
       }

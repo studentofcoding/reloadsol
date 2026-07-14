@@ -969,7 +969,7 @@ export default function StrategyAdminHub() {
             <div className="grid gap-4 md:grid-cols-2">
               {gmgn.map((s) => (
                 <GmgnCard
-                  key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.radar?.stickyPumpPct}-${s.config.radar?.dumpBanPct}-${s.config.radar?.comeback?.allowSimReopen}-${s.config.radar?.telegram?.singleThread}`}
+                  key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.radar?.stickyPumpPct}-${s.config.radar?.dumpBanPct}-${s.config.radar?.comeback?.allowSimReopen}-${s.config.radar?.telegram?.singleThread}-${s.config.radar?.telegram?.minMcapUsd}`}
                   strategy={s}
                   saving={saving === s.id}
                   onSave={saveStrategy}
@@ -2542,6 +2542,9 @@ function GmgnCard({
   const [unbanOnComeback, setUnbanOnComeback] = useState(r.comeback.unbanOnComeback);
   const [allowSimReopen, setAllowSimReopen] = useState(r.comeback.allowSimReopen);
   const [singleThread, setSingleThread] = useState(r.telegram.singleThread);
+  const [minTelegramMcapUsd, setMinTelegramMcapUsd] = useState(
+    String(r.telegram.minMcapUsd ?? DEFAULT_GMGN_RADAR.telegram.minMcapUsd),
+  );
 
   return (
     <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
@@ -2627,6 +2630,12 @@ function GmgnCard({
             checked={singleThread}
             onChange={setSingleThread}
           />
+          <NumberField
+            label="Telegram min mcap $"
+            value={minTelegramMcapUsd}
+            onChange={setMinTelegramMcapUsd}
+            step="1000"
+          />
           <NumberField label="drawdown %" value={drawdownPct} onChange={setDrawdownPct} step="1" />
           <NumberField
             label="trough mcap max"
@@ -2702,7 +2711,10 @@ function GmgnCard({
                     unbanOnComeback,
                     allowSimReopen,
                   },
-                  telegram: { singleThread },
+                  telegram: {
+                    singleThread,
+                    minMcapUsd: parseFloat(minTelegramMcapUsd),
+                  },
                 },
               },
             })

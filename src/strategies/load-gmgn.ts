@@ -66,3 +66,16 @@ export async function getActiveGmgnForSim(): Promise<GmgnStrategy[]> {
       (s.execution_mode === 'sim_only' || s.execution_mode === 'ab_parallel'),
   )
 }
+
+/** Radar Telegram follows GMGN SM/KOL strategy toggles — off when none are active. */
+export async function isAnyGmgnRadarStrategyActive(): Promise<boolean> {
+  const registry = await getMergedGmgnRegistry()
+  return Object.values(registry).some((s) => s.is_active)
+}
+
+/** Pure helper for tests / callers with a preloaded registry. */
+export function hasActiveGmgnRadarStrategy(
+  registry: Record<string, Pick<GmgnStrategy, 'is_active'>>,
+): boolean {
+  return Object.values(registry).some((s) => s.is_active)
+}

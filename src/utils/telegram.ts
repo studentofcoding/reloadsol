@@ -331,6 +331,16 @@ export function formatReloadsolBuyLink(mint: string, solAmount = 0.1): string {
   return `https://reloadsol.app/buy?sol=${solAmount}&mints=${mint}`
 }
 
+function formatSmKolLine(
+  sm?: number | null,
+  kol?: number | null,
+): string | null {
+  const smN = sm != null && Number.isFinite(sm) ? Math.max(0, sm) : 0
+  const kolN = kol != null && Number.isFinite(kol) ? Math.max(0, kol) : 0
+  if (smN <= 0 && kolN <= 0) return null
+  return `SM ${smN} · KOL ${kolN}`
+}
+
 export function buildMcapSimManualTradeAlertText(params: {
   strategyId: string
   strategyName: string
@@ -339,6 +349,8 @@ export function buildMcapSimManualTradeAlertText(params: {
   entryMcap: number
   entryAt?: string | null
   liveMcap?: number | null
+  sm?: number | null
+  kol?: number | null
 }): string {
   const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
   const name = escapeTelegramHtml(params.strategyName)
@@ -356,6 +368,7 @@ export function buildMcapSimManualTradeAlertText(params: {
     Math.abs(params.liveMcap - params.entryMcap) / Math.max(params.entryMcap, 1) > 0.02
       ? formatMcapUsd(params.liveMcap)
       : null
+  const smKol = formatSmKolLine(params.sm, params.kol)
 
   return [
     `🟢 <b>Mcap Sim OPEN — copy trade</b>`,
@@ -364,6 +377,7 @@ export function buildMcapSimManualTradeAlertText(params: {
     `Token: <b>${symbol}</b>`,
     `Entry mcap: ${formatMcapUsd(params.entryMcap)}`,
     live ? `Live mcap: ${live}` : null,
+    smKol,
     entryAt ? `Entry at: ${entryAt}` : null,
     '',
     `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a> · <a href="${jupLink}">Jupiter</a>`,
@@ -383,6 +397,8 @@ export function buildSignalsEarlyEnterAlertText(params: {
   entryAt?: string | null
   pWinner?: number | null
   predicted?: 'winner' | 'loser' | null
+  sm?: number | null
+  kol?: number | null
 }): string {
   const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
   const chartLink = formatReloadsolChartLink(params.tokenAddress)
@@ -403,6 +419,7 @@ export function buildSignalsEarlyEnterAlertText(params: {
     params.pWinner != null && Number.isFinite(params.pWinner)
       ? `Pattern ML (shadow): pW ${params.pWinner.toFixed(2)} → ${params.predicted ?? '—'}`
       : 'Pattern ML (shadow): n/a'
+  const smKol = formatSmKolLine(params.sm, params.kol)
 
   return [
     `🟡 <b>Early Signals Enter — copy trade</b>`,
@@ -411,6 +428,7 @@ export function buildSignalsEarlyEnterAlertText(params: {
     `Growth: <b>${growth}</b> (before 100%)`,
     `Score: ${params.score.toFixed(0)}`,
     `Live mcap: ${formatMcapUsd(params.entryMcap)}`,
+    smKol,
     mlLine,
     rationale ? `Rationale: ${rationale}` : null,
     entryAt ? `Seen at: ${entryAt}` : null,
@@ -432,6 +450,8 @@ export async function sendSignalsEarlyEnterAlert(params: {
   entryAt?: string | null
   pWinner?: number | null
   predicted?: 'winner' | 'loser' | null
+  sm?: number | null
+  kol?: number | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
@@ -457,6 +477,8 @@ export async function sendMcapSimManualTradeAlert(params: {
   entryMcap: number
   entryAt?: string | null
   liveMcap?: number | null
+  sm?: number | null
+  kol?: number | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
@@ -519,10 +541,23 @@ export async function sendGmgnRadarAlert(params: {
   eventLabel?: string | null
   priceUsd?: number | null
   mcapUsd?: number | null
+  /** Override; defaults to DEFAULT_GMGN_RADAR.telegram.minMcapUsd */
+  minMcapUsd?: number | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
   // Only share WATCH / ENTER — SKIP stays in social metadata, not Telegram
   if (params.review.action === 'SKIP') return false
+
+  const { isAnyGmgnRadarStrategyActive } = await import('@/strategies/load-gmgn')
+  if (!(await isAnyGmgnRadarStrategyActive())) return false
+
+  const { DEFAULT_GMGN_RADAR } = await import('@/strategies/registry')
+  const { shouldSkipRadarTelegramForMcap } = await import(
+    '@/strategies/gmgn-radar-thread-sync'
+  )
+  const minMcap =
+    params.minMcapUsd ?? DEFAULT_GMGN_RADAR.telegram.minMcapUsd
+  if (shouldSkipRadarTelegramForMcap(params.mcapUsd, minMcap)) return false
 
   const { formatGmgnRadarTelegramHtml } = await import('@/strategies/gmgn-radar-review')
   const chartLink = formatReloadsolChartLink(params.tokenAddress)

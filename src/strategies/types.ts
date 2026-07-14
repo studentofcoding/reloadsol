@@ -233,6 +233,8 @@ export interface GmgnRadarConfig {
   telegram: {
     /** One editable Telegram card per lifecycle until dead. */
     singleThread: boolean
+    /** Skip new/comeback Telegram opens when known mcap is below this (USD). */
+    minMcapUsd: number
   }
 }
 
