@@ -26,6 +26,11 @@ import {
   trackerHistoryHasVolume,
 } from './trade-window-chart-data'
 import { isOpenTrackerPosition, resolveTrackerStrategyId } from '@/utils/trading-simulation'
+import {
+  computeBestTradeWindows,
+  DEFAULT_REPORT_TIMEZONE,
+  resolveReportTimeZone,
+} from './best-trade-windows'
 import type {
   StrategyDefinitionRow,
   StrategyDomain,
@@ -40,6 +45,7 @@ import type {
   McapTrackerMilestoneBucket,
   McapOpenSimReportRow,
   McapTrackerReportStats,
+  StrategyBestTradeWindows,
 } from './types'
 
 function errorMessage(error: unknown): string {
@@ -1226,6 +1232,7 @@ export async function aggregateStrategyReports(params: {
   isSimulated?: boolean
   from?: string
   to?: string
+  timeZone?: string
 }): Promise<{
   breakdown: StrategyReportBreakdown[]
   abPairs: import('./types').StrategyAbPair[]
@@ -1234,7 +1241,10 @@ export async function aggregateStrategyReports(params: {
   coverage: StrategyCoverageRow[]
   mlStats: MlLabelStats
   mcapTrackerStats: McapTrackerReportStats
+  bestTradeWindows: StrategyBestTradeWindows[]
+  timezone: string
 }> {
+  const timeZone = resolveReportTimeZone(params.timeZone ?? DEFAULT_REPORT_TIMEZONE)
   const emptyMcapStats: McapTrackerReportStats = {
     strategies: [],
     milestone_buckets: [],
@@ -1262,6 +1272,8 @@ export async function aggregateStrategyReports(params: {
         coverage: [],
         mlStats: { total: 0, unlabeled: 0, by_label: {}, by_condition: {} },
         mcapTrackerStats: emptyMcapStats,
+        bestTradeWindows: [],
+        timezone: timeZone,
       }
     }
     throw error
@@ -1445,15 +1457,26 @@ export async function aggregateStrategyReports(params: {
   const withPnl = rows.filter((r) => r.pnl_pct != null)
   const topTrades = [...withPnl]
     .sort((a, b) => Number(b.pnl_pct) - Number(a.pnl_pct))
-    .slice(0, 5)
+    .slice(0, 8)
   const worstTrades = [...withPnl]
     .sort((a, b) => Number(a.pnl_pct) - Number(b.pnl_pct))
-    .slice(0, 5)
+    .slice(0, 8)
 
   const mlStats = computeMlLabelStats(rows)
   const mcapTrackerStats = await buildMcapTrackerReportStats(rows, breakdown)
+  const bestTradeWindows = computeBestTradeWindows(rows, { timeZone })
 
-  return { breakdown, abPairs, topTrades, worstTrades, coverage, mlStats, mcapTrackerStats }
+  return {
+    breakdown,
+    abPairs,
+    topTrades,
+    worstTrades,
+    coverage,
+    mlStats,
+    mcapTrackerStats,
+    bestTradeWindows,
+    timezone: timeZone,
+  }
 }
 
 export type StrategyDomainHeartbeatSource =

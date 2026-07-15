@@ -56,4 +56,4 @@ Apply schema via [`db/init/`](../db/init/) (`strategy_definitions`, `strategy_ou
 - **Sim-outcome ML gate (secondary):** [ML_GATE_PLAN.md](./ML_GATE_PLAN.md) — dataset stats API, training pipeline in `ml/`.
 - **GMGN Radar:** live Telegram thread + stages + sticky TTL/ENTER override + pinned Strategy PnL leaderboard — [GMGN_STRATEGY.md](./GMGN_STRATEGY.md).
 - `POST /api/strategies/[id]/promote` copies winning config after review.
-- Optional digest: `STRATEGY_REPORT_DISCORD_ENABLED`, `STRATEGY_REPORT_TELEGRAM_ENABLED`, cron `STRATEGY_REPORT_INTERVAL`.
+- Optional digest: `STRATEGY_REPORT_DISCORD_ENABLED`, `STRATEGY_REPORT_TELEGRAM_ENABLED`, cron `STRATEGY_REPORT_INTERVAL`. Digest includes best trade windows (tz `STRATEGY_REPORT_TZ` or `Asia/Bangkok`). Reports API: `?tz=Asia/Bangkok|UTC`, ranking by avg PnL, top 8 trades.

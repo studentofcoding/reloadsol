@@ -285,7 +285,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 ### API routes
 
 - `GET /api/strategies` — merged registry
-- `GET /api/strategies/reports` — breakdown + `coverage[]`
+- `GET /api/strategies/reports` — breakdown + `coverage[]` + `best_trade_windows` (default tz `Asia/Bangkok`, `?tz=`), ranking by avg PnL, top/worst 8 trades
 - `GET /api/strategies/outcomes` — paginated outcomes
 - `PATCH /api/strategies/outcomes/[id]` — ML label merge
 - `GET /api/mcap-patterns/stats` — 24h cohort counts + pattern model readiness

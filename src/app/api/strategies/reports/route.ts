@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { aggregateStrategyReports } from '@/strategies/db'
+import {
+  DEFAULT_REPORT_TIMEZONE,
+  resolveReportTimeZone,
+} from '@/strategies/best-trade-windows'
 import type { StrategyDomain } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
@@ -14,14 +18,27 @@ export async function GET(request: NextRequest) {
       isSimParam === 'true' ? true : isSimParam === 'false' ? false : undefined
     const from = searchParams.get('from') ?? undefined
     const to = searchParams.get('to') ?? undefined
+    const timeZone = resolveReportTimeZone(
+      searchParams.get('tz') ?? DEFAULT_REPORT_TIMEZONE,
+    )
 
-    const { breakdown, abPairs, topTrades, worstTrades, coverage, mlStats, mcapTrackerStats } =
-      await aggregateStrategyReports({
+    const {
+      breakdown,
+      abPairs,
+      topTrades,
+      worstTrades,
+      coverage,
+      mlStats,
+      mcapTrackerStats,
+      bestTradeWindows,
+      timezone,
+    } = await aggregateStrategyReports({
       domain: domain ?? undefined,
       strategyId,
       isSimulated,
       from,
       to,
+      timeZone,
     })
 
     const totalTrades = breakdown.reduce((s, b) => s + b.trade_count, 0)
@@ -32,9 +49,13 @@ export async function GET(request: NextRequest) {
         ? breakdown.reduce((s, b) => s + b.avg_pnl_pct, 0) / breakdown.length
         : 0
 
+    // Profit-first ranking among buckets with enough sample.
     const ranking = breakdown
       .filter((b) => b.trade_count >= 10)
-      .sort((a, b) => b.win_rate - a.win_rate || b.avg_pnl_pct - a.avg_pnl_pct)
+      .sort(
+        (a, b) =>
+          b.avg_pnl_pct - a.avg_pnl_pct || b.win_rate - a.win_rate,
+      )
 
     return NextResponse.json({
       success: true,
@@ -51,7 +72,16 @@ export async function GET(request: NextRequest) {
       worst_trades: worstTrades,
       ml_stats: mlStats,
       mcap_tracker_stats: mcapTrackerStats,
-      filters: { domain, strategy_id: strategyId, is_simulated: isSimulated, from, to },
+      best_trade_windows: bestTradeWindows,
+      timezone,
+      filters: {
+        domain,
+        strategy_id: strategyId,
+        is_simulated: isSimulated,
+        from,
+        to,
+        tz: timezone,
+      },
     })
   } catch (error) {
     return NextResponse.json(

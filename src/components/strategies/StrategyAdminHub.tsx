@@ -164,6 +164,20 @@ type McapTrackerReportStats = {
   open_sim_positions?: McapOpenSimReportRow[];
 };
 
+type BestTradeWindowRow = {
+  strategy_id: string;
+  domain: string;
+  is_simulated: boolean;
+  timezone: string;
+  best: {
+    start_hour: number;
+    end_hour: number;
+    trade_count: number;
+    win_rate: number;
+    avg_pnl_pct: number;
+  } | null;
+};
+
 type StrategyAdminQueryData = {
   data: StrategiesResponse;
   outcomes: OutcomeRow[];
@@ -175,6 +189,8 @@ type StrategyAdminQueryData = {
     ranking: ReportBreakdown[];
     ml_stats: MlLabelStats;
     mcap_tracker_stats: McapTrackerReportStats | null;
+    best_trade_windows: BestTradeWindowRow[];
+    timezone: string;
   } | null;
 };
 
@@ -356,6 +372,7 @@ export default function StrategyAdminHub() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [reportFrom, setReportFrom] = useState("");
   const [reportTo, setReportTo] = useState("");
+  const [reportTz, setReportTz] = useState("Asia/Bangkok");
   const [reportDomain, setReportDomain] = useState("");
   const [reportStrategyId, setReportStrategyId] = useState("");
   const [reportSimulated, setReportSimulated] = useState("");
@@ -422,6 +439,7 @@ export default function StrategyAdminHub() {
         "strategy-admin",
         reportFrom,
         reportTo,
+        reportTz,
         reportDomain,
         reportStrategyId,
         reportSimulated,
@@ -435,6 +453,7 @@ export default function StrategyAdminHub() {
     [
       reportFrom,
       reportTo,
+      reportTz,
       reportDomain,
       reportStrategyId,
       reportSimulated,
@@ -478,6 +497,7 @@ export default function StrategyAdminHub() {
       if (reportDomain) reportParams.set("domain", reportDomain);
       if (reportStrategyId) reportParams.set("strategy_id", reportStrategyId);
       if (reportSimulated) reportParams.set("is_simulated", reportSimulated);
+      reportParams.set("tz", reportTz);
 
       const outcomesQuery = buildOutcomesQuery({
         reportFrom,
@@ -519,6 +539,9 @@ export default function StrategyAdminHub() {
                 by_condition: {},
               }) as MlLabelStats,
               mcap_tracker_stats: repJson.mcap_tracker_stats ?? null,
+              best_trade_windows: (repJson.best_trade_windows ??
+                []) as BestTradeWindowRow[],
+              timezone: (repJson.timezone as string) ?? reportTz,
             }
           : null,
       };
@@ -1048,6 +1071,17 @@ export default function StrategyAdminHub() {
                 />
               </label>
               <label className="text-gray-400">
+                Timezone
+                <select
+                  className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
+                  value={reportTz}
+                  onChange={(e) => setReportTz(e.target.value)}
+                >
+                  <option value="Asia/Bangkok">Asia/Bangkok</option>
+                  <option value="UTC">UTC</option>
+                </select>
+              </label>
+              <label className="text-gray-400">
                 Domain
                 <select
                   className="block mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white"
@@ -1524,14 +1558,47 @@ export default function StrategyAdminHub() {
               <p className="text-gray-500 text-sm mb-6">No A/B pairs yet (set execution_mode=ab_parallel).</p>
             )}
 
-            <h3 className="text-lg font-semibold text-white mb-2">Ranking (n≥10)</h3>
+            <h3 className="text-lg font-semibold text-white mb-2">
+              Ranking by avg PnL (n≥10)
+            </h3>
             <ul className="text-sm text-gray-300 mb-6 space-y-1">
               {(reports?.ranking ?? []).slice(0, 10).map((r: ReportBreakdown) => (
                 <li key={`${r.domain}-${r.strategy_id}-${r.is_simulated}`}>
-                  {r.domain}/{r.strategy_id} [{r.is_simulated ? "SIM" : "LIVE"}]: WR{" "}
-                  {(r.win_rate * 100).toFixed(1)}%, avg {r.avg_pnl_pct.toFixed(2)}% ({r.trade_count} trades)
+                  {r.domain}/{r.strategy_id} [{r.is_simulated ? "SIM" : "LIVE"}]: avg{" "}
+                  {r.avg_pnl_pct.toFixed(2)}%, WR {(r.win_rate * 100).toFixed(1)}% (
+                  {r.trade_count} trades)
                 </li>
               ))}
+            </ul>
+
+            <h3 className="text-lg font-semibold text-white mb-2">
+              Best trade windows ({reports?.timezone ?? reportTz})
+            </h3>
+            <ul className="text-sm text-gray-300 mb-6 space-y-1">
+              {(reports?.best_trade_windows ?? [])
+                .filter((w) => w.best)
+                .slice(0, 20)
+                .map((w) => {
+                  const b = w.best!;
+                  const pad = (n: number) => String(n).padStart(2, "0");
+                  const range = `${pad(b.start_hour)}:00–${pad(b.end_hour)}:00`;
+                  const avg = `${b.avg_pnl_pct >= 0 ? "+" : ""}${b.avg_pnl_pct.toFixed(0)}%`;
+                  return (
+                    <li
+                      key={`${w.domain}-${w.strategy_id}-${w.is_simulated}`}
+                    >
+                      {w.strategy_id} [{w.is_simulated ? "SIM" : "LIVE"}] · {range} ·
+                      avg {avg} · n={b.trade_count}
+                    </li>
+                  );
+                })}
+              {(reports?.best_trade_windows ?? []).filter((w) => w.best).length ===
+                0 && (
+                <li className="text-gray-500">
+                  No windows with ≥5 trades yet (need enough closed outcomes by
+                  entry hour).
+                </li>
+              )}
             </ul>
           </section>
 

@@ -418,6 +418,36 @@ export interface StrategyAbPair {
   live: StrategyReportBreakdown | null
 }
 
+export interface StrategyHourBucket {
+  hour: number
+  trade_count: number
+  win_count: number
+  win_rate: number
+  avg_pnl_pct: number
+  total_pnl_pct: number
+}
+
+export interface StrategyTradeWindow {
+  /** Inclusive start hour in the selected timezone (0–23). */
+  start_hour: number
+  /** Exclusive end hour (0–23), wrapping past midnight if needed. */
+  end_hour: number
+  trade_count: number
+  win_rate: number
+  avg_pnl_pct: number
+  total_pnl_pct: number
+}
+
+export interface StrategyBestTradeWindows {
+  strategy_id: string
+  domain: StrategyDomain
+  is_simulated: boolean
+  timezone: string
+  best: StrategyTradeWindow | null
+  top_windows: StrategyTradeWindow[]
+  hours: StrategyHourBucket[]
+}
+
 export interface SignalsStrategyMeta {
   id: 'default' | 'sell_over_100'
   name: string
