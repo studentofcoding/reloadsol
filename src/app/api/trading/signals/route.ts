@@ -120,10 +120,15 @@ export async function GET(request: NextRequest) {
           const { getMergedMcapTrackerRegistry } = await import(
             '@/strategies/load-mcap-tracker'
           )
+          const { getSignalsStrategy } = await import('@/strategies/load-signals')
           const signalsId =
             strategyTemplate === 'sell_over_100'
               ? 'signals_sell_over_100'
               : 'signals_default'
+          const signalsStrategy = await getSignalsStrategy(signalsId)
+          if (!signalsStrategy?.is_active) {
+            return
+          }
           const strategyIds = [signalsId]
           const [peaks, tracked] = await Promise.all([
             lookupSmKolPeaksForMint(alert.tokenAddress),

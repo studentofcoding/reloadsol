@@ -316,6 +316,18 @@ async function openSimPosition(params: {
   })
 
   await insertTradingRecord(record)
+
+  const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
+  notifyStrategyOpen({
+    domain: 'gmgn',
+    strategyId: params.strategy.id,
+    tokenSymbol: params.symbol,
+    tokenAddress: params.mintAddress,
+    marketCap: entryMcap,
+    isSimulated: true,
+    topHoldersPct,
+    features: fullFeatures,
+  })
 }
 
 export async function POST(request: NextRequest) {

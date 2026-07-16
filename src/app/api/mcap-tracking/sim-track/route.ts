@@ -263,6 +263,14 @@ async function openSimPosition(params: {
       '@/strategies/gmgn-radar-accumulate'
     )
     void (async () => {
+      const { isStrategyActiveForTelegram } = await import(
+        '@/strategies/strategy-telegram-notify'
+      )
+      if (
+        !(await isStrategyActiveForTelegram('mcap_tracker', manualStrategyId))
+      ) {
+        return
+      }
       const peaks = await lookupSmKolPeaksForMint(params.mintAddress)
       await sendMcapSimManualTradeAlert({
         strategyId: manualStrategyId,

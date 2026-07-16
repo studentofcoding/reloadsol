@@ -245,7 +245,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `CRON_SERVICE_URL` | `http://cron:8080` in Docker compose | Next.js proxy to cron |
 | `TELEGRAM_BOT_TOKEN` | — | Sim open copy-trade alerts (with `TELEGRAM_ALERT_CHAT_ID`) |
 | `TELEGRAM_ALERT_CHAT_ID` | — | Telegram destination for strategy/sim alerts |
-| `STRATEGY_TRACK_TELEGRAM_ENABLED` | enabled unless `false` | Gates all strategy track Telegram alerts |
+| `STRATEGY_TRACK_TELEGRAM_ENABLED` | enabled unless `false` | Global kill switch for strategy track Telegram. Per-strategy: Admin `is_active` gates position OPEN/CLOSE + Early Enter / Mcap Sim OPEN for that id |
 
 ### Endpoints
 
