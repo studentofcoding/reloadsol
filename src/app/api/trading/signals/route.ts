@@ -116,7 +116,25 @@ export async function GET(request: NextRequest) {
           const { lookupSmKolPeaksForMint } = await import(
             '@/strategies/gmgn-radar-accumulate'
           )
-          const peaks = await lookupSmKolPeaksForMint(alert.tokenAddress)
+          const { fetchMcapTrackingRow } = await import('@/utils/mcap-tracker')
+          const { getMergedMcapTrackerRegistry } = await import(
+            '@/strategies/load-mcap-tracker'
+          )
+          const signalsId =
+            strategyTemplate === 'sell_over_100'
+              ? 'signals_sell_over_100'
+              : 'signals_default'
+          const strategyIds = [signalsId]
+          const [peaks, tracked] = await Promise.all([
+            lookupSmKolPeaksForMint(alert.tokenAddress),
+            fetchMcapTrackingRow(alert.tokenAddress),
+          ])
+          if (tracked) {
+            const registry = await getMergedMcapTrackerRegistry()
+            for (const id of ['mcap_enter_first_seen', 'mcap_enter_at_80'] as const) {
+              if (registry[id]?.is_active) strategyIds.push(id)
+            }
+          }
           await sendSignalsEarlyEnterAlert({
             tokenSymbol: alert.tokenSymbol,
             tokenAddress: alert.tokenAddress,
@@ -129,6 +147,7 @@ export async function GET(request: NextRequest) {
             predicted: alert.predicted,
             sm: peaks?.sm ?? null,
             kol: peaks?.kol ?? null,
+            strategyIds,
           })
         })()
       }

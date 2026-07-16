@@ -274,6 +274,9 @@ async function openSimPosition(params: {
         liveMcap: params.snapshot.current_mcap,
         sm: peaks?.sm ?? null,
         kol: peaks?.kol ?? null,
+        // ponytail: log only from tracked snapshot — skip Jupiter refetch when set
+        organicScore: params.snapshot.organic_score,
+        topHoldersPct: params.snapshot.top_holders_pct,
       })
     })().catch((err) => {
       console.error('[mcap-sim-open] telegram alert failed:', err)
@@ -287,6 +290,9 @@ async function openSimPosition(params: {
       tokenAddress: params.mintAddress,
       marketCap: params.entryMcap,
       isSimulated: true,
+      organicScore: params.snapshot.organic_score,
+      topHoldersPct: params.snapshot.top_holders_pct,
+      features: scoredEntryFeatures,
     })
   }
 }
@@ -487,6 +493,9 @@ async function openLivePosition(params: {
     tokenAddress: params.mintAddress,
     marketCap: params.entryMcap,
     isSimulated: false,
+    organicScore: params.snapshot.organic_score,
+    topHoldersPct: params.snapshot.top_holders_pct,
+    features: scoredEntryFeatures,
   })
 }
 

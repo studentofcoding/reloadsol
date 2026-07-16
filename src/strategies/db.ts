@@ -1196,19 +1196,26 @@ export function rankTopPnlByActiveStrategy(
 /** Closed realized PnL leaderboard: top N per active strategy_definitions row. */
 export async function listTopPnlByActiveStrategy(
   limit = 8,
+  options?: { sinceIso?: string },
 ): Promise<StrategyPnlLeaderboardSection[]> {
   const defs = await loadStrategyDefinitionRows()
   const active = defs.filter((d) => d.is_active)
   if (active.length === 0) return []
 
   const ids = active.map((d) => d.id)
+  const sinceIso = options?.sinceIso?.trim() || null
   let rows: StrategyOutcomeRow[]
   try {
     const result = await query<Record<string, unknown>>(
-      `SELECT * FROM strategy_outcomes
-       WHERE strategy_id = ANY($1::text[])
-         AND pnl_pct IS NOT NULL`,
-      [ids],
+      sinceIso
+        ? `SELECT * FROM strategy_outcomes
+           WHERE strategy_id = ANY($1::text[])
+             AND pnl_pct IS NOT NULL
+             AND COALESCE(exit_at, created_at) >= $2::timestamptz`
+        : `SELECT * FROM strategy_outcomes
+           WHERE strategy_id = ANY($1::text[])
+             AND pnl_pct IS NOT NULL`,
+      sinceIso ? [ids, sinceIso] : [ids],
     )
     rows = dedupeStrategyOutcomeRows(result.rows.map(mapStrategyOutcomeRow))
   } catch (error) {

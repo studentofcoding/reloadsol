@@ -40,6 +40,51 @@ function readFeatureString(
   return null
 }
 
+function readFeatureNumber(
+  features: Record<string, unknown> | null | undefined,
+  ...keys: string[]
+): number | null {
+  if (!features) return null
+  for (const key of keys) {
+    const value = features[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string' && value.trim()) {
+      const n = Number(value)
+      if (Number.isFinite(n)) return n
+    }
+  }
+  return null
+}
+
+function telegramExtrasFromFeatures(
+  features: Record<string, unknown> | null | undefined,
+): {
+  organicScore: number | null
+  topHoldersPct: number | null
+  sm: number | null
+  kol: number | null
+  marketCap: number | null
+} {
+  return {
+    organicScore: readFeatureNumber(features, 'organic_score', 'organicScore'),
+    topHoldersPct: readFeatureNumber(
+      features,
+      'top_holders_pct',
+      'topHoldersPct',
+      'top_holders_percentage',
+    ),
+    sm: readFeatureNumber(features, 'sm', 'sm_count', 'smart_money_count'),
+    kol: readFeatureNumber(features, 'kol', 'kol_count'),
+    marketCap: readFeatureNumber(
+      features,
+      'market_cap',
+      'entry_mcap',
+      'exit_mcap',
+      'current_mcap',
+    ),
+  }
+}
+
 export function notifyStrategyOpen(params: {
   domain: StrategyDomain
   strategyId: string
@@ -47,15 +92,25 @@ export function notifyStrategyOpen(params: {
   tokenAddress: string
   marketCap?: number | null
   isSimulated: boolean
+  features?: Record<string, unknown> | null
+  organicScore?: number | null
+  topHoldersPct?: number | null
+  sm?: number | null
+  kol?: number | null
 }): void {
+  const fromFeatures = telegramExtrasFromFeatures(params.features)
   void sendStrategyTrackOpenAlert({
     strategyId: params.strategyId,
     strategyName: resolveStrategyDisplayName(params.domain, params.strategyId),
     domain: params.domain,
     tokenSymbol: params.tokenSymbol,
     tokenAddress: params.tokenAddress,
-    marketCap: params.marketCap,
+    marketCap: params.marketCap ?? fromFeatures.marketCap,
     isSimulated: params.isSimulated,
+    organicScore: params.organicScore ?? fromFeatures.organicScore,
+    topHoldersPct: params.topHoldersPct ?? fromFeatures.topHoldersPct,
+    sm: params.sm ?? fromFeatures.sm,
+    kol: params.kol ?? fromFeatures.kol,
   }).catch((err) => {
     console.error('[strategy-telegram] open notify failed:', err)
   })
@@ -70,11 +125,13 @@ export function notifyStrategyClose(params: {
   status?: string | null
   isSimulated: boolean
   features?: Record<string, unknown> | null
+  marketCap?: number | null
 }): void {
   const symbol =
     params.tokenSymbol?.trim() ||
     readFeatureString(params.features, 'token_symbol', 'pool_name') ||
     params.tokenAddress.slice(0, 8)
+  const fromFeatures = telegramExtrasFromFeatures(params.features)
 
   void sendStrategyTrackCloseAlert({
     strategyId: params.strategyId,
@@ -82,9 +139,14 @@ export function notifyStrategyClose(params: {
     domain: params.domain,
     tokenSymbol: symbol,
     tokenAddress: params.tokenAddress,
+    marketCap: params.marketCap ?? fromFeatures.marketCap,
     pnlPct: params.pnlPct,
     status: params.status ?? (params.pnlPct >= 0 ? 'won' : 'lost'),
     isSimulated: params.isSimulated,
+    organicScore: fromFeatures.organicScore,
+    topHoldersPct: fromFeatures.topHoldersPct,
+    sm: fromFeatures.sm,
+    kol: fromFeatures.kol,
   }).catch((err) => {
     console.error('[strategy-telegram] close notify failed:', err)
   })

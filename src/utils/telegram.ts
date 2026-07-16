@@ -299,6 +299,10 @@ export async function sendStrategyTrackOpenAlert(params: {
   tokenAddress: string
   marketCap?: number | null
   isSimulated: boolean
+  organicScore?: number | null
+  topHoldersPct?: number | null
+  sm?: number | null
+  kol?: number | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
@@ -306,21 +310,39 @@ export async function sendStrategyTrackOpenAlert(params: {
   const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
   const name = escapeTelegramHtml(params.strategyName)
   const domain = escapeTelegramHtml(params.domain)
-  const link = formatJupiterTokenLink(params.tokenAddress)
+  const chartLink = formatReloadsolChartLink(params.tokenAddress)
+  const buyLink = formatJupiterTokenLink(params.tokenAddress)
+  const organicHolders = formatOrganicHoldersLine(
+    params.organicScore,
+    params.topHoldersPct,
+  )
+  const smKol = formatSmKolLine(params.sm, params.kol)
 
   const text = [
-    `<a href="${link}">${link}</a>`,
-    '',
     `🟢 <b>Strategy OPEN (${mode})</b>`,
     '',
     `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
     `Domain: ${domain}`,
     `Market Cap: ${formatMcapUsd(params.marketCap)}`,
     `Token: ${symbol}`,
-    ``,
-  ].join('\n')
+    organicHolders,
+    smKol,
+    '',
+    `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a>`,
+    `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
+  ]
+    .filter((line): line is string => line != null)
+    .join('\n')
 
-  return sendTelegramAlert(text, { parseMode: 'HTML' })
+  return sendTelegramAlert(text, {
+    parseMode: 'HTML',
+    inlineKeyboard: [
+      [
+        { text: 'Chart', url: chartLink },
+        { text: 'Buy', url: buyLink },
+      ],
+    ],
+  })
 }
 
 export function formatReloadsolChartLink(mint: string): string {
@@ -329,6 +351,11 @@ export function formatReloadsolChartLink(mint: string): string {
 
 export function formatReloadsolBuyLink(mint: string, solAmount = 0.1): string {
   return `https://reloadsol.app/buy?sol=${solAmount}&mints=${mint}`
+}
+
+/** Telegram Buy button / link — Jupiter token page. */
+export function formatTelegramBuyLink(mint: string): string {
+  return formatJupiterTokenLink(mint)
 }
 
 function formatSmKolLine(
@@ -341,6 +368,35 @@ function formatSmKolLine(
   return `SM ${smN} · KOL ${kolN}`
 }
 
+function formatOrganicHoldersLine(
+  organicScore?: number | null,
+  topHoldersPct?: number | null,
+): string | null {
+  const parts: string[] = []
+  if (organicScore != null && Number.isFinite(organicScore)) {
+    parts.push(`Organic ${Math.round(organicScore)}`)
+  }
+  if (topHoldersPct != null && Number.isFinite(topHoldersPct)) {
+    parts.push(`top10 ${Math.round(topHoldersPct)}%`)
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+function formatChartBuyHtmlLine(mint: string): string {
+  const chartLink = formatReloadsolChartLink(mint)
+  const buyLink = formatTelegramBuyLink(mint)
+  return `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a>`
+}
+
+function chartBuyInlineKeyboard(mint: string) {
+  return [
+    [
+      { text: 'Chart', url: formatReloadsolChartLink(mint) },
+      { text: 'Buy', url: formatTelegramBuyLink(mint) },
+    ],
+  ]
+}
+
 export function buildMcapSimManualTradeAlertText(params: {
   strategyId: string
   strategyName: string
@@ -351,12 +407,11 @@ export function buildMcapSimManualTradeAlertText(params: {
   liveMcap?: number | null
   sm?: number | null
   kol?: number | null
+  organicScore?: number | null
+  topHoldersPct?: number | null
 }): string {
   const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
   const name = escapeTelegramHtml(params.strategyName)
-  const chartLink = formatReloadsolChartLink(params.tokenAddress)
-  const buyLink = formatReloadsolBuyLink(params.tokenAddress)
-  const jupLink = formatJupiterTokenLink(params.tokenAddress)
   const entryAt =
     typeof params.entryAt === 'string' && params.entryAt
       ? escapeTelegramHtml(params.entryAt)
@@ -369,6 +424,10 @@ export function buildMcapSimManualTradeAlertText(params: {
       ? formatMcapUsd(params.liveMcap)
       : null
   const smKol = formatSmKolLine(params.sm, params.kol)
+  const organicHolders = formatOrganicHoldersLine(
+    params.organicScore,
+    params.topHoldersPct,
+  )
 
   return [
     `🟢 <b>Mcap Sim OPEN — copy trade</b>`,
@@ -377,10 +436,11 @@ export function buildMcapSimManualTradeAlertText(params: {
     `Token: <b>${symbol}</b>`,
     `Entry mcap: ${formatMcapUsd(params.entryMcap)}`,
     live ? `Live mcap: ${live}` : null,
+    organicHolders,
     smKol,
     entryAt ? `Entry at: ${entryAt}` : null,
     '',
-    `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a> · <a href="${jupLink}">Jupiter</a>`,
+    formatChartBuyHtmlLine(params.tokenAddress),
     `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
   ]
     .filter((line): line is string => line != null)
@@ -399,11 +459,9 @@ export function buildSignalsEarlyEnterAlertText(params: {
   predicted?: 'winner' | 'loser' | null
   sm?: number | null
   kol?: number | null
+  strategyIds?: string[] | null
 }): string {
   const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
-  const chartLink = formatReloadsolChartLink(params.tokenAddress)
-  const buyLink = formatReloadsolBuyLink(params.tokenAddress)
-  const jupLink = formatJupiterTokenLink(params.tokenAddress)
   const growth = Number.isFinite(params.growthPercent)
     ? `${params.growthPercent >= 0 ? '+' : ''}${params.growthPercent.toFixed(1)}%`
     : 'n/a'
@@ -420,10 +478,17 @@ export function buildSignalsEarlyEnterAlertText(params: {
       ? `Pattern ML (shadow): pW ${params.pWinner.toFixed(2)} → ${params.predicted ?? '—'}`
       : 'Pattern ML (shadow): n/a'
   const smKol = formatSmKolLine(params.sm, params.kol)
+  const strategies =
+    params.strategyIds && params.strategyIds.length > 0
+      ? `Strategies: ${params.strategyIds
+          .map((id) => escapeTelegramHtml(id))
+          .join(' · ')}`
+      : null
 
   return [
     `🟡 <b>Early Signals Enter — copy trade</b>`,
     '',
+    strategies,
     `Token: <b>${symbol}</b>`,
     `Growth: <b>${growth}</b> (before 100%)`,
     `Score: ${params.score.toFixed(0)}`,
@@ -433,7 +498,7 @@ export function buildSignalsEarlyEnterAlertText(params: {
     rationale ? `Rationale: ${rationale}` : null,
     entryAt ? `Seen at: ${entryAt}` : null,
     '',
-    `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a> · <a href="${jupLink}">Jupiter</a>`,
+    formatChartBuyHtmlLine(params.tokenAddress),
     `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
   ]
     .filter((line): line is string => line != null)
@@ -452,20 +517,13 @@ export async function sendSignalsEarlyEnterAlert(params: {
   predicted?: 'winner' | 'loser' | null
   sm?: number | null
   kol?: number | null
+  strategyIds?: string[] | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
-  const chartLink = formatReloadsolChartLink(params.tokenAddress)
-  const buyLink = formatReloadsolBuyLink(params.tokenAddress)
-
   return sendTelegramAlert(buildSignalsEarlyEnterAlertText(params), {
     parseMode: 'HTML',
-    inlineKeyboard: [
-      [
-        { text: 'Chart', url: chartLink },
-        { text: 'Buy', url: buyLink },
-      ],
-    ],
+    inlineKeyboard: chartBuyInlineKeyboard(params.tokenAddress),
   })
 }
 
@@ -479,20 +537,14 @@ export async function sendMcapSimManualTradeAlert(params: {
   liveMcap?: number | null
   sm?: number | null
   kol?: number | null
+  organicScore?: number | null
+  topHoldersPct?: number | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
-  const chartLink = formatReloadsolChartLink(params.tokenAddress)
-  const buyLink = formatReloadsolBuyLink(params.tokenAddress)
-
   return sendTelegramAlert(buildMcapSimManualTradeAlertText(params), {
     parseMode: 'HTML',
-    inlineKeyboard: [
-      [
-        { text: 'Chart', url: chartLink },
-        { text: 'Buy', url: buyLink },
-      ],
-    ],
+    inlineKeyboard: chartBuyInlineKeyboard(params.tokenAddress),
   })
 }
 
@@ -506,6 +558,10 @@ export async function sendStrategyTrackCloseAlert(params: {
   pnlPct: number
   status: string
   isSimulated: boolean
+  organicScore?: number | null
+  topHoldersPct?: number | null
+  sm?: number | null
+  kol?: number | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
@@ -515,11 +571,15 @@ export async function sendStrategyTrackCloseAlert(params: {
   const name = escapeTelegramHtml(params.strategyName)
   const domain = escapeTelegramHtml(params.domain)
   const result = escapeTelegramHtml((params.status || 'unknown').toUpperCase())
-  const link = formatJupiterTokenLink(params.tokenAddress)
+  const chartLink = formatReloadsolChartLink(params.tokenAddress)
+  const buyLink = formatTelegramBuyLink(params.tokenAddress)
+  const organicHolders = formatOrganicHoldersLine(
+    params.organicScore,
+    params.topHoldersPct,
+  )
+  const smKol = formatSmKolLine(params.sm, params.kol)
 
   const text = [
-    `<a href="${link}">${link}</a>`,
-    '',
     `🔴 <b>Strategy CLOSE (${mode})</b>`,
     '',
     `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
@@ -528,9 +588,19 @@ export async function sendStrategyTrackCloseAlert(params: {
     `Market Cap: ${formatMcapUsd(params.marketCap)}`,
     `PnL: ${sign}${params.pnlPct.toFixed(2)}%`,
     `Result: <b>${result}</b>`,
-  ].join('\n')
+    organicHolders,
+    smKol,
+    '',
+    `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a>`,
+    `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
+  ]
+    .filter((line): line is string => line != null)
+    .join('\n')
 
-  return sendTelegramAlert(text, { parseMode: 'HTML' })
+  return sendTelegramAlert(text, {
+    parseMode: 'HTML',
+    inlineKeyboard: chartBuyInlineKeyboard(params.tokenAddress),
+  })
 }
 
 export async function sendGmgnRadarAlert(params: {
@@ -561,7 +631,7 @@ export async function sendGmgnRadarAlert(params: {
 
   const { formatGmgnRadarTelegramHtml } = await import('@/strategies/gmgn-radar-review')
   const chartLink = formatReloadsolChartLink(params.tokenAddress)
-  const buyLink = formatReloadsolBuyLink(params.tokenAddress)
+  const buyLink = formatTelegramBuyLink(params.tokenAddress)
   const text = formatGmgnRadarTelegramHtml(params)
 
   return sendTelegramAlert(text, {

@@ -179,7 +179,7 @@ Metadata: `radar_price_usd`, `radar_mcap_usd`, `radar_growth_pct`, `radar_watch_
 
 ### Pinned 24h PnL leaderboard
 
-Cron `gmgn_radar_digest` (default every **86400s**, `GMGN_RADAR_DIGEST_INTERVAL`; `0` disables) posts/edits one pinned **Strategy PnL** message: for each **active** strategy (`strategy_definitions.is_active`), top **8** closed trades by realized `pnl_pct` (SIM + LIVE mixed, tagged). Chat: `GMGN_RADAR_DIGEST_CHAT_ID` or alert chat (env name is historical). State table `radar_digest_pins`. Manual: `POST /trigger/gmgn-radar-digest`. Live Radar cards still use NEW/TRACKING/SURGE/FADING stages — those are not the digest rank.
+Cron `gmgn_radar_digest` (default every **86400s**, `GMGN_RADAR_DIGEST_INTERVAL`; `0` disables) posts/edits one pinned **Strategy PnL** message: for each **active** strategy (`strategy_definitions.is_active`), top **8** closed trades by realized `pnl_pct` (SIM + LIVE mixed, tagged) with `COALESCE(exit_at, created_at)` in the **rolling last 24h**. Header: `· 24h (Bangkok)`. Chat: `GMGN_RADAR_DIGEST_CHAT_ID` or alert chat (env name is historical). State table `radar_digest_pins`. Manual: `POST /trigger/gmgn-radar-digest`. Live Radar cards still use NEW/TRACKING/SURGE/FADING stages — those are not the digest rank.
 
 ### Key files
 

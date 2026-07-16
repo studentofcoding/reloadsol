@@ -87,8 +87,9 @@ Each subsection: **Capture** (what triggers entry) → **Calculate** (filters/sc
 ### `mcap_enter_first_seen` (mcap_tracker)
 
 - **Capture:** `POST /api/mcap-tracking/sim-track`; candidates from `token_mcap_tracking` via `fetchMcapSimCandidateRows`.
-- **Calculate:** `entryTemplate: first_seen`; entry mcap band 30k–2M; L1 rules in `mcap-sim-track.ts`; optional social L1 + ML shadow gates.
-- **Result:** SL -50%, TP 200%, max hold 96h, sim buy 0.01 SOL → `recordMcapTrackerOutcome`. Sim wallet: `mcap-tracker-sim`.
+- **Calculate:** `entryTemplate: first_seen`; entry mcap band 30k–2M; L1 rules in `mcap-sim-track.ts`; optional social L1 + ML shadow gates. Organic/holders entry gates are **off by default** (`organicScoreMin` / `topHoldersPctMax` undefined) — values are logged on Telegram when already on the snapshot.
+- **Result:** SL -50%, TP **200%**, max hold 96h, sim buy 0.01 SOL → `recordMcapTrackerOutcome`. Sim wallet: `mcap-tracker-sim`.
+- **Why WR / ~+200% windows look strong vs other domains:** shared exit books TP at +200% growth from entry baseline (`first_mcap` for first_seen; live fill for at_80). Winners cluster near the TP ceiling; ATT/DLMM/GMGN use different exit geometry — do not treat high mcap WR as a secret filter.
 - **Pattern ML hook:** shadow scores `ml_pattern_p_winner`, `ml_pattern_predicted` on entry (`entry-pattern-scorer`).
 - **Manual copy-trade alert (Stage 2):** on sim open → Telegram (`sendMcapSimManualTradeAlert`) + UI toast (poll `GET /api/mcap-tracking/sim-open-alerts`). Deduped 24h per strategy+mint.
 - **Early alert (Stage 1):** Signals `enter` + growth &lt;100% → `sendSignalsEarlyEnterAlert` + Early Enter toast (independent of sim open). Pattern ML shadow (`p_winner`) attached for display only.

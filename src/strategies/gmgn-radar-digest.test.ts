@@ -143,6 +143,7 @@ describe('formatStrategyPnlLeaderboardHtml', () => {
       updatedAt: new Date('2026-07-14T00:00:00.000Z'),
     })
     expect(html).toContain('Strategy PnL')
+    expect(html).toContain('24h (Bangkok)')
     expect(html).toContain('mcap_enter_at_80')
     expect(html).toContain('+182%')
     expect(html).toContain('[SIM]')

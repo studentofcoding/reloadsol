@@ -151,6 +151,7 @@ Shared:
 - **Telegram env:** `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false`.
 - **Workers:** `signals_refresh` (~60s) helps Stage 1; **`mcap_tracker_sim_open` (~15s, `phase=open`)** for Stage 2 opens; **`mcap_tracker_sim_track` (~120s, `phase=manage`)** for exits/snapshots. Manual track trigger runs `phase=all`. Skip-if-running on both.
 - **`mcap_enter_at_80` freshness:** skips `milestone_too_old` outside `recencyMinutes` (default 240). **Entry mcap = live `current_mcap` at open** (copy-trade fill); milestone only gates eligibility. Telegram Entry is the buy-now reference.
+- **Mcap WR skew:** TP +200% / first_mcap (or live fill) baseline means winners often land near ~+200%; organic/holders gates off by default — compare other domains carefully.
 - **Env:** `MCAP_TRACKER_SIM_OPEN_INTERVAL` (default 15), `MCAP_TRACKER_SIM_INTERVAL` (default 120 manage).
 - **DB:** apply [`db/init/07-mcap-drop-peak.sql`](../db/init/07-mcap-drop-peak.sql) for `-40%`/`-80%` drop stamps + peak profit columns (auto `rugged` / `potential` labels).
 

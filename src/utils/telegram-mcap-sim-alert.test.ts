@@ -2,17 +2,19 @@ import { describe, expect, it } from 'vitest'
 import {
   buildMcapSimManualTradeAlertText,
   buildSignalsEarlyEnterAlertText,
-  formatReloadsolBuyLink,
+  formatJupiterTokenLink,
   formatReloadsolChartLink,
 } from './telegram'
 
+const MINT = 'So11111111111111111111111111111111111111112'
+
 describe('buildMcapSimManualTradeAlertText', () => {
-  it('includes copy-trade title, strategy label, and links', () => {
+  it('includes copy-trade title, strategy label, Chart + Jupiter Buy', () => {
     const text = buildMcapSimManualTradeAlertText({
       strategyId: 'mcap_enter_first_seen',
       strategyName: 'Enter at first seen',
       tokenSymbol: 'TEST',
-      tokenAddress: 'So11111111111111111111111111111111111111112',
+      tokenAddress: MINT,
       entryMcap: 85_000,
       entryAt: '2026-07-09T01:00:00.000Z',
     })
@@ -23,13 +25,11 @@ describe('buildMcapSimManualTradeAlertText', () => {
     expect(text).toContain('TEST')
     expect(text).toContain('$85.0K')
     expect(text).toContain('2026-07-09T01:00:00.000Z')
-    expect(text).toContain(
-      formatReloadsolChartLink('So11111111111111111111111111111111111111112'),
-    )
-    expect(text).toContain(
-      formatReloadsolBuyLink('So11111111111111111111111111111111111111112'),
-    )
-    expect(text).toContain('jup.ag/tokens/')
+    expect(text).toContain(formatReloadsolChartLink(MINT))
+    expect(text).toContain(formatJupiterTokenLink(MINT))
+    expect(text).toContain('>Buy</a>')
+    expect(text).not.toContain('>Jupiter</a>')
+    expect(text).not.toContain('reloadsol.app/buy')
   })
 
   it('escapes HTML in symbol and strategy name', () => {
@@ -85,29 +85,74 @@ describe('buildMcapSimManualTradeAlertText', () => {
     expect(text).not.toContain('SM ')
     expect(text).not.toContain('KOL ')
   })
+
+  it('logs organic + top10 when already on snapshot', () => {
+    const text = buildMcapSimManualTradeAlertText({
+      strategyId: 'mcap_enter_first_seen',
+      strategyName: 'Enter at first seen',
+      tokenSymbol: 'TEST',
+      tokenAddress: 'MintABC',
+      entryMcap: 85_000,
+      organicScore: 72.4,
+      topHoldersPct: 18.2,
+    })
+    expect(text).toContain('Organic 72 · top10 18%')
+  })
+
+  it('omits organic/holders when both null', () => {
+    const text = buildMcapSimManualTradeAlertText({
+      strategyId: 'mcap_enter_first_seen',
+      strategyName: 'Enter at first seen',
+      tokenSymbol: 'TEST',
+      tokenAddress: 'MintABC',
+      entryMcap: 85_000,
+    })
+    expect(text).not.toContain('Organic')
+    expect(text).not.toContain('top10')
+  })
 })
 
 describe('buildSignalsEarlyEnterAlertText', () => {
-  it('includes early-enter title, growth under 100%, and links', () => {
+  it('includes early-enter title, growth under 100%, and Jupiter Buy', () => {
     const text = buildSignalsEarlyEnterAlertText({
       tokenSymbol: 'EARLY',
-      tokenAddress: 'So11111111111111111111111111111111111111112',
+      tokenAddress: MINT,
       entryMcap: 70_000,
       growthPercent: 35.4,
       score: 58,
       rationale: 'Strong momentum and recency',
       entryAt: '2026-07-09T01:00:00.000Z',
+      strategyIds: ['signals_default'],
     })
 
     expect(text).toContain('Early Signals Enter — copy trade')
+    expect(text).toContain('Strategies: signals_default')
     expect(text).toContain('EARLY')
     expect(text).toContain('+35.4%')
     expect(text).toContain('before 100%')
     expect(text).toContain('$70.0K')
     expect(text).toContain('Strong momentum and recency')
     expect(text).toContain('Pattern ML (shadow): n/a')
+    expect(text).toContain(formatReloadsolChartLink(MINT))
+    expect(text).toContain(formatJupiterTokenLink(MINT))
+    expect(text).not.toContain('>Jupiter</a>')
+  })
+
+  it('lists known strategies including active mcap ids', () => {
+    const text = buildSignalsEarlyEnterAlertText({
+      tokenSymbol: 'EARLY',
+      tokenAddress: 'MintABC',
+      entryMcap: 70_000,
+      growthPercent: 35.4,
+      score: 58,
+      strategyIds: [
+        'signals_default',
+        'mcap_enter_at_80',
+        'mcap_enter_first_seen',
+      ],
+    })
     expect(text).toContain(
-      formatReloadsolChartLink('So11111111111111111111111111111111111111112'),
+      'Strategies: signals_default · mcap_enter_at_80 · mcap_enter_first_seen',
     )
   })
 

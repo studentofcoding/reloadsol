@@ -22,6 +22,9 @@ import {
 
 const TOP_N = 8
 const TELEGRAM_MAX_CHARS = 4000
+const PNL_WINDOW_MS = 24 * 60 * 60 * 1000
+/** Rolling window label (Asia/Bangkok wall clock context for operators). */
+export const PNL_DIGEST_WINDOW_LABEL = '24h (Bangkok)'
 
 function escapeHtml(s: string): string {
   return s
@@ -51,17 +54,19 @@ export function formatStrategyPnlLeaderboardHtml(params: {
   sections: StrategyPnlLeaderboardSection[]
   updatedAt: Date
   topN?: number
+  windowLabel?: string
 }): string {
   const topN = params.topN ?? TOP_N
+  const windowLabel = params.windowLabel ?? PNL_DIGEST_WINDOW_LABEL
   const when = params.updatedAt.toISOString().replace('T', ' ').slice(0, 16) + ' UTC'
   const lines: string[] = [
-    `📌 <b>Strategy PnL</b> · top ${topN} · active`,
+    `📌 <b>Strategy PnL</b> · top ${topN} · active · ${escapeHtml(windowLabel)}`,
     `<i>Updated ${escapeHtml(when)}</i>`,
     '',
   ]
 
   if (params.sections.length === 0) {
-    lines.push('<i>No closed PnL for active strategies.</i>')
+    lines.push('<i>No closed PnL for active strategies in the last 24h.</i>')
     return lines.join('\n')
   }
 
@@ -91,10 +96,15 @@ export function fitPnlLeaderboardSections(
   sections: StrategyPnlLeaderboardSection[],
   updatedAt: Date,
   maxChars = TELEGRAM_MAX_CHARS,
+  windowLabel = PNL_DIGEST_WINDOW_LABEL,
 ): { sections: StrategyPnlLeaderboardSection[]; html: string } {
   let current = sections.map((s) => ({ ...s, trades: [...s.trades] }))
   for (;;) {
-    const html = formatStrategyPnlLeaderboardHtml({ sections: current, updatedAt })
+    const html = formatStrategyPnlLeaderboardHtml({
+      sections: current,
+      updatedAt,
+      windowLabel,
+    })
     if (html.length <= maxChars) {
       return { sections: current, html }
     }
@@ -157,8 +167,9 @@ export async function publishRadarDigest(): Promise<{
   }
 
   await ensureRadarDigestPinsTable()
-  const rawSections = await listTopPnlByActiveStrategy(TOP_N)
   const updatedAt = new Date()
+  const sinceIso = new Date(updatedAt.getTime() - PNL_WINDOW_MS).toISOString()
+  const rawSections = await listTopPnlByActiveStrategy(TOP_N, { sinceIso })
   const { sections, html: text } = fitPnlLeaderboardSections(rawSections, updatedAt)
   const tradeCount = sections.reduce((n, s) => n + s.trades.length, 0)
 

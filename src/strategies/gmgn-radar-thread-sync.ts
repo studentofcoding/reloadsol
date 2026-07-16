@@ -22,7 +22,7 @@ import type { GmgnRadarConfig } from './types'
 import { maybeOpenGmgnComebackSim } from './gmgn-comeback-sim'
 import {
   editTelegramMessage,
-  formatReloadsolBuyLink,
+  formatJupiterTokenLink,
   formatReloadsolChartLink,
   getTelegramAlertChatId,
   isStrategyTrackTelegramEnabled,
@@ -34,7 +34,7 @@ function chartKeyboard(tokenAddress: string) {
   return [
     [
       { text: '📈 Chart', url: formatReloadsolChartLink(tokenAddress) },
-      { text: '🎯 Buy', url: formatReloadsolBuyLink(tokenAddress) },
+      { text: '🎯 Buy', url: formatJupiterTokenLink(tokenAddress) },
     ],
   ]
 }
