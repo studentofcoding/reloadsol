@@ -4,8 +4,6 @@ import {
   fetchRaptorQuoteAndSwapDirect,
   fetchRaptorQuote,
   fetchRaptorQuoteDirect,
-  sendRaptorTransaction,
-  sendRaptorTransactionDirect,
   getRaptorTransactionStatusSafe,
   RaptorAPIError,
   type RaptorQuoteAndSwapParams,
@@ -271,14 +269,21 @@ export type SubmitSignedSwapParams = {
   direct?: boolean;
 };
 
-/** Submit signed swap — provider-specific send with RPC fallback. */
+export type SubmitSignedSwapResult = {
+  signature: string;
+  via: SwapSendVia;
+  /** Poll Raptor status API even when send went via RPC. */
+  checkViaRaptor?: boolean;
+};
+
+/** Submit signed swap — Shyft API (with RPC fallback) or RPC-only for Raptor. */
 export async function submitSignedSwap(
   params: SubmitSignedSwapParams,
-): Promise<{ signature: string; via: SwapSendVia }> {
-  const signedBase64 = Buffer.from(params.signedTx.serialize()).toString("base64");
+): Promise<SubmitSignedSwapResult> {
   const useDirect = params.direct ?? typeof window === "undefined";
 
   if (getTradeProvider() === "shyft") {
+    const signedBase64 = Buffer.from(params.signedTx.serialize()).toString("base64");
     try {
       const sendResult = useDirect
         ? await sendShyftTransactionDirect(signedBase64)
@@ -299,24 +304,13 @@ export async function submitSignedSwap(
     return { signature, via: "rpc" };
   }
 
-  try {
-    const sendResult = useDirect
-      ? await sendRaptorTransactionDirect(signedBase64)
-      : await sendRaptorTransaction(signedBase64);
-
-    if (sendResult.success && sendResult.signature) {
-      return { signature: sendResult.signature, via: "raptor" };
-    }
-  } catch (raptorError) {
-    console.warn("Raptor send failed, falling back to RPC:", raptorError);
-  }
-
+  // Raptor stack: send via RPC only; confirm still uses Raptor status API.
   await waitForRpcRateLimit();
   const signature = await params.connection.sendTransaction(params.signedTx, {
     skipPreflight: true,
     maxRetries: 2,
   });
-  return { signature, via: "rpc" };
+  return { signature, via: "rpc", checkViaRaptor: true };
 }
 
 export type SubmitSignedSwapBatchItem = {
@@ -326,7 +320,13 @@ export type SubmitSignedSwapBatchItem = {
 };
 
 export type SubmitSignedSwapBatchResult =
-  | { index: number; success: true; signature: string; via: SwapSendVia }
+  | {
+      index: number;
+      success: true;
+      signature: string;
+      via: SwapSendVia;
+      checkViaRaptor?: boolean;
+    }
   | { index: number; success: false; error: unknown };
 
 async function rpcSendFallback(
@@ -419,6 +419,7 @@ export async function submitSignedSwapBatch(
             success: true,
             signature: sendResult.signature,
             via: sendResult.via,
+            checkViaRaptor: sendResult.checkViaRaptor,
           },
         ];
       } catch (error) {
@@ -444,6 +445,7 @@ export async function submitSignedSwapBatch(
           success: true as const,
           signature: sendResult.signature,
           via: sendResult.via,
+          checkViaRaptor: sendResult.checkViaRaptor,
         };
       } catch (error) {
         return { index: item.index, success: false as const, error };
@@ -488,6 +490,8 @@ export type ConfirmSwapSignatureParams = {
   signature: string;
   via: SwapSendVia;
   connection: Connection;
+  /** Poll Raptor status API (defaults to via === "raptor"). */
+  checkViaRaptor?: boolean;
   /** Unused for confirm (kept for caller compatibility). */
   lastValidBlockHeight?: number;
   /** Unused for confirm (kept for caller compatibility). */
@@ -566,7 +570,7 @@ async function tryWsConfirm(
 
 /**
  * Confirm signatures with one shared poll loop:
- * - Raptor status (RPC-free) is the primary source for `via: 'raptor'` sends.
+ * - Raptor status (RPC-free) is primary when `via: 'raptor'` or `checkViaRaptor`.
  * - One batched getSignatureStatuses call per tick covers everything else.
  * Returns sig -> null (confirmed) or error message.
  */
@@ -585,7 +589,9 @@ export async function confirmSwapSignaturesBatch(
   const raptorEligible = new Set<string>();
   for (const item of items) {
     pending.set(item.signature, item);
-    if (item.via === "raptor") raptorEligible.add(item.signature);
+    if (item.via === "raptor" || item.checkViaRaptor) {
+      raptorEligible.add(item.signature);
+    }
   }
 
   // Dev-only WS transport: signatureSubscribe first, poll only leftovers.
@@ -787,6 +793,7 @@ export async function executeClientSwap(
     await confirmSwapSignature({
       signature: sendResult.signature,
       via: sendResult.via,
+      checkViaRaptor: sendResult.checkViaRaptor,
       connection: params.connection,
       lastValidBlockHeight: prepared.lastValidBlockHeight,
       blockhash: signedTx.message.recentBlockhash,

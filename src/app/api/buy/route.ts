@@ -48,6 +48,7 @@ export const POST = async (req: NextRequest) => {
         await confirmSwapSignature({
           signature: sendResult.signature,
           via: sendResult.via,
+          checkViaRaptor: sendResult.checkViaRaptor,
           connection,
           direct: true,
           blockhash: signedTx.message.recentBlockhash,

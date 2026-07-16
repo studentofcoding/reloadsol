@@ -16,6 +16,7 @@ vi.mock("@/utils/solanatracker-raptor", async (importOriginal) => {
   return {
     ...actual,
     fetchRaptorQuoteAndSwapDirect: vi.fn(),
+    sendRaptorTransactionDirect: vi.fn(),
     getRaptorTransactionStatusSafe: vi.fn(),
   };
 });
@@ -36,8 +37,10 @@ vi.mock("@/utils/shyft-transaction", () => ({
 
 import {
   fetchRaptorQuoteAndSwapDirect,
+  sendRaptorTransactionDirect,
   getRaptorTransactionStatusSafe,
 } from "@/utils/solanatracker-raptor";
+import { getTradeProvider } from "@/utils/trade-provider";
 import { prepareJupiterLiteSwap } from "@/utils/jupiter-lite-swap";
 import { sendShyftTransactionDirect, sendShyftManyTransactionsDirect } from "@/utils/shyft-transaction";
 import {
@@ -59,6 +62,7 @@ const PREPARE_PARAMS = {
 describe("swap-executor shyft provider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(getTradeProvider).mockReturnValue("shyft");
   });
 
   it("prepareSwapTransaction uses Raptor on shyft stack when Raptor succeeds", async () => {
@@ -171,5 +175,61 @@ describe("swap-executor shyft provider", () => {
       { index: 0, success: true, signature: "sig-a", via: "shyft" },
       { index: 1, success: true, signature: "sig-b", via: "shyft" },
     ]);
+  });
+});
+
+describe("swap-executor raptor provider", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTradeProvider).mockReturnValue("raptor");
+  });
+
+  it("submitSignedSwap sends via RPC and skips Raptor send API", async () => {
+    const tx = {
+      serialize: () => Buffer.from("signed-bytes"),
+    } as unknown as VersionedTransaction;
+
+    const sendTransaction = vi.fn().mockResolvedValue("rpc-sig");
+    const connection = { sendTransaction } as unknown as Connection;
+
+    const result = await submitSignedSwap({
+      signedTx: tx,
+      prepared: { provider: "raptor", swapTransaction: "x" },
+      connection,
+      direct: true,
+    });
+
+    expect(result).toEqual({
+      signature: "rpc-sig",
+      via: "rpc",
+      checkViaRaptor: true,
+    });
+    expect(sendTransaction).toHaveBeenCalledWith(tx, {
+      skipPreflight: true,
+      maxRetries: 2,
+    });
+    expect(sendRaptorTransactionDirect).not.toHaveBeenCalled();
+  });
+
+  it("confirmSwapSignaturesBatch polls Raptor when checkViaRaptor even if via is rpc", async () => {
+    vi.mocked(getRaptorTransactionStatusSafe).mockResolvedValue({
+      status: "confirmed",
+    });
+
+    const connection = {
+      getSignatureStatuses: vi.fn(),
+    } as never;
+
+    const results = await confirmSwapSignaturesBatch(
+      [{ signature: "sig-rpc", via: "rpc", checkViaRaptor: true, direct: true }],
+      connection,
+      { intervalMs: 10, deadlineMs: 1000 },
+    );
+
+    expect(getRaptorTransactionStatusSafe).toHaveBeenCalledWith("sig-rpc", {
+      direct: true,
+    });
+    expect(connection.getSignatureStatuses).not.toHaveBeenCalled();
+    expect(results.get("sig-rpc")).toBeNull();
   });
 });

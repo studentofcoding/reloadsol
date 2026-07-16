@@ -650,6 +650,7 @@ class RealTradeExecutor implements TradeExecutor {
       await confirmSwapSignature({
         signature,
         via: sendResult.via,
+        checkViaRaptor: sendResult.checkViaRaptor,
         connection: this.connection,
         lastValidBlockHeight: prepared.lastValidBlockHeight,
         blockhash: signedTx.message.recentBlockhash,

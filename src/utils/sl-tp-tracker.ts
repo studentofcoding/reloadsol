@@ -806,6 +806,7 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
         await confirmSwapSignature({
           signature,
           via: sendResult.via,
+          checkViaRaptor: sendResult.checkViaRaptor,
           connection: tradingConnection,
           lastValidBlockHeight: prepared.lastValidBlockHeight,
           blockhash: transaction.message.recentBlockhash,

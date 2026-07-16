@@ -1928,6 +1928,7 @@ export async function executeBulkBuy(
         .map((r) => ({
           signature: r.signature,
           via: r.via,
+          checkViaRaptor: r.checkViaRaptor,
           lastValidBlockHeight: transactionMetas[r.index].lastValidBlockHeight,
           blockhash: signedTransactions[r.index].message.recentBlockhash,
         }))
@@ -2670,6 +2671,7 @@ export async function executeBulkSellAlt(
               .map((r) => ({
                 signature: r.signature,
                 via: r.via,
+                checkViaRaptor: r.checkViaRaptor,
                 connection,
                 lastValidBlockHeight: transactionMetas[r.index].lastValidBlockHeight,
                 blockhash: signedTransactions[r.index].message.recentBlockhash,
