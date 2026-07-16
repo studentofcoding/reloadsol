@@ -1,4 +1,5 @@
 import type { DlmmStrategy, DlmmStrategyConfig, DlmmStrategyOverride } from './types'
+import { mergeNotifyConfig } from './strategy-notify'
 
 export function mergeDlmmStrategy(
   base: DlmmStrategy,
@@ -6,6 +7,7 @@ export function mergeDlmmStrategy(
   isActiveOverride?: boolean | null,
 ): DlmmStrategy {
   const o = override ?? {}
+  const notify = mergeNotifyConfig(base.config.notify, o.notify)
   return {
     ...base,
     is_active: isActiveOverride ?? base.is_active,
@@ -16,6 +18,7 @@ export function mergeDlmmStrategy(
         ...base.config.execution,
         ...o.execution,
       },
+      ...(notify ? { notify } : {}),
     },
   }
 }

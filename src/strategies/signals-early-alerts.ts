@@ -148,6 +148,16 @@ export function drainSignalsEarlyAlerts(): McapToast[] {
   return undelivered.map(buildSignalsEarlyToast)
 }
 
+/** Mark pending early toasts delivered without emitting (notify.ui off). */
+export function discardPendingSignalsEarlyToasts(tokenAddresses: string[]): void {
+  const set = new Set(tokenAddresses)
+  for (const alert of pending) {
+    if (!alert.delivered && set.has(alert.tokenAddress)) {
+      alert.delivered = true
+    }
+  }
+}
+
 /** Emit Stage-1 alerts for eligible scored signals. Returns newly recorded alerts. */
 export function emitSignalsEarlyAlertsFromScored(
   signals: ScoredSignal[],

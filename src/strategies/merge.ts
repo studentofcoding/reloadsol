@@ -3,6 +3,7 @@ import type {
   TrendingBotStrategy,
   TrendingBotStrategyOverride,
 } from './types'
+import { mergeNotifyConfig } from './strategy-notify'
 
 function mergeFilter(
   base?: TokenFilterConfig,
@@ -36,6 +37,7 @@ export function mergeStrategyOverride(
   }
 
   const o = override ?? {}
+  const notify = mergeNotifyConfig(base.notify, o.notify)
   return {
     ...base,
     ...o,
@@ -49,6 +51,7 @@ export function mergeStrategyOverride(
       ? { ...base.conditions, ...o.conditions }
       : base.conditions,
     filtering: mergeFilter(base.filtering, o.filtering),
+    ...(notify ? { notify } : {}),
   }
 }
 

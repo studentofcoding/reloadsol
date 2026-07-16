@@ -46,6 +46,7 @@ import {
   readVolumeAtEntry,
 } from "@/strategies/outcome-features";
 import { DEFAULT_GMGN_RADAR } from "@/strategies/registry";
+import { notifySyncForActive, readNotifyFlags } from "@/strategies/strategy-notify";
 
 const OUTCOMES_PAGE_SIZE = 100;
 
@@ -73,6 +74,64 @@ async function patchOutcomeTrainingClass(
     throw new Error(json.error || "Failed to update training class");
   }
   return json.outcome;
+}
+
+function StrategyNotifyBar({
+  strategyId,
+  notify,
+  saving,
+  onSave,
+}: {
+  strategyId: string
+  notify?: { telegram?: boolean; ui?: boolean } | null
+  saving: boolean
+  onSave: (id: string, patch: Record<string, unknown>) => void
+}) {
+  const flags = readNotifyFlags(notify)
+  return (
+    <div className="flex flex-wrap gap-3 items-center text-xs text-gray-300">
+      <label className="flex items-center gap-1.5 cursor-pointer">
+        <input
+          type="checkbox"
+          className="rounded border-gray-600"
+          checked={flags.telegram}
+          disabled={saving}
+          onChange={(e) =>
+            onSave(strategyId, {
+              config: { notify: { telegram: e.target.checked, ui: flags.ui } },
+            })
+          }
+        />
+        Telegram
+      </label>
+      <label className="flex items-center gap-1.5 cursor-pointer">
+        <input
+          type="checkbox"
+          className="rounded border-gray-600"
+          checked={flags.ui}
+          disabled={saving}
+          onChange={(e) =>
+            onSave(strategyId, {
+              config: { notify: { telegram: flags.telegram, ui: e.target.checked } },
+            })
+          }
+        />
+        UI toasts
+      </label>
+    </div>
+  )
+}
+
+function toggleActiveWithNotifySync(
+  strategyId: string,
+  currentlyActive: boolean,
+  onSave: (id: string, patch: Record<string, unknown>) => void,
+) {
+  const next = !currentlyActive
+  onSave(strategyId, {
+    is_active: next,
+    config: { notify: notifySyncForActive(next) },
+  })
 }
 
 type TabId = "config" | "reports" | "review" | "workers";
@@ -2232,11 +2291,19 @@ function TrendingBotCard({
         <button
           type="button"
           disabled={saving}
-          onClick={() => onSave(strategy.id, { is_active: !strategy.is_active })}
+          onClick={() =>
+            toggleActiveWithNotifySync(strategy.id, strategy.is_active, onSave)
+          }
           className="px-3 py-1.5 bg-gray-700 text-white text-xs rounded"
         >
           {strategy.is_active ? "Deactivate" : "Activate"}
         </button>
+        <StrategyNotifyBar
+          strategyId={strategy.id}
+          notify={strategy.notify}
+          saving={saving}
+          onSave={onSave}
+        />
         {promoteTargets.length > 0 && (
           <>
             <select
@@ -2423,11 +2490,19 @@ function SignalsCard({
         <button
           type="button"
           disabled={saving}
-          onClick={() => onSave(strategy.id, { is_active: !strategy.is_active })}
+          onClick={() =>
+            toggleActiveWithNotifySync(strategy.id, strategy.is_active, onSave)
+          }
           className="px-3 py-1.5 bg-gray-700 text-white text-xs rounded"
         >
           {strategy.is_active ? "Deactivate" : "Activate"}
         </button>
+        <StrategyNotifyBar
+          strategyId={strategy.id}
+          notify={strategy.config.notify}
+          saving={saving}
+          onSave={onSave}
+        />
       </div>
     </div>
   );
@@ -2552,11 +2627,19 @@ function McapTrackerCard({
         <button
           type="button"
           disabled={saving}
-          onClick={() => onSave(strategy.id, { is_active: !strategy.is_active })}
+          onClick={() =>
+            toggleActiveWithNotifySync(strategy.id, strategy.is_active, onSave)
+          }
           className="px-3 py-1.5 bg-gray-700 text-white text-xs rounded"
         >
           {strategy.is_active ? "Deactivate" : "Activate"}
         </button>
+        <StrategyNotifyBar
+          strategyId={strategy.id}
+          notify={strategy.config.notify}
+          saving={saving}
+          onSave={onSave}
+        />
       </div>
     </div>
   );
@@ -2793,11 +2876,19 @@ function GmgnCard({
         <button
           type="button"
           disabled={saving}
-          onClick={() => onSave(strategy.id, { is_active: !strategy.is_active })}
+          onClick={() =>
+            toggleActiveWithNotifySync(strategy.id, strategy.is_active, onSave)
+          }
           className="px-3 py-1.5 bg-gray-700 text-white text-xs rounded"
         >
           {strategy.is_active ? "Deactivate" : "Activate"}
         </button>
+        <StrategyNotifyBar
+          strategyId={strategy.id}
+          notify={strategy.config.notify}
+          saving={saving}
+          onSave={onSave}
+        />
       </div>
     </div>
   );
@@ -2902,11 +2993,19 @@ function DlmmCard({
         <button
           type="button"
           disabled={saving}
-          onClick={() => onSave(strategy.id, { is_active: !strategy.is_active })}
+          onClick={() =>
+            toggleActiveWithNotifySync(strategy.id, strategy.is_active, onSave)
+          }
           className="px-3 py-1.5 bg-gray-700 text-white text-xs rounded"
         >
           {strategy.is_active ? "Deactivate" : "Activate"}
         </button>
+        <StrategyNotifyBar
+          strategyId={strategy.id}
+          notify={strategy.config.notify}
+          saving={saving}
+          onSave={onSave}
+        />
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import type { McapTrackerStrategy, McapTrackerStrategyOverride } from './types'
+import { mergeNotifyConfig } from './strategy-notify'
 
 export function mergeMcapTrackerStrategy(
   base: McapTrackerStrategy,
@@ -32,6 +33,9 @@ export function mergeMcapTrackerStrategy(
       ...(o.social ?? {}),
     }
   }
+
+  const notify = mergeNotifyConfig(base.config.notify, o.notify)
+  if (notify) config.notify = notify
 
   return {
     ...base,

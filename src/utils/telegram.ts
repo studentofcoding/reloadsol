@@ -291,6 +291,159 @@ export function formatMcapUsd(mcap: number | null | undefined): string {
   return `$${mcap.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 }
 
+export type StrategyAlertKind = 'open' | 'open_copy' | 'early_copy' | 'close'
+
+function strategyAlertTitle(
+  kind: StrategyAlertKind,
+  mode: 'SIM' | 'LIVE',
+): string {
+  switch (kind) {
+    case 'open':
+      return `🟢 <b>OPEN (${mode})</b>`
+    case 'open_copy':
+      return `🟢 <b>OPEN · copy trade (${mode})</b>`
+    case 'early_copy':
+      return `🟡 <b>EARLY · copy trade (${mode})</b>`
+    case 'close':
+      return `🔴 <b>CLOSE (${mode})</b>`
+  }
+}
+
+function liveMcapLine(
+  entryMcap: number,
+  liveMcap?: number | null,
+): string | null {
+  if (
+    typeof liveMcap !== 'number' ||
+    !Number.isFinite(liveMcap) ||
+    liveMcap <= 0
+  ) {
+    return null
+  }
+  if (Math.abs(liveMcap - entryMcap) / Math.max(entryMcap, 1) <= 0.02) {
+    return null
+  }
+  return `Live mcap: ${formatMcapUsd(liveMcap)}`
+}
+
+/** Normalized Telegram body for strategy OPEN / CLOSE / EARLY / copy-trade. */
+export function buildStrategyAlertText(params: {
+  kind: StrategyAlertKind
+  strategyId: string
+  strategyName: string
+  domain: string
+  tokenSymbol: string
+  tokenAddress: string
+  isSimulated?: boolean
+  entryMcap?: number | null
+  marketCap?: number | null
+  liveMcap?: number | null
+  entryAt?: string | null
+  strategyIds?: string[] | null
+  growthPercent?: number
+  score?: number
+  rationale?: string | null
+  seenAt?: string | null
+  pWinner?: number | null
+  predicted?: 'winner' | 'loser' | null
+  pnlPct?: number
+  status?: string
+  organicScore?: number | null
+  topHoldersPct?: number | null
+  sm?: number | null
+  kol?: number | null
+}): string {
+  const titleMode: 'SIM' | 'LIVE' =
+    params.kind === 'early_copy' || params.isSimulated !== false ? 'SIM' : 'LIVE'
+
+  const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
+  const name = escapeTelegramHtml(params.strategyName)
+  const domain = escapeTelegramHtml(params.domain)
+  const organicHolders = formatOrganicHoldersLine(
+    params.organicScore,
+    params.topHoldersPct,
+  )
+  const smKol = formatSmKolLine(params.sm, params.kol)
+  const bodyLines: (string | null)[] = []
+
+  if (params.kind === 'open' || params.kind === 'open_copy') {
+    const entry =
+      params.entryMcap != null &&
+      Number.isFinite(params.entryMcap) &&
+      params.entryMcap > 0
+        ? params.entryMcap
+        : params.marketCap
+    if (entry != null && Number.isFinite(entry) && entry > 0) {
+      bodyLines.push(`Entry mcap: ${formatMcapUsd(entry)}`)
+      bodyLines.push(liveMcapLine(entry, params.liveMcap))
+    } else if (params.marketCap != null) {
+      bodyLines.push(`Market Cap: ${formatMcapUsd(params.marketCap)}`)
+    }
+    bodyLines.push(organicHolders)
+    bodyLines.push(smKol)
+    if (params.entryAt) {
+      bodyLines.push(`Entry at: ${escapeTelegramHtml(params.entryAt)}`)
+    }
+  } else if (params.kind === 'early_copy') {
+    if (params.strategyIds && params.strategyIds.length > 0) {
+      bodyLines.push(
+        `Strategies: ${params.strategyIds
+          .map((id) => escapeTelegramHtml(id))
+          .join(' · ')}`,
+      )
+    }
+    const growth =
+      params.growthPercent != null && Number.isFinite(params.growthPercent)
+        ? `${params.growthPercent >= 0 ? '+' : ''}${params.growthPercent.toFixed(1)}%`
+        : 'n/a'
+    bodyLines.push(`Growth: <b>${growth}</b> (before 100%)`)
+    if (params.score != null && Number.isFinite(params.score)) {
+      bodyLines.push(`Score: ${params.score.toFixed(0)}`)
+    }
+    bodyLines.push(
+      `Live mcap: ${formatMcapUsd(params.entryMcap ?? params.marketCap)}`,
+    )
+    bodyLines.push(organicHolders)
+    bodyLines.push(smKol)
+    bodyLines.push(
+      params.pWinner != null && Number.isFinite(params.pWinner)
+        ? `Pattern ML (shadow): pW ${params.pWinner.toFixed(2)} → ${params.predicted ?? '—'}`
+        : 'Pattern ML (shadow): n/a',
+    )
+    if (params.rationale) {
+      bodyLines.push(`Rationale: ${escapeTelegramHtml(params.rationale)}`)
+    }
+    if (params.seenAt) {
+      bodyLines.push(`Seen at: ${escapeTelegramHtml(params.seenAt)}`)
+    }
+  } else {
+    bodyLines.push(`Market Cap: ${formatMcapUsd(params.marketCap)}`)
+    if (params.pnlPct != null && Number.isFinite(params.pnlPct)) {
+      const sign = params.pnlPct >= 0 ? '+' : ''
+      bodyLines.push(`PnL: ${sign}${params.pnlPct.toFixed(2)}%`)
+    }
+    bodyLines.push(
+      `Result: <b>${escapeTelegramHtml((params.status || 'unknown').toUpperCase())}</b>`,
+    )
+    bodyLines.push(organicHolders)
+    bodyLines.push(smKol)
+  }
+
+  return [
+    strategyAlertTitle(params.kind, titleMode),
+    '',
+    `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
+    `Domain: ${domain}`,
+    `Token: <b>${symbol}</b>`,
+    ...bodyLines,
+    '',
+    formatChartBuyHtmlLine(params.tokenAddress),
+    `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
+  ]
+    .filter((line): line is string => line != null)
+    .join('\n')
+}
+
 export async function sendStrategyTrackOpenAlert(params: {
   strategyId: string
   strategyName: string
@@ -306,42 +459,25 @@ export async function sendStrategyTrackOpenAlert(params: {
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
-  const mode = params.isSimulated ? 'SIM' : 'LIVE'
-  const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
-  const name = escapeTelegramHtml(params.strategyName)
-  const domain = escapeTelegramHtml(params.domain)
-  const chartLink = formatReloadsolChartLink(params.tokenAddress)
-  const buyLink = formatJupiterTokenLink(params.tokenAddress)
-  const organicHolders = formatOrganicHoldersLine(
-    params.organicScore,
-    params.topHoldersPct,
-  )
-  const smKol = formatSmKolLine(params.sm, params.kol)
-
-  const text = [
-    `🟢 <b>Strategy OPEN (${mode})</b>`,
-    '',
-    `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
-    `Domain: ${domain}`,
-    `Market Cap: ${formatMcapUsd(params.marketCap)}`,
-    `Token: ${symbol}`,
-    organicHolders,
-    smKol,
-    '',
-    `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a>`,
-    `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
-  ]
-    .filter((line): line is string => line != null)
-    .join('\n')
+  const text = buildStrategyAlertText({
+    kind: 'open',
+    strategyId: params.strategyId,
+    strategyName: params.strategyName,
+    domain: params.domain,
+    tokenSymbol: params.tokenSymbol,
+    tokenAddress: params.tokenAddress,
+    isSimulated: params.isSimulated,
+    marketCap: params.marketCap,
+    entryMcap: params.marketCap,
+    organicScore: params.organicScore,
+    topHoldersPct: params.topHoldersPct,
+    sm: params.sm,
+    kol: params.kol,
+  })
 
   return sendTelegramAlert(text, {
     parseMode: 'HTML',
-    inlineKeyboard: [
-      [
-        { text: 'Chart', url: chartLink },
-        { text: 'Buy', url: buyLink },
-      ],
-    ],
+    inlineKeyboard: chartBuyInlineKeyboard(params.tokenAddress),
   })
 }
 
@@ -410,41 +546,22 @@ export function buildMcapSimManualTradeAlertText(params: {
   organicScore?: number | null
   topHoldersPct?: number | null
 }): string {
-  const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
-  const name = escapeTelegramHtml(params.strategyName)
-  const entryAt =
-    typeof params.entryAt === 'string' && params.entryAt
-      ? escapeTelegramHtml(params.entryAt)
-      : null
-  const live =
-    typeof params.liveMcap === 'number' &&
-    Number.isFinite(params.liveMcap) &&
-    params.liveMcap > 0 &&
-    Math.abs(params.liveMcap - params.entryMcap) / Math.max(params.entryMcap, 1) > 0.02
-      ? formatMcapUsd(params.liveMcap)
-      : null
-  const smKol = formatSmKolLine(params.sm, params.kol)
-  const organicHolders = formatOrganicHoldersLine(
-    params.organicScore,
-    params.topHoldersPct,
-  )
-
-  return [
-    `🟢 <b>Mcap Sim OPEN — copy trade</b>`,
-    '',
-    `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
-    `Token: <b>${symbol}</b>`,
-    `Entry mcap: ${formatMcapUsd(params.entryMcap)}`,
-    live ? `Live mcap: ${live}` : null,
-    organicHolders,
-    smKol,
-    entryAt ? `Entry at: ${entryAt}` : null,
-    '',
-    formatChartBuyHtmlLine(params.tokenAddress),
-    `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
-  ]
-    .filter((line): line is string => line != null)
-    .join('\n')
+  return buildStrategyAlertText({
+    kind: 'open_copy',
+    strategyId: params.strategyId,
+    strategyName: params.strategyName,
+    domain: 'mcap_tracker',
+    tokenSymbol: params.tokenSymbol,
+    tokenAddress: params.tokenAddress,
+    isSimulated: true,
+    entryMcap: params.entryMcap,
+    liveMcap: params.liveMcap,
+    entryAt: params.entryAt,
+    organicScore: params.organicScore,
+    topHoldersPct: params.topHoldersPct,
+    sm: params.sm,
+    kol: params.kol,
+  })
 }
 
 export function buildSignalsEarlyEnterAlertText(params: {
@@ -460,49 +577,32 @@ export function buildSignalsEarlyEnterAlertText(params: {
   sm?: number | null
   kol?: number | null
   strategyIds?: string[] | null
+  strategyId?: string
+  strategyName?: string
 }): string {
-  const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
-  const growth = Number.isFinite(params.growthPercent)
-    ? `${params.growthPercent >= 0 ? '+' : ''}${params.growthPercent.toFixed(1)}%`
-    : 'n/a'
-  const entryAt =
-    typeof params.entryAt === 'string' && params.entryAt
-      ? escapeTelegramHtml(params.entryAt)
-      : null
-  const rationale =
-    typeof params.rationale === 'string' && params.rationale
-      ? escapeTelegramHtml(params.rationale)
-      : null
-  const mlLine =
-    params.pWinner != null && Number.isFinite(params.pWinner)
-      ? `Pattern ML (shadow): pW ${params.pWinner.toFixed(2)} → ${params.predicted ?? '—'}`
-      : 'Pattern ML (shadow): n/a'
-  const smKol = formatSmKolLine(params.sm, params.kol)
-  const strategies =
-    params.strategyIds && params.strategyIds.length > 0
-      ? `Strategies: ${params.strategyIds
-          .map((id) => escapeTelegramHtml(id))
-          .join(' · ')}`
-      : null
-
-  return [
-    `🟡 <b>Early Signals Enter — copy trade</b>`,
-    '',
-    strategies,
-    `Token: <b>${symbol}</b>`,
-    `Growth: <b>${growth}</b> (before 100%)`,
-    `Score: ${params.score.toFixed(0)}`,
-    `Live mcap: ${formatMcapUsd(params.entryMcap)}`,
-    smKol,
-    mlLine,
-    rationale ? `Rationale: ${rationale}` : null,
-    entryAt ? `Seen at: ${entryAt}` : null,
-    '',
-    formatChartBuyHtmlLine(params.tokenAddress),
-    `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
-  ]
-    .filter((line): line is string => line != null)
-    .join('\n')
+  const strategyId =
+    params.strategyId ||
+    params.strategyIds?.[0] ||
+    'signals_default'
+  return buildStrategyAlertText({
+    kind: 'early_copy',
+    strategyId,
+    strategyName: params.strategyName || strategyId,
+    domain: 'signals',
+    tokenSymbol: params.tokenSymbol,
+    tokenAddress: params.tokenAddress,
+    isSimulated: true,
+    entryMcap: params.entryMcap,
+    growthPercent: params.growthPercent,
+    score: params.score,
+    rationale: params.rationale,
+    seenAt: params.entryAt,
+    pWinner: params.pWinner,
+    predicted: params.predicted,
+    sm: params.sm,
+    kol: params.kol,
+    strategyIds: params.strategyIds,
+  })
 }
 
 export async function sendSignalsEarlyEnterAlert(params: {
@@ -518,6 +618,8 @@ export async function sendSignalsEarlyEnterAlert(params: {
   sm?: number | null
   kol?: number | null
   strategyIds?: string[] | null
+  strategyId?: string
+  strategyName?: string
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
@@ -565,37 +667,22 @@ export async function sendStrategyTrackCloseAlert(params: {
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
-  const mode = params.isSimulated ? 'SIM' : 'LIVE'
-  const sign = params.pnlPct >= 0 ? '+' : ''
-  const symbol = escapeTelegramHtml(params.tokenSymbol || 'UNKNOWN')
-  const name = escapeTelegramHtml(params.strategyName)
-  const domain = escapeTelegramHtml(params.domain)
-  const result = escapeTelegramHtml((params.status || 'unknown').toUpperCase())
-  const chartLink = formatReloadsolChartLink(params.tokenAddress)
-  const buyLink = formatTelegramBuyLink(params.tokenAddress)
-  const organicHolders = formatOrganicHoldersLine(
-    params.organicScore,
-    params.topHoldersPct,
-  )
-  const smKol = formatSmKolLine(params.sm, params.kol)
-
-  const text = [
-    `🔴 <b>Strategy CLOSE (${mode})</b>`,
-    '',
-    `Strategy: <b>${name}</b> (${escapeTelegramHtml(params.strategyId)})`,
-    `Domain: ${domain}`,
-    `Token: ${symbol}`,
-    `Market Cap: ${formatMcapUsd(params.marketCap)}`,
-    `PnL: ${sign}${params.pnlPct.toFixed(2)}%`,
-    `Result: <b>${result}</b>`,
-    organicHolders,
-    smKol,
-    '',
-    `<a href="${chartLink}">Chart</a> · <a href="${buyLink}">Buy</a>`,
-    `<code>${escapeTelegramHtml(params.tokenAddress)}</code>`,
-  ]
-    .filter((line): line is string => line != null)
-    .join('\n')
+  const text = buildStrategyAlertText({
+    kind: 'close',
+    strategyId: params.strategyId,
+    strategyName: params.strategyName,
+    domain: params.domain,
+    tokenSymbol: params.tokenSymbol,
+    tokenAddress: params.tokenAddress,
+    isSimulated: params.isSimulated,
+    marketCap: params.marketCap,
+    pnlPct: params.pnlPct,
+    status: params.status,
+    organicScore: params.organicScore,
+    topHoldersPct: params.topHoldersPct,
+    sm: params.sm,
+    kol: params.kol,
+  })
 
   return sendTelegramAlert(text, {
     parseMode: 'HTML',

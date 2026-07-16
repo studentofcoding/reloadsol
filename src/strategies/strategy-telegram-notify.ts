@@ -1,4 +1,4 @@
-import type { StrategyDomain } from './types'
+import type { StrategyDomain, StrategyNotifyConfig } from './types'
 import {
   DLMM_STRATEGY_DEFAULTS,
   GMGN_STRATEGIES,
@@ -6,6 +6,10 @@ import {
   SIGNALS_STRATEGIES,
   TRENDING_BOT_STRATEGIES,
 } from './registry'
+import {
+  readNotifyFlags,
+  type StrategyNotifyFlags,
+} from './strategy-notify'
 import {
   sendStrategyTrackCloseAlert,
   sendStrategyTrackOpenAlert,
@@ -31,45 +35,57 @@ export function resolveStrategyDisplayName(
   }
 }
 
-/** Admin `is_active` master switch for strategy position Telegram. */
-export async function isStrategyActiveForTelegram(
+async function loadStrategyNotifyConfig(
   domain: StrategyDomain,
   strategyId: string,
-): Promise<boolean> {
+): Promise<StrategyNotifyConfig | null | undefined> {
   switch (domain) {
     case 'signals': {
       const { getSignalsStrategy } = await import('./load-signals')
-      const s = await getSignalsStrategy(strategyId)
-      return s?.is_active === true
+      return (await getSignalsStrategy(strategyId))?.config.notify
     }
     case 'mcap_tracker': {
       const { getMergedMcapTrackerRegistry } = await import('./load-mcap-tracker')
       const registry = await getMergedMcapTrackerRegistry()
-      return registry[strategyId]?.is_active === true
+      return registry[strategyId]?.config.notify
     }
     case 'gmgn': {
       const { getMergedGmgnRegistry } = await import('./load-gmgn')
       const registry = await getMergedGmgnRegistry()
-      return registry[strategyId]?.is_active === true
+      return registry[strategyId]?.config.notify
     }
     case 'trending_bot': {
-      const { getMergedTrendingBotRegistry, isStrategyActive } = await import(
-        './load-strategy'
-      )
+      const { getMergedTrendingBotRegistry } = await import('./load-strategy')
       const registry = await getMergedTrendingBotRegistry()
-      return isStrategyActive(strategyId, registry)
+      return registry[strategyId]?.notify
     }
     case 'dlmm': {
       const { getMergedDlmmStrategy } = await import('./load-dlmm')
       const s = await getMergedDlmmStrategy()
-      return s.is_active === true && (strategyId === s.id || strategyId === 'dlmm_default')
+      if (strategyId !== s.id && strategyId !== 'dlmm_default') return undefined
+      return s.config.notify
     }
-    default: {
-      const { loadStrategyDefinitionById } = await import('./db')
-      const row = await loadStrategyDefinitionById(strategyId)
-      return row?.is_active === true
-    }
+    default:
+      return undefined
   }
+}
+
+/** Notify flags for a strategy (defaults telegram/ui on). */
+export async function getStrategyNotifyFlags(
+  domain: StrategyDomain,
+  strategyId: string,
+): Promise<StrategyNotifyFlags> {
+  const notify = await loadStrategyNotifyConfig(domain, strategyId)
+  return readNotifyFlags(notify)
+}
+
+/** @deprecated use getStrategyNotifyFlags — gates on notify.telegram only */
+export async function isStrategyActiveForTelegram(
+  domain: StrategyDomain,
+  strategyId: string,
+): Promise<boolean> {
+  const flags = await getStrategyNotifyFlags(domain, strategyId)
+  return flags.telegram
 }
 
 function readFeatureString(
@@ -144,9 +160,8 @@ export function notifyStrategyOpen(params: {
 }): void {
   const fromFeatures = telegramExtrasFromFeatures(params.features)
   void (async () => {
-    if (!(await isStrategyActiveForTelegram(params.domain, params.strategyId))) {
-      return
-    }
+    const flags = await getStrategyNotifyFlags(params.domain, params.strategyId)
+    if (!flags.telegram) return
     await sendStrategyTrackOpenAlert({
       strategyId: params.strategyId,
       strategyName: resolveStrategyDisplayName(params.domain, params.strategyId),
@@ -183,9 +198,8 @@ export function notifyStrategyClose(params: {
   const fromFeatures = telegramExtrasFromFeatures(params.features)
 
   void (async () => {
-    if (!(await isStrategyActiveForTelegram(params.domain, params.strategyId))) {
-      return
-    }
+    const flags = await getStrategyNotifyFlags(params.domain, params.strategyId)
+    if (!flags.telegram) return
     await sendStrategyTrackCloseAlert({
       strategyId: params.strategyId,
       strategyName: resolveStrategyDisplayName(params.domain, params.strategyId),

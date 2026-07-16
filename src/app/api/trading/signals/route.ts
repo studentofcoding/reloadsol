@@ -121,12 +121,17 @@ export async function GET(request: NextRequest) {
             '@/strategies/load-mcap-tracker'
           )
           const { getSignalsStrategy } = await import('@/strategies/load-signals')
+          const { readNotifyFlags } = await import('@/strategies/strategy-notify')
+          const { resolveStrategyDisplayName } = await import(
+            '@/strategies/strategy-telegram-notify'
+          )
           const signalsId =
             strategyTemplate === 'sell_over_100'
               ? 'signals_sell_over_100'
               : 'signals_default'
           const signalsStrategy = await getSignalsStrategy(signalsId)
-          if (!signalsStrategy?.is_active) {
+          const notify = readNotifyFlags(signalsStrategy?.config.notify)
+          if (!notify.telegram && !notify.ui) {
             return
           }
           const strategyIds = [signalsId]
@@ -140,20 +145,30 @@ export async function GET(request: NextRequest) {
               if (registry[id]?.is_active) strategyIds.push(id)
             }
           }
-          await sendSignalsEarlyEnterAlert({
-            tokenSymbol: alert.tokenSymbol,
-            tokenAddress: alert.tokenAddress,
-            entryMcap: alert.entryMcap,
-            growthPercent: alert.growthPercent,
-            score: alert.score,
-            rationale: alert.rationale,
-            entryAt: alert.entryAt,
-            pWinner: alert.pWinner,
-            predicted: alert.predicted,
-            sm: peaks?.sm ?? null,
-            kol: peaks?.kol ?? null,
-            strategyIds,
-          })
+          if (notify.telegram) {
+            await sendSignalsEarlyEnterAlert({
+              tokenSymbol: alert.tokenSymbol,
+              tokenAddress: alert.tokenAddress,
+              entryMcap: alert.entryMcap,
+              growthPercent: alert.growthPercent,
+              score: alert.score,
+              rationale: alert.rationale,
+              entryAt: alert.entryAt,
+              pWinner: alert.pWinner,
+              predicted: alert.predicted,
+              sm: peaks?.sm ?? null,
+              kol: peaks?.kol ?? null,
+              strategyIds,
+              strategyId: signalsId,
+              strategyName: resolveStrategyDisplayName('signals', signalsId),
+            })
+          }
+          if (!notify.ui) {
+            const { discardPendingSignalsEarlyToasts } = await import(
+              '@/strategies/signals-early-alerts'
+            )
+            discardPendingSignalsEarlyToasts([alert.tokenAddress])
+          }
         })()
       }
     }

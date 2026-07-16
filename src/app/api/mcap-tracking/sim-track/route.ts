@@ -250,27 +250,26 @@ async function openSimPosition(params: {
 
   if (isMcapManualTradeStrategy(params.strategyId)) {
     const manualStrategyId = params.strategyId
-    recordSimOpenAlert({
-      strategyId: manualStrategyId,
-      tokenAddress: params.mintAddress,
-      tokenSymbol: params.symbol,
-      entryMcap: params.entryMcap,
-      entryAt: params.entryAt,
-      entryTemplate: params.entryTemplate,
-    })
+    const { getStrategyNotifyFlags } = await import(
+      '@/strategies/strategy-telegram-notify'
+    )
+    const notify = await getStrategyNotifyFlags('mcap_tracker', manualStrategyId)
+    if (notify.ui) {
+      recordSimOpenAlert({
+        strategyId: manualStrategyId,
+        tokenAddress: params.mintAddress,
+        tokenSymbol: params.symbol,
+        entryMcap: params.entryMcap,
+        entryAt: params.entryAt,
+        entryTemplate: params.entryTemplate,
+      })
+    }
     const { sendMcapSimManualTradeAlert } = await import('@/utils/telegram')
     const { lookupSmKolPeaksForMint } = await import(
       '@/strategies/gmgn-radar-accumulate'
     )
     void (async () => {
-      const { isStrategyActiveForTelegram } = await import(
-        '@/strategies/strategy-telegram-notify'
-      )
-      if (
-        !(await isStrategyActiveForTelegram('mcap_tracker', manualStrategyId))
-      ) {
-        return
-      }
+      if (!notify.telegram) return
       const peaks = await lookupSmKolPeaksForMint(params.mintAddress)
       await sendMcapSimManualTradeAlert({
         strategyId: manualStrategyId,

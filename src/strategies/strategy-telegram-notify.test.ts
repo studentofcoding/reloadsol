@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
-  isStrategyActiveForTelegram,
+  getStrategyNotifyFlags,
   resolveStrategyDisplayName,
 } from './strategy-telegram-notify'
 
@@ -23,36 +23,42 @@ describe('resolveStrategyDisplayName', () => {
   })
 })
 
-describe('isStrategyActiveForTelegram', () => {
+describe('getStrategyNotifyFlags', () => {
   beforeEach(() => {
     vi.mocked(getSignalsStrategy).mockReset()
     vi.mocked(getMergedMcapTrackerRegistry).mockReset()
   })
 
-  it('returns true for active signals strategy', async () => {
-    vi.mocked(getSignalsStrategy).mockResolvedValue({
-      id: 'signals_default',
-      is_active: true,
-    } as Awaited<ReturnType<typeof getSignalsStrategy>>)
-    await expect(
-      isStrategyActiveForTelegram('signals', 'signals_default'),
-    ).resolves.toBe(true)
-  })
-
-  it('returns false for inactive signals strategy', async () => {
+  it('defaults telegram on when notify unset', async () => {
     vi.mocked(getSignalsStrategy).mockResolvedValue({
       id: 'signals_default',
       is_active: false,
+      config: {},
     } as Awaited<ReturnType<typeof getSignalsStrategy>>)
     await expect(
-      isStrategyActiveForTelegram('signals', 'signals_default'),
-    ).resolves.toBe(false)
+      getStrategyNotifyFlags('signals', 'signals_default'),
+    ).resolves.toEqual({ telegram: true, ui: true })
   })
 
-  it('returns false when mcap strategy missing from registry', async () => {
-    vi.mocked(getMergedMcapTrackerRegistry).mockResolvedValue({})
+  it('honors notify.telegram false while strategy inactive', async () => {
+    vi.mocked(getSignalsStrategy).mockResolvedValue({
+      id: 'signals_default',
+      is_active: false,
+      config: { notify: { telegram: false, ui: false } },
+    } as Awaited<ReturnType<typeof getSignalsStrategy>>)
     await expect(
-      isStrategyActiveForTelegram('mcap_tracker', 'mcap_enter_at_80'),
-    ).resolves.toBe(false)
+      getStrategyNotifyFlags('signals', 'signals_default'),
+    ).resolves.toEqual({ telegram: false, ui: false })
+  })
+
+  it('reads mcap notify from registry', async () => {
+    vi.mocked(getMergedMcapTrackerRegistry).mockResolvedValue({
+      mcap_enter_at_80: {
+        config: { notify: { telegram: true, ui: false } },
+      },
+    } as Awaited<ReturnType<typeof getMergedMcapTrackerRegistry>>)
+    await expect(
+      getStrategyNotifyFlags('mcap_tracker', 'mcap_enter_at_80'),
+    ).resolves.toEqual({ telegram: true, ui: false })
   })
 })

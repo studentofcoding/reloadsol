@@ -135,7 +135,7 @@ From `ml/artifacts/pattern-gate/model.meta.json` (330 train / 66 test):
 **Stage 1 — Early Enter** (before growth hits 100%):
 
 - Fired from `GET /api/trading/signals` when `decision=enter` and growth &lt; 100% (not stuck / not `rugged`).
-- Telegram: `sendSignalsEarlyEnterAlert` **only if** matching Signals strategy is `is_active` (`signals_default` ↔ template `default`, `signals_sell_over_100` ↔ `sell_over_100`). UI toasts + `signals_early` stamps still run when inactive.
+- Telegram: `sendSignalsEarlyEnterAlert` **only if** matching Signals strategy `config.notify.telegram` is on (default on; Activate syncs on, Deactivate syncs off; manual override allowed). UI toasts follow `config.notify.ui`. Stamps/`signals_early` still run.
 - Toast category `signals_enter` (**Early Enter**).
 - Dedup: one per mint per 24h (`signals_enter:{mint}`).
 - **Pattern ML shadow (display only):** scores `p_winner` / `predicted` on Stage-1 candidates (5m cache). Shown on Telegram, toast, and Signals **ML** column. Does **not** block alerts — stay shadow until `pattern_ready`.
@@ -143,15 +143,15 @@ From `ml/artifacts/pattern-gate/model.meta.json` (330 train / 66 test):
 **Stage 2 — Mcap Sim Open** (confirm after paper open):
 
 - When mcap sim-track opens for **`mcap_enter_first_seen`** or **`mcap_enter_at_80`**.
-- Telegram: `sendMcapSimManualTradeAlert` (requires that mcap strategy `is_active`). Toast category `sim_open` (**Mcap Sim Open**).
+- Telegram / UI toast gated by that strategy’s `config.notify` (same sync rules). Toast category `sim_open` (**Mcap Sim Open**).
 - Dedup: one per strategy+mint per 24h. Still fires even if Stage 1 already alerted.
 
 Shared:
 
-- **Position OPEN/CLOSE Telegram:** `notifyStrategyOpen` / `notifyStrategyClose` only send when the strategy’s Admin `is_active` is true (all domains: signals, mcap, trending, gmgn, dlmm). Deactivate a strategy → silence its open/close TG. GMGN paper open also notifies on open (parity with other domains).
+- **Position OPEN/CLOSE Telegram:** unified template (`OPEN` / `OPEN · copy trade` / `EARLY · copy trade` / `CLOSE`) via `buildStrategyAlertText`. Sends when `config.notify.telegram` is on (defaults on when unset).
+- **`/dev/strategies` notify toggles:** each card has **Telegram** + **UI toasts**. **Activate** sets both on; **Deactivate** sets both off; either can be flipped manually afterward (including TG/UI on while strategy off).
 - **UI:** `McapSimOpenToastHost` in root layout; polls `GET /api/mcap-tracking/sim-open-alerts` every 15s; toast **top-right** (`z-index: 9999`) with **Buy**.
-- **Telegram env:** `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false` (global kill switch).
-- **Workers:** `signals_refresh` (~60s) helps Stage 1; **`mcap_tracker_sim_open` (~15s, `phase=open`)** for Stage 2 opens; **`mcap_tracker_sim_track` (~120s, `phase=manage`)** for exits/snapshots. Manual track trigger runs `phase=all`. Skip-if-running on both.
+- **Telegram env:** `TELEGRAM_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`; `STRATEGY_TRACK_TELEGRAM_ENABLED` must not be `false` (global kill switch).- **Workers:** `signals_refresh` (~60s) helps Stage 1; **`mcap_tracker_sim_open` (~15s, `phase=open`)** for Stage 2 opens; **`mcap_tracker_sim_track` (~120s, `phase=manage`)** for exits/snapshots. Manual track trigger runs `phase=all`. Skip-if-running on both.
 - **`mcap_enter_at_80` freshness:** skips `milestone_too_old` outside `recencyMinutes` (default 240). **Entry mcap = live `current_mcap` at open** (copy-trade fill); milestone only gates eligibility. Telegram Entry is the buy-now reference.
 - **Mcap WR skew:** TP +200% / first_mcap (or live fill) baseline means winners often land near ~+200%; organic/holders gates off by default — compare other domains carefully.
 - **Env:** `MCAP_TRACKER_SIM_OPEN_INTERVAL` (default 15), `MCAP_TRACKER_SIM_INTERVAL` (default 120 manage).

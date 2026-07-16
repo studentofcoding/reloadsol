@@ -1,4 +1,5 @@
 import type { SignalsStrategy, SignalsStrategyConfig, SignalsStrategyOverride } from './types'
+import { mergeNotifyConfig } from './strategy-notify'
 
 export function mergeSignalsStrategy(
   base: SignalsStrategy,
@@ -29,6 +30,8 @@ export function mergeSignalsStrategy(
   if (!base.config.social && !o.social) {
     delete (mergedConfig as { social?: unknown }).social
   }
+  const notify = mergeNotifyConfig(base.config.notify, o.notify)
+  if (notify) mergedConfig.notify = notify
 
   return {
     ...base,

@@ -1,5 +1,6 @@
 import type { GmgnStrategy, GmgnStrategyOverride } from './types'
 import { DEFAULT_GMGN_RADAR } from './registry'
+import { mergeNotifyConfig } from './strategy-notify'
 
 export function mergeGmgnStrategy(
   base: GmgnStrategy,
@@ -39,6 +40,9 @@ export function mergeGmgnStrategy(
       },
     },
   }
+
+  const notify = mergeNotifyConfig(base.config.notify, o.notify)
+  if (notify) config.notify = notify
 
   return {
     ...base,

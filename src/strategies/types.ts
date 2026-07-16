@@ -18,6 +18,12 @@ export type SocialGateConfig = {
   socialMaxMinutesSinceFirstMention?: number
 }
 
+/** Per-strategy Telegram / UI toast switches (default on when unset). */
+export type StrategyNotifyConfig = {
+  telegram?: boolean
+  ui?: boolean
+}
+
 export interface TokenFilterConfig {
   enabled: boolean
   mcap?: { min?: number; max?: number }
@@ -55,6 +61,7 @@ export interface TrendingBotStrategy {
   }
   filtering?: TokenFilterConfig
   allocation_weight?: number
+  notify?: StrategyNotifyConfig
 }
 
 export type TrendingBotStrategyOverride = Partial<
@@ -63,6 +70,7 @@ export type TrendingBotStrategyOverride = Partial<
   take_profit_levels?: Partial<TrendingBotStrategy['take_profit_levels']>
   conditions?: Partial<NonNullable<TrendingBotStrategy['conditions']>>
   filtering?: Partial<TokenFilterConfig>
+  notify?: StrategyNotifyConfig
 }
 
 export interface SignalsScoringWeights {
@@ -103,6 +111,7 @@ export interface SignalsStrategyConfig {
     simBuySol: number
     maxOpenPositions: number
   }
+  notify?: StrategyNotifyConfig
 }
 
 export type SignalsStrategyOverride = Partial<
@@ -112,6 +121,7 @@ export type SignalsStrategyOverride = Partial<
   scoring?: Partial<SignalsScoringWeights>
   social?: Partial<SocialGateConfig>
   execution?: Partial<SignalsStrategyConfig['execution']>
+  notify?: StrategyNotifyConfig
 }
 
 export interface SignalsStrategy {
@@ -139,12 +149,14 @@ export interface DlmmStrategyConfig {
     maxOpenPositions: number
     minCandidateScore: number
   }
+  notify?: StrategyNotifyConfig
 }
 
 export type DlmmStrategyOverride = Partial<
   Omit<DlmmStrategyConfig, 'execution'>
 > & {
   execution?: Partial<DlmmStrategyConfig['execution']>
+  notify?: StrategyNotifyConfig
 }
 
 export interface DlmmStrategy {
@@ -181,6 +193,7 @@ export interface McapTrackerStrategyConfig {
     topHoldersPctMax?: number
   }
   social?: SocialGateConfig
+  notify?: StrategyNotifyConfig
 }
 
 export type McapTrackerStrategyOverride = Partial<
@@ -191,6 +204,7 @@ export type McapTrackerStrategyOverride = Partial<
   exit?: Partial<McapTrackerStrategyConfig['exit']>
   entry?: Partial<McapTrackerStrategyConfig['entry']>
   social?: Partial<SocialGateConfig>
+  notify?: StrategyNotifyConfig
 }
 
 export interface McapTrackerStrategy {
@@ -273,6 +287,7 @@ export interface GmgnStrategyConfig {
   }
   /** Radar price / comeback / Telegram thread knobs. */
   radar?: GmgnRadarConfig
+  notify?: StrategyNotifyConfig
 }
 
 export type GmgnStrategyOverride = Partial<
@@ -286,6 +301,7 @@ export type GmgnStrategyOverride = Partial<
     comeback?: Partial<GmgnRadarComebackConfig>
     telegram?: Partial<GmgnRadarConfig['telegram']>
   }
+  notify?: StrategyNotifyConfig
 }
 
 export interface GmgnStrategy {

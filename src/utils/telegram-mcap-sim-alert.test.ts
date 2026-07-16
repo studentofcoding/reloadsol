@@ -19,9 +19,10 @@ describe('buildMcapSimManualTradeAlertText', () => {
       entryAt: '2026-07-09T01:00:00.000Z',
     })
 
-    expect(text).toContain('Mcap Sim OPEN — copy trade')
+    expect(text).toContain('OPEN · copy trade')
     expect(text).toContain('Enter at first seen')
     expect(text).toContain('mcap_enter_first_seen')
+    expect(text).toContain('Domain: mcap_tracker')
     expect(text).toContain('TEST')
     expect(text).toContain('$85.0K')
     expect(text).toContain('2026-07-09T01:00:00.000Z')
@@ -30,6 +31,7 @@ describe('buildMcapSimManualTradeAlertText', () => {
     expect(text).toContain('>Buy</a>')
     expect(text).not.toContain('>Jupiter</a>')
     expect(text).not.toContain('reloadsol.app/buy')
+    expect(text).not.toContain('Mcap Sim OPEN')
   })
 
   it('escapes HTML in symbol and strategy name', () => {
@@ -125,8 +127,9 @@ describe('buildSignalsEarlyEnterAlertText', () => {
       strategyIds: ['signals_default'],
     })
 
-    expect(text).toContain('Early Signals Enter — copy trade')
+    expect(text).toContain('EARLY · copy trade')
     expect(text).toContain('Strategies: signals_default')
+    expect(text).toContain('Domain: signals')
     expect(text).toContain('EARLY')
     expect(text).toContain('+35.4%')
     expect(text).toContain('before 100%')
@@ -136,6 +139,7 @@ describe('buildSignalsEarlyEnterAlertText', () => {
     expect(text).toContain(formatReloadsolChartLink(MINT))
     expect(text).toContain(formatJupiterTokenLink(MINT))
     expect(text).not.toContain('>Jupiter</a>')
+    expect(text).not.toContain('Early Signals Enter')
   })
 
   it('lists known strategies including active mcap ids', () => {
