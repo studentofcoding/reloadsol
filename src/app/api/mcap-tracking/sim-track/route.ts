@@ -245,12 +245,11 @@ async function openSimPosition(params: {
   const {
     isMcapManualTradeStrategy,
     recordSimOpenAlert,
-    strategyLabelForManualTrade,
   } = await import('@/strategies/mcap-sim-open-alerts')
 
   if (isMcapManualTradeStrategy(params.strategyId)) {
     const manualStrategyId = params.strategyId
-    const { getStrategyNotifyFlags } = await import(
+    const { getStrategyNotifyFlags, resolveStrategyDisplayName } = await import(
       '@/strategies/strategy-telegram-notify'
     )
     const notify = await getStrategyNotifyFlags('mcap_tracker', manualStrategyId)
@@ -264,30 +263,34 @@ async function openSimPosition(params: {
         entryTemplate: params.entryTemplate,
       })
     }
-    const { sendMcapSimManualTradeAlert } = await import('@/utils/telegram')
-    const { lookupSmKolPeaksForMint } = await import(
-      '@/strategies/gmgn-radar-accumulate'
-    )
-    void (async () => {
-      if (!notify.telegram) return
-      const peaks = await lookupSmKolPeaksForMint(params.mintAddress)
-      await sendMcapSimManualTradeAlert({
-        strategyId: manualStrategyId,
-        strategyName: strategyLabelForManualTrade(manualStrategyId),
-        tokenSymbol: params.symbol,
-        tokenAddress: params.mintAddress,
-        entryMcap: params.entryMcap,
-        entryAt: params.entryAt,
-        liveMcap: params.snapshot.current_mcap,
-        sm: peaks?.sm ?? null,
-        kol: peaks?.kol ?? null,
-        // ponytail: log only from tracked snapshot — skip Jupiter refetch when set
-        organicScore: params.snapshot.organic_score,
-        topHoldersPct: params.snapshot.top_holders_pct,
-      })
-    })().catch((err) => {
-      console.error('[mcap-sim-open] telegram alert failed:', err)
-    })
+    if (notify.telegram) {
+      const { sendStrategyTrackOpenAlert } = await import('@/utils/telegram')
+      const feats = scoredEntryFeatures ?? {}
+      const readNum = (...keys: string[]): number | null => {
+        for (const key of keys) {
+          const v = feats[key]
+          if (typeof v === 'number' && Number.isFinite(v)) return v
+        }
+        return null
+      }
+      try {
+        await sendStrategyTrackOpenAlert({
+          strategyId: manualStrategyId,
+          strategyName: resolveStrategyDisplayName('mcap_tracker', manualStrategyId),
+          domain: 'mcap_tracker',
+          tokenSymbol: params.symbol,
+          tokenAddress: params.mintAddress,
+          marketCap: params.entryMcap,
+          isSimulated: true,
+          organicScore: params.snapshot.organic_score,
+          topHoldersPct: params.snapshot.top_holders_pct,
+          sm: readNum('sm', 'sm_count', 'smart_money_count'),
+          kol: readNum('kol', 'kol_count'),
+        })
+      } catch (err) {
+        console.error('[mcap-sim-open] telegram alert failed:', err)
+      }
+    }
   } else {
     const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
     notifyStrategyOpen({

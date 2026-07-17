@@ -29,7 +29,7 @@ describe('mcap-sim-open-alerts', () => {
     )
   })
 
-  it('records alert once per strategy+mint and drains as toast', () => {
+  it('records alert once per strategy+mint and peeks as toast without consume', () => {
     const first = recordSimOpenAlert({
       strategyId: 'mcap_enter_at_80',
       tokenAddress: 'MintABC',
@@ -72,7 +72,7 @@ describe('mcap-sim-open-alerts', () => {
       entryTemplate: 'milestone_80',
     })
 
-    expect(drainSimOpenAlerts()).toHaveLength(0)
+    expect(drainSimOpenAlerts()).toHaveLength(2)
   })
 
   it('ignores non-manual strategies', () => {

@@ -21,6 +21,8 @@ export type McapSimOpenAlert = {
 }
 
 const DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000
+/** Recent alerts stay peekable for UI poll without one-shot consume. */
+const PEEK_WINDOW_MS = 90_000
 const MAX_BUFFER = 50
 
 const recentKeys = new Map<string, number>()
@@ -109,12 +111,20 @@ export function buildSimOpenToast(alert: McapSimOpenAlert): McapToast {
   }
 }
 
-export function drainSimOpenAlerts(): McapToast[] {
-  const undelivered = pending.filter((a) => !a.delivered)
-  for (const alert of undelivered) {
-    alert.delivered = true
+function prunePending(now: number): void {
+  for (let i = pending.length - 1; i >= 0; i--) {
+    if (now - pending[i].recordedAt > PEEK_WINDOW_MS) {
+      pending.splice(i, 1)
+    }
   }
-  return undelivered.map(buildSimOpenToast)
+}
+
+export function drainSimOpenAlerts(): McapToast[] {
+  const now = Date.now()
+  prunePending(now)
+  return pending
+    .filter((a) => now - a.recordedAt <= PEEK_WINDOW_MS)
+    .map(buildSimOpenToast)
 }
 
 /** Test helper — clears in-memory state. */
