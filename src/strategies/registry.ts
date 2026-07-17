@@ -269,6 +269,29 @@ export const DEFAULT_GMGN_EXIT = {
   maxHoldHours: 12,
 }
 
+/** Same SL/TP/hold as GMGN — Jupiter price basis for social-only sim. */
+export const DEFAULT_SOCIAL_EXIT = { ...DEFAULT_GMGN_EXIT }
+
+export const SOCIAL_STRATEGIES: Record<string, import('./types').SocialStrategy> = {
+  social_only_fomo_gt7: {
+    id: 'social_only_fomo_gt7',
+    name: 'Social-only FOMO (>7)',
+    description:
+      'Paper trade when FOMO mentions >7 in 30m and token is only on social_token_rollups',
+    is_active: true,
+    execution_mode: 'sim_only',
+    config: {
+      entry: {
+        minMentions30m: 7,
+        topSource: 'GMGN_Smart_Money_FOMO',
+        maxCandidatesPerTick: 5,
+      },
+      execution: { simBuySol: 0.02, maxOpenPositions: 5 },
+      exit: { ...DEFAULT_SOCIAL_EXIT },
+    },
+  },
+}
+
 export const DEFAULT_GMGN_RADAR: import('./types').GmgnRadarConfig = {
   stickyPumpPct: 50,
   dumpBanPct: -80,

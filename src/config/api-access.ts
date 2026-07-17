@@ -57,6 +57,7 @@ export const SERVICE_AUTH_API_PREFIXES = [
   '/api/gmgn/sim-track',
   '/api/gmgn/activity-poll',
   '/api/gmgn/radar-digest',
+  '/api/social/sim-track',
   '/api/social/ingest',
   '/api/social/rollup',
   '/api/social/cleanup',

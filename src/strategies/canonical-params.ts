@@ -5,6 +5,7 @@ import type {
   McapTrackerStrategy,
   SignalsStrategy,
   SocialGateConfig,
+  SocialStrategy,
   StrategyDomain,
   TrendingBotStrategy,
 } from './types'
@@ -18,6 +19,7 @@ export type EntryTrigger =
   | 'dlmm_pool_screen'
   | 'gmgn_smartmoney'
   | 'gmgn_kol'
+  | 'social_only_fomo'
 
 export type StrategyParameterSet = {
   domain: StrategyDomain
@@ -168,6 +170,27 @@ export function gmgnToCanonical(s: GmgnStrategy): StrategyParameterSet {
   }
 }
 
+export function socialToCanonical(s: SocialStrategy): StrategyParameterSet {
+  return {
+    domain: 'social',
+    strategyId: s.id,
+    executionMode: s.execution_mode,
+    positionSizeSol: s.config.execution.simBuySol,
+    maxOpenPositions: s.config.execution.maxOpenPositions,
+    entry: {
+      trigger: 'social_only_fomo',
+    },
+    exit: {
+      stopLossPct: s.config.exit.stopLossPct,
+      takeProfitPct: s.config.exit.takeProfitPct,
+      maxHoldHours: s.config.exit.maxHoldHours,
+    },
+    extensions: {
+      entry: s.config.entry,
+    },
+  }
+}
+
 export function dlmmToCanonical(s: DlmmStrategy): StrategyParameterSet {
   return {
     domain: 'dlmm',
@@ -216,6 +239,10 @@ export async function getCanonicalParamsForStrategy(
   const gmgn = await getMergedGmgnRegistry()
   if (gmgn[strategyId]) return gmgnToCanonical(gmgn[strategyId])
 
+  const { getMergedSocialRegistry } = await import('./load-social')
+  const social = await getMergedSocialRegistry()
+  if (social[strategyId]) return socialToCanonical(social[strategyId])
+
   const { getMergedDlmmStrategy } = await import('./load-dlmm')
   const dlmm = await getMergedDlmmStrategy()
   if (dlmm.id === strategyId) return dlmmToCanonical(dlmm)
@@ -228,6 +255,7 @@ export function mapRegistryToCanonical(params: {
   signals: Record<string, SignalsStrategy>
   mcap: Record<string, McapTrackerStrategy>
   gmgn: Record<string, GmgnStrategy>
+  social?: Record<string, SocialStrategy>
   dlmm: DlmmStrategy
 }): Record<string, StrategyParameterSet> {
   const out: Record<string, StrategyParameterSet> = {}
@@ -242,6 +270,9 @@ export function mapRegistryToCanonical(params: {
   }
   for (const s of Object.values(params.gmgn)) {
     out[s.id] = gmgnToCanonical(s)
+  }
+  for (const s of Object.values(params.social ?? {})) {
+    out[s.id] = socialToCanonical(s)
   }
   out[params.dlmm.id] = dlmmToCanonical(params.dlmm)
   return out

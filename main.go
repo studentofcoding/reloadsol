@@ -230,6 +230,7 @@ type Config struct {
     GmgnSimInterval      int    // seconds
     GmgnActivityPollInterval int // seconds
     GmgnRadarDigestInterval int // seconds (0 = disabled)
+    SocialSimInterval    int    // seconds
     StrategyReportInterval int  // seconds (0 = disabled)
     DLMMScreenInterval int    // seconds
     DLMMSimTrackInterval int // seconds
@@ -299,6 +300,14 @@ func NewCronService() *CronService {
                 }
             }
             return 120 // default 120s
+        }(),
+        SocialSimInterval: func() int {
+            if v := os.Getenv("SOCIAL_SIM_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
+                    return iv
+                }
+            }
+            return 90 // default 90s
         }(),
         GmgnActivityPollInterval: func() int {
             if v := os.Getenv("GMGN_ACTIVITY_POLL_INTERVAL"); v != "" {
@@ -456,6 +465,14 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(gmgnSimEntryID, "gmgn_sim_track")
 
+    socialSimSpec := fmt.Sprintf("@every %ds", cs.config.SocialSimInterval)
+    socialSimEntryID, err := cs.cron.AddFunc(socialSimSpec, cs.runSocialSimTrack)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("Failed to add social sim track cron job: %v", err))
+        log.Fatal("Failed to add social sim track cron job:", err)
+    }
+    cs.workers.BindEntry(socialSimEntryID, "social_sim_track")
+
     gmgnActivityPollSpec := fmt.Sprintf("@every %ds", cs.config.GmgnActivityPollInterval)
     gmgnActivityPollEntryID, err := cs.cron.AddFunc(gmgnActivityPollSpec, cs.runGmgnActivityPoll)
     if err != nil {
@@ -560,6 +577,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/mcap-tracker-sim-track", cs.manualMcapTrackerSimTrackTrigger)
     http.HandleFunc("/trigger/mcap-tracker-sim-open", cs.manualMcapTrackerSimOpenTrigger)
     http.HandleFunc("/trigger/gmgn-sim-track", cs.manualGmgnSimTrackTrigger)
+    http.HandleFunc("/trigger/social-sim-track", cs.manualSocialSimTrackTrigger)
     http.HandleFunc("/trigger/gmgn-activity-poll", cs.manualGmgnActivityPollTrigger)
     http.HandleFunc("/trigger/gmgn-radar-digest", cs.manualGmgnRadarDigestTrigger)
     http.HandleFunc("/trigger/social-rollup", cs.manualSocialRollupTrigger)
@@ -582,6 +600,7 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim open: every %d seconds", cs.config.McapTrackerSimOpenInterval))
     cs.logger.Info(fmt.Sprintf("📈 MCap tracker sim manage: every %d seconds", cs.config.McapTrackerSimInterval))
     cs.logger.Info(fmt.Sprintf("🐋 GMGN sim track: every %d seconds", cs.config.GmgnSimInterval))
+    cs.logger.Info(fmt.Sprintf("📣 Social sim track: every %d seconds", cs.config.SocialSimInterval))
     cs.logger.Info(fmt.Sprintf("🔥 GMGN activity poll: every %d seconds", cs.config.GmgnActivityPollInterval))
     if cs.config.GmgnRadarDigestInterval > 0 {
         cs.logger.Info(fmt.Sprintf("📌 GMGN radar digest: every %d seconds", cs.config.GmgnRadarDigestInterval))
@@ -758,6 +777,20 @@ func (cs *CronService) runGmgnSimTrack() {
     cs.workers.Success("gmgn_sim_track")
 }
 
+func (cs *CronService) runSocialSimTrack() {
+    cs.workers.Begin("social_sim_track")
+    cs.logger.Info("📣 Running social sim track...")
+    url := fmt.Sprintf("%s/api/social/sim-track?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil, 180)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ Social sim track failed: %v", err))
+        cs.workers.Fail("social_sim_track", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ Social sim track completed (%d bytes)", len(resp)))
+    cs.workers.Success("social_sim_track")
+}
+
 func (cs *CronService) runGmgnActivityPoll() {
     cs.workers.Begin("gmgn_activity_poll")
     cs.logger.Info("🔥 Running GMGN activity poll...")
@@ -894,6 +927,20 @@ func (cs *CronService) manualGmgnSimTrackTrigger(w http.ResponseWriter, r *http.
     json.NewEncoder(w).Encode(map[string]interface{}{
         "success": true,
         "message": "GMGN sim track triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualSocialSimTrackTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual social sim track trigger")
+    go cs.runSocialSimTrack()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "Social sim track triggered",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

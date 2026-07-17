@@ -4,6 +4,7 @@ export type StrategyDomain =
   | 'dlmm'
   | 'mcap_tracker'
   | 'gmgn'
+  | 'social'
 
 export type ExecutionMode = 'sim_only' | 'live_only' | 'ab_parallel'
 
@@ -311,6 +312,43 @@ export interface GmgnStrategy {
   is_active: boolean
   execution_mode: ExecutionMode
   config: GmgnStrategyConfig
+}
+
+/** Social-only FOMO entry (rollup mentions, absent from other boards). */
+export interface SocialStrategyConfig {
+  entry: {
+    minMentions30m: number
+    topSource: string
+    maxCandidatesPerTick: number
+  }
+  execution: {
+    simBuySol: number
+    maxOpenPositions: number
+  }
+  exit: {
+    stopLossPct: number
+    takeProfitPct: number
+    maxHoldHours: number
+  }
+  notify?: StrategyNotifyConfig
+}
+
+export type SocialStrategyOverride = Partial<
+  Omit<SocialStrategyConfig, 'entry' | 'execution' | 'exit'>
+> & {
+  entry?: Partial<SocialStrategyConfig['entry']>
+  execution?: Partial<SocialStrategyConfig['execution']>
+  exit?: Partial<SocialStrategyConfig['exit']>
+  notify?: StrategyNotifyConfig
+}
+
+export interface SocialStrategy {
+  id: string
+  name: string
+  description: string
+  is_active: boolean
+  execution_mode: ExecutionMode
+  config: SocialStrategyConfig
 }
 
 export interface McapTrackerMilestoneBucket {

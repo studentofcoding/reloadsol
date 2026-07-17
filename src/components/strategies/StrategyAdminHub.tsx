@@ -8,6 +8,7 @@ import type {
   SignalsStrategy,
   McapTrackerStrategy,
   GmgnStrategy,
+  SocialStrategy,
   DlmmStrategy,
   ExecutionMode,
   TokenFilterConfig,
@@ -150,6 +151,10 @@ type StrategiesResponse = {
   };
   gmgn?: {
     effective: Record<string, GmgnStrategy>;
+    active: string[];
+  };
+  social?: {
+    effective: Record<string, SocialStrategy>;
     active: string[];
   };
   dlmm?: { effective: DlmmStrategy };
@@ -940,6 +945,7 @@ export default function StrategyAdminHub() {
   const signals = Object.values(data?.signals?.effective ?? {});
   const mcapTracker = Object.values(data?.mcap_tracker?.effective ?? {});
   const gmgn = Object.values(data?.gmgn?.effective ?? {});
+  const social = Object.values(data?.social?.effective ?? {});
   const dlmm = data?.dlmm?.effective;
 
   return (
@@ -1061,6 +1067,25 @@ export default function StrategyAdminHub() {
           </section>
 
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+            <h2 className="text-xl font-bold text-white mb-4">Social strategies</h2>
+            <p className="text-gray-400 text-sm mb-4">
+              Social-only FOMO entry when a token is present only on{" "}
+              <code className="text-xs">social_token_rollups</code> with FOMO mentions &gt;7 in 30m.
+              Paper wallet: <code className="text-xs">social-sim</code>.
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              {social.map((s) => (
+                <SocialCard
+                  key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.entry.minMentions30m}`}
+                  strategy={s}
+                  saving={saving === s.id}
+                  onSave={saveStrategy}
+                />
+              ))}
+            </div>
+          </section>
+
+          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
             <h2 className="text-xl font-bold text-white mb-4">DLMM thresholds</h2>
             {dlmm && (
               <DlmmCard
@@ -1155,6 +1180,7 @@ export default function StrategyAdminHub() {
                   <option value="signals">Signals</option>
                   <option value="mcap_tracker">MCap tracker</option>
                   <option value="gmgn">GMGN</option>
+                  <option value="social">Social</option>
                   <option value="dlmm">DLMM</option>
                 </select>
               </label>
@@ -2865,6 +2891,153 @@ function GmgnCard({
                     singleThread,
                     minMcapUsd: parseFloat(minTelegramMcapUsd),
                   },
+                },
+              },
+            })
+          }
+          className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded"
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() =>
+            toggleActiveWithNotifySync(strategy.id, strategy.is_active, onSave)
+          }
+          className="px-3 py-1.5 bg-gray-700 text-white text-xs rounded"
+        >
+          {strategy.is_active ? "Deactivate" : "Activate"}
+        </button>
+        <StrategyNotifyBar
+          strategyId={strategy.id}
+          notify={strategy.config.notify}
+          saving={saving}
+          onSave={onSave}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SocialCard({
+  strategy,
+  saving,
+  onSave,
+}: {
+  strategy: SocialStrategy;
+  saving: boolean;
+  onSave: (id: string, patch: Record<string, unknown>) => void;
+}) {
+  const entry = strategy.config.entry;
+  const e = strategy.config.execution;
+  const x = strategy.config.exit;
+  const [minMentions, setMinMentions] = useState(String(entry.minMentions30m));
+  const [topSource, setTopSource] = useState(entry.topSource);
+  const [maxCandidates, setMaxCandidates] = useState(String(entry.maxCandidatesPerTick));
+  const [simBuy, setSimBuy] = useState(String(e.simBuySol));
+  const [maxOpen, setMaxOpen] = useState(String(e.maxOpenPositions));
+  const [stopLoss, setStopLoss] = useState(String(x.stopLossPct));
+  const [takeProfit, setTakeProfit] = useState(String(x.takeProfitPct));
+  const [maxHold, setMaxHold] = useState(String(x.maxHoldHours));
+  const [execMode, setExecMode] = useState(strategy.execution_mode);
+
+  return (
+    <div className="border border-gray-700 rounded-lg p-4 bg-gray-800">
+      <h3 className="font-semibold text-white">{strategy.name}</h3>
+      <p className="text-xs text-gray-500 mb-3">{strategy.id}</p>
+      <p className="text-xs text-gray-400 mb-3">{strategy.description}</p>
+      <label className="text-xs text-gray-400 block mb-2">
+        Execution mode
+        <ExecutionModeSelect value={execMode} onChange={setExecMode} />
+      </label>
+      <div className="grid grid-cols-2 gap-2 text-xs">
+        <label className="text-gray-400">
+          Min mentions 30m
+          <input
+            className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
+            value={minMentions}
+            onChange={(ev) => setMinMentions(ev.target.value)}
+          />
+        </label>
+        <label className="text-gray-400">
+          Max candidates/tick
+          <input
+            className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
+            value={maxCandidates}
+            onChange={(ev) => setMaxCandidates(ev.target.value)}
+          />
+        </label>
+        <label className="text-gray-400 col-span-2">
+          Top source
+          <input
+            className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
+            value={topSource}
+            onChange={(ev) => setTopSource(ev.target.value)}
+          />
+        </label>
+        <label className="text-gray-400">
+          Sim buy SOL
+          <input
+            className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
+            value={simBuy}
+            onChange={(ev) => setSimBuy(ev.target.value)}
+          />
+        </label>
+        <label className="text-gray-400">
+          Max open
+          <input
+            className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
+            value={maxOpen}
+            onChange={(ev) => setMaxOpen(ev.target.value)}
+          />
+        </label>
+        <label className="text-gray-400">
+          Stop loss %
+          <input
+            className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
+            value={stopLoss}
+            onChange={(ev) => setStopLoss(ev.target.value)}
+          />
+        </label>
+        <label className="text-gray-400">
+          Take profit %
+          <input
+            className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
+            value={takeProfit}
+            onChange={(ev) => setTakeProfit(ev.target.value)}
+          />
+        </label>
+        <label className="text-gray-400">
+          Max hold hours
+          <input
+            className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
+            value={maxHold}
+            onChange={(ev) => setMaxHold(ev.target.value)}
+          />
+        </label>
+      </div>
+      <div className="flex flex-wrap gap-2 mt-3">
+        <button
+          type="button"
+          disabled={saving}
+          onClick={() =>
+            onSave(strategy.id, {
+              execution_mode: execMode,
+              config: {
+                entry: {
+                  minMentions30m: parseInt(minMentions, 10),
+                  topSource,
+                  maxCandidatesPerTick: parseInt(maxCandidates, 10),
+                },
+                execution: {
+                  simBuySol: parseFloat(simBuy),
+                  maxOpenPositions: parseInt(maxOpen, 10),
+                },
+                exit: {
+                  stopLossPct: parseFloat(stopLoss),
+                  takeProfitPct: parseFloat(takeProfit),
+                  maxHoldHours: parseFloat(maxHold),
                 },
               },
             })

@@ -540,7 +540,7 @@ INSERT INTO bot_trading_state (id) VALUES ('global') ON CONFLICT (id) DO NOTHING
 
 CREATE TABLE IF NOT EXISTS strategy_definitions (
   id TEXT PRIMARY KEY,
-  domain TEXT NOT NULL CHECK (domain IN ('trending_bot', 'signals', 'dlmm', 'mcap_tracker', 'gmgn')),
+  domain TEXT NOT NULL CHECK (domain IN ('trending_bot', 'signals', 'dlmm', 'mcap_tracker', 'gmgn', 'social')),
   name TEXT NOT NULL,
   description TEXT,
   config JSONB NOT NULL DEFAULT '{}',
@@ -553,7 +553,7 @@ CREATE TABLE IF NOT EXISTS strategy_definitions (
 CREATE TABLE IF NOT EXISTS strategy_outcomes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   strategy_id TEXT NOT NULL,
-  domain TEXT NOT NULL CHECK (domain IN ('trending_bot', 'signals', 'dlmm', 'mcap_tracker', 'gmgn')),
+  domain TEXT NOT NULL CHECK (domain IN ('trending_bot', 'signals', 'dlmm', 'mcap_tracker', 'gmgn', 'social')),
   token_address TEXT,
   entry_at TIMESTAMPTZ,
   exit_at TIMESTAMPTZ,

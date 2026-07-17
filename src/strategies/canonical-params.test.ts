@@ -11,6 +11,7 @@ import {
   GMGN_STRATEGIES,
   MCAP_TRACKER_STRATEGIES,
   SIGNALS_STRATEGIES,
+  SOCIAL_STRATEGIES,
   TRENDING_BOT_STRATEGIES,
 } from './registry'
 
@@ -59,12 +60,14 @@ describe('strategy param adapters', () => {
       signals: SIGNALS_STRATEGIES,
       mcap: MCAP_TRACKER_STRATEGIES,
       gmgn: GMGN_STRATEGIES,
+      social: SOCIAL_STRATEGIES,
       dlmm: DLMM_STRATEGY_DEFAULTS,
     })
     expect(map.att?.domain).toBe('trending_bot')
     expect(map.signals_default?.domain).toBe('signals')
     expect(map.mcap_enter_first_seen?.domain).toBe('mcap_tracker')
     expect(map.gmgn_smartmoney_default?.domain).toBe('gmgn')
+    expect(map.social_only_fomo_gt7?.domain).toBe('social')
     expect(map.dlmm_default?.domain).toBe('dlmm')
   })
 })

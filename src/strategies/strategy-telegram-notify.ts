@@ -4,6 +4,7 @@ import {
   GMGN_STRATEGIES,
   MCAP_TRACKER_STRATEGIES,
   SIGNALS_STRATEGIES,
+  SOCIAL_STRATEGIES,
   TRENDING_BOT_STRATEGIES,
 } from './registry'
 import {
@@ -28,6 +29,8 @@ export function resolveStrategyDisplayName(
       return MCAP_TRACKER_STRATEGIES[strategyId]?.name ?? strategyId
     case 'gmgn':
       return GMGN_STRATEGIES[strategyId]?.name ?? strategyId
+    case 'social':
+      return SOCIAL_STRATEGIES[strategyId]?.name ?? strategyId
     case 'dlmm':
       return DLMM_STRATEGY_DEFAULTS.name
     default:
@@ -52,6 +55,11 @@ async function loadStrategyNotifyConfig(
     case 'gmgn': {
       const { getMergedGmgnRegistry } = await import('./load-gmgn')
       const registry = await getMergedGmgnRegistry()
+      return registry[strategyId]?.config.notify
+    }
+    case 'social': {
+      const { getMergedSocialRegistry } = await import('./load-social')
+      const registry = await getMergedSocialRegistry()
       return registry[strategyId]?.config.notify
     }
     case 'trending_bot': {

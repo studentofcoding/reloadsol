@@ -228,6 +228,7 @@ func (cs *CronService) initWorkerRegistry() {
 		{ID: "gmgn_sim_track", Name: "GMGN sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnSimInterval, TriggerPath: "/trigger/gmgn-sim-track", CanTrigger: true},
 		{ID: "gmgn_activity_poll", Name: "GMGN activity poll", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnActivityPollInterval, TriggerPath: "/trigger/gmgn-activity-poll", CanTrigger: true},
 		{ID: "gmgn_radar_digest", Name: "GMGN radar digest", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnRadarDigestInterval, TriggerPath: "/trigger/gmgn-radar-digest", CanTrigger: true, Disabled: cs.config.GmgnRadarDigestInterval <= 0},
+		{ID: "social_sim_track", Name: "Social sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.SocialSimInterval, TriggerPath: "/trigger/social-sim-track", CanTrigger: true},
 		{ID: "social_rollup", Name: "Social rollup", Domain: "algo", Schedule: "every 300s", IntervalSec: 300, TriggerPath: "/trigger/social-rollup", CanTrigger: true},
 		{ID: "social_cleanup", Name: "Social cleanup", Domain: "algo", Schedule: "every 30m", IntervalSec: 1800, TriggerPath: "/trigger/social-cleanup", CanTrigger: true},
 		{ID: "social_wallet_poll", Name: "Social wallet poll", Domain: "algo", Schedule: "every 300s", IntervalSec: 300, TriggerPath: "/trigger/social-wallet-poll", CanTrigger: true},

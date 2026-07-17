@@ -193,6 +193,41 @@ export async function recordGmgnOutcome(params: {
   }
 }
 
+export async function recordSocialOutcome(params: {
+  strategyId: string
+  tokenAddress: string
+  entryAt?: string | null
+  exitAt?: string | null
+  pnlPct?: number | null
+  status?: string | null
+  isSimulated?: boolean
+  features?: Record<string, unknown> | null
+}): Promise<void> {
+  await insertStrategyOutcome({
+    strategy_id: params.strategyId,
+    domain: 'social',
+    token_address: params.tokenAddress,
+    entry_at: params.entryAt ?? null,
+    exit_at: params.exitAt ?? new Date().toISOString(),
+    pnl_pct: params.pnlPct ?? null,
+    status: params.status ?? null,
+    is_simulated: params.isSimulated ?? true,
+    features: params.features ?? null,
+  })
+
+  if (params.pnlPct != null) {
+    notifyStrategyClose({
+      domain: 'social',
+      strategyId: params.strategyId,
+      tokenAddress: params.tokenAddress,
+      pnlPct: params.pnlPct,
+      status: params.status,
+      isSimulated: params.isSimulated ?? true,
+      features: params.features,
+    })
+  }
+}
+
 function mapDlmmPositionRow(row: Record<string, unknown>): DlmmPosition {
   return {
     id: String(row.id),

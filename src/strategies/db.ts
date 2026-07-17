@@ -1606,7 +1606,14 @@ export async function getStrategyDomainHeartbeats(params?: {
   dlmmWorkerLastSuccessAt?: string | null
   workerLastSuccessById?: Record<string, string | null | undefined>
 }): Promise<StrategyDomainHeartbeat[]> {
-  const domains: StrategyDomain[] = ['signals', 'trending_bot', 'dlmm', 'mcap_tracker', 'gmgn']
+  const domains: StrategyDomain[] = [
+    'signals',
+    'trending_bot',
+    'dlmm',
+    'mcap_tracker',
+    'gmgn',
+    'social',
+  ]
   const results: StrategyDomainHeartbeat[] = []
   const workerById = params?.workerLastSuccessById ?? {}
 
@@ -1616,6 +1623,7 @@ export async function getStrategyDomainHeartbeats(params?: {
     trending_bot: ['trending_tracker'],
     dlmm: ['dlmm_manage'],
     gmgn: ['gmgn_sim_track', 'gmgn_activity_poll', 'gmgn_radar_digest'],
+    social: ['social_sim_track'],
   }
 
   for (const domain of domains) {
