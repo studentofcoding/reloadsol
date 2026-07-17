@@ -16,6 +16,7 @@ import {
   copyTokenAddress,
   getLpTerminalPoolsUrl,
 } from '@/utils/dlmm/lp-terminal';
+import LpTerminalPoolsTable from '@/components/dlmm/LpTerminalPoolsTable';
 import ScrollableMenuRow from '@/components/ScrollableMenuRow';
 
 function formatUsd(n: number) {
@@ -385,6 +386,7 @@ export default function HunterCandidateTabs({
   const [tab, setTab] = useState<'general' | 'potential' | 'robinhood'>(
     'general',
   );
+  const [robinhoodView, setRobinhoodView] = useState<'pools' | 'gmgn'>('pools');
   const { entries, remove, isLoading: potentialLoading } = useDlmmPotentialList();
   const {
     tokens: robinhoodTokens,
@@ -393,7 +395,7 @@ export default function HunterCandidateTabs({
     isFetching: robinhoodFetching,
     error: robinhoodError,
     refetch: refetchRobinhood,
-  } = useRobinhoodScreen(tab === 'robinhood');
+  } = useRobinhoodScreen(tab === 'robinhood' && robinhoodView === 'gmgn');
   const { addressSet: rugAddressSet, isLoading: rugLoading } = useRugList();
 
   const potentialCandidates: DisplayCandidate[] = useMemo(() => {
@@ -498,7 +500,7 @@ export default function HunterCandidateTabs({
                 : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
             }`}
           >
-            Robinhood ({robinhoodTokens.length})
+            Robinhood
           </button>
         </ScrollableMenuRow>
       </div>
@@ -516,47 +518,81 @@ export default function HunterCandidateTabs({
         </p>
       ) : (
         <div className="mb-4 space-y-2">
-          <p className="text-gray-500 text-sm">
-            GMGN Robinhood 24h screen — mcap &gt;{' '}
-            {formatUsd(ROBINHOOD_LP_DEFAULTS.minMcap)}, vol &gt;{' '}
-            {formatUsd(ROBINHOOD_LP_DEFAULTS.minVolume)}, exclude flap.fun.
-            Then LP on chainId <span className="text-gray-300">4663</span> via{' '}
-            <a
-              href={getLpTerminalPoolsUrl()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-emerald-400 hover:underline"
-            >
-              LP Terminal
-            </a>{' '}
-            (wallet connect there — not Meteora Deploy). Prefer util over meme;
-            check komun + FOMO thesis yourself.
-          </p>
-          <p className="text-xs text-gray-500 border border-gray-700 rounded px-3 py-2 bg-gray-950/50">
-            Playbook: max 3 positions · compound · day = bigcap runner full
-            range · night close ~10–20% · fee &gt; IL → gas · convict = hold /
-            extend left. Open card → LP Terminal → search CA / add liquidity.
-          </p>
-          <div className="flex items-center gap-3 text-xs text-gray-500">
+          <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => void refetchRobinhood()}
-              disabled={robinhoodFetching}
-              className="px-2 py-1 rounded bg-gray-800 text-gray-300 hover:bg-gray-700 disabled:opacity-50"
+              onClick={() => setRobinhoodView('pools')}
+              className={`px-3 py-1.5 text-xs font-medium rounded ${
+                robinhoodView === 'pools'
+                  ? 'bg-emerald-600 text-black'
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
             >
-              {robinhoodFetching ? 'Refreshing…' : 'Refresh'}
+              Pools
             </button>
-            {robinhoodFetchedAt && (
-              <span>
-                Updated {new Date(robinhoodFetchedAt).toLocaleTimeString()}
-              </span>
-            )}
+            <button
+              type="button"
+              onClick={() => setRobinhoodView('gmgn')}
+              className={`px-3 py-1.5 text-xs font-medium rounded ${
+                robinhoodView === 'gmgn'
+                  ? 'bg-emerald-600 text-black'
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              GMGN screen
+            </button>
           </div>
+          {robinhoodView === 'pools' ? (
+            <p className="text-gray-500 text-sm">
+              Uni v2/v3 pools on Robinhood Chain (4663) via LP Terminal indexer.{' '}
+              <span className="text-gray-400">+ LP</span> opens{' '}
+              <a
+                href={getLpTerminalPoolsUrl()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-emerald-400 hover:underline"
+              >
+                LP Terminal
+              </a>{' '}
+              — connect wallet there (not Meteora Deploy).
+            </p>
+          ) : (
+            <>
+              <p className="text-gray-500 text-sm">
+                GMGN Robinhood 24h screen — mcap &gt;{' '}
+                {formatUsd(ROBINHOOD_LP_DEFAULTS.minMcap)}, vol &gt;{' '}
+                {formatUsd(ROBINHOOD_LP_DEFAULTS.minVolume)}, exclude flap.fun.
+                Prefer util over meme; check komun + FOMO thesis yourself.
+              </p>
+              <p className="text-xs text-gray-500 border border-gray-700 rounded px-3 py-2 bg-gray-950/50">
+                Playbook: max 3 positions · compound · day = bigcap runner full
+                range · night close ~10–20% · fee &gt; IL → gas · convict =
+                hold / extend left.
+              </p>
+              <div className="flex items-center gap-3 text-xs text-gray-500">
+                <button
+                  type="button"
+                  onClick={() => void refetchRobinhood()}
+                  disabled={robinhoodFetching}
+                  className="px-2 py-1 rounded bg-gray-800 text-gray-300 hover:bg-gray-700 disabled:opacity-50"
+                >
+                  {robinhoodFetching ? 'Refreshing…' : 'Refresh'}
+                </button>
+                {robinhoodFetchedAt && (
+                  <span>
+                    Updated {new Date(robinhoodFetchedAt).toLocaleTimeString()}
+                  </span>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 
       {tab === 'robinhood' ? (
-        robinhoodLoading ? (
+        robinhoodView === 'pools' ? (
+          <LpTerminalPoolsTable />
+        ) : robinhoodLoading ? (
           <p className="text-gray-400">Loading Robinhood screen from GMGN…</p>
         ) : robinhoodError ? (
           <p className="text-red-400 text-sm">

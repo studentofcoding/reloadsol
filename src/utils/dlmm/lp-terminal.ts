@@ -16,9 +16,20 @@ export function getLpTerminalBaseUrl(
 }
 
 /**
- * Optional self-hosted indexer base (no trailing slash).
- * Documented for a later phase — not required for v1 deep links.
+ * Indexer HTTP origin for /api/pools (no trailing slash).
+ * Defaults to the public LP Terminal site when unset.
  */
+export function getLpTerminalIndexerBase(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const raw =
+    env.LP_TERMINAL_INDEXER_URL?.trim() ||
+    env.NEXT_PUBLIC_LP_TERMINAL_INDEXER_URL?.trim() ||
+    DEFAULT_LP_TERMINAL_BASE_URL
+  return raw.replace(/\/+$/, '')
+}
+
+/** @deprecated Prefer getLpTerminalIndexerBase — always returns a usable origin. */
 export function getLpTerminalIndexerUrl(
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
@@ -28,6 +39,14 @@ export function getLpTerminalIndexerUrl(
     ''
   if (!raw) return null
   return raw.replace(/\/+$/, '')
+}
+
+/** Deep-link a specific pool address into LP Terminal POOLS search. */
+export function getLpTerminalPoolDeepLink(
+  poolOrTokenAddress?: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return getLpTerminalPoolsUrl(poolOrTokenAddress, env)
 }
 
 /**

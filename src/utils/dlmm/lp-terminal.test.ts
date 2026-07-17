@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_LP_TERMINAL_BASE_URL,
   getLpTerminalBaseUrl,
+  getLpTerminalIndexerBase,
   getLpTerminalIndexerUrl,
   getLpTerminalPoolsUrl,
 } from './lp-terminal'
@@ -31,10 +32,14 @@ describe('lp-terminal', () => {
     ).toBe('https://lp.example/#pools?q=0xabc')
   })
 
-  it('indexer URL optional', () => {
+  it('indexer URL optional vs base default', () => {
     expect(getLpTerminalIndexerUrl({})).toBeNull()
+    expect(getLpTerminalIndexerBase({})).toBe(DEFAULT_LP_TERMINAL_BASE_URL)
     expect(
       getLpTerminalIndexerUrl({ LP_TERMINAL_INDEXER_URL: 'http://127.0.0.1:8787/' }),
+    ).toBe('http://127.0.0.1:8787')
+    expect(
+      getLpTerminalIndexerBase({ LP_TERMINAL_INDEXER_URL: 'http://127.0.0.1:8787/' }),
     ).toBe('http://127.0.0.1:8787')
   })
 })
