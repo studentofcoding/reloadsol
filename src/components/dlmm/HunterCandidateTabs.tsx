@@ -16,6 +16,7 @@ import {
   copyTokenAddress,
   getLpTerminalPoolsUrl,
 } from '@/utils/dlmm/lp-terminal';
+import DlmmGeneralPoolsTable from '@/components/dlmm/DlmmGeneralPoolsTable';
 import LpTerminalPoolsTable from '@/components/dlmm/LpTerminalPoolsTable';
 import ScrollableMenuRow from '@/components/ScrollableMenuRow';
 
@@ -462,8 +463,6 @@ export default function HunterCandidateTabs({
     [potentialCandidates, rugAddressSet],
   );
 
-  const activeList = tab === 'general' ? visibleGeneral : visiblePotential;
-
   return (
     <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
@@ -611,9 +610,28 @@ export default function HunterCandidateTabs({
             ))}
           </div>
         )
-      ) : poolsLoading ||
-        (tab === 'potential' && potentialLoading) ||
-        rugLoading ? (
+      ) : tab === 'general' ? (
+        poolsLoading || rugLoading ? (
+          <p className="text-gray-400">Loading pools from Meteora...</p>
+        ) : poolsError ? (
+          <p className="text-red-400 text-sm">
+            {poolsErrorMsg instanceof Error
+              ? poolsErrorMsg.message
+              : 'Failed to load pools'}
+          </p>
+        ) : visibleGeneral.length === 0 ? (
+          <p className="text-gray-500 text-sm">
+            No pools matched screening thresholds.
+          </p>
+        ) : (
+          <DlmmGeneralPoolsTable
+            candidates={visibleGeneral}
+            pools={pools}
+            dbReady={dbReady}
+            onDeploy={onDeploy}
+          />
+        )
+      ) : poolsLoading || potentialLoading || rugLoading ? (
         <p className="text-gray-400">Loading pools from Meteora...</p>
       ) : poolsError ? (
         <p className="text-red-400 text-sm">
@@ -621,42 +639,36 @@ export default function HunterCandidateTabs({
             ? poolsErrorMsg.message
             : 'Failed to load pools'}
         </p>
-      ) : activeList.length === 0 ? (
+      ) : visiblePotential.length === 0 ? (
         <div className="text-gray-500 text-sm">
-          {tab === 'general' ? (
-            'No pools matched screening thresholds.'
-          ) : (
-            <>
-              No tokens on the Potential list yet. Use{' '}
-              <span className="text-green-300">Potential</span> on{' '}
-              <Link href="/dev/signals" className="text-blue-400 underline">
-                Signals
-              </Link>{' '}
-              or{' '}
-              <Link href="/dev/algo-tester" className="text-blue-400 underline">
-                Algo Tester
-              </Link>
-              .
-            </>
-          )}
+          No tokens on the Potential list yet. Use{' '}
+          <span className="text-green-300">Potential</span> on{' '}
+          <Link href="/dev/signals" className="text-blue-400 underline">
+            Signals
+          </Link>{' '}
+          or{' '}
+          <Link href="/dev/algo-tester" className="text-blue-400 underline">
+            Algo Tester
+          </Link>
+          .
         </div>
       ) : (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-          {activeList.map((c) => (
+          {visiblePotential.map((c) => (
             <CandidateCard
               key={c.potentialId ?? c.pool_address}
               c={c}
               pools={pools}
               dbReady={dbReady}
               onDeploy={onDeploy}
-              showSource={tab === 'potential'}
+              showSource
               actionSource={
-                tab === 'potential' && c.source
+                c.source
                   ? (c.source as DlmmPotentialSource)
                   : 'dlmm-general'
               }
               onRemove={
-                tab === 'potential' && c.list_token_address
+                c.list_token_address
                   ? () => void remove(c.list_token_address!)
                   : undefined
               }
