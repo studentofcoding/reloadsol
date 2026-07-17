@@ -2934,6 +2934,12 @@ function SocialCard({
   const x = strategy.config.exit;
   const [minMentions, setMinMentions] = useState(String(entry.minMentions30m));
   const [topSource, setTopSource] = useState(entry.topSource);
+  const [requireMentionSources, setRequireMentionSources] = useState(
+    (entry.requireMentionSources ?? []).join(', '),
+  );
+  const [trendingssolChannel, setTrendingssolChannel] = useState(
+    entry.listenChannelPeers?.TRENDINGSSOL ?? '@trendingssol',
+  );
   const [maxCandidates, setMaxCandidates] = useState(String(entry.maxCandidatesPerTick));
   const [simBuy, setSimBuy] = useState(String(e.simBuySol));
   const [maxOpen, setMaxOpen] = useState(String(e.maxOpenPositions));
@@ -2975,6 +2981,28 @@ function SocialCard({
             value={topSource}
             onChange={(ev) => setTopSource(ev.target.value)}
           />
+        </label>
+        <label className="text-gray-400 col-span-2">
+          Require mention sources (30m, comma-separated)
+          <input
+            className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
+            value={requireMentionSources}
+            onChange={(ev) => setRequireMentionSources(ev.target.value)}
+            placeholder="TRENDINGSSOL"
+          />
+        </label>
+        <label className="text-gray-400 col-span-2">
+          TRENDINGSSOL channel (ingest listen peer)
+          <input
+            className="w-full mt-1 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-white"
+            value={trendingssolChannel}
+            onChange={(ev) => setTrendingssolChannel(ev.target.value)}
+            placeholder="@trendingssol or -100…"
+          />
+          <span className="text-gray-500 mt-1 block">
+            Telegram @username or numeric id. social-ingest polls this; source
+            label stays TRENDINGSSOL for the FOMO gate.
+          </span>
         </label>
         <label className="text-gray-400">
           Sim buy SOL
@@ -3028,6 +3056,14 @@ function SocialCard({
                 entry: {
                   minMentions30m: parseInt(minMentions, 10),
                   topSource,
+                  requireMentionSources: requireMentionSources
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                  listenChannelPeers: (() => {
+                    const peer = trendingssolChannel.trim();
+                    return peer ? { TRENDINGSSOL: peer } : {};
+                  })(),
                   maxCandidatesPerTick: parseInt(maxCandidates, 10),
                 },
                 execution: {

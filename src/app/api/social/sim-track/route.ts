@@ -17,7 +17,9 @@ import {
   fetchFomoRollupCandidates,
   filterSocialOnlyCandidates,
   loadMintsPresentElsewhere,
+  loadMintsWithRequiredMentionSources,
   loadSocialClosedMints,
+  requiredMentionSources,
 } from '@/strategies/social/social-only-discovery'
 import type { SocialStrategy } from '@/strategies/types'
 
@@ -359,9 +361,11 @@ export async function POST(request: NextRequest) {
 
       const rollups = await fetchFomoRollupCandidates(strategy.config.entry, 100)
       const candidateMints = rollups.map((r) => r.token_address)
-      const [presentElsewhere, priorClosed] = await Promise.all([
+      const requireSources = requiredMentionSources(strategy.config.entry)
+      const [presentElsewhere, priorClosed, requiredMentionMints] = await Promise.all([
         loadMintsPresentElsewhere(candidateMints),
         loadSocialClosedMints(strategy.id, candidateMints),
+        loadMintsWithRequiredMentionSources(requireSources, candidateMints),
       ])
       priorClosed.forEach((mint) => closedMints.add(mint))
 
@@ -371,6 +375,7 @@ export async function POST(request: NextRequest) {
         presentElsewhere,
         openMints: openMintSet,
         closedMints,
+        requiredMentionMints,
       })
 
       const refreshedRecords = await fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET)

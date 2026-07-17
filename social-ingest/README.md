@@ -79,8 +79,18 @@ python social-ingest/main.py
 | `GAMBLES_ID` | GAMBLES |
 | `JOJI_INNER_ID` | JOJI |
 | `STONK_CALLS_ID` | STONK_CALLS |
+| `TRENDINGSSOL_CHANNEL` | TRENDINGSSOL (**fallback only**) |
 
-Startup logs print resolved channel ids (`bare=` internal id, `marked=` Telethon `event.chat_id`). Set `SOCIAL_INGEST_LOG_SKIPS=false` to hide per-message skip lines.
+**TRENDINGSSOL listen peer** is configured in the app: `/dev/strategies` → Social card → **TRENDINGSSOL channel** (`entry.listenChannelPeers.TRENDINGSSOL`). social-ingest polls `GET /api/social/ingest-listen` every ~60s and hot-reloads the Telethon handler when the peer changes.
+
+Optional env fallback (used only if the UI peer is empty / API unreachable):
+
+```bash
+TRENDINGSSOL_CHANNEL=@trendingssol
+# or TRENDINGSSOL_CHANNEL=-100xxxxxxxxxx
+```
+
+Startup logs print resolved channel ids (`bare=` internal id, `marked=` Telethon `event.chat_id`). Usernames are resolved after Telethon login. Set `SOCIAL_INGEST_LOG_SKIPS=false` to hide per-message skip lines.
 
 ## Wallet seed
 

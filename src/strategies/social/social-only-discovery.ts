@@ -18,6 +18,7 @@ export type SocialOnlyCandidate = {
 export type SocialOnlySkipReason =
   | 'low_mentions'
   | 'wrong_source'
+  | 'missing_required_source'
   | 'on_mcap'
   | 'on_signals'
   | 'on_trending'
@@ -40,16 +41,28 @@ export function passesSocialOnlyRollupGate(
   return null
 }
 
+export function requiredMentionSources(
+  entry: SocialStrategy['config']['entry'],
+): string[] {
+  return (entry.requireMentionSources ?? [])
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
 export function filterSocialOnlyCandidates(params: {
   rollups: SocialTokenRollupRow[]
   entry: SocialStrategy['config']['entry']
   presentElsewhere: Set<string>
   openMints: Set<string>
   closedMints: Set<string>
+  /** Mints that have required secondary sources in the last 30m (when configured). */
+  requiredMentionMints?: Set<string>
 }): { eligible: SocialOnlyCandidate[]; skipped: string[] } {
   const skipped: string[] = []
   const eligible: SocialOnlyCandidate[] = []
   const max = Math.max(1, params.entry.maxCandidatesPerTick)
+  const requireSources = requiredMentionSources(params.entry)
+  const mustHaveSecondary = requireSources.length > 0
 
   for (const rollup of params.rollups) {
     const mint = rollup.token_address
@@ -58,6 +71,13 @@ export function filterSocialOnlyCandidates(params: {
     const gate = passesSocialOnlyRollupGate(rollup, params.entry)
     if (gate) {
       skipped.push(`${mint.slice(0, 8)}: ${gate}`)
+      continue
+    }
+    if (
+      mustHaveSecondary &&
+      !(params.requiredMentionMints?.has(mint) ?? false)
+    ) {
+      skipped.push(`${mint.slice(0, 8)}: missing_required_source`)
       continue
     }
     if (params.openMints.has(mint)) {
@@ -171,6 +191,31 @@ export async function fetchFomoRollupCandidates(
     return rows
   } catch (error) {
     if (isMissingRelation(error)) return []
+    throw error
+  }
+}
+
+/** Mints with a mention from any of `sources` in the last 30 minutes. */
+export async function loadMintsWithRequiredMentionSources(
+  sources: string[],
+  tokenAddresses: string[],
+): Promise<Set<string>> {
+  const uniqueSources = Array.from(new Set(sources.map((s) => s.trim()).filter(Boolean)))
+  const uniqueMints = Array.from(new Set(tokenAddresses.filter(Boolean)))
+  if (uniqueSources.length === 0 || uniqueMints.length === 0) return new Set()
+
+  try {
+    const { rows } = await query<{ token_address: string }>(
+      `SELECT DISTINCT token_address FROM social_token_events
+       WHERE event_type = 'mention'
+         AND source = ANY($1::text[])
+         AND occurred_at >= NOW() - INTERVAL '30 minutes'
+         AND token_address = ANY($2::text[])`,
+      [uniqueSources, uniqueMints],
+    )
+    return new Set(rows.map((r) => r.token_address).filter(Boolean))
+  } catch (error) {
+    if (isMissingRelation(error)) return new Set()
     throw error
   }
 }

@@ -220,6 +220,49 @@ export async function tokenSecurity(params: {
   return gmgnApi.tokenSecurity(params)
 }
 
+export type { GmgnMarketRankRow, MarketTrendingParams } from './gmgn-api'
+
+async function marketTrendingCli(
+  params: gmgnApi.MarketTrendingParams,
+): Promise<gmgnApi.GmgnMarketRankRow[]> {
+  const args = [
+    'market',
+    'trending',
+    '--chain',
+    params.chain,
+    '--interval',
+    params.interval,
+    '--limit',
+    String(params.limit ?? 100),
+    '--raw',
+  ]
+  if (params.minMarketcap != null) {
+    args.push('--min-marketcap', String(params.minMarketcap))
+  }
+  if (params.minVolume != null) {
+    args.push('--min-volume', String(params.minVolume))
+  }
+  if (params.orderBy) args.push('--order-by', params.orderBy)
+  if (params.direction) args.push('--direction', params.direction)
+
+  const raw = await gmgnCliRaw(args)
+  if (!raw || typeof raw !== 'object') return []
+  const record = raw as Record<string, unknown>
+  const data =
+    record.code === 0 || record.code === '0'
+      ? (record.data as Record<string, unknown> | undefined)
+      : record
+  const rank = data?.rank
+  return Array.isArray(rank) ? (rank as gmgnApi.GmgnMarketRankRow[]) : []
+}
+
+export async function marketTrending(
+  params: gmgnApi.MarketTrendingParams,
+): Promise<gmgnApi.GmgnMarketRankRow[]> {
+  if (preferCliTransport()) return marketTrendingCli(params)
+  return gmgnApi.marketTrending(params)
+}
+
 export function isSolMemeTokenAddress(address: string | undefined): boolean {
   if (!address || address === SOL_NATIVE) return false
   if (address.length < 32 || address.length > 44) return false

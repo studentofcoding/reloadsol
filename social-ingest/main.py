@@ -10,6 +10,8 @@ import logging
 import os
 from datetime import timezone
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import aiohttp
 from dotenv import load_dotenv
@@ -17,13 +19,16 @@ from telethon import TelegramClient, events
 
 from alert_parser import has_crosscheck_fields
 from parsers import (
+    bare_id_from_entity,
     build_source_lookup,
     extract_cas,
     extract_sol_amount,
     extract_wallet_name,
     fetch_gmgn_token_metadata,
     lookup_channel_source,
-    parse_channel_ids,
+    marked_channel_id,
+    merge_ui_peers_over_env,
+    parse_channel_env,
 )
 
 load_dotenv()
@@ -45,6 +50,7 @@ LOG_SKIPS = os.getenv("SOCIAL_INGEST_LOG_SKIPS", "true").lower() in ("1", "true"
 MAX_CAS_PER_MESSAGE = max(1, int(os.getenv("SOCIAL_MAX_CAS_PER_MESSAGE", "3")))
 STORE_EXCERPT = os.getenv("SOCIAL_STORE_EXCERPT", "false").lower() in ("1", "true", "yes")
 EXCERPT_MAX = min(500, max(40, int(os.getenv("SOCIAL_EXCERPT_MAX", "120"))))
+LISTEN_POLL_SECONDS = max(15, int(os.getenv("SOCIAL_LISTEN_POLL_SECONDS", "60")))
 
 INGEST_URL = os.getenv(
     "SOCIAL_INGEST_URL",
@@ -64,6 +70,14 @@ def session_path() -> str:
     base = Path(SESSION_DIR)
     base.mkdir(parents=True, exist_ok=True)
     return str(base / SESSION_NAME)
+
+
+def ingest_listen_url() -> str:
+    parsed = urlparse(INGEST_URL)
+    path = parsed.path.replace("/api/social/ingest", "/api/social/ingest-listen")
+    if path == parsed.path:
+        path = "/api/social/ingest-listen"
+    return urlunparse(parsed._replace(path=path, query=f"key={INGEST_SECRET}"))
 
 
 async def post_crosscheck(session: aiohttp.ClientSession, payload: dict) -> None:
@@ -88,9 +102,44 @@ async def post_events(session: aiohttp.ClientSession, events_payload: list[dict]
             logging.info("Ingest OK (%s): %s events", resp.status, len(events_payload))
 
 
+async def fetch_ui_listen_peers(
+    session: aiohttp.ClientSession,
+) -> list[tuple[str, str]]:
+    """Load Strategies UI listenChannelPeers from /api/social/ingest-listen."""
+    import json
+
+    url = ingest_listen_url()
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            body = await resp.text()
+            if resp.status >= 400:
+                logging.warning(
+                    "ingest-listen failed (%s): %s", resp.status, body[:300]
+                )
+                return []
+            data = json.loads(body) if body.strip() else {}
+    except Exception as exc:
+        logging.warning("ingest-listen fetch error: %s", exc)
+        return []
+
+    if not data.get("success"):
+        logging.warning("ingest-listen unsuccessful: %s", str(data)[:300])
+        return []
+
+    out: list[tuple[str, str]] = []
+    for row in data.get("channels") or []:
+        if not isinstance(row, dict):
+            continue
+        source = str(row.get("source") or "").strip()
+        peer = str(row.get("peer") or "").strip()
+        if source and peer:
+            out.append((source, peer))
+    return out
+
+
 async def build_events(
     http: aiohttp.ClientSession,
-    message,
+    message: Any,
     source: str,
     channel_id: int,
 ) -> list[dict]:
@@ -108,7 +157,9 @@ async def build_events(
     wallet_name = extract_wallet_name(text)
     sol_amount = extract_sol_amount(text)
     is_wallet_channel = source == "GMGN_copy_trade"
-    event_type = "wallet_buy" if is_wallet_channel and "buy" in text.lower() else "mention"
+    event_type = (
+        "wallet_buy" if is_wallet_channel and "buy" in text.lower() else "mention"
+    )
 
     if len(all_cas) > MAX_CAS_PER_MESSAGE:
         logging.info(
@@ -120,9 +171,7 @@ async def build_events(
         )
     cas = all_cas[:MAX_CAS_PER_MESSAGE]
 
-    excerpt = (
-        text.replace("\n", " ")[:EXCERPT_MAX] if STORE_EXCERPT else None
-    )
+    excerpt = text.replace("\n", " ")[:EXCERPT_MAX] if STORE_EXCERPT else None
 
     events_out: list[dict] = []
     for index, ca in enumerate(cas):
@@ -150,71 +199,179 @@ async def build_events(
     return events_out
 
 
+async def resolve_username_channels(
+    client: TelegramClient,
+    usernames: list[tuple[str, str]],
+) -> list[tuple[int, str]]:
+    """Resolve @username peers to bare channel ids after Telethon start."""
+    out: list[tuple[int, str]] = []
+    for username, source in usernames:
+        try:
+            entity = await client.get_entity(username)
+        except Exception as exc:
+            logging.error(
+                "Failed to resolve channel %s username=%s: %s",
+                source,
+                username,
+                exc,
+            )
+            continue
+        bare_id = bare_id_from_entity(entity)
+        if bare_id is None:
+            logging.error(
+                "Resolved %s username=%s but entity has no id",
+                source,
+                username,
+            )
+            continue
+        marked = marked_channel_id(bare_id)
+        logging.info(
+            "Channel %s username=%s → bare=%s marked=%s",
+            source,
+            username,
+            bare_id,
+            marked,
+        )
+        out.append((bare_id, source))
+    return out
+
+
+async def resolve_channel_lists(
+    client: TelegramClient,
+    numeric: list[tuple[int, str]],
+    usernames: list[tuple[str, str]],
+) -> list[tuple[int, str]]:
+    resolved = await resolve_username_channels(client, usernames)
+    return [*numeric, *resolved]
+
+
 async def main() -> None:
     if not API_ID or not API_HASH or not PHONE_NUMBER:
         raise SystemExit("Set API_ID, API_HASH, PHONE_NUMBER in environment")
 
-    channels = parse_channel_ids()
-    if not channels:
-        raise SystemExit("No channel IDs configured (GMGN_*, FINDER_TRENDING_ID, etc.)")
-
-    channel_ids, source_by_id = build_source_lookup(channels)
-
     client = TelegramClient(session_path(), API_ID, API_HASH)
     await client.start(phone=PHONE_NUMBER)
 
-    logging.info(
-        "Listening on %d channels (session=%s enrich_gmgn=%s max_cas=%d) → %s",
-        len(channel_ids),
-        session_path(),
-        ENRICH_GMGN,
-        MAX_CAS_PER_MESSAGE,
-        INGEST_URL,
-    )
+    state: dict[str, Any] = {
+        "source_by_id": {},
+        "channel_ids": [],
+        "signature": "",
+        "handler": None,
+    }
 
     async with aiohttp.ClientSession() as http:
 
-        @client.on(events.NewMessage(chats=channel_ids))
-        async def handler(event):  # type: ignore[no-redef]
-            source = lookup_channel_source(event.chat_id, source_by_id)
-            if not source:
-                if LOG_SKIPS:
-                    logging.warning(
-                        "Skip message: unknown chat_id=%s (check channel env ids)",
-                        event.chat_id,
-                    )
-                return
-
-            text = event.message.raw_text or ""
-            if has_crosscheck_fields(text):
-                occurred_at = event.message.date.astimezone(timezone.utc).isoformat()
-                await post_crosscheck(
-                    http,
-                    {
-                        "raw_message": text,
-                        "channel_id": str(event.chat_id),
-                        "external_message_id": str(event.message.id),
-                        "occurred_at": occurred_at,
-                    },
+        async def apply_listen_config(force_log: bool = False) -> bool:
+            env_numeric, env_usernames = parse_channel_env()
+            ui_peers = await fetch_ui_listen_peers(http)
+            numeric, usernames, signature = merge_ui_peers_over_env(
+                env_numeric, env_usernames, ui_peers
+            )
+            if not numeric and not usernames:
+                logging.error(
+                    "No channels configured (set GMGN_* env and/or Strategies "
+                    "listenChannelPeers / optional TRENDINGSSOL_CHANNEL fallback)"
                 )
-                return
+                return False
 
-            payload = await build_events(http, event.message, source, event.chat_id)
+            if signature == state["signature"] and state["handler"] is not None:
+                return True
 
-            if not payload:
-                if LOG_SKIPS and text.strip():
-                    excerpt = text.replace("\n", " ")[:120]
-                    logging.info(
-                        "Skip message (no token CA): source=%s chat_id=%s excerpt=%r",
-                        source,
-                        event.chat_id,
-                        excerpt,
+            channels = await resolve_channel_lists(client, numeric, usernames)
+            if not channels:
+                logging.error("No channels resolved (check peers / @usernames)")
+                return False
+
+            channel_ids, source_by_id = build_source_lookup(channels)
+
+            if state["handler"] is not None:
+                client.remove_event_handler(state["handler"])
+
+            async def on_message(event):  # type: ignore[no-untyped-def]
+                source = lookup_channel_source(
+                    event.chat_id, state["source_by_id"]
+                )
+                if not source:
+                    if LOG_SKIPS:
+                        logging.warning(
+                            "Skip message: unknown chat_id=%s (check listen peers)",
+                            event.chat_id,
+                        )
+                    return
+
+                text = event.message.raw_text or ""
+                if has_crosscheck_fields(text):
+                    occurred_at = event.message.date.astimezone(
+                        timezone.utc
+                    ).isoformat()
+                    await post_crosscheck(
+                        http,
+                        {
+                            "raw_message": text,
+                            "channel_id": str(event.chat_id),
+                            "external_message_id": str(event.message.id),
+                            "occurred_at": occurred_at,
+                        },
                     )
-                return
+                    return
 
-            await post_events(http, payload)
+                payload = await build_events(
+                    http, event.message, source, event.chat_id
+                )
+                if not payload:
+                    if LOG_SKIPS and text.strip():
+                        excerpt = text.replace("\n", " ")[:120]
+                        logging.info(
+                            "Skip message (no token CA): source=%s chat_id=%s excerpt=%r",
+                            source,
+                            event.chat_id,
+                            excerpt,
+                        )
+                    return
+                await post_events(http, payload)
 
-        await client.run_until_disconnected()
+            client.add_event_handler(
+                on_message, events.NewMessage(chats=list(channel_ids))
+            )
+            state["handler"] = on_message
+            state["source_by_id"] = source_by_id
+            state["channel_ids"] = channel_ids
+            state["signature"] = signature
+
+            logging.info(
+                "Listening on %d channels (session=%s enrich_gmgn=%s max_cas=%d) → %s ui_peers=%s",
+                len(channel_ids),
+                session_path(),
+                ENRICH_GMGN,
+                MAX_CAS_PER_MESSAGE,
+                INGEST_URL,
+                ui_peers,
+            )
+            if force_log:
+                logging.info("Listen signature=%s", signature)
+            return True
+
+        ok = await apply_listen_config(force_log=True)
+        if not ok:
+            raise SystemExit("No channels resolved at startup")
+
+        async def poll_listen_config() -> None:
+            while True:
+                await asyncio.sleep(LISTEN_POLL_SECONDS)
+                try:
+                    await apply_listen_config()
+                except Exception as exc:
+                    logging.warning("Listen config reload failed: %s", exc)
+
+        poll_task = asyncio.create_task(poll_listen_config())
+        try:
+            await client.run_until_disconnected()
+        finally:
+            poll_task.cancel()
+            try:
+                await poll_task
+            except asyncio.CancelledError:
+                pass
 
 
 if __name__ == "__main__":

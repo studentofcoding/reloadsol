@@ -193,3 +193,52 @@ export async function tokenSecurity(params: {
   )
   return data ?? {}
 }
+
+export type GmgnMarketRankRow = Record<string, unknown> & {
+  address?: string
+  symbol?: string
+  name?: string
+  market_cap?: number
+  volume?: number
+  liquidity?: number
+  holder_count?: number
+  launchpad?: string
+  launchpad_platform?: string
+  website?: string
+  twitter_username?: string
+  telegram?: string
+  price_change_percent?: number
+  hot_level?: number
+  smart_degen_count?: number
+  renowned_count?: number
+  visiting_count?: number
+}
+
+export type MarketTrendingParams = {
+  chain: string
+  interval: string
+  limit?: number
+  minMarketcap?: number
+  minVolume?: number
+  orderBy?: string
+  direction?: 'asc' | 'desc'
+}
+
+export async function marketTrending(
+  params: MarketTrendingParams,
+): Promise<GmgnMarketRankRow[]> {
+  const query: Record<string, string> = {
+    chain: params.chain,
+    interval: params.interval,
+    limit: String(params.limit ?? 100),
+  }
+  if (params.minMarketcap != null) query.min_marketcap = String(params.minMarketcap)
+  if (params.minVolume != null) query.min_volume = String(params.minVolume)
+  if (params.orderBy) query.orderby = params.orderBy
+  if (params.direction) query.direction = params.direction
+
+  const data = unwrapApiData<{ rank?: GmgnMarketRankRow[] }>(
+    await gmgnFetch('/v1/market/rank', query),
+  )
+  return Array.isArray(data?.rank) ? data.rank : []
+}

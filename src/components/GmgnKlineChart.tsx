@@ -1,13 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { getGmgnKlineUrl, getGmgnTokenUrl } from "@/utils/gmgn";
+import { getGmgnKlineUrl, getGmgnTokenUrl, type GmgnChain } from "@/utils/gmgn";
 
 interface GmgnKlineChartProps {
   tokenMint: string;
   symbol?: string;
   height?: number;
   interval?: string;
+  chain?: GmgnChain;
   className?: string;
 }
 
@@ -16,10 +17,11 @@ export default function GmgnKlineChart({
   symbol,
   height = 280,
   interval = "5",
+  chain = "sol",
   className = "",
 }: GmgnKlineChartProps) {
   const [loading, setLoading] = useState(true);
-  const chartUrl = getGmgnKlineUrl(tokenMint, { interval, theme: "dark" });
+  const chartUrl = getGmgnKlineUrl(tokenMint, { interval, theme: "dark", chain });
 
   return (
     <div className={`relative rounded-lg overflow-hidden border border-gray-700 bg-black ${className}`}>
@@ -41,7 +43,7 @@ export default function GmgnKlineChart({
         onError={() => setLoading(false)}
       />
       <a
-        href={getGmgnTokenUrl(tokenMint)}
+        href={getGmgnTokenUrl(tokenMint, chain)}
         target="_blank"
         rel="noopener noreferrer"
         className="absolute top-2 right-2 z-20 px-2 py-1 text-xs bg-black/70 hover:bg-black text-gray-300 rounded border border-gray-600"

@@ -5,16 +5,39 @@ import Link from 'next/link';
 import GmgnKlineChart from '@/components/GmgnKlineChart';
 import DlmmChartActions from '@/components/dlmm/DlmmChartActions';
 import { useDlmmPotentialList } from '@/hooks/useDlmmPotentialList';
+import { useRobinhoodScreen } from '@/hooks/useRobinhoodScreen';
 import { useRugList } from '@/hooks/useRugList';
 import type { DlmmPotentialSource, DlmmScreenCandidate } from '@/types/dlmm';
 import type { EnrichedPool } from '@/hooks/useDlmmPools';
-import { getPoolChartMint } from '@/utils/gmgn';
+import { getGmgnTokenUrl, getPoolChartMint } from '@/utils/gmgn';
+import type { RobinhoodScreenToken } from '@/utils/dlmm/robinhood-screen';
+import { ROBINHOOD_LP_DEFAULTS } from '@/utils/dlmm/robinhood-screen';
 import ScrollableMenuRow from '@/components/ScrollableMenuRow';
 
 function formatUsd(n: number) {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
   return `$${n.toFixed(0)}`;
+}
+
+function formatPct(n: number) {
+  const sign = n > 0 ? '+' : '';
+  return `${sign}${n.toFixed(1)}%`;
+}
+
+function socialHref(raw: string, kind: 'twitter' | 'telegram' | 'website'): string | null {
+  const v = raw.trim();
+  if (!v) return null;
+  if (v.startsWith('http://') || v.startsWith('https://')) return v;
+  if (kind === 'twitter') {
+    const handle = v.replace(/^@/, '');
+    return `https://x.com/${handle}`;
+  }
+  if (kind === 'telegram') {
+    const handle = v.replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '');
+    return `https://t.me/${handle}`;
+  }
+  return `https://${v}`;
 }
 
 export type DisplayCandidate = DlmmScreenCandidate & {
@@ -179,6 +202,142 @@ function CandidateCard({
   );
 }
 
+function RobinhoodCard({ t }: { t: RobinhoodScreenToken }) {
+  const twitter = socialHref(t.twitter, 'twitter');
+  const telegram = socialHref(t.telegram, 'telegram');
+  const website = socialHref(t.website, 'website');
+
+  return (
+    <div className="bg-gray-800 border border-gray-600 rounded-lg p-4 flex flex-col gap-3">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="text-white font-bold">
+            {t.symbol}{' '}
+            <span className="text-gray-400 font-normal text-sm">{t.name}</span>
+          </h3>
+          <p className="text-xs text-gray-500 mt-0.5 font-mono break-all">
+            {t.address}
+          </p>
+        </div>
+        <a
+          href={getGmgnTokenUrl(t.address, 'robinhood')}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 text-xs text-blue-400 hover:text-blue-300"
+        >
+          GMGN ↗
+        </a>
+      </div>
+
+      <GmgnKlineChart
+        tokenMint={t.address}
+        symbol={t.symbol}
+        chain="robinhood"
+        height={260}
+        interval="5"
+      />
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm text-gray-400">
+        <div>
+          <div className="text-gray-500 text-xs">Mcap</div>
+          {formatUsd(t.marketCap)}
+        </div>
+        <div>
+          <div className="text-gray-500 text-xs">Vol 24h</div>
+          {formatUsd(t.volume24h)}
+        </div>
+        <div>
+          <div className="text-gray-500 text-xs">Liquidity</div>
+          {formatUsd(t.liquidity)}
+        </div>
+        <div>
+          <div className="text-gray-500 text-xs">Holders</div>
+          {t.holders.toLocaleString()}
+        </div>
+        <div>
+          <div className="text-gray-500 text-xs">24h</div>
+          <span
+            className={
+              t.priceChangePct >= 0 ? 'text-green-400' : 'text-red-400'
+            }
+          >
+            {formatPct(t.priceChangePct)}
+          </span>
+        </div>
+        <div>
+          <div className="text-gray-500 text-xs">Launchpad</div>
+          {t.launchpad}
+        </div>
+        <div>
+          <div className="text-gray-500 text-xs">SM / KOL</div>
+          {t.smartDegenCount} / {t.renownedCount}
+        </div>
+        <div>
+          <div className="text-gray-500 text-xs">Hot / visits</div>
+          {t.hotLevel} / {t.visitingCount}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2 text-xs">
+        <span
+          className={`px-2 py-0.5 rounded ${
+            t.communityCue === 'komun_ok'
+              ? 'bg-green-900/50 text-green-300'
+              : 'bg-yellow-900/40 text-yellow-300'
+          }`}
+        >
+          {t.communityCue === 'komun_ok' ? 'komun jelas' : 'komun tipis'}
+        </span>
+        <span
+          className={`px-2 py-0.5 rounded ${
+            t.fomoCue === 'fomo_hot'
+              ? 'bg-orange-900/50 text-orange-300'
+              : 'bg-gray-700 text-gray-300'
+          }`}
+        >
+          {t.fomoCue === 'fomo_hot' ? 'fomo hot' : 'fomo quiet'}
+        </span>
+      </div>
+
+      <div className="flex flex-wrap gap-3 text-xs">
+        {twitter && (
+          <a
+            href={twitter}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-400 hover:underline"
+          >
+            Twitter
+          </a>
+        )}
+        {telegram && (
+          <a
+            href={telegram}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-400 hover:underline"
+          >
+            Telegram
+          </a>
+        )}
+        {website && (
+          <a
+            href={website}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-400 hover:underline"
+          >
+            Website
+          </a>
+        )}
+        {!twitter && !telegram && !website && (
+          <span className="text-gray-500">No socials</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function HunterCandidateTabs({
   generalCandidates,
   pools,
@@ -188,8 +347,18 @@ export default function HunterCandidateTabs({
   dbReady,
   onDeploy,
 }: HunterCandidateTabsProps) {
-  const [tab, setTab] = useState<'general' | 'potential'>('general');
+  const [tab, setTab] = useState<'general' | 'potential' | 'robinhood'>(
+    'general',
+  );
   const { entries, remove, isLoading: potentialLoading } = useDlmmPotentialList();
+  const {
+    tokens: robinhoodTokens,
+    fetchedAt: robinhoodFetchedAt,
+    isLoading: robinhoodLoading,
+    isFetching: robinhoodFetching,
+    error: robinhoodError,
+    refetch: refetchRobinhood,
+  } = useRobinhoodScreen(tab === 'robinhood');
   const { addressSet: rugAddressSet, isLoading: rugLoading } = useRugList();
 
   const potentialCandidates: DisplayCandidate[] = useMemo(() => {
@@ -285,6 +454,17 @@ export default function HunterCandidateTabs({
           >
             Potential ({visiblePotential.length})
           </button>
+          <button
+            type="button"
+            onClick={() => setTab('robinhood')}
+            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${
+              tab === 'robinhood'
+                ? 'bg-emerald-500 text-black'
+                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+            }`}
+          >
+            Robinhood ({robinhoodTokens.length})
+          </button>
         </ScrollableMenuRow>
       </div>
 
@@ -292,16 +472,68 @@ export default function HunterCandidateTabs({
         <p className="text-gray-500 text-sm mb-4">
           Automated Hunter screen — pools matching agent thresholds.
         </p>
-      ) : (
+      ) : tab === 'potential' ? (
         <p className="text-gray-500 text-sm mb-4">
           Curated from Signals, Board, Tracker, or Algo Tester. Use{' '}
           <span className="text-green-300">Potential</span> or{' '}
           <span className="text-red-300">Rug</span> on any chart — rugged
           tokens are excluded from both tabs.
         </p>
+      ) : (
+        <div className="mb-4 space-y-2">
+          <p className="text-gray-500 text-sm">
+            GMGN Robinhood 24h screen — mcap &gt;{' '}
+            {formatUsd(ROBINHOOD_LP_DEFAULTS.minMcap)}, vol &gt;{' '}
+            {formatUsd(ROBINHOOD_LP_DEFAULTS.minVolume)}, exclude flap.fun.
+            Screening only (no deploy). Prefer util over meme; check komun +
+            FOMO thesis yourself.
+          </p>
+          <p className="text-xs text-gray-500 border border-gray-700 rounded px-3 py-2 bg-gray-950/50">
+            Playbook: max 3 positions · compound · day = bigcap runner full
+            range · night close ~10–20% · fee &gt; IL → gas · convict = hold /
+            extend left.
+          </p>
+          <div className="flex items-center gap-3 text-xs text-gray-500">
+            <button
+              type="button"
+              onClick={() => void refetchRobinhood()}
+              disabled={robinhoodFetching}
+              className="px-2 py-1 rounded bg-gray-800 text-gray-300 hover:bg-gray-700 disabled:opacity-50"
+            >
+              {robinhoodFetching ? 'Refreshing…' : 'Refresh'}
+            </button>
+            {robinhoodFetchedAt && (
+              <span>
+                Updated {new Date(robinhoodFetchedAt).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+        </div>
       )}
 
-      {poolsLoading || (tab === 'potential' && potentialLoading) || rugLoading ? (
+      {tab === 'robinhood' ? (
+        robinhoodLoading ? (
+          <p className="text-gray-400">Loading Robinhood screen from GMGN…</p>
+        ) : robinhoodError ? (
+          <p className="text-red-400 text-sm">
+            {robinhoodError instanceof Error
+              ? robinhoodError.message
+              : 'Failed to load Robinhood screen'}
+          </p>
+        ) : robinhoodTokens.length === 0 ? (
+          <p className="text-gray-500 text-sm">
+            No Robinhood tokens matched filters (mcap / vol / non-flap).
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            {robinhoodTokens.map((t) => (
+              <RobinhoodCard key={t.address} t={t} />
+            ))}
+          </div>
+        )
+      ) : poolsLoading ||
+        (tab === 'potential' && potentialLoading) ||
+        rugLoading ? (
         <p className="text-gray-400">Loading pools from Meteora...</p>
       ) : poolsError ? (
         <p className="text-red-400 text-sm">

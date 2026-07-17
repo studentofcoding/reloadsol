@@ -15,18 +15,24 @@ export function getPoolChartMint(
   return tokenXAddress;
 }
 
+export type GmgnChain = 'sol' | 'bsc' | 'base' | 'eth' | 'robinhood'
+
 export function getGmgnKlineUrl(
   tokenMint: string,
-  options?: { interval?: string; theme?: 'dark' | 'light' },
+  options?: { interval?: string; theme?: 'dark' | 'light'; chain?: GmgnChain },
 ): string {
   const interval = options?.interval ?? '5'
+  const chain = options?.chain ?? 'sol'
   const params = new URLSearchParams({ interval })
   if (options?.theme) params.set('theme', options.theme)
-  return `https://www.gmgn.cc/kline/sol/${tokenMint}?${params.toString()}`
+  return `https://www.gmgn.cc/kline/${chain}/${tokenMint}?${params.toString()}`
 }
 
-export function getGmgnTokenUrl(tokenMint: string): string {
-  return `https://gmgn.ai/sol/token/${tokenMint}`;
+export function getGmgnTokenUrl(
+  tokenMint: string,
+  chain: GmgnChain = 'sol',
+): string {
+  return `https://gmgn.ai/${chain}/token/${tokenMint}`
 }
 
 /** GMGN iframe interval param for a trade hold window. */

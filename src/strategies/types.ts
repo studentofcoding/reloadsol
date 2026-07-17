@@ -320,6 +320,13 @@ export interface SocialStrategyConfig {
     minMentions30m: number
     topSource: string
     maxCandidatesPerTick: number
+    /** Also require a mention from these ingest sources within 30m. */
+    requireMentionSources?: string[]
+    /**
+     * Telegram peers for social-ingest to listen on (source label → @user or -100… id).
+     * Overrides matching TRENDINGSSOL_CHANNEL-style env when set.
+     */
+    listenChannelPeers?: Record<string, string>
   }
   execution: {
     simBuySol: number
