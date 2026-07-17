@@ -3,7 +3,7 @@ import { isMissingSchemaError } from '@/utils/db-health'
 import { getTrackingHealthStats, computeMcapSimPnlPct } from '@/utils/mcap-tracker'
 import { countOpenMcapSimPositions, getOpenMcapSimPositions } from '@/utils/mcap-sim-track'
 import { readTokenSymbol, readTrainingClass } from './outcome-features'
-import { dedupeStrategyOutcomeRows, mcapSimClosedOutcomeKey } from './outcome-dedupe'
+import { dedupeStrategyOutcomeRows } from './outcome-dedupe'
 import { applyAutoOutcomeLabels } from './outcome-labeling'
 import { matchesTrainingClassFilter } from './ml-training-features'
 import {
@@ -305,6 +305,7 @@ export async function upsertStrategyDefinition(params: {
 
 export { dedupeStrategyOutcomeRows, mcapSimClosedOutcomeKey } from './outcome-dedupe'
 
+/** Mints that already have a strategy_outcomes row for this mcap strategy (one-shot). */
 export async function loadMcapSimClosedOutcomeKeys(
   strategyId: string,
   tokenAddresses: string[],
@@ -312,8 +313,8 @@ export async function loadMcapSimClosedOutcomeKeys(
   if (tokenAddresses.length === 0) return new Set()
 
   try {
-    const { rows } = await query<{ token_address: string; entry_at: string }>(
-      `SELECT token_address, entry_at FROM strategy_outcomes
+    const { rows } = await query<{ token_address: string }>(
+      `SELECT DISTINCT token_address FROM strategy_outcomes
        WHERE strategy_id = $1
          AND domain = 'mcap_tracker'
          AND token_address = ANY($2::text[])`,
@@ -322,9 +323,7 @@ export async function loadMcapSimClosedOutcomeKeys(
 
     const keys = new Set<string>()
     for (const row of rows) {
-      if (row.token_address && row.entry_at) {
-        keys.add(mcapSimClosedOutcomeKey(row.token_address, toIso(row.entry_at)))
-      }
+      if (row.token_address) keys.add(row.token_address)
     }
     return keys
   } catch (error) {

@@ -29,7 +29,7 @@ import {
   resolveTokenMonitorSnapshot,
 } from '@/strategies/sim-monitor-snapshots'
 import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
-import { fetchTradingRecordsForWallet, loadMcapSimClosedOutcomeKeys, mcapSimClosedOutcomeKey } from '@/strategies/db'
+import { fetchTradingRecordsForWallet, loadMcapSimClosedOutcomeKeys } from '@/strategies/db'
 import {
   acquireTradeLock,
   isRealTradingHalted,
@@ -787,11 +787,7 @@ export async function POST(request: NextRequest) {
         }
 
         openMintSet.delete(pos.mintAddress)
-        if (pos.entryAt) {
-          closedOutcomeKeys.add(
-            mcapSimClosedOutcomeKey(pos.mintAddress, pos.entryAt),
-          )
-        }
+        closedOutcomeKeys.add(pos.mintAddress)
       }
       }
 

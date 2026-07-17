@@ -135,16 +135,38 @@ describe('mcap sim entry helpers', () => {
     expect(resolveMcapSimEntry(at80, snapshot)?.entryMcap).toBe(2_500_000)
   })
 
-  it('skips when a closed outcome already exists for token+entryAt', () => {
+  it('skips when mint already has a closed outcome (one-shot)', () => {
     const lastUpdated = new Date(Date.now() - 30 * 60_000).toISOString()
     const snapshot = row({
       when_reach_80pct: new Date(Date.now() - 30 * 60_000).toISOString(),
       last_updated_at: lastUpdated,
       mcap_growth_percent: 95,
     })
-    const closedKeys = new Set([`mint1|${lastUpdated}`])
+    const closedMints = new Set(['mint1'])
     expect(
-      getMcapSimOpenSkipReason(at80, snapshot, new Set(), closedKeys),
+      getMcapSimOpenSkipReason(at80, snapshot, new Set(), closedMints),
     ).toBe('already_closed')
+  })
+
+  it('still skips after last_updated_at advances when mint is closed', () => {
+    const milestone = new Date(Date.now() - 30 * 60_000).toISOString()
+    const snapshotT0 = row({
+      when_reach_80pct: milestone,
+      last_updated_at: milestone,
+      mcap_growth_percent: 95,
+    })
+    const snapshotT1 = row({
+      when_reach_80pct: milestone,
+      last_updated_at: new Date().toISOString(),
+      mcap_growth_percent: 95,
+    })
+    const closedMints = new Set(['mint1'])
+    expect(getMcapSimOpenSkipReason(at80, snapshotT0, new Set(), closedMints)).toBe(
+      'already_closed',
+    )
+    expect(getMcapSimOpenSkipReason(at80, snapshotT1, new Set(), closedMints)).toBe(
+      'already_closed',
+    )
+    expect(getMcapSimOpenSkipReason(at80, snapshotT1, new Set(), new Set())).toBeNull()
   })
 })

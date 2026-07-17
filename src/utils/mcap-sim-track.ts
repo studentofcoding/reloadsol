@@ -221,10 +221,8 @@ export function getMcapSimOpenSkipReason(
     return 'out_of_range'
   }
 
-  if (
-    entry &&
-    closedOutcomeKeys.has(`${snapshot.token_address}|${entry.entryAt}`)
-  ) {
+  // Mint one-shot: any prior outcome for this strategy+mint blocks reopen.
+  if (closedOutcomeKeys.has(snapshot.token_address)) {
     return 'already_closed'
   }
 
