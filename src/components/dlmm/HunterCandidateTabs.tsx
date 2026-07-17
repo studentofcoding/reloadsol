@@ -12,6 +12,10 @@ import type { EnrichedPool } from '@/hooks/useDlmmPools';
 import { getGmgnTokenUrl, getPoolChartMint } from '@/utils/gmgn';
 import type { RobinhoodScreenToken } from '@/utils/dlmm/robinhood-screen';
 import { ROBINHOOD_LP_DEFAULTS } from '@/utils/dlmm/robinhood-screen';
+import {
+  copyTokenAddress,
+  getLpTerminalPoolsUrl,
+} from '@/utils/dlmm/lp-terminal';
 import ScrollableMenuRow from '@/components/ScrollableMenuRow';
 
 function formatUsd(n: number) {
@@ -206,6 +210,8 @@ function RobinhoodCard({ t }: { t: RobinhoodScreenToken }) {
   const twitter = socialHref(t.twitter, 'twitter');
   const telegram = socialHref(t.telegram, 'telegram');
   const website = socialHref(t.website, 'website');
+  const lpTerminalUrl = getLpTerminalPoolsUrl(t.address);
+  const [copied, setCopied] = useState(false);
 
   return (
     <div className="bg-gray-800 border border-gray-600 rounded-lg p-4 flex flex-col gap-3">
@@ -334,6 +340,35 @@ function RobinhoodCard({ t }: { t: RobinhoodScreenToken }) {
           <span className="text-gray-500">No socials</span>
         )}
       </div>
+
+      <div className="flex flex-col sm:flex-row gap-2 mt-1">
+        <a
+          href={lpTerminalUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex-1 text-center py-2 bg-emerald-600 hover:bg-emerald-500 text-black text-sm font-medium rounded"
+        >
+          Open in LP Terminal
+        </a>
+        <button
+          type="button"
+          onClick={() => {
+            void copyTokenAddress(t.address).then((ok) => {
+              if (!ok) return;
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1500);
+            });
+          }}
+          className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded"
+          title="Copy CA for UNISWAP search in LP Terminal"
+        >
+          {copied ? 'Copied CA' : 'Copy CA'}
+        </button>
+      </div>
+      <p className="text-[11px] text-gray-500">
+        LP on Robinhood Chain (4663) via LP Terminal — connect wallet there; not
+        Meteora Deploy.
+      </p>
     </div>
   );
 }
@@ -485,13 +520,22 @@ export default function HunterCandidateTabs({
             GMGN Robinhood 24h screen — mcap &gt;{' '}
             {formatUsd(ROBINHOOD_LP_DEFAULTS.minMcap)}, vol &gt;{' '}
             {formatUsd(ROBINHOOD_LP_DEFAULTS.minVolume)}, exclude flap.fun.
-            Screening only (no deploy). Prefer util over meme; check komun +
-            FOMO thesis yourself.
+            Then LP on chainId <span className="text-gray-300">4663</span> via{' '}
+            <a
+              href={getLpTerminalPoolsUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-emerald-400 hover:underline"
+            >
+              LP Terminal
+            </a>{' '}
+            (wallet connect there — not Meteora Deploy). Prefer util over meme;
+            check komun + FOMO thesis yourself.
           </p>
           <p className="text-xs text-gray-500 border border-gray-700 rounded px-3 py-2 bg-gray-950/50">
             Playbook: max 3 positions · compound · day = bigcap runner full
             range · night close ~10–20% · fee &gt; IL → gas · convict = hold /
-            extend left.
+            extend left. Open card → LP Terminal → search CA / add liquidity.
           </p>
           <div className="flex items-center gap-3 text-xs text-gray-500">
             <button
