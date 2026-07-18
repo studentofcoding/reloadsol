@@ -29,7 +29,7 @@ import {
 } from "@/utils/jupiter-portfolio";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { SwapQuote } from "@/types";
-import { trackSell } from "@/utils/operations-api";
+import { trackSell, trackClose } from "@/utils/operations-api";
 import { usePnLShare } from "@/hooks/usePnLShare";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
 import { useSolPrice } from "@/hooks/useSolPrice";
@@ -39,6 +39,11 @@ import { pnlShareService } from "@/utils/pnl-share-service";
 import { closeSimulationPosition } from "@/utils/simulation-trades";
 import { requireSignAllTransactions } from "@/utils/wallet-signing";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
+import {
+  TRADE_LIST_SORT_OPTIONS,
+  compareBySortMode,
+  type TradeListSortMode,
+} from "@/utils/trade-list-sort";
 
 interface PnLRecord {
   id: string;
@@ -200,7 +205,12 @@ export default function PnLTracker() {
     autoTriggerShare,
   } = usePnLShare();
 
-  const { showOutcome, outcomeModalProps } = useTradeOutcome();
+  const { showOutcome, hideOutcome, outcomeModalProps } = useTradeOutcome();
+  const [pendingCloseableTokens, setPendingCloseableTokens] = useState<
+    TokenToSell[]
+  >([]);
+  const [isClosingAccounts, setIsClosingAccounts] = useState(false);
+  const [sortMode, setSortMode] = useState<TradeListSortMode>("date_desc");
 
   // Hint message state
   const [showClosedPositionsHint, setShowClosedPositionsHint] =
@@ -975,18 +985,40 @@ export default function PnLTracker() {
   );
 
   const filteredDisplayRecords = useMemo(() => {
-    if (modeFilter === "all") return displayRecords;
-    return displayRecords.filter((r) =>
-      modeFilter === "sim" ? !!r.isSimulation : !r.isSimulation,
+    const filtered =
+      modeFilter === "all"
+        ? displayRecords
+        : displayRecords.filter((r) =>
+            modeFilter === "sim" ? !!r.isSimulation : !r.isSimulation,
+          );
+    return [...filtered].sort((a, b) =>
+      compareBySortMode(
+        sortMode,
+        a.sellTimestamp,
+        b.sellTimestamp,
+        a.pnlPercentage,
+        b.pnlPercentage,
+      ),
     );
-  }, [displayRecords, modeFilter]);
+  }, [displayRecords, modeFilter, sortMode]);
 
   const filteredDisplayOpenPositions = useMemo(() => {
-    if (modeFilter === "all") return displayOpenPositions;
-    return displayOpenPositions.filter((p) =>
-      modeFilter === "sim" ? !!p.isSimulation : !p.isSimulation,
+    const filtered =
+      modeFilter === "all"
+        ? displayOpenPositions
+        : displayOpenPositions.filter((p) =>
+            modeFilter === "sim" ? !!p.isSimulation : !p.isSimulation,
+          );
+    return [...filtered].sort((a, b) =>
+      compareBySortMode(
+        sortMode,
+        a.buyTimestamp,
+        b.buyTimestamp,
+        a.pnlPercentage,
+        b.pnlPercentage,
+      ),
     );
-  }, [displayOpenPositions, modeFilter]);
+  }, [displayOpenPositions, modeFilter, sortMode]);
 
   // ✅ NEW: Toggle token selection for bulk sell
   const toggleTokenSelection = useCallback(
@@ -1239,6 +1271,15 @@ export default function PnLTracker() {
           `✅ Bulk sell completed: ${sellResult.successfulSwaps.length} successful, ${sellResult.failedSwaps.length} failed`,
         );
 
+        const alreadyClosed = new Set(sellResult.successfulCloses);
+        const closeable = tokensToSell.filter(
+          (t) =>
+            sellResult.successfulSwaps.some(
+              (s) => s.mintAddress === t.mintAddress,
+            ) && !alreadyClosed.has(t.mintAddress),
+        );
+        setPendingCloseableTokens(closeable);
+
         showOutcome({
           success: true,
           operation: "sell",
@@ -1248,6 +1289,10 @@ export default function PnLTracker() {
               ? realPositions[0].symbol || realPositions[0].name
               : `${realPositions.length} tokens`,
           solAmount: sellResult.totalReceived || 0,
+          closeableAccounts: closeable.map((t) => ({
+            mintAddress: t.mintAddress,
+            symbol: t.symbol,
+          })),
         });
       } else {
         throw new Error(
@@ -1954,6 +1999,24 @@ export default function PnLTracker() {
           // ✅ NEW: Clear notification flag when position is sold
           clearNotificationFlag(position.mintAddress);
 
+          const alreadyClosed = new Set(sellResult.successfulCloses);
+          const closeable =
+            !alreadyClosed.has(position.mintAddress) ? [tokenForSale] : [];
+          setPendingCloseableTokens(closeable);
+          setSellError("");
+          showOutcome({
+            success: true,
+            operation: "sell",
+            isSimulation: false,
+            tokenSymbol: position.symbol || position.name,
+            mintAddress: position.mintAddress,
+            solAmount: sellResult.totalReceived || 0,
+            closeableAccounts: closeable.map((t) => ({
+              mintAddress: t.mintAddress,
+              symbol: t.symbol || position.symbol || position.name,
+            })),
+          });
+
           // Track the successful sell operation for points
           try {
             const trackResult = await trackSell(
@@ -2003,7 +2066,6 @@ export default function PnLTracker() {
           }
 
           // Track operation for PnL and history via React Query system
-          // Note: This will automatically trigger PnL recalculation via real-time subscription
           try {
             const { fetchTokenPricesForTracking } =
               await import("@/utils/trading-tracker");
@@ -2022,7 +2084,6 @@ export default function PnLTracker() {
               solPrice: currentSolPrice,
             };
 
-            // Track via centralized system - this will trigger automatic PnL refresh
             await trackOperation({
               walletAddress: publicKey.toString(),
               operationType: "sell",
@@ -2041,28 +2102,12 @@ export default function PnLTracker() {
               priorityFee: 300000,
               errors: undefined,
             });
-
-            // Show success message briefly
-            setSellError("");
-
-            showOutcome({
-              success: true,
-              operation: "sell",
-              isSimulation: false,
-              tokenSymbol: position.symbol || position.name,
-              mintAddress: position.mintAddress,
-              solAmount: sellResult.totalReceived || 0,
-            });
-
-            // The PnL will refresh automatically via React Query subscription
-            // No need for manual calculatePnL() call
           } catch (trackError) {
             console.error(
               "Failed to track sell operation for history/PnL:",
               trackError,
             );
 
-            // Fallback: manual refresh if tracking fails
             setTimeout(() => {
               calculatePnL();
             }, 200);
@@ -2105,6 +2150,98 @@ export default function PnLTracker() {
       showOutcome,
     ],
   );
+
+  const handlePostSellCloseAccounts = useCallback(async () => {
+    if (
+      !connected ||
+      !publicKey ||
+      !signAllTransactions ||
+      !connection ||
+      pendingCloseableTokens.length === 0
+    ) {
+      return;
+    }
+
+    setIsClosingAccounts(true);
+    try {
+      const signTx = requireSignAllTransactions(
+        signAllTransactions,
+        "Wallet signing is required to close accounts",
+      );
+      const closeOnlyResult = await executeBulkSellAlt(
+        {
+          tokens: [],
+          unsellableTokens: pendingCloseableTokens,
+          slippage: 200,
+          priorityFee: 30000,
+        },
+        publicKey.toString(),
+        connection,
+        signTx,
+      );
+
+      setPendingCloseableTokens([]);
+      const closeConfirmed = closeOnlyResult.signatures.length > 0;
+
+      if (closeConfirmed) {
+        try {
+          await trackClose(
+            publicKey.toString(),
+            closeOnlyResult.successfulCloses.length,
+            {
+              failureCount: closeOnlyResult.failedCloses.length,
+              tokenMints: closeOnlyResult.successfulCloses,
+              signatures: closeOnlyResult.signatures,
+              solAmount: closeOnlyResult.successfulCloses.length * 0.00203928,
+            },
+          );
+        } catch (trackError) {
+          console.error("Failed to track post-sell close:", trackError);
+        }
+
+        showOutcome({
+          success: closeOnlyResult.failedCloses.length === 0,
+          operation: "close",
+          isSimulation: false,
+          tokenSymbol:
+            closeOnlyResult.successfulCloses.length === 1
+              ? `${closeOnlyResult.successfulCloses[0].slice(0, 4)}…`
+              : `${closeOnlyResult.successfulCloses.length} accounts`,
+          error:
+            closeOnlyResult.failedCloses.length > 0
+              ? closeOnlyResult.failedCloses[0]?.error || "Close failed"
+              : undefined,
+        });
+        setTimeout(() => calculatePnL(), 200);
+      } else {
+        showOutcome({
+          success: false,
+          operation: "close",
+          isSimulation: false,
+          error:
+            closeOnlyResult.failedCloses[0]?.error || "No accounts closed",
+        });
+      }
+    } catch (err) {
+      console.error("Post-sell close error:", err);
+      showOutcome({
+        success: false,
+        operation: "close",
+        isSimulation: false,
+        error: err instanceof Error ? err.message : "Close failed",
+      });
+    } finally {
+      setIsClosingAccounts(false);
+    }
+  }, [
+    connected,
+    publicKey,
+    signAllTransactions,
+    connection,
+    pendingCloseableTokens,
+    showOutcome,
+    calculatePnL,
+  ]);
 
   // Cleanup timeouts when component unmounts
   useEffect(() => {
@@ -2287,26 +2424,45 @@ export default function PnLTracker() {
               </button>
             </div>
 
-            <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
-              {(
-                [
-                  { key: "all" as const, label: "All" },
-                  { key: "real" as const, label: "Real" },
-                  { key: "sim" as const, label: "Sim" },
-                ] as const
-              ).map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setModeFilter(tab.key)}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all min-w-max ${
-                    modeFilter === tab.key
-                      ? "bg-blue-600 text-white"
-                      : "text-gray-400 hover:text-white hover:bg-gray-700/50"
-                  }`}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
+                {(
+                  [
+                    { key: "all" as const, label: "All" },
+                    { key: "real" as const, label: "Real" },
+                    { key: "sim" as const, label: "Sim" },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setModeFilter(tab.key)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all min-w-max ${
+                      modeFilter === tab.key
+                        ? "bg-blue-600 text-white"
+                        : "text-gray-400 hover:text-white hover:bg-gray-700/50"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+              <label className="flex items-center gap-1.5 text-xs text-gray-400">
+                <span className="sr-only">Sort</span>
+                <select
+                  value={sortMode}
+                  onChange={(e) =>
+                    setSortMode(e.target.value as TradeListSortMode)
+                  }
+                  className="bg-gray-800 border border-gray-600 rounded-md px-2 py-1.5 text-xs text-white focus:outline-none focus:border-gray-400"
+                  title="Sort by date or PnL"
                 >
-                  {tab.label}
-                </button>
-              ))}
+                  {TRADE_LIST_SORT_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
 
             {/* ✅ NEW: Global P&L visibility toggle */}
@@ -3326,7 +3482,15 @@ export default function PnLTracker() {
         shareData={shareData}
         onCopySuccess={() => console.log("Tweet text copied!")}
       />
-      <TradeOutcomeModal {...outcomeModalProps} />
+      <TradeOutcomeModal
+        {...outcomeModalProps}
+        onClose={() => {
+          setPendingCloseableTokens([]);
+          hideOutcome();
+        }}
+        onCloseAccounts={handlePostSellCloseAccounts}
+        isClosingAccounts={isClosingAccounts}
+      />
     </div>
   );
 }

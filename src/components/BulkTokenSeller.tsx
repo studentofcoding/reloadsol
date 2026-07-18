@@ -102,7 +102,11 @@ export default function BulkTokenSeller() {
   } = useRpc();
   const triggerPostTradeRefresh = usePostTradeRefresh({ refetchRecords: true });
   const { trackOperation } = useTradingData();
-  const { showOutcome, outcomeModalProps } = useTradeOutcome();
+  const { showOutcome, hideOutcome, outcomeModalProps } = useTradeOutcome();
+  const [pendingCloseableTokens, setPendingCloseableTokens] = useState<
+    TokenToSell[]
+  >([]);
+  const [isClosingAccounts, setIsClosingAccounts] = useState(false);
 
   // ✅ NEW: Add PnL sharing hook
   const {
@@ -691,6 +695,17 @@ export default function BulkTokenSeller() {
           sellResult.successfulCloses.length > 0 ||
           sellResult.failedCloses.length > 0)
       ) {
+        const alreadyClosed = new Set(sellResult.successfulCloses);
+        const closeable = selectedTokens.filter(
+          (t) =>
+            t.sellPercentage >= 100 &&
+            sellResult.successfulSwaps.some(
+              (s) => s.mintAddress === t.mintAddress,
+            ) &&
+            !alreadyClosed.has(t.mintAddress),
+        );
+        setPendingCloseableTokens(closeable);
+
         showOutcome({
           success: sellResult.success,
           operation: "sell",
@@ -707,6 +722,12 @@ export default function BulkTokenSeller() {
           error: sellResult.success
             ? undefined
             : sellResult.failedSwaps[0]?.error || "Sell failed",
+          closeableAccounts: sellResult.success
+            ? closeable.map((t) => ({
+                mintAddress: t.mintAddress,
+                symbol: t.symbol,
+              }))
+            : undefined,
         });
       }
 
@@ -993,6 +1014,103 @@ export default function BulkTokenSeller() {
     triggerPostTradeRefresh,
     showOutcome,
     trackOperation,
+  ]);
+
+  /** Close emptied ATAs offered on the post-sell success modal. */
+  const handlePostSellCloseAccounts = useCallback(async () => {
+    if (
+      !connected ||
+      !publicKey ||
+      !signAllTransactions ||
+      !connection ||
+      pendingCloseableTokens.length === 0
+    ) {
+      return;
+    }
+
+    setIsClosingAccounts(true);
+    try {
+      const closeOnlyResult = await executeBulkSellAlt(
+        {
+          tokens: [],
+          unsellableTokens: pendingCloseableTokens,
+          slippage,
+          priorityFee,
+        },
+        publicKey.toString(),
+        connection,
+        signAllTransactions,
+      );
+
+      const closeConfirmed = closeOnlyResult.signatures.length > 0;
+      setPendingCloseableTokens([]);
+
+      if (closeConfirmed) {
+        try {
+          await trackClose(
+            publicKey.toString(),
+            closeOnlyResult.successfulCloses.length,
+            {
+              failureCount: closeOnlyResult.failedCloses.length,
+              tokenMints: closeOnlyResult.successfulCloses,
+              signatures: closeOnlyResult.signatures,
+              solAmount: closeOnlyResult.successfulCloses.length * 0.00203928,
+            },
+          );
+        } catch (trackError) {
+          console.error("Failed to track post-sell close:", trackError);
+        }
+
+        triggerPostTradeRefresh({
+          refreshWalletTokens: (forceRefresh) =>
+            fetchTokens(forceRefresh ?? true),
+        });
+
+        showOutcome({
+          success: closeOnlyResult.failedCloses.length === 0,
+          operation: "close",
+          isSimulation: false,
+          tokenSymbol:
+            closeOnlyResult.successfulCloses.length === 1
+              ? `${closeOnlyResult.successfulCloses[0].slice(0, 4)}…`
+              : `${closeOnlyResult.successfulCloses.length} accounts`,
+          error:
+            closeOnlyResult.failedCloses.length > 0
+              ? closeOnlyResult.failedCloses[0]?.error || "Close failed"
+              : undefined,
+        });
+      } else {
+        showOutcome({
+          success: false,
+          operation: "close",
+          isSimulation: false,
+          error:
+            closeOnlyResult.failedCloses[0]?.error ||
+            "No accounts closed",
+        });
+      }
+    } catch (err) {
+      console.error("Post-sell close error:", err);
+      showOutcome({
+        success: false,
+        operation: "close",
+        isSimulation: false,
+        error: err instanceof Error ? err.message : "Close failed",
+      });
+    } finally {
+      setIsClosingAccounts(false);
+    }
+  }, [
+    connected,
+    publicKey,
+    signAllTransactions,
+    connection,
+    pendingCloseableTokens,
+    slippage,
+    priorityFee,
+    fetchTokens,
+    triggerPostTradeRefresh,
+    showOutcome,
   ]);
 
   // Handle close-only (burn) operation without selling any tokens
@@ -2237,7 +2355,15 @@ export default function BulkTokenSeller() {
         )}
 
         {/* Trade outcome modal */}
-        <TradeOutcomeModal {...outcomeModalProps} />
+        <TradeOutcomeModal
+          {...outcomeModalProps}
+          onClose={() => {
+            setPendingCloseableTokens([]);
+            hideOutcome();
+          }}
+          onCloseAccounts={handlePostSellCloseAccounts}
+          isClosingAccounts={isClosingAccounts}
+        />
 
         {/* ✅ NEW: Add PnL Share Modal */}
         <PnLShareModal

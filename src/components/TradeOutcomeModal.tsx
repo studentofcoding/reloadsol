@@ -1,8 +1,13 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState } from "react";
 
 export type TradeOutcomeOperation = 'buy' | 'sell' | 'close';
+
+export type CloseableAccount = {
+  mintAddress: string;
+  symbol?: string;
+};
 
 export type TradeOutcomeState = {
   isOpen: boolean;
@@ -13,6 +18,8 @@ export type TradeOutcomeState = {
   mintAddress?: string;
   solAmount?: number;
   error?: string;
+  /** Successful 100% sells eligible for rent reclaim (post-sell CTA). */
+  closeableAccounts?: CloseableAccount[];
 };
 
 const initialState: TradeOutcomeState = {
@@ -23,6 +30,8 @@ const initialState: TradeOutcomeState = {
 
 type TradeOutcomeModalProps = TradeOutcomeState & {
   onClose: () => void;
+  onCloseAccounts?: () => void | Promise<void>;
+  isClosingAccounts?: boolean;
 };
 
 export function useTradeOutcome() {
@@ -63,6 +72,12 @@ function operationLabel(operation: TradeOutcomeOperation): string {
   }
 }
 
+function accountLabel(account: CloseableAccount): string {
+  if (account.symbol) return account.symbol;
+  const m = account.mintAddress;
+  return `${m.slice(0, 4)}…${m.slice(-4)}`;
+}
+
 export default function TradeOutcomeModal({
   isOpen,
   onClose,
@@ -73,6 +88,9 @@ export default function TradeOutcomeModal({
   mintAddress,
   solAmount,
   error,
+  closeableAccounts,
+  onCloseAccounts,
+  isClosingAccounts = false,
 }: TradeOutcomeModalProps) {
   if (!isOpen) return null;
 
@@ -82,6 +100,13 @@ export default function TradeOutcomeModal({
     (mintAddress
       ? `${mintAddress.slice(0, 4)}…${mintAddress.slice(-4)}`
       : 'Token');
+
+  const showCloseAccounts =
+    success &&
+    operation === 'sell' &&
+    !isSimulation &&
+    (closeableAccounts?.length ?? 0) > 0 &&
+    typeof onCloseAccounts === 'function';
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
@@ -97,6 +122,7 @@ export default function TradeOutcomeModal({
           onClick={onClose}
           className="absolute top-3 right-3 text-gray-400 hover:text-white text-xl leading-none"
           aria-label="Close"
+          disabled={isClosingAccounts}
         >
           ×
         </button>
@@ -138,19 +164,51 @@ export default function TradeOutcomeModal({
               Position closed — it will disappear from open positions shortly.
             </p>
           ) : null}
+
+          {showCloseAccounts ? (
+            <div className="mt-4 text-left rounded-xl border border-emerald-500/30 bg-black/30 px-3 py-3">
+              <p className="text-xs text-emerald-200/90 mb-2">
+                Empty accounts after 100% sell — reclaim ~0.002 SOL rent each:
+              </p>
+              <ul className="max-h-28 overflow-y-auto space-y-1 text-sm text-gray-200">
+                {closeableAccounts!.map((account) => (
+                  <li key={account.mintAddress} className="font-mono text-xs">
+                    {accountLabel(account)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
 
-        <button
-          type="button"
-          onClick={onClose}
-          className={`mt-6 w-full py-2.5 rounded-lg font-medium text-white transition-colors ${
-            success
-              ? 'bg-emerald-600 hover:bg-emerald-500'
-              : 'bg-red-600 hover:bg-red-500'
-          }`}
-        >
-          OK
-        </button>
+        <div className="mt-6 space-y-2">
+          {showCloseAccounts ? (
+            <button
+              type="button"
+              onClick={() => void onCloseAccounts?.()}
+              disabled={isClosingAccounts}
+              className="w-full py-2.5 rounded-lg font-medium text-white transition-colors bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed"
+            >
+              {isClosingAccounts
+                ? 'Closing accounts…'
+                : `Close ${closeableAccounts!.length} account${
+                    closeableAccounts!.length === 1 ? '' : 's'
+                  }`}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isClosingAccounts}
+            className={`w-full py-2.5 rounded-lg font-medium text-white transition-colors disabled:opacity-50 ${
+              success
+                ? 'bg-emerald-600 hover:bg-emerald-500'
+                : 'bg-red-600 hover:bg-red-500'
+            }`}
+          >
+            OK
+          </button>
+        </div>
       </div>
     </div>
   );
