@@ -152,9 +152,7 @@ export default function TradingHistory() {
     deleteRecord,
     recordsError,
   } = useTradingData();
-  const [timeFilter, setTimeFilter] = useState<"all" | "24h" | "7d" | "30d">(
-    "7d",
-  );
+  const [modeFilter, setModeFilter] = useState<"all" | "real" | "sim">("all");
   const [error, setError] = useState<string>("");
   const [isLocalStorageAvailable] = useState(() => checkLocalStorageAvailable());
   const { data: solPriceUsd = 145 } = useSolPrice(300_000);
@@ -163,6 +161,13 @@ export default function TradingHistory() {
     () => processTradingRecords(walletAddress, rawRecords, solPriceUsd),
     [walletAddress, rawRecords, solPriceUsd],
   );
+
+  const filteredRecords = useMemo(() => {
+    if (modeFilter === "all") return processedRecords;
+    return processedRecords.filter((r) =>
+      modeFilter === "sim" ? !!r.is_simulation : !r.is_simulation,
+    );
+  }, [processedRecords, modeFilter]);
 
   const storageWarning = !isLocalStorageAvailable
     ? "Browser storage is not available. Trading history will not be saved."
@@ -362,6 +367,31 @@ export default function TradingHistory() {
         </div>
       )} */}
 
+      {/* All / Real / Sim filter */}
+      {walletAddress && processedRecords.length > 0 && (
+        <div className="flex space-x-1 bg-gray-800 rounded-lg p-1 mb-3 w-fit">
+          {(
+            [
+              { key: "all" as const, label: "All" },
+              { key: "real" as const, label: "Real" },
+              { key: "sim" as const, label: "Sim" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setModeFilter(tab.key)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all min-w-max ${
+                modeFilter === tab.key
+                  ? "bg-blue-600 text-white"
+                  : "text-gray-400 hover:text-white hover:bg-gray-700/50"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Horizontal Records List */}
       {walletAddress && processedRecords.length === 0 ? (
         <div className="text-center py-4">
@@ -369,9 +399,15 @@ export default function TradingHistory() {
             Trade on reloadsol to track your history
           </p>
         </div>
+      ) : filteredRecords.length === 0 ? (
+        <div className="text-center py-4">
+          <p className="text-gray-400 text-sm">
+            No {modeFilter} history records
+          </p>
+        </div>
       ) : (
         <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
-          {processedRecords.slice(0, 10).map((record: TrackingRecord) => (
+          {filteredRecords.slice(0, 10).map((record: TrackingRecord) => (
             <div
               key={record.id}
               className={`relative flex-shrink-0 hover:bg-gray-700/40 transition-all duration-200 min-w-[100px] rounded-lg cursor-pointer group py-2 px-3 mr-2 border ${

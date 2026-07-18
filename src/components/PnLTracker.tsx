@@ -22,6 +22,11 @@ import {
   UserToken,
   TokenToSell,
 } from "@/utils/jupiter";
+import {
+  fetchJupiterPortfolio,
+  mapPortfolioToUserTokens,
+  resolveWalletTokenToSell,
+} from "@/utils/jupiter-portfolio";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { SwapQuote } from "@/types";
 import { trackSell } from "@/utils/operations-api";
@@ -122,6 +127,7 @@ export default function PnLTracker() {
   const solPriceQuery = useSolPrice();
   const solPriceUsd = solPriceQuery.data ?? 145;
   const [activeTab, setActiveTab] = useState<"completed" | "open">("completed");
+  const [modeFilter, setModeFilter] = useState<"all" | "real" | "sim">("all");
   const [isRefreshingPrices, setIsRefreshingPrices] = useState<boolean>(false);
 
   // Fast sell state
@@ -772,13 +778,26 @@ export default function PnLTracker() {
 
         if (openCycles.size > 0) {
           try {
-            // Try to verify against actual wallet holdings
-            const walletTokens = await fetchUserTokens(
-              connection,
-              publicKey!,
-              false,
-              false,
-            );
+            // Prefer Jupiter Portfolio (same as /sell) so Token-2022 / portfolio
+            // holdings attach for Fast Sell; RPC fetchUserTokens as fallback.
+            let walletTokens: UserToken[] = [];
+            try {
+              const portfolio = await fetchJupiterPortfolio(
+                publicKey!.toString(),
+              );
+              walletTokens = mapPortfolioToUserTokens(portfolio);
+            } catch (portfolioErr) {
+              console.warn(
+                "Jupiter portfolio unavailable for open positions, falling back to RPC",
+                portfolioErr,
+              );
+              walletTokens = await fetchUserTokens(
+                connection,
+                publicKey!,
+                false,
+                false,
+              );
+            }
 
             // Filter and update based on wallet state
             openPositionsResult = openPositionsResult.filter((pos) => {
@@ -960,6 +979,20 @@ export default function PnLTracker() {
     [openPositions, tokenMetaMap],
   );
 
+  const filteredDisplayRecords = useMemo(() => {
+    if (modeFilter === "all") return displayRecords;
+    return displayRecords.filter((r) =>
+      modeFilter === "sim" ? !!r.isSimulation : !r.isSimulation,
+    );
+  }, [displayRecords, modeFilter]);
+
+  const filteredDisplayOpenPositions = useMemo(() => {
+    if (modeFilter === "all") return displayOpenPositions;
+    return displayOpenPositions.filter((p) =>
+      modeFilter === "sim" ? !!p.isSimulation : !p.isSimulation,
+    );
+  }, [displayOpenPositions, modeFilter]);
+
   // ✅ NEW: Toggle token selection for bulk sell
   const toggleTokenSelection = useCallback(
     (tokenId: string, event: React.MouseEvent) => {
@@ -977,10 +1010,12 @@ export default function PnLTracker() {
     [],
   );
 
-  // ✅ NEW: Select all tokens
+  // ✅ NEW: Select all tokens (filtered open list)
   const selectAllTokens = useCallback(() => {
-    setSelectedTokens(new Set(openPositions.map((pos) => pos.id)));
-  }, [openPositions]);
+    setSelectedTokens(
+      new Set(filteredDisplayOpenPositions.map((pos) => pos.id)),
+    );
+  }, [filteredDisplayOpenPositions]);
 
   // ✅ NEW: Clear all selections
   const clearAllSelections = useCallback(() => {
@@ -1851,53 +1886,52 @@ export default function PnLTracker() {
         const balanceBeforeOp = await connection.getBalance(publicKey);
         const balanceBeforeSOL = balanceBeforeOp / LAMPORTS_PER_SOL;
 
-        // Use the pre-verified wallet token data from the position
-        let tokenToSell = position.walletTokenData;
-
-        if (!tokenToSell) {
-          // Fallback: fetch current user tokens if wallet data is not available
-          console.log("⚠️ No wallet token data in position, fetching fresh...");
-          const userTokens = await fetchUserTokens(
-            connection,
-            publicKey,
-            false,
-            false,
-          );
-          tokenToSell = userTokens.find(
-            (token) => token.mintAddress === position.mintAddress,
-          );
-        }
-
-        if (!tokenToSell || tokenToSell.uiAmount <= 0) {
-          throw new Error(
-            `Token not found in wallet or has zero balance. Expected: ${position.actualWalletBalance?.toFixed(4) || "unknown"} tokens`,
-          );
-        }
-
-        console.log(
-          `💰 Fast selling ${tokenToSell.symbol}: ${tokenToSell.uiAmount} tokens (balance verified: ${position.actualWalletBalance?.toFixed(4) || "unknown"})`,
+        // Resolve via Jupiter Portfolio first (same source as /sell), then
+        // cached position data / RPC — Token-2022 often missing from RPC-only.
+        const tokenToSell = await resolveWalletTokenToSell(
+          publicKey.toString(),
+          position.mintAddress,
+          {
+            cached: position.walletTokenData,
+            rpcFetch: () =>
+              fetchUserTokens(connection, publicKey, false, false),
+          },
         );
 
-        // Check if we have a cached quote for faster execution
-        const cachedQuote = sellQuotes.get(position.id);
-        if (cachedQuote) {
-          console.log("🚀 Using cached quote for faster execution");
-          // Use cached quote logic here - you can implement direct transaction execution
-          // For now, we'll continue with the existing bulk sell approach
+        if (!tokenToSell || tokenToSell.uiAmount <= 0 || !tokenToSell.balance) {
+          throw new Error(
+            "Not in wallet — refresh or use /sell",
+          );
         }
 
-        // Convert to TokenToSell format for bulk sell
+        // Keep open-position card sellable after resolve
+        setOpenPositions((prev) =>
+          prev.map((p) =>
+            p.id === position.id
+              ? {
+                  ...p,
+                  walletTokenData: tokenToSell,
+                  actualWalletBalance: tokenToSell.uiAmount,
+                }
+              : p,
+          ),
+        );
+
+        console.log(
+          `💰 Fast selling ${tokenToSell.symbol}: ${tokenToSell.uiAmount} tokens (portfolio-resolved)`,
+        );
+
         const tokenForSale: TokenToSell = {
           ...tokenToSell,
-          sellAmount: tokenToSell.balance, // Sell 100% of the token
+          sellAmount: tokenToSell.balance,
           sellPercentage: 100,
         };
 
-        // Prepare bulk sell request with optimized settings
+        // Match /sell (BulkTokenSeller) defaults
         const sellRequest: BulkSellRequest = {
           tokens: [tokenForSale],
-          slippage: 300, // 3% slippage (default)
-          priorityFee: 30000, // 0.0003 SOL priority fee (default),
+          slippage: 200, // 2%
+          priorityFee: 30000,
         };
 
         // Execute the sell using the more efficient executeBulkSellAlt
@@ -2070,7 +2104,6 @@ export default function PnLTracker() {
       records,
       calculatePnL,
       clearNotificationFlag,
-      sellQuotes,
       autoTriggerShare,
       trackOperation,
       showOutcome,
@@ -2244,7 +2277,7 @@ export default function PnLTracker() {
                     : "text-gray-400 hover:text-white"
                 }`}
               >
-                Completed ({pnlRecords.length})
+                Completed ({filteredDisplayRecords.length})
               </button>
               <button
                 onClick={() => setActiveTab("open")}
@@ -2254,8 +2287,30 @@ export default function PnLTracker() {
                     : "text-gray-400 hover:text-white"
                 }`}
               >
-                Open ({openPositions.length})
+                Open ({filteredDisplayOpenPositions.length})
               </button>
+            </div>
+
+            <div className="flex space-x-1 bg-gray-800 rounded-lg p-1">
+              {(
+                [
+                  { key: "all" as const, label: "All" },
+                  { key: "real" as const, label: "Real" },
+                  { key: "sim" as const, label: "Sim" },
+                ] as const
+              ).map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setModeFilter(tab.key)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all min-w-max ${
+                    modeFilter === tab.key
+                      ? "bg-blue-600 text-white"
+                      : "text-gray-400 hover:text-white hover:bg-gray-700/50"
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
             {/* ✅ NEW: Global P&L visibility toggle */}
@@ -2309,7 +2364,7 @@ export default function PnLTracker() {
 
         <div className="flex items-center space-x-2">
           {/* ✅ NEW: Bulk sell controls */}
-          {activeTab === "open" && openPositions.length > 0 && (
+          {activeTab === "open" && filteredDisplayOpenPositions.length > 0 && (
             <div className="flex items-center space-x-2">
               {selectedTokens.size > 0 ? (
                 <>
@@ -2462,10 +2517,12 @@ export default function PnLTracker() {
                   </div>
                 )}
 
-                {pnlRecords.length === 0 ? (
+                {filteredDisplayRecords.length === 0 ? (
                   <div className="text-center py-8">
                     <p className="text-gray-400 text-sm">
-                      No completed trades yet
+                      {pnlRecords.length === 0
+                        ? "No completed trades yet"
+                        : `No ${modeFilter} completed trades`}
                     </p>
                     <p className="text-gray-500 text-xs mt-1">
                       Buy and sell tokens to see your P&L here
@@ -2473,7 +2530,7 @@ export default function PnLTracker() {
                   </div>
                 ) : (
                   <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
-                    {displayRecords.map((record) => {
+                    {filteredDisplayRecords.map((record) => {
                       // Calculate USD amounts
                       const buyAmountUSD = record.solAmountBought * solPriceUsd;
                       const pnlAmountUSD =
@@ -2712,9 +2769,13 @@ export default function PnLTracker() {
 
             {activeTab === "open" && (
               <>
-                {openPositions.length === 0 ? (
+                {filteredDisplayOpenPositions.length === 0 ? (
                   <div className="text-center py-8">
-                    <p className="text-gray-400 text-sm">No open positions</p>
+                    <p className="text-gray-400 text-sm">
+                      {openPositions.length === 0
+                        ? "No open positions"
+                        : `No ${modeFilter} open positions`}
+                    </p>
                     <p className="text-gray-500 text-xs mt-1">
                       Buy some tokens to see your positions here
                     </p>
@@ -2742,7 +2803,7 @@ export default function PnLTracker() {
                         />
                       )}
 
-                      {displayOpenPositions.map((position) => {
+                      {filteredDisplayOpenPositions.map((position) => {
                         const isSelected = selectedTokens.has(position.id);
                         const buyAmountUSD =
                           position.solAmountBought * solPriceUsd;
@@ -2849,15 +2910,30 @@ export default function PnLTracker() {
                                       handleFastSell(position, e);
                                     }}
                                     disabled={
-                                      isSelling &&
-                                      sellingTokenId === position.id
+                                      (isSelling &&
+                                        sellingTokenId === position.id) ||
+                                      (!position.isSimulation &&
+                                        !(
+                                          position.walletTokenData &&
+                                          position.walletTokenData.uiAmount > 0
+                                        ))
                                     }
-                                    className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                    title="Fast Sell"
+                                    className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 disabled:bg-red-800 disabled:opacity-40 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                    title={
+                                      position.isSimulation
+                                        ? "Close SIM"
+                                        : position.walletTokenData &&
+                                            position.walletTokenData.uiAmount >
+                                              0
+                                          ? "Fast Sell"
+                                          : "Not in wallet — refresh or use /sell"
+                                    }
                                   >
                                     {isSelling &&
                                     sellingTokenId === position.id ? (
                                       <div className="w-2 h-2 border border-white border-t-transparent rounded-full animate-spin"></div>
+                                    ) : position.isSimulation ? (
+                                      "Close SIM"
                                     ) : (
                                       "🔴"
                                     )}

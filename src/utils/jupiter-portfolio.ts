@@ -142,6 +142,42 @@ export async function fetchJupiterPortfolioDirect(
   return fetchPortfolioFromUrl(url, PORTFOLIO_FETCH_TIMEOUT_MS);
 }
 
+/** Resolve a sellable token via Jupiter Portfolio (same source as /sell). */
+export async function resolveWalletTokenToSell(
+  walletAddress: string,
+  mintAddress: string,
+  fallbacks: {
+    cached?: UserToken;
+    rpcFetch?: () => Promise<UserToken[]>;
+  } = {},
+): Promise<UserToken | null> {
+  try {
+    const portfolio = await fetchJupiterPortfolio(walletAddress);
+    const found = mapPortfolioToUserTokens(portfolio).find(
+      (t) => t.mintAddress === mintAddress,
+    );
+    if (found && found.uiAmount > 0) return found;
+  } catch (err) {
+    console.warn("Jupiter portfolio resolve failed, trying fallbacks", err);
+  }
+
+  if (fallbacks.cached && fallbacks.cached.uiAmount > 0) {
+    return fallbacks.cached;
+  }
+
+  if (fallbacks.rpcFetch) {
+    try {
+      const tokens = await fallbacks.rpcFetch();
+      const found = tokens.find((t) => t.mintAddress === mintAddress);
+      if (found && found.uiAmount > 0) return found;
+    } catch (err) {
+      console.warn("RPC token resolve failed", err);
+    }
+  }
+
+  return null;
+}
+
 export async function refreshPortfolioPrices(
   walletAddress: string,
   existingTokens: UserToken[],
