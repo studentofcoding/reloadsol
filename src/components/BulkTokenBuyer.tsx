@@ -74,14 +74,24 @@ export default function BulkTokenBuyer() {
     return "0.1";
   };
 
+  // Chart mint from toast→/buy queue; drained once with initial tokenMints (not in an effect).
+  const pendingChartMintRef = useRef<string | null>(null);
+
   const getInitialTokenMints = () => {
-    const mints = searchParams.get("mints");
-    if (!mints) return "";
-    return mints
+    const fromUrl = (searchParams.get("mints") ?? "")
       .split(",")
       .slice(0, 10)
-      .filter(Boolean)
-      .join("\n");
+      .map((m) => m.trim())
+      .filter(Boolean);
+    const pending = drainBuyPendingMints();
+    if (pending.length > 0) {
+      pendingChartMintRef.current = pending[pending.length - 1]!;
+    }
+    const merged = [...fromUrl];
+    for (const mint of pending) {
+      if (!merged.includes(mint)) merged.push(mint);
+    }
+    return merged.join("\n");
   };
 
   // Form state
@@ -411,23 +421,12 @@ export default function BulkTokenBuyer() {
     };
   }, [handleAddToken, handleSelectToken]);
 
-  // Drain toast → /buy pending mints once (append + open chart on last)
-  const drainedPendingRef = useRef(false);
+  // Open chart for last toast→/buy mint (list already merged in useState init)
   useEffect(() => {
-    if (drainedPendingRef.current) return;
-    const pending = drainBuyPendingMints();
-    drainedPendingRef.current = true;
-    if (pending.length === 0) return;
-    // One setState so multiple pending mints don't overwrite each other
-    setTokenMints((current) => {
-      const existing = parseMintAddresses(current);
-      const merged = [...existing];
-      for (const mint of pending) {
-        if (!merged.includes(mint)) merged.push(mint);
-      }
-      return merged.join("\n");
-    });
-    void handleSelectToken(pending[pending.length - 1]!);
+    const mint = pendingChartMintRef.current;
+    if (!mint) return;
+    pendingChartMintRef.current = null;
+    void handleSelectToken(mint);
   }, [handleSelectToken]);
 
   const effectiveShowResults =
@@ -943,6 +942,80 @@ export default function BulkTokenBuyer() {
 
           {connected && (
             <div className="space-y-8">
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <div className="flex items-center space-x-4 text-xs">
+                    <span
+                      className={`flex items-center space-x-1 ${validMints.length > 0 ? "text-white" : "text-gray-400"}`}
+                    >
+                      <div
+                        className={`w-2 h-2 rounded-full ${validMints.length > 0 ? "bg-white" : "bg-gray-500"}`}
+                      ></div>
+                      <span>Total tokens you'll buy: {validMints.length}/10</span>
+                    </span>
+                    <span className="text-gray-400">
+                      Total parsed: {parsedMints.length}
+                    </span>
+                  </div>
+                  {parsedMints.length > validMints.length && (
+                    <span className="text-xs text-gray-400">
+                      {parsedMints.length - validMints.length} invalid
+                      addresses
+                    </span>
+                  )}
+                </div>
+
+                {validMints.length > 0 &&
+                  (isLoadingMetadata && mergedTokenList.length === 0 ? (
+                    <div className="max-h-[200px] overflow-y-auto">
+                      <TokenSkeleton count={1} variant="token-chips" />
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {validMints.map((mint) => {
+                        const token =
+                          mergedTokenList.find((t) => t.address === mint) ??
+                          null;
+                        const symbol =
+                          token?.symbol || `${mint.slice(0, 4)}...`;
+                        return (
+                          <div
+                            key={mint}
+                            className="flex items-center bg-gray-700 rounded-lg pl-2 pr-1 py-1 text-white"
+                          >
+                            {token?.icon && (
+                              <OptimizedImage
+                                src={token.icon}
+                                alt={symbol}
+                                className="w-5 h-5 mr-1 rounded-full"
+                              />
+                            )}
+                            <span className="mr-1 text-sm">{symbol}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveToken(mint)}
+                              className="p-1 rounded-full hover:bg-gray-600"
+                              title="Remove token"
+                            >
+                              <svg
+                                className="w-3 h-3 text-gray-300"
+                                viewBox="0 0 20 20"
+                                fill="currentColor"
+                              >
+                                <path
+                                  fillRule="evenodd"
+                                  d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                                  clipRule="evenodd"
+                                />
+                              </svg>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                ))}
+              </div>
+              
               <div className="flex justify-between items-center">
                 <p className="text-xs text-gray-400 flex items-center">
                   <svg
@@ -1652,80 +1725,6 @@ export default function BulkTokenBuyer() {
                   className="hidden"
                   disabled={isLoading}
                 />
-
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center">
-                    <div className="flex items-center space-x-4 text-xs">
-                      <span
-                        className={`flex items-center space-x-1 ${validMints.length > 0 ? "text-white" : "text-gray-400"}`}
-                      >
-                        <div
-                          className={`w-2 h-2 rounded-full ${validMints.length > 0 ? "bg-white" : "bg-gray-500"}`}
-                        ></div>
-                        <span>Valid: {validMints.length}/10</span>
-                      </span>
-                      <span className="text-gray-400">
-                        Total parsed: {parsedMints.length}
-                      </span>
-                    </div>
-                    {parsedMints.length > validMints.length && (
-                      <span className="text-xs text-gray-400">
-                        {parsedMints.length - validMints.length} invalid
-                        addresses
-                      </span>
-                    )}
-                  </div>
-
-                  {validMints.length > 0 &&
-                    (isLoadingMetadata && mergedTokenList.length === 0 ? (
-                      <div className="max-h-[200px] overflow-y-auto">
-                        <TokenSkeleton count={1} variant="token-chips" />
-                      </div>
-                    ) : (
-                      <div className="flex flex-wrap gap-2">
-                        {validMints.map((mint) => {
-                          const token =
-                            mergedTokenList.find((t) => t.address === mint) ??
-                            null;
-                          const symbol =
-                            token?.symbol || `${mint.slice(0, 4)}...`;
-                          return (
-                            <div
-                              key={mint}
-                              className="flex items-center bg-gray-700 rounded-lg pl-2 pr-1 py-1 text-white"
-                            >
-                              {token?.icon && (
-                                <OptimizedImage
-                                  src={token.icon}
-                                  alt={symbol}
-                                  className="w-5 h-5 mr-1 rounded-full"
-                                />
-                              )}
-                              <span className="mr-1 text-sm">{symbol}</span>
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveToken(mint)}
-                                className="p-1 rounded-full hover:bg-gray-600"
-                                title="Remove token"
-                              >
-                                <svg
-                                  className="w-3 h-3 text-gray-300"
-                                  viewBox="0 0 20 20"
-                                  fill="currentColor"
-                                >
-                                  <path
-                                    fillRule="evenodd"
-                                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                                    clipRule="evenodd"
-                                  />
-                                </svg>
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))}
-                </div>
               </div>
 
               {/* Settings Grid */}
