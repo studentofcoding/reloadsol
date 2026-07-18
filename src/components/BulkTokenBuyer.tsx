@@ -1015,45 +1015,6 @@ export default function BulkTokenBuyer() {
                     </div>
                 ))}
               </div>
-              
-              <div className="flex justify-between items-center">
-                <p className="text-xs text-gray-400 flex items-center">
-                  <svg
-                    className="w-4 h-4 mr-1"
-                    fill="currentColor"
-                    viewBox="0 0 20 20"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  Click on the{" "}
-                  <svg
-                    className="w-4 h-4 mx-1 text-gray-300"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
-                    />
-                  </svg>{" "}
-                  icon on Trending Tokens to view price charts
-                </p>
-                {selectedToken && (
-                  <button
-                    onClick={() => handleAddToken(selectedToken)}
-                    className="text-xs bg-gray-700 text-white py-1 px-3 rounded-md hover:bg-gray-600 transition-colors"
-                  >
-                    Add Selected Token
-                  </button>
-                )}
-              </div>
 
               {/* Token Chart Section */}
               {selectedToken && (
