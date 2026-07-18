@@ -427,9 +427,9 @@ export default function SwapPageClient() {
         })}
       </div>
       <Script
-        src="https://terminal.jup.ag/main-v4.js"
-        strategy="lazyOnload"
-        data-enable-lazy-load
+        src="https://plugin.jup.ag/plugin-v1.js"
+        strategy="afterInteractive"
+        data-preload
       />
       {isPageReady && (
         <JupiterTerminal

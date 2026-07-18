@@ -4,7 +4,6 @@ import { useEffect, useRef, useCallback } from "react";
 import { useWallet } from "./WalletProvider";
 import { useTradingData } from "./TradingDataProvider";
 import { getSolPriceUSD } from "@/utils/solana";
-import { RPC_ENDPOINTS } from "@/utils/connection";
 
 interface JupiterTerminalProps {
   initialInputMint?: string;
@@ -221,33 +220,34 @@ export default function JupiterTerminal({
         window.Jupiter &&
         window.Jupiter.init
       ) {
-        console.log("Initializing Jupiter Terminal with swap tracking:", {
+        console.log("Initializing Jupiter Plugin with swap tracking:", {
           initialInputMint,
           initialOutputMint,
           displayMode: "integrated",
         });
 
         try {
+          // Plugin v1: Ultra-powered; form defaults go under formProps
           window.Jupiter.init({
             displayMode: "integrated",
             integratedTargetId: "jupiter-terminal-swap",
-            endpoint: RPC_ENDPOINTS.mainnet,
             containerClassName: "rounded-2xl p-6 w-full max-w-2xl mx-auto",
             containerStyles: {
               height: "500px",
-              paddingTop: "50px"
+              paddingTop: "50px",
             },
             enableWalletPassthrough: true,
             passthroughWalletContextState: walletContextState,
-            initialInputMint,
-            initialOutputMint,
-            // Add swap tracking callbacks
+            formProps: {
+              initialInputMint,
+              initialOutputMint,
+            },
             onSuccess: handleSwapSuccess,
             onSwapError: handleSwapError,
           });
           return true;
         } catch (error) {
-          console.error("Failed to initialize Jupiter Terminal:", error);
+          console.error("Failed to initialize Jupiter Plugin:", error);
           return false;
         }
       }
