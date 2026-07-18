@@ -113,6 +113,30 @@ interface OpenPosition {
   simulationType?: string; // Type of simulation
 }
 
+const HOLDINGS_DUST_UI = 0.000001;
+
+/** Real opens require a holdings balance; sims always kept. No local-trust fallback. */
+function pruneOpenPositionsByHoldings(
+  positions: OpenPosition[],
+  walletTokens: UserToken[],
+): OpenPosition[] {
+  return positions.filter((pos) => {
+    if (pos.isSimulation) return true;
+
+    const walletTok = walletTokens.find(
+      (wt) => wt.mintAddress === pos.mintAddress,
+    );
+    if (!walletTok || walletTok.uiAmount <= HOLDINGS_DUST_UI) return false;
+
+    pos.actualWalletBalance = walletTok.uiAmount;
+    pos.walletTokenData = walletTok;
+    if (!pos.symbol) pos.symbol = walletTok.symbol;
+    if (!pos.name) pos.name = walletTok.name;
+    if (!pos.logoURI) pos.logoURI = walletTok.logoURI;
+    return true;
+  });
+}
+
 export default function PnLTracker() {
   const { publicKey, connected, signAllTransactions } = useWallet();
   const walletAddress = useWalletAddress();
@@ -799,46 +823,11 @@ export default function PnLTracker() {
               );
             }
 
-            // Filter and update based on wallet state
-            openPositionsResult = openPositionsResult.filter((pos) => {
-              // Skip wallet verification for simulations - they exist only locally
-              if (pos.isSimulation) {
-                return true;
-              }
-
-              const walletTok = walletTokens.find(
-                (wt) => wt.mintAddress === pos.mintAddress,
-              );
-
-              if (walletTok) {
-                // Token found in wallet - update with real data
-                pos.actualWalletBalance = walletTok.uiAmount;
-                pos.walletTokenData = walletTok;
-                // Update metadata if missing
-                if (!pos.symbol) pos.symbol = walletTok.symbol;
-                if (!pos.name) pos.name = walletTok.name;
-                if (!pos.logoURI) pos.logoURI = walletTok.logoURI;
-
-                // Keep if balance is significant (avoid dust)
-                return walletTok.uiAmount > 0.000001;
-              } else {
-                // Token NOT found in wallet (or filtered out by fetchUserTokens)
-                // TRUST LOCAL TRACKING: If we have a tracked position that hasn't been sold via our app,
-                // we should keep it visible. The user might have just bought it and RPC is lagging,
-                // or fetchUserTokens filtered it out (e.g. low value but bot bought).
-
-                // We trust the cycle.remainingTokenAmount from our local tracking (which initialized actualWalletBalance)
-                if (
-                  pos.actualWalletBalance &&
-                  pos.actualWalletBalance > 0.000001
-                ) {
-                  return true;
-                }
-
-                // Only if both local and wallet are empty do we filter it out
-                return false;
-              }
-            });
+            // Holdings are source of truth for real opens (drop ghost / sold tokens)
+            openPositionsResult = pruneOpenPositionsByHoldings(
+              openPositionsResult,
+              walletTokens,
+            );
 
             // ✅ NEW: Add any tokens found in wallet but NOT in open cycles (e.g. bought by bot or outside app)
             const trackedMints = new Set(
@@ -2437,26 +2426,37 @@ export default function PnLTracker() {
             </div>
           )}
 
-          {/* Refresh PnL Button */}
+          {/* Refresh list: re-fetch holdings + drop tokens not in wallet */}
           {activeTab === "open" && (
             <button
               onClick={() => {
-                calculatePnL();
-                // Also trigger price refresh if we have positions
+                void calculatePnL();
+              }}
+              disabled={isLoading}
+              className="flex items-center space-x-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 text-white text-xs rounded-md transition-colors"
+              title="Refresh list (drop tokens not in wallet)"
+            >
+              <span className={isLoading ? "animate-spin" : ""}>🔄</span>
+              <span>Refresh list</span>
+            </button>
+          )}
+
+          {/* Price-only refresh */}
+          {activeTab === "open" && (
+            <button
+              onClick={() => {
                 if (openPositions.length > 0) {
                   refreshOpenPositionPrices();
                 }
               }}
-              disabled={isLoading || isRefreshingPrices}
+              disabled={isLoading || isRefreshingPrices || openPositions.length === 0}
               className="flex items-center space-x-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 text-white text-xs rounded-md transition-colors"
-              title="Refresh PnL and Prices"
+              title="Refresh open position prices"
             >
               <span
-                className={
-                  isLoading || isRefreshingPrices ? "animate-spin" : ""
-                }
+                className={isRefreshingPrices ? "animate-spin" : ""}
               >
-                🔄
+                💲
               </span>
             </button>
           )}
