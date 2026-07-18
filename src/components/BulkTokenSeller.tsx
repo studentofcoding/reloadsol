@@ -1233,11 +1233,11 @@ export default function BulkTokenSeller() {
   );
   const grossSOL = grossUSD / solPriceUsd; // Convert USD to SOL
   const sellFee = getFeeForOperation("SELL", grossSOL); // 0.5% of SOL received
-  const tokensToClose =
-    selectedTokens.filter((token) => token.sellPercentage >= 100).length +
-    selectedZeroBalanceTokens.length;
-  const closeFee = getFeeForOperation("CLOSE") * tokensToClose; // Fixed fee per account
-  const rentRecovery = tokensToClose * 0.00203928; // Rent recovery
+  // Close fees/rent only for explicit close targets (zero-balance), not 100% sells —
+  // sell no longer auto-closes emptied ATAs (use Close for rent reclaim).
+  const tokensToClose = selectedZeroBalanceTokens.length;
+  const closeFee = getFeeForOperation("CLOSE") * tokensToClose;
+  const rentRecovery = tokensToClose * 0.00203928;
   const estimatedSOL = grossSOL - sellFee - closeFee + rentRecovery;
 
   // Calculate total reload estimation based on showDustOnly filter
@@ -1266,11 +1266,9 @@ export default function BulkTokenSeller() {
     : zeroBalanceTokens.length;
   const totalGrossSOL = totalGrossUSD / solPriceUsd;
   const totalSellFee = getFeeForOperation("SELL", totalGrossSOL);
-  const totalCloseFee =
-    getFeeForOperation("CLOSE") *
-    (tokensForCalculation.length + totalZeroTokens);
-  const totalRentRecovery =
-    (tokensForCalculation.length + totalZeroTokens) * 0.00203928;
+  // Rent reclaim is a separate Close step; estimate sell proceeds only here.
+  const totalCloseFee = getFeeForOperation("CLOSE") * totalZeroTokens;
+  const totalRentRecovery = totalZeroTokens * 0.00203928;
   const totalReloadEstimate =
     totalGrossSOL - totalSellFee - totalCloseFee + totalRentRecovery;
 
@@ -2122,34 +2120,30 @@ export default function BulkTokenSeller() {
                             0,
                           );
 
-                          // Determine if any closure will occur (full sells or zero-balance closes)
-                          const willCloseAny =
-                            selectedTokens.some(
-                              (t) => t.sellAmount >= t.balance,
-                            ) || selectedZeroBalanceTokens.length > 0;
+                          // Close only runs for selected zero-balance accounts (not after 100% sells).
+                          const willCloseZeroBalance =
+                            selectedZeroBalanceTokens.length > 0;
 
                           const tokenText =
                             selectedTokens.length === 1
                               ? "token"
                               : `${selectedTokens.length} tokens`;
 
-                          if (willCloseAny) {
+                          if (willCloseZeroBalance) {
                             return totalSolOutput > 0
-                              ? `Sell & close ${tokenText} for ${totalSolOutput.toFixed(4)} Sol`
-                              : `Sell & close ${tokenText}`;
-                          } else {
-                            if (selectedTokens.length === 1) {
-                              const symbol =
-                                selectedTokens[0].symbol || "token";
-                              return totalSolOutput > 0
-                                ? `Sell ${symbol} for ${totalSolOutput.toFixed(4)} Sol`
-                                : `Sell ${symbol}`;
-                            } else {
-                              return totalSolOutput > 0
-                                ? `Sell ${tokenText} for ${totalSolOutput.toFixed(4)} Sol`
-                                : `Sell ${tokenText}`;
-                            }
+                              ? `Sell & close dust for ${totalSolOutput.toFixed(4)} Sol`
+                              : `Sell & close dust`;
                           }
+                          if (selectedTokens.length === 1) {
+                            const symbol =
+                              selectedTokens[0].symbol || "token";
+                            return totalSolOutput > 0
+                              ? `Sell ${symbol} for ${totalSolOutput.toFixed(4)} Sol`
+                              : `Sell ${symbol}`;
+                          }
+                          return totalSolOutput > 0
+                            ? `Sell ${tokenText} for ${totalSolOutput.toFixed(4)} Sol`
+                            : `Sell ${tokenText}`;
                         })()}
                       </span>
                       <svg

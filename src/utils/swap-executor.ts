@@ -29,6 +29,7 @@ import {
   type ConfirmTransport,
 } from "@/utils/confirm-transport";
 import { confirmSignaturesViaWs } from "@/utils/ws-confirm";
+import { isWalletUserRejection } from "@/utils/wallet-rejection";
 import type { SwapQuote, SwapTransaction } from "@/types";
 
 export type SwapProvider = "raptor" | "jupiter_lite";
@@ -733,7 +734,7 @@ export type SignOneTransaction = (
   tx: VersionedTransaction,
 ) => Promise<VersionedTransaction>;
 
-/** Batch sign with one-by-one fallback when wallet rejects the batch. */
+/** Batch sign with one-by-one fallback when wallet cannot batch-sign. */
 export async function signTransactionsWithFallback(
   transactions: VersionedTransaction[],
   signAllTransactions: (
@@ -746,9 +747,12 @@ export async function signTransactionsWithFallback(
   try {
     return await signAllTransactions(transactions);
   } catch (batchError) {
-    if (!signTransaction) throw batchError;
+    // User cancel must not fall back to token[0] one-by-one prompts.
+    if (isWalletUserRejection(batchError) || !signTransaction) {
+      throw batchError;
+    }
     console.warn(
-      "Batch sign rejected, falling back to one-by-one:",
+      "Batch sign failed, falling back to one-by-one:",
       batchError,
     );
   }

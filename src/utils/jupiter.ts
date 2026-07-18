@@ -1597,13 +1597,13 @@ async function executeManualCloseTransaction(
   )
 }
 
-async function tryJupiterReclaimClose(
+/** Craft reclaim tx only — no wallet prompt. Throws on craft/build failure. */
+async function craftJupiterReclaimTransaction(
   closableTokens: UserToken[],
   userPublicKey: string,
   connection: Connection,
-  signAllTransactions: (transactions: VersionedTransaction[]) => Promise<VersionedTransaction[]>,
   sellData?: { successfulSwapsCount: number; totalSolReceived: number }
-): Promise<string> {
+): Promise<VersionedTransaction> {
   const mints = closableTokens.map((token) => token.mintAddress)
   const craftResponse = await craftReclaimTransaction(userPublicKey, mints)
   const transactionBase64 = extractReclaimTransactionBase64(craftResponse)
@@ -1618,14 +1618,12 @@ async function tryJupiterReclaimClose(
     sellData
   )
 
-  const transaction = await injectInstructionsIntoVersionedTransaction(
+  return injectInstructionsIntoVersionedTransaction(
     connection,
     transactionBase64,
     feeInstructions,
     new PublicKey(userPublicKey)
   )
-
-  return sendSignedCloseTransaction(transaction, connection, signAllTransactions)
 }
 
 function filterClosableTokens(
@@ -1652,6 +1650,13 @@ function filterClosableTokens(
   return { closableTokens, failed }
 }
 
+/** ponytail: never fall back to manual after a wallet prompt — only when craft fails. */
+export function resolveCloseExecutionPlan(
+  craftSucceeded: boolean,
+): 'sign-reclaim' | 'manual' {
+  return craftSucceeded ? 'sign-reclaim' : 'manual'
+}
+
 async function executeCloseForTokens(
   closableTokens: UserToken[],
   userPublicKey: string,
@@ -1663,21 +1668,30 @@ async function executeCloseForTokens(
     throw new Error('No closable token accounts to process')
   }
 
+  // Craft before any wallet prompt; only then fall back to manual (one sign total).
+  let reclaimTx: VersionedTransaction | null = null
   try {
-    const signature = await tryJupiterReclaimClose(
+    reclaimTx = await craftJupiterReclaimTransaction(
       closableTokens,
       userPublicKey,
       connection,
-      signAllTransactions,
       sellData
+    )
+  } catch (craftError) {
+    console.warn(
+      'Jupiter reclaim craft failed, falling back to manual burn+close:',
+      craftError instanceof Error ? craftError.message : craftError
+    )
+  }
+
+  if (resolveCloseExecutionPlan(reclaimTx !== null) === 'sign-reclaim' && reclaimTx) {
+    const signature = await sendSignedCloseTransaction(
+      reclaimTx,
+      connection,
+      signAllTransactions
     )
     console.log(`Successfully reclaimed ${closableTokens.length} token accounts via Jupiter`)
     return { signature, method: 'jupiter-reclaim' }
-  } catch (reclaimError) {
-    console.warn(
-      'Jupiter reclaim close failed, falling back to manual burn+close:',
-      reclaimError instanceof Error ? reclaimError.message : reclaimError
-    )
   }
 
   const signature = await executeManualCloseTransaction(
@@ -1691,8 +1705,7 @@ async function executeCloseForTokens(
   return { signature, method: 'manual' }
 }
 
-// Close token accounts after successful sales with improved error handling
-// Primary path: Jupiter /reclaim/craft; fallback: manual burn + close
+// Close token accounts (close-only / dust). Craft reclaim first; manual only if craft fails.
 async function closeTokenAccounts(
   tokens: UserToken[],
   userPublicKey: string,
@@ -2738,12 +2751,11 @@ export async function executeBulkSellAlt(
       }
     }
 
-    const tokensToCloseFromSwaps = successfulSwaps.filter(token => token.sellPercentage >= 100);
-    const tokensToClose: UserToken[] = [...tokensToCloseFromSwaps];
-
-    if (request.unsellableTokens && request.unsellableTokens.length > 0) {
-      tokensToClose.push(...request.unsellableTokens.filter(token => !token.frozen));
-    }
+    // Close-only / dust via unsellableTokens. Do not auto-close after 100% sells
+    // (that forced a second wallet prompt per sell).
+    const tokensToClose = (request.unsellableTokens ?? []).filter(
+      (token) => !token.frozen,
+    );
 
     if (tokensToClose.length > 0) {
       const closeResults = await closeTokenAccounts(
