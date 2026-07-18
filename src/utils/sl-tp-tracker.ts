@@ -10,7 +10,7 @@ import {
 import { notifySlTpTrigger } from './trading-notifications'
 import { getConnection } from '@/utils/solana'
 import { fetchUserTokens } from '@/utils/jupiter'
-import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
+import { getOpenPositionPrices } from '@/utils/open-position-prices'
 
 export interface SLTPPosition {
     id: string
@@ -516,7 +516,7 @@ export async function addSLTPPosition(params: {
 // Function to get current token prices
 async function getCurrentTokenPrices(tokenAddresses: string[]): Promise<Map<string, number>> {
     try {
-        const prices = await fetchTokenPricesForTracking(tokenAddresses)
+        const prices = await getOpenPositionPrices(tokenAddresses)
 
         const priceMap = new Map<string, number>()
         for (const [address, price] of Object.entries(prices)) {
@@ -689,6 +689,23 @@ async function reconcileClosedPositions(positions: SLTPPosition[]): Promise<{ fi
 }
 
 // Function to execute sell order
+/** Force 100% live close when a strategy is deactivated. */
+export async function forceCloseSLTPPositionForDeactivate(
+  position: SLTPPosition,
+): Promise<boolean> {
+  const price =
+    position.current_price > 0 ? position.current_price : position.entry_price
+  return executeSellOrder(position, {
+    triggered: true,
+    trigger_type: 'stop_loss',
+    sell_percentage: 100,
+    current_price: price,
+    trigger_price: price,
+    gain_percentage: 0,
+    reason: 'strategy_deactivated',
+  })
+}
+
 async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTriggerResult): Promise<boolean> {
     try {
         await initializeTradingConnection()
@@ -885,8 +902,14 @@ async function executeSellOrder(position: SLTPPosition, triggerResult: SLTPTrigg
         })
 
         const isFullClose = updateData.is_active === false
-        const closeReasonMap: Record<string, 'sl' | 'tp1' | 'tp2' | 'tp3'> = {
-            stop_loss: 'sl',
+        const closeReasonMap: Record<
+          string,
+          'sl' | 'tp1' | 'tp2' | 'tp3' | 'strategy_deactivated' | 'sltp_monitor'
+        > = {
+            stop_loss:
+              triggerResult.reason === 'strategy_deactivated'
+                ? 'strategy_deactivated'
+                : 'sl',
             take_profit_1: 'tp1',
             take_profit_2: 'tp2',
             take_profit_3: 'tp3',

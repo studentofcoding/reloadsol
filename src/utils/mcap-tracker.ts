@@ -1349,6 +1349,7 @@ export type McapSimCloseReason =
   | 'label_rugged'
   | 'tracking_stopped'
   | 'take_profit_200'
+  | 'strategy_deactivated'
 
 export type McapSimExitConfig = {
   stopLossPct?: number

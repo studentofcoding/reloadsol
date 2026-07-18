@@ -9,9 +9,23 @@ const memoryFallback = new Map<string, MemoryEntry>()
 let redisClient: Redis | null = null
 let redisDisabled = false
 let redisUnavailableLogged = false
+/** Separate connection for SUBSCRIBE (ioredis requirement). */
+let redisSubClient: Redis | null = null
+let redisSubDisabled = false
 
 function getRedisUrl(): string | undefined {
   return process.env.REDIS_URL?.trim() || undefined
+}
+
+async function ensureConnected(client: Redis): Promise<boolean> {
+  try {
+    if (client.status === 'wait') {
+      await client.connect()
+    }
+    return true
+  } catch {
+    return false
+  }
 }
 
 function getRedisClient(): Redis | null {
@@ -35,6 +49,86 @@ function getRedisClient(): Redis | null {
   }
 
   return redisClient
+}
+
+function getRedisSubClient(): Redis | null {
+  if (redisSubDisabled || redisDisabled || !getRedisUrl()) {
+    return null
+  }
+
+  if (!redisSubClient) {
+    redisSubClient = new Redis(getRedisUrl()!, {
+      maxRetriesPerRequest: null,
+      lazyConnect: true,
+      enableOfflineQueue: false,
+    })
+    redisSubClient.on('error', (error) => {
+      console.warn('[redis-cache] Redis subscriber error:', error.message)
+      redisSubDisabled = true
+    })
+  }
+
+  return redisSubClient
+}
+
+/** Publish JSON on a channel. No-op if Redis unavailable. */
+export async function publishJson(
+  channel: string,
+  payload: unknown,
+): Promise<void> {
+  const client = getRedisClient()
+  if (!client) return
+  try {
+    if (!(await ensureConnected(client))) return
+    await client.publish(channel, JSON.stringify(payload))
+  } catch {
+    // leave command client alone; pub is best-effort
+  }
+}
+
+/**
+ * Subscribe to a JSON channel. Returns unsubscribe fn.
+ * Uses a dedicated Redis connection. No-op unsubscribe if Redis unavailable.
+ */
+export async function subscribeJson(
+  channel: string,
+  handler: (payload: unknown) => void,
+): Promise<() => void> {
+  const client = getRedisSubClient()
+  if (!client) {
+    return () => undefined
+  }
+
+  const onMessage = (ch: string, message: string) => {
+    if (ch !== channel) return
+    try {
+      handler(JSON.parse(message) as unknown)
+    } catch {
+      // ignore bad payloads
+    }
+  }
+
+  try {
+    if (!(await ensureConnected(client))) {
+      return () => undefined
+    }
+    await client.subscribe(channel)
+    client.on('message', onMessage)
+  } catch {
+    redisSubDisabled = true
+    return () => undefined
+  }
+
+  return () => {
+    void (async () => {
+      try {
+        client.off('message', onMessage)
+        await client.unsubscribe(channel)
+      } catch {
+        // ignore
+      }
+    })()
+  }
 }
 
 function memoryGet(key: string): string | null {

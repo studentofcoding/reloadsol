@@ -1510,128 +1510,82 @@ export default function PnLTracker() {
     }
   }, [openPositions, connection, publicKey]);
 
-  // Function to fetch current prices for open positions
-  const refreshOpenPositionPrices = React.useCallback(async () => {
-    if (openPositions.length === 0) return;
-
-    setIsRefreshingPrices(true);
-
-    try {
-      // Mark all positions as loading
-      setOpenPositions((prev) =>
-        prev.map((pos) => ({ ...pos, isLoadingPrice: true })),
-      );
-
-      // Get all mint addresses for open positions
-      const mintAddresses = openPositions.map((pos) => pos.mintAddress);
-
-      // Fetch current prices from Jupiter API
-      // Use the new Jupiter API utility
-      const { getTokenPrices } = await import("@/utils/jupiter-api");
-      const prices = await getTokenPrices(mintAddresses);
-
-      // Update positions with current prices and calculate P&L
+  const applyOpenPrices = React.useCallback(
+    (prices: Record<string, number>, clearLoading = true) => {
       setOpenPositions((prev) => {
         const updatedPositions = prev.map((position) => {
           const currentTokenPriceUsd = prices[position.mintAddress];
-
-          if (currentTokenPriceUsd && currentTokenPriceUsd > 0) {
-            // Use actual buy price if available for accurate P&L calculation
-            if (position.buyPriceUsd && position.buyPriceUsd > 0) {
-              // Accurate calculation using actual token buy price vs current price
-              const pnlPercentage =
-                ((currentTokenPriceUsd - position.buyPriceUsd) /
-                  position.buyPriceUsd) *
-                100;
-
-              // Estimate current USD value based on initial SOL investment and price change
-              const initialUsdValue = position.solAmountBought * solPriceUsd;
-              const priceMultiplier =
-                currentTokenPriceUsd / position.buyPriceUsd;
-              const estimatedCurrentValue = initialUsdValue * priceMultiplier;
-
-              return {
-                ...position,
-                currentUsdValue: estimatedCurrentValue,
-                currentTokenPriceUsd,
-                pnlPercentage,
-                isLoadingPrice: false,
-              };
-            } else {
-              // Fallback calculation for positions without stored buy price
-
-              // Handle untracked positions (solAmountBought === 0)
-              if (position.solAmountBought === 0) {
-                const currentUsdValue =
-                  (position.actualWalletBalance || 0) * currentTokenPriceUsd;
-                return {
-                  ...position,
-                  currentUsdValue,
-                  currentTokenPriceUsd,
-                  pnlPercentage: 0, // No PnL since we don't know buy price
-                  isLoadingPrice: false,
-                };
-              }
-
-              const initialUsdValue = position.solAmountBought * solPriceUsd;
-              const currentSolValue = position.solAmountBought;
-              const currentUsdValue = currentSolValue * solPriceUsd;
-
-              // Rough estimation based on price action
-              const priceMultiplier =
-                currentTokenPriceUsd / (initialUsdValue / currentSolValue);
-              const estimatedCurrentValue =
-                initialUsdValue * Math.max(0.1, priceMultiplier);
-              const pnlPercentage =
-                ((estimatedCurrentValue - initialUsdValue) / initialUsdValue) *
-                100;
-
-              return {
-                ...position,
-                currentUsdValue: estimatedCurrentValue,
-                currentTokenPriceUsd,
-                pnlPercentage,
-                isLoadingPrice: false,
-              };
-            }
+          if (!(currentTokenPriceUsd && currentTokenPriceUsd > 0)) {
+            return clearLoading
+              ? { ...position, isLoadingPrice: false }
+              : position;
           }
+
+          if (position.buyPriceUsd && position.buyPriceUsd > 0) {
+            const pnlPercentage =
+              ((currentTokenPriceUsd - position.buyPriceUsd) /
+                position.buyPriceUsd) *
+              100;
+            const initialUsdValue = position.solAmountBought * solPriceUsd;
+            const priceMultiplier =
+              currentTokenPriceUsd / position.buyPriceUsd;
+            const estimatedCurrentValue = initialUsdValue * priceMultiplier;
+            return {
+              ...position,
+              currentUsdValue: estimatedCurrentValue,
+              currentTokenPriceUsd,
+              pnlPercentage,
+              isLoadingPrice: false,
+            };
+          }
+
+          if (position.solAmountBought === 0) {
+            const currentUsdValue =
+              (position.actualWalletBalance || 0) * currentTokenPriceUsd;
+            return {
+              ...position,
+              currentUsdValue,
+              currentTokenPriceUsd,
+              pnlPercentage: 0,
+              isLoadingPrice: false,
+            };
+          }
+
+          const initialUsdValue = position.solAmountBought * solPriceUsd;
+          const currentSolValue = position.solAmountBought;
+          const priceMultiplier =
+            currentTokenPriceUsd / (initialUsdValue / currentSolValue);
+          const estimatedCurrentValue =
+            initialUsdValue * Math.max(0.1, priceMultiplier);
+          const pnlPercentage =
+            ((estimatedCurrentValue - initialUsdValue) / initialUsdValue) *
+            100;
 
           return {
             ...position,
+            currentUsdValue: estimatedCurrentValue,
+            currentTokenPriceUsd,
+            pnlPercentage,
             isLoadingPrice: false,
           };
         });
 
-        // ✅ ADD: Sort the updated positions (same logic as in calculatePnL)
         updatedPositions.sort((a, b) => {
-          // First, prioritize positions with calculated P&L
           const aHasPnL = a.pnlPercentage !== undefined;
           const bHasPnL = b.pnlPercentage !== undefined;
-
           if (aHasPnL && !bHasPnL) return -1;
           if (!aHasPnL && bHasPnL) return 1;
-
-          // If both have P&L, sort by percentage (highest positive first)
           if (aHasPnL && bHasPnL) {
             return (b.pnlPercentage || 0) - (a.pnlPercentage || 0);
           }
-
-          // If neither has P&L, sort by timestamp (newest first)
           return b.buyTimestamp - a.buyTimestamp;
         });
 
         return updatedPositions;
       });
-    } catch (error) {
-      console.error("Error refreshing open position prices:", error);
-      // Remove loading state on error
-      setOpenPositions((prev) =>
-        prev.map((pos) => ({ ...pos, isLoadingPrice: false })),
-      );
-    } finally {
-      setIsRefreshingPrices(false);
-    }
-  }, [openPositions, solPriceUsd]);
+    },
+    [solPriceUsd],
+  );
 
   const openMintsKey = useMemo(
     () =>
@@ -1642,14 +1596,100 @@ export default function PnLTracker() {
     [openPositions],
   );
 
+  // Server-side GMGN/Jupiter open prices (warms Redis + publishes for SSE)
+  const refreshOpenPositionPrices = React.useCallback(async () => {
+    if (!openMintsKey) return;
+
+    setIsRefreshingPrices(true);
+    try {
+      setOpenPositions((prev) =>
+        prev.map((pos) => ({ ...pos, isLoadingPrice: true })),
+      );
+      const mintAddresses = openMintsKey.split(",").filter(Boolean);
+      const res = await fetch("/api/prices/open/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mints: mintAddresses }),
+      });
+      const data = (await res.json()) as {
+        success?: boolean;
+        prices?: Record<string, number>;
+      };
+      if (!res.ok || !data.success) {
+        throw new Error("open price refresh failed");
+      }
+      applyOpenPrices(data.prices ?? {});
+    } catch (error) {
+      console.error("Error refreshing open position prices:", error);
+      setOpenPositions((prev) =>
+        prev.map((pos) => ({ ...pos, isLoadingPrice: false })),
+      );
+    } finally {
+      setIsRefreshingPrices(false);
+    }
+  }, [openMintsKey, applyOpenPrices]);
+
+  // Redis pub/sub → SSE for near-realtime open-card prices
+  useEffect(() => {
+    if (!openMintsKey) return;
+
+    let es: EventSource | null = null;
+    let pollId: ReturnType<typeof setInterval> | null = null;
+    let closed = false;
+
+    const startPollFallback = () => {
+      if (pollId || closed) return;
+      pollId = setInterval(() => {
+        void refreshOpenPositionPrices();
+      }, 5_000);
+    };
+
+    try {
+      es = new EventSource(
+        `/api/prices/open/stream?mints=${encodeURIComponent(openMintsKey)}`,
+      );
+      es.onmessage = (ev) => {
+        try {
+          const payload = JSON.parse(ev.data) as {
+            mint?: string;
+            price?: number;
+          };
+          if (
+            typeof payload.mint === "string" &&
+            typeof payload.price === "number" &&
+            payload.price > 0
+          ) {
+            applyOpenPrices({ [payload.mint]: payload.price }, false);
+          }
+        } catch {
+          // ignore bad events
+        }
+      };
+      es.onerror = () => {
+        es?.close();
+        es = null;
+        startPollFallback();
+      };
+    } catch {
+      startPollFallback();
+    }
+
+    return () => {
+      closed = true;
+      es?.close();
+      if (pollId) clearInterval(pollId);
+    };
+  }, [openMintsKey, applyOpenPrices, refreshOpenPositionPrices]);
+
   useQuery({
     queryKey: ["pnl-open-prices", openMintsKey, solPriceUsd],
     queryFn: async () => {
       await refreshOpenPositionPrices();
       return true;
     },
-    enabled: openPositions.length > 0 && !isRefreshingPrices,
-    refetchInterval: openPositions.length > 0 ? 30_000 : false,
+    enabled: !!openMintsKey && !isRefreshingPrices,
+    // Safety net if SSE is quiet; primary updates come via Redis pub/sub
+    refetchInterval: openMintsKey ? 15_000 : false,
   });
 
   // Handle token selection for chart display
@@ -2874,6 +2914,16 @@ export default function PnLTracker() {
                                       : "—";
                                   })()}
                                 </span>
+                                {position.buyTimestamp > 0 && (
+                                  <span
+                                    className="text-gray-500 ml-2"
+                                    title={new Date(
+                                      position.buyTimestamp,
+                                    ).toLocaleString()}
+                                  >
+                                    · {formatRelativeTime(position.buyTimestamp)}
+                                  </span>
+                                )}
                               </div>
 
                               {/* SOL amount - Hidden when global toggle is active */}

@@ -28,6 +28,7 @@ export type BotCloseReason =
   | 'max_hold'
   | 'sltp_monitor'
   | 'track_route'
+  | 'strategy_deactivated'
 
 export interface BotSellResult {
   success: boolean

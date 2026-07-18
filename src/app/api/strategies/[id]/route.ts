@@ -15,10 +15,15 @@ import { invalidateGmgnCache } from '@/strategies/load-gmgn'
 import { invalidateSocialCache } from '@/strategies/load-social'
 import { invalidateDlmmStrategyCache } from '@/strategies/load-dlmm'
 import { upsertStrategyDefinition, loadStrategyDefinitionById } from '@/strategies/db'
+import {
+  closeOpenPositionsForStrategy,
+  type CloseOnDeactivateResult,
+} from '@/strategies/close-on-deactivate'
 import { updateAgentConfig } from '@/utils/dlmm/db'
 import { mergeStrategyConfigPatch } from '@/strategies/merge-strategy-config-patch'
 import type {
   ExecutionMode,
+  StrategyDomain,
   TrendingBotStrategyOverride,
   SignalsStrategyOverride,
   McapTrackerStrategyOverride,
@@ -60,6 +65,32 @@ function resolveStrategyBase(id: string) {
   return null
 }
 
+async function closeIfDeactivating(params: {
+  strategyId: string
+  domain: StrategyDomain
+  wasActive: boolean
+  nextActive: boolean | undefined
+}): Promise<CloseOnDeactivateResult | undefined> {
+  if (params.nextActive !== false || !params.wasActive) return undefined
+  try {
+    return await closeOpenPositionsForStrategy({
+      strategyId: params.strategyId,
+      domain: params.domain,
+    })
+  } catch (err) {
+    console.error('[strategies/patch] close-on-deactivate failed:', err)
+    return {
+      closed: 0,
+      failed: [
+        {
+          token: '*',
+          error: err instanceof Error ? err.message : String(err),
+        },
+      ],
+    }
+  }
+}
+
 export async function PATCH(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
@@ -84,6 +115,7 @@ export async function PATCH(
     )
     const nextActive =
       body.is_active ?? existingRow?.is_active ?? null
+    const wasActive = existingRow?.is_active ?? true
 
     if (resolved.domain === 'trending_bot') {
       const merged = mergeStrategyOverride(
@@ -107,7 +139,17 @@ export async function PATCH(
       }
 
       invalidateStrategyCache()
-      return NextResponse.json({ success: true, strategy: merged })
+      const closedPositions = await closeIfDeactivating({
+        strategyId: id,
+        domain: 'trending_bot',
+        wasActive,
+        nextActive: body.is_active,
+      })
+      return NextResponse.json({
+        success: true,
+        strategy: merged,
+        ...(closedPositions ? { closedPositions } : {}),
+      })
     }
 
     if (resolved.domain === 'signals') {
@@ -133,7 +175,17 @@ export async function PATCH(
       }
 
       invalidateSignalsCache()
-      return NextResponse.json({ success: true, strategy: merged })
+      const closedPositions = await closeIfDeactivating({
+        strategyId: id,
+        domain: 'signals',
+        wasActive,
+        nextActive: body.is_active,
+      })
+      return NextResponse.json({
+        success: true,
+        strategy: merged,
+        ...(closedPositions ? { closedPositions } : {}),
+      })
     }
 
     if (resolved.domain === 'mcap_tracker') {
@@ -159,7 +211,17 @@ export async function PATCH(
       }
 
       invalidateMcapTrackerCache()
-      return NextResponse.json({ success: true, strategy: merged })
+      const closedPositions = await closeIfDeactivating({
+        strategyId: id,
+        domain: 'mcap_tracker',
+        wasActive,
+        nextActive: body.is_active,
+      })
+      return NextResponse.json({
+        success: true,
+        strategy: merged,
+        ...(closedPositions ? { closedPositions } : {}),
+      })
     }
 
     if (resolved.domain === 'gmgn') {
@@ -185,7 +247,17 @@ export async function PATCH(
       }
 
       invalidateGmgnCache()
-      return NextResponse.json({ success: true, strategy: merged })
+      const closedPositions = await closeIfDeactivating({
+        strategyId: id,
+        domain: 'gmgn',
+        wasActive,
+        nextActive: body.is_active,
+      })
+      return NextResponse.json({
+        success: true,
+        strategy: merged,
+        ...(closedPositions ? { closedPositions } : {}),
+      })
     }
 
     if (resolved.domain === 'social') {
@@ -211,7 +283,17 @@ export async function PATCH(
       }
 
       invalidateSocialCache()
-      return NextResponse.json({ success: true, strategy: merged })
+      const closedPositions = await closeIfDeactivating({
+        strategyId: id,
+        domain: 'social',
+        wasActive,
+        nextActive: body.is_active,
+      })
+      return NextResponse.json({
+        success: true,
+        strategy: merged,
+        ...(closedPositions ? { closedPositions } : {}),
+      })
     }
 
     const merged = mergeDlmmStrategy(
@@ -257,7 +339,17 @@ export async function PATCH(
     }
 
     invalidateDlmmStrategyCache()
-    return NextResponse.json({ success: true, strategy: merged })
+    const closedPositions = await closeIfDeactivating({
+      strategyId: id,
+      domain: 'dlmm',
+      wasActive,
+      nextActive: body.is_active,
+    })
+    return NextResponse.json({
+      success: true,
+      strategy: merged,
+      ...(closedPositions ? { closedPositions } : {}),
+    })
   } catch (error) {
     return NextResponse.json(
       { success: false, error: error instanceof Error ? error.message : String(error) },

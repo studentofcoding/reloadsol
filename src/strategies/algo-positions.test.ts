@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  mapDlmmPositionToAlgoPosition,
   mapMcapOpenToAlgoPosition,
   mapOutcomeToAlgoPosition,
   mapTrackerRowToAlgoPosition,
+  mapWalletOpenToAlgoPosition,
   type TrackerOpenRow,
 } from '@/strategies/algo-positions'
+import type { DlmmPosition } from '@/types/dlmm'
 import type { StrategyOutcomeRow } from '@/strategies/types'
 
 const names = new Map([['att', 'Aggressive Trending']])
@@ -155,5 +158,87 @@ describe('mapMcapOpenToAlgoPosition', () => {
     expect(pos.entryMcap).toBe(84000)
     expect(pos.entryPriceUsd).toBeNull()
     expect(pos.strategyName).toBe('Enter at first seen')
+  })
+})
+
+describe('mapWalletOpenToAlgoPosition', () => {
+  it('maps signals/gmgn/social open with entry price and domain', () => {
+    const names = new Map([['signals_alpha', 'Signals Alpha']])
+    const pos = mapWalletOpenToAlgoPosition(
+      {
+        mintAddress: 'Mint555',
+        symbol: 'SIG',
+        entryAt: '2026-07-04T00:00:00.000Z',
+        entryPriceUsd: 0.00012,
+      },
+      'signals_alpha',
+      'signals',
+      names,
+    )
+    expect(pos.domain).toBe('signals')
+    expect(pos.status).toBe('open')
+    expect(pos.isSimulated).toBe(true)
+    expect(pos.entryPriceUsd).toBeCloseTo(0.00012)
+    expect(pos.entryAt).toBe('2026-07-04T00:00:00.000Z')
+    expect(pos.strategyName).toBe('Signals Alpha')
+  })
+})
+
+describe('mapDlmmPositionToAlgoPosition', () => {
+  it('maps open dlmm position from created_at and pool name', () => {
+    const p = {
+      id: 'd1',
+      pool_address: 'Pool111',
+      pool_name: 'SOL/USDC',
+      position_pubkey: null,
+      token_x_symbol: 'SOL',
+      token_y_symbol: 'USDC',
+      amount_sol: 1,
+      min_bin_id: null,
+      max_bin_id: null,
+      entry_value_usd: 150,
+      current_value_usd: 160,
+      fees_earned_usd: 1,
+      pnl_pct: 6.6,
+      status: 'open',
+      is_muted: false,
+      oor_since: null,
+      take_profit_pct: 50,
+      stop_loss_pct: -20,
+      oor_timeout_min: 30,
+      last_decision: null,
+      last_decision_reason: null,
+      last_decision_at: null,
+      tx_signature: null,
+      created_at: '2026-07-05T00:00:00.000Z',
+      updated_at: '2026-07-05T00:00:00.000Z',
+      closed_at: null,
+    } as DlmmPosition
+
+    const pos = mapDlmmPositionToAlgoPosition(
+      p,
+      new Map([['dlmm_default', 'DLMM Default']]),
+    )
+    expect(pos).not.toBeNull()
+    expect(pos!.domain).toBe('dlmm')
+    expect(pos!.strategyId).toBe('dlmm_default')
+    expect(pos!.tokenSymbol).toBe('SOL/USDC')
+    expect(pos!.entryPriceUsd).toBe(150)
+    expect(pos!.entryAt).toBe('2026-07-05T00:00:00.000Z')
+    expect(pos!.pnlPct).toBeCloseTo(6.6)
+  })
+
+  it('returns null for closed dlmm rows', () => {
+    const p = {
+      id: 'd2',
+      status: 'closed',
+      pool_name: 'X',
+      token_x_symbol: 'X',
+      token_y_symbol: 'Y',
+      entry_value_usd: 0,
+      pnl_pct: 0,
+      created_at: '2026-07-05T00:00:00.000Z',
+    } as DlmmPosition
+    expect(mapDlmmPositionToAlgoPosition(p, new Map())).toBeNull()
   })
 })

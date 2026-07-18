@@ -10,6 +10,7 @@ import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
+import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import { getSolPriceUSD } from '@/utils/solana'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
@@ -148,7 +149,7 @@ async function closeSimPosition(params: {
   const cycle = computeOpenSimCycle(records, params.mintAddress)
   if (!cycle) return 0
 
-  const prices = await fetchTokenPricesForTracking([params.mintAddress])
+  const prices = await getOpenPositionPrices([params.mintAddress])
   const sellPriceUsd = prices[params.mintAddress] || cycle.weightedBuyPriceUsd
   const solPrice = await getSolPriceUSD()
   const remaining = cycle.remainingTokenAmount
@@ -333,7 +334,7 @@ export async function POST(request: NextRequest) {
       const mintsToPrice = openPositions.map((p) => p.mintAddress)
       const prices =
         mintsToPrice.length > 0
-          ? await fetchTokenPricesForTracking(mintsToPrice)
+          ? await getOpenPositionPrices(mintsToPrice)
           : ({} as Record<string, number>)
 
       for (const pos of openPositions) {

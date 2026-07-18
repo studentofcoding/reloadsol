@@ -145,9 +145,9 @@ export async function getActiveStrategiesWithState(): Promise<ActiveStrategiesRe
     )
   }
 
+  // ponytail: empty active = no trending entries (no silent 'att' force)
   if (finalActiveStrategies.length === 0) {
-    console.warn(`No active strategies found! Falling back to 'att' strategy`)
-    finalActiveStrategies = ['att']
+    console.warn('No active trending strategies — skipping new entries')
   }
 
   const activeConfigs: Record<string, TrendingBotStrategy> = {}
@@ -187,7 +187,7 @@ export async function getActiveStrategiesWithState(): Promise<ActiveStrategiesRe
     }
   }
 
-  if (Object.keys(allocation).length === 0) {
+  if (Object.keys(allocation).length === 0 && finalActiveStrategies.length > 0) {
     const equalShare = 1.0 / finalActiveStrategies.length
     finalActiveStrategies.forEach((strategyId) => {
       allocation[strategyId] = equalShare
@@ -305,15 +305,14 @@ export function getActiveStrategiesSync(): ActiveStrategiesResult {
   if (syncActiveState) {
     return syncActiveState
   }
-  const strategies = Object.keys(syncRegistry).filter((id) =>
+  const ids = Object.keys(syncRegistry).filter((id) =>
     isStrategyActive(id, syncRegistry),
   )
-  const ids = strategies.length ? strategies : ['att']
   const configs: Record<string, TrendingBotStrategy> = {}
   ids.forEach((id) => {
     if (syncRegistry[id]) configs[id] = syncRegistry[id]
   })
-  const equal = 1 / ids.length
+  const equal = ids.length > 0 ? 1 / ids.length : 0
   const allocation = Object.fromEntries(ids.map((id) => [id, equal]))
   const executionModes = Object.fromEntries(
     ids.map((id) => [id, syncRegistry[id]?.execution_mode ?? 'sim_only']),

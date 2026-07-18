@@ -9,12 +9,21 @@ import {
   isSimulatedTrackerPosition,
   resolveTrackerStrategyId,
 } from '@/utils/trading-simulation'
+import { getPositions } from '@/utils/dlmm/db'
+import type { DlmmPosition } from '@/types/dlmm'
 import {
   fetchTradingRecordsForWallet,
   listStrategyOutcomes,
   loadStrategyDefinitionRows,
 } from './db'
 import { readTokenSymbol } from './outcome-features'
+import { getOpenStrategySimPositions } from './open-strategy-sim-positions'
+import {
+  GMGN_SIM_WALLET,
+  MCAP_TRACKER_SIM_WALLET,
+  SIGNALS_SIM_WALLET,
+  SOCIAL_SIM_WALLET,
+} from './sim-wallets'
 import type { StrategyDomain, StrategyOutcomeRow } from './types'
 
 export type AlgoPosition = {
@@ -159,6 +168,65 @@ export function mapMcapOpenToAlgoPosition(
   }
 }
 
+export function mapWalletOpenToAlgoPosition(
+  pos: {
+    mintAddress: string
+    symbol: string
+    entryAt: string | null
+    entryPriceUsd: number
+  },
+  strategyId: string,
+  domain: 'signals' | 'gmgn' | 'social',
+  nameById: Map<string, string>,
+): AlgoPosition {
+  return {
+    id: `${domain}:${strategyId}:${pos.mintAddress}`,
+    strategyId,
+    strategyName: nameById.get(strategyId) ?? strategyId,
+    domain,
+    isSimulated: true,
+    status: 'open',
+    tokenAddress: pos.mintAddress,
+    tokenSymbol: pos.symbol || null,
+    tokenName: null,
+    logoUrl: null,
+    entryPriceUsd:
+      pos.entryPriceUsd > 0 ? pos.entryPriceUsd : null,
+    exitPriceUsd: null,
+    entryMcap: null,
+    exitMcap: null,
+    pnlPct: null,
+    entryAt: pos.entryAt,
+    exitAt: null,
+  }
+}
+
+export function mapDlmmPositionToAlgoPosition(
+  p: DlmmPosition,
+  nameById: Map<string, string>,
+): AlgoPosition | null {
+  if (!['open', 'out_of_range', 'pending'].includes(p.status)) return null
+  return {
+    id: `dlmm:${p.id}`,
+    strategyId: 'dlmm_default',
+    strategyName: nameById.get('dlmm_default') ?? 'dlmm_default',
+    domain: 'dlmm',
+    isSimulated: true,
+    status: 'open',
+    tokenAddress: null,
+    tokenSymbol: p.pool_name || p.token_x_symbol || p.token_y_symbol || null,
+    tokenName: null,
+    logoUrl: null,
+    entryPriceUsd: p.entry_value_usd > 0 ? p.entry_value_usd : null,
+    exitPriceUsd: null,
+    entryMcap: null,
+    exitMcap: null,
+    pnlPct: p.pnl_pct,
+    entryAt: p.created_at,
+    exitAt: null,
+  }
+}
+
 function getTrackerTableName(): string {
   return process.env.NODE_ENV === 'development'
     ? 'trending_token_tracker_dev'
@@ -166,18 +234,23 @@ function getTrackerTableName(): string {
 }
 
 /**
- * All algo strategy positions: open (trending tracker + mcap sim) and
- * closed (strategy_outcomes, newest first).
- * ponytail: signals/dlmm open positions are excluded — no shared open-position
- * helper exists; their closed trades still show via outcomes. Upgrade path:
- * add mappers per domain here.
+ * All algo strategy positions: open (all domains) and closed (strategy_outcomes).
  */
 export async function getAlgoPositions(params?: {
   closedLimit?: number
 }): Promise<AlgoPositionsResult> {
   const closedLimit = params?.closedLimit ?? 100
 
-  const [defRows, outcomes, trackerRows, mcapSimRecords] = await Promise.all([
+  const [
+    defRows,
+    outcomes,
+    trackerRows,
+    mcapSimRecords,
+    signalsRecords,
+    gmgnRecords,
+    socialRecords,
+    dlmmPositions,
+  ] = await Promise.all([
     loadStrategyDefinitionRows(),
     listStrategyOutcomes({ limit: closedLimit }),
     (async (): Promise<TrackerOpenRow[]> => {
@@ -195,9 +268,11 @@ export async function getAlgoPositions(params?: {
         throw error
       }
     })(),
-    fetchTradingRecordsForWallet(
-      process.env.MCAP_TRACKER_SIM_WALLET_ADDRESS || 'mcap-tracker-sim',
-    ),
+    fetchTradingRecordsForWallet(MCAP_TRACKER_SIM_WALLET),
+    fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET),
+    fetchTradingRecordsForWallet(GMGN_SIM_WALLET),
+    fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET),
+    getPositions(),
   ])
 
   const nameById = new Map(defRows.map((d) => [d.id, d.name]))
@@ -208,10 +283,27 @@ export async function getAlgoPositions(params?: {
     if (mapped) open.push(mapped)
   }
   for (const def of defRows) {
-    if (def.domain !== 'mcap_tracker') continue
-    for (const pos of getOpenMcapSimPositions(mcapSimRecords, def.id)) {
-      open.push(mapMcapOpenToAlgoPosition(pos, def.id, nameById))
+    if (def.domain === 'mcap_tracker') {
+      for (const pos of getOpenMcapSimPositions(mcapSimRecords, def.id)) {
+        open.push(mapMcapOpenToAlgoPosition(pos, def.id, nameById))
+      }
+    } else if (def.domain === 'signals') {
+      for (const pos of getOpenStrategySimPositions(signalsRecords, def.id)) {
+        open.push(mapWalletOpenToAlgoPosition(pos, def.id, 'signals', nameById))
+      }
+    } else if (def.domain === 'gmgn') {
+      for (const pos of getOpenStrategySimPositions(gmgnRecords, def.id)) {
+        open.push(mapWalletOpenToAlgoPosition(pos, def.id, 'gmgn', nameById))
+      }
+    } else if (def.domain === 'social') {
+      for (const pos of getOpenStrategySimPositions(socialRecords, def.id)) {
+        open.push(mapWalletOpenToAlgoPosition(pos, def.id, 'social', nameById))
+      }
     }
+  }
+  for (const p of dlmmPositions) {
+    const mapped = mapDlmmPositionToAlgoPosition(p, nameById)
+    if (mapped) open.push(mapped)
   }
   open.sort((a, b) => (b.entryAt ?? '').localeCompare(a.entryAt ?? ''))
 

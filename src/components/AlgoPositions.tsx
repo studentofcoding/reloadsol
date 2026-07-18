@@ -40,6 +40,19 @@ function formatPnl(pnlPct: number | null): {
   return { text: `${pnlPct > 0 ? "+" : ""}${pnlPct.toFixed(1)}%`, className };
 }
 
+function formatOpenRelative(isoOrTs: string): string {
+  const ts = Date.parse(isoOrTs);
+  if (!Number.isFinite(ts)) return "";
+  const diff = Date.now() - ts;
+  const minutes = Math.floor(diff / (1000 * 60));
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${days}d ago`;
+}
+
 function PositionCard({
   position,
   meta,
@@ -122,6 +135,14 @@ function PositionCard({
               </>
             )}
           </>
+        )}
+        {position.entryAt && (
+          <span
+            className="text-gray-500 ml-2"
+            title={new Date(position.entryAt).toLocaleString()}
+          >
+            · {formatOpenRelative(position.entryAt)}
+          </span>
         )}
       </div>
 

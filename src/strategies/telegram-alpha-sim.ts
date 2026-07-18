@@ -1,8 +1,8 @@
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { getSolPriceUSD } from '@/utils/solana'
+import { SIGNALS_SIM_WALLET } from '@/strategies/sim-wallets'
 
-export const SIGNALS_SIM_WALLET =
-  process.env.SIGNALS_SIM_WALLET_ADDRESS || 'signals-strategy-sim'
+export { SIGNALS_SIM_WALLET }
 
 export async function openSignalsSimPosition(params: {
   strategyId: string
