@@ -158,7 +158,6 @@ export default function BulkTokenSeller() {
 
   const autoSelectRanAfterFetchRef = useRef(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [isClosingAccounts, setIsClosingAccounts] = useState<boolean>(false);
   const [sellPointsEarned, setSellPointsEarned] = useState<number | null>(null);
   const [closePointsEarned, setClosePointsEarned] = useState<number | null>(
     null,
