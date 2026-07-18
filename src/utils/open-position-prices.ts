@@ -83,7 +83,7 @@ async function writeAndPublish(
 export async function getOpenPositionPrices(
   mints: string[],
 ): Promise<Record<string, number>> {
-  const unique = [...new Set(mints.filter(Boolean))]
+  const unique = Array.from(new Set(mints.filter(Boolean)))
   if (unique.length === 0) return {}
 
   const out: Record<string, number> = {}

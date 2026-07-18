@@ -50,6 +50,11 @@ import {
 } from "@/utils/axiom";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 import { getGmgnKlineUrl } from "@/utils/gmgn";
+import {
+  ADD_TOKEN_TO_LIST_EVENT,
+  drainBuyPendingMints,
+  type AddTokenToBuyDetail,
+} from "@/utils/add-token-to-buy";
 
 export default function BulkTokenBuyer() {
   const { signAllTransactions, connected } = useWallet();
@@ -389,28 +394,41 @@ export default function BulkTokenBuyer() {
     [searchResults, tokenList, userTokens],
   );
 
-  // Listen for custom event to add token to list
+  // Listen for custom event to add token to list (+ open chart)
   useEffect(() => {
-    const handleAddTokenEvent = (event: CustomEvent) => {
-      if (event.detail && event.detail.tokenAddress) {
-        handleAddToken(event.detail.tokenAddress);
+    const handleAddTokenEvent = (event: Event) => {
+      const detail = (event as CustomEvent<AddTokenToBuyDetail>).detail;
+      if (!detail?.tokenAddress) return;
+      handleAddToken(detail.tokenAddress);
+      if (detail.openChart !== false) {
+        void handleSelectToken(detail.tokenAddress);
       }
     };
 
-    // Add event listener
-    window.addEventListener(
-      "addTokenToList",
-      handleAddTokenEvent as EventListener,
-    );
-
-    // Clean up
+    window.addEventListener(ADD_TOKEN_TO_LIST_EVENT, handleAddTokenEvent);
     return () => {
-      window.removeEventListener(
-        "addTokenToList",
-        handleAddTokenEvent as EventListener,
-      );
+      window.removeEventListener(ADD_TOKEN_TO_LIST_EVENT, handleAddTokenEvent);
     };
-  }, [handleAddToken]);
+  }, [handleAddToken, handleSelectToken]);
+
+  // Drain toast → /buy pending mints once (append + open chart on last)
+  const drainedPendingRef = useRef(false);
+  useEffect(() => {
+    if (drainedPendingRef.current) return;
+    const pending = drainBuyPendingMints();
+    drainedPendingRef.current = true;
+    if (pending.length === 0) return;
+    // One setState so multiple pending mints don't overwrite each other
+    setTokenMints((current) => {
+      const existing = parseMintAddresses(current);
+      const merged = [...existing];
+      for (const mint of pending) {
+        if (!merged.includes(mint)) merged.push(mint);
+      }
+      return merged.join("\n");
+    });
+    void handleSelectToken(pending[pending.length - 1]!);
+  }, [handleSelectToken]);
 
   const effectiveShowResults =
     showResults || (searchTerm.length > 0 && searchResults.length > 0 && !isSearching);

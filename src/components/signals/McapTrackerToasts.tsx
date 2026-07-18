@@ -1,9 +1,13 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import type { McapToast } from "@/types/mcap-toasts";
 import { useFastBuy } from "@/hooks/useFastBuy";
+import {
+  queueBuyMint,
+  requestAddTokenToBuy,
+} from "@/utils/add-token-to-buy";
 
 const TOAST_AUTO_DISMISS_MS = 12_000;
 const SIM_OPEN_AUTO_DISMISS_MS = 20_000;
@@ -57,10 +61,24 @@ type McapTrackerToastsProps = {
 
 export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
   const { fastBuy, buyStates, buyConfig } = useFastBuy();
+  const router = useRouter();
+  const pathname = usePathname();
   const [active, setActive] = useState<ActiveToast[]>([]);
   const seenKeysRef = useRef<Set<string>>(new Set());
   const timersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const pausedRef = useRef<Set<string>>(new Set());
+
+  const handleAddTokenToBuy = useCallback(
+    (address: string) => {
+      const onBuy = pathname === "/buy" || pathname?.startsWith("/buy/");
+      requestAddTokenToBuy(address, { openChart: true });
+      if (!onBuy) {
+        queueBuyMint(address);
+        router.push("/buy");
+      }
+    },
+    [pathname, router],
+  );
 
   const dismiss = useCallback((id: string) => {
     const timer = timersRef.current.get(id);
@@ -179,12 +197,14 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
                         Entry {entryMcapLabel}
                       </span>
                     )}
-                    <Link
-                      href={`/chart/${item.address}`}
+                    <button
+                      type="button"
+                      onClick={() => handleAddTokenToBuy(item.address)}
                       className="text-xs underline opacity-90 hover:opacity-100"
+                      title="Add to buy list and open chart"
                     >
                       {item.symbol}
-                    </Link>
+                    </button>
                   </div>
                 )}
               </div>
