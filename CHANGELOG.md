@@ -8,6 +8,20 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Trading UX (PnL / buy / toasts)
+
+- **PnL Fast Sell**: real positions resolve sellable balance via Jupiter Portfolio (`resolveWalletTokenToSell`); slippage **200** bps / `priorityFee` **30000** (aligned with `/sell`); SIM opens mark-close via `closeSimulationPosition` (no on-chain swap); Fast Sell disabled when mint not in wallet.
+- **All / Real / Sim** filter pills on PnL (open + completed) and Trading History.
+- **Buy chips**: selected mints under Valid/Total parsed (symbol + icon + remove); driven by `validMints` + `mergedTokenList`.
+- **Dev-only** “Search this token” on selected buy header → `/dev/token-search?address=…`.
+- **Toast → buy**: mcap/sim toast token click appends mint to `/buy` list and opens chart (`add-token-to-buy` event + sessionStorage bridge when off `/buy`); no longer links to `/chart/…`.
+- **Open-position prices**: GMGN `tokenInfo` + Redis TTL/pub-sub + SSE (`/api/prices/open/*`) for PnL open cards; Jupiter fallback.
+- **Refresh list** on PnL Open: re-fetch holdings and prune ghost real opens via `pruneOpenPositionsByHoldings` (holdings are source of truth; sims kept).
+
+### Fixed — open-position-prices build
+
+- `Array.from(new Set(...))` instead of Set spread (Next build without `downlevelIteration`).
+
 ### Added — Radar price growth rules
 
 - Track `radar_price_usd` across reappearances; growth vs previous sighting.

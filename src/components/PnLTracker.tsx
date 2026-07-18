@@ -152,6 +152,12 @@ export default function PnLTracker() {
   const solPriceUsd = solPriceQuery.data ?? 145;
   const [activeTab, setActiveTab] = useState<"completed" | "open">("completed");
   const [modeFilter, setModeFilter] = useState<"all" | "real" | "sim">("all");
+  const [showAlgoStrategies, setShowAlgoStrategies] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("pnl-show-algo-strategies") !== "false";
+    }
+    return true;
+  });
   const [isRefreshingPrices, setIsRefreshingPrices] = useState<boolean>(false);
 
   // Fast sell state
@@ -1563,6 +1569,7 @@ export default function PnLTracker() {
             };
           }
 
+          // External / wallet-only opens: no cost basis — keep live price, do not fake 0% PnL
           if (position.solAmountBought === 0) {
             const currentUsdValue =
               (position.actualWalletBalance || 0) * currentTokenPriceUsd;
@@ -1570,7 +1577,7 @@ export default function PnLTracker() {
               ...position,
               currentUsdValue,
               currentTokenPriceUsd,
-              pnlPercentage: 0,
+              pnlPercentage: undefined,
               isLoadingPrice: false,
             };
           }
@@ -2871,6 +2878,14 @@ export default function PnLTracker() {
                                       {position.pnlPercentage > 0 ? "+" : ""}
                                       {position.pnlPercentage.toFixed(1)}%
                                     </span>
+                                  ) : position.currentTokenPriceUsd &&
+                                    position.currentTokenPriceUsd > 0 ? (
+                                    <span
+                                      className="text-xs text-gray-300 font-mono"
+                                      title="Live price (no buy cost basis)"
+                                    >
+                                      ${position.currentTokenPriceUsd.toFixed(6)}
+                                    </span>
                                   ) : (
                                     <span className="text-blue-400 text-xs">
                                       OPEN
@@ -2975,21 +2990,40 @@ export default function PnLTracker() {
                                 </div>
                               </div>
 
-                              {/* Buy Price Display */}
+                              {/* Buy / live price — $0 buy is cost-basis gap, not dead pub/sub */}
                               <div className="text-xs text-gray-400 mb-1">
                                 <span className="text-gray-500">
                                   Buy Price:{" "}
                                 </span>
                                 <span className="text-gray-300">
                                   {(() => {
-                                    const price =
-                                      position.buyPriceUsd ??
-                                      buyAmountUSD / position.solAmountBought;
-                                    return Number.isFinite(price)
+                                    const fromUsd =
+                                      position.buyPriceUsd &&
+                                      position.buyPriceUsd > 0
+                                        ? position.buyPriceUsd
+                                        : null;
+                                    const fromSol =
+                                      !fromUsd &&
+                                      position.solAmountBought > 0 &&
+                                      buyAmountUSD > 0
+                                        ? buyAmountUSD / position.solAmountBought
+                                        : null;
+                                    const price = fromUsd ?? fromSol;
+                                    return price != null && Number.isFinite(price)
                                       ? `$${price.toFixed(6)}`
                                       : "—";
                                   })()}
                                 </span>
+                                {position.currentTokenPriceUsd &&
+                                  position.currentTokenPriceUsd > 0 && (
+                                    <span
+                                      className="text-gray-400 ml-2"
+                                      title="Live mark from open-price feed"
+                                    >
+                                      · Now $
+                                      {position.currentTokenPriceUsd.toFixed(6)}
+                                    </span>
+                                  )}
                                 {position.buyTimestamp > 0 && (
                                   <span
                                     className="text-gray-500 ml-2"
@@ -3136,9 +3170,41 @@ export default function PnLTracker() {
           </div>
         )}
 
-        {/* Algo strategy positions (open + closed) */}
+        {/* Algo strategy positions — toggle unmounts fetch when hidden */}
         <div className="mt-6">
-          <AlgoPositions />
+          {showAlgoStrategies ? (
+            <>
+              <div className="flex justify-end mb-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAlgoStrategies(false);
+                    localStorage.setItem("pnl-show-algo-strategies", "false");
+                  }}
+                  className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-md transition-colors"
+                  title="Hide algo strategy positions"
+                >
+                  Hide algo
+                </button>
+              </div>
+              <AlgoPositions />
+            </>
+          ) : (
+            <div className="flex items-center justify-between bg-gray-900/60 border border-gray-700 rounded-xl px-4 py-3">
+              <span className="text-sm text-gray-400">Algo Strategies</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAlgoStrategies(true);
+                  localStorage.setItem("pnl-show-algo-strategies", "true");
+                }}
+                className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-md transition-colors"
+                title="Show algo strategy positions"
+              >
+                Show algo
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

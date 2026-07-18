@@ -18,9 +18,10 @@ ReloadSOL uses **three execution stacks** for swaps and closes, plus supporting 
 
 | Supporting layer | Role |
 |------------------|------|
-| **Jupiter Portfolio** | Wallet token list + USD values (`useWalletTokens`) |
+| **Jupiter Portfolio** | Wallet token list + USD values (`useWalletTokens`); PnL Fast Sell / Refresh list holdings prune |
 | **`/api/rpc` proxy** | On-chain read/write (balances, send, confirm, manual close) |
-| **GMGN iframe** | Price charts on `/buy`, `/sell`, `/chart/[mint]`, ChartBuyModal (no swap execution) |
+| **GMGN iframe** | Price charts on `/buy`, `/sell`, ChartBuyModal (no swap execution) |
+| **Toast → buy bridge** | `add-token-to-buy` — toast token click appends mint on `/buy` + opens chart (not `/chart`) |
 
 ```mermaid
 flowchart TB
@@ -337,25 +338,31 @@ handleInstantSell
 
 **No fee instructions, no ATA close.**
 
-#### C. PnL Fast Sell — Raptor + auto-close
+#### C. PnL Fast Sell — Portfolio resolve + Raptor (real) / mark-close (SIM)
 
-**File:** `PnLTracker.tsx`
+**File:** `PnLTracker.tsx` · helper `resolveWalletTokenToSell` in `jupiter-portfolio.ts`
 
 ```
-fetchSellQuote (hover) → getSwapQuote (preview only)
 handleFastSell
-  → executeBulkSellAlt({ tokens: [one], sellPercentage: 100 })
-    → Raptor swap (token → SOL)
-    → closeTokenAccounts (100% sell)
-      → Jupiter Reclaim primary → manual SPL fallback
-  → trackSell + trackOperation
+  → if isSimulation:
+      closeSimulationPosition (DB / local mark-close; no on-chain swap)
+  → else:
+      resolveWalletTokenToSell (Jupiter Portfolio → cached walletTokenData → RPC)
+      require uiAmount / balance > 0 (else disable: “Not in wallet…”)
+      executeBulkSellAlt({ sellAmount: balance, slippage: 200, priorityFee: 30000 })
+        → Raptor swap (token → SOL)
+        → closeTokenAccounts (100% sell)
+          → Jupiter Reclaim primary → manual SPL fallback
+      → trackSell + trackOperation
 ```
 
-**Only single-token path that reclaims rent** after sell.
+**Open list:** **Refresh list** re-runs `calculatePnL` with `pruneOpenPositionsByHoldings` — real opens must appear in Jupiter Portfolio (dust filtered); sims kept. All / Real / Sim pills filter open + completed.
+
+**Only single-token real path that reclaims rent** after sell.
 
 | Internal API | External |
 |--------------|----------|
-| Raptor routes + `/api/jupiter/reclaim/craft` + `/api/rpc` | Raptor + Jupiter Ultra reclaim |
+| `/api/jupiter/portfolio` + Raptor + `/api/jupiter/reclaim/craft` + `/api/rpc` | Jupiter Portfolio + Raptor + Jupiter Ultra reclaim |
 
 #### D. `/swap` — Jupiter Terminal
 

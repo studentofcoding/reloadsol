@@ -9,6 +9,9 @@
 ### Bulk Token Buying (`/buy`)
 
 - **Functionality**: Buy up to 10 tokens simultaneously with a single SOL amount split across them.
+- **Selected chips**: Valid mints show under Valid/Total parsed (symbol + icon + fast remove).
+- **Ingress**: Trending / toast token actions can **append** to the existing list and open the in-page chart (`add-token-to-buy`); toast symbol click goes to `/buy`, not `/chart`.
+- **Dev**: “Search this token” (dev wallets) opens `/dev/token-search?address=…`.
 - **Risk Analysis**: Integrated risk checks ([RiskAnalysis.tsx](src/components/RiskAnalysis.tsx)) to evaluate token safety before purchase.
 - **Providers**: Supports multiple DEX aggregators including **Jupiter**, **SolanaTracker**, and **GMGN**.
 - **Key Component**: [BulkTokenBuyer.tsx](src/components/BulkTokenBuyer.tsx)
@@ -30,6 +33,10 @@
 ### PnL Tracker
 
 - **Functionality**: Tracks **Open Positions** (current holdings) and **Completed Trades** (historical).
+- **Filters**: **All / Real / Sim** on open + completed (same pills on Trading History).
+- **Fast Sell**: Real → Jupiter Portfolio balance resolve then Raptor sell; SIM → mark-close only; disabled when not in wallet.
+- **Refresh list**: Re-fetches holdings and drops real opens missing from portfolio (`pruneOpenPositionsByHoldings`).
+- **Open prices**: Shared GMGN + Redis + SSE feed (Jupiter fallback) for open-card marks.
 - **Metrics**: Calculates Realized/Unrealized PnL in SOL and USD.
 - **Integration**: Handles both manual trades and bot operations.
 - **Key Component**: [PnLTracker.tsx](src/components/PnLTracker.tsx)
