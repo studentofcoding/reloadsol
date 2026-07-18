@@ -2,8 +2,13 @@
 
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useCallback, useEffect, useRef, useMemo, useDeferredValue } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useWallet, useConnection } from "../components/WalletProvider";
+import {
+  useWallet,
+  useConnection,
+  useDevWalletAccess,
+} from "../components/WalletProvider";
 import { useRpc } from "@/contexts/RpcContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
@@ -52,6 +57,7 @@ export default function BulkTokenBuyer() {
     useResolvedWalletPublicKey();
   const { connection } = useConnection();
   const { activeRpcUrl } = useRpc();
+  const isDevUser = useDevWalletAccess();
   const { trackOperation } = useTradingData();
   const triggerPostBuyRefresh = usePostBuyRefresh();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
@@ -822,7 +828,7 @@ export default function BulkTokenBuyer() {
       const result = await fetchAxiomTokenInfo(tokenAddress);
       if (result.success && result.data) {
         // Find the token to get its market cap for fee analysis
-        const token = tokenList.find((t) => t.address === tokenAddress);
+        const token = mergedTokenList.find((t) => t.address === tokenAddress);
         const marketCap = token?.mcap || 0;
         const risk = getRiskIndicators(result.data, marketCap);
         setAxiomData((prev) =>
@@ -988,6 +994,14 @@ export default function BulkTokenBuyer() {
                                   className="w-5 h-5 rounded-full"
                                 />
                               )}
+                              {isDevUser && (
+                                <Link
+                                  href={`/dev/token-search?address=${encodeURIComponent(selectedToken)}`}
+                                  className="text-xs text-blue-400 hover:text-blue-300 underline"
+                                >
+                                  Search this token
+                                </Link>
+                              )}
                             </div>
                             <div className="text-right">
                               <div className="text-sm text-gray-400">
@@ -1026,6 +1040,14 @@ export default function BulkTokenBuyer() {
                                   }
                                   className="w-5 h-5 rounded-full"
                                 />
+                              )}
+                              {isDevUser && (
+                                <Link
+                                  href={`/dev/token-search?address=${encodeURIComponent(selectedToken)}`}
+                                  className="text-xs text-blue-400 hover:text-blue-300 underline"
+                                >
+                                  Search this token
+                                </Link>
                               )}
                             </div>
                             <div className="text-right">
@@ -1329,7 +1351,7 @@ export default function BulkTokenBuyer() {
                   >
                     Token to buy (up to 10)
                   </label>
-                  {tokenList.length > 0 && (
+                  {validMints.length > 0 && (
                     <button
                       type="button"
                       onClick={handleClearTokens}
@@ -1512,53 +1534,6 @@ export default function BulkTokenBuyer() {
                     )}
                 </div>
 
-                {/* Token List Display */}
-                {isLoadingMetadata ? (
-                  <div className="max-h-[200px] overflow-y-auto">
-                    <TokenSkeleton count={1} variant="token-chips" />
-                  </div>
-                ) : tokenList.length > 0 ? (
-                  <div className="max-h-[200px] overflow-y-auto">
-                    <div className="flex flex-wrap gap-2">
-                      {tokenList.map((token) => (
-                        <div
-                          key={token.address}
-                          className="flex items-center bg-gray-700 rounded-lg pl-2 pr-1 py-1 text-white"
-                        >
-                          {token.icon && (
-                            <OptimizedImage
-                              src={token.icon}
-                              alt={token.symbol ?? "Token"}
-                              className="w-5 h-5 mr-1 rounded-full"
-                            />
-                          )}
-                          <span className="mr-1 text-sm">{token.name}</span>
-                          <span className="text-xs text-gray-400 mr-1">
-                            ({token.symbol})
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveToken(token.address)}
-                            className="p-1 rounded-full hover:bg-gray-600"
-                          >
-                            <svg
-                              className="w-3 h-3 text-gray-300"
-                              viewBox="0 0 20 20"
-                              fill="currentColor"
-                            >
-                              <path
-                                fillRule="evenodd"
-                                d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-                                clipRule="evenodd"
-                              />
-                            </svg>
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-
                 {/* Risk Analysis Section */}
                 {validMints.length > 0 && (
                   <div className="space-y-3">
@@ -1587,7 +1562,7 @@ export default function BulkTokenBuyer() {
                     {showRiskAnalysis && (
                       <div className="space-y-2">
                         {validMints.map((mint) => {
-                          const tokenInfo = tokenList.find(
+                          const tokenInfo = mergedTokenList.find(
                             (t) => t.address === mint,
                           );
                           const axiomInfo = axiomData.get(mint);
@@ -1660,25 +1635,78 @@ export default function BulkTokenBuyer() {
                   disabled={isLoading}
                 />
 
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center space-x-4 text-xs">
-                    <span
-                      className={`flex items-center space-x-1 ${validMints.length > 0 ? "text-white" : "text-gray-400"}`}
-                    >
-                      <div
-                        className={`w-2 h-2 rounded-full ${validMints.length > 0 ? "bg-white" : "bg-gray-500"}`}
-                      ></div>
-                      <span>Valid: {validMints.length}/10</span>
-                    </span>
-                    <span className="text-gray-400">
-                      Total parsed: {parsedMints.length}
-                    </span>
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center space-x-4 text-xs">
+                      <span
+                        className={`flex items-center space-x-1 ${validMints.length > 0 ? "text-white" : "text-gray-400"}`}
+                      >
+                        <div
+                          className={`w-2 h-2 rounded-full ${validMints.length > 0 ? "bg-white" : "bg-gray-500"}`}
+                        ></div>
+                        <span>Valid: {validMints.length}/10</span>
+                      </span>
+                      <span className="text-gray-400">
+                        Total parsed: {parsedMints.length}
+                      </span>
+                    </div>
+                    {parsedMints.length > validMints.length && (
+                      <span className="text-xs text-gray-400">
+                        {parsedMints.length - validMints.length} invalid
+                        addresses
+                      </span>
+                    )}
                   </div>
-                  {parsedMints.length > validMints.length && (
-                    <span className="text-xs text-gray-400">
-                      {parsedMints.length - validMints.length} invalid addresses
-                    </span>
-                  )}
+
+                  {validMints.length > 0 &&
+                    (isLoadingMetadata && mergedTokenList.length === 0 ? (
+                      <div className="max-h-[200px] overflow-y-auto">
+                        <TokenSkeleton count={1} variant="token-chips" />
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap gap-2">
+                        {validMints.map((mint) => {
+                          const token =
+                            mergedTokenList.find((t) => t.address === mint) ??
+                            null;
+                          const symbol =
+                            token?.symbol || `${mint.slice(0, 4)}...`;
+                          return (
+                            <div
+                              key={mint}
+                              className="flex items-center bg-gray-700 rounded-lg pl-2 pr-1 py-1 text-white"
+                            >
+                              {token?.icon && (
+                                <OptimizedImage
+                                  src={token.icon}
+                                  alt={symbol}
+                                  className="w-5 h-5 mr-1 rounded-full"
+                                />
+                              )}
+                              <span className="mr-1 text-sm">{symbol}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveToken(mint)}
+                                className="p-1 rounded-full hover:bg-gray-600"
+                                title="Remove token"
+                              >
+                                <svg
+                                  className="w-3 h-3 text-gray-300"
+                                  viewBox="0 0 20 20"
+                                  fill="currentColor"
+                                >
+                                  <path
+                                    fillRule="evenodd"
+                                    d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                                    clipRule="evenodd"
+                                  />
+                                </svg>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
                 </div>
               </div>
 
