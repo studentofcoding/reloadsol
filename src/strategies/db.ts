@@ -495,11 +495,12 @@ export async function insertStrategyOutcome(params: {
   })
 
   try {
-    await query(
+    const { rows: inserted } = await query<{ id: string }>(
       `INSERT INTO strategy_outcomes (
          strategy_id, domain, token_address, entry_at, exit_at,
          pnl_pct, status, is_simulated, features
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
       [
         params.strategy_id,
         params.domain,
@@ -512,6 +513,11 @@ export async function insertStrategyOutcome(params: {
         JSON.stringify(features),
       ],
     )
+    const outcomeId = inserted[0]?.id ?? null
+    if (params.token_address && outcomeId) {
+      const { scheduleEpisodeFinalize } = await import('@/strategies/strategy-episodes')
+      scheduleEpisodeFinalize(params.token_address, outcomeId)
+    }
   } catch (error) {
     if (isMissingSchemaError(error)) {
       return
