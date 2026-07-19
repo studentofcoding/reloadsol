@@ -84,24 +84,31 @@ export default function TokenMapBoard({
       </div>
 
       {showGmgn ? (
-        <div className="space-y-2">
-          <div className="w-full h-[300px] rounded-xl border border-gray-700 overflow-hidden bg-black">
-            <GmgnChartEmbed
-              tokenAddress={result.tokenAddress}
-              height="100%"
-              className="w-full h-full"
-              title={`GMGN · ${result.symbol ?? result.tokenAddress.slice(0, 8)}`}
-            />
-          </div>
-          <GmgnTokenStatsGrid tokenAddress={result.tokenAddress} />
+        <div className="w-full h-[300px] rounded-xl border border-gray-700 overflow-hidden bg-black">
+          <GmgnChartEmbed
+            tokenAddress={result.tokenAddress}
+            height="100%"
+            className="w-full h-full"
+            title={`GMGN · ${result.symbol ?? result.tokenAddress.slice(0, 8)}`}
+          />
         </div>
       ) : null}
 
-      <TokenMapStrategyChart
-        tokenAddress={result.tokenAddress}
-        activities={activities}
-        hours={24}
-      />
+      <div className="flex flex-col gap-2 md:flex-row md:items-stretch">
+        <div className="w-full min-w-[7rem] md:w-[10%] md:shrink-0">
+          <GmgnTokenStatsGrid
+            tokenAddress={result.tokenAddress}
+            variant="rail"
+          />
+        </div>
+        <div className="min-w-0 w-full md:w-[90%] md:flex-1">
+          <TokenMapStrategyChart
+            tokenAddress={result.tokenAddress}
+            activities={activities}
+            hours={24}
+          />
+        </div>
+      </div>
 
       <div className="flex gap-3 overflow-x-auto pb-2">
         {TOKEN_MAP_LANES.map((lane) => (

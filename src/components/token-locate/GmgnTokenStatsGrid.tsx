@@ -114,11 +114,29 @@ function tilesFrom(snap: GmgnTokenSnapshot): Tile[] {
   ]
 }
 
+function TileValue({ tile }: { tile: Tile }) {
+  if (tile.key === 'dex' && tile.value.startsWith('Boost')) {
+    return (
+      <>
+        <span className="text-yellow-300">Boost</span>
+        {tile.accent ? (
+          <span className="text-gray-400"> {tile.accent}</span>
+        ) : null}
+      </>
+    )
+  }
+  return <>{tile.value}</>
+}
+
 export default function GmgnTokenStatsGrid({
   tokenAddress,
+  variant = 'rail',
 }: {
   tokenAddress: string
+  variant?: 'row' | 'rail'
 }) {
+  const isRail = variant === 'rail'
+
   const query = useQuery({
     queryKey: ['gmgn-token-snapshot', tokenAddress],
     queryFn: async (): Promise<GmgnTokenSnapshot> => {
@@ -138,11 +156,19 @@ export default function GmgnTokenStatsGrid({
 
   if (query.isLoading) {
     return (
-      <div className="grid grid-cols-3 gap-2">
+      <div
+        className={
+          isRail
+            ? 'grid grid-cols-1 gap-1 max-h-[320px] overflow-y-auto'
+            : 'grid grid-cols-3 gap-2'
+        }
+      >
         {Array.from({ length: 9 }).map((_, i) => (
           <div
             key={i}
-            className="h-16 animate-pulse rounded-lg border border-gray-700 bg-gray-900/80"
+            className={`animate-pulse rounded-lg border border-gray-700 bg-gray-900/80 ${
+              isRail ? 'h-8' : 'h-16'
+            }`}
           />
         ))}
       </div>
@@ -151,8 +177,12 @@ export default function GmgnTokenStatsGrid({
 
   if (query.error || !query.data) {
     return (
-      <p className="rounded-lg border border-gray-700 bg-gray-900/60 px-3 py-2 text-[11px] text-amber-200/80">
-        GMGN token info unavailable
+      <p
+        className={`rounded-lg border border-gray-700 bg-gray-900/60 text-amber-200/80 ${
+          isRail ? 'px-1.5 py-1 text-[9px]' : 'px-3 py-2 text-[11px]'
+        }`}
+      >
+        GMGN info unavailable
         {query.error instanceof Error ? `: ${query.error.message}` : ''}
       </p>
     )
@@ -161,25 +191,32 @@ export default function GmgnTokenStatsGrid({
   const tiles = tilesFrom(query.data)
 
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div
+      className={
+        isRail
+          ? 'grid grid-cols-1 gap-1 max-h-[320px] overflow-y-auto'
+          : 'grid grid-cols-3 gap-2'
+      }
+    >
       {tiles.map((tile) => (
         <div
           key={tile.key}
-          className="rounded-lg border border-gray-700 bg-gray-950/80 px-2.5 py-2"
+          className={`rounded-lg border border-gray-700 bg-gray-950/80 ${
+            isRail ? 'px-1.5 py-1' : 'px-2.5 py-2'
+          }`}
         >
-          <p className={`text-sm font-semibold leading-tight ${tile.valueClass}`}>
-            {tile.key === 'dex' && tile.value.startsWith('Boost') ? (
-              <>
-                <span className="text-yellow-300">Boost</span>
-                {tile.accent ? (
-                  <span className="text-gray-400"> {tile.accent}</span>
-                ) : null}
-              </>
-            ) : (
-              tile.value
-            )}
+          <p
+            className={`font-semibold leading-tight ${tile.valueClass} ${
+              isRail ? 'text-[11px]' : 'text-sm'
+            }`}
+          >
+            <TileValue tile={tile} />
           </p>
-          <p className="mt-1 text-[10px] text-gray-500 underline decoration-dashed decoration-gray-600 underline-offset-2">
+          <p
+            className={`text-gray-500 underline decoration-dashed decoration-gray-600 underline-offset-2 ${
+              isRail ? 'mt-0.5 text-[8px] leading-tight' : 'mt-1 text-[10px]'
+            }`}
+          >
             {tile.label}
           </p>
         </div>
