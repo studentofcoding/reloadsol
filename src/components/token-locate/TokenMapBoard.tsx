@@ -1,6 +1,9 @@
 'use client'
 
+import { useState } from 'react'
+import GmgnChartEmbed from '@/components/signals/shared/GmgnChartEmbed'
 import TokenMapLane from '@/components/token-locate/TokenMapLane'
+import TokenMapStrategyChart from '@/components/token-locate/TokenMapStrategyChart'
 import type { StrategyPresence, TokenLocateResult } from '@/strategies/token-locate'
 import {
   TOKEN_MAP_LANES,
@@ -46,6 +49,7 @@ export default function TokenMapBoard({
 }) {
   const presenceByDomain = groupPresence(result.strategyPresence ?? [])
   const activityByDomain = groupActivity(activities)
+  const [showGmgn, setShowGmgn] = useState(true)
 
   return (
     <div className="space-y-3">
@@ -56,7 +60,16 @@ export default function TokenMapBoard({
           </h2>
           <p className="font-mono text-xs text-gray-500">{result.tokenAddress}</p>
         </div>
-        <div className="flex flex-wrap gap-2 text-xs">
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <label className="inline-flex items-center gap-1.5 text-gray-400 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showGmgn}
+              onChange={(e) => setShowGmgn(e.target.checked)}
+              className="rounded border-gray-600 bg-gray-800"
+            />
+            GMGN chart
+          </label>
           <a href={result.links.chart} className="text-blue-400 hover:underline" target="_blank" rel="noreferrer">
             Chart
           </a>
@@ -68,6 +81,24 @@ export default function TokenMapBoard({
           </a>
         </div>
       </div>
+
+      {showGmgn ? (
+        <div className="w-full h-[300px] rounded-xl border border-gray-700 overflow-hidden bg-black">
+          <GmgnChartEmbed
+            tokenAddress={result.tokenAddress}
+            height="100%"
+            className="w-full h-full"
+            title={`GMGN · ${result.symbol ?? result.tokenAddress.slice(0, 8)}`}
+          />
+        </div>
+      ) : null}
+
+      <TokenMapStrategyChart
+        tokenAddress={result.tokenAddress}
+        activities={activities}
+        hours={24}
+      />
+
       <div className="flex gap-3 overflow-x-auto pb-2">
         {TOKEN_MAP_LANES.map((lane) => (
           <TokenMapLane
