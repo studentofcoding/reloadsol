@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CandlestickSeries,
   ColorType,
@@ -10,6 +10,7 @@ import {
   LineSeries,
   type IChartApi,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type SeriesMarker,
   type Time,
   type UTCTimestamp,
@@ -19,21 +20,22 @@ import type {
   TokenChartPoint,
   TokenOhlcBar,
 } from '@/strategies/token-map-chart'
+import {
+  CHART_TZ,
+  DOMAIN_COLORS,
+  GRAY_CANDLE,
+  GRAY_WICK,
+  formatPriceLabel,
+  meanPairwiseOverlapCorr,
+  outcomeWindows,
+  paintCandles,
+  priceFormatFor,
+} from '@/strategies/token-map-strategy-chart-paint'
 import type {
   TokenMapActivityItem,
   TokenMapActivityKind,
   TokenMapDomain,
 } from '@/strategies/token-map-types'
-
-const DOMAIN_COLORS: Record<TokenMapDomain, string> = {
-  mcap_tracker: '#a78bfa',
-  signals: '#60a5fa',
-  gmgn: '#facc15',
-  trending_bot: '#34d399',
-  dlmm: '#f472b6',
-  social: '#94a3b8',
-  infra: '#64748b',
-}
 
 type ChartPayload = {
   points: TokenChartPoint[]
@@ -43,8 +45,48 @@ type ChartPayload = {
   ohlcSource: string
 }
 
+const TOGGLE_DOMAINS = (
+  Object.keys(DOMAIN_COLORS) as TokenMapDomain[]
+).filter((d) => d !== 'infra')
+
 function toUtc(sec: number): UTCTimestamp {
   return sec as UTCTimestamp
+}
+
+const bangkokTime = new Intl.DateTimeFormat('en-GB', {
+  timeZone: CHART_TZ,
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+const bangkokDateTime = new Intl.DateTimeFormat('en-GB', {
+  timeZone: CHART_TZ,
+  day: '2-digit',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+
+function formatTickMark(time: Time): string {
+  const sec =
+    typeof time === 'number'
+      ? time
+      : typeof time === 'string'
+        ? Math.floor(new Date(time).getTime() / 1000)
+        : Date.UTC(time.year, time.month - 1, time.day) / 1000
+  return bangkokTime.format(new Date(sec * 1000))
+}
+
+function formatCrosshairTime(time: Time): string {
+  const sec =
+    typeof time === 'number'
+      ? time
+      : typeof time === 'string'
+        ? Math.floor(new Date(time).getTime() / 1000)
+        : Date.UTC(time.year, time.month - 1, time.day) / 1000
+  return bangkokDateTime.format(new Date(sec * 1000))
 }
 
 function activityMarker(item: TokenMapActivityItem): SeriesMarker<Time> | null {
@@ -62,7 +104,6 @@ function activityMarker(item: TokenMapActivityItem): SeriesMarker<Time> | null {
     shape = 'arrowDown'
     position = 'aboveBar'
   } else if (item.kind === 'outcome') {
-    // Entry/exit drawn from chart API outcomes; skip collapsed activity duplicate
     return null
   } else if (item.kind === 'gmgn_hot' || item.kind === 'live_boost') {
     shape = 'circle'
@@ -135,22 +176,49 @@ function buildPlaceholderPoints(
   times.sort((a, b) => a - b)
   const min = times[0]!
   const max = times[times.length - 1]!
-  const mid = 1
   return [
-    { t: min - 60, priceUsd: mid },
-    { t: max + 60, priceUsd: mid },
+    { t: min - 60, priceUsd: 1 },
+    { t: max + 60, priceUsd: 1 },
   ]
 }
 
-const KIND_LEGEND: { kind: TokenMapActivityKind | 'outcome_entry'; label: string; hint: string }[] =
-  [
-    { kind: 'sim_open', label: 'Sim open', hint: '↑' },
-    { kind: 'sim_close', label: 'Sim sell', hint: '↓' },
-    { kind: 'outcome', label: 'Outcome', hint: '■' },
-    { kind: 'gmgn_hot', label: 'GMGN hot', hint: '●' },
-    { kind: 'live_boost', label: 'Live boost', hint: '●' },
-    { kind: 'social_event', label: 'Social', hint: '●' },
-  ]
+function buildMarkers(
+  activities: TokenMapActivityItem[],
+  outcomes: TokenChartOutcomeSegment[],
+  enabled: ReadonlySet<TokenMapDomain>,
+): SeriesMarker<Time>[] {
+  const markers: SeriesMarker<Time>[] = []
+  for (const item of activities) {
+    if (!enabled.has(item.domain)) continue
+    const m = activityMarker(item)
+    if (m) markers.push(m)
+  }
+  for (const seg of outcomes) {
+    if (!enabled.has(seg.domain)) continue
+    markers.push(...outcomeMarkers(seg))
+  }
+  markers.sort((a, b) => Number(a.time) - Number(b.time))
+  const seen = new Set<string>()
+  return markers.filter((m) => {
+    const key = `${String(m.time)}:${m.text ?? ''}:${m.shape}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+const KIND_LEGEND: {
+  kind: TokenMapActivityKind | 'outcome_entry'
+  label: string
+  hint: string
+}[] = [
+  { kind: 'sim_open', label: 'Sim open', hint: '↑' },
+  { kind: 'sim_close', label: 'Sim sell', hint: '↓' },
+  { kind: 'outcome', label: 'Outcome', hint: '■' },
+  { kind: 'gmgn_hot', label: 'GMGN hot', hint: '●' },
+  { kind: 'live_boost', label: 'Live boost', hint: '●' },
+  { kind: 'social_event', label: 'Social', hint: '●' },
+]
 
 export default function TokenMapStrategyChart({
   tokenAddress,
@@ -163,14 +231,73 @@ export default function TokenMapStrategyChart({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const mainSeriesRef = useRef<
+    ISeriesApi<'Line'> | ISeriesApi<'Candlestick'> | null
+  >(null)
+  const payloadRef = useRef<ChartPayload | null>(null)
+
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [lastPrice, setLastPrice] = useState<number | null>(null)
+  const [corr, setCorr] = useState<number | null>(null)
+  const [enabledDomains, setEnabledDomains] = useState<Set<TokenMapDomain>>(
+    () => new Set(TOGGLE_DOMAINS),
+  )
+
   const activityKey = useMemo(
     () => activities.map((a) => `${a.id}:${a.occurredAt}:${a.kind}`).join('|'),
     [activities],
   )
 
+  const enabledKey = useMemo(
+    () => TOGGLE_DOMAINS.filter((d) => enabledDomains.has(d)).join(','),
+    [enabledDomains],
+  )
+
+  const applyDomainPaint = useCallback(
+    (payload: ChartPayload, enabled: ReadonlySet<TokenMapDomain>) => {
+      const windows = outcomeWindows(payload.outcomes, enabled)
+      if (candleSeriesRef.current && payload.candles.length > 0) {
+        const painted = paintCandles(payload.candles, windows)
+        candleSeriesRef.current.setData(
+          painted.map((c) => ({
+            time: toUtc(c.time),
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close,
+            color: c.color,
+            wickColor: c.wickColor,
+            borderColor: c.borderColor,
+          })),
+        )
+      }
+      const markers = buildMarkers(activities, payload.outcomes, enabled)
+      if (mainSeriesRef.current) {
+        markersRef.current?.detach()
+        markersRef.current =
+          markers.length > 0
+            ? createSeriesMarkers(mainSeriesRef.current, markers)
+            : null
+      }
+      setCorr(meanPairwiseOverlapCorr(payload.outcomes, enabled))
+    },
+    [activities],
+  )
+
+  const toggleDomain = (domain: TokenMapDomain) => {
+    setEnabledDomains((prev) => {
+      const next = new Set(prev)
+      if (next.has(domain)) next.delete(domain)
+      else next.add(domain)
+      return next
+    })
+  }
+
+  // Fetch + build chart when token/hours/activities change
   useEffect(() => {
     let cancelled = false
     const el = containerRef.current
@@ -208,8 +335,21 @@ export default function TokenMapStrategyChart({
       }
       if (cancelled || !containerRef.current) return
 
+      payloadRef.current = payload
       chartRef.current?.remove()
       chartRef.current = null
+      candleSeriesRef.current = null
+      mainSeriesRef.current = null
+      markersRef.current = null
+
+      const lastClose =
+        payload.candles.length > 0
+          ? payload.candles[payload.candles.length - 1]!.close
+          : payload.points.length > 0
+            ? payload.points[payload.points.length - 1]!.priceUsd
+            : null
+      setLastPrice(lastClose)
+      const pf = priceFormatFor(lastClose ?? 0)
 
       const chart = createChart(containerRef.current, {
         height: 260,
@@ -217,12 +357,21 @@ export default function TokenMapStrategyChart({
           background: { type: ColorType.Solid, color: '#111827' },
           textColor: '#9ca3af',
         },
+        localization: {
+          locale: 'en-GB',
+          timeFormatter: formatCrosshairTime,
+          priceFormatter: (p: number) => formatPriceLabel(p),
+        },
         grid: {
           vertLines: { color: '#1f2937' },
           horzLines: { color: '#1f2937' },
         },
         rightPriceScale: { borderColor: '#374151' },
-        timeScale: { borderColor: '#374151', timeVisible: true },
+        timeScale: {
+          borderColor: '#374151',
+          timeVisible: true,
+          tickMarkFormatter: formatTickMark,
+        },
       })
       chartRef.current = chart
 
@@ -231,22 +380,17 @@ export default function TokenMapStrategyChart({
       let linePoints = payload.points
 
       if (useCandles) {
-        mainSeries = chart.addSeries(CandlestickSeries, {
-          upColor: '#34d399',
-          downColor: '#f87171',
+        const candleSeries = chart.addSeries(CandlestickSeries, {
+          upColor: GRAY_CANDLE,
+          downColor: GRAY_CANDLE,
           borderVisible: false,
-          wickUpColor: '#34d399',
-          wickDownColor: '#f87171',
+          wickUpColor: GRAY_WICK,
+          wickDownColor: GRAY_WICK,
+          priceFormat: pf,
         })
-        mainSeries.setData(
-          payload.candles.map((c) => ({
-            time: toUtc(c.time),
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-          })),
-        )
+        candleSeriesRef.current = candleSeries
+        mainSeries = candleSeries
+
         const vol = chart.addSeries(HistogramSeries, {
           priceFormat: { type: 'volume' },
           priceScaleId: 'vol',
@@ -260,12 +404,12 @@ export default function TokenMapStrategyChart({
             .map((c) => ({
               time: toUtc(c.time),
               value: c.volume!,
-              color: c.close >= c.open ? '#34d39955' : '#f8717155',
+              color: '#4b556355',
             })),
         )
         setNote(
           payload.ohlcSource && payload.ohlcSource !== 'none'
-            ? `OHLC: ${payload.ohlcSource}`
+            ? `OHLC: ${payload.ohlcSource} · ${CHART_TZ}`
             : null,
         )
       } else {
@@ -283,6 +427,7 @@ export default function TokenMapStrategyChart({
           color: '#60a5fa',
           lineWidth: 2,
           priceLineVisible: false,
+          priceFormat: pf,
         })
         if (linePoints.length > 0) {
           mainSeries.setData(
@@ -294,29 +439,8 @@ export default function TokenMapStrategyChart({
         }
       }
 
-      const markers: SeriesMarker<Time>[] = []
-      for (const item of activities) {
-        const m = activityMarker(item)
-        if (m) markers.push(m)
-      }
-      for (const seg of payload.outcomes) {
-        // Prefer dedicated entry/exit markers over the collapsed activity outcome point
-        markers.push(...outcomeMarkers(seg))
-      }
-      markers.sort((a, b) => Number(a.time) - Number(b.time))
-
-      // Deduplicate identical time+text
-      const seen = new Set<string>()
-      const unique = markers.filter((m) => {
-        const key = `${String(m.time)}:${m.text ?? ''}:${m.shape}`
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-
-      if (unique.length > 0) {
-        createSeriesMarkers(mainSeries, unique)
-      }
+      mainSeriesRef.current = mainSeries
+      applyDomainPaint(payload, enabledDomains)
 
       chart.timeScale().fitContent()
       setLoading(false)
@@ -336,18 +460,42 @@ export default function TokenMapStrategyChart({
     return () => {
       cancelled = true
       window.removeEventListener('resize', onResize)
+      markersRef.current?.detach()
+      markersRef.current = null
       chartRef.current?.remove()
       chartRef.current = null
+      candleSeriesRef.current = null
+      mainSeriesRef.current = null
     }
-    // activityKey stands in for activities content without remounting on array identity
-  }, [tokenAddress, hours, activityKey, activities])
+    // enabledDomains applied in separate effect after mount; initial paint uses current set
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch only on token/hours/activities
+  }, [tokenAddress, hours, activityKey, activities, applyDomainPaint])
+
+  // Re-paint candles/markers when domain toggles change (no refetch)
+  useEffect(() => {
+    const payload = payloadRef.current
+    if (!payload || !mainSeriesRef.current) return
+    applyDomainPaint(payload, enabledDomains)
+  }, [enabledKey, enabledDomains, applyDomainPaint])
 
   return (
     <div className="rounded-xl border border-gray-700 bg-gray-900/60 overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
-        <p className="text-xs font-medium text-gray-300">
-          Strategy correlation
-        </p>
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-gray-800">
+        <div className="flex items-center gap-2 min-w-0">
+          <p className="text-xs font-medium text-gray-300 shrink-0">
+            Strategy correlation
+          </p>
+          {lastPrice != null ? (
+            <span className="text-[10px] text-gray-400 truncate">
+              last {formatPriceLabel(lastPrice)}
+            </span>
+          ) : null}
+          {corr != null ? (
+            <span className="text-[10px] text-emerald-300/90 shrink-0">
+              corr: {corr.toFixed(2)}
+            </span>
+          ) : null}
+        </div>
         {loading ? (
           <span className="text-[10px] text-gray-500">Loading…</span>
         ) : null}
@@ -369,17 +517,26 @@ export default function TokenMapStrategyChart({
           </span>
         ))}
         <span className="text-gray-600">|</span>
-        {(Object.keys(DOMAIN_COLORS) as TokenMapDomain[])
-          .filter((d) => d !== 'infra')
-          .map((d) => (
-            <span key={d} className="inline-flex items-center gap-1">
+        {TOGGLE_DOMAINS.map((d) => {
+          const on = enabledDomains.has(d)
+          return (
+            <button
+              key={d}
+              type="button"
+              onClick={() => toggleDomain(d)}
+              className={`inline-flex items-center gap-1 rounded px-1 py-0.5 transition-opacity ${
+                on ? 'opacity-100' : 'opacity-35'
+              }`}
+              title={on ? `Hide ${d}` : `Show ${d}`}
+            >
               <span
                 className="inline-block h-2 w-2 rounded-full"
                 style={{ background: DOMAIN_COLORS[d] }}
               />
               {d.replace('_', ' ')}
-            </span>
-          ))}
+            </button>
+          )
+        })}
       </div>
     </div>
   )
