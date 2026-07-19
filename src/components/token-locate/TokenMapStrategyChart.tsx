@@ -21,6 +21,12 @@ import type {
   TokenOhlcBar,
 } from '@/strategies/token-map-chart'
 import {
+  CLOSE_MARKER,
+  OPEN_MARKER,
+  buildTidiedMarkers,
+  candleIntervalSec,
+} from '@/strategies/token-map-chart-markers'
+import {
   CHART_TZ,
   DOMAIN_COLORS,
   GRAY_CANDLE,
@@ -48,9 +54,6 @@ type ChartPayload = {
 const TOGGLE_DOMAINS = (
   Object.keys(DOMAIN_COLORS) as TokenMapDomain[]
 ).filter((d) => d !== 'infra')
-
-const OPEN_MARKER = '#34d399'
-const CLOSE_MARKER = '#f87171'
 
 function toUtc(sec: number): UTCTimestamp {
   return sec as UTCTimestamp
@@ -92,74 +95,6 @@ function formatCrosshairTime(time: Time): string {
   return bangkokDateTime.format(new Date(sec * 1000))
 }
 
-function activityMarker(item: TokenMapActivityItem): SeriesMarker<Time> | null {
-  const ms = new Date(item.occurredAt).getTime()
-  if (!Number.isFinite(ms)) return null
-  const time = toUtc(Math.floor(ms / 1000))
-
-  let shape: SeriesMarker<Time>['shape'] = 'circle'
-  let position: SeriesMarker<Time>['position'] = 'inBar'
-  let color = DOMAIN_COLORS[item.domain] ?? '#94a3b8'
-  if (item.kind === 'sim_open') {
-    shape = 'arrowUp'
-    position = 'belowBar'
-    color = OPEN_MARKER
-  } else if (item.kind === 'sim_close') {
-    shape = 'arrowDown'
-    position = 'aboveBar'
-    color = CLOSE_MARKER
-  } else if (item.kind === 'outcome') {
-    return null
-  } else if (item.kind === 'gmgn_hot' || item.kind === 'live_boost') {
-    shape = 'circle'
-    position = 'aboveBar'
-  }
-
-  return {
-    time,
-    position,
-    shape,
-    color,
-    size: 1.25,
-    text: item.title.slice(0, 28),
-  }
-}
-
-function outcomeMarkers(seg: TokenChartOutcomeSegment): SeriesMarker<Time>[] {
-  const out: SeriesMarker<Time>[] = []
-  if (seg.entryAt) {
-    const t = Math.floor(new Date(seg.entryAt).getTime() / 1000)
-    if (Number.isFinite(t)) {
-      out.push({
-        time: toUtc(t),
-        position: 'belowBar',
-        shape: 'arrowUp',
-        color: OPEN_MARKER,
-        size: 1,
-        text: `in ${seg.strategyId.slice(0, 16)}`,
-      })
-    }
-  }
-  if (seg.exitAt) {
-    const t = Math.floor(new Date(seg.exitAt).getTime() / 1000)
-    if (Number.isFinite(t)) {
-      const lost = (seg.status ?? '').toLowerCase() === 'lost'
-      out.push({
-        time: toUtc(t),
-        position: 'aboveBar',
-        shape: lost ? 'arrowDown' : 'square',
-        color: CLOSE_MARKER,
-        size: 1.1,
-        text:
-          seg.pnlPct != null
-            ? `${seg.pnlPct.toFixed(1)}%`
-            : seg.status ?? 'out',
-      })
-    }
-  }
-  return out
-}
-
 function buildPlaceholderPoints(
   activities: TokenMapActivityItem[],
   outcomes: TokenChartOutcomeSegment[],
@@ -186,42 +121,37 @@ function buildPlaceholderPoints(
   ]
 }
 
-function buildMarkers(
+function toSeriesMarkers(
   activities: TokenMapActivityItem[],
   outcomes: TokenChartOutcomeSegment[],
   enabled: ReadonlySet<TokenMapDomain>,
+  intervalSec: number,
 ): SeriesMarker<Time>[] {
-  const markers: SeriesMarker<Time>[] = []
-  for (const item of activities) {
-    if (!enabled.has(item.domain)) continue
-    const m = activityMarker(item)
-    if (m) markers.push(m)
-  }
-  for (const seg of outcomes) {
-    if (!enabled.has(seg.domain)) continue
-    markers.push(...outcomeMarkers(seg))
-  }
-  markers.sort((a, b) => Number(a.time) - Number(b.time))
-  const seen = new Set<string>()
-  return markers.filter((m) => {
-    const key = `${String(m.time)}:${m.text ?? ''}:${m.shape}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  return buildTidiedMarkers({
+    activities,
+    outcomes,
+    enabled,
+    intervalSec,
+  }).map((m) => ({
+    time: toUtc(m.time),
+    position: m.position,
+    shape: m.shape,
+    color: m.color,
+    size: m.size,
+    ...(m.text ? { text: m.text } : {}),
+  }))
 }
 
 const KIND_LEGEND: {
-  kind: TokenMapActivityKind | 'outcome_entry' | 'open' | 'close'
+  kind: TokenMapActivityKind | 'outcome_entry' | 'open' | 'close' | 'cluster'
   label: string
   hint: string
   color?: string
 }[] = [
   { kind: 'open', label: 'Open', hint: '↑', color: OPEN_MARKER },
   { kind: 'close', label: 'Close', hint: '↓', color: CLOSE_MARKER },
-  { kind: 'gmgn_hot', label: 'GMGN hot', hint: '●' },
-  { kind: 'live_boost', label: 'Live boost', hint: '●' },
-  { kind: 'social_event', label: 'Social', hint: '●' },
+  { kind: 'gmgn_hot', label: 'Social/GMGN dots', hint: '●' },
+  { kind: 'cluster', label: 'clustered', hint: '×N' },
 ]
 
 export default function TokenMapStrategyChart({
@@ -280,7 +210,13 @@ export default function TokenMapStrategyChart({
           })),
         )
       }
-      const markers = buildMarkers(activities, payload.outcomes, enabled)
+      const intervalSec = candleIntervalSec(payload.candles)
+      const markers = toSeriesMarkers(
+        activities,
+        payload.outcomes,
+        enabled,
+        intervalSec,
+      )
       if (mainSeriesRef.current) {
         markersRef.current?.detach()
         markersRef.current =
