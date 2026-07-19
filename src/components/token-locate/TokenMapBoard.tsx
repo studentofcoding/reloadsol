@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import GmgnChartEmbed from '@/components/signals/shared/GmgnChartEmbed'
+import GmgnTokenStatsGrid from '@/components/token-locate/GmgnTokenStatsGrid'
 import TokenMapLane from '@/components/token-locate/TokenMapLane'
 import TokenMapStrategyChart from '@/components/token-locate/TokenMapStrategyChart'
 import type { StrategyPresence, TokenLocateResult } from '@/strategies/token-locate'
@@ -83,13 +84,16 @@ export default function TokenMapBoard({
       </div>
 
       {showGmgn ? (
-        <div className="w-full h-[300px] rounded-xl border border-gray-700 overflow-hidden bg-black">
-          <GmgnChartEmbed
-            tokenAddress={result.tokenAddress}
-            height="100%"
-            className="w-full h-full"
-            title={`GMGN · ${result.symbol ?? result.tokenAddress.slice(0, 8)}`}
-          />
+        <div className="space-y-2">
+          <div className="w-full h-[300px] rounded-xl border border-gray-700 overflow-hidden bg-black">
+            <GmgnChartEmbed
+              tokenAddress={result.tokenAddress}
+              height="100%"
+              className="w-full h-full"
+              title={`GMGN · ${result.symbol ?? result.tokenAddress.slice(0, 8)}`}
+            />
+          </div>
+          <GmgnTokenStatsGrid tokenAddress={result.tokenAddress} />
         </div>
       ) : null}
 

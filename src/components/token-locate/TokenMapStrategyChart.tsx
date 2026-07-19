@@ -49,6 +49,9 @@ const TOGGLE_DOMAINS = (
   Object.keys(DOMAIN_COLORS) as TokenMapDomain[]
 ).filter((d) => d !== 'infra')
 
+const OPEN_MARKER = '#34d399'
+const CLOSE_MARKER = '#f87171'
+
 function toUtc(sec: number): UTCTimestamp {
   return sec as UTCTimestamp
 }
@@ -93,16 +96,18 @@ function activityMarker(item: TokenMapActivityItem): SeriesMarker<Time> | null {
   const ms = new Date(item.occurredAt).getTime()
   if (!Number.isFinite(ms)) return null
   const time = toUtc(Math.floor(ms / 1000))
-  const color = DOMAIN_COLORS[item.domain] ?? '#94a3b8'
 
   let shape: SeriesMarker<Time>['shape'] = 'circle'
   let position: SeriesMarker<Time>['position'] = 'inBar'
+  let color = DOMAIN_COLORS[item.domain] ?? '#94a3b8'
   if (item.kind === 'sim_open') {
     shape = 'arrowUp'
     position = 'belowBar'
+    color = OPEN_MARKER
   } else if (item.kind === 'sim_close') {
     shape = 'arrowDown'
     position = 'aboveBar'
+    color = CLOSE_MARKER
   } else if (item.kind === 'outcome') {
     return null
   } else if (item.kind === 'gmgn_hot' || item.kind === 'live_boost') {
@@ -121,7 +126,6 @@ function activityMarker(item: TokenMapActivityItem): SeriesMarker<Time> | null {
 }
 
 function outcomeMarkers(seg: TokenChartOutcomeSegment): SeriesMarker<Time>[] {
-  const color = DOMAIN_COLORS[seg.domain] ?? '#a78bfa'
   const out: SeriesMarker<Time>[] = []
   if (seg.entryAt) {
     const t = Math.floor(new Date(seg.entryAt).getTime() / 1000)
@@ -130,7 +134,7 @@ function outcomeMarkers(seg: TokenChartOutcomeSegment): SeriesMarker<Time>[] {
         time: toUtc(t),
         position: 'belowBar',
         shape: 'arrowUp',
-        color,
+        color: OPEN_MARKER,
         size: 1,
         text: `in ${seg.strategyId.slice(0, 16)}`,
       })
@@ -144,7 +148,7 @@ function outcomeMarkers(seg: TokenChartOutcomeSegment): SeriesMarker<Time>[] {
         time: toUtc(t),
         position: 'aboveBar',
         shape: lost ? 'arrowDown' : 'square',
-        color: lost ? '#f87171' : color,
+        color: CLOSE_MARKER,
         size: 1.1,
         text:
           seg.pnlPct != null
@@ -208,13 +212,13 @@ function buildMarkers(
 }
 
 const KIND_LEGEND: {
-  kind: TokenMapActivityKind | 'outcome_entry'
+  kind: TokenMapActivityKind | 'outcome_entry' | 'open' | 'close'
   label: string
   hint: string
+  color?: string
 }[] = [
-  { kind: 'sim_open', label: 'Sim open', hint: '↑' },
-  { kind: 'sim_close', label: 'Sim sell', hint: '↓' },
-  { kind: 'outcome', label: 'Outcome', hint: '■' },
+  { kind: 'open', label: 'Open', hint: '↑', color: OPEN_MARKER },
+  { kind: 'close', label: 'Close', hint: '↓', color: CLOSE_MARKER },
   { kind: 'gmgn_hot', label: 'GMGN hot', hint: '●' },
   { kind: 'live_boost', label: 'Live boost', hint: '●' },
   { kind: 'social_event', label: 'Social', hint: '●' },
@@ -241,6 +245,7 @@ export default function TokenMapStrategyChart({
   const [error, setError] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [refreshKey, setRefreshKey] = useState(0)
   const [lastPrice, setLastPrice] = useState<number | null>(null)
   const [corr, setCorr] = useState<number | null>(null)
   const [enabledDomains, setEnabledDomains] = useState<Set<TokenMapDomain>>(
@@ -468,8 +473,8 @@ export default function TokenMapStrategyChart({
       mainSeriesRef.current = null
     }
     // enabledDomains applied in separate effect after mount; initial paint uses current set
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch only on token/hours/activities
-  }, [tokenAddress, hours, activityKey, activities, applyDomainPaint])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refetch on token/hours/activities/refresh
+  }, [tokenAddress, hours, activityKey, activities, applyDomainPaint, refreshKey])
 
   // Re-paint candles/markers when domain toggles change (no refetch)
   useEffect(() => {
@@ -496,9 +501,21 @@ export default function TokenMapStrategyChart({
             </span>
           ) : null}
         </div>
-        {loading ? (
-          <span className="text-[10px] text-gray-500">Loading…</span>
-        ) : null}
+        <div className="flex items-center gap-2 shrink-0">
+          {loading ? (
+            <span className="text-[10px] text-gray-500">
+              {refreshKey > 0 ? 'Refreshing…' : 'Loading…'}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => setRefreshKey((k) => k + 1)}
+            className="rounded border border-gray-600 px-2 py-0.5 text-[10px] text-gray-300 hover:bg-gray-800 disabled:opacity-40"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
       {error ? (
         <p className="px-3 py-4 text-xs text-red-300">{error}</p>
@@ -512,8 +529,11 @@ export default function TokenMapStrategyChart({
       ) : null}
       <div className="flex flex-wrap gap-x-3 gap-y-1 px-3 py-2 border-t border-gray-800 text-[10px] text-gray-400">
         {KIND_LEGEND.map((row) => (
-          <span key={row.kind}>
-            <span className="text-gray-300">{row.hint}</span> {row.label}
+          <span key={row.kind} className="inline-flex items-center gap-1">
+            <span style={row.color ? { color: row.color } : undefined}>
+              {row.hint}
+            </span>{' '}
+            {row.label}
           </span>
         ))}
         <span className="text-gray-600">|</span>
