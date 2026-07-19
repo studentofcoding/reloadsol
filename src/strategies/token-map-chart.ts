@@ -61,17 +61,85 @@ function toUnixSec(iso: string): number | null {
   return Math.floor(ms / 1000)
 }
 
-/**
- * OHLC adapter hook — no candle ingest in-repo yet (GMGN is iframe-only).
- * When a source is wired, return bars and set ohlcSource accordingly.
- */
-export async function fetchTokenOhlc(_params: {
+const ST_CHART_BASE = 'https://data.solanatracker.io/chart'
+
+function ohlcIntervalForHours(hours: number): string {
+  if (hours <= 6) return '1m'
+  if (hours <= 24) return '5m'
+  return '15m'
+}
+
+function num(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
+  return null
+}
+
+function mapStBars(raw: unknown): TokenOhlcBar[] {
+  if (!Array.isArray(raw)) return []
+  const out: TokenOhlcBar[] = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue
+    const r = row as Record<string, unknown>
+    const time = num(r.time)
+    const open = num(r.open)
+    const high = num(r.high)
+    const low = num(r.low)
+    const close = num(r.close)
+    if (time == null || open == null || high == null || low == null || close == null) {
+      continue
+    }
+    const volume = num(r.volume)
+    out.push({
+      time: Math.floor(time),
+      open,
+      high,
+      low,
+      close,
+      ...(volume != null ? { volume } : {}),
+    })
+  }
+  out.sort((a, b) => a.time - b.time)
+  return out
+}
+
+/** Live OHLCV from Solana Tracker Data API (no local candle ingest). */
+export async function fetchTokenOhlc(params: {
   tokenAddress: string
   hours: number
   interval?: string
 }): Promise<{ candles: TokenOhlcBar[]; source: string }> {
-  // ponytail: ceiling = empty until Solana Tracker / GMGN kline adapter is keyed
-  return { candles: [], source: 'none' }
+  const apiKey = process.env.SOLANATRACKER_DATA_API_KEY?.trim()
+  if (!apiKey) return { candles: [], source: 'none' }
+
+  const hours = Math.min(Math.max(params.hours, 1), 168)
+  const timeTo = Math.floor(Date.now() / 1000)
+  const timeFrom = timeTo - hours * 60 * 60
+  const type = params.interval?.trim() || ohlcIntervalForHours(hours)
+  const url = new URL(
+    `${ST_CHART_BASE}/${encodeURIComponent(params.tokenAddress)}`,
+  )
+  url.searchParams.set('type', type)
+  url.searchParams.set('time_from', String(timeFrom))
+  url.searchParams.set('time_to', String(timeTo))
+  url.searchParams.set('currency', 'usd')
+
+  try {
+    const res = await fetch(url.toString(), {
+      headers: { 'x-api-key': apiKey },
+      signal: AbortSignal.timeout(15_000),
+    })
+    if (!res.ok) return { candles: [], source: 'none' }
+    const body = (await res.json()) as Record<string, unknown>
+    const candles = mapStBars(body.oclhv ?? body.ohlcv)
+    if (candles.length === 0) return { candles: [], source: 'none' }
+    return { candles, source: 'solanatracker' }
+  } catch {
+    return { candles: [], source: 'none' }
+  }
 }
 
 export async function loadTokenMapChart(params: {

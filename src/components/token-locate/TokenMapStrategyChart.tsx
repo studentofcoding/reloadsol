@@ -263,7 +263,11 @@ export default function TokenMapStrategyChart({
               color: c.close >= c.open ? '#34d39955' : '#f8717155',
             })),
         )
-        setNote(null)
+        setNote(
+          payload.ohlcSource && payload.ohlcSource !== 'none'
+            ? `OHLC: ${payload.ohlcSource}`
+            : null,
+        )
       } else {
         if (linePoints.length === 0) {
           linePoints = buildPlaceholderPoints(activities, payload.outcomes)
