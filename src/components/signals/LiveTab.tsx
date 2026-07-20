@@ -2,7 +2,7 @@
 
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLiveTrendingTokens } from "@/hooks/useLiveTrendingTokens";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useOwnedTokenPrices } from "@/hooks/useOwnedTokenPrices";
@@ -104,6 +104,7 @@ async function fetchOwnedTokenPrices(
 }
 
 export default function LiveTab() {
+  const queryClient = useQueryClient();
   const { strategyId, template, setTemplate } = useSignalsStrategy();
   const router = useRouter();
   const { connected, publicKey, signTransaction, signAllTransactions } =
@@ -298,6 +299,9 @@ export default function LiveTab() {
             tokenSymbol: token.token_symbol,
             source: "live",
           });
+          void queryClient.invalidateQueries({
+            queryKey: ["signal-ohlc-labels"],
+          });
         }
         return;
       }
@@ -314,6 +318,11 @@ export default function LiveTab() {
           label: targetLabel,
         }),
       });
+      if (targetLabel === "potential") {
+        void queryClient.invalidateQueries({
+          queryKey: ["signal-ohlc-labels"],
+        });
+      }
     } catch (err) {
       console.error("Failed to update label", err);
     }

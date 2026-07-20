@@ -24,7 +24,7 @@ type LabelRow = {
 }
 
 function sessionKey(label: 'potential' | 'rug'): string {
-  return `signal-ohlc-labels:v1:${label}`
+  return `signal-ohlc-labels:v2:${label}`
 }
 
 function readSession(label: 'potential' | 'rug'): LabelRow[] | undefined {
@@ -89,8 +89,7 @@ function Section({
     initialData: initial,
     staleTime: CLIENT_TTL_MS,
     gcTime: CLIENT_TTL_MS,
-    // Warm session: skip network until stale
-    refetchOnMount: initial ? false : true,
+    refetchOnMount: 'always',
     refetchOnWindowFocus: false,
   })
 

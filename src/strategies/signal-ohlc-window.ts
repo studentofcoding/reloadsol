@@ -48,6 +48,15 @@ function parseMs(raw: unknown): number | null {
   return null
 }
 
+export function hasTrackStartAnchor(ctx: TrackContext): boolean {
+  return (
+    parseMs(ctx.tracking_started_at) != null ||
+    parseMs(ctx.waiting_started_at) != null ||
+    parseMs(ctx.first_seen_at) != null ||
+    parseMs(ctx.created_at) != null
+  )
+}
+
 export function resolveTrackStartMs(ctx: TrackContext, nowMs = Date.now()): number {
   const candidates = [
     ctx.tracking_started_at,
@@ -60,6 +69,42 @@ export function resolveTrackStartMs(ctx: TrackContext, nowMs = Date.now()): numb
     if (ms != null) return ms
   }
   return nowMs
+}
+
+/** Capture bounds for OHLC gallery: no tracker → last 10m ending now. */
+export function resolveCaptureWindowMs(
+  ctx: TrackContext,
+  label: SignalOhlcLabelKind,
+  nowMs = Date.now(),
+): { startMs: number; endMs: number; endReason: SignalOhlcEndReason } {
+  if (!hasTrackStartAnchor(ctx)) {
+    return {
+      startMs: nowMs - POTENTIAL_MAX_MS,
+      endMs: nowMs,
+      endReason: 'label_now',
+    }
+  }
+
+  const w = resolveSignalOhlcWindow({ label, ctx, nowMs })
+  let startMs = Date.parse(w.windowStartIso)
+  let endMs = Date.parse(w.windowEndIso)
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return {
+      startMs: nowMs - POTENTIAL_MAX_MS,
+      endMs: nowMs,
+      endReason: 'label_now',
+    }
+  }
+  // Never ask for a future window
+  if (endMs > nowMs) endMs = nowMs
+  if (endMs <= startMs) {
+    return {
+      startMs: nowMs - POTENTIAL_MAX_MS,
+      endMs: nowMs,
+      endReason: 'label_now',
+    }
+  }
+  return { startMs, endMs, endReason: w.endReason }
 }
 
 /** Timestamp of max price_usd in price_history (within optional max). */

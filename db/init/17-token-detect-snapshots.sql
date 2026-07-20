@@ -18,10 +18,10 @@ CREATE TABLE IF NOT EXISTS token_detect_snapshots (
 CREATE INDEX IF NOT EXISTS idx_token_detect_snapshots_token_detected
   ON token_detect_snapshots (token_address, detected_at DESC);
 
-UPDATE token_detect_snapshots SET rug_label = 'potential' WHERE rug_label = 'not_rug';
-
 ALTER TABLE token_detect_snapshots
   DROP CONSTRAINT IF EXISTS token_detect_snapshots_rug_label_check;
+
+UPDATE token_detect_snapshots SET rug_label = 'potential' WHERE rug_label = 'not_rug';
 
 DO $$ BEGIN
   ALTER TABLE token_detect_snapshots

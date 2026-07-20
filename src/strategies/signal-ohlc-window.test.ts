@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   peakPriceTimestampMs,
+  POTENTIAL_MAX_MS,
+  resolveCaptureWindowMs,
   resolveSignalOhlcWindow,
   toSignalOhlcStoreLabel,
 } from '@/strategies/signal-ohlc-window'
@@ -72,6 +74,28 @@ describe('resolveSignalOhlcWindow potential', () => {
     })
     expect(w.endReason).toBe('cap_10m')
     expect(Date.parse(w.windowEndIso) - startMs).toBe(10 * 60_000)
+  })
+})
+
+describe('resolveCaptureWindowMs', () => {
+  it('no track anchor → last 10m ending now', () => {
+    const nowMs = startMs + 60 * 60_000
+    const w = resolveCaptureWindowMs({}, 'potential', nowMs)
+    expect(w.endReason).toBe('label_now')
+    expect(w.endMs).toBe(nowMs)
+    expect(w.startMs).toBe(nowMs - POTENTIAL_MAX_MS)
+  })
+
+  it('with tracking_started_at → track start..cap', () => {
+    const nowMs = startMs + 30 * 60_000
+    const w = resolveCaptureWindowMs(
+      { tracking_started_at: start },
+      'potential',
+      nowMs,
+    )
+    expect(w.startMs).toBe(startMs)
+    expect(w.endMs - startMs).toBe(POTENTIAL_MAX_MS)
+    expect(w.endReason).toBe('cap_10m')
   })
 })
 

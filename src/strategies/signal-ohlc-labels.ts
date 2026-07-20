@@ -5,11 +5,9 @@ import {
   getCachedTokenOhlc24h1m,
   tokenOhlcToRugBars,
 } from '@/strategies/token-map-chart'
-import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
+import { takeLastOhlcBars, type OhlcRugBar } from '@/strategies/ohlc-rug-rules'
 import {
-  POTENTIAL_MAX_MS,
-  resolveSignalOhlcWindow,
-  resolveTrackStartMs,
+  resolveCaptureWindowMs,
   toSignalOhlcStoreLabel,
   type SignalOhlcLabelKind,
   type TrackContext,
@@ -197,27 +195,25 @@ export async function captureSignalOhlcLabel(params: {
   if (existing) return existing.id
 
   const { ctx, symbol } = await loadTrackContext(params.tokenAddress)
-  const metaWindow = resolveSignalOhlcWindow({ label: storeLabel, ctx })
-
-  const startMs = resolveTrackStartMs(ctx)
-  const endMs = startMs + POTENTIAL_MAX_MS
+  const { startMs, endMs, endReason } = resolveCaptureWindowMs(
+    ctx,
+    storeLabel,
+  )
   const startSec = Math.floor(startMs / 1000)
   const endSec = Math.floor(endMs / 1000)
 
   let bars: OhlcRugBar[] = []
   let ohlcSource = 'none'
+  let fullSeries: OhlcRugBar[] = []
 
   const cached = await getCachedTokenOhlc24h1m(params.tokenAddress)
   if (cached.candles.length > 0) {
-    bars = filterBarsToWindow(
-      tokenOhlcToRugBars(cached.candles),
-      startSec,
-      endSec,
-    )
+    fullSeries = tokenOhlcToRugBars(cached.candles)
+    bars = filterBarsToWindow(fullSeries, startSec, endSec)
     if (bars.length > 0) ohlcSource = cached.source || 'solanatracker'
   }
 
-  // Brand-new mint / window outside cached 24h — one narrow ST pull
+  // Window outside cache / brand-new mint — narrow ST pull
   if (bars.length === 0) {
     const { candles, source } = await fetchTokenOhlc({
       tokenAddress: params.tokenAddress,
@@ -225,8 +221,16 @@ export async function captureSignalOhlcLabel(params: {
       timeTo: endSec,
       interval: '1m',
     })
-    bars = filterBarsToWindow(tokenOhlcToRugBars(candles), startSec, endSec)
-    ohlcSource = source || 'none'
+    const mapped = tokenOhlcToRugBars(candles)
+    if (mapped.length > 0) fullSeries = mapped
+    bars = filterBarsToWindow(mapped, startSec, endSec)
+    if (bars.length > 0) ohlcSource = source || 'none'
+  }
+
+  // Still empty: last 10 of whatever series we have (Freeview-style)
+  if (bars.length === 0 && fullSeries.length > 0) {
+    bars = takeLastOhlcBars(fullSeries, 10)
+    ohlcSource = 'last10_fallback'
   }
 
   let windowStartIso = new Date(startMs).toISOString()
@@ -251,7 +255,7 @@ export async function captureSignalOhlcLabel(params: {
       windowEndIso,
       ohlcSource,
       JSON.stringify(bars),
-      metaWindow.endReason,
+      endReason,
       params.source ?? null,
     ],
   )
