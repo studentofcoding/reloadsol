@@ -23,25 +23,39 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const [existing, { bars }] = await Promise.all([
-      getLatestDetectSnapshot(address),
-      fetchLastOhlcRugBars(address),
-    ])
+    // Live bars first — DB snapshot must not block Freeview rules
+    const { bars } = await fetchLastOhlcRugBars(address)
     const evalResult = evaluateOhlcRugRules(bars)
 
-    // Persist first Freeview view so training capture can copy bars
+    let existing: Awaited<ReturnType<typeof getLatestDetectSnapshot>> = null
+    try {
+      existing = await getLatestDetectSnapshot(address)
+    } catch (err) {
+      console.warn('[detect-snapshot] getLatest failed', {
+        mint: address,
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+
     let snapshotId = existing?.id ?? null
     let detectedAt = existing?.detected_at ?? null
     let snapSource = existing?.source ?? null
     if ((!existing || existing.bars.length === 0) && bars.length > 0) {
-      snapshotId = await insertDetectSnapshot({
-        tokenAddress: address,
-        source: 'freeview',
-        bars,
-        evalResult,
-      })
-      detectedAt = new Date().toISOString()
-      snapSource = 'freeview'
+      try {
+        snapshotId = await insertDetectSnapshot({
+          tokenAddress: address,
+          source: 'freeview',
+          bars,
+          evalResult,
+        })
+        detectedAt = new Date().toISOString()
+        snapSource = 'freeview'
+      } catch (err) {
+        console.warn('[detect-snapshot] insert failed', {
+          mint: address,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     }
 
     return NextResponse.json(

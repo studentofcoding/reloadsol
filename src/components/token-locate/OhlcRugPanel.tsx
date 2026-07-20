@@ -144,10 +144,19 @@ export default function OhlcRugPanel({
   }
 
   if (query.error || !query.data) {
+    const detail =
+      query.error instanceof Error
+        ? query.error.message.slice(0, 120)
+        : null
     return (
-      <p className="rounded-lg border border-gray-700 bg-gray-900/60 px-1.5 py-1 text-[9px] text-amber-200/80">
-        OHLC rules unavailable
-      </p>
+      <div className="rounded-lg border border-gray-700 bg-gray-900/60 px-1.5 py-1 text-[9px] text-amber-200/80">
+        <p>OHLC rules unavailable</p>
+        {detail ? (
+          <p className="mt-0.5 truncate text-[8px] text-amber-200/50" title={detail}>
+            {detail}
+          </p>
+        ) : null}
+      </div>
     )
   }
 

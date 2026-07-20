@@ -132,4 +132,27 @@ describe('getCachedTokenOhlc24h1m', () => {
     await getCachedTokenOhlc24h1m(uniqueMint)
     expect(fetchMock).toHaveBeenCalledOnce()
   })
+
+  it('falls through to ST when cacheGet hangs past timeout', async () => {
+    vi.resetModules()
+    vi.doMock('@/utils/redis-cache', () => ({
+      cacheGet: () => new Promise(() => undefined),
+      cacheSet: vi.fn().mockResolvedValue(undefined),
+    }))
+    vi.stubEnv('SOLANATRACKER_DATA_API_KEY', 'test-key')
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        oclhv: [{ time: 9, open: 1, high: 1, low: 1, close: 1 }],
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { getCachedTokenOhlc24h1m: getCached } = await import(
+      '@/strategies/token-map-chart'
+    )
+    const result = await getCached(`HangTest${Date.now()}1111111111111111111`)
+    expect(result.candles).toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
 })

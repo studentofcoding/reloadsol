@@ -7,9 +7,27 @@ import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 /** ponytail: 90s collapses Telegram + Freeview + label capture bursts; upgrade = longer TTL + stampede lock */
 export const OHLC_24H_1M_CACHE_TTL_SEC = 90
+/** Skip stuck Redis connect/get so Freeview/Telegram still hit ST */
+const OHLC_CACHE_GET_TIMEOUT_MS = 400
 
 function ohlc24h1mCacheKey(tokenAddress: string): string {
   return `ohlc:v1:24h1m:${tokenAddress}`
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('timeout')), ms)
+    promise.then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
 }
 
 export type TokenChartPoint = {
@@ -193,14 +211,15 @@ export async function getCachedTokenOhlc24h1m(
 ): Promise<{ candles: TokenOhlcBar[]; source: string }> {
   const key = ohlc24h1mCacheKey(tokenAddress)
   try {
-    const cached = await cacheGet<{ candles: TokenOhlcBar[]; source: string }>(
-      key,
+    const cached = await withTimeout(
+      cacheGet<{ candles: TokenOhlcBar[]; source: string }>(key),
+      OHLC_CACHE_GET_TIMEOUT_MS,
     )
     if (cached && Array.isArray(cached.candles) && cached.candles.length > 0) {
       return cached
     }
   } catch {
-    /* fail-open */
+    /* fail-open: Redis hang/timeout → ST */
   }
 
   const result = await fetchTokenOhlc({
@@ -210,7 +229,10 @@ export async function getCachedTokenOhlc24h1m(
   })
   if (result.candles.length > 0) {
     try {
-      await cacheSet(key, result, OHLC_24H_1M_CACHE_TTL_SEC)
+      await withTimeout(
+        cacheSet(key, result, OHLC_24H_1M_CACHE_TTL_SEC),
+        OHLC_CACHE_GET_TIMEOUT_MS,
+      )
     } catch {
       /* fail-open */
     }
