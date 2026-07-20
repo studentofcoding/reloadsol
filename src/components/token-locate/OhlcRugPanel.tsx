@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import MiniOhlcCandles from '@/components/signals/shared/MiniOhlcCandles'
 import {
   DEFAULT_OHLC_RUG_THRESHOLDS,
   evaluateOhlcRugRules,
@@ -29,81 +30,6 @@ function fmtPct(ratio: number | null | undefined): string {
 function fmtRatio(ratio: number | null | undefined): string {
   if (ratio == null || !Number.isFinite(ratio)) return '—'
   return ratio.toFixed(3)
-}
-
-/** Tiny SVG candlesticks for the 10% rail. */
-function MiniCandles({
-  bars,
-  trip,
-}: {
-  bars: OhlcRugBar[]
-  trip: boolean
-}) {
-  if (bars.length === 0) {
-    return (
-      <div className="flex h-16 items-center justify-center text-[9px] text-gray-500">
-        No OHLC
-      </div>
-    )
-  }
-  const highs = bars.map((b) => b.h)
-  const lows = bars.map((b) => b.l)
-  const maxH = Math.max(...highs)
-  const minL = Math.min(...lows)
-  const span = Math.max(maxH - minL, 1e-12)
-  const w = 100
-  const h = 56
-  const pad = 2
-  const slot = (w - pad * 2) / bars.length
-
-  return (
-    <svg
-      viewBox={`0 0 ${w} ${h}`}
-      className="h-16 w-full"
-      role="img"
-      aria-label="OHLC mini chart"
-    >
-      <rect
-        width={w}
-        height={h}
-        fill={trip ? '#450a0a' : '#0a0a0a'}
-        rx={2}
-      />
-      {bars.map((b, i) => {
-        const x = pad + i * slot + slot / 2
-        const y = (price: number) =>
-          pad + ((maxH - price) / span) * (h - pad * 2)
-        const yH = y(b.h)
-        const yL = y(b.l)
-        const yO = y(b.o)
-        const yC = y(b.c)
-        const up = b.c >= b.o
-        const color = up ? '#34d399' : '#f87171'
-        const bodyTop = Math.min(yO, yC)
-        const bodyBot = Math.max(yO, yC)
-        const bodyH = Math.max(bodyBot - bodyTop, 0.8)
-        return (
-          <g key={b.t}>
-            <line
-              x1={x}
-              x2={x}
-              y1={yH}
-              y2={yL}
-              stroke={color}
-              strokeWidth={0.6}
-            />
-            <rect
-              x={x - Math.max(slot * 0.25, 0.8)}
-              y={bodyTop}
-              width={Math.max(slot * 0.5, 1.2)}
-              height={bodyH}
-              fill={color}
-            />
-          </g>
-        )
-      })}
-    </svg>
-  )
 }
 
 export default function OhlcRugPanel({
@@ -195,7 +121,7 @@ export default function OhlcRugPanel({
         </span>
       </div>
 
-      <MiniCandles bars={query.data.bars} trip={live.trip} />
+      <MiniOhlcCandles bars={query.data.bars} trip={live.trip} />
 
       <label className="block text-[8px] text-gray-500">
         Label

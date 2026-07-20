@@ -1,11 +1,13 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
-import AlgoTesterOhlcChart, {
-  type StoredOhlcBar,
-} from '@/components/algo-tester/AlgoTesterOhlcChart'
+import MiniOhlcCandles, {
+  type MiniOhlcBar,
+} from '@/components/signals/shared/MiniOhlcCandles'
 import TokenSearchLink from '@/components/signals/shared/TokenSearchLink'
 import { formatAppDateTime } from '@/utils/datetime'
+
+const CLIENT_TTL_MS = 10 * 60 * 1000
 
 type LabelRow = {
   id: string
@@ -15,10 +17,44 @@ type LabelRow = {
   window_start: string
   window_end: string
   ohlc_source: string
-  bars: StoredOhlcBar[]
+  bars: MiniOhlcBar[]
   end_reason: string | null
   source: string | null
   created_at: string
+}
+
+function sessionKey(label: 'potential' | 'rug'): string {
+  return `signal-ohlc-labels:v1:${label}`
+}
+
+function readSession(label: 'potential' | 'rug'): LabelRow[] | undefined {
+  if (typeof window === 'undefined') return undefined
+  try {
+    const raw = sessionStorage.getItem(sessionKey(label))
+    if (!raw) return undefined
+    const parsed = JSON.parse(raw) as { at: number; entries: LabelRow[] }
+    if (
+      !parsed?.at ||
+      Date.now() - parsed.at > CLIENT_TTL_MS ||
+      !Array.isArray(parsed.entries)
+    ) {
+      return undefined
+    }
+    return parsed.entries
+  } catch {
+    return undefined
+  }
+}
+
+function writeSession(label: 'potential' | 'rug', entries: LabelRow[]): void {
+  try {
+    sessionStorage.setItem(
+      sessionKey(label),
+      JSON.stringify({ at: Date.now(), entries }),
+    )
+  } catch {
+    /* quota */
+  }
 }
 
 function Section({
@@ -30,6 +66,8 @@ function Section({
   label: 'potential' | 'rug'
   accent: string
 }) {
+  const initial = readSession(label)
+
   const query = useQuery({
     queryKey: ['signal-ohlc-labels', label],
     queryFn: async (): Promise<LabelRow[]> => {
@@ -44,15 +82,22 @@ function Section({
       if (!res.ok || !json.success) {
         throw new Error(json.error || 'Failed to load OHLC labels')
       }
-      return json.entries ?? []
+      const entries = json.entries ?? []
+      writeSession(label, entries)
+      return entries
     },
-    staleTime: 30_000,
+    initialData: initial,
+    staleTime: CLIENT_TTL_MS,
+    gcTime: CLIENT_TTL_MS,
+    // Warm session: skip network until stale
+    refetchOnMount: initial ? false : true,
+    refetchOnWindowFocus: false,
   })
 
   return (
     <section className="space-y-3">
       <h2 className={`text-lg font-semibold ${accent}`}>{title}</h2>
-      {query.isLoading ? (
+      {query.isLoading && !query.data ? (
         <p className="text-sm text-gray-500">Loading…</p>
       ) : null}
       {query.error ? (
@@ -88,17 +133,14 @@ function Section({
               {row.end_reason ? (
                 <span className="ml-2 text-gray-500">· {row.end_reason}</span>
               ) : null}
+              {row.ohlc_source ? (
+                <span className="ml-2 text-gray-600">· {row.ohlc_source}</span>
+              ) : null}
             </p>
-            <AlgoTesterOhlcChart
-              tokenAddress={row.token_address}
-              bars={
-                Array.isArray(row.bars) && row.bars.length > 0
-                  ? row.bars
-                  : null
-              }
-              ohlcSource={row.ohlc_source}
-              last10
-              height={220}
+            <MiniOhlcCandles
+              bars={Array.isArray(row.bars) ? row.bars : []}
+              className="h-28 w-full"
+              emptyLabel="No OHLC bars"
             />
           </article>
         ))}

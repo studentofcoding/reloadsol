@@ -1,8 +1,12 @@
 import { query, queryOne } from '@/utils/db'
-import { fetchLastOhlcRugBars } from '@/strategies/detect-snapshots'
-import { OHLC_RUG_MAX_BARS } from '@/strategies/ohlc-rug-rules'
+import { cacheDelByPrefix, cacheGet, cacheSet } from '@/utils/redis-cache'
+import { getLatestDetectSnapshot } from '@/strategies/detect-snapshots'
+import { fetchTokenOhlc } from '@/strategies/token-map-chart'
+import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
 import {
+  POTENTIAL_MAX_MS,
   resolveSignalOhlcWindow,
+  resolveTrackStartMs,
   toSignalOhlcStoreLabel,
   type SignalOhlcLabelKind,
   type TrackContext,
@@ -29,7 +33,6 @@ CREATE INDEX IF NOT EXISTS idx_signal_ohlc_labels_label_created
   ON signal_ohlc_labels (label, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_signal_ohlc_labels_token_created
   ON signal_ohlc_labels (token_address, created_at DESC);
--- one card per token per label
 DELETE FROM signal_ohlc_labels sol
 WHERE sol.id IN (
   SELECT id FROM (
@@ -45,6 +48,29 @@ WHERE sol.id IN (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_signal_ohlc_labels_token_label
   ON signal_ohlc_labels (token_address, label);
 `
+
+/** Redis list cache TTL — 10 minutes */
+export const SIGNAL_OHLC_LABELS_CACHE_TTL_SEC = 600
+
+export function signalOhlcLabelsCachePrefix(
+  label: SignalOhlcLabelKind,
+): string {
+  return `signal-ohlc-labels:v1:${label}`
+}
+
+export function signalOhlcLabelsCacheKey(
+  label: SignalOhlcLabelKind,
+  limit: number,
+  offset: number,
+): string {
+  return `${signalOhlcLabelsCachePrefix(label)}:${limit}:${offset}`
+}
+
+async function invalidateSignalOhlcLabelsCache(
+  label: SignalOhlcLabelKind,
+): Promise<void> {
+  await cacheDelByPrefix(signalOhlcLabelsCachePrefix(label))
+}
 
 let ensurePromise: Promise<void> | null = null
 
@@ -138,7 +164,15 @@ export type SignalOhlcLabelRow = {
   created_at: string
 }
 
-/** Capture once per (token, label). Bars = Freeview last-10×1m. */
+function filterBarsToWindow(
+  bars: OhlcRugBar[],
+  startSec: number,
+  endSec: number,
+): OhlcRugBar[] {
+  return bars.filter((b) => b.t >= startSec && b.t <= endSec)
+}
+
+/** Capture once per (token, label). Copy Freeview snapshot first 10m; else ST. */
 export async function captureSignalOhlcLabel(params: {
   tokenAddress: string
   /** UI label: potential | rugged | rug */
@@ -160,17 +194,46 @@ export async function captureSignalOhlcLabel(params: {
   if (existing) return existing.id
 
   const { ctx, symbol } = await loadTrackContext(params.tokenAddress)
-  const window = resolveSignalOhlcWindow({ label: storeLabel, ctx })
+  const metaWindow = resolveSignalOhlcWindow({ label: storeLabel, ctx })
 
-  const last = await fetchLastOhlcRugBars(
-    params.tokenAddress,
-    OHLC_RUG_MAX_BARS,
-  )
-  const bars = last.bars
-  const source = last.source || 'none'
+  const startMs = resolveTrackStartMs(ctx)
+  const endMs = startMs + POTENTIAL_MAX_MS
+  const startSec = Math.floor(startMs / 1000)
+  const endSec = Math.floor(endMs / 1000)
 
-  let windowStartIso = window.windowStartIso
-  let windowEndIso = window.windowEndIso
+  let bars: OhlcRugBar[] = []
+  let ohlcSource = 'none'
+
+  const snap = await getLatestDetectSnapshot(params.tokenAddress)
+  if (snap?.bars?.length) {
+    bars = filterBarsToWindow(snap.bars, startSec, endSec)
+    // Snapshot is often last-10 of hour — if no overlap, use snapshot as-is
+    if (bars.length === 0) bars = snap.bars
+    ohlcSource = 'detect_snapshot'
+  }
+
+  if (bars.length === 0) {
+    const { candles, source } = await fetchTokenOhlc({
+      tokenAddress: params.tokenAddress,
+      timeFrom: startSec,
+      timeTo: endSec,
+      interval: '1m',
+    })
+    bars = candles
+      .filter((c) => c.time >= startSec && c.time <= endSec)
+      .map((c) => ({
+        t: c.time,
+        o: c.open,
+        h: c.high,
+        l: c.low,
+        c: c.close,
+        ...(c.volume != null ? { v: c.volume } : {}),
+      }))
+    ohlcSource = source || 'none'
+  }
+
+  let windowStartIso = new Date(startMs).toISOString()
+  let windowEndIso = new Date(endMs).toISOString()
   if (bars.length > 0) {
     windowStartIso = new Date(bars[0]!.t * 1000).toISOString()
     windowEndIso = new Date(bars[bars.length - 1]!.t * 1000).toISOString()
@@ -189,12 +252,15 @@ export async function captureSignalOhlcLabel(params: {
       storeLabel,
       windowStartIso,
       windowEndIso,
-      source,
+      ohlcSource,
       JSON.stringify(bars),
-      window.endReason,
+      metaWindow.endReason,
       params.source ?? null,
     ],
   )
+
+  await invalidateSignalOhlcLabelsCache(storeLabel)
+
   if (rows[0]?.id) return rows[0].id
 
   const raced = await queryOne<{ id: string }>(
@@ -204,6 +270,31 @@ export async function captureSignalOhlcLabel(params: {
     [params.tokenAddress, storeLabel],
   )
   return raced?.id ?? null
+}
+
+async function listFromDb(params: {
+  label?: SignalOhlcLabelKind | null
+  limit: number
+  offset: number
+}): Promise<SignalOhlcLabelRow[]> {
+  if (params.label === 'potential' || params.label === 'rug') {
+    const { rows } = await query<SignalOhlcLabelRow>(
+      `SELECT * FROM signal_ohlc_labels
+       WHERE label = $1
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [params.label, params.limit, params.offset],
+    )
+    return rows
+  }
+
+  const { rows } = await query<SignalOhlcLabelRow>(
+    `SELECT * FROM signal_ohlc_labels
+     ORDER BY created_at DESC
+     LIMIT $1 OFFSET $2`,
+    [params.limit, params.offset],
+  )
+  return rows
 }
 
 export async function listSignalOhlcLabels(params: {
@@ -216,21 +307,14 @@ export async function listSignalOhlcLabels(params: {
   const offset = Math.max(params.offset ?? 0, 0)
 
   if (params.label === 'potential' || params.label === 'rug') {
-    const { rows } = await query<SignalOhlcLabelRow>(
-      `SELECT * FROM signal_ohlc_labels
-       WHERE label = $1
-       ORDER BY created_at DESC
-       LIMIT $2 OFFSET $3`,
-      [params.label, limit, offset],
-    )
+    const key = signalOhlcLabelsCacheKey(params.label, limit, offset)
+    const cached = await cacheGet<SignalOhlcLabelRow[]>(key)
+    if (cached) return cached
+
+    const rows = await listFromDb({ label: params.label, limit, offset })
+    await cacheSet(key, rows, SIGNAL_OHLC_LABELS_CACHE_TTL_SEC)
     return rows
   }
 
-  const { rows } = await query<SignalOhlcLabelRow>(
-    `SELECT * FROM signal_ohlc_labels
-     ORDER BY created_at DESC
-     LIMIT $1 OFFSET $2`,
-    [limit, offset],
-  )
-  return rows
+  return listFromDb({ label: params.label, limit, offset })
 }

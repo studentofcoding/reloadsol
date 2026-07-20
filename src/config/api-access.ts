@@ -33,6 +33,7 @@ export const WALLET_API_PREFIXES = [
 export const DEV_API_PREFIXES = [
   '/api/signals',
   '/api/rug',
+  '/api/potential',
   '/api/dlmm',
   '/api/trading/signals',
   '/api/mcap-tracking',

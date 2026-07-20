@@ -6,7 +6,15 @@ import {
   pctChange,
 } from './gmgn-radar-comeback'
 import type { GmgnRadarReview } from './gmgn-radar-review'
-import { formatGmgnRadarLiveThreadHtml } from './gmgn-radar-review'
+import {
+  formatGmgnRadarLiveThreadCaption,
+  formatGmgnRadarLiveThreadHtml,
+} from './gmgn-radar-review'
+import {
+  formatOhlcTelegramPre,
+  loadOhlcBarsForTelegram,
+} from './ohlc-telegram-paint'
+import { renderOhlcCandlesPng } from './ohlc-telegram-svg'
 import {
   ensureRadarAlertThreadsTable,
   getLatestDeadRadarThread,
@@ -22,11 +30,13 @@ import type { GmgnRadarConfig } from './types'
 import { maybeOpenGmgnComebackSim } from './gmgn-comeback-sim'
 import {
   editTelegramMessage,
+  editTelegramMessageMedia,
   formatJupiterTokenLink,
   formatReloadsolChartLink,
   getTelegramAlertChatId,
   isStrategyTrackTelegramEnabled,
   sendTelegramMessage,
+  sendTelegramPhoto,
 } from '@/utils/telegram'
 import { unmarkTokenRug } from '@/utils/rug-list/service'
 
@@ -107,7 +117,9 @@ async function renderAndEdit(
     deathReason?: string | null
   },
 ): Promise<void> {
-  const text = formatGmgnRadarLiveThreadHtml({
+  const bars = await loadOhlcBarsForTelegram(thread.token_address)
+  const png = await renderOhlcCandlesPng(bars, { symbol: params.symbol })
+  const captionBase = {
     kind: params.kind,
     review: params.review,
     symbol: params.symbol,
@@ -127,6 +139,26 @@ async function renderAndEdit(
     deathReason: params.deathReason,
     openedAt: thread.opened_at,
     peakMcapUsd: params.peakMcapUsd ?? thread.peak_mcap_usd,
+  }
+
+  if (png) {
+    const caption = formatGmgnRadarLiveThreadCaption(captionBase)
+    const ok = await editTelegramMessageMedia({
+      chatId: thread.chat_id,
+      messageId: thread.message_id,
+      png,
+      caption,
+      parseMode: 'HTML',
+      inlineKeyboard: chartKeyboard(thread.token_address),
+    })
+    if (ok) return
+  }
+
+  // Legacy text threads / media edit failure
+  const ohlcPre = formatOhlcTelegramPre(bars)
+  const text = formatGmgnRadarLiveThreadHtml({
+    ...captionBase,
+    ohlcPre: ohlcPre || null,
   })
   await editTelegramMessage({
     chatId: thread.chat_id,
@@ -152,8 +184,11 @@ async function openNewThread(params: {
   if (!chatId) return null
 
   const lifecycle = await getNextRadarLifecycle(params.tokenAddress)
-  const text = formatGmgnRadarLiveThreadHtml({
-    kind: params.kind,
+  const bars = await loadOhlcBarsForTelegram(params.tokenAddress)
+  const png = await renderOhlcCandlesPng(bars, { symbol: params.symbol })
+  const openedAt = new Date().toISOString()
+  const cardBase = {
+    kind: params.kind as 'new' | 'comeback',
     review: params.review,
     symbol: params.symbol,
     tokenAddress: params.tokenAddress,
@@ -165,19 +200,37 @@ async function openNewThread(params: {
     initialMcapUsd: params.mcapUsd,
     priceUsd: params.priceUsd,
     mcapUsd: params.mcapUsd,
-    pricePctVsLast: null,
-    mcapPctVsLast: null,
-    pricePctVsInitial: null,
-    mcapPctVsInitial: null,
-    openedAt: new Date().toISOString(),
+    pricePctVsLast: null as number | null,
+    mcapPctVsLast: null as number | null,
+    pricePctVsInitial: null as number | null,
+    mcapPctVsInitial: null as number | null,
+    openedAt,
     peakMcapUsd: params.mcapUsd,
-  })
+  }
 
-  const sent = await sendTelegramMessage(text, {
-    chatId,
-    parseMode: 'HTML',
-    inlineKeyboard: chartKeyboard(params.tokenAddress),
-  })
+  let sent =
+    png != null
+      ? await sendTelegramPhoto({
+          png,
+          caption: formatGmgnRadarLiveThreadCaption(cardBase),
+          chatId,
+          parseMode: 'HTML',
+          inlineKeyboard: chartKeyboard(params.tokenAddress),
+        })
+      : { ok: false as boolean, messageId: null as number | null, chatId }
+
+  if (!sent.ok || sent.messageId == null) {
+    const ohlcPre = formatOhlcTelegramPre(bars)
+    const text = formatGmgnRadarLiveThreadHtml({
+      ...cardBase,
+      ohlcPre: ohlcPre || null,
+    })
+    sent = await sendTelegramMessage(text, {
+      chatId,
+      parseMode: 'HTML',
+      inlineKeyboard: chartKeyboard(params.tokenAddress),
+    })
+  }
   if (!sent.ok || sent.messageId == null) return null
 
   return insertRadarThread({
@@ -329,6 +382,10 @@ export async function syncRadarTelegramThread(
           console.error('[radar-thread] comeback sim reopen failed:', err)
         }
       }
+      // Telegram: ENTER only (WATCH/SKIP stay in-app)
+      if (input.review.action !== 'ENTER') {
+        return { action: 'skipped', thread: dead }
+      }
       if (
         shouldSkipRadarTelegramForMcap(
           input.mcapUsd,
@@ -358,7 +415,8 @@ export async function syncRadarTelegramThread(
   if (input.hardDead) {
     return { action: 'skipped', thread: null }
   }
-  if (input.review.action === 'SKIP') {
+  // Telegram: ENTER only — WATCH / SKIP stay in-app
+  if (input.review.action !== 'ENTER') {
     return { action: 'skipped', thread: null }
   }
   if (

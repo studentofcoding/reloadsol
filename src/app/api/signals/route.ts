@@ -3,6 +3,10 @@ import { query, queryOne } from '@/utils/db'
 import { markTokenRug, unmarkTokenRug } from '@/utils/rug-list/service'
 import { removeRugEntry } from '@/utils/rug-list/db'
 import { getRugList } from '@/utils/rug-list/service'
+import {
+  markTokenPotential,
+  unmarkTokenPotential,
+} from '@/utils/potential-list/service'
 
 export const dynamic = 'force-dynamic'
 
@@ -162,28 +166,25 @@ export async function POST(request: NextRequest) {
         tokenSymbol: tokenSymbol || existing?.token_symbol,
         source: 'board',
       })
+    } else if (label === 'potential') {
+      await removeRugEntry(tokenAddress)
+      const potSource =
+        source === 'mcap_tracker'
+          ? 'tracker'
+          : source === 'live'
+            ? 'live'
+            : 'board'
+      await markTokenPotential({
+        tokenAddress,
+        tokenSymbol: tokenSymbol || existing?.token_symbol,
+        source: potSource,
+      })
     } else if (label) {
       await removeRugEntry(tokenAddress)
-    }
-
-    // potential: await capture so Next doesn't kill the work on response.
-    // rug: markTokenRug awaits captureSignalOhlcLabel
-    if (label === 'potential') {
       try {
-        const { captureSignalOhlcLabel } = await import(
-          '@/strategies/signal-ohlc-labels'
-        )
-        await captureSignalOhlcLabel({
-          tokenAddress,
-          label: 'potential',
-          tokenSymbol: tokenSymbol || existing?.token_symbol,
-          source: source === 'mcap_tracker' ? 'signals_mcap' : 'signals_board',
-        })
-      } catch (err) {
-        console.warn('[signals] potential OHLC capture failed', {
-          mint: tokenAddress,
-          error: err instanceof Error ? err.message : String(err),
-        })
+        await unmarkTokenPotential(tokenAddress)
+      } catch {
+        /* ignore */
       }
     }
 

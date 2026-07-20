@@ -480,6 +480,8 @@ export function formatGmgnRadarLiveThreadHtml(params: {
   deathReason?: string | null
   openedAt?: string | null
   peakMcapUsd?: number | null
+  /** Preformatted OHLC strip from formatOhlcTelegramPre (omit if empty). */
+  ohlcPre?: string | null
 }): string {
   const sym = params.symbol?.trim() || 'UNKNOWN'
   const cat = params.category?.trim() || 'GMGN'
@@ -503,6 +505,10 @@ export function formatGmgnRadarLiveThreadHtml(params: {
   const ageLine = params.openedAt
     ? `⏱ <b>Age:</b> ${formatAgeCompact(params.openedAt)}`
     : null
+  const ohlcBlock =
+    params.ohlcPre && params.ohlcPre.trim()
+      ? [`📈 <b>OHLC 10m</b>`, params.ohlcPre]
+      : []
 
   const lines = [
     header,
@@ -510,6 +516,7 @@ export function formatGmgnRadarLiveThreadHtml(params: {
     '',
     `🧠 <b>Radar:</b> ${params.review.emoji} <b>${params.review.action}</b> (${params.review.score}/100)`,
     `<i>${escapeHtml(params.review.summary)}</i>`,
+    ...ohlcBlock,
     '',
     `📌 <b>Initial:</b> ${formatPriceCompact(params.initialPriceUsd)} · MC ${params.initialMcapUsd != null && params.initialMcapUsd > 0 ? formatMcapCompact(params.initialMcapUsd) : '—'}`,
     `💰 <b>Now:</b> ${formatPriceCompact(params.priceUsd)} · MC ${params.mcapUsd != null && params.mcapUsd > 0 ? formatMcapCompact(params.mcapUsd) : '—'}`,
@@ -530,6 +537,62 @@ export function formatGmgnRadarLiveThreadHtml(params: {
     formatRadarRawDebugPre(params.review.rawDebug),
   ]
   return lines.filter((l): l is string => l != null).join('\n')
+}
+
+const TELEGRAM_CAPTION_MAX = 1024
+
+/**
+ * Compact caption for sendPhoto (≤1024). No ohlcPre / rawDebug — chart is the image.
+ */
+export function formatGmgnRadarLiveThreadCaption(params: {
+  kind: 'new' | 'comeback' | 'dead'
+  review: GmgnRadarReview
+  symbol?: string | null
+  tokenAddress: string
+  category?: string | null
+  lifecycle: number
+  peakSm: number
+  peakKol: number
+  initialPriceUsd: number | null
+  initialMcapUsd: number | null
+  priceUsd: number | null
+  mcapUsd: number | null
+  pricePctVsLast?: number | null
+  mcapPctVsLast?: number | null
+  pricePctVsInitial?: number | null
+  mcapPctVsInitial?: number | null
+  deathReason?: string | null
+  openedAt?: string | null
+  peakMcapUsd?: number | null
+}): string {
+  const sym = params.symbol?.trim() || 'UNKNOWN'
+  const cat = params.category?.trim() || 'GMGN'
+  const stage = deriveRadarThreadStage({
+    openedAt: params.openedAt,
+    mcapPctVsInitial: params.mcapPctVsInitial,
+    peakSm: params.peakSm,
+    radarAction: params.review.action,
+  })
+  const header = `${stageHeaderLabel(params.kind, stage)} · ${cat} · <b>${escapeHtml(sym)}</b>`
+  const lines = [
+    header,
+    `Lifecycle #${params.lifecycle}`,
+    `🧠 <b>Radar:</b> ${params.review.emoji} <b>${params.review.action}</b> (${params.review.score}/100)`,
+    `<i>${escapeHtml(params.review.summary.slice(0, 120))}</i>`,
+    `📌 ${formatPriceCompact(params.initialPriceUsd)} · MC ${params.initialMcapUsd != null && params.initialMcapUsd > 0 ? formatMcapCompact(params.initialMcapUsd) : '—'}`,
+    `💰 ${formatPriceCompact(params.priceUsd)} · MC ${params.mcapUsd != null && params.mcapUsd > 0 ? formatMcapCompact(params.mcapUsd) : '—'}`,
+    params.openedAt ? `⏱ ${formatAgeCompact(params.openedAt)}` : null,
+    `👥 SM ${params.peakSm} · KOL ${params.peakKol}`,
+    params.deathReason
+      ? `<i>${escapeHtml(params.deathReason.slice(0, 80))}</i>`
+      : null,
+    `<code>${escapeHtml(params.tokenAddress)}</code>`,
+  ]
+  let out = lines.filter((l): l is string => l != null).join('\n')
+  if (out.length > TELEGRAM_CAPTION_MAX) {
+    out = out.slice(0, TELEGRAM_CAPTION_MAX - 1) + '…'
+  }
+  return out
 }
 
 /** Dedicated Rug alert (always shared even though SKIP is not). */

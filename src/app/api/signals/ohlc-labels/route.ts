@@ -23,7 +23,12 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(
       { success: true, entries: rows },
-      { headers: { 'Cache-Control': 'no-store' } },
+      {
+        headers: {
+          // Client + Redis hold the 10m pattern cache; allow short browser reuse
+          'Cache-Control': 'private, max-age=60',
+        },
+      },
     )
   } catch (error) {
     return NextResponse.json(

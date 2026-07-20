@@ -3,6 +3,7 @@ import { accumulateRadarPeaks } from './gmgn-radar-accumulate'
 import {
   buildGmgnRadarReview,
   deriveRadarThreadStage,
+  formatGmgnRadarLiveThreadCaption,
   formatGmgnRadarLiveThreadHtml,
   formatGmgnRadarRugTelegramHtml,
   formatGmgnRadarTelegramHtml,
@@ -220,6 +221,7 @@ describe('gmgn-radar-review recalibrated', () => {
       mcapPctVsInitial: 34.0,
       openedAt: new Date().toISOString(),
       peakMcapUsd: 55_000,
+      ohlcPre: '<pre>▁▃▅▇\n1→2 · +10.0% · 4b</pre>',
     })
     expect(html).toContain('SURGE')
     expect(html).toContain('Initial:')
@@ -231,6 +233,7 @@ describe('gmgn-radar-review recalibrated', () => {
     expect(html).toContain('KOL')
     expect(html).toContain('+10.0%')
     expect(html).toContain('Δ vs last')
+    expect(html).toContain('OHLC 10m')
     expect(html).toContain('<pre>')
     expect(html).toMatch(/boost=15|top10Pct=/)
   })
@@ -273,6 +276,30 @@ describe('gmgn-radar-review recalibrated', () => {
         nowMs: now,
       }),
     ).toBe('fade')
+  })
+
+  it('formats compact photo caption under 1024 without rawDebug', () => {
+    const review = buildGmgnRadarReview({ sm: 10, kol: 5, top10: 14 })
+    const caption = formatGmgnRadarLiveThreadCaption({
+      kind: 'new',
+      review,
+      symbol: 'WUKONG',
+      tokenAddress: 'So11111111111111111111111111111111111111112',
+      category: 'HOT',
+      lifecycle: 1,
+      peakSm: 12,
+      peakKol: 8,
+      initialPriceUsd: 0.0001,
+      initialMcapUsd: 37_300,
+      priceUsd: 0.00015,
+      mcapUsd: 50_000,
+      openedAt: new Date().toISOString(),
+    })
+    expect(caption.length).toBeLessThanOrEqual(1024)
+    expect(caption).toContain('Radar:')
+    expect(caption).toContain('WUKONG')
+    expect(caption).not.toContain('boost=')
+    expect(caption).not.toContain('OHLC 10m')
   })
 
   it('formats dead thread without removing lifecycle context', () => {

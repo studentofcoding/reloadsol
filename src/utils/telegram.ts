@@ -133,6 +133,120 @@ export async function editTelegramMessage(params: {
   }
 }
 
+const TELEGRAM_CAPTION_MAX = 1024
+
+export async function sendTelegramPhoto(params: {
+  png: Buffer
+  caption?: string
+  chatId?: string
+  inlineKeyboard?: Array<Array<TelegramInlineButton>>
+  parseMode?: 'HTML' | 'Markdown'
+}): Promise<TelegramSendResult> {
+  if (!isTelegramConfigured()) {
+    console.log('[Telegram] Skipped sendPhoto (not configured)')
+    return { ok: false, messageId: null, chatId: null }
+  }
+
+  try {
+    const token = getBotToken()
+    const chatId = params.chatId ?? getAlertChatId()
+    const form = new FormData()
+    form.append('chat_id', chatId)
+    form.append(
+      'photo',
+      new Blob([new Uint8Array(params.png)], { type: 'image/png' }),
+      'ohlc.png',
+    )
+    if (params.caption) {
+      form.append('caption', params.caption.slice(0, TELEGRAM_CAPTION_MAX))
+    }
+    if (params.parseMode) form.append('parse_mode', params.parseMode)
+    if (params.inlineKeyboard?.length) {
+      form.append(
+        'reply_markup',
+        JSON.stringify({ inline_keyboard: params.inlineKeyboard }),
+      )
+    }
+
+    const response = await fetch(`${TELEGRAM_API}/bot${token}/sendPhoto`, {
+      method: 'POST',
+      body: form,
+    })
+
+    if (!response.ok) {
+      const errText = await response.text()
+      console.error('[Telegram] sendPhoto failed:', response.status, errText)
+      return { ok: false, messageId: null, chatId }
+    }
+    const data = (await response.json()) as {
+      ok?: boolean
+      result?: { message_id?: number }
+    }
+    const messageId =
+      typeof data.result?.message_id === 'number' ? data.result.message_id : null
+    return { ok: Boolean(data.ok), messageId, chatId }
+  } catch (error) {
+    console.error('[Telegram] sendPhoto error:', error)
+    return { ok: false, messageId: null, chatId: null }
+  }
+}
+
+export async function editTelegramMessageMedia(params: {
+  chatId: string
+  messageId: number
+  png: Buffer
+  caption?: string
+  inlineKeyboard?: Array<Array<TelegramInlineButton>>
+  parseMode?: 'HTML' | 'Markdown'
+}): Promise<boolean> {
+  if (!isTelegramConfigured()) return false
+  try {
+    const token = getBotToken()
+    const form = new FormData()
+    form.append('chat_id', params.chatId)
+    form.append('message_id', String(params.messageId))
+    form.append(
+      'photo',
+      new Blob([new Uint8Array(params.png)], { type: 'image/png' }),
+      'ohlc.png',
+    )
+    const media: Record<string, unknown> = {
+      type: 'photo',
+      media: 'attach://photo',
+    }
+    if (params.caption) {
+      media.caption = params.caption.slice(0, TELEGRAM_CAPTION_MAX)
+    }
+    if (params.parseMode) media.parse_mode = params.parseMode
+    form.append('media', JSON.stringify(media))
+    if (params.inlineKeyboard?.length) {
+      form.append(
+        'reply_markup',
+        JSON.stringify({ inline_keyboard: params.inlineKeyboard }),
+      )
+    }
+
+    const response = await fetch(
+      `${TELEGRAM_API}/bot${token}/editMessageMedia`,
+      { method: 'POST', body: form },
+    )
+    if (!response.ok) {
+      const errText = await response.text()
+      if (errText.includes('message is not modified')) return true
+      console.error(
+        '[Telegram] editMessageMedia failed:',
+        response.status,
+        errText,
+      )
+      return false
+    }
+    return true
+  } catch (error) {
+    console.error('[Telegram] editMessageMedia error:', error)
+    return false
+  }
+}
+
 export async function pinTelegramMessage(params: {
   chatId: string
   messageId: number

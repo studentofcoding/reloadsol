@@ -4,7 +4,7 @@ import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import GmgnKlineChart from '@/components/GmgnKlineChart';
 import DlmmChartActions from '@/components/dlmm/DlmmChartActions';
-import { useDlmmPotentialList } from '@/hooks/useDlmmPotentialList';
+import { usePotentialList } from '@/hooks/usePotentialList';
 import { useRobinhoodScreen } from '@/hooks/useRobinhoodScreen';
 import { useRugList } from '@/hooks/useRugList';
 import type { DlmmPotentialSource, DlmmScreenCandidate } from '@/types/dlmm';
@@ -388,7 +388,7 @@ export default function HunterCandidateTabs({
     'general',
   );
   const [robinhoodView, setRobinhoodView] = useState<'pools' | 'gmgn'>('pools');
-  const { entries, remove, isLoading: potentialLoading } = useDlmmPotentialList();
+  const { entries, remove, isLoading: potentialLoading } = usePotentialList();
   const {
     tokens: robinhoodTokens,
     fetchedAt: robinhoodFetchedAt,

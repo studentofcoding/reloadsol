@@ -3,6 +3,7 @@ import {
   captureDetectSnapshot,
   fetchLastOhlcRugBars,
   getLatestDetectSnapshot,
+  insertDetectSnapshot,
   updateDetectSnapshotLabel,
   type DetectRugLabel,
 } from '@/strategies/detect-snapshots'
@@ -28,6 +29,21 @@ export async function GET(request: NextRequest) {
     ])
     const evalResult = evaluateOhlcRugRules(bars)
 
+    // Persist first Freeview view so training capture can copy bars
+    let snapshotId = existing?.id ?? null
+    let detectedAt = existing?.detected_at ?? null
+    let snapSource = existing?.source ?? null
+    if ((!existing || existing.bars.length === 0) && bars.length > 0) {
+      snapshotId = await insertDetectSnapshot({
+        tokenAddress: address,
+        source: 'freeview',
+        bars,
+        evalResult,
+      })
+      detectedAt = new Date().toISOString()
+      snapSource = 'freeview'
+    }
+
     return NextResponse.json(
       {
         success: true,
@@ -38,9 +54,9 @@ export async function GET(request: NextRequest) {
         rule_hits: evalResult.hits,
         trip: evalResult.trip,
         rug_label: existing?.rug_label ?? 'system',
-        snapshot_id: existing?.id ?? null,
-        detected_at: existing?.detected_at ?? null,
-        source: existing?.source ?? null,
+        snapshot_id: snapshotId,
+        detected_at: detectedAt,
+        source: snapSource,
         frozen_features: existing?.features ?? null,
         frozen_rule_hits: existing?.rule_hits ?? null,
       },
