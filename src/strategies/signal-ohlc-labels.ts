@@ -7,11 +7,16 @@ import {
 } from '@/strategies/token-map-chart'
 import { takeLastOhlcBars, type OhlcRugBar } from '@/strategies/ohlc-rug-rules'
 import {
+  POTENTIAL_MAX_MS,
   resolveCaptureWindowMs,
   toSignalOhlcStoreLabel,
   type SignalOhlcLabelKind,
   type TrackContext,
 } from '@/strategies/signal-ohlc-window'
+
+/** Marked after one failed ST backfill so gallery does not retry every load */
+const BACKFILL_EMPTY_SOURCE = 'backfill_empty'
+const BACKFILL_CONCURRENCY = 3
 
 const ENSURE_SQL = `
 CREATE TABLE IF NOT EXISTS signal_ohlc_labels (
@@ -173,6 +178,164 @@ function filterBarsToWindow(
   return bars.filter((b) => b.t >= startSec && b.t <= endSec)
 }
 
+function rowBarsEmpty(row: SignalOhlcLabelRow): boolean {
+  return !Array.isArray(row.bars) || row.bars.length === 0
+}
+
+function needsOhlcBackfill(row: SignalOhlcLabelRow): boolean {
+  return rowBarsEmpty(row) && row.ohlc_source !== BACKFILL_EMPTY_SOURCE
+}
+
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return []
+  const out = new Array<R>(items.length)
+  let next = 0
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const idx = next++
+      out[idx] = await fn(items[idx]!)
+    }
+  }
+  const n = Math.min(concurrency, items.length)
+  await Promise.all(Array.from({ length: n }, () => worker()))
+  return out
+}
+
+/**
+ * One-shot backfill for gallery rows with empty bars (ST / gmgn token-ohlc path).
+ * Failed attempts set ohlc_source=backfill_empty so we do not hammer ST.
+ */
+export async function backfillEmptySignalOhlcBars(
+  row: SignalOhlcLabelRow,
+): Promise<SignalOhlcLabelRow> {
+  if (!needsOhlcBackfill(row)) return row
+
+  const startMs = new Date(row.window_start).getTime()
+  const endMs = new Date(row.window_end).getTime()
+  let startSec = Number.isFinite(startMs)
+    ? Math.floor(startMs / 1000)
+    : Math.floor((Date.now() - POTENTIAL_MAX_MS) / 1000)
+  let endSec = Number.isFinite(endMs)
+    ? Math.floor(endMs / 1000)
+    : Math.floor(Date.now() / 1000)
+  if (endSec <= startSec) {
+    endSec = Math.floor(Date.now() / 1000)
+    startSec = endSec - Math.floor(POTENTIAL_MAX_MS / 1000)
+  }
+
+  let bars: OhlcRugBar[] = []
+  let ohlcSource = 'none'
+  let fullSeries: OhlcRugBar[] = []
+
+  try {
+    const cached = await getCachedTokenOhlc24h1m(row.token_address)
+    if (cached.candles.length > 0) {
+      fullSeries = tokenOhlcToRugBars(cached.candles)
+      bars = filterBarsToWindow(fullSeries, startSec, endSec)
+      if (bars.length > 0) ohlcSource = cached.source || 'solanatracker'
+    }
+
+    if (bars.length === 0) {
+      const { candles, source } = await fetchTokenOhlc({
+        tokenAddress: row.token_address,
+        timeFrom: startSec,
+        timeTo: endSec,
+        interval: '1m',
+      })
+      const mapped = tokenOhlcToRugBars(candles)
+      if (mapped.length > 0) fullSeries = mapped
+      bars = filterBarsToWindow(mapped, startSec, endSec)
+      if (bars.length > 0) ohlcSource = source || 'solanatracker'
+    }
+
+    if (bars.length === 0 && fullSeries.length === 0) {
+      const { candles, source } = await fetchTokenOhlc({
+        tokenAddress: row.token_address,
+        hours: 24,
+        interval: '1m',
+      })
+      fullSeries = tokenOhlcToRugBars(candles)
+      if (fullSeries.length > 0) {
+        ohlcSource = source || 'solanatracker'
+      }
+    }
+
+    if (bars.length === 0 && fullSeries.length > 0) {
+      bars = takeLastOhlcBars(fullSeries, 10)
+      ohlcSource = 'last10_fallback'
+    }
+  } catch (err) {
+    console.warn('[signal-ohlc-labels] backfill fetch failed', {
+      mint: row.token_address,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  if (bars.length === 0) {
+    await query(
+      `UPDATE signal_ohlc_labels SET ohlc_source = $2
+       WHERE id = $1::uuid
+         AND (bars = '[]'::jsonb OR jsonb_array_length(bars) = 0)`,
+      [row.id, BACKFILL_EMPTY_SOURCE],
+    )
+    await invalidateSignalOhlcLabelsCache(row.label)
+    return { ...row, ohlc_source: BACKFILL_EMPTY_SOURCE }
+  }
+
+  const windowStartIso = new Date(bars[0]!.t * 1000).toISOString()
+  const windowEndIso = new Date(bars[bars.length - 1]!.t * 1000).toISOString()
+
+  const updated = await queryOne<SignalOhlcLabelRow>(
+    `UPDATE signal_ohlc_labels
+     SET bars = $2::jsonb,
+         ohlc_source = $3,
+         window_start = $4::timestamptz,
+         window_end = $5::timestamptz
+     WHERE id = $1::uuid
+       AND (bars = '[]'::jsonb OR jsonb_array_length(bars) = 0)
+     RETURNING *`,
+    [
+      row.id,
+      JSON.stringify(bars),
+      ohlcSource,
+      windowStartIso,
+      windowEndIso,
+    ],
+  )
+  await invalidateSignalOhlcLabelsCache(row.label)
+  return (
+    updated ?? {
+      ...row,
+      bars,
+      ohlc_source: ohlcSource,
+      window_start: windowStartIso,
+      window_end: windowEndIso,
+    }
+  )
+}
+
+async function backfillEmptyRows(
+  rows: SignalOhlcLabelRow[],
+): Promise<SignalOhlcLabelRow[]> {
+  const needIdx = rows
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => needsOhlcBackfill(r))
+  if (needIdx.length === 0) return rows
+
+  const filled = await mapPool(needIdx, BACKFILL_CONCURRENCY, ({ r }) =>
+    backfillEmptySignalOhlcBars(r),
+  )
+  const out = rows.slice()
+  for (let j = 0; j < needIdx.length; j++) {
+    out[needIdx[j]!.i] = filled[j]!
+  }
+  return out
+}
+
 /** Capture once per (token, label). Prefer cached 24h×1m window; else narrow ST. */
 export async function captureSignalOhlcLabel(params: {
   tokenAddress: string
@@ -310,12 +473,19 @@ export async function listSignalOhlcLabels(params: {
   if (params.label === 'potential' || params.label === 'rug') {
     const key = signalOhlcLabelsCacheKey(params.label, limit, offset)
     const cached = await cacheGet<SignalOhlcLabelRow[]>(key)
-    if (cached) return cached
+    if (cached && !cached.some(needsOhlcBackfill)) {
+      return cached
+    }
 
-    const rows = await listFromDb({ label: params.label, limit, offset })
+    const base =
+      cached && cached.some(needsOhlcBackfill)
+        ? cached
+        : await listFromDb({ label: params.label, limit, offset })
+    const rows = await backfillEmptyRows(base)
     await cacheSet(key, rows, SIGNAL_OHLC_LABELS_CACHE_TTL_SEC)
     return rows
   }
 
-  return listFromDb({ label: params.label, limit, offset })
+  const rows = await listFromDb({ label: params.label, limit, offset })
+  return backfillEmptyRows(rows)
 }
