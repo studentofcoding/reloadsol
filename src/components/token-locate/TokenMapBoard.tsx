@@ -113,7 +113,10 @@ export default function TokenMapBoard({
       {/* OHLC rug panel always visible (evidence); GMGN only when not concentration-banned */}
       <div className="flex flex-col gap-2 md:flex-row md:items-stretch">
         <div className="w-full min-w-[7rem] md:w-[10%] md:shrink-0">
-          <OhlcRugPanel tokenAddress={result.tokenAddress} />
+          <OhlcRugPanel
+            tokenAddress={result.tokenAddress}
+            tokenSymbol={result.symbol}
+          />
         </div>
         {!concentrationBanned && showGmgn ? (
           <div className="min-w-0 h-[300px] w-full overflow-hidden rounded-xl border border-gray-700 bg-black md:w-[90%] md:flex-1">

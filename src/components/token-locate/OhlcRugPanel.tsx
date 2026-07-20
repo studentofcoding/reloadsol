@@ -9,13 +9,49 @@ import {
   type OhlcRugBar,
   type OhlcRugThresholds,
 } from '@/strategies/ohlc-rug-rules'
+import type { DetectRugLabel } from '@/strategies/detect-snapshots'
+
+const THRESHOLDS_KEY = 'ohlc-rug-thresholds-v1'
+
+function loadThresholds(): OhlcRugThresholds {
+  if (typeof window === 'undefined') return { ...DEFAULT_OHLC_RUG_THRESHOLDS }
+  try {
+    const raw = localStorage.getItem(THRESHOLDS_KEY)
+    if (!raw) return { ...DEFAULT_OHLC_RUG_THRESHOLDS }
+    const parsed = JSON.parse(raw) as Partial<OhlcRugThresholds>
+    return {
+      dumpPct:
+        typeof parsed.dumpPct === 'number'
+          ? parsed.dumpPct
+          : DEFAULT_OHLC_RUG_THRESHOLDS.dumpPct,
+      wickRatio:
+        typeof parsed.wickRatio === 'number'
+          ? parsed.wickRatio
+          : DEFAULT_OHLC_RUG_THRESHOLDS.wickRatio,
+      volDeathRatio:
+        typeof parsed.volDeathRatio === 'number'
+          ? parsed.volDeathRatio
+          : DEFAULT_OHLC_RUG_THRESHOLDS.volDeathRatio,
+    }
+  } catch {
+    return { ...DEFAULT_OHLC_RUG_THRESHOLDS }
+  }
+}
+
+function saveThresholds(t: OhlcRugThresholds): void {
+  try {
+    localStorage.setItem(THRESHOLDS_KEY, JSON.stringify(t))
+  } catch {
+    /* quota */
+  }
+}
 
 type SnapshotResponse = {
   success: boolean
   error?: string
   bars: OhlcRugBar[]
   barCount: number
-  rug_label: 'system' | 'rug' | 'not_rug'
+  rug_label: DetectRugLabel
   snapshot_id: string | null
   trip: boolean
   rule_hits: ReturnType<typeof evaluateOhlcRugRules>['hits']
@@ -34,13 +70,21 @@ function fmtRatio(ratio: number | null | undefined): string {
 
 export default function OhlcRugPanel({
   tokenAddress,
+  tokenSymbol,
 }: {
   tokenAddress: string
+  tokenSymbol?: string | null
 }) {
   const qc = useQueryClient()
-  const [thresholds, setThresholds] = useState<OhlcRugThresholds>({
-    ...DEFAULT_OHLC_RUG_THRESHOLDS,
-  })
+  const [thresholds, setThresholds] = useState<OhlcRugThresholds>(loadThresholds)
+
+  const setThreshold = (patch: Partial<OhlcRugThresholds>) => {
+    setThresholds((prev) => {
+      const next = { ...prev, ...patch }
+      saveThresholds(next)
+      return next
+    })
+  }
 
   const query = useQuery({
     queryKey: ['gmgn-detect-snapshot', tokenAddress],
@@ -64,11 +108,15 @@ export default function OhlcRugPanel({
   }, [query.data?.bars, thresholds])
 
   const labelMut = useMutation({
-    mutationFn: async (rug_label: 'system' | 'rug' | 'not_rug') => {
+    mutationFn: async (rug_label: DetectRugLabel) => {
       const res = await fetch('/api/gmgn/detect-snapshot', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: tokenAddress, rug_label }),
+        body: JSON.stringify({
+          address: tokenAddress,
+          rug_label,
+          tokenSymbol: tokenSymbol ?? null,
+        }),
       })
       const json = (await res.json()) as {
         success: boolean
@@ -84,6 +132,8 @@ export default function OhlcRugPanel({
       void qc.invalidateQueries({
         queryKey: ['gmgn-detect-snapshot', tokenAddress],
       })
+      void qc.invalidateQueries({ queryKey: ['potential-list'] })
+      void qc.invalidateQueries({ queryKey: ['rug-list'] })
     },
   })
 
@@ -130,19 +180,19 @@ export default function OhlcRugPanel({
           value={label}
           disabled={labelMut.isPending}
           onChange={(e) => {
-            const v = e.target.value as 'system' | 'rug' | 'not_rug'
+            const v = e.target.value as DetectRugLabel
             labelMut.mutate(v)
           }}
         >
           <option value="system">system</option>
           <option value="rug">rug</option>
-          <option value="not_rug">not_rug</option>
+          <option value="potential">potential</option>
         </select>
       </label>
 
       <div className="space-y-1 border-t border-gray-800 pt-1">
         <p className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
-          Rules (live tweak)
+          Rules (live tweak · saved)
         </p>
         {live.hits.map((hit) => (
           <div
@@ -179,10 +229,7 @@ export default function OhlcRugPanel({
             step={1}
             value={Math.round(thresholds.dumpPct * 100)}
             onChange={(e) =>
-              setThresholds((t) => ({
-                ...t,
-                dumpPct: Number(e.target.value) / 100,
-              }))
+              setThreshold({ dumpPct: Number(e.target.value) / 100 })
             }
             className="mt-0.5 w-full"
           />
@@ -196,10 +243,7 @@ export default function OhlcRugPanel({
             step={1}
             value={Math.round(thresholds.wickRatio * 100)}
             onChange={(e) =>
-              setThresholds((t) => ({
-                ...t,
-                wickRatio: Number(e.target.value) / 100,
-              }))
+              setThreshold({ wickRatio: Number(e.target.value) / 100 })
             }
             className="mt-0.5 w-full"
           />
@@ -213,10 +257,7 @@ export default function OhlcRugPanel({
             step={1}
             value={Math.round(thresholds.volDeathRatio * 100)}
             onChange={(e) =>
-              setThresholds((t) => ({
-                ...t,
-                volDeathRatio: Number(e.target.value) / 100,
-              }))
+              setThreshold({ volDeathRatio: Number(e.target.value) / 100 })
             }
             className="mt-0.5 w-full"
           />

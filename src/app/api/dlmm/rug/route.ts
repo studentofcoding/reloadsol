@@ -18,6 +18,7 @@ const VALID_SOURCES: TokenRugSource[] = [
   'dlmm-general',
   'gmgn-radar',
   'concentration',
+  'freeview',
 ];
 
 /** Backward-compatible alias — delegates to shared token_rug_list service. */

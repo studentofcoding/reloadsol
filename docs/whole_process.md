@@ -548,7 +548,7 @@ See [architecture.md §9–10](./architecture.md#9-recent-improvements-jun-2026)
 |------|-------------------|
 | PnL cron auth fixed | `pnl_update` worker succeeds with `PNL_UPDATE_SECRET` |
 | Trending schema patch | `volume_5m` + related columns on `trending_token_tracker` |
-| OHLC worker removed | Charts are **GMGN-only** (no local candle API) |
+| OHLC | GMGN **embed** for UI charts; Solana Tracker candles via `/api/gmgn/token-ohlc` + `token_detect_snapshots` / `signal_ohlc_labels` |
 | Raptor bulk paths | Unchanged — still primary for `/buy`, `/sell`, chart buy |
 
 | Next | Suggested action |

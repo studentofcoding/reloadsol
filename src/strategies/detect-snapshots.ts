@@ -21,12 +21,20 @@ CREATE TABLE IF NOT EXISTS token_detect_snapshots (
   bars JSONB NOT NULL DEFAULT '[]'::jsonb,
   features JSONB NOT NULL DEFAULT '{}'::jsonb,
   rule_hits JSONB NOT NULL DEFAULT '[]'::jsonb,
-  rug_label TEXT NOT NULL DEFAULT 'system'
-    CHECK (rug_label IN ('system', 'rug', 'not_rug')),
+  rug_label TEXT NOT NULL DEFAULT 'system',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_token_detect_snapshots_token_detected
   ON token_detect_snapshots (token_address, detected_at DESC);
+UPDATE token_detect_snapshots SET rug_label = 'potential' WHERE rug_label = 'not_rug';
+ALTER TABLE token_detect_snapshots
+  DROP CONSTRAINT IF EXISTS token_detect_snapshots_rug_label_check;
+DO $$ BEGIN
+  ALTER TABLE token_detect_snapshots
+    ADD CONSTRAINT token_detect_snapshots_rug_label_check
+    CHECK (rug_label IN ('system', 'rug', 'potential'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 `
 
 let ensurePromise: Promise<void> | null = null
@@ -44,7 +52,7 @@ export async function ensureDetectSnapshotsTable(): Promise<void> {
 }
 
 export type DetectSnapshotSource = 'concentration' | 'freeview'
-export type DetectRugLabel = 'system' | 'rug' | 'not_rug'
+export type DetectRugLabel = 'system' | 'rug' | 'potential'
 
 export type DetectSnapshotRow = {
   id: string
@@ -150,7 +158,7 @@ export async function updateDetectSnapshotLabel(
   rugLabel: DetectRugLabel,
 ): Promise<DetectSnapshotRow | null> {
   await ensureDetectSnapshotsTable()
-  if (rugLabel !== 'rug' && rugLabel !== 'not_rug' && rugLabel !== 'system') {
+  if (rugLabel !== 'rug' && rugLabel !== 'potential' && rugLabel !== 'system') {
     return null
   }
   const row = await queryOne<Record<string, unknown>>(
@@ -169,6 +177,13 @@ export async function updateDetectSnapshotLabel(
 }
 
 function mapRow(row: Record<string, unknown>): DetectSnapshotRow {
+  const raw = String(row.rug_label ?? 'system')
+  const rug_label: DetectRugLabel =
+    raw === 'rug' || raw === 'potential'
+      ? raw
+      : raw === 'not_rug'
+        ? 'potential'
+        : 'system'
   return {
     id: String(row.id),
     token_address: String(row.token_address),
@@ -184,7 +199,7 @@ function mapRow(row: Record<string, unknown>): DetectSnapshotRow {
       volDeathRatio: null,
     },
     rule_hits: (row.rule_hits as OhlcRugEval['hits']) ?? [],
-    rug_label: row.rug_label as DetectRugLabel,
+    rug_label,
     updated_at: String(row.updated_at),
   }
 }

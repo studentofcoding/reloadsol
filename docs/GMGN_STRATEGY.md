@@ -111,7 +111,7 @@ Only tokens with `score >= GMGN_ACTIVITY_SCORE_THRESHOLD` (default 50) are inges
 
 Separate from the **activity score** (used for hot ingest). Radar is a 0–100 decision card: **SKIP &lt;45**, **WATCH 45–77**, **ENTER ≥78**.
 
-**Telegram:** only **WATCH** and **ENTER** are shared. SKIP is still scored and stored on `raw_metadata` / entry features, but not posted.
+**Telegram:** only **ENTER** is shared (WATCH and SKIP stay in-app / metadata). Scoring still writes WATCH/SKIP on `raw_metadata` / entry features.
 
 ### Accumulators (2h per mint)
 
@@ -169,6 +169,8 @@ Low absolute mcap (e.g. staying under $30k after a micro start) is **not** treat
 
 When `config.radar.telegram.singleThread` is true (default): one editable card per lifecycle with initial price/MC, now + % vs last, peak SM/KOL, **Age**, **Peak MC**. Headers use trajectory stages: **NEW TOKEN** (&lt;20m), **TRACKING**, **SURGE** (MC +50% / SM≥5 / ENTER), **FADING** (MC ≤−40%). Ingest stays cooldown-gated; **thread refresh** runs every hot poll. Persist in `radar_alert_threads`.
 
+**New / comeback opens (ENTER only):** prefer **`sendPhoto`** with a 10m candlestick PNG (SVG → `sharp` in [`ohlc-telegram-svg.ts`](../src/strategies/ohlc-telegram-svg.ts); bars from detect snapshot or ST). Compact HTML caption (≤1024). Updates use `editMessageMedia`. If bars/PNG unavailable, fall back to text `sendMessage` / `editMessageText` (optional Unicode sparkline). Wired in [`gmgn-radar-thread-sync.ts`](../src/strategies/gmgn-radar-thread-sync.ts).
+
 **Min mcap for new cards:** `config.radar.telegram.minMcapUsd` (default **20_000**) — skip **new/comeback** Telegram opens when known mcap is below the floor (edits/death on open threads still run). Null mcap is allowed (fail-open).
 
 **Strategy toggle:** Radar Telegram (thread sync + legacy cards) runs only when **at least one** GMGN strategy is `is_active` (SM / KOL / combined / search clones). If all are off in Admin, Radar Telegram is off — scoring/ingest may still run.
@@ -187,7 +189,8 @@ Cron `gmgn_radar_digest` (default every **86400s**, `GMGN_RADAR_DIGEST_INTERVAL`
 - `src/strategies/gmgn-radar-review.ts` — score / action / Telegram HTML (live thread + stages + rug)
 - `src/strategies/gmgn-radar-price.ts` — sticky / dump / TTL / ENTER override
 - `src/strategies/gmgn-radar-comeback.ts` — drawdown death + comeback evaluators
-- `src/strategies/gmgn-radar-thread-sync.ts` — send/edit lifecycle cards
+- `src/strategies/gmgn-radar-thread-sync.ts` — ENTER-only sendPhoto / edit lifecycle cards
+- `src/strategies/ohlc-telegram-svg.ts` — 10m OHLC SVG → PNG for Telegram photos
 - `src/strategies/gmgn-radar-digest.ts` — pinned Strategy PnL leaderboard
 - `listTopPnlByActiveStrategy` / `rankTopPnlByActiveStrategy` in `src/strategies/db.ts`
 - `src/strategies/gmgn-comeback-sim.ts` — optional paper reopen on comeback (`allowSimReopen`)

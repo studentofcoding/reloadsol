@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — Potential API + OHLC training / Radar Telegram
+
+- **`/api/potential`** — canonical potential watchlist (`markTokenPotential`: list + `trading_signals` label + OHLC capture). Clients use `usePotentialList`; `/api/dlmm/potential` is a thin alias only.
+- **OHLC labels** — Freeview saves `token_detect_snapshots`; Potential/Rug capture into `signal_ohlc_labels` (first ~10m / snapshot); gallery `/dev/ohlc-labels` (Redis + SVG). Solana Tracker via `/api/gmgn/token-ohlc`.
+- **Radar Telegram** — **ENTER only** (WATCH/SKIP not posted); lifecycle open prefers **sendPhoto** + SVG/PNG 10m OHLC (`ohlc-telegram-svg.ts`).
+
 ### Added — Trading UX (PnL / buy / toasts)
 
 - **PnL Fast Sell**: real positions resolve sellable balance via Jupiter Portfolio (`resolveWalletTokenToSell`); slippage **200** bps / `priorityFee` **30000** (aligned with `/sell`); SIM opens mark-close via `closeSimulationPosition` (no on-chain swap); Fast Sell disabled when mint not in wallet.
@@ -500,8 +506,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - DLMM dashboard (`HunterCandidateTabs` cards)
   - Signals hub — Signals, Live, Board, Tracker tabs
   - Algo Tester — Dashboard and History tabs
-- **API** — `GET/POST/DELETE` `/api/dlmm/potential`, `/api/rug`, and `/api/dlmm/rug` (alias).
-- **Hooks** — `useDlmmPotentialList`, `useRugList`, `useDlmmChartActions` (mutually exclusive: marking Potential clears Rug and vice versa).
+- **API** — `GET/POST/DELETE` `/api/potential`, `/api/rug` (`/api/dlmm/potential` and `/api/dlmm/rug` are thin aliases).
+- **Hooks** — `usePotentialList` (alias `useDlmmPotentialList`), `useRugList`, `useDlmmChartActions` (mutually exclusive: marking Potential clears Rug and vice versa).
 
 ### Added — Slim dev surfaces (Signals, Algo Tester, DLMM)
 

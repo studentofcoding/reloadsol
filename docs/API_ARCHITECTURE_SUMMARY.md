@@ -73,7 +73,20 @@ Dedicated system for long-term tracking of token market cap performance and risk
     - **Live Enrichment**: Merges database history with real-time market data from the Trending API.
     - **Smart Notifications**: Server-side deduplicated toasts for high performers.
 
-## 6. Infrastructure & Monitoring
+## 6. Signals labels & lists (`/api/signals`, `/api/potential`, `/api/rug`)
+
+Kanban / chart labeling and training OHLC.
+
+- **`POST /api/signals`**: Upsert `trading_signals` labels. **Potential** → `markTokenPotential` (list + OHLC). **Rugged** → `markTokenRug`. Leaving potential → `unmarkTokenPotential`.
+- **`GET/POST/DELETE /api/potential`**: Potential watchlist (`dlmm_potential_list`) + signal sync + `signal_ohlc_labels` capture. Canonical; `/api/dlmm/potential` is a thin alias.
+- **`GET/POST/DELETE /api/rug`**: Rug exclusion list; `/api/dlmm/rug` alias.
+- **`GET /api/signals/ohlc-labels`**: Training gallery rows (Redis-cached). Dev UI: `/dev/ohlc-labels`.
+- **`GET /api/gmgn/detect-snapshot`**: Freeview last-10×1m OHLC + persist `token_detect_snapshots`.
+- **`GET /api/gmgn/token-ohlc`**: Solana Tracker OHLCV wrapper for charts / capture fallback.
+
+Hooks: `usePotentialList`, `useRugList`, `useDlmmChartActions`.
+
+## 7. Infrastructure & Monitoring
 
 Ensures the system remains healthy and performant.
 

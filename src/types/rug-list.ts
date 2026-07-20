@@ -9,7 +9,8 @@ export type TokenRugSource =
   | 'algo-history'
   | 'dlmm-general'
   | 'gmgn-radar'
-  | 'concentration';
+  | 'concentration'
+  | 'freeview';
 
 export interface TokenRugEntry {
   id: string;

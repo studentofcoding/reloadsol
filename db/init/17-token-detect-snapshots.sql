@@ -11,12 +11,23 @@ CREATE TABLE IF NOT EXISTS token_detect_snapshots (
   bars JSONB NOT NULL DEFAULT '[]'::jsonb,
   features JSONB NOT NULL DEFAULT '{}'::jsonb,
   rule_hits JSONB NOT NULL DEFAULT '[]'::jsonb,
-  rug_label TEXT NOT NULL DEFAULT 'system'
-    CHECK (rug_label IN ('system', 'rug', 'not_rug')),
+  rug_label TEXT NOT NULL DEFAULT 'system',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_token_detect_snapshots_token_detected
   ON token_detect_snapshots (token_address, detected_at DESC);
+
+UPDATE token_detect_snapshots SET rug_label = 'potential' WHERE rug_label = 'not_rug';
+
+ALTER TABLE token_detect_snapshots
+  DROP CONSTRAINT IF EXISTS token_detect_snapshots_rug_label_check;
+
+DO $$ BEGIN
+  ALTER TABLE token_detect_snapshots
+    ADD CONSTRAINT token_detect_snapshots_rug_label_check
+    CHECK (rug_label IN ('system', 'rug', 'potential'));
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 ALTER TABLE token_detect_snapshots ENABLE ROW LEVEL SECURITY;

@@ -199,7 +199,7 @@ Enforced in [`src/utils/api-auth.ts`](../src/utils/api-auth.ts) + [`src/config/a
 |------|-----|----------|
 | **public** | Anyone | `/api/health`, `/api/rpc`, `/api/solprice` |
 | **wallet** | Signed wallet session | `/api/buy`, `/api/operations`, `/api/trading/records` |
-| **dev** | Whitelisted dev wallets | `/api/signals`, `/api/trending`, `/api/workers`, `/api/strategies` |
+| **dev** | Whitelisted dev wallets | `/api/signals`, `/api/potential`, `/api/rug`, `/api/trending`, `/api/workers`, `/api/strategies` |
 | **service** | Cron secrets / bearer / UA | `/api/trending/track`, `/api/signals/sim-track`, `/api/pnl/update` |
 
 Wallet session: `WALLET_SESSION_SECRET` cookie after SIWS-style sign-in.
@@ -263,11 +263,20 @@ Required columns for track route include `volume_5m`, `waiting_started_at`, `tra
 
 Pattern ML shadow fields on mcap sim entries: `entry_features.ml_pattern_p_winner`, `ml_pattern_predicted`. Artifacts: `ml/artifacts/pattern-gate/` (bind-mounted into web).
 
+### OHLC (Solana Tracker + training)
+
+Live candles come from **Solana Tracker** (`fetchTokenOhlc` / `GET /api/gmgn/token-ohlc`), not the removed OHLC worker. Freeview and label capture persist short windows for rules + training.
+
+| Table | Purpose |
+|-------|---------|
+| `token_detect_snapshots` | Freeview / concentration last-10×1m bars + OHLC rug-rule eval |
+| `signal_ohlc_labels` | Potential / Rug training snapshots (gallery `/dev/ohlc-labels`) |
+
 ### Legacy / optional
 
 | Table | Notes |
 |-------|-------|
-| `token_ohlc_bars` | Orphaned after OHLC worker removal; safe to ignore |
+| `token_ohlc_bars` | Orphaned after OHLC **worker** removal; unused — training OHLC uses tables above |
 
 ---
 
@@ -296,8 +305,9 @@ Default `npm run docker:deploy` uses `--auto` from git diff.
 | **Jupiter trending API** | `datapi.jup.ag` + `api.jup.ag` fallback |
 | **Shyft RPC** | On-chain reads/writes via `/api/rpc` |
 | **GMGN iframe** | Charts on `/chart`, modals (no swap) |
+| **Solana Tracker Data API** | OHLCV for Freeview, strategy charts, Radar Telegram photos |
 | **Discord** | Bot alerts, cron operational logs |
-| **Telegram** | Optional DLMM alerts |
+| **Telegram** | Radar ENTER lifecycle (photo + caption), optional DLMM alerts |
 
 Env: see [`.env.docker.example`](../.env.docker.example) and README environment table.
 
@@ -312,7 +322,7 @@ Env: see [`.env.docker.example`](../.env.docker.example) and README environment 
 | **Trending track** | Jupiter API fallback mirror; schema via `db/init/` migrations |
 | **Pattern ML** | 24h cohort export/train, shadow scorer on mcap sim-track (Jul 2026) |
 | **Cron slim-down** | Removed `ohlc_update`, `price_monitor` (11 workers) |
-| **Charts** | GMGN-only; local OHLC stack removed |
+| **Charts** | GMGN embed for UI; ST OHLC for Freeview / training / Radar photos |
 | **Docker** | Selective web/cron rebuild (`docker-scope.sh`, `docker-deploy.sh`) |
 | **Strategy reports** | Coverage table, pagination, all 7 strategies in Reports tab |
 | **Next.js** | Migrated to 16.x; dev nav focused on Signals, Algo Tester, DLMM |
@@ -340,7 +350,7 @@ Set `TRENDING_LIST_DISCORD_VIA_CRON=false` for local dev without cron (re-enable
 | **Medium** | Consolidate daily summary | Done — `daily_summary` cron only; inline track logic removed |
 | **Medium** | Auth on Go `/trigger/*` | Not used — `/trigger/*` open on cron port; rely on network/firewall |
 | **Medium** | Discord notification dedup | Done — cron-only list alerts + cooldown dedup; track filtering summary skipped when `TRENDING_LIST_DISCORD_VIA_CRON=true` |
-| **Low** | Drop `token_ohlc_bars` table | Orphaned after OHLC removal |
+| **Low** | Drop `token_ohlc_bars` table | Orphaned worker table (unused; training OHLC is separate) |
 | **Low** | Refresh [Overview.md](./Overview.md) | Still references removed pages (mcap-tracker nav, catch-the-coin) |
 
 ---

@@ -78,6 +78,7 @@ export async function PATCH(request: NextRequest) {
     const body = (await request.json()) as {
       address?: string
       rug_label?: DetectRugLabel
+      tokenSymbol?: string | null
     }
     const address = body.address?.trim() ?? ''
     if (!address || !isValidMintAddress(address)) {
@@ -87,9 +88,9 @@ export async function PATCH(request: NextRequest) {
       )
     }
     const label = body.rug_label
-    if (label !== 'rug' && label !== 'not_rug' && label !== 'system') {
+    if (label !== 'rug' && label !== 'potential' && label !== 'system') {
       return NextResponse.json(
-        { success: false, error: 'rug_label must be system|rug|not_rug' },
+        { success: false, error: 'rug_label must be system|rug|potential' },
         { status: 400 },
       )
     }
@@ -108,6 +109,40 @@ export async function PATCH(request: NextRequest) {
         { success: false, error: 'No snapshot to label' },
         { status: 404 },
       )
+    }
+
+    // Sync global potential / rug lists (best-effort)
+    try {
+      if (label === 'rug') {
+        const { markTokenRug } = await import('@/utils/rug-list/service')
+        await markTokenRug({
+          tokenAddress: address,
+          tokenSymbol: body.tokenSymbol ?? null,
+          source: 'freeview',
+        })
+      } else if (label === 'potential') {
+        const { markTokenPotential } = await import(
+          '@/utils/potential-list/service'
+        )
+        await markTokenPotential({
+          tokenAddress: address,
+          tokenSymbol: body.tokenSymbol ?? null,
+          source: 'dlmm-general',
+        })
+      } else {
+        const { unmarkTokenRug } = await import('@/utils/rug-list/service')
+        const { unmarkTokenPotential } = await import(
+          '@/utils/potential-list/service'
+        )
+        await unmarkTokenRug(address).catch(() => undefined)
+        await unmarkTokenPotential(address).catch(() => undefined)
+      }
+    } catch (err) {
+      console.warn('[detect-snapshot] list sync failed', {
+        mint: address,
+        label,
+        error: err instanceof Error ? err.message : String(err),
+      })
     }
 
     return NextResponse.json({

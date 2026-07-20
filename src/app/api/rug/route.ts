@@ -18,6 +18,7 @@ const VALID_SOURCES: TokenRugSource[] = [
   'dlmm-general',
   'gmgn-radar',
   'concentration',
+  'freeview',
 ];
 
 export async function GET() {
