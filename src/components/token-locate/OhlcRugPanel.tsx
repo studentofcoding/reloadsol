@@ -134,6 +134,7 @@ export default function OhlcRugPanel({
       })
       void qc.invalidateQueries({ queryKey: ['potential-list'] })
       void qc.invalidateQueries({ queryKey: ['rug-list'] })
+      void qc.invalidateQueries({ queryKey: ['signal-ohlc-labels'] })
     },
   })
 

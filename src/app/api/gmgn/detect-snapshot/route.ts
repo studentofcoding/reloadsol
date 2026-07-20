@@ -125,12 +125,24 @@ export async function PATCH(request: NextRequest) {
       )
     }
 
-    // Sync global potential / rug lists (best-effort)
+    // Sync global potential / rug lists + OHLC gallery (best-effort)
     try {
+      const {
+        upsertSignalOhlcLabelFromBars,
+        removeSignalOhlcLabelsForToken,
+      } = await import('@/strategies/signal-ohlc-labels')
+
       if (label === 'rug') {
         const { markTokenRug } = await import('@/utils/rug-list/service')
         await markTokenRug({
           tokenAddress: address,
+          tokenSymbol: body.tokenSymbol ?? null,
+          source: 'freeview',
+        })
+        await upsertSignalOhlcLabelFromBars({
+          tokenAddress: address,
+          label: 'rug',
+          bars: updated.bars,
           tokenSymbol: body.tokenSymbol ?? null,
           source: 'freeview',
         })
@@ -143,6 +155,13 @@ export async function PATCH(request: NextRequest) {
           tokenSymbol: body.tokenSymbol ?? null,
           source: 'dlmm-general',
         })
+        await upsertSignalOhlcLabelFromBars({
+          tokenAddress: address,
+          label: 'potential',
+          bars: updated.bars,
+          tokenSymbol: body.tokenSymbol ?? null,
+          source: 'freeview',
+        })
       } else {
         const { unmarkTokenRug } = await import('@/utils/rug-list/service')
         const { unmarkTokenPotential } = await import(
@@ -150,6 +169,7 @@ export async function PATCH(request: NextRequest) {
         )
         await unmarkTokenRug(address).catch(() => undefined)
         await unmarkTokenPotential(address).catch(() => undefined)
+        await removeSignalOhlcLabelsForToken(address)
       }
     } catch (err) {
       console.warn('[detect-snapshot] list sync failed', {

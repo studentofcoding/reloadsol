@@ -436,6 +436,86 @@ export async function captureSignalOhlcLabel(params: {
   return raced?.id ?? null
 }
 
+/**
+ * Upsert gallery row from Freeview detect-snapshot bars.
+ * Exclusive: deletes the other label row for the same mint.
+ */
+export async function upsertSignalOhlcLabelFromBars(params: {
+  tokenAddress: string
+  label: SignalOhlcLabelKind
+  bars: OhlcRugBar[]
+  tokenSymbol?: string | null
+  source?: string | null
+}): Promise<string | null> {
+  const storeLabel = params.label
+  await ensureSignalOhlcLabelsTable()
+
+  if (!Array.isArray(params.bars) || params.bars.length === 0) {
+    // No Freeview bars — try normal capture once
+    return captureSignalOhlcLabel({
+      tokenAddress: params.tokenAddress,
+      label: storeLabel,
+      tokenSymbol: params.tokenSymbol,
+      source: params.source ?? 'freeview',
+    })
+  }
+
+  const otherLabel: SignalOhlcLabelKind =
+    storeLabel === 'potential' ? 'rug' : 'potential'
+  await query(
+    `DELETE FROM signal_ohlc_labels
+     WHERE token_address = $1 AND label = $2`,
+    [params.tokenAddress, otherLabel],
+  )
+  await invalidateSignalOhlcLabelsCache(otherLabel)
+
+  const sorted = [...params.bars].sort((a, b) => a.t - b.t)
+  const windowStartIso = new Date(sorted[0]!.t * 1000).toISOString()
+  const windowEndIso = new Date(
+    sorted[sorted.length - 1]!.t * 1000,
+  ).toISOString()
+
+  const { rows } = await query<{ id: string }>(
+    `INSERT INTO signal_ohlc_labels (
+       token_address, token_symbol, label, window_start, window_end,
+       ohlc_interval, ohlc_source, bars, end_reason, source
+     ) VALUES ($1, $2, $3, $4, $5, '1m', 'detect_snapshot', $6::jsonb, 'label_now', $7)
+     ON CONFLICT (token_address, label) DO UPDATE SET
+       token_symbol = COALESCE(EXCLUDED.token_symbol, signal_ohlc_labels.token_symbol),
+       window_start = EXCLUDED.window_start,
+       window_end = EXCLUDED.window_end,
+       ohlc_source = EXCLUDED.ohlc_source,
+       bars = EXCLUDED.bars,
+       end_reason = EXCLUDED.end_reason,
+       source = EXCLUDED.source
+     RETURNING id`,
+    [
+      params.tokenAddress,
+      params.tokenSymbol ?? null,
+      storeLabel,
+      windowStartIso,
+      windowEndIso,
+      JSON.stringify(sorted),
+      params.source ?? 'freeview',
+    ],
+  )
+
+  await invalidateSignalOhlcLabelsCache(storeLabel)
+  return rows[0]?.id ?? null
+}
+
+/** Remove all gallery OHLC rows for a mint (Freeview → system). */
+export async function removeSignalOhlcLabelsForToken(
+  tokenAddress: string,
+): Promise<void> {
+  await ensureSignalOhlcLabelsTable()
+  await query(`DELETE FROM signal_ohlc_labels WHERE token_address = $1`, [
+    tokenAddress,
+  ])
+  await invalidateSignalOhlcLabelsCache('potential')
+  await invalidateSignalOhlcLabelsCache('rug')
+}
+
 async function listFromDb(params: {
   label?: SignalOhlcLabelKind | null
   limit: number
