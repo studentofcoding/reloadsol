@@ -702,8 +702,8 @@ export async function sendGmgnRadarAlert(params: {
   minMcapUsd?: number | null
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
-  // Only share WATCH / ENTER — SKIP stays in social metadata, not Telegram
-  if (params.review.action === 'SKIP') return false
+  // Only ENTER on Telegram — WATCH / SKIP stay in-app / social metadata
+  if (params.review.action !== 'ENTER') return false
 
   const { isAnyGmgnRadarStrategyActive } = await import('@/strategies/load-gmgn')
   if (!(await isAnyGmgnRadarStrategyActive())) return false
