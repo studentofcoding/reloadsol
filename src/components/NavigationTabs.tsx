@@ -42,6 +42,7 @@ export default function NavigationTabs({
     "/dev/strategies",
     "/dev/token-search",
     "/dev/ohlc-labels",
+    "/dev/arbitrage",
   ].some((path) => (pathname || "").startsWith(path));
 
   const handleTabClick = (tab: string) => {
@@ -295,6 +296,17 @@ export default function NavigationTabs({
                       title="OHLC labels"
                     >
                       <span className="text-xs font-semibold">OHLC</span>
+                    </Link>
+                    <Link
+                      href="/dev/arbitrage"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                        isActive("/dev/arbitrage")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                      }`}
+                      title="SOL arbitration"
+                    >
+                      <span className="text-xs font-semibold">Arb</span>
                     </Link>
                   </>
                 )}
@@ -650,6 +662,17 @@ export default function NavigationTabs({
                 >
                   <span className="mb-1 text-sm font-bold">OHLC</span>
                   <span className="text-xs font-medium">Labels</span>
+                </Link>
+                <Link
+                  href="/dev/arbitrage"
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                    isActive("/dev/arbitrage")
+                      ? "bg-white text-black"
+                      : "text-gray-400"
+                  }`}
+                >
+                  <span className="mb-1 text-sm font-bold">Arb</span>
+                  <span className="text-xs font-medium">Console</span>
                 </Link>
               </>
             )}

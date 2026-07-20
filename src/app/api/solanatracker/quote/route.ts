@@ -39,12 +39,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const maxHopsRaw = searchParams.get("maxHops");
+    const maxHops =
+      maxHopsRaw != null && /^\d+$/.test(maxHopsRaw)
+        ? Number.parseInt(maxHopsRaw, 10)
+        : undefined;
+
     const start = Date.now();
     const quote = await fetchRaptorQuoteDirect(
       inputMint,
       outputMint,
       amount,
       Number.isFinite(slippageBps) ? slippageBps : 200,
+      maxHops,
     );
 
     return NextResponse.json(

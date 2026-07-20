@@ -55,6 +55,8 @@ export type PrepareSwapParams = {
   /** Server-side routes set true to call Raptor directly */
   direct?: boolean;
   connection?: Connection;
+  /** Arb-only: override Raptor maxHops for this prepare. */
+  maxHops?: number;
 };
 
 function mapRaptorQuoteToSwapQuote(
@@ -86,6 +88,7 @@ async function prepareRaptorSwap(
     priorityFeeLamports: params.priorityFeeLamports,
     feeAccount: params.feeAccount,
     feeBps: params.feeBps,
+    maxHops: params.maxHops,
   };
 
   const useDirect = params.direct ?? typeof window === "undefined";

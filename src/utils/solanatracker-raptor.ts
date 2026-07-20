@@ -9,11 +9,24 @@ export const RAPTOR_DEV_FEE_ACCOUNT =
 /** Direct/single-hop only — avoids multi-hop route failures on thin pump tokens. */
 export const RAPTOR_DEFAULT_MAX_HOPS = 1;
 
+/** Arb-only default — never applied to directional bots. */
+export const RAPTOR_DEFAULT_MAX_HOPS_ARBITRAGE = 3;
+
 export function getRaptorMaxHops(): number {
   const raw = process.env.RAPTOR_MAX_HOPS?.trim();
   if (!raw) return RAPTOR_DEFAULT_MAX_HOPS;
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed >= 1 ? parsed : RAPTOR_DEFAULT_MAX_HOPS;
+}
+
+/** maxHops for SOL arbitration paths only (`RAPTOR_MAX_HOPS_ARBITRAGE`). */
+export function getRaptorMaxHopsArbitrage(): number {
+  const raw = process.env.RAPTOR_MAX_HOPS_ARBITRAGE?.trim();
+  if (!raw) return RAPTOR_DEFAULT_MAX_HOPS_ARBITRAGE;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed >= 1
+    ? parsed
+    : RAPTOR_DEFAULT_MAX_HOPS_ARBITRAGE;
 }
 
 export class RaptorAPIError extends Error {
@@ -114,6 +127,8 @@ export type RaptorQuoteAndSwapParams = {
   priorityFeeLamports?: number;
   feeAccount?: string;
   feeBps?: number;
+  /** Override global hops (arb uses getRaptorMaxHopsArbitrage). */
+  maxHops?: number;
 };
 
 export function buildRaptorQuoteAndSwapBody(
@@ -128,7 +143,7 @@ export function buildRaptorQuoteAndSwapBody(
     slippageBps: params.slippageBps,
     wrapUnwrapSol: true,
     txVersion: "V0",
-    maxHops: getRaptorMaxHops(),
+    maxHops: params.maxHops ?? getRaptorMaxHops(),
     priorityFee: priority.priorityFee,
     maxPriorityFee: priority.maxPriorityFee,
     feeAccount: params.feeAccount ?? RAPTOR_DEV_FEE_ACCOUNT,
@@ -200,13 +215,14 @@ export async function fetchRaptorQuoteDirect(
   outputMint: string,
   amount: string,
   slippageBps: number,
+  maxHops?: number,
 ): Promise<RaptorQuoteResponse> {
   const params = new URLSearchParams({
     inputMint,
     outputMint,
     amount,
     slippageBps: String(slippageBps),
-    maxHops: String(getRaptorMaxHops()),
+    maxHops: String(maxHops ?? getRaptorMaxHops()),
   });
   return raptorFetch<RaptorQuoteResponse>(`/quote?${params.toString()}`);
 }
@@ -265,13 +281,14 @@ export async function fetchRaptorQuote(
   outputMint: string,
   amount: string,
   slippageBps: number,
+  maxHops?: number,
 ): Promise<RaptorQuoteResponse> {
   const query = new URLSearchParams({
     inputMint,
     outputMint,
     amount,
     slippageBps: String(slippageBps),
-    maxHops: String(getRaptorMaxHops()),
+    maxHops: String(maxHops ?? getRaptorMaxHops()),
   });
   const response = await fetch(`/api/solanatracker/quote?${query.toString()}`);
   if (!response.ok) {

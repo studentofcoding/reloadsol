@@ -236,6 +236,7 @@ type Config struct {
     DLMMSimTrackInterval int // seconds
     DLMMManageInterval int    // seconds
     DLMMSecret         string
+    SolArbScanInterval int // seconds (0 = disabled)
 }
 
 type CronService struct {
@@ -358,6 +359,14 @@ func NewCronService() *CronService {
             return 60
         }(),
         DLMMSecret: getEnv("DLMM_MANAGE_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
+        SolArbScanInterval: func() int {
+            if v := os.Getenv("SOL_ARB_SCAN_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
+                    return iv
+                }
+            }
+            return 60 // default 60s; set 0 to disable
+        }(),
     }
 
 	c := cron.New(cron.WithSeconds())
@@ -548,6 +557,16 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(dlmmManageEntryID, "dlmm_manage")
 
+    if cs.config.SolArbScanInterval > 0 {
+        solArbSpec := fmt.Sprintf("@every %ds", cs.config.SolArbScanInterval)
+        solArbEntryID, err := cs.cron.AddFunc(solArbSpec, cs.runSolArbScan)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add sol-arb scan cron job: %v", err))
+            log.Fatal("Failed to add sol-arb scan cron job:", err)
+        }
+        cs.workers.BindEntry(solArbEntryID, "sol_arb_scan")
+    }
+
     // Daily summary - once per day at midnight UTC
     summaryEntryID, err := cs.cron.AddFunc("0 0 0 * * *", cs.runDailySummary)
 	if err != nil {
@@ -587,6 +606,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/dlmm-screen", cs.manualDLMMScreenTrigger)
     http.HandleFunc("/trigger/dlmm-sim-track", cs.manualDLMMSimTrackTrigger)
     http.HandleFunc("/trigger/dlmm-manage", cs.manualDLMMManageTrigger)
+    http.HandleFunc("/trigger/sol-arb-scan", cs.manualSolArbScanTrigger)
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
     cs.cron.Start()
@@ -618,6 +638,11 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("🌊 DLMM screen: every %d seconds", cs.config.DLMMScreenInterval))
     cs.logger.Info(fmt.Sprintf("🧪 DLMM sim track: every %d seconds", cs.config.DLMMSimTrackInterval))
     cs.logger.Info(fmt.Sprintf("🩺 DLMM manage: every %d seconds", cs.config.DLMMManageInterval))
+    if cs.config.SolArbScanInterval > 0 {
+        cs.logger.Info(fmt.Sprintf("⚡ SOL arb scan: every %d seconds", cs.config.SolArbScanInterval))
+    } else {
+        cs.logger.Info("⚡ SOL arb scan: disabled (SOL_ARB_SCAN_INTERVAL=0)")
+    }
 	cs.logger.Info("📋 Daily summary: daily at 00:00 UTC")
 	cs.logger.Info("💰 PnL update: daily at 02:00 UTC" )
 	cs.logger.Info("🔗 Health check: /health")
@@ -1364,6 +1389,34 @@ func (cs *CronService) manualDLMMManageTrigger(w http.ResponseWriter, r *http.Re
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]string{
         "message":   "DLMM manage triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) runSolArbScan() {
+    cs.workers.Begin("sol_arb_scan")
+    cs.logger.Info("⚡ Running SOL arb scan...")
+    url := fmt.Sprintf("%s/api/sol-arb/scan?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ SOL arb scan failed: %v", err))
+        cs.workers.Fail("sol_arb_scan", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ SOL arb scan completed: %s", resp))
+    cs.workers.Success("sol_arb_scan")
+}
+
+func (cs *CronService) manualSolArbScanTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual SOL arb scan trigger")
+    cs.runSolArbScan()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "SOL arb scan triggered manually",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

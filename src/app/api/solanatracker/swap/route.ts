@@ -57,6 +57,7 @@ export async function POST(request: NextRequest) {
       priorityFeeLamports: body.priorityFeeLamports,
       feeAccount: body.feeAccount,
       feeBps: body.feeBps,
+      maxHops: body.maxHops,
     });
 
     return NextResponse.json(
