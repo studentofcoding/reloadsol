@@ -166,17 +166,25 @@ export async function POST(request: NextRequest) {
       await removeRugEntry(tokenAddress)
     }
 
-    // potential: capture here. rug: markTokenRug → scheduleSignalOhlcCapture
+    // potential: await capture so Next doesn't kill the work on response.
+    // rug: markTokenRug awaits captureSignalOhlcLabel
     if (label === 'potential') {
-      const { scheduleSignalOhlcCapture } = await import(
-        '@/strategies/signal-ohlc-labels'
-      )
-      scheduleSignalOhlcCapture({
-        tokenAddress,
-        label: 'potential',
-        tokenSymbol: tokenSymbol || existing?.token_symbol,
-        source: source === 'mcap_tracker' ? 'signals_mcap' : 'signals_board',
-      })
+      try {
+        const { captureSignalOhlcLabel } = await import(
+          '@/strategies/signal-ohlc-labels'
+        )
+        await captureSignalOhlcLabel({
+          tokenAddress,
+          label: 'potential',
+          tokenSymbol: tokenSymbol || existing?.token_symbol,
+          source: source === 'mcap_tracker' ? 'signals_mcap' : 'signals_board',
+        })
+      } catch (err) {
+        console.warn('[signals] potential OHLC capture failed', {
+          mint: tokenAddress,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     }
 
     return NextResponse.json({ success: true })

@@ -23,4 +23,21 @@ CREATE INDEX IF NOT EXISTS idx_signal_ohlc_labels_label_created
 CREATE INDEX IF NOT EXISTS idx_signal_ohlc_labels_token_created
   ON signal_ohlc_labels (token_address, created_at DESC);
 
+-- one card per token per label
+DELETE FROM signal_ohlc_labels sol
+WHERE sol.id IN (
+  SELECT id FROM (
+    SELECT id,
+           ROW_NUMBER() OVER (
+             PARTITION BY token_address, label
+             ORDER BY created_at DESC
+           ) AS rn
+    FROM signal_ohlc_labels
+  ) d
+  WHERE d.rn > 1
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_signal_ohlc_labels_token_label
+  ON signal_ohlc_labels (token_address, label);
+
 ALTER TABLE signal_ohlc_labels ENABLE ROW LEVEL SECURITY;

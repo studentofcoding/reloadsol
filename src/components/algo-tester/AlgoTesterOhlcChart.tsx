@@ -107,6 +107,8 @@ function storedToCandles(bars: StoredOhlcBar[]): TokenOhlcBar[] {
   }))
 }
 
+const LAST10 = 10
+
 export default function AlgoTesterOhlcChart({
   tokenAddress,
   fromIso,
@@ -115,6 +117,8 @@ export default function AlgoTesterOhlcChart({
   tradingSimulation,
   bars,
   ohlcSource,
+  /** When true (and no stored bars), fetch hours=1 × 1m and take last 10 — same as Freeview. */
+  last10 = false,
   height = 280,
 }: {
   tokenAddress: string
@@ -122,9 +126,10 @@ export default function AlgoTesterOhlcChart({
   toIso?: string | null
   priceHistory?: PriceHistRow[] | null
   tradingSimulation?: unknown
-  /** When set, skip network fetch and paint these bars. */
+  /** When set with length > 0, skip network fetch and paint these bars. */
   bars?: StoredOhlcBar[] | null
   ohlcSource?: string | null
+  last10?: boolean
   height?: number
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -154,16 +159,18 @@ export default function AlgoTesterOhlcChart({
         if (!toIso) toSec = candles[candles.length - 1]!.time
         source = ohlcSource || 'stored'
       } else {
-        if (fromSec == null) {
-          setNote('Missing start timestamp')
-          setLoading(false)
-          return
-        }
-        const qs = new URLSearchParams({
-          address: tokenAddress,
-          timeFrom: String(fromSec),
-          timeTo: String(toSec),
-        })
+        const useLast10 = last10 || fromSec == null
+        const qs = useLast10
+          ? new URLSearchParams({
+              address: tokenAddress,
+              hours: '1',
+              interval: '1m',
+            })
+          : new URLSearchParams({
+              address: tokenAddress,
+              timeFrom: String(fromSec),
+              timeTo: String(toSec),
+            })
         try {
           const res = await fetch(`/api/gmgn/token-ohlc?${qs}`)
           const json = (await res.json()) as {
@@ -177,9 +184,14 @@ export default function AlgoTesterOhlcChart({
             setLoading(false)
             return
           }
-          candles = (json.candles ?? []).filter(
-            (c) => c.time >= fromSec! && c.time <= toSec,
-          )
+          const raw = json.candles ?? []
+          candles = useLast10
+            ? raw.slice(-LAST10)
+            : raw.filter((c) => c.time >= fromSec! && c.time <= toSec)
+          if (candles.length > 0) {
+            fromSec = candles[0]!.time
+            toSec = candles[candles.length - 1]!.time
+          }
           source = json.source ?? 'none'
         } catch (e) {
           if (!cancelled) {
@@ -316,6 +328,7 @@ export default function AlgoTesterOhlcChart({
     tradingSimulation,
     bars,
     ohlcSource,
+    last10,
     height,
   ])
 

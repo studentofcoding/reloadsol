@@ -1,5 +1,6 @@
 import { query, queryOne } from '@/utils/db'
-import { fetchTokenOhlc } from '@/strategies/token-map-chart'
+import { fetchLastOhlcRugBars } from '@/strategies/detect-snapshots'
+import { OHLC_RUG_MAX_BARS } from '@/strategies/ohlc-rug-rules'
 import {
   resolveSignalOhlcWindow,
   toSignalOhlcStoreLabel,
@@ -28,6 +29,21 @@ CREATE INDEX IF NOT EXISTS idx_signal_ohlc_labels_label_created
   ON signal_ohlc_labels (label, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_signal_ohlc_labels_token_created
   ON signal_ohlc_labels (token_address, created_at DESC);
+-- one card per token per label
+DELETE FROM signal_ohlc_labels sol
+WHERE sol.id IN (
+  SELECT id FROM (
+    SELECT id,
+           ROW_NUMBER() OVER (
+             PARTITION BY token_address, label
+             ORDER BY created_at DESC
+           ) AS rn
+    FROM signal_ohlc_labels
+  ) d
+  WHERE d.rn > 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_signal_ohlc_labels_token_label
+  ON signal_ohlc_labels (token_address, label);
 `
 
 let ensurePromise: Promise<void> | null = null
@@ -85,12 +101,10 @@ async function loadTrackContext(
     when_reach_80pct: (mcap?.when_reach_80pct as string | null) ?? null,
     when_reach_120pct: (mcap?.when_reach_120pct as string | null) ?? null,
     when_reach_200pct: (mcap?.when_reach_200pct as string | null) ?? null,
-    // peak from mcap peak_seen_at used when price_history missing
     price_history:
       (trending?.price_history as TrackContext['price_history']) ?? null,
   }
 
-  // If no price_history peak, synthesize a single peak point from mcap peak_seen_at
   if (
     (!ctx.price_history || ctx.price_history.length === 0) &&
     typeof mcap?.peak_seen_at === 'string'
@@ -124,6 +138,7 @@ export type SignalOhlcLabelRow = {
   created_at: string
 }
 
+/** Capture once per (token, label). Bars = Freeview last-10×1m. */
 export async function captureSignalOhlcLabel(params: {
   tokenAddress: string
   /** UI label: potential | rugged | rug */
@@ -135,66 +150,60 @@ export async function captureSignalOhlcLabel(params: {
   if (!storeLabel) return null
 
   await ensureSignalOhlcLabelsTable()
+
+  const existing = await queryOne<{ id: string }>(
+    `SELECT id FROM signal_ohlc_labels
+     WHERE token_address = $1 AND label = $2
+     LIMIT 1`,
+    [params.tokenAddress, storeLabel],
+  )
+  if (existing) return existing.id
+
   const { ctx, symbol } = await loadTrackContext(params.tokenAddress)
   const window = resolveSignalOhlcWindow({ label: storeLabel, ctx })
 
-  const startSec = Math.floor(new Date(window.windowStartIso).getTime() / 1000)
-  const endSec = Math.floor(new Date(window.windowEndIso).getTime() / 1000)
+  const last = await fetchLastOhlcRugBars(
+    params.tokenAddress,
+    OHLC_RUG_MAX_BARS,
+  )
+  const bars = last.bars
+  const source = last.source || 'none'
 
-  const { candles, source } = await fetchTokenOhlc({
-    tokenAddress: params.tokenAddress,
-    timeFrom: startSec,
-    timeTo: endSec,
-    interval: '1m',
-  })
-
-  const bars = candles
-    .filter((c) => c.time >= startSec && c.time <= endSec)
-    .map((c) => ({
-      t: c.time,
-      o: c.open,
-      h: c.high,
-      l: c.low,
-      c: c.close,
-      ...(c.volume != null ? { v: c.volume } : {}),
-    }))
+  let windowStartIso = window.windowStartIso
+  let windowEndIso = window.windowEndIso
+  if (bars.length > 0) {
+    windowStartIso = new Date(bars[0]!.t * 1000).toISOString()
+    windowEndIso = new Date(bars[bars.length - 1]!.t * 1000).toISOString()
+  }
 
   const { rows } = await query<{ id: string }>(
     `INSERT INTO signal_ohlc_labels (
        token_address, token_symbol, label, window_start, window_end,
        ohlc_interval, ohlc_source, bars, end_reason, source
      ) VALUES ($1, $2, $3, $4, $5, '1m', $6, $7::jsonb, $8, $9)
+     ON CONFLICT (token_address, label) DO NOTHING
      RETURNING id`,
     [
       params.tokenAddress,
       params.tokenSymbol ?? symbol,
       storeLabel,
-      window.windowStartIso,
-      window.windowEndIso,
-      source || 'none',
+      windowStartIso,
+      windowEndIso,
+      source,
       JSON.stringify(bars),
       window.endReason,
       params.source ?? null,
     ],
   )
-  return rows[0]?.id ?? null
-}
+  if (rows[0]?.id) return rows[0].id
 
-/** Schedule capture without failing the caller. */
-export function scheduleSignalOhlcCapture(params: {
-  tokenAddress: string
-  label: string
-  source?: string
-  tokenSymbol?: string | null
-}): void {
-  if (!toSignalOhlcStoreLabel(params.label)) return
-  void captureSignalOhlcLabel(params).catch((err) => {
-    console.warn('[signal-ohlc-labels] capture failed', {
-      mint: params.tokenAddress,
-      label: params.label,
-      error: err instanceof Error ? err.message : String(err),
-    })
-  })
+  const raced = await queryOne<{ id: string }>(
+    `SELECT id FROM signal_ohlc_labels
+     WHERE token_address = $1 AND label = $2
+     LIMIT 1`,
+    [params.tokenAddress, storeLabel],
+  )
+  return raced?.id ?? null
 }
 
 export async function listSignalOhlcLabels(params: {

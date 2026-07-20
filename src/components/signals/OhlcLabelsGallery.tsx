@@ -91,10 +91,13 @@ function Section({
             </p>
             <AlgoTesterOhlcChart
               tokenAddress={row.token_address}
-              fromIso={row.window_start}
-              toIso={row.window_end}
-              bars={Array.isArray(row.bars) ? row.bars : []}
+              bars={
+                Array.isArray(row.bars) && row.bars.length > 0
+                  ? row.bars
+                  : null
+              }
               ohlcSource={row.ohlc_source}
+              last10
               height={220}
             />
           </article>

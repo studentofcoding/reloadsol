@@ -114,19 +114,22 @@ export async function markTokenRug(input: MarkTokenRugInput) {
   await syncTradingSignalRugged(tokenAddress, tokenSymbol);
   await syncMcapTrackingRugged(tokenAddress);
 
-  // Best-effort OHLC snapshot for rug gallery (Live / any markRug path)
+  // Best-effort OHLC snapshot for rug gallery (await so route doesn't drop it)
   try {
-    const { scheduleSignalOhlcCapture } = await import(
+    const { captureSignalOhlcLabel } = await import(
       '@/strategies/signal-ohlc-labels'
     );
-    scheduleSignalOhlcCapture({
+    await captureSignalOhlcLabel({
       tokenAddress,
       label: 'rug',
       tokenSymbol,
       source: `rug_${source}`,
     });
-  } catch {
-    /* ignore */
+  } catch (err) {
+    console.warn('[rug-list] OHLC capture failed', {
+      mint: tokenAddress,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 
   return entry;
