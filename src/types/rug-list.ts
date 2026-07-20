@@ -8,7 +8,8 @@ export type TokenRugSource =
   | 'algo-dashboard'
   | 'algo-history'
   | 'dlmm-general'
-  | 'gmgn-radar';
+  | 'gmgn-radar'
+  | 'concentration';
 
 export interface TokenRugEntry {
   id: string;

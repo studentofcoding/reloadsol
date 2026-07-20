@@ -1,3 +1,5 @@
+import { evaluateConcentrationBan } from '@/strategies/concentration-ban'
+import { buildGmgnTokenSnapshot } from '@/strategies/gmgn-token-snapshot'
 import type { GmgnStrategyConfig, GmgnVerdictLevel } from './types'
 
 export type GmgnSecurityVerdict = {
@@ -102,6 +104,17 @@ export function evaluateGmgnSecurity(params: {
     gmgn_holder_count: readNumber(info.holder_count),
     gmgn_renowned_wallets: readNumber(readNested(info, ['wallet_tags_stat', 'renowned_wallets'])),
     gmgn_launchpad: info.launchpad ?? null,
+  }
+
+  // Global hard ban — runs even when security gate is disabled
+  const conc = evaluateConcentrationBan(buildGmgnTokenSnapshot(info, security))
+  if (conc.ban) {
+    return {
+      pass: false,
+      verdict: 'reject',
+      reasons: conc.reasons.map((r) => `concentration ban: ${r}`),
+      features,
+    }
   }
 
   if (!config.enabled) {

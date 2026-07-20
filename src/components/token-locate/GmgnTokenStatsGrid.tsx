@@ -1,9 +1,15 @@
 'use client'
 
+import { useEffect } from 'react'
 import type { GmgnTokenSnapshot } from '@/strategies/gmgn-token-snapshot'
 import { useQuery } from '@tanstack/react-query'
 
-type SnapshotResponse = GmgnTokenSnapshot & {
+export type GmgnSnapshotWithBan = GmgnTokenSnapshot & {
+  concentrationBanned?: boolean
+  concentrationReasons?: string[]
+}
+
+type SnapshotResponse = GmgnSnapshotWithBan & {
   success: boolean
   error?: string
 }
@@ -131,15 +137,20 @@ function TileValue({ tile }: { tile: Tile }) {
 export default function GmgnTokenStatsGrid({
   tokenAddress,
   variant = 'rail',
+  onConcentrationBan,
 }: {
   tokenAddress: string
   variant?: 'row' | 'rail'
+  onConcentrationBan?: (payload: {
+    banned: boolean
+    reasons: string[]
+  }) => void
 }) {
   const isRail = variant === 'rail'
 
   const query = useQuery({
     queryKey: ['gmgn-token-snapshot', tokenAddress],
-    queryFn: async (): Promise<GmgnTokenSnapshot> => {
+    queryFn: async (): Promise<GmgnSnapshotWithBan> => {
       const res = await fetch(
         `/api/gmgn/token-snapshot?address=${encodeURIComponent(tokenAddress)}`,
       )
@@ -153,6 +164,14 @@ export default function GmgnTokenStatsGrid({
     staleTime: 60_000,
     refetchInterval: 120_000,
   })
+
+  useEffect(() => {
+    if (!onConcentrationBan || !query.data) return
+    onConcentrationBan({
+      banned: Boolean(query.data.concentrationBanned),
+      reasons: query.data.concentrationReasons ?? [],
+    })
+  }, [onConcentrationBan, query.data])
 
   if (query.isLoading) {
     return (

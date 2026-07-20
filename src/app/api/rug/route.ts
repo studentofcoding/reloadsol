@@ -16,6 +16,8 @@ const VALID_SOURCES: TokenRugSource[] = [
   'algo-dashboard',
   'algo-history',
   'dlmm-general',
+  'gmgn-radar',
+  'concentration',
 ];
 
 export async function GET() {

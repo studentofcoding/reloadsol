@@ -16,6 +16,8 @@ const VALID_SOURCES: TokenRugSource[] = [
   'algo-dashboard',
   'algo-history',
   'dlmm-general',
+  'gmgn-radar',
+  'concentration',
 ];
 
 /** Backward-compatible alias — delegates to shared token_rug_list service. */

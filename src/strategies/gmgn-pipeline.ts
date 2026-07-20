@@ -13,6 +13,7 @@ import {
   gmgnRadarInputFromFeatures,
   withRadarActionOverride,
 } from './gmgn-radar-review'
+import { banConcentrationIfNeeded } from './concentration-ban'
 import { killAndBanRadarDump } from './gmgn-radar-dump'
 import {
   applyRadarPriceRules,
@@ -160,6 +161,13 @@ export async function gateGmgnCandidates(params: {
       tokenSecurity({ chain, address: candidate.tokenAddress }),
     ])
 
+    const concBan = await banConcentrationIfNeeded({
+      tokenAddress: candidate.tokenAddress,
+      tokenSymbol: candidate.symbol,
+      info,
+      security,
+    })
+
     const result = evaluateGmgnSecurity({
       tokenAddress: candidate.tokenAddress,
       chain,
@@ -243,8 +251,8 @@ export async function gateGmgnCandidates(params: {
 
     gated.push({
       ...candidate,
-      verdict: result.verdict,
-      pass: result.pass && !banned,
+      verdict: concBan.banned ? 'reject' : result.verdict,
+      pass: result.pass && !banned && !concBan.banned,
       securityReasons: result.reasons,
       entryFeatures: {
         ...result.features,
