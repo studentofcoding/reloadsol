@@ -191,7 +191,11 @@ async function openSimPosition(params: {
     const annotated = params.socialCtx
       ? annotateEntryFeatures(baseFeatures, params.socialCtx)
       : baseFeatures
-    const ml = await attachMlEntryShadow(annotated, { enforce: false })
+    const { attachOhlcRugShadow } = await import('@/strategies/ohlc-rug-shadow')
+    const ohlc = await attachOhlcRugShadow(params.mintAddress, annotated, {
+      enforce: false,
+    })
+    const ml = await attachMlEntryShadow(ohlc.features, { enforce: false })
     scoredEntryFeatures = ml.features
   }
 
@@ -879,7 +883,11 @@ export async function POST(request: NextRequest) {
           },
         )
         const annotated = annotateEntryFeatures(baseFeatures, socialCtx)
-        const ml = await attachMlEntryShadow(annotated, { enforce: true })
+        const { attachOhlcRugShadow } = await import('@/strategies/ohlc-rug-shadow')
+        const ohlc = await attachOhlcRugShadow(snapshot.token_address, annotated, {
+          enforce: false,
+        })
+        const ml = await attachMlEntryShadow(ohlc.features, { enforce: true })
         if (ml.gateReject) {
           if (ml.pBad != null) {
             logMlGateCounterfactual({

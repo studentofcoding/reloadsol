@@ -331,8 +331,12 @@ export async function POST(request: NextRequest) {
           },
         )
         const annotated = annotateEntryFeatures(baseFeatures, socialCtx)
+        const { attachOhlcRugShadow } = await import('@/strategies/ohlc-rug-shadow')
+        const ohlc = await attachOhlcRugShadow(signal.token_address, annotated, {
+          enforce: false,
+        })
         const { attachMlEntryShadow } = await import('@/strategies/ml-entry-shadow')
-        const ml = await attachMlEntryShadow(annotated, { enforce: false })
+        const ml = await attachMlEntryShadow(ohlc.features, { enforce: false })
 
         // Phase B: stamp exit-overlay audit only — signals exits stay scoring-driven
         const { signalsToCanonical } = await import('@/strategies/canonical-params')

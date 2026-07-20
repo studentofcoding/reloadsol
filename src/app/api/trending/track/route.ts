@@ -101,8 +101,12 @@ async function attachBuyEntryFeatures(
 
   let features = entryFeatures
   try {
+    const { attachOhlcRugShadow } = await import('@/strategies/ohlc-rug-shadow')
+    const ohlc = await attachOhlcRugShadow(token.token_address, entryFeatures, {
+      enforce: false,
+    })
     const { attachMlEntryShadow } = await import('@/strategies/ml-entry-shadow')
-    const ml = await attachMlEntryShadow(entryFeatures, { enforce: false })
+    const ml = await attachMlEntryShadow(ohlc.features, { enforce: false })
     features = ml.features
   } catch {
     /* keep base features */

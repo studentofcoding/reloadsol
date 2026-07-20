@@ -3,6 +3,7 @@ import {
   type GmgnTokenSnapshot,
 } from '@/strategies/gmgn-token-snapshot'
 import { closeOpenSimsForRadarDump } from '@/strategies/gmgn-radar-dump'
+import { captureDetectSnapshot } from '@/strategies/detect-snapshots'
 import { markTokenRug } from '@/utils/rug-list/service'
 
 /** Hard ban when any axis is strictly greater than this percent. */
@@ -59,6 +60,20 @@ export async function banConcentrationIfNeeded(params: {
     source: 'concentration',
   })
 
+  // ponytail: OHLC snapshot is best-effort; ban must not fail if ST/OHLC is down
+  let allReasons = reasons
+  try {
+    const snap = await captureDetectSnapshot({
+      tokenAddress: params.tokenAddress,
+      source: 'concentration',
+    })
+    if (snap.reasons.length > 0) {
+      allReasons = [...reasons, ...snap.reasons]
+    }
+  } catch {
+    /* ignore */
+  }
+
   let closedSims = 0
   if (params.closeSims !== false) {
     const { closed } = await closeOpenSimsForRadarDump({
@@ -68,5 +83,5 @@ export async function banConcentrationIfNeeded(params: {
     closedSims = closed
   }
 
-  return { banned: true, reasons, closedSims }
+  return { banned: true, reasons: allReasons, closedSims }
 }

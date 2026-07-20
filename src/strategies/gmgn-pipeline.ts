@@ -14,6 +14,7 @@ import {
   withRadarActionOverride,
 } from './gmgn-radar-review'
 import { banConcentrationIfNeeded } from './concentration-ban'
+import { attachOhlcRugShadow } from './ohlc-rug-shadow'
 import { killAndBanRadarDump } from './gmgn-radar-dump'
 import {
   applyRadarPriceRules,
@@ -161,6 +162,13 @@ export async function gateGmgnCandidates(params: {
       tokenSecurity({ chain, address: candidate.tokenAddress }),
     ])
 
+    // OHLC rug shadow first-check; enforce later (does not change pass)
+    const ohlcShadow = await attachOhlcRugShadow(
+      candidate.tokenAddress,
+      {},
+      { enforce: false },
+    )
+
     const concBan = await banConcentrationIfNeeded({
       tokenAddress: candidate.tokenAddress,
       tokenSymbol: candidate.symbol,
@@ -256,6 +264,7 @@ export async function gateGmgnCandidates(params: {
       securityReasons: result.reasons,
       entryFeatures: {
         ...result.features,
+        ...ohlcShadow.features,
         ...gmgnScoreToFeatureFields({
           score: candidate.activityScore,
           metrics: candidate.activityMetrics,

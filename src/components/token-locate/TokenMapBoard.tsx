@@ -3,6 +3,7 @@
 import { useCallback, useState } from 'react'
 import GmgnChartEmbed from '@/components/signals/shared/GmgnChartEmbed'
 import GmgnTokenStatsGrid from '@/components/token-locate/GmgnTokenStatsGrid'
+import OhlcRugPanel from '@/components/token-locate/OhlcRugPanel'
 import TokenMapLane from '@/components/token-locate/TokenMapLane'
 import TokenMapStrategyChart from '@/components/token-locate/TokenMapStrategyChart'
 import type { StrategyPresence, TokenLocateResult } from '@/strategies/token-locate'
@@ -109,16 +110,22 @@ export default function TokenMapBoard({
         </div>
       ) : null}
 
-      {!concentrationBanned && showGmgn ? (
-        <div className="w-full h-[300px] rounded-xl border border-gray-700 overflow-hidden bg-black">
-          <GmgnChartEmbed
-            tokenAddress={result.tokenAddress}
-            height="100%"
-            className="w-full h-full"
-            title={`GMGN · ${result.symbol ?? result.tokenAddress.slice(0, 8)}`}
-          />
+      {/* OHLC rug panel always visible (evidence); GMGN only when not concentration-banned */}
+      <div className="flex flex-col gap-2 md:flex-row md:items-stretch">
+        <div className="w-full min-w-[7rem] md:w-[10%] md:shrink-0">
+          <OhlcRugPanel tokenAddress={result.tokenAddress} />
         </div>
-      ) : null}
+        {!concentrationBanned && showGmgn ? (
+          <div className="min-w-0 h-[300px] w-full overflow-hidden rounded-xl border border-gray-700 bg-black md:w-[90%] md:flex-1">
+            <GmgnChartEmbed
+              tokenAddress={result.tokenAddress}
+              height="100%"
+              className="w-full h-full"
+              title={`GMGN · ${result.symbol ?? result.tokenAddress.slice(0, 8)}`}
+            />
+          </div>
+        ) : null}
+      </div>
 
       <div
         className={
