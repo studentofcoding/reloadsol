@@ -1,15 +1,21 @@
-/** Compact OHLC strip for Telegram HTML (editMessageText-safe). */
+/** Compact OHLC strip + shared Telegram photo/text send. */
 
 import {
-  fetchLastOhlcRugBars,
-  getLatestDetectSnapshot,
-} from '@/strategies/detect-snapshots'
+  getCachedTokenOhlc24h1m,
+  tokenOhlcToRugBars,
+} from '@/strategies/token-map-chart'
+import { renderOhlcCandlesPng } from '@/strategies/ohlc-telegram-svg'
+import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
 import {
-  OHLC_RUG_MAX_BARS,
-  type OhlcRugBar,
-} from '@/strategies/ohlc-rug-rules'
+  sendTelegramMessage,
+  sendTelegramPhoto,
+  type TelegramInlineButton,
+  type TelegramSendResult,
+} from '@/utils/telegram'
 
 const BLOCKS = '▁▂▃▄▅▆▇█'
+/** Sparkline max width in text fallback */
+const SPARK_MAX = 24
 
 function escapeHtml(s: string): string {
   return s
@@ -31,26 +37,36 @@ function fmtPx(n: number): string {
   return n.toExponential(2)
 }
 
+function downsampleBars(bars: OhlcRugBar[], maxN: number): OhlcRugBar[] {
+  if (bars.length <= maxN) return bars
+  const out: OhlcRugBar[] = []
+  const step = bars.length / maxN
+  for (let i = 0; i < maxN; i++) {
+    out.push(bars[Math.min(bars.length - 1, Math.floor(i * step))]!)
+  }
+  return out
+}
+
 /**
- * Paint ≤10 bars as a `<pre>` sparkline + o→c / dump stats.
+ * Paint series as a `<pre>` sparkline + o→c / dump stats (downsampled).
  * Returns empty string when no bars (caller omits section).
  */
 export function formatOhlcTelegramPre(bars: OhlcRugBar[]): string {
   if (!Array.isArray(bars) || bars.length === 0) return ''
 
-  const sliced = bars.slice(-OHLC_RUG_MAX_BARS)
-  const lows = sliced.map((b) => b.l)
-  const highs = sliced.map((b) => b.h)
+  const first = bars[0]!
+  const last = bars[bars.length - 1]!
+  const sparkBars = downsampleBars(bars, SPARK_MAX)
+  const lows = sparkBars.map((b) => b.l)
+  const highs = sparkBars.map((b) => b.h)
   const minL = Math.min(...lows)
   const maxH = Math.max(...highs)
   const span = Math.max(maxH - minL, 1e-12)
 
-  const spark = sliced
+  const spark = sparkBars
     .map((b) => BLOCKS[barCloseLevel(b, minL, span)]!)
     .join('')
 
-  const first = sliced[0]!
-  const last = sliced[sliced.length - 1]!
   const dumpPct =
     first.h > 0 ? ((first.h - last.l) / first.h) * 100 : null
   const chgPct =
@@ -64,7 +80,7 @@ export function formatOhlcTelegramPre(bars: OhlcRugBar[]): string {
     dumpPct != null && Number.isFinite(dumpPct)
       ? `dump ${dumpPct.toFixed(0)}%`
       : null,
-    `${sliced.length}b`,
+    `${bars.length}b · 24h`,
   ]
     .filter((x): x is string => x != null)
     .join(' · ')
@@ -73,22 +89,70 @@ export function formatOhlcTelegramPre(bars: OhlcRugBar[]): string {
   return `<pre>${escapeHtml(body)}</pre>`
 }
 
-/** Prefer saved Freeview detect snapshot; else live last-10×1m. */
+/** Full cached 24h×1m series for Telegram charts. */
 export async function loadOhlcBarsForTelegram(
   tokenAddress: string,
 ): Promise<OhlcRugBar[]> {
   try {
-    const snap = await getLatestDetectSnapshot(tokenAddress)
-    if (snap?.bars?.length) {
-      return snap.bars.slice(-OHLC_RUG_MAX_BARS)
-    }
-  } catch {
-    /* fall through */
-  }
-  try {
-    const { bars } = await fetchLastOhlcRugBars(tokenAddress)
-    return bars
+    const { candles } = await getCachedTokenOhlc24h1m(tokenAddress)
+    return tokenOhlcToRugBars(candles)
   } catch {
     return []
   }
+}
+
+export async function loadAndRenderOhlcPng(
+  tokenAddress: string,
+  symbol?: string | null,
+): Promise<{ bars: OhlcRugBar[]; png: Buffer | null }> {
+  const bars = await loadOhlcBarsForTelegram(tokenAddress)
+  const png = await renderOhlcCandlesPng(bars, { symbol })
+  return { bars, png }
+}
+
+export type SendTelegramOhlcResult = TelegramSendResult & {
+  usedPhoto: boolean
+}
+
+/**
+ * Prefer PNG candlestick photo; fall back to HTML text + OHLC sparkline.
+ */
+export async function sendTelegramOhlcPhotoOrText(params: {
+  tokenAddress: string
+  symbol?: string | null
+  caption: string
+  textBody: string
+  chatId?: string
+  inlineKeyboard?: Array<Array<TelegramInlineButton>>
+}): Promise<SendTelegramOhlcResult> {
+  const { bars, png } = await loadAndRenderOhlcPng(
+    params.tokenAddress,
+    params.symbol,
+  )
+
+  if (png) {
+    const sent = await sendTelegramPhoto({
+      png,
+      caption: params.caption,
+      chatId: params.chatId,
+      parseMode: 'HTML',
+      inlineKeyboard: params.inlineKeyboard,
+    })
+    if (sent.ok) {
+      return { ...sent, usedPhoto: true }
+    }
+  }
+
+  const ohlcPre = formatOhlcTelegramPre(bars)
+  let text = params.textBody
+  if (ohlcPre && !text.includes(ohlcPre) && !text.includes('OHLC 24h')) {
+    text = `${text}\n\n📈 <b>OHLC 24h</b>\n${ohlcPre}`
+  }
+
+  const sent = await sendTelegramMessage(text, {
+    chatId: params.chatId,
+    parseMode: 'HTML',
+    inlineKeyboard: params.inlineKeyboard,
+  })
+  return { ...sent, usedPhoto: false }
 }

@@ -233,7 +233,7 @@ describe('gmgn-radar-review recalibrated', () => {
     expect(html).toContain('KOL')
     expect(html).toContain('+10.0%')
     expect(html).toContain('Δ vs last')
-    expect(html).toContain('OHLC 10m')
+    expect(html).toContain('OHLC 24h')
     expect(html).toContain('<pre>')
     expect(html).toMatch(/boost=15|top10Pct=/)
   })
@@ -299,7 +299,7 @@ describe('gmgn-radar-review recalibrated', () => {
     expect(caption).toContain('Radar:')
     expect(caption).toContain('WUKONG')
     expect(caption).not.toContain('boost=')
-    expect(caption).not.toContain('OHLC 10m')
+    expect(caption).not.toContain('OHLC 24h')
   })
 
   it('formats dead thread without removing lifecycle context', () => {

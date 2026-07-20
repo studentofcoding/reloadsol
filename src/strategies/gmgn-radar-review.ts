@@ -507,7 +507,7 @@ export function formatGmgnRadarLiveThreadHtml(params: {
     : null
   const ohlcBlock =
     params.ohlcPre && params.ohlcPre.trim()
-      ? [`📈 <b>OHLC 10m</b>`, params.ohlcPre]
+      ? [`📈 <b>OHLC 24h</b>`, params.ohlcPre]
       : []
 
   const lines = [

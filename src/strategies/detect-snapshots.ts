@@ -1,5 +1,8 @@
 import { query, queryOne } from '@/utils/db'
-import { fetchTokenOhlc } from '@/strategies/token-map-chart'
+import {
+  getCachedTokenOhlc24h1m,
+  tokenOhlcToRugBars,
+} from '@/strategies/token-map-chart'
 import {
   evaluateOhlcRugRules,
   OHLC_RUG_MAX_BARS,
@@ -71,19 +74,8 @@ export async function fetchLastOhlcRugBars(
   tokenAddress: string,
   n = OHLC_RUG_MAX_BARS,
 ): Promise<{ bars: OhlcRugBar[]; source: string }> {
-  const { candles, source } = await fetchTokenOhlc({
-    tokenAddress,
-    hours: 1,
-    interval: '1m',
-  })
-  const mapped: OhlcRugBar[] = candles.map((c) => ({
-    t: c.time,
-    o: c.open,
-    h: c.high,
-    l: c.low,
-    c: c.close,
-    ...(c.volume != null ? { v: c.volume } : {}),
-  }))
+  const { candles, source } = await getCachedTokenOhlc24h1m(tokenAddress)
+  const mapped = tokenOhlcToRugBars(candles)
   return { bars: takeLastOhlcBars(mapped, n), source }
 }
 

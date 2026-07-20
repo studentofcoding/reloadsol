@@ -30,7 +30,7 @@ export function isTelegramAdmin(chatId: number | string): boolean {
   return admins.includes(String(chatId));
 }
 
-type TelegramInlineButton =
+export type TelegramInlineButton =
   | { text: string; callback_data: string }
   | { text: string; url: string }
 
@@ -589,10 +589,17 @@ export async function sendStrategyTrackOpenAlert(params: {
     kol: params.kol,
   })
 
-  return sendTelegramAlert(text, {
-    parseMode: 'HTML',
+  const { sendTelegramOhlcPhotoOrText } = await import(
+    '@/strategies/ohlc-telegram-paint'
+  )
+  const sent = await sendTelegramOhlcPhotoOrText({
+    tokenAddress: params.tokenAddress,
+    symbol: params.tokenSymbol,
+    caption: text,
+    textBody: text,
     inlineKeyboard: chartBuyInlineKeyboard(params.tokenAddress),
   })
+  return sent.ok
 }
 
 export function formatReloadsolChartLink(mint: string): string {
@@ -737,10 +744,18 @@ export async function sendSignalsEarlyEnterAlert(params: {
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
-  return sendTelegramAlert(buildSignalsEarlyEnterAlertText(params), {
-    parseMode: 'HTML',
+  const text = buildSignalsEarlyEnterAlertText(params)
+  const { sendTelegramOhlcPhotoOrText } = await import(
+    '@/strategies/ohlc-telegram-paint'
+  )
+  const sent = await sendTelegramOhlcPhotoOrText({
+    tokenAddress: params.tokenAddress,
+    symbol: params.tokenSymbol,
+    caption: text,
+    textBody: text,
     inlineKeyboard: chartBuyInlineKeyboard(params.tokenAddress),
   })
+  return sent.ok
 }
 
 export async function sendMcapSimManualTradeAlert(params: {
@@ -758,10 +773,18 @@ export async function sendMcapSimManualTradeAlert(params: {
 }): Promise<boolean> {
   if (!isStrategyTrackTelegramEnabled()) return false
 
-  return sendTelegramAlert(buildMcapSimManualTradeAlertText(params), {
-    parseMode: 'HTML',
+  const text = buildMcapSimManualTradeAlertText(params)
+  const { sendTelegramOhlcPhotoOrText } = await import(
+    '@/strategies/ohlc-telegram-paint'
+  )
+  const sent = await sendTelegramOhlcPhotoOrText({
+    tokenAddress: params.tokenAddress,
+    symbol: params.tokenSymbol,
+    caption: text,
+    textBody: text,
     inlineKeyboard: chartBuyInlineKeyboard(params.tokenAddress),
   })
+  return sent.ok
 }
 
 export async function sendStrategyTrackCloseAlert(params: {
@@ -798,10 +821,17 @@ export async function sendStrategyTrackCloseAlert(params: {
     kol: params.kol,
   })
 
-  return sendTelegramAlert(text, {
-    parseMode: 'HTML',
+  const { sendTelegramOhlcPhotoOrText } = await import(
+    '@/strategies/ohlc-telegram-paint'
+  )
+  const sent = await sendTelegramOhlcPhotoOrText({
+    tokenAddress: params.tokenAddress,
+    symbol: params.tokenSymbol,
+    caption: text,
+    textBody: text,
     inlineKeyboard: chartBuyInlineKeyboard(params.tokenAddress),
   })
+  return sent.ok
 }
 
 export async function sendGmgnRadarAlert(params: {

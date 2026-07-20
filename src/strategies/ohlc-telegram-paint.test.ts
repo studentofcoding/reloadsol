@@ -29,21 +29,21 @@ describe('formatOhlcTelegramPre', () => {
     expect(html).toMatch(/<\/pre>$/)
     expect(html.length).toBeLessThan(500)
     expect(html).toContain('→')
-    expect(html).toContain('4b')
-    // sparkline uses block chars
+    expect(html).toContain('4b · 24h')
     expect(html).toMatch(/[▁▂▃▄▅▆▇█]/)
   })
 
-  it('caps at 10 bars', () => {
-    const bars = Array.from({ length: 15 }, (_, i) =>
+  it('downsamples sparkline but reports full bar count', () => {
+    const bars = Array.from({ length: 48 }, (_, i) =>
       bar(i, 1 + i * 0.01, 1.2, 0.9, 1 + i * 0.01),
     )
     const html = formatOhlcTelegramPre(bars)
-    expect(html).toContain('10b')
+    expect(html).toContain('48b · 24h')
+    const spark = html.replace(/<\/?pre>/g, '').split('\n')[0] ?? ''
+    expect(spark.length).toBeLessThanOrEqual(24)
   })
 
   it('escapes HTML in pre body', () => {
-    // values are numeric — ensure wrapper is safe
     const html = formatOhlcTelegramPre([bar(1, 1, 1, 1, 1)])
     expect(html).not.toContain('<script')
     expect(html.startsWith('<pre>')).toBe(true)

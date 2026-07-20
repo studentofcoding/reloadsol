@@ -34,8 +34,19 @@ describe('renderOhlcCandlesSvg', () => {
     expect(svg!).toContain('<rect')
     expect(svg!).toContain('<line')
     expect(svg!).toContain('TEST')
+    expect(svg!).toContain('24h OHLC')
     expect(svg!).toContain('#34d399')
     expect(svg!).toContain('#f87171')
+  })
+
+  it('renders full series beyond 10 bars', () => {
+    const bars = Array.from({ length: 36 }, (_, i) =>
+      bar(i, 1, 1.1, 0.9, i % 2 === 0 ? 1.05 : 0.95),
+    )
+    const svg = renderOhlcCandlesSvg(bars, { symbol: 'LONG' })
+    expect(svg).toBeTruthy()
+    const lineCount = (svg!.match(/<line /g) ?? []).length
+    expect(lineCount).toBe(36)
   })
 
   it('rasterizes PNG via sharp', async () => {

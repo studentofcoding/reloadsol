@@ -2,6 +2,15 @@ import { listStrategyOutcomes } from '@/strategies/db'
 import { fetchTrackerTokenMetrics } from '@/strategies/sim-monitor-snapshots'
 import { parsePriceHistory } from '@/strategies/trade-window-chart-data'
 import type { TokenMapDomain } from '@/strategies/token-map-types'
+import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
+import { cacheGet, cacheSet } from '@/utils/redis-cache'
+
+/** ponytail: 90s collapses Telegram + Freeview + label capture bursts; upgrade = longer TTL + stampede lock */
+export const OHLC_24H_1M_CACHE_TTL_SEC = 90
+
+function ohlc24h1mCacheKey(tokenAddress: string): string {
+  return `ohlc:v1:24h1m:${tokenAddress}`
+}
 
 export type TokenChartPoint = {
   t: number
@@ -163,6 +172,50 @@ export async function fetchTokenOhlc(params: {
   } catch {
     return { candles: [], source: 'none' }
   }
+}
+
+export function tokenOhlcToRugBars(candles: TokenOhlcBar[]): OhlcRugBar[] {
+  return candles.map((c) => ({
+    t: c.time,
+    o: c.open,
+    h: c.high,
+    l: c.low,
+    c: c.close,
+    ...(c.volume != null ? { v: c.volume } : {}),
+  }))
+}
+
+/**
+ * Canonical last-24h × 1m series (cached). Telegram / rug-10 / signal_ohlc_labels derive from this.
+ */
+export async function getCachedTokenOhlc24h1m(
+  tokenAddress: string,
+): Promise<{ candles: TokenOhlcBar[]; source: string }> {
+  const key = ohlc24h1mCacheKey(tokenAddress)
+  try {
+    const cached = await cacheGet<{ candles: TokenOhlcBar[]; source: string }>(
+      key,
+    )
+    if (cached && Array.isArray(cached.candles) && cached.candles.length > 0) {
+      return cached
+    }
+  } catch {
+    /* fail-open */
+  }
+
+  const result = await fetchTokenOhlc({
+    tokenAddress,
+    hours: 24,
+    interval: '1m',
+  })
+  if (result.candles.length > 0) {
+    try {
+      await cacheSet(key, result, OHLC_24H_1M_CACHE_TTL_SEC)
+    } catch {
+      /* fail-open */
+    }
+  }
+  return result
 }
 
 export async function loadTokenMapChart(params: {

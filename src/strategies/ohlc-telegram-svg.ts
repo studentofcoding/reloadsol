@@ -1,15 +1,14 @@
 /** SVG / PNG candlestick render for Telegram sendPhoto. */
 
 import sharp from 'sharp'
-import {
-  OHLC_RUG_MAX_BARS,
-  type OhlcRugBar,
-} from '@/strategies/ohlc-rug-rules'
+import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
 
 export type OhlcSvgOpts = {
   width?: number
   height?: number
   symbol?: string | null
+  /** Chart title suffix; default "24h OHLC". */
+  titleSuffix?: string
 }
 
 function esc(s: string): string {
@@ -20,14 +19,13 @@ function esc(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
-/** Pure SVG candlesticks (≤10 bars). Empty → null. */
+/** Pure SVG candlesticks for full series. Empty → null. */
 export function renderOhlcCandlesSvg(
   bars: OhlcRugBar[],
   opts: OhlcSvgOpts = {},
 ): string | null {
   if (!Array.isArray(bars) || bars.length === 0) return null
 
-  const sliced = bars.slice(-OHLC_RUG_MAX_BARS)
   const width = opts.width ?? 640
   const height = opts.height ?? 320
   const padTop = opts.symbol ? 28 : 12
@@ -36,9 +34,10 @@ export function renderOhlcCandlesSvg(
   const chartTop = padTop
   const chartH = height - chartTop - padBot
   const chartW = width - pad * 2
+  const titleSuffix = opts.titleSuffix ?? '24h OHLC'
 
-  const highs = sliced.map((b) => b.h)
-  const lows = sliced.map((b) => b.l)
+  const highs = bars.map((b) => b.h)
+  const lows = bars.map((b) => b.l)
   const maxH = Math.max(...highs)
   const minL = Math.min(...lows)
   const span = Math.max(maxH - minL, 1e-12)
@@ -46,7 +45,7 @@ export function renderOhlcCandlesSvg(
   const y = (price: number) =>
     chartTop + ((maxH - price) / span) * chartH
 
-  const slot = chartW / sliced.length
+  const slot = chartW / bars.length
   const parts: string[] = []
 
   parts.push(
@@ -56,12 +55,12 @@ export function renderOhlcCandlesSvg(
 
   if (opts.symbol?.trim()) {
     parts.push(
-      `<text x="${pad}" y="20" fill="#9ca3af" font-family="ui-sans-serif,system-ui,sans-serif" font-size="14">${esc(opts.symbol.trim())} · 10m OHLC</text>`,
+      `<text x="${pad}" y="20" fill="#9ca3af" font-family="ui-sans-serif,system-ui,sans-serif" font-size="14">${esc(opts.symbol.trim())} · ${esc(titleSuffix)}</text>`,
     )
   }
 
-  for (let i = 0; i < sliced.length; i++) {
-    const b = sliced[i]!
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i]!
     const x = pad + i * slot + slot / 2
     const up = b.c >= b.o
     const color = up ? '#34d399' : '#f87171'
@@ -71,10 +70,10 @@ export function renderOhlcCandlesSvg(
     const yC = y(b.c)
     const bodyTop = Math.min(yO, yC)
     const bodyH = Math.max(Math.abs(yC - yO), 1.5)
-    const bodyW = Math.max(slot * 0.55, 4)
+    const bodyW = Math.max(Math.min(slot * 0.55, 8), 1)
 
     parts.push(
-      `<line x1="${x}" x2="${x}" y1="${yH}" y2="${yL}" stroke="${color}" stroke-width="1.5"/>`,
+      `<line x1="${x}" x2="${x}" y1="${yH}" y2="${yL}" stroke="${color}" stroke-width="1"/>`,
     )
     parts.push(
       `<rect x="${x - bodyW / 2}" y="${bodyTop}" width="${bodyW}" height="${bodyH}" fill="${color}"/>`,

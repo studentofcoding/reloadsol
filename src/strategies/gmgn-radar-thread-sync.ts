@@ -12,9 +12,9 @@ import {
 } from './gmgn-radar-review'
 import {
   formatOhlcTelegramPre,
-  loadOhlcBarsForTelegram,
+  loadAndRenderOhlcPng,
+  sendTelegramOhlcPhotoOrText,
 } from './ohlc-telegram-paint'
-import { renderOhlcCandlesPng } from './ohlc-telegram-svg'
 import {
   ensureRadarAlertThreadsTable,
   getLatestDeadRadarThread,
@@ -35,8 +35,6 @@ import {
   formatReloadsolChartLink,
   getTelegramAlertChatId,
   isStrategyTrackTelegramEnabled,
-  sendTelegramMessage,
-  sendTelegramPhoto,
 } from '@/utils/telegram'
 import { unmarkTokenRug } from '@/utils/rug-list/service'
 
@@ -117,8 +115,10 @@ async function renderAndEdit(
     deathReason?: string | null
   },
 ): Promise<void> {
-  const bars = await loadOhlcBarsForTelegram(thread.token_address)
-  const png = await renderOhlcCandlesPng(bars, { symbol: params.symbol })
+  const { bars, png } = await loadAndRenderOhlcPng(
+    thread.token_address,
+    params.symbol,
+  )
   const captionBase = {
     kind: params.kind,
     review: params.review,
@@ -184,8 +184,6 @@ async function openNewThread(params: {
   if (!chatId) return null
 
   const lifecycle = await getNextRadarLifecycle(params.tokenAddress)
-  const bars = await loadOhlcBarsForTelegram(params.tokenAddress)
-  const png = await renderOhlcCandlesPng(bars, { symbol: params.symbol })
   const openedAt = new Date().toISOString()
   const cardBase = {
     kind: params.kind as 'new' | 'comeback',
@@ -208,29 +206,19 @@ async function openNewThread(params: {
     peakMcapUsd: params.mcapUsd,
   }
 
-  let sent =
-    png != null
-      ? await sendTelegramPhoto({
-          png,
-          caption: formatGmgnRadarLiveThreadCaption(cardBase),
-          chatId,
-          parseMode: 'HTML',
-          inlineKeyboard: chartKeyboard(params.tokenAddress),
-        })
-      : { ok: false as boolean, messageId: null as number | null, chatId }
-
-  if (!sent.ok || sent.messageId == null) {
-    const ohlcPre = formatOhlcTelegramPre(bars)
-    const text = formatGmgnRadarLiveThreadHtml({
-      ...cardBase,
-      ohlcPre: ohlcPre || null,
-    })
-    sent = await sendTelegramMessage(text, {
-      chatId,
-      parseMode: 'HTML',
-      inlineKeyboard: chartKeyboard(params.tokenAddress),
-    })
-  }
+  const caption = formatGmgnRadarLiveThreadCaption(cardBase)
+  const textBody = formatGmgnRadarLiveThreadHtml({
+    ...cardBase,
+    ohlcPre: null,
+  })
+  const sent = await sendTelegramOhlcPhotoOrText({
+    tokenAddress: params.tokenAddress,
+    symbol: params.symbol,
+    caption,
+    textBody,
+    chatId,
+    inlineKeyboard: chartKeyboard(params.tokenAddress),
+  })
   if (!sent.ok || sent.messageId == null) return null
 
   return insertRadarThread({

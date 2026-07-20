@@ -1,7 +1,10 @@
 import { query, queryOne } from '@/utils/db'
 import { cacheDelByPrefix, cacheGet, cacheSet } from '@/utils/redis-cache'
-import { getLatestDetectSnapshot } from '@/strategies/detect-snapshots'
-import { fetchTokenOhlc } from '@/strategies/token-map-chart'
+import {
+  fetchTokenOhlc,
+  getCachedTokenOhlc24h1m,
+  tokenOhlcToRugBars,
+} from '@/strategies/token-map-chart'
 import type { OhlcRugBar } from '@/strategies/ohlc-rug-rules'
 import {
   POTENTIAL_MAX_MS,
@@ -172,7 +175,7 @@ function filterBarsToWindow(
   return bars.filter((b) => b.t >= startSec && b.t <= endSec)
 }
 
-/** Capture once per (token, label). Copy Freeview snapshot first 10m; else ST. */
+/** Capture once per (token, label). Prefer cached 24h×1m window; else narrow ST. */
 export async function captureSignalOhlcLabel(params: {
   tokenAddress: string
   /** UI label: potential | rugged | rug */
@@ -204,14 +207,17 @@ export async function captureSignalOhlcLabel(params: {
   let bars: OhlcRugBar[] = []
   let ohlcSource = 'none'
 
-  const snap = await getLatestDetectSnapshot(params.tokenAddress)
-  if (snap?.bars?.length) {
-    bars = filterBarsToWindow(snap.bars, startSec, endSec)
-    // Snapshot is often last-10 of hour — if no overlap, use snapshot as-is
-    if (bars.length === 0) bars = snap.bars
-    ohlcSource = 'detect_snapshot'
+  const cached = await getCachedTokenOhlc24h1m(params.tokenAddress)
+  if (cached.candles.length > 0) {
+    bars = filterBarsToWindow(
+      tokenOhlcToRugBars(cached.candles),
+      startSec,
+      endSec,
+    )
+    if (bars.length > 0) ohlcSource = cached.source || 'solanatracker'
   }
 
+  // Brand-new mint / window outside cached 24h — one narrow ST pull
   if (bars.length === 0) {
     const { candles, source } = await fetchTokenOhlc({
       tokenAddress: params.tokenAddress,
@@ -219,16 +225,7 @@ export async function captureSignalOhlcLabel(params: {
       timeTo: endSec,
       interval: '1m',
     })
-    bars = candles
-      .filter((c) => c.time >= startSec && c.time <= endSec)
-      .map((c) => ({
-        t: c.time,
-        o: c.open,
-        h: c.high,
-        l: c.low,
-        c: c.close,
-        ...(c.volume != null ? { v: c.volume } : {}),
-      }))
+    bars = filterBarsToWindow(tokenOhlcToRugBars(candles), startSec, endSec)
     ohlcSource = source || 'none'
   }
 
