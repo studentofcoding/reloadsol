@@ -44,6 +44,7 @@ export const DEV_API_PREFIXES = [
   '/api/strategies',
   '/api/gmgn/token-snapshot',
   '/api/gmgn/detect-snapshot',
+  '/api/gmgn/token-ohlc',
   '/api/workers',
   '/api/social',
 ] as const;

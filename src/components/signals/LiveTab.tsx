@@ -8,6 +8,7 @@ import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useOwnedTokenPrices } from "@/hooks/useOwnedTokenPrices";
 import { boardTabUrl } from "@/components/signals/shared/parseAddresses";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
+import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { useRugList } from "@/hooks/useRugList";
@@ -1403,9 +1404,12 @@ export default function LiveTab() {
             )}
           </div>
           <div className="flex-1">
-            <h3 className="text-white font-semibold text-lg">
-              {token.token_symbol}
-            </h3>
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-white font-semibold text-lg">
+                {token.token_symbol}
+              </h3>
+              <TokenSearchLink address={token.token_address} />
+            </div>
             <div className="flex items-center space-x-2 mt-1">
               <span className="text-white text-sm font-medium">
                 {formatCurrency(token.price, 6, false)}

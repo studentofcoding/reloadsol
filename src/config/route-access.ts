@@ -15,6 +15,7 @@ export const DEV_ROUTES = [
   '/dev/strategies',
   '/dev/rpc-tester',
   '/dev/token-search',
+  '/dev/ohlc-labels',
 ] as const;
 
 export type WalletRequiredRoute = (typeof WALLET_REQUIRED_ROUTES)[number];

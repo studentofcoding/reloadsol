@@ -41,6 +41,7 @@ export default function NavigationTabs({
     "/dev/social",
     "/dev/strategies",
     "/dev/token-search",
+    "/dev/ohlc-labels",
   ].some((path) => (pathname || "").startsWith(path));
 
   const handleTabClick = (tab: string) => {
@@ -283,6 +284,17 @@ export default function NavigationTabs({
                           d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
                         />
                       </svg>
+                    </Link>
+                    <Link
+                      href="/dev/ohlc-labels"
+                      className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
+                        isActive("/dev/ohlc-labels")
+                          ? "bg-gray-700 text-white"
+                          : "text-gray-400 hover:text-white hover:bg-gray-800"
+                      }`}
+                      title="OHLC labels"
+                    >
+                      <span className="text-xs font-semibold">OHLC</span>
                     </Link>
                   </>
                 )}
@@ -627,6 +639,17 @@ export default function NavigationTabs({
                     />
                   </svg>
                   <span className="text-xs font-medium">Locate</span>
+                </Link>
+                <Link
+                  href="/dev/ohlc-labels"
+                  className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
+                    isActive("/dev/ohlc-labels")
+                      ? "bg-white text-black"
+                      : "text-gray-400"
+                  }`}
+                >
+                  <span className="mb-1 text-sm font-bold">OHLC</span>
+                  <span className="text-xs font-medium">Labels</span>
                 </Link>
               </>
             )}

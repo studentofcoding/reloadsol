@@ -6,6 +6,7 @@ import { formatDistanceToNow } from "date-fns";
 import { formatAppDateTime } from "@/utils/datetime";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
+import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
 import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -2175,8 +2176,9 @@ export default function TrackerTab() {
                       {stoppingTokens.has(token.token_address) ? "⏳" : "⛔"}
                     </button>
                   </div>
-                  <p className="text-sm text-gray-400 font-mono truncate">
-                    {token.token_address}
+                  <p className="flex items-center gap-1 text-sm text-gray-400 font-mono truncate">
+                    <span className="truncate">{token.token_address}</span>
+                    <TokenSearchLink address={token.token_address} />
                   </p>
                 </div>
               </div>

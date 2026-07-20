@@ -9,6 +9,7 @@ import React, {
   useRef,
 } from "react";
 import { useBoardInit } from "@/hooks/useBoardInit";
+import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
 import { useSearchParams, usePathname, useRouter } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import {
@@ -271,6 +272,7 @@ const ChartItem = React.memo(
           <div className="flex items-center justify-between text-sm font-medium text-white mb-1">
             <div className="flex items-center gap-2">
               {symbol || addr.slice(0, 8) + "..."}
+              <TokenSearchLink address={addr} />
               {isMcapSource && (
                 <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1 rounded border border-purple-700">
                   MCAP

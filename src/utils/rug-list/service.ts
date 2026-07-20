@@ -114,6 +114,21 @@ export async function markTokenRug(input: MarkTokenRugInput) {
   await syncTradingSignalRugged(tokenAddress, tokenSymbol);
   await syncMcapTrackingRugged(tokenAddress);
 
+  // Best-effort OHLC snapshot for rug gallery (Live / any markRug path)
+  try {
+    const { scheduleSignalOhlcCapture } = await import(
+      '@/strategies/signal-ohlc-labels'
+    );
+    scheduleSignalOhlcCapture({
+      tokenAddress,
+      label: 'rug',
+      tokenSymbol,
+      source: `rug_${source}`,
+    });
+  } catch {
+    /* ignore */
+  }
+
   return entry;
 }
 

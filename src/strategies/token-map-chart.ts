@@ -63,7 +63,7 @@ function toUnixSec(iso: string): number | null {
 
 const ST_CHART_BASE = 'https://data.solanatracker.io/chart'
 
-function ohlcIntervalForHours(hours: number): string {
+export function ohlcIntervalForHours(hours: number): string {
   if (hours <= 6) return '1m'
   if (hours <= 24) return '5m'
   return '15m'
@@ -109,16 +109,39 @@ function mapStBars(raw: unknown): TokenOhlcBar[] {
 /** Live OHLCV from Solana Tracker Data API (no local candle ingest). */
 export async function fetchTokenOhlc(params: {
   tokenAddress: string
-  hours: number
+  hours?: number
   interval?: string
+  /** Unix seconds — when set with timeTo, overrides hours window. */
+  timeFrom?: number
+  timeTo?: number
 }): Promise<{ candles: TokenOhlcBar[]; source: string }> {
   const apiKey = process.env.SOLANATRACKER_DATA_API_KEY?.trim()
   if (!apiKey) return { candles: [], source: 'none' }
 
-  const hours = Math.min(Math.max(params.hours, 1), 168)
-  const timeTo = Math.floor(Date.now() / 1000)
-  const timeFrom = timeTo - hours * 60 * 60
-  const type = params.interval?.trim() || ohlcIntervalForHours(hours)
+  const nowSec = Math.floor(Date.now() / 1000)
+  let timeTo =
+    params.timeTo != null && Number.isFinite(params.timeTo)
+      ? Math.floor(params.timeTo)
+      : nowSec
+  let timeFrom =
+    params.timeFrom != null && Number.isFinite(params.timeFrom)
+      ? Math.floor(params.timeFrom)
+      : null
+
+  if (timeFrom == null) {
+    const hours = Math.min(Math.max(params.hours ?? 24, 1), 168)
+    timeFrom = timeTo - hours * 60 * 60
+  }
+
+  if (timeFrom >= timeTo) {
+    timeFrom = timeTo - 3600
+  }
+
+  const spanHours = Math.max(1, Math.ceil((timeTo - timeFrom) / 3600))
+  const hoursClamped = Math.min(spanHours, 168)
+  const type =
+    params.interval?.trim() || ohlcIntervalForHours(hoursClamped)
+
   const url = new URL(
     `${ST_CHART_BASE}/${encodeURIComponent(params.tokenAddress)}`,
   )

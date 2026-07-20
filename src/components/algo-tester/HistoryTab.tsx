@@ -2,19 +2,7 @@
 
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useEffect, useCallback } from "react";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-} from "chart.js";
-import { Line } from "react-chartjs-2";
-import "chartjs-adapter-date-fns";
+import AlgoTesterOhlcChart from "@/components/algo-tester/AlgoTesterOhlcChart";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import {
@@ -28,18 +16,6 @@ import {
   isSkippedTrackerToken,
   resolveCompletedOutcome,
 } from "@/utils/trending-profit";
-
-// Register Chart.js components
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-);
 
 const LoadingSkeleton = () => (
   <div className="space-y-4 animate-pulse">
@@ -993,97 +969,26 @@ export default function HistoryTab() {
                       </div>
                     )}
 
-                    {/* Price History Chart */}
-                    {selectedToken.price_history &&
-                      selectedToken.price_history.length > 0 && (
-                        <div className="bg-gray-700 p-4 rounded-lg">
-                          <h3 className="text-lg font-bold text-white mb-3">
-                            Price History
-                          </h3>
-                          <div className="h-64">
-                            <Line
-                              data={{
-                                labels: selectedToken.price_history.map(
-                                  (record: any) => new Date(record.timestamp),
-                                ),
-                                datasets: [
-                                  {
-                                    label: "Price (USD)",
-                                    data: selectedToken.price_history.map(
-                                      (record: any) => record.price_usd,
-                                    ),
-                                    borderColor: "#10b981",
-                                    backgroundColor: "rgba(16, 185, 129, 0.1)",
-                                    borderWidth: 2,
-                                    fill: true,
-                                    tension: 0.4,
-                                    pointBackgroundColor: "#10b981",
-                                    pointBorderColor: "#ffffff",
-                                    pointBorderWidth: 2,
-                                    pointRadius: 4,
-                                    pointHoverRadius: 6,
-                                  },
-                                ],
-                              }}
-                              options={{
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                plugins: {
-                                  legend: {
-                                    display: false,
-                                  },
-                                  tooltip: {
-                                    backgroundColor: "rgba(0, 0, 0, 0.8)",
-                                    titleColor: "#ffffff",
-                                    bodyColor: "#ffffff",
-                                    borderColor: "#374151",
-                                    borderWidth: 1,
-                                    callbacks: {
-                                      label: function (context) {
-                                        return `Price: $${formatPrice(context.parsed.y ?? 0)}`;
-                                      },
-                                    },
-                                  },
-                                },
-                                scales: {
-                                  x: {
-                                    type: "time",
-                                    time: {
-                                      displayFormats: {
-                                        minute: "HH:mm",
-                                        hour: "MMM dd HH:mm",
-                                        day: "MMM dd",
-                                      },
-                                    },
-                                    grid: {
-                                      color: "rgba(75, 85, 99, 0.3)",
-                                    },
-                                    ticks: {
-                                      color: "#9ca3af",
-                                      maxTicksLimit: 6,
-                                    },
-                                  },
-                                  y: {
-                                    grid: {
-                                      color: "rgba(75, 85, 99, 0.3)",
-                                    },
-                                    ticks: {
-                                      color: "#9ca3af",
-                                      callback: function (value) {
-                                        return "$" + formatPrice(Number(value));
-                                      },
-                                    },
-                                  },
-                                },
-                                interaction: {
-                                  intersect: false,
-                                  mode: "index",
-                                },
-                              }}
-                            />
-                          </div>
-                        </div>
-                      )}
+                    {/* OHLC chart (TradingView LWC) windowed by result timestamps */}
+                    <div className="bg-gray-700 p-4 rounded-lg">
+                      <h3 className="text-lg font-bold text-white mb-3">
+                        Price History (OHLC)
+                      </h3>
+                      <AlgoTesterOhlcChart
+                        tokenAddress={selectedToken.token_address}
+                        fromIso={
+                          selectedToken.tracking_started_at ||
+                          selectedToken.waiting_started_at ||
+                          selectedToken.created_at
+                        }
+                        toIso={
+                          selectedToken.status_changed_at ||
+                          selectedToken.updated_at
+                        }
+                        priceHistory={selectedToken.price_history}
+                        tradingSimulation={selectedToken.trading_simulation}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>

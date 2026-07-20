@@ -166,6 +166,19 @@ export async function POST(request: NextRequest) {
       await removeRugEntry(tokenAddress)
     }
 
+    // potential: capture here. rug: markTokenRug → scheduleSignalOhlcCapture
+    if (label === 'potential') {
+      const { scheduleSignalOhlcCapture } = await import(
+        '@/strategies/signal-ohlc-labels'
+      )
+      scheduleSignalOhlcCapture({
+        tokenAddress,
+        label: 'potential',
+        tokenSymbol: tokenSymbol || existing?.token_symbol,
+        source: source === 'mcap_tracker' ? 'signals_mcap' : 'signals_board',
+      })
+    }
+
     return NextResponse.json({ success: true })
   } catch (error) {
     return NextResponse.json({ success: false, error: String(error) }, { status: 500 })

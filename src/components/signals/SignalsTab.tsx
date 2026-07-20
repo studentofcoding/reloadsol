@@ -10,6 +10,7 @@ import type { BulkBuyRequest } from "@/types";
 import { TokenLabel } from "@/utils/mcap-tracker";
 import ChartBuyModal from "@/components/ChartBuyModal";
 import GmgnChartEmbed from "@/components/signals/shared/GmgnChartEmbed";
+import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
 import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { RUG_LIST_QUERY_KEY } from "@/hooks/useRugList";
@@ -939,6 +940,7 @@ export default function SignalsTab() {
                             <span className="font-medium">
                               {s.token_symbol || "UNKNOWN"}
                             </span>
+                            <TokenSearchLink address={s.token_address} />
                             {labelBadge(s.label)}
                             <button
                               onClick={() =>
