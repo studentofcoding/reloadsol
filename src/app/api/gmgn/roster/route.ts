@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
+  buildScoreParts,
+  listDigHitsForWallets,
   listRecentConcurrenceSignals,
   listRecentDigRuns,
   listRoster,
@@ -18,12 +20,25 @@ export async function GET(request: NextRequest) {
       listRecentDigRuns(20),
       listRecentConcurrenceSignals(50),
     ])
+
+    const hitsByWallet = await listDigHitsForWallets(roster.map((r) => r.address))
+
+    const enriched = roster.map((row) => {
+      const hit_tokens = hitsByWallet[row.address] ?? []
+      const score_parts = buildScoreParts({
+        runnerHits: row.runner_hits,
+        score: row.score,
+        hitTokens: hit_tokens,
+      })
+      return { ...row, hit_tokens, score_parts }
+    })
+
     return NextResponse.json({
       success: true,
-      roster,
+      roster: enriched,
       digRuns,
       signals,
-      needsFollow: roster.filter(
+      needsFollow: enriched.filter(
         (r) => r.status === 'needs_follow' || r.follow_status === 'needs_follow',
       ),
     })

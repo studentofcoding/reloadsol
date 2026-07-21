@@ -339,6 +339,71 @@ export async function countWalletRunnerHits(
   return Number(row?.n ?? 0)
 }
 
+export type DigHitToken = {
+  token_address: string
+  profit_usd: number | null
+}
+
+/** Distinct dig-hit tokens per wallet; profit summed across dig runs. */
+export async function listDigHitsForWallets(
+  addresses: string[],
+): Promise<Record<string, DigHitToken[]>> {
+  await ensureWalletDiggerTables()
+  const out: Record<string, DigHitToken[]> = {}
+  if (!addresses.length) return out
+
+  const { rows } = await query<{
+    wallet_address: string
+    token_address: string
+    profit_usd: number | null
+  }>(
+    `SELECT wallet_address, token_address, SUM(COALESCE(profit_usd, 0))::float8 AS profit_usd
+     FROM alpha_wallet_dig_hits
+     WHERE wallet_address = ANY($1::text[])
+     GROUP BY wallet_address, token_address
+     ORDER BY wallet_address, profit_usd DESC NULLS LAST`,
+    [addresses],
+  )
+
+  for (const row of rows) {
+    const list = out[row.wallet_address] ?? []
+    list.push({
+      token_address: row.token_address,
+      profit_usd: row.profit_usd != null ? Number(row.profit_usd) : null,
+    })
+    out[row.wallet_address] = list
+  }
+  return out
+}
+
+export type RosterScoreParts = {
+  hits: number
+  hits_contrib: number
+  dig_profit_usd: number
+  profit_contrib: number
+}
+
+export function buildScoreParts(params: {
+  runnerHits: number
+  score: number
+  hitTokens: DigHitToken[]
+}): RosterScoreParts {
+  const hits = Math.max(0, Number(params.runnerHits) || 0)
+  const hits_contrib = hits * 10
+  const summed = params.hitTokens.reduce((acc, t) => {
+    const p = t.profit_usd
+    if (p == null || !Number.isFinite(p) || p <= 0) return acc
+    return acc + p
+  }, 0)
+  // Prefer summed dig-hit profits; if none recorded, derive from stored score
+  const dig_profit_usd =
+    params.hitTokens.length > 0
+      ? summed
+      : Math.max(0, (Number(params.score) || 0) - hits_contrib) * 1000
+  const profit_contrib = dig_profit_usd / 1000
+  return { hits, hits_contrib, dig_profit_usd, profit_contrib }
+}
+
 export async function insertRosterTradeEvents(
   events: Array<{
     maker: string

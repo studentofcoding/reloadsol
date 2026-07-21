@@ -2,6 +2,18 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 
+type HitToken = {
+  token_address: string;
+  profit_usd: number | null;
+};
+
+type ScoreParts = {
+  hits: number;
+  hits_contrib: number;
+  dig_profit_usd: number;
+  profit_contrib: number;
+};
+
 type RosterRow = {
   address: string;
   status: string;
@@ -11,6 +23,8 @@ type RosterRow = {
   notes: string | null;
   promoted_at: string | null;
   updated_at: string;
+  hit_tokens?: HitToken[];
+  score_parts?: ScoreParts;
 };
 
 type DigRun = {
@@ -41,6 +55,63 @@ function shortAddr(a: string): string {
   return `${a.slice(0, 4)}…${a.slice(-4)}`;
 }
 
+function gmgnWalletUrl(address: string): string {
+  return `https://gmgn.ai/sol/address/${address}`;
+}
+
+function exportLabel(row: RosterRow): string {
+  if (Number.isFinite(row.runner_hits)) return `dig-h${row.runner_hits}`;
+  return shortAddr(row.address);
+}
+
+function toGmgnTextExport(rows: RosterRow[]): string {
+  return rows.map((r) => `${r.address}:${exportLabel(r)},`).join("");
+}
+
+function toGmgnJsonExport(rows: RosterRow[]): string {
+  return JSON.stringify(
+    rows.map((r) => ({
+      address: r.address,
+      name: exportLabel(r),
+      emoji: "⛏️",
+      groups: ["default", "digger"],
+    })),
+    null,
+    2,
+  );
+}
+
+function scoreTooltip(row: RosterRow): string {
+  const parts = row.score_parts;
+  const hits = parts?.hits ?? row.runner_hits;
+  const hitsContrib = parts?.hits_contrib ?? hits * 10;
+  const digProfit = parts?.dig_profit_usd ?? 0;
+  const profitContrib = parts?.profit_contrib ?? digProfit / 1000;
+  return [
+    "score = hits×10 + dig_profit/1000",
+    `hits ${hits} → +${hitsContrib.toFixed(1)}`,
+    `dig profit $${Math.round(digProfit).toLocaleString()} → +${profitContrib.toFixed(1)}`,
+    `total ${Number(row.score).toFixed(1)}`,
+  ].join("\n");
+}
+
+function hitsTooltip(row: RosterRow): string {
+  const tokens = row.hit_tokens ?? [];
+  if (!tokens.length) return "no dig hits recorded";
+  const lines = tokens.map((t) => {
+    const addr = shortAddr(t.token_address);
+    const profit =
+      t.profit_usd != null && Number.isFinite(t.profit_usd)
+        ? ` ($${Math.round(t.profit_usd).toLocaleString()})`
+        : "";
+    return `${addr}${profit}`;
+  });
+  return [`Token hits (${tokens.length}):`, ...lines].join("\n");
+}
+
+const tipClass =
+  "cursor-help underline decoration-dotted decoration-gray-500 underline-offset-2";
+
 export default function RosterTab() {
   const [roster, setRoster] = useState<RosterRow[]>([]);
   const [needsFollow, setNeedsFollow] = useState<RosterRow[]>([]);
@@ -49,6 +120,7 @@ export default function RosterTab() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -100,17 +172,23 @@ export default function RosterTab() {
     }
   };
 
-  const copy = async (text: string) => {
+  const copy = async (text: string, statusMsg?: string) => {
     try {
       await navigator.clipboard.writeText(text);
+      if (statusMsg) {
+        setExportStatus(statusMsg);
+        window.setTimeout(() => setExportStatus(null), 2500);
+      }
     } catch {
-      /* ignore */
+      setExportStatus("Clipboard failed");
     }
   };
 
   if (loading) {
     return <div className="py-8 text-center text-gray-400">Loading roster…</div>;
   }
+
+  const emptyQueue = needsFollow.length === 0;
 
   return (
     <div className="space-y-8 text-sm text-gray-200">
@@ -121,21 +199,52 @@ export default function RosterTab() {
       )}
 
       <section>
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold text-white">Needs follow</h2>
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700"
-          >
-            Refresh
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={emptyQueue}
+              onClick={() =>
+                void copy(
+                  toGmgnTextExport(needsFollow),
+                  `Copied ${needsFollow.length} wallets (text)`,
+                )
+              }
+              className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-40"
+            >
+              Export text
+            </button>
+            <button
+              type="button"
+              disabled={emptyQueue}
+              onClick={() =>
+                void copy(
+                  toGmgnJsonExport(needsFollow),
+                  `Copied ${needsFollow.length} wallets (JSON)`,
+                )
+              }
+              className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700 disabled:opacity-40"
+            >
+              Export JSON
+            </button>
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
         <p className="mb-3 text-xs text-gray-500">
-          Soft hybrid: follow these wallets on GMGN, then mark Followed so
-          concurrence can count them.
+          Soft hybrid: export → paste into GMGN Add wallet, follow, then mark
+          Followed so concurrence can count them. Click address to open GMGN.
         </p>
-        {needsFollow.length === 0 ? (
+        {exportStatus && (
+          <p className="mb-2 text-xs text-emerald-400">{exportStatus}</p>
+        )}
+        {emptyQueue ? (
           <p className="text-gray-500">Queue empty.</p>
         ) : (
           <ul className="divide-y divide-gray-800 rounded border border-gray-800">
@@ -144,9 +253,25 @@ export default function RosterTab() {
                 key={row.address}
                 className="flex flex-wrap items-center gap-2 px-3 py-2"
               >
-                <code className="text-xs text-amber-200">{shortAddr(row.address)}</code>
+                <a
+                  href={gmgnWalletUrl(row.address)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-xs text-amber-200 underline-offset-2 hover:underline"
+                  title={row.address}
+                >
+                  {shortAddr(row.address)}
+                </a>
                 <span className="text-xs text-gray-500">
-                  score {row.score.toFixed(1)} · hits {row.runner_hits}
+                  score{" "}
+                  <span className={tipClass} title={scoreTooltip(row)}>
+                    {row.score.toFixed(1)}
+                  </span>
+                  {" · "}
+                  hits{" "}
+                  <span className={tipClass} title={hitsTooltip(row)}>
+                    {row.runner_hits}
+                  </span>
                 </span>
                 <button
                   type="button"
@@ -201,12 +326,28 @@ export default function RosterTab() {
                 .map((row) => (
                   <tr key={row.address} className="border-t border-gray-800">
                     <td className="px-3 py-1.5 font-mono text-amber-100">
-                      {shortAddr(row.address)}
+                      <a
+                        href={gmgnWalletUrl(row.address)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline-offset-2 hover:underline"
+                        title={row.address}
+                      >
+                        {shortAddr(row.address)}
+                      </a>
                     </td>
                     <td className="px-3 py-1.5">{row.status}</td>
                     <td className="px-3 py-1.5">{row.follow_status}</td>
-                    <td className="px-3 py-1.5">{row.score.toFixed(1)}</td>
-                    <td className="px-3 py-1.5">{row.runner_hits}</td>
+                    <td className="px-3 py-1.5">
+                      <span className={tipClass} title={scoreTooltip(row)}>
+                        {row.score.toFixed(1)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <span className={tipClass} title={hitsTooltip(row)}>
+                        {row.runner_hits}
+                      </span>
+                    </td>
                   </tr>
                 ))}
             </tbody>
