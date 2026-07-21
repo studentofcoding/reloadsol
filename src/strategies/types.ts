@@ -217,7 +217,23 @@ export interface McapTrackerStrategy {
   config: McapTrackerStrategyConfig
 }
 
-export type GmgnDiscoverySource = 'smartmoney' | 'kol' | 'both'
+export type GmgnDiscoverySource = 'smartmoney' | 'kol' | 'both' | 'roster'
+
+export type GmgnRosterConcurrenceConfig = {
+  minWallets: number
+  windowSec: number
+  maxTokenAgeHours: number
+  minMcapUsd: number
+  maxMcapUsd: number
+  digMarketCap: number
+  rosterCap: number
+  minRunnerHits: number
+  minWinrate: number
+  minBuyCount: number
+  minPnl: number
+  wonOutcomesHours: number
+  tagDenylist: string[]
+}
 
 export type GmgnVerdictLevel = 'clean' | 'mixed' | 'reject'
 
@@ -288,11 +304,13 @@ export interface GmgnStrategyConfig {
   }
   /** Radar price / comeback / Telegram thread knobs. */
   radar?: GmgnRadarConfig
+  /** Wallet digger + roster concurrence knobs (gmgn_roster_concurrence). */
+  roster?: GmgnRosterConcurrenceConfig
   notify?: StrategyNotifyConfig
 }
 
 export type GmgnStrategyOverride = Partial<
-  Omit<GmgnStrategyConfig, 'discovery' | 'security' | 'execution' | 'exit' | 'radar'>
+  Omit<GmgnStrategyConfig, 'discovery' | 'security' | 'execution' | 'exit' | 'radar' | 'roster'>
 > & {
   discovery?: Partial<GmgnStrategyConfig['discovery']>
   security?: Partial<GmgnStrategyConfig['security']>
@@ -302,6 +320,7 @@ export type GmgnStrategyOverride = Partial<
     comeback?: Partial<GmgnRadarComebackConfig>
     telegram?: Partial<GmgnRadarConfig['telegram']>
   }
+  roster?: Partial<GmgnRosterConcurrenceConfig>
   notify?: StrategyNotifyConfig
 }
 

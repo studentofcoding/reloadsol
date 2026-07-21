@@ -228,6 +228,8 @@ func (cs *CronService) initWorkerRegistry() {
 		{ID: "gmgn_sim_track", Name: "GMGN sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnSimInterval, TriggerPath: "/trigger/gmgn-sim-track", CanTrigger: true},
 		{ID: "gmgn_activity_poll", Name: "GMGN activity poll", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnActivityPollInterval, TriggerPath: "/trigger/gmgn-activity-poll", CanTrigger: true},
 		{ID: "gmgn_radar_digest", Name: "GMGN radar digest", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnRadarDigestInterval, TriggerPath: "/trigger/gmgn-radar-digest", CanTrigger: true, Disabled: cs.config.GmgnRadarDigestInterval <= 0},
+		{ID: "gmgn_wallet_digger", Name: "GMGN wallet digger", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnWalletDiggerInterval, TriggerPath: "/trigger/gmgn-wallet-digger", CanTrigger: true, Disabled: cs.config.GmgnWalletDiggerInterval <= 0},
+		{ID: "gmgn_roster_watch", Name: "GMGN roster watch", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.GmgnRosterWatchInterval, TriggerPath: "/trigger/gmgn-roster-watch", CanTrigger: true, Disabled: cs.config.GmgnRosterWatchInterval <= 0},
 		{ID: "social_sim_track", Name: "Social sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.SocialSimInterval, TriggerPath: "/trigger/social-sim-track", CanTrigger: true},
 		{ID: "social_rollup", Name: "Social rollup", Domain: "algo", Schedule: "every 300s", IntervalSec: 300, TriggerPath: "/trigger/social-rollup", CanTrigger: true},
 		{ID: "social_cleanup", Name: "Social cleanup", Domain: "algo", Schedule: "every 30m", IntervalSec: 1800, TriggerPath: "/trigger/social-cleanup", CanTrigger: true},

@@ -1,6 +1,7 @@
 import type { GmgnStrategy, GmgnStrategyOverride } from './types'
 import { DEFAULT_GMGN_RADAR } from './registry'
 import { mergeNotifyConfig } from './strategy-notify'
+import { mergeRosterConfig } from './wallet-digger/defaults'
 
 export function mergeGmgnStrategy(
   base: GmgnStrategy,
@@ -39,6 +40,13 @@ export function mergeGmgnStrategy(
         ...(oRadar?.telegram ?? {}),
       },
     },
+  }
+
+  if (base.config.roster || o.roster) {
+    config.roster = mergeRosterConfig({
+      ...base.config.roster,
+      ...o.roster,
+    })
   }
 
   const notify = mergeNotifyConfig(base.config.notify, o.notify)

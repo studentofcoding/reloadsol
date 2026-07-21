@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { discoverAndGateGmgnCandidates } from '@/strategies/gmgn-pipeline'
 import { getActiveGmgnForSim } from '@/strategies/load-gmgn'
 import { mergeEntryFeaturesForOutcome } from '@/strategies/entry-feature-snapshot'
-import {
-  buildFullEntryFeatureSnapshot,
-  ensureCompleteBuyFeaturesForOutcome,
-} from '@/strategies/resolve-entry-snapshot'
+import { ensureCompleteBuyFeaturesForOutcome } from '@/strategies/resolve-entry-snapshot'
 import { recordGmgnOutcome } from '@/strategies/outcomes'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
+import {
+  GMGN_SIM_WALLET,
+  openGmgnSimPosition,
+} from '@/strategies/gmgn-open-sim'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
@@ -21,8 +22,7 @@ import type { GmgnStrategy } from '@/strategies/types'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
-export const GMGN_SIM_WALLET =
-  process.env.GMGN_SIM_WALLET_ADDRESS || 'gmgn-sim'
+export { GMGN_SIM_WALLET }
 
 function getSimTrackSecret(): string {
   return (
@@ -257,78 +257,7 @@ async function openSimPosition(params: {
   entryFeatures: Record<string, unknown>
   entryPriceUsd: number
 }): Promise<void> {
-  const solAmount = params.strategy.config.execution.simBuySol
-  const solPrice = await getSolPriceUSD()
-  const priceUsd = params.entryPriceUsd > 0 ? params.entryPriceUsd : 0.000001
-  const tokenAmount =
-    priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : solAmount * 1_000_000
-
-  const entryAt = new Date().toISOString()
-  const entryMcap = readFiniteNumber(params.entryFeatures.gmgn_market_cap_usd)
-  const topHoldersPct = gmgnTopHoldersToPct(
-    readFiniteNumber(params.entryFeatures.gmgn_top_10_holder_rate),
-  )
-
-  const fullFeatures = await buildFullEntryFeatureSnapshot(
-    params.mintAddress,
-    {
-      entryAt,
-      entryMcap,
-      topHoldersPct,
-      tokenSymbol: params.symbol,
-    },
-    params.entryFeatures,
-  )
-
-  const record = buildTradingRecord({
-    walletAddress: GMGN_SIM_WALLET,
-    operationType: 'buy',
-    is_simulation: true,
-    simulation_type: 'strategy',
-    bot_strategy: params.strategy.id,
-    tokens: [
-      {
-        mintAddress: params.mintAddress,
-        symbol: params.symbol,
-        tokenAmount,
-        solAmount,
-        priceUsd,
-        solPrice,
-      },
-    ],
-    successCount: 1,
-    failureCount: 0,
-    totalTokens: 1,
-    solAmount,
-    feesPaid: 0,
-    solPriceUsd: solPrice,
-    signatures: [`gmgn-sim-open-${Date.now()}`],
-    status: 'tracking',
-    trading_simulation: {
-      entry_at: entryAt,
-      entry_price_usd: priceUsd,
-      entry_features: {
-        ...fullFeatures,
-        entry_at: entryAt,
-        initial_price_usd: priceUsd,
-        token_symbol: params.symbol,
-      },
-    },
-  })
-
-  await insertTradingRecord(record)
-
-  const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
-  notifyStrategyOpen({
-    domain: 'gmgn',
-    strategyId: params.strategy.id,
-    tokenSymbol: params.symbol,
-    tokenAddress: params.mintAddress,
-    marketCap: entryMcap,
-    isSimulated: true,
-    topHoldersPct,
-    features: fullFeatures,
-  })
+  await openGmgnSimPosition(params)
 }
 
 export async function POST(request: NextRequest) {

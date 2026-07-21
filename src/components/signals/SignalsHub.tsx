@@ -17,12 +17,16 @@ const BoardTab = dynamic(() => import("@/components/signals/BoardTab"), {
 const TrackerTab = dynamic(() => import("@/components/signals/TrackerTab"), {
   loading: () => <TabLoading label="Tracker" />,
 });
+const RosterTab = dynamic(() => import("@/components/signals/RosterTab"), {
+  loading: () => <TabLoading label="Roster" />,
+});
 
 const TABS = [
   { id: "signals", label: "Signals" },
   { id: "live", label: "Live" },
   { id: "board", label: "Board" },
   { id: "tracker", label: "Tracker" },
+  { id: "roster", label: "Roster" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -80,6 +84,7 @@ function SignalsHubContent() {
       {activeTab === "live" && <LiveTab />}
       {activeTab === "board" && <BoardTab />}
       {activeTab === "tracker" && <TrackerTab />}
+      {activeTab === "roster" && <RosterTab />}
     </div>
   );
 }

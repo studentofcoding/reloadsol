@@ -383,6 +383,55 @@ export const GMGN_STRATEGIES: Record<string, import('./types').GmgnStrategy> = {
       radar: { ...DEFAULT_GMGN_RADAR, comeback: { ...DEFAULT_GMGN_RADAR.comeback }, telegram: { ...DEFAULT_GMGN_RADAR.telegram } },
     },
   },
+  gmgn_roster_concurrence: {
+    id: 'gmgn_roster_concurrence',
+    name: 'GMGN Roster Concurrence',
+    description:
+      'Alert + sim when ≥4 dug roster wallets buy the same fresh mint within 15m',
+    is_active: false,
+    execution_mode: 'sim_only',
+    config: {
+      discovery: {
+        source: 'roster',
+        chain: 'sol',
+        side: 'buy',
+        limit: 100,
+        minAmountUsd: 25,
+        maxTradeAgeMinutes: 15,
+        clusterMinWallets: 4,
+        cooldownHours: 6,
+      },
+      security: { ...DEFAULT_GMGN_SECURITY },
+      execution: { simBuySol: 0.02, maxOpenPositions: 5 },
+      exit: { ...DEFAULT_GMGN_EXIT },
+      radar: {
+        ...DEFAULT_GMGN_RADAR,
+        comeback: { ...DEFAULT_GMGN_RADAR.comeback },
+        telegram: { ...DEFAULT_GMGN_RADAR.telegram },
+      },
+      roster: {
+        minWallets: 4,
+        windowSec: 15 * 60,
+        maxTokenAgeHours: 6,
+        minMcapUsd: 20_000,
+        maxMcapUsd: 2_000_000,
+        digMarketCap: 25,
+        rosterCap: 150,
+        minRunnerHits: 2,
+        minWinrate: 0.4,
+        minBuyCount: 10,
+        minPnl: 1.0,
+        wonOutcomesHours: 48,
+        tagDenylist: [
+          'bundler',
+          'dex_bot',
+          'sniper',
+          'rat_trader',
+          'fresh_wallet',
+        ],
+      },
+    },
+  },
 }
 
 export const DLMM_STRATEGY_DEFAULTS: import('./types').DlmmStrategy = {

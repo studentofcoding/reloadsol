@@ -230,6 +230,8 @@ type Config struct {
     GmgnSimInterval      int    // seconds
     GmgnActivityPollInterval int // seconds
     GmgnRadarDigestInterval int // seconds (0 = disabled)
+    GmgnWalletDiggerInterval int // seconds (0 = disabled)
+    GmgnRosterWatchInterval int // seconds (0 = disabled)
     SocialSimInterval    int    // seconds
     StrategyReportInterval int  // seconds (0 = disabled)
     DLMMScreenInterval int    // seconds
@@ -325,6 +327,22 @@ func NewCronService() *CronService {
                 }
             }
             return 86400 // default daily; set 0 to disable
+        }(),
+        GmgnWalletDiggerInterval: func() int {
+            if v := os.Getenv("GMGN_WALLET_DIGGER_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
+                    return iv
+                }
+            }
+            return 14400 // default 4h; set 0 to disable
+        }(),
+        GmgnRosterWatchInterval: func() int {
+            if v := os.Getenv("GMGN_ROSTER_WATCH_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv >= 0 {
+                    return iv
+                }
+            }
+            return 75 // default 75s; set 0 to disable
         }(),
         StrategyReportInterval: func() int {
             if v := os.Getenv("STRATEGY_REPORT_INTERVAL"); v != "" {
@@ -500,6 +518,26 @@ func (cs *CronService) Start() {
         cs.workers.BindEntry(gmgnRadarDigestEntryID, "gmgn_radar_digest")
     }
 
+    if cs.config.GmgnWalletDiggerInterval > 0 {
+        gmgnWalletDiggerSpec := fmt.Sprintf("@every %ds", cs.config.GmgnWalletDiggerInterval)
+        gmgnWalletDiggerEntryID, err := cs.cron.AddFunc(gmgnWalletDiggerSpec, cs.runGmgnWalletDigger)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add GMGN wallet digger cron job: %v", err))
+            log.Fatal("Failed to add GMGN wallet digger cron job:", err)
+        }
+        cs.workers.BindEntry(gmgnWalletDiggerEntryID, "gmgn_wallet_digger")
+    }
+
+    if cs.config.GmgnRosterWatchInterval > 0 {
+        gmgnRosterWatchSpec := fmt.Sprintf("@every %ds", cs.config.GmgnRosterWatchInterval)
+        gmgnRosterWatchEntryID, err := cs.cron.AddFunc(gmgnRosterWatchSpec, cs.runGmgnRosterWatch)
+        if err != nil {
+            cs.logger.Error(fmt.Sprintf("Failed to add GMGN roster watch cron job: %v", err))
+            log.Fatal("Failed to add GMGN roster watch cron job:", err)
+        }
+        cs.workers.BindEntry(gmgnRosterWatchEntryID, "gmgn_roster_watch")
+    }
+
     socialRollupEntryID, err := cs.cron.AddFunc("@every 300s", cs.runSocialRollup)
     if err != nil {
         cs.logger.Error(fmt.Sprintf("Failed to add social rollup cron job: %v", err))
@@ -596,6 +634,8 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/mcap-tracker-sim-track", cs.manualMcapTrackerSimTrackTrigger)
     http.HandleFunc("/trigger/mcap-tracker-sim-open", cs.manualMcapTrackerSimOpenTrigger)
     http.HandleFunc("/trigger/gmgn-sim-track", cs.manualGmgnSimTrackTrigger)
+    http.HandleFunc("/trigger/gmgn-wallet-digger", cs.manualGmgnWalletDiggerTrigger)
+    http.HandleFunc("/trigger/gmgn-roster-watch", cs.manualGmgnRosterWatchTrigger)
     http.HandleFunc("/trigger/social-sim-track", cs.manualSocialSimTrackTrigger)
     http.HandleFunc("/trigger/gmgn-activity-poll", cs.manualGmgnActivityPollTrigger)
     http.HandleFunc("/trigger/gmgn-radar-digest", cs.manualGmgnRadarDigestTrigger)
@@ -622,6 +662,12 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("🐋 GMGN sim track: every %d seconds", cs.config.GmgnSimInterval))
     cs.logger.Info(fmt.Sprintf("📣 Social sim track: every %d seconds", cs.config.SocialSimInterval))
     cs.logger.Info(fmt.Sprintf("🔥 GMGN activity poll: every %d seconds", cs.config.GmgnActivityPollInterval))
+    if cs.config.GmgnWalletDiggerInterval > 0 {
+        cs.logger.Info(fmt.Sprintf("⛏️ GMGN wallet digger: every %d seconds", cs.config.GmgnWalletDiggerInterval))
+    }
+    if cs.config.GmgnRosterWatchInterval > 0 {
+        cs.logger.Info(fmt.Sprintf("👀 GMGN roster watch: every %d seconds", cs.config.GmgnRosterWatchInterval))
+    }
     if cs.config.GmgnRadarDigestInterval > 0 {
         cs.logger.Info(fmt.Sprintf("📌 GMGN radar digest: every %d seconds", cs.config.GmgnRadarDigestInterval))
     } else {
@@ -844,6 +890,34 @@ func (cs *CronService) runGmgnRadarDigest() {
     cs.workers.Success("gmgn_radar_digest")
 }
 
+func (cs *CronService) runGmgnWalletDigger() {
+    cs.workers.Begin("gmgn_wallet_digger")
+    cs.logger.Info("⛏️ Running GMGN wallet digger...")
+    url := fmt.Sprintf("%s/api/gmgn/wallet-digger?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil, 300)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ GMGN wallet digger failed: %v", err))
+        cs.workers.Fail("gmgn_wallet_digger", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ GMGN wallet digger completed (%d bytes)", len(resp)))
+    cs.workers.Success("gmgn_wallet_digger")
+}
+
+func (cs *CronService) runGmgnRosterWatch() {
+    cs.workers.Begin("gmgn_roster_watch")
+    cs.logger.Info("👀 Running GMGN roster watch...")
+    url := fmt.Sprintf("%s/api/gmgn/roster-watch?key=%s", cs.config.APIBaseURL, cs.config.TrendingSecret)
+    resp, err := cs.makeRequest("POST", url, nil, 180)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ GMGN roster watch failed: %v", err))
+        cs.workers.Fail("gmgn_roster_watch", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ GMGN roster watch completed (%d bytes)", len(resp)))
+    cs.workers.Success("gmgn_roster_watch")
+}
+
 func (cs *CronService) runSocialRollup() {
     cs.workers.Begin("social_rollup")
     cs.logger.Info("📣 Running social rollup...")
@@ -994,6 +1068,34 @@ func (cs *CronService) manualGmgnRadarDigestTrigger(w http.ResponseWriter, r *ht
     json.NewEncoder(w).Encode(map[string]interface{}{
         "success": true,
         "message": "GMGN radar digest triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualGmgnWalletDiggerTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual GMGN wallet digger trigger")
+    go cs.runGmgnWalletDigger()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "GMGN wallet digger triggered",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) manualGmgnRosterWatchTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual GMGN roster watch trigger")
+    go cs.runGmgnRosterWatch()
+    json.NewEncoder(w).Encode(map[string]interface{}{
+        "success": true,
+        "message": "GMGN roster watch triggered",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

@@ -5,6 +5,8 @@ export type WorkerId =
   | 'gmgn_sim_track'
   | 'gmgn_activity_poll'
   | 'gmgn_radar_digest'
+  | 'gmgn_wallet_digger'
+  | 'gmgn_roster_watch'
   | 'social_sim_track'
   | 'social_rollup'
   | 'social_wallet_poll'
@@ -26,6 +28,8 @@ export const WORKER_TRIGGER_PATHS: Record<WorkerId, string> = {
   gmgn_sim_track: '/trigger/gmgn-sim-track',
   gmgn_activity_poll: '/trigger/gmgn-activity-poll',
   gmgn_radar_digest: '/trigger/gmgn-radar-digest',
+  gmgn_wallet_digger: '/trigger/gmgn-wallet-digger',
+  gmgn_roster_watch: '/trigger/gmgn-roster-watch',
   social_sim_track: '/trigger/social-sim-track',
   social_rollup: '/trigger/social-rollup',
   social_wallet_poll: '/trigger/social-wallet-poll',

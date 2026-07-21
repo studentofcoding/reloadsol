@@ -63,6 +63,8 @@ export async function getActiveGmgnForSim(): Promise<GmgnStrategy[]> {
   return Object.values(registry).filter(
     (s) =>
       s.is_active &&
+      s.id !== 'gmgn_roster_concurrence' &&
+      s.config.discovery.source !== 'roster' &&
       (s.execution_mode === 'sim_only' || s.execution_mode === 'ab_parallel'),
   )
 }
@@ -70,12 +72,16 @@ export async function getActiveGmgnForSim(): Promise<GmgnStrategy[]> {
 /** Radar Telegram follows GMGN SM/KOL strategy toggles — off when none are active. */
 export async function isAnyGmgnRadarStrategyActive(): Promise<boolean> {
   const registry = await getMergedGmgnRegistry()
-  return Object.values(registry).some((s) => s.is_active)
+  return Object.values(registry).some(
+    (s) => s.is_active && s.id !== 'gmgn_roster_concurrence',
+  )
 }
 
 /** Pure helper for tests / callers with a preloaded registry. */
 export function hasActiveGmgnRadarStrategy(
   registry: Record<string, Pick<GmgnStrategy, 'is_active'>>,
 ): boolean {
-  return Object.values(registry).some((s) => s.is_active)
+  return Object.entries(registry).some(
+    ([id, s]) => s.is_active && id !== 'gmgn_roster_concurrence',
+  )
 }

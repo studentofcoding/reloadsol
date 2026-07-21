@@ -242,3 +242,88 @@ export async function marketTrending(
   )
   return Array.isArray(data?.rank) ? data.rank : []
 }
+
+export type GmgnTokenTraderRow = Record<string, unknown> & {
+  address?: string
+  profit?: number
+  realized_profit?: number
+  buy_volume_cur?: number
+  amount_percentage?: number
+  tags?: string[]
+  maker_token_tags?: string[]
+}
+
+export type TokenTradersParams = {
+  chain: string
+  address: string
+  limit?: number
+  orderBy?: string
+  direction?: 'asc' | 'desc'
+  tag?: string
+}
+
+export async function tokenTraders(
+  params: TokenTradersParams,
+): Promise<GmgnTokenTraderRow[]> {
+  const query: Record<string, string> = {
+    chain: params.chain,
+    address: params.address,
+    limit: String(params.limit ?? 20),
+  }
+  if (params.orderBy) query.orderby = params.orderBy
+  if (params.direction) query.direction = params.direction
+  if (params.tag) query.tag = params.tag
+  const data = unwrapApiData<{ list?: GmgnTokenTraderRow[] }>(
+    await gmgnFetch('/v1/market/token_top_traders', query),
+  )
+  return Array.isArray(data?.list) ? data.list : []
+}
+
+export type GmgnWalletStats = Record<string, unknown> & {
+  wallet_address?: string
+  winrate?: number
+  pnl?: number
+  realized_profit?: number
+  buy_count?: number
+  sell_count?: number
+}
+
+export async function walletStats(params: {
+  chain: string
+  wallet: string
+  period?: '7d' | '30d'
+}): Promise<GmgnWalletStats> {
+  const data = unwrapApiData<GmgnWalletStats | GmgnWalletStats[]>(
+    await gmgnFetch('/v1/user/wallet_stats', {
+      chain: params.chain,
+      wallet_address: params.wallet,
+      period: params.period ?? '30d',
+    }),
+  )
+  if (Array.isArray(data)) return data[0] ?? {}
+  return data ?? {}
+}
+
+/** Signed-auth route — use gmgn-cli trackFollowWallet; HTTP helper left for docs parity. */
+export async function trackFollowWallet(params: {
+  chain: string
+  side?: 'buy' | 'sell'
+  limit?: number
+  wallet?: string
+  minAmountUsd?: number
+  maxAmountUsd?: number
+}): Promise<GmgnTrackRow[]> {
+  const query: Record<string, string> = {
+    chain: params.chain,
+    limit: String(params.limit ?? 50),
+  }
+  if (params.side) query.side = params.side
+  if (params.wallet) query.wallet_address = params.wallet
+  if (params.minAmountUsd != null) query.min_amount_usd = String(params.minAmountUsd)
+  if (params.maxAmountUsd != null) query.max_amount_usd = String(params.maxAmountUsd)
+  // Without request signing this will 401 — callers should prefer CLI transport.
+  const raw = unwrapApiData<GmgnTrackResponse>(
+    await gmgnFetch('/v1/trade/follow_wallet', query),
+  )
+  return raw.list ?? []
+}

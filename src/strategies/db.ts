@@ -1628,7 +1628,13 @@ export async function getStrategyDomainHeartbeats(params?: {
     signals: ['signals_sim_track', 'signals_refresh'],
     trending_bot: ['trending_tracker'],
     dlmm: ['dlmm_manage'],
-    gmgn: ['gmgn_sim_track', 'gmgn_activity_poll', 'gmgn_radar_digest'],
+    gmgn: [
+      'gmgn_sim_track',
+      'gmgn_activity_poll',
+      'gmgn_radar_digest',
+      'gmgn_wallet_digger',
+      'gmgn_roster_watch',
+    ],
     social: ['social_sim_track'],
   }
 
