@@ -109,8 +109,37 @@ function hitsTooltip(row: RosterRow): string {
   return [`Token hits (${tokens.length}):`, ...lines].join("\n");
 }
 
-const tipClass =
-  "cursor-help underline decoration-dotted decoration-gray-500 underline-offset-2";
+function HoverTip({
+  text,
+  children,
+}: {
+  text: string;
+  children: React.ReactNode;
+}) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+
+  return (
+    <span
+      className="inline-flex cursor-help underline decoration-dotted decoration-gray-500 underline-offset-2"
+      onMouseEnter={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        setPos({ x: r.left, y: r.bottom + 6 });
+      }}
+      onMouseLeave={() => setPos(null)}
+    >
+      {children}
+      {pos && (
+        <span
+          role="tooltip"
+          className="pointer-events-none fixed z-[9999] w-max max-w-[min(20rem,70vw)] whitespace-pre-line rounded border border-gray-600 bg-gray-950 px-2.5 py-1.5 text-left text-[11px] leading-snug text-gray-100 shadow-xl"
+          style={{ left: pos.x, top: pos.y }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
 
 export default function RosterTab() {
   const [roster, setRoster] = useState<RosterRow[]>([]);
@@ -264,14 +293,14 @@ export default function RosterTab() {
                 </a>
                 <span className="text-xs text-gray-500">
                   score{" "}
-                  <span className={tipClass} title={scoreTooltip(row)}>
+                  <HoverTip text={scoreTooltip(row)}>
                     {row.score.toFixed(1)}
-                  </span>
+                  </HoverTip>
                   {" · "}
                   hits{" "}
-                  <span className={tipClass} title={hitsTooltip(row)}>
+                  <HoverTip text={hitsTooltip(row)}>
                     {row.runner_hits}
-                  </span>
+                  </HoverTip>
                 </span>
                 <button
                   type="button"
@@ -308,7 +337,7 @@ export default function RosterTab() {
         <h2 className="mb-2 text-base font-semibold text-white">
           Active / followed roster
         </h2>
-        <div className="overflow-x-auto rounded border border-gray-800">
+        <div className="overflow-x-auto overflow-y-visible rounded border border-gray-800">
           <table className="min-w-full text-left text-xs">
             <thead className="bg-gray-900 text-gray-400">
               <tr>
@@ -339,14 +368,14 @@ export default function RosterTab() {
                     <td className="px-3 py-1.5">{row.status}</td>
                     <td className="px-3 py-1.5">{row.follow_status}</td>
                     <td className="px-3 py-1.5">
-                      <span className={tipClass} title={scoreTooltip(row)}>
+                      <HoverTip text={scoreTooltip(row)}>
                         {row.score.toFixed(1)}
-                      </span>
+                      </HoverTip>
                     </td>
                     <td className="px-3 py-1.5">
-                      <span className={tipClass} title={hitsTooltip(row)}>
+                      <HoverTip text={hitsTooltip(row)}>
                         {row.runner_hits}
-                      </span>
+                      </HoverTip>
                     </td>
                   </tr>
                 ))}
