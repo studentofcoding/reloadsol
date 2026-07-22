@@ -1,4 +1,5 @@
-import { randomUUID } from 'crypto'
+import { createPrivateKey, randomUUID, sign as cryptoSign, constants as cryptoConstants } from 'crypto'
+import { existsSync, readFileSync } from 'fs'
 import type { GmgnTrackResponse, GmgnTrackRow } from './gmgn-cli'
 
 const DEFAULT_HOST = 'https://openapi.gmgn.ai'
@@ -25,6 +26,18 @@ function getApiKey(): string {
 
 function getHost(): string {
   return process.env.GMGN_API_HOST?.trim() || DEFAULT_HOST
+}
+
+/** Match gmgn-cli: PEM with \\n escapes, or a path to a PEM file. */
+function getPrivateKeyPem(): string {
+  const raw = process.env.GMGN_PRIVATE_KEY?.trim()
+  if (!raw) {
+    throw new GmgnApiError('GMGN_PRIVATE_KEY is not set')
+  }
+  if (!raw.includes('BEGIN') && existsSync(raw)) {
+    return readFileSync(raw, 'utf-8')
+  }
+  return raw.replace(/\\n/g, '\n')
 }
 
 function sleep(ms: number): Promise<void> {
@@ -71,13 +84,55 @@ function unwrapApiData<T>(body: unknown): T {
   return body as T
 }
 
-async function gmgnFetch(path: string, query: Record<string, string> = {}): Promise<unknown> {
-  const apiKey = getApiKey()
+/** gmgn-cli signer.js buildMessage — exported for the self-check. */
+export function buildGmgnSignMessage(
+  subPath: string,
+  queryParams: Record<string, string>,
+  body: string,
+  timestamp: number,
+): string {
+  const sortedQs = Object.keys(queryParams)
+    .sort()
+    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(String(queryParams[k]))}`)
+    .join('&')
+  return `${subPath}:${sortedQs}:${body}:${timestamp}`
+}
+
+function detectSignAlgorithm(pem: string): 'Ed25519' | 'RSA-SHA256' {
+  const key = createPrivateKey(pem)
+  switch (key.asymmetricKeyType) {
+    case 'ed25519':
+      return 'Ed25519'
+    case 'rsa':
+      return 'RSA-SHA256'
+    default:
+      throw new GmgnApiError(
+        `Unsupported GMGN key type: ${key.asymmetricKeyType}. Supported: Ed25519, RSA`,
+      )
+  }
+}
+
+/** Match gmgn-cli signer.js sign — exported for the self-check. */
+export function signGmgnMessage(message: string, privateKeyPem: string): string {
+  const msgBuf = Buffer.from(message, 'utf-8')
+  const algorithm = detectSignAlgorithm(privateKeyPem)
+  if (algorithm === 'Ed25519') {
+    return cryptoSign(null, msgBuf, privateKeyPem).toString('base64')
+  }
+  return cryptoSign('sha256', msgBuf, {
+    key: privateKeyPem,
+    padding: cryptoConstants.RSA_PKCS1_PSS_PADDING,
+    saltLength: 32,
+  }).toString('base64')
+}
+
+async function gmgnHttpGet(
+  path: string,
+  query: Record<string, string>,
+  headers: Record<string, string>,
+): Promise<unknown> {
   const host = getHost()
   const params = new URLSearchParams(query)
-  params.set('timestamp', String(Math.floor(Date.now() / 1000)))
-  params.set('client_id', randomUUID())
-
   const url = `${host}${path}?${params.toString()}`
   const maxAttempts = 2
 
@@ -88,10 +143,7 @@ async function gmgnFetch(path: string, query: Record<string, string> = {}): Prom
     try {
       const response = await fetch(url, {
         method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          'X-APIKEY': apiKey,
-        },
+        headers,
         signal: controller.signal,
       })
 
@@ -138,6 +190,42 @@ async function gmgnFetch(path: string, query: Record<string, string> = {}): Prom
   }
 
   throw new GmgnApiError('GMGN API failed after retries')
+}
+
+async function gmgnFetch(path: string, query: Record<string, string> = {}): Promise<unknown> {
+  const apiKey = getApiKey()
+  const params = {
+    ...query,
+    timestamp: String(Math.floor(Date.now() / 1000)),
+    client_id: randomUUID(),
+  }
+  return gmgnHttpGet(path, params, {
+    Accept: 'application/json',
+    'X-APIKEY': apiKey,
+  })
+}
+
+/** Signed auth (follow-wallet / trade routes) — mirrors gmgn-cli OpenApiClient.authSignedRequest. */
+async function gmgnSignedFetch(
+  path: string,
+  query: Record<string, string> = {},
+): Promise<unknown> {
+  const apiKey = getApiKey()
+  const privateKeyPem = getPrivateKeyPem()
+  const timestamp = Math.floor(Date.now() / 1000)
+  const params = {
+    ...query,
+    timestamp: String(timestamp),
+    client_id: randomUUID(),
+  }
+  const message = buildGmgnSignMessage(path, params, '', timestamp)
+  const signature = signGmgnMessage(message, privateKeyPem)
+  return gmgnHttpGet(path, params, {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    'X-APIKEY': apiKey,
+    'X-Signature': signature,
+  })
 }
 
 export async function trackSmartMoney(params: {
@@ -304,7 +392,7 @@ export async function walletStats(params: {
   return data ?? {}
 }
 
-/** Signed-auth route — use gmgn-cli trackFollowWallet; HTTP helper left for docs parity. */
+/** Signed-auth route — requires GMGN_PRIVATE_KEY. */
 export async function trackFollowWallet(params: {
   chain: string
   side?: 'buy' | 'sell'
@@ -321,9 +409,8 @@ export async function trackFollowWallet(params: {
   if (params.wallet) query.wallet_address = params.wallet
   if (params.minAmountUsd != null) query.min_amount_usd = String(params.minAmountUsd)
   if (params.maxAmountUsd != null) query.max_amount_usd = String(params.maxAmountUsd)
-  // Without request signing this will 401 — callers should prefer CLI transport.
   const raw = unwrapApiData<GmgnTrackResponse>(
-    await gmgnFetch('/v1/trade/follow_wallet', query),
+    await gmgnSignedFetch('/v1/trade/follow_wallet', query),
   )
   return raw.list ?? []
 }

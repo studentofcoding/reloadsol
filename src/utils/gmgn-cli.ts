@@ -35,9 +35,10 @@ export type GmgnTrackRow = {
 
 export type GmgnTrackResponse = { list?: GmgnTrackRow[] }
 
-function preferCliTransport(): boolean {
-  return process.env.GMGN_TRANSPORT?.trim().toLowerCase() === 'cli'
-}
+export type { GmgnMarketRankRow, MarketTrendingParams } from './gmgn-api'
+export type { GmgnTokenTraderRow, TokenTradersParams, GmgnWalletStats } from './gmgn-api'
+
+// GMGN_TRANSPORT=cli is ignored — facades always use HTTP (gmgn-api).
 
 function getCliBin(): string {
   return process.env.GMGN_CLI_BIN?.trim() || 'gmgn-cli'
@@ -64,6 +65,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** Live swap / order stub only — read facades never spawn CLI. */
 export async function gmgnCliRaw(args: string[], timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unknown> {
   const bin = getCliBin()
   const maxAttempts = 2
@@ -116,82 +118,11 @@ export async function gmgnCliRaw(args: string[], timeoutMs = DEFAULT_TIMEOUT_MS)
   throw new GmgnCliError('gmgn-cli failed after retries')
 }
 
-async function trackSmartMoneyCli(params: {
-  chain: string
-  side?: 'buy' | 'sell'
-  limit?: number
-}): Promise<GmgnTrackRow[]> {
-  const args = [
-    'track',
-    'smartmoney',
-    '--chain',
-    params.chain,
-    '--limit',
-    String(params.limit ?? 20),
-    '--raw',
-  ]
-  if (params.side) args.push('--side', params.side)
-  const raw = (await gmgnCliRaw(args)) as GmgnTrackResponse
-  return raw.list ?? []
-}
-
-async function trackKolCli(params: {
-  chain: string
-  side?: 'buy' | 'sell'
-  limit?: number
-}): Promise<GmgnTrackRow[]> {
-  const args = [
-    'track',
-    'kol',
-    '--chain',
-    params.chain,
-    '--limit',
-    String(params.limit ?? 20),
-    '--raw',
-  ]
-  if (params.side) args.push('--side', params.side)
-  const raw = (await gmgnCliRaw(args)) as GmgnTrackResponse
-  return raw.list ?? []
-}
-
-async function tokenInfoCli(params: {
-  chain: string
-  address: string
-}): Promise<Record<string, unknown>> {
-  const raw = await gmgnCliRaw([
-    'token',
-    'info',
-    '--chain',
-    params.chain,
-    '--address',
-    params.address,
-    '--raw',
-  ])
-  return raw as Record<string, unknown>
-}
-
-async function tokenSecurityCli(params: {
-  chain: string
-  address: string
-}): Promise<Record<string, unknown>> {
-  const raw = await gmgnCliRaw([
-    'token',
-    'security',
-    '--chain',
-    params.chain,
-    '--address',
-    params.address,
-    '--raw',
-  ])
-  return raw as Record<string, unknown>
-}
-
 export async function trackSmartMoney(params: {
   chain: string
   side?: 'buy' | 'sell'
   limit?: number
 }): Promise<GmgnTrackRow[]> {
-  if (preferCliTransport()) return trackSmartMoneyCli(params)
   return gmgnApi.trackSmartMoney(params)
 }
 
@@ -200,7 +131,6 @@ export async function trackKol(params: {
   side?: 'buy' | 'sell'
   limit?: number
 }): Promise<GmgnTrackRow[]> {
-  if (preferCliTransport()) return trackKolCli(params)
   return gmgnApi.trackKol(params)
 }
 
@@ -208,7 +138,6 @@ export async function tokenInfo(params: {
   chain: string
   address: string
 }): Promise<Record<string, unknown>> {
-  if (preferCliTransport()) return tokenInfoCli(params)
   return gmgnApi.tokenInfo(params)
 }
 
@@ -216,112 +145,19 @@ export async function tokenSecurity(params: {
   chain: string
   address: string
 }): Promise<Record<string, unknown>> {
-  if (preferCliTransport()) return tokenSecurityCli(params)
   return gmgnApi.tokenSecurity(params)
-}
-
-export type { GmgnMarketRankRow, MarketTrendingParams } from './gmgn-api'
-
-async function marketTrendingCli(
-  params: gmgnApi.MarketTrendingParams,
-): Promise<gmgnApi.GmgnMarketRankRow[]> {
-  const args = [
-    'market',
-    'trending',
-    '--chain',
-    params.chain,
-    '--interval',
-    params.interval,
-    '--limit',
-    String(params.limit ?? 100),
-    '--raw',
-  ]
-  if (params.minMarketcap != null) {
-    args.push('--min-marketcap', String(params.minMarketcap))
-  }
-  if (params.minVolume != null) {
-    args.push('--min-volume', String(params.minVolume))
-  }
-  if (params.orderBy) args.push('--order-by', params.orderBy)
-  if (params.direction) args.push('--direction', params.direction)
-
-  const raw = await gmgnCliRaw(args)
-  if (!raw || typeof raw !== 'object') return []
-  const record = raw as Record<string, unknown>
-  const data =
-    record.code === 0 || record.code === '0'
-      ? (record.data as Record<string, unknown> | undefined)
-      : record
-  const rank = data?.rank
-  return Array.isArray(rank) ? (rank as gmgnApi.GmgnMarketRankRow[]) : []
 }
 
 export async function marketTrending(
   params: gmgnApi.MarketTrendingParams,
 ): Promise<gmgnApi.GmgnMarketRankRow[]> {
-  if (preferCliTransport()) return marketTrendingCli(params)
   return gmgnApi.marketTrending(params)
-}
-
-export type { GmgnTokenTraderRow, TokenTradersParams, GmgnWalletStats } from './gmgn-api'
-
-async function tokenTradersCli(
-  params: gmgnApi.TokenTradersParams,
-): Promise<gmgnApi.GmgnTokenTraderRow[]> {
-  const args = [
-    'token',
-    'traders',
-    '--chain',
-    params.chain,
-    '--address',
-    params.address,
-    '--limit',
-    String(params.limit ?? 20),
-    '--raw',
-  ]
-  if (params.orderBy) args.push('--order-by', params.orderBy)
-  if (params.direction) args.push('--direction', params.direction)
-  if (params.tag) args.push('--tag', params.tag)
-  const raw = await gmgnCliRaw(args)
-  if (!raw || typeof raw !== 'object') return []
-  const record = raw as Record<string, unknown>
-  const data =
-    record.code === 0 || record.code === '0'
-      ? (record.data as Record<string, unknown> | undefined)
-      : record
-  const list = data?.list ?? (record as { list?: unknown }).list
-  return Array.isArray(list) ? (list as gmgnApi.GmgnTokenTraderRow[]) : []
 }
 
 export async function tokenTraders(
   params: gmgnApi.TokenTradersParams,
 ): Promise<gmgnApi.GmgnTokenTraderRow[]> {
-  if (preferCliTransport()) return tokenTradersCli(params)
   return gmgnApi.tokenTraders(params)
-}
-
-async function walletStatsCli(params: {
-  chain: string
-  wallet: string
-  period?: '7d' | '30d'
-}): Promise<gmgnApi.GmgnWalletStats> {
-  const raw = await gmgnCliRaw([
-    'portfolio',
-    'stats',
-    '--chain',
-    params.chain,
-    '--wallet',
-    params.wallet,
-    '--period',
-    params.period ?? '30d',
-    '--raw',
-  ])
-  if (!raw || typeof raw !== 'object') return {}
-  const record = raw as Record<string, unknown>
-  const data =
-    record.code === 0 || record.code === '0' ? record.data : record
-  if (Array.isArray(data)) return (data[0] as gmgnApi.GmgnWalletStats) ?? {}
-  return (data as gmgnApi.GmgnWalletStats) ?? {}
 }
 
 export async function walletStats(params: {
@@ -329,40 +165,9 @@ export async function walletStats(params: {
   wallet: string
   period?: '7d' | '30d'
 }): Promise<gmgnApi.GmgnWalletStats> {
-  if (preferCliTransport()) return walletStatsCli(params)
   return gmgnApi.walletStats(params)
 }
 
-async function trackFollowWalletCli(params: {
-  chain: string
-  side?: 'buy' | 'sell'
-  limit?: number
-  wallet?: string
-  minAmountUsd?: number
-  maxAmountUsd?: number
-}): Promise<GmgnTrackRow[]> {
-  const args = [
-    'track',
-    'follow-wallet',
-    '--chain',
-    params.chain,
-    '--limit',
-    String(params.limit ?? 50),
-    '--raw',
-  ]
-  if (params.side) args.push('--side', params.side)
-  if (params.wallet) args.push('--wallet', params.wallet)
-  if (params.minAmountUsd != null) {
-    args.push('--min-amount-usd', String(params.minAmountUsd))
-  }
-  if (params.maxAmountUsd != null) {
-    args.push('--max-amount-usd', String(params.maxAmountUsd))
-  }
-  const raw = (await gmgnCliRaw(args)) as GmgnTrackResponse
-  return raw.list ?? []
-}
-
-/** Always CLI — follow-wallet requires signed auth (GMGN_PRIVATE_KEY). */
 export async function trackFollowWallet(params: {
   chain: string
   side?: 'buy' | 'sell'
@@ -371,7 +176,7 @@ export async function trackFollowWallet(params: {
   minAmountUsd?: number
   maxAmountUsd?: number
 }): Promise<GmgnTrackRow[]> {
-  return trackFollowWalletCli(params)
+  return gmgnApi.trackFollowWallet(params)
 }
 
 export function isSolMemeTokenAddress(address: string | undefined): boolean {

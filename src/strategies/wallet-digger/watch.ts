@@ -16,12 +16,17 @@ import { findConcurrenceClusters } from './concurrence'
 import {
   fetchRecentRosterBuys,
   getFollowedRosterAddresses,
+  getRosterHitsMap,
   hasRecentConcurrenceSignal,
   insertConcurrenceSignal,
   insertRosterTradeEvents,
   updateConcurrenceSignalFlags,
 } from './db'
-import { mergeRosterConfig, type RosterConcurrenceConfig } from './defaults'
+import {
+  mergeRosterConfig,
+  passAgeMcapBand,
+  type RosterConcurrenceConfig,
+} from './defaults'
 
 const STRATEGY_ID = 'gmgn_roster_concurrence'
 
@@ -123,10 +128,28 @@ export async function runRosterWatch(params?: {
 
   const skipped: string[] = []
   let fired = 0
+  const allMakers = Array.from(new Set(clusters.flatMap((c) => c.makers)))
+  const hitsMap = await getRosterHitsMap(allMakers)
 
   for (const cluster of clusters) {
     if (await hasRecentConcurrenceSignal(cluster.tokenAddress)) {
       skipped.push(`${cluster.tokenAddress.slice(0, 8)}: recent signal`)
+      continue
+    }
+
+    const hitsSum = cluster.makers.reduce((s, m) => s + (hitsMap.get(m) ?? 0), 0)
+    if (hitsSum < cfg.minRunnerHitsSum) {
+      await insertConcurrenceSignal({
+        tokenAddress: cluster.tokenAddress,
+        symbol: cluster.tokenAddress.slice(0, 8),
+        makers: cluster.makers,
+        windowSec: cfg.windowSec,
+        firstTradeAt: new Date(cluster.firstTradeAtSec * 1000),
+        lastTradeAt: new Date(cluster.lastTradeAtSec * 1000),
+        marketCapUsd: null,
+        skipReason: `hits_sum ${hitsSum} < ${cfg.minRunnerHitsSum}`,
+      })
+      skipped.push(`${cluster.tokenAddress.slice(0, 8)}: hits_sum`)
       continue
     }
 
@@ -151,7 +174,8 @@ export async function runRosterWatch(params?: {
       recent.find((r) => r.token_address === cluster.tokenAddress)?.symbol ||
       cluster.tokenAddress.slice(0, 8)
 
-    if (ageH != null && ageH > cfg.maxTokenAgeHours) {
+    const bandGate = passAgeMcapBand(ageH, mcap, cfg)
+    if (!bandGate.ok) {
       await insertConcurrenceSignal({
         tokenAddress: cluster.tokenAddress,
         symbol,
@@ -160,23 +184,9 @@ export async function runRosterWatch(params?: {
         firstTradeAt: new Date(cluster.firstTradeAtSec * 1000),
         lastTradeAt: new Date(cluster.lastTradeAtSec * 1000),
         marketCapUsd: mcap,
-        skipReason: `age ${ageH.toFixed(1)}h > ${cfg.maxTokenAgeHours}h`,
+        skipReason: bandGate.reason,
       })
-      skipped.push(`${symbol}: age`)
-      continue
-    }
-    if (mcap != null && (mcap < cfg.minMcapUsd || mcap > cfg.maxMcapUsd)) {
-      await insertConcurrenceSignal({
-        tokenAddress: cluster.tokenAddress,
-        symbol,
-        makers: cluster.makers,
-        windowSec: cfg.windowSec,
-        firstTradeAt: new Date(cluster.firstTradeAtSec * 1000),
-        lastTradeAt: new Date(cluster.lastTradeAtSec * 1000),
-        marketCapUsd: mcap,
-        skipReason: `mcap ${Math.round(mcap)} out of band`,
-      })
-      skipped.push(`${symbol}: mcap`)
+      skipped.push(`${symbol}: band`)
       continue
     }
 
@@ -215,6 +225,7 @@ export async function runRosterWatch(params?: {
     const shortMakers = cluster.makers.map((m) => `${m.slice(0, 4)}…${m.slice(-4)}`)
     const caption =
       `⚡ <b>Roster concurrence</b> — ${symbol}\n` +
+      `Band: ${bandGate.band} · hitsΣ ${hitsSum}\n` +
       `${cluster.makers.length} followed wallets bought within ${Math.round(cfg.windowSec / 60)}m\n` +
       `Makers: ${shortMakers.join(', ')}\n` +
       (mcap != null ? `Mcap: $${Math.round(mcap).toLocaleString()}\n` : '') +

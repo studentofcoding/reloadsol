@@ -163,6 +163,25 @@ export async function getFollowedRosterAddresses(): Promise<Set<string>> {
   return set
 }
 
+/** runner_hits for addresses (missing → 0). */
+export async function getRosterHitsMap(
+  addresses: string[],
+): Promise<Map<string, number>> {
+  await ensureWalletDiggerTables()
+  const out = new Map<string, number>()
+  const unique = Array.from(new Set(addresses.map((a) => a.trim()).filter(Boolean)))
+  for (const a of unique) out.set(a, 0)
+  if (unique.length === 0) return out
+  const { rows } = await query<{ address: string; runner_hits: number }>(
+    `SELECT address, runner_hits FROM alpha_wallet_roster WHERE address = ANY($1::text[])`,
+    [unique],
+  )
+  for (const row of rows) {
+    out.set(row.address, Math.max(0, Number(row.runner_hits) || 0))
+  }
+  return out
+}
+
 export async function upsertRosterCandidate(params: {
   address: string
   score: number

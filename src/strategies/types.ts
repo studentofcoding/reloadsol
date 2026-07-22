@@ -222,9 +222,14 @@ export type GmgnDiscoverySource = 'smartmoney' | 'kol' | 'both' | 'roster'
 export type GmgnRosterConcurrenceConfig = {
   minWallets: number
   windowSec: number
-  maxTokenAgeHours: number
-  minMcapUsd: number
-  maxMcapUsd: number
+  newMaxAgeHours: number
+  newMinMcapUsd: number
+  newMaxMcapUsd: number
+  oldMinAgeHours: number
+  oldMaxAgeHours: number
+  oldMinMcapUsd: number
+  oldMaxMcapUsd: number
+  minRunnerHitsSum: number
   digMarketCap: number
   rosterCap: number
   minRunnerHits: number

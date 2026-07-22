@@ -18,10 +18,17 @@ import {
   mergeRosterConfig,
   type RosterConcurrenceConfig,
 } from './defaults'
+import {
+  passesSoldAboveBoughtMc,
+  readAvgMcEdge,
+  readPortfolioBars,
+} from './portfolio-edge'
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
+
+let loggedMissingMcEdge = false
 
 function readNum(v: unknown): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return v
@@ -191,13 +198,24 @@ export async function runWalletDigger(params?: {
           period: '30d',
         })
         portfolio = stats
-        const winrate = readNum(stats.winrate) ?? 0
-        const buyCount = readNum(stats.buy_count) ?? 0
-        const pnl = readNum(stats.pnl) ?? 0
+        const bars = readPortfolioBars(stats)
+        const mcEdge = passesSoldAboveBoughtMc(stats)
+        if (!mcEdge && !loggedMissingMcEdge) {
+          loggedMissingMcEdge = true
+          const edge = readAvgMcEdge(stats)
+          // peek: openapi wallet_stats often lacks UI Bought/Sold Avg MC fields
+          log.info('api_request', 'wallet-digger promote MC-edge unavailable or failed', {
+            address: address.slice(0, 8),
+            boughtAvgMc: edge.boughtAvgMc,
+            soldAvgMc: edge.soldAvgMc,
+            sampleKeys: Object.keys(stats).slice(0, 24),
+          })
+        }
         passPortfolio =
-          winrate >= cfg.minWinrate &&
-          buyCount >= cfg.minBuyCount &&
-          pnl >= cfg.minPnl
+          bars.winrate >= cfg.minWinrate &&
+          bars.buyCount >= cfg.minBuyCount &&
+          bars.pnl >= cfg.minPnl &&
+          mcEdge
         await sleep(200)
       } catch (e) {
         errors.push(`stats ${address.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`)
