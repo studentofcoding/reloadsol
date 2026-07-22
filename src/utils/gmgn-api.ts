@@ -1,9 +1,17 @@
-import { createPrivateKey, randomUUID, sign as cryptoSign, constants as cryptoConstants } from 'crypto'
+import {
+  createPrivateKey,
+  randomUUID,
+  sign as cryptoSign,
+  constants as cryptoConstants,
+  type KeyObject,
+} from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import type { GmgnTrackResponse, GmgnTrackRow } from './gmgn-cli'
 
 const DEFAULT_HOST = 'https://openapi.gmgn.ai'
 const DEFAULT_TIMEOUT_MS = 15_000
+const PKCS8_PRIVATE_KEY_RE =
+  /(-----BEGIN PRIVATE KEY-----[\s\S]+?-----END PRIVATE KEY-----)/
 
 export class GmgnApiError extends Error {
   constructor(
@@ -28,16 +36,60 @@ function getHost(): string {
   return process.env.GMGN_API_HOST?.trim() || DEFAULT_HOST
 }
 
-/** Match gmgn-cli: PEM with \\n escapes, or a path to a PEM file. */
+/**
+ * Normalize GMGN signing key to a single PKCS#8 PEM block.
+ * Matches gmgn-cli config: one-line `\n` escapes, or keypair.pem with private+public.
+ */
+export function normalizeGmgnPrivateKeyPem(raw: string): string {
+  let value = raw.trim()
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim()
+  }
+  if (!value.includes('BEGIN') && existsSync(value)) {
+    value = readFileSync(value, 'utf-8')
+  }
+  value = value.replace(/\\n/g, '\n').replace(/\r\n/g, '\n')
+  const match = value.match(PKCS8_PRIVATE_KEY_RE)
+  if (!match?.[1]) {
+    throw new GmgnApiError(
+      'GMGN_PRIVATE_KEY must be a PKCS#8 PEM (-----BEGIN PRIVATE KEY----- … -----END PRIVATE KEY-----). ' +
+        'Use the Ed25519/RSA signing key from gmgn-cli config / GMGN API key page — not a Solana wallet secret.',
+    )
+  }
+  return match[1] + '\n'
+}
+
 function getPrivateKeyPem(): string {
   const raw = process.env.GMGN_PRIVATE_KEY?.trim()
   if (!raw) {
     throw new GmgnApiError('GMGN_PRIVATE_KEY is not set')
   }
-  if (!raw.includes('BEGIN') && existsSync(raw)) {
-    return readFileSync(raw, 'utf-8')
+  return normalizeGmgnPrivateKeyPem(raw)
+}
+
+function loadGmgnPrivateKey(pem: string): { key: KeyObject; algorithm: 'Ed25519' | 'RSA-SHA256' } {
+  let key: KeyObject
+  try {
+    key = createPrivateKey(pem)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new GmgnApiError(
+      `GMGN_PRIVATE_KEY is not a valid PKCS#8 PEM (Ed25519/RSA): ${detail}`,
+    )
   }
-  return raw.replace(/\\n/g, '\n')
+  switch (key.asymmetricKeyType) {
+    case 'ed25519':
+      return { key, algorithm: 'Ed25519' }
+    case 'rsa':
+      return { key, algorithm: 'RSA-SHA256' }
+    default:
+      throw new GmgnApiError(
+        `Unsupported GMGN key type: ${key.asymmetricKeyType}. Supported: Ed25519, RSA`,
+      )
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -98,32 +150,27 @@ export function buildGmgnSignMessage(
   return `${subPath}:${sortedQs}:${body}:${timestamp}`
 }
 
-function detectSignAlgorithm(pem: string): 'Ed25519' | 'RSA-SHA256' {
-  const key = createPrivateKey(pem)
-  switch (key.asymmetricKeyType) {
-    case 'ed25519':
-      return 'Ed25519'
-    case 'rsa':
-      return 'RSA-SHA256'
-    default:
-      throw new GmgnApiError(
-        `Unsupported GMGN key type: ${key.asymmetricKeyType}. Supported: Ed25519, RSA`,
-      )
-  }
-}
-
 /** Match gmgn-cli signer.js sign — exported for the self-check. */
 export function signGmgnMessage(message: string, privateKeyPem: string): string {
+  const pem = normalizeGmgnPrivateKeyPem(privateKeyPem)
+  const { key, algorithm } = loadGmgnPrivateKey(pem)
   const msgBuf = Buffer.from(message, 'utf-8')
-  const algorithm = detectSignAlgorithm(privateKeyPem)
-  if (algorithm === 'Ed25519') {
-    return cryptoSign(null, msgBuf, privateKeyPem).toString('base64')
+  try {
+    if (algorithm === 'Ed25519') {
+      return cryptoSign(null, msgBuf, key).toString('base64')
+    }
+    return cryptoSign('sha256', msgBuf, {
+      key,
+      padding: cryptoConstants.RSA_PKCS1_PSS_PADDING,
+      saltLength: 32,
+    }).toString('base64')
+  } catch (error) {
+    if (error instanceof GmgnApiError) throw error
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new GmgnApiError(
+      `GMGN_PRIVATE_KEY is not a valid PKCS#8 PEM (Ed25519/RSA): ${detail}`,
+    )
   }
-  return cryptoSign('sha256', msgBuf, {
-    key: privateKeyPem,
-    padding: cryptoConstants.RSA_PKCS1_PSS_PADDING,
-    saltLength: 32,
-  }).toString('base64')
 }
 
 async function gmgnHttpGet(

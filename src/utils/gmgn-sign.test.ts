@@ -1,6 +1,19 @@
 import { generateKeyPairSync, verify as cryptoVerify } from 'crypto'
 import { describe, expect, it } from 'vitest'
-import { buildGmgnSignMessage, signGmgnMessage } from './gmgn-api'
+import {
+  buildGmgnSignMessage,
+  GmgnApiError,
+  normalizeGmgnPrivateKeyPem,
+  signGmgnMessage,
+} from './gmgn-api'
+
+function freshEd25519Pem(): { privatePem: string; publicKey: ReturnType<typeof generateKeyPairSync>['publicKey'] } {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+  return {
+    privatePem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    publicKey,
+  }
+}
 
 describe('buildGmgnSignMessage', () => {
   it('matches gmgn-cli sorted query format', () => {
@@ -21,17 +34,58 @@ describe('buildGmgnSignMessage', () => {
   })
 
   it('Ed25519 signature verifies for the message bytes', () => {
-    const { privateKey, publicKey } = generateKeyPairSync('ed25519')
-    const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
+    const { privatePem, publicKey } = freshEd25519Pem()
     const message = buildGmgnSignMessage(
       '/v1/trade/follow_wallet',
       { chain: 'sol', client_id: 'x', limit: '1', timestamp: '1' },
       '',
       1,
     )
-    const sigB64 = signGmgnMessage(message, pem)
+    const sigB64 = signGmgnMessage(message, privatePem)
     expect(
       cryptoVerify(null, Buffer.from(message, 'utf-8'), publicKey, Buffer.from(sigB64, 'base64')),
     ).toBe(true)
+  })
+})
+
+describe('normalizeGmgnPrivateKeyPem', () => {
+  it('unescapes one-line PEM and signs', () => {
+    const { privatePem, publicKey } = freshEd25519Pem()
+    const escaped = privatePem.replace(/\n/g, '\\n')
+    const normalized = normalizeGmgnPrivateKeyPem(escaped)
+    expect(normalized).toContain('-----BEGIN PRIVATE KEY-----')
+    expect(normalized).not.toContain('\\n')
+    const message = 'hello'
+    const sig = signGmgnMessage(message, escaped)
+    expect(
+      cryptoVerify(null, Buffer.from(message, 'utf-8'), publicKey, Buffer.from(sig, 'base64')),
+    ).toBe(true)
+  })
+
+  it('extracts private block from keypair.pem-style dual content', () => {
+    const { privatePem, publicKey } = freshEd25519Pem()
+    const pub = publicKey.export({ type: 'spki', format: 'pem' }).toString()
+    const dual = `# Private Key\n${privatePem}\n# Public Key\n${pub}\n`
+    const normalized = normalizeGmgnPrivateKeyPem(dual)
+    expect(normalized).toMatch(/^-----BEGIN PRIVATE KEY-----/)
+    expect(normalized).not.toContain('BEGIN PUBLIC KEY')
+    const message = 'dual-block'
+    const sig = signGmgnMessage(message, dual)
+    expect(
+      cryptoVerify(null, Buffer.from(message, 'utf-8'), publicKey, Buffer.from(sig, 'base64')),
+    ).toBe(true)
+  })
+
+  it('strips wrapping quotes', () => {
+    const { privatePem } = freshEd25519Pem()
+    const quoted = `"${privatePem.replace(/\n/g, '\\n')}"`
+    expect(normalizeGmgnPrivateKeyPem(quoted)).toContain('-----BEGIN PRIVATE KEY-----')
+  })
+
+  it('throws a clear error for OpenSSH / garbage (not raw decoder only)', () => {
+    expect(() =>
+      normalizeGmgnPrivateKeyPem('-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----'),
+    ).toThrow(GmgnApiError)
+    expect(() => normalizeGmgnPrivateKeyPem('not-a-key')).toThrow(/PKCS#8 PEM/)
   })
 })
