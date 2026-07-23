@@ -40,10 +40,11 @@ CREATE TABLE IF NOT EXISTS alpha_wallet_dig_hits (
   dig_run_id BIGINT REFERENCES alpha_wallet_dig_runs (id) ON DELETE CASCADE,
   wallet_address TEXT NOT NULL,
   token_address TEXT NOT NULL,
+  chain TEXT NOT NULL DEFAULT 'sol',
   profit_usd DOUBLE PRECISION,
   tags JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (dig_run_id, wallet_address, token_address)
+  UNIQUE (dig_run_id, wallet_address, token_address, chain)
 );
 
 CREATE INDEX IF NOT EXISTS idx_alpha_wallet_dig_hits_wallet
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS alpha_roster_trade_events (
   id BIGSERIAL PRIMARY KEY,
   maker TEXT NOT NULL,
   token_address TEXT NOT NULL,
+  chain TEXT NOT NULL DEFAULT 'sol',
   side TEXT NOT NULL DEFAULT 'buy',
   amount_usd DOUBLE PRECISION,
   price_usd DOUBLE PRECISION,
@@ -62,16 +64,17 @@ CREATE TABLE IF NOT EXISTS alpha_roster_trade_events (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_alpha_roster_trade_events_tx
-  ON alpha_roster_trade_events (tx_hash)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alpha_roster_trade_events_tx_chain
+  ON alpha_roster_trade_events (tx_hash, chain)
   WHERE tx_hash IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_alpha_roster_trade_events_window
-  ON alpha_roster_trade_events (token_address, trade_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alpha_roster_trade_events_window_chain
+  ON alpha_roster_trade_events (chain, token_address, trade_at DESC);
 
 CREATE TABLE IF NOT EXISTS alpha_concurrence_signals (
   id BIGSERIAL PRIMARY KEY,
   token_address TEXT NOT NULL,
+  chain TEXT NOT NULL DEFAULT 'sol',
   symbol TEXT,
   makers TEXT[] NOT NULL,
   window_sec INT NOT NULL,

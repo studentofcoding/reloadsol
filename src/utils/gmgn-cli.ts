@@ -185,6 +185,26 @@ export function isSolMemeTokenAddress(address: string | undefined): boolean {
   return /^[1-9A-HJ-NP-Za-km-z]+$/.test(address)
 }
 
+const EVM_ZERO = '0x0000000000000000000000000000000000000000'
+
+/** Robinhood / EVM-style token address. */
+export function isEvmTokenAddress(address: string | undefined): boolean {
+  if (!address) return false
+  const a = address.trim()
+  if (a.toLowerCase() === EVM_ZERO) return false
+  return /^0x[a-fA-F0-9]{40}$/.test(a)
+}
+
+export function isGmgnTokenAddress(
+  chain: string,
+  address: string | undefined,
+): boolean {
+  if (chain === 'robinhood' || chain === 'bsc' || chain === 'base' || chain === 'eth') {
+    return isEvmTokenAddress(address)
+  }
+  return isSolMemeTokenAddress(address)
+}
+
 export function normalizeTrackRows(
   rows: GmgnTrackRow[],
   source: 'smartmoney' | 'kol',

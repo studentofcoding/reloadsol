@@ -42,6 +42,7 @@ export type AlphaConcurrenceSignalRow = {
   telegram_sent: boolean
   sim_opened: boolean
   skip_reason: string | null
+  chain: string
 }
 
 const ENSURE_SQL = `
@@ -76,15 +77,16 @@ CREATE TABLE IF NOT EXISTS alpha_wallet_dig_hits (
   dig_run_id BIGINT REFERENCES alpha_wallet_dig_runs (id) ON DELETE CASCADE,
   wallet_address TEXT NOT NULL,
   token_address TEXT NOT NULL,
+  chain TEXT NOT NULL DEFAULT 'sol',
   profit_usd DOUBLE PRECISION,
   tags JSONB NOT NULL DEFAULT '[]'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (dig_run_id, wallet_address, token_address)
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS alpha_roster_trade_events (
   id BIGSERIAL PRIMARY KEY,
   maker TEXT NOT NULL,
   token_address TEXT NOT NULL,
+  chain TEXT NOT NULL DEFAULT 'sol',
   side TEXT NOT NULL DEFAULT 'buy',
   amount_usd DOUBLE PRECISION,
   price_usd DOUBLE PRECISION,
@@ -93,13 +95,10 @@ CREATE TABLE IF NOT EXISTS alpha_roster_trade_events (
   tx_hash TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_alpha_roster_trade_events_tx
-  ON alpha_roster_trade_events (tx_hash) WHERE tx_hash IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_alpha_roster_trade_events_window
-  ON alpha_roster_trade_events (token_address, trade_at DESC);
 CREATE TABLE IF NOT EXISTS alpha_concurrence_signals (
   id BIGSERIAL PRIMARY KEY,
   token_address TEXT NOT NULL,
+  chain TEXT NOT NULL DEFAULT 'sol',
   symbol TEXT,
   makers TEXT[] NOT NULL,
   window_sec INT NOT NULL,
@@ -115,11 +114,29 @@ CREATE INDEX IF NOT EXISTS idx_alpha_concurrence_signals_token_fired
   ON alpha_concurrence_signals (token_address, fired_at DESC);
 `
 
+/** Idempotent upgrades for DBs created before chain columns. */
+const MIGRATE_CHAIN_SQL = `
+ALTER TABLE alpha_wallet_dig_hits ADD COLUMN IF NOT EXISTS chain TEXT NOT NULL DEFAULT 'sol';
+ALTER TABLE alpha_roster_trade_events ADD COLUMN IF NOT EXISTS chain TEXT NOT NULL DEFAULT 'sol';
+ALTER TABLE alpha_concurrence_signals ADD COLUMN IF NOT EXISTS chain TEXT NOT NULL DEFAULT 'sol';
+ALTER TABLE alpha_wallet_dig_hits DROP CONSTRAINT IF EXISTS alpha_wallet_dig_hits_dig_run_id_wallet_address_token_address_key;
+DROP INDEX IF EXISTS idx_alpha_roster_trade_events_tx;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alpha_wallet_dig_hits_run_wallet_token_chain
+  ON alpha_wallet_dig_hits (dig_run_id, wallet_address, token_address, chain);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alpha_roster_trade_events_tx_chain
+  ON alpha_roster_trade_events (tx_hash, chain) WHERE tx_hash IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_alpha_roster_trade_events_window_chain
+  ON alpha_roster_trade_events (chain, token_address, trade_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alpha_concurrence_signals_token_chain_fired
+  ON alpha_concurrence_signals (token_address, chain, fired_at DESC);
+`
+
 let ensured = false
 
 export async function ensureWalletDiggerTables(): Promise<void> {
   if (ensured) return
   await query(ENSURE_SQL)
+  await query(MIGRATE_CHAIN_SQL)
   ensured = true
 }
 
@@ -294,7 +311,9 @@ export async function demoteExcessRoster(cap: number): Promise<number> {
   return rows.length
 }
 
-export async function startDigRun(runnerTokens: string[]): Promise<number> {
+export async function startDigRun(
+  runnerTokens: Array<string | { chain: string; address: string }>,
+): Promise<number> {
   await ensureWalletDiggerTables()
   const row = await queryOne<{ id: number }>(
     `INSERT INTO alpha_wallet_dig_runs (runner_tokens)
@@ -325,18 +344,21 @@ export async function insertDigHit(params: {
   digRunId: number
   walletAddress: string
   tokenAddress: string
+  chain?: string
   profitUsd?: number | null
   tags?: string[]
 }): Promise<void> {
+  await ensureWalletDiggerTables()
   await query(
     `INSERT INTO alpha_wallet_dig_hits (
-       dig_run_id, wallet_address, token_address, profit_usd, tags
-     ) VALUES ($1, $2, $3, $4, $5::jsonb)
-     ON CONFLICT (dig_run_id, wallet_address, token_address) DO NOTHING`,
+       dig_run_id, wallet_address, token_address, chain, profit_usd, tags
+     ) VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+     ON CONFLICT (dig_run_id, wallet_address, token_address, chain) DO NOTHING`,
     [
       params.digRunId,
       params.walletAddress,
       params.tokenAddress,
+      params.chain ?? 'sol',
       params.profitUsd ?? null,
       JSON.stringify(params.tags ?? []),
     ],
@@ -427,6 +449,7 @@ export async function insertRosterTradeEvents(
   events: Array<{
     maker: string
     tokenAddress: string
+    chain?: string
     side?: string
     amountUsd?: number | null
     priceUsd?: number | null
@@ -438,18 +461,21 @@ export async function insertRosterTradeEvents(
   await ensureWalletDiggerTables()
   let n = 0
   for (const e of events) {
+    const chain = e.chain ?? 'sol'
     if (e.txHash) {
       const { rowCount } = await query(
         `INSERT INTO alpha_roster_trade_events (
-           maker, token_address, side, amount_usd, price_usd, symbol, trade_at, tx_hash
+           maker, token_address, chain, side, amount_usd, price_usd, symbol, trade_at, tx_hash
          )
-         SELECT $1, $2, $3, $4, $5, $6, $7, $8
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9
          WHERE NOT EXISTS (
-           SELECT 1 FROM alpha_roster_trade_events WHERE tx_hash = $8
+           SELECT 1 FROM alpha_roster_trade_events
+           WHERE tx_hash = $9 AND chain = $3
          )`,
         [
           e.maker,
           e.tokenAddress,
+          chain,
           e.side ?? 'buy',
           e.amountUsd ?? null,
           e.priceUsd ?? null,
@@ -462,11 +488,12 @@ export async function insertRosterTradeEvents(
     } else {
       await query(
         `INSERT INTO alpha_roster_trade_events (
-           maker, token_address, side, amount_usd, price_usd, symbol, trade_at
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           maker, token_address, chain, side, amount_usd, price_usd, symbol, trade_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           e.maker,
           e.tokenAddress,
+          chain,
           e.side ?? 'buy',
           e.amountUsd ?? null,
           e.priceUsd ?? null,
@@ -485,6 +512,7 @@ export async function fetchRecentRosterBuys(windowSec: number): Promise<
   Array<{
     maker: string
     token_address: string
+    chain: string
     trade_at: Date
     amount_usd: number | null
     symbol: string | null
@@ -494,11 +522,12 @@ export async function fetchRecentRosterBuys(windowSec: number): Promise<
   const { rows } = await query<{
     maker: string
     token_address: string
+    chain: string
     trade_at: Date
     amount_usd: number | null
     symbol: string | null
   }>(
-    `SELECT maker, token_address, trade_at, amount_usd, symbol
+    `SELECT maker, token_address, chain, trade_at, amount_usd, symbol
      FROM alpha_roster_trade_events
      WHERE side = 'buy'
        AND trade_at >= NOW() - ($1 * INTERVAL '1 second')
@@ -511,20 +540,23 @@ export async function fetchRecentRosterBuys(windowSec: number): Promise<
 export async function hasRecentConcurrenceSignal(
   tokenAddress: string,
   withinHours = 6,
+  chain = 'sol',
 ): Promise<boolean> {
   await ensureWalletDiggerTables()
   const row = await queryOne<{ id: number }>(
     `SELECT id FROM alpha_concurrence_signals
      WHERE token_address = $1
+       AND chain = $3
        AND fired_at >= NOW() - ($2 * INTERVAL '1 hour')
      LIMIT 1`,
-    [tokenAddress, withinHours],
+    [tokenAddress, withinHours, chain],
   )
   return Boolean(row)
 }
 
 export async function insertConcurrenceSignal(params: {
   tokenAddress: string
+  chain?: string
   symbol?: string | null
   makers: string[]
   windowSec: number
@@ -538,12 +570,13 @@ export async function insertConcurrenceSignal(params: {
   await ensureWalletDiggerTables()
   const row = await queryOne<{ id: number }>(
     `INSERT INTO alpha_concurrence_signals (
-       token_address, symbol, makers, window_sec, first_trade_at, last_trade_at,
+       token_address, chain, symbol, makers, window_sec, first_trade_at, last_trade_at,
        market_cap_usd, telegram_sent, sim_opened, skip_reason
-     ) VALUES ($1, $2, $3::text[], $4, $5, $6, $7, $8, $9, $10)
+     ) VALUES ($1, $2, $3, $4::text[], $5, $6, $7, $8, $9, $10, $11)
      RETURNING id`,
     [
       params.tokenAddress,
+      params.chain ?? 'sol',
       params.symbol ?? null,
       params.makers,
       params.windowSec,

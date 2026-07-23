@@ -6,9 +6,19 @@ export const ROSTER_TAG_DENYLIST = [
   'fresh_wallet',
 ] as const
 
-export const DEFAULT_ROSTER_CONFIG = {
-  minWallets: 4,
-  windowSec: 15 * 60,
+export type RosterChain = 'sol' | 'robinhood'
+
+export type RosterAgeMcapBands = {
+  newMaxAgeHours: number
+  newMinMcapUsd: number
+  newMaxMcapUsd: number
+  oldMinAgeHours: number
+  oldMaxAgeHours: number
+  oldMinMcapUsd: number
+  oldMaxMcapUsd: number
+}
+
+export const DEFAULT_SOL_BANDS: RosterAgeMcapBands = {
   newMaxAgeHours: 24,
   newMinMcapUsd: 20_000,
   newMaxMcapUsd: 500_000,
@@ -16,6 +26,26 @@ export const DEFAULT_ROSTER_CONFIG = {
   oldMaxAgeHours: 168,
   oldMinMcapUsd: 1_000_000,
   oldMaxMcapUsd: 4_000_000,
+}
+
+export const DEFAULT_ROBINHOOD_BANDS: RosterAgeMcapBands = {
+  newMaxAgeHours: 24,
+  newMinMcapUsd: 100_000,
+  newMaxMcapUsd: 1_000_000,
+  oldMinAgeHours: 24,
+  oldMaxAgeHours: 168,
+  oldMinMcapUsd: 1_000_000,
+  oldMaxMcapUsd: 5_000_000,
+}
+
+export const DEFAULT_ROSTER_CONFIG = {
+  chains: ['sol', 'robinhood'] as RosterChain[],
+  bands: {
+    sol: { ...DEFAULT_SOL_BANDS },
+    robinhood: { ...DEFAULT_ROBINHOOD_BANDS },
+  },
+  minWallets: 4,
+  windowSec: 15 * 60,
   minRunnerHitsSum: 8,
   digMarketCap: 25,
   rosterCap: 150,
@@ -28,15 +58,13 @@ export const DEFAULT_ROSTER_CONFIG = {
 }
 
 export type RosterConcurrenceConfig = {
+  chains: RosterChain[]
+  bands: {
+    sol: RosterAgeMcapBands
+    robinhood: RosterAgeMcapBands
+  }
   minWallets: number
   windowSec: number
-  newMaxAgeHours: number
-  newMinMcapUsd: number
-  newMaxMcapUsd: number
-  oldMinAgeHours: number
-  oldMaxAgeHours: number
-  oldMinMcapUsd: number
-  oldMaxMcapUsd: number
   minRunnerHitsSum: number
   digMarketCap: number
   rosterCap: number
@@ -48,26 +76,27 @@ export type RosterConcurrenceConfig = {
   tagDenylist: string[]
 }
 
+/** Legacy flat sol band fields that may still appear in stored strategy overrides. */
+type LegacySolBandOverride = Partial<RosterAgeMcapBands>
+
 export type AgeMcapBand = 'new' | 'old'
 
 export type AgeMcapBandResult =
   | { ok: true; band: AgeMcapBand }
   | { ok: false; reason: string }
 
+export function bandConfigForChain(
+  cfg: RosterConcurrenceConfig,
+  chain: RosterChain,
+): RosterAgeMcapBands {
+  return cfg.bands[chain] ?? cfg.bands.sol
+}
+
 /** Dual-band age×mcap gate — fail closed on null age/mcap. */
 export function passAgeMcapBand(
   ageH: number | null,
   mcap: number | null,
-  cfg: Pick<
-    RosterConcurrenceConfig,
-    | 'newMaxAgeHours'
-    | 'newMinMcapUsd'
-    | 'newMaxMcapUsd'
-    | 'oldMinAgeHours'
-    | 'oldMaxAgeHours'
-    | 'oldMinMcapUsd'
-    | 'oldMaxMcapUsd'
-  >,
+  cfg: RosterAgeMcapBands,
 ): AgeMcapBandResult {
   if (ageH == null) return { ok: false, reason: 'unknown age' }
   if (mcap == null) return { ok: false, reason: 'unknown mcap' }
@@ -101,13 +130,42 @@ export function passAgeMcapBand(
 }
 
 export function mergeRosterConfig(
-  override?: Partial<RosterConcurrenceConfig> | null,
+  override?: (Partial<RosterConcurrenceConfig> & LegacySolBandOverride) | null,
 ): RosterConcurrenceConfig {
+  const o = override ?? {}
+  const legacySol: LegacySolBandOverride = {
+    newMaxAgeHours: o.newMaxAgeHours,
+    newMinMcapUsd: o.newMinMcapUsd,
+    newMaxMcapUsd: o.newMaxMcapUsd,
+    oldMinAgeHours: o.oldMinAgeHours,
+    oldMaxAgeHours: o.oldMaxAgeHours,
+    oldMinMcapUsd: o.oldMinMcapUsd,
+    oldMaxMcapUsd: o.oldMaxMcapUsd,
+  }
+  const hasLegacySol = Object.values(legacySol).some((v) => v != null)
+
+  const chains =
+    o.chains?.length && o.chains.every((c) => c === 'sol' || c === 'robinhood')
+      ? ([...new Set(o.chains)] as RosterChain[])
+      : [...DEFAULT_ROSTER_CONFIG.chains]
+
   return {
     ...DEFAULT_ROSTER_CONFIG,
-    ...(override ?? {}),
-    tagDenylist: override?.tagDenylist?.length
-      ? [...override.tagDenylist]
+    ...o,
+    chains,
+    bands: {
+      sol: {
+        ...DEFAULT_SOL_BANDS,
+        ...(hasLegacySol ? legacySol : {}),
+        ...(o.bands?.sol ?? {}),
+      },
+      robinhood: {
+        ...DEFAULT_ROBINHOOD_BANDS,
+        ...(o.bands?.robinhood ?? {}),
+      },
+    },
+    tagDenylist: o.tagDenylist?.length
+      ? [...o.tagDenylist]
       : [...DEFAULT_ROSTER_CONFIG.tagDenylist],
   }
 }

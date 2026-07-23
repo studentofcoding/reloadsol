@@ -1,5 +1,6 @@
 import {
-  isSolMemeTokenAddress,
+  isEvmTokenAddress,
+  isGmgnTokenAddress,
   marketTrending,
   tokenTraders,
   walletStats,
@@ -16,6 +17,7 @@ import {
 } from './db'
 import {
   mergeRosterConfig,
+  type RosterChain,
   type RosterConcurrenceConfig,
 } from './defaults'
 import {
@@ -57,69 +59,91 @@ function isDenied(tags: string[], denylist: string[]): boolean {
   return tags.some((t) => deny.has(t))
 }
 
-async function collectRunnerMints(cfg: RosterConcurrenceConfig): Promise<string[]> {
+function isWalletAddress(chain: RosterChain, address: string): boolean {
+  if (chain === 'robinhood') return isEvmTokenAddress(address)
+  return address.length >= 32 && address.length <= 44
+}
+
+type RunnerMint = { chain: RosterChain; address: string }
+
+async function collectRunnerMintsForChain(
+  cfg: RosterConcurrenceConfig,
+  chain: RosterChain,
+): Promise<RunnerMint[]> {
   const seen = new Set<string>()
   const out: string[] = []
 
   const push = (addr: string | undefined) => {
-    if (!isSolMemeTokenAddress(addr) || seen.has(addr!)) return
-    seen.add(addr!)
-    out.push(addr!)
+    if (!addr || !isGmgnTokenAddress(chain, addr) || seen.has(addr)) return
+    seen.add(addr)
+    out.push(addr)
   }
 
-  // Volume leaders
+  const minVolMcap = chain === 'robinhood' ? 100_000 : 50_000
+  const minMoverMcap = chain === 'robinhood' ? 100_000 : 20_000
+
   const trending = await marketTrending({
-    chain: 'sol',
+    chain,
     interval: '24h',
     limit: 40,
-    minMarketcap: 50_000,
+    minMarketcap: minVolMcap,
     orderBy: 'volume',
     direction: 'desc',
   }).catch((e) => {
     log.warn('api_request', 'wallet-digger marketTrending volume failed', {
+      chain,
       err: String(e),
     })
     return []
   })
   for (const row of trending) push(typeof row.address === 'string' ? row.address : undefined)
 
-  // Printers: 6h movers
   const movers = await marketTrending({
-    chain: 'sol',
+    chain,
     interval: '6h',
     limit: 40,
-    minMarketcap: 20_000,
+    minMarketcap: minMoverMcap,
     orderBy: 'price_change_percent',
     direction: 'desc',
   }).catch((e) => {
     log.warn('api_request', 'wallet-digger marketTrending movers failed', {
+      chain,
       err: String(e),
     })
     return []
   })
   for (const row of movers) {
     const chg = readNum(row.price_change_percent)
-    if (chg != null && chg < 200) continue // ~3× ≈ +200%
+    if (chg != null && chg < 200) continue
     push(typeof row.address === 'string' ? row.address : undefined)
   }
 
   const marketSlice = out.slice(0, cfg.digMarketCap)
+  const final: RunnerMint[] = marketSlice.map((address) => ({ chain, address }))
 
-  const won = await fetchWonOutcomeMints({
-    sinceHours: cfg.wonOutcomesHours,
-    limit: 40,
-  }).catch(() => [] as string[])
-  for (const m of won) push(m)
-
-  // Prefer market slice first, then won uniques
-  const final: string[] = []
-  const finalSeen = new Set<string>()
-  for (const m of [...marketSlice, ...won]) {
-    if (finalSeen.has(m)) continue
-    finalSeen.add(m)
-    final.push(m)
+  if (chain === 'sol') {
+    const won = await fetchWonOutcomeMints({
+      sinceHours: cfg.wonOutcomesHours,
+      limit: 40,
+    }).catch(() => [] as string[])
+    const seenFinal = new Set(marketSlice)
+    for (const m of won) {
+      if (!isGmgnTokenAddress('sol', m) || seenFinal.has(m)) continue
+      seenFinal.add(m)
+      final.push({ chain: 'sol', address: m })
+    }
   }
+
   return final
+}
+
+async function collectRunnerMints(cfg: RosterConcurrenceConfig): Promise<RunnerMint[]> {
+  const all: RunnerMint[] = []
+  for (const chain of cfg.chains) {
+    const part = await collectRunnerMintsForChain(cfg, chain)
+    all.push(...part)
+  }
+  return all
 }
 
 export async function runWalletDigger(params?: {
@@ -134,28 +158,30 @@ export async function runWalletDigger(params?: {
 }> {
   const cfg = mergeRosterConfig(params?.rosterConfig)
   const runners = await collectRunnerMints(cfg)
-  const digRunId = await startDigRun(runners)
+  const digRunId = await startDigRun(
+    runners.map((r) => ({ chain: r.chain, address: r.address })),
+  )
   const errors: string[] = []
   let tradersSeen = 0
   let promoted = 0
 
   const walletAgg = new Map<
     string,
-    { tokens: Set<string>; profit: number; tags: Set<string> }
+    { tokens: Set<string>; profit: number; tags: Set<string>; chain: RosterChain }
   >()
 
-  for (const token of runners) {
+  for (const runner of runners) {
     try {
       const list = await tokenTraders({
-        chain: 'sol',
-        address: token,
+        chain: runner.chain,
+        address: runner.address,
         limit: 100,
         orderBy: 'profit',
         direction: 'desc',
       })
       for (const row of list) {
         const addr = typeof row.address === 'string' ? row.address.trim() : ''
-        if (!addr || addr.length < 32) continue
+        if (!addr || !isWalletAddress(runner.chain, addr)) continue
         const tags = traderTags(row)
         if (isDenied(tags, cfg.tagDenylist)) continue
         tradersSeen++
@@ -164,8 +190,9 @@ export async function runWalletDigger(params?: {
           tokens: new Set<string>(),
           profit: 0,
           tags: new Set<string>(),
+          chain: runner.chain,
         }
-        agg.tokens.add(token)
+        agg.tokens.add(runner.address)
         agg.profit += profit
         for (const t of tags) agg.tags.add(t)
         walletAgg.set(addr, agg)
@@ -173,15 +200,17 @@ export async function runWalletDigger(params?: {
         await insertDigHit({
           digRunId,
           walletAddress: addr,
-          tokenAddress: token,
+          tokenAddress: runner.address,
+          chain: runner.chain,
           profitUsd: profit,
           tags,
         })
       }
     } catch (e) {
-      errors.push(`${token.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`)
+      errors.push(
+        `${runner.chain}:${runner.address.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`,
+      )
     }
-    // weight-5 route — be polite
     await sleep(400)
   }
 
@@ -193,7 +222,7 @@ export async function runWalletDigger(params?: {
     if (runnerHits >= cfg.minRunnerHits) {
       try {
         const stats = await walletStats({
-          chain: 'sol',
+          chain: agg.chain,
           wallet: address,
           period: '30d',
         })
@@ -203,9 +232,9 @@ export async function runWalletDigger(params?: {
         if (!mcEdge && !loggedMissingMcEdge) {
           loggedMissingMcEdge = true
           const edge = readAvgMcEdge(stats)
-          // peek: openapi wallet_stats often lacks UI Bought/Sold Avg MC fields
           log.info('api_request', 'wallet-digger promote MC-edge unavailable or failed', {
             address: address.slice(0, 8),
+            chain: agg.chain,
             boughtAvgMc: edge.boughtAvgMc,
             soldAvgMc: edge.soldAvgMc,
             sampleKeys: Object.keys(stats).slice(0, 24),
@@ -240,6 +269,7 @@ export async function runWalletDigger(params?: {
   log.info('api_request', 'wallet-digger dig complete', {
     digRunId,
     runners: runners.length,
+    chains: cfg.chains,
     tradersSeen,
     promoted,
     demoted,

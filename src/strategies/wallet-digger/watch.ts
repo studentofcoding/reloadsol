@@ -6,7 +6,7 @@ import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import type { GmgnStrategy } from '@/strategies/types'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import {
-  isSolMemeTokenAddress,
+  isGmgnTokenAddress,
   tokenInfo,
   tokenSecurity,
   trackFollowWallet,
@@ -23,8 +23,10 @@ import {
   updateConcurrenceSignalFlags,
 } from './db'
 import {
+  bandConfigForChain,
   mergeRosterConfig,
   passAgeMcapBand,
+  type RosterChain,
   type RosterConcurrenceConfig,
 } from './defaults'
 
@@ -86,54 +88,88 @@ export async function runRosterWatch(params?: {
     return { ingested: 0, clusters: 0, fired: 0, skipped: ['no followed roster wallets'] }
   }
 
-  const rows = await trackFollowWallet({
-    chain: 'sol',
-    side: 'buy',
-    limit: 100,
-  })
-
-  const events = rows
-    .filter((r) => r.side !== 'sell' && isSolMemeTokenAddress(r.base_address))
-    .map((r) => {
-      const ts =
-        typeof r.timestamp === 'number' && r.timestamp > 0
-          ? r.timestamp
-          : Math.floor(Date.now() / 1000)
-      return {
-        maker: (r.maker ?? '').trim(),
-        tokenAddress: r.base_address!,
-        side: 'buy' as const,
-        amountUsd: typeof r.amount_usd === 'number' ? r.amount_usd : null,
-        priceUsd: typeof r.price_usd === 'number' ? r.price_usd : null,
-        symbol: r.base_token?.symbol ?? null,
-        tradeAt: new Date(ts * 1000),
-        txHash: r.transaction_hash ?? null,
-      }
+  let ingested = 0
+  for (const chain of cfg.chains) {
+    const rows = await trackFollowWallet({
+      chain,
+      side: 'buy',
+      limit: 100,
+    }).catch((e) => {
+      log.warn('api_request', 'roster-watch trackFollowWallet failed', {
+        chain,
+        err: String(e),
+      })
+      return []
     })
-    .filter((e) => e.maker && roster.has(e.maker))
 
-  const ingested = await insertRosterTradeEvents(events)
+    const events = rows
+      .filter((r) => r.side !== 'sell' && isGmgnTokenAddress(chain, r.base_address))
+      .map((r) => {
+        const ts =
+          typeof r.timestamp === 'number' && r.timestamp > 0
+            ? r.timestamp
+            : Math.floor(Date.now() / 1000)
+        return {
+          maker: (r.maker ?? '').trim(),
+          tokenAddress: r.base_address!,
+          chain,
+          side: 'buy' as const,
+          amountUsd: typeof r.amount_usd === 'number' ? r.amount_usd : null,
+          priceUsd: typeof r.price_usd === 'number' ? r.price_usd : null,
+          symbol: r.base_token?.symbol ?? null,
+          tradeAt: new Date(ts * 1000),
+          txHash: r.transaction_hash ?? null,
+        }
+      })
+      .filter((e) => e.maker && roster.has(e.maker))
+
+    ingested += await insertRosterTradeEvents(events)
+  }
 
   const recent = await fetchRecentRosterBuys(cfg.windowSec)
-  const clusters = findConcurrenceClusters({
-    events: recent.map((r) => ({
-      maker: r.maker,
-      tokenAddress: r.token_address,
-      tradeAtSec: Math.floor(new Date(r.trade_at).getTime() / 1000),
-    })),
-    roster,
-    windowSec: cfg.windowSec,
-    minWallets: cfg.minWallets,
-  })
+  const byChain = new Map<RosterChain, typeof recent>()
+  for (const r of recent) {
+    const chain = (r.chain === 'robinhood' ? 'robinhood' : 'sol') as RosterChain
+    if (!cfg.chains.includes(chain)) continue
+    const list = byChain.get(chain) ?? []
+    list.push(r)
+    byChain.set(chain, list)
+  }
 
   const skipped: string[] = []
   let fired = 0
-  const allMakers = Array.from(new Set(clusters.flatMap((c) => c.makers)))
-  const hitsMap = await getRosterHitsMap(allMakers)
+  let clusterCount = 0
 
-  for (const cluster of clusters) {
-    if (await hasRecentConcurrenceSignal(cluster.tokenAddress)) {
-      skipped.push(`${cluster.tokenAddress.slice(0, 8)}: recent signal`)
+  const allClusterMakers = new Set<string>()
+  const chainClusters: Array<{
+    chain: RosterChain
+    cluster: ReturnType<typeof findConcurrenceClusters>[number]
+  }> = []
+
+  for (const chain of cfg.chains) {
+    const chainRecent = byChain.get(chain) ?? []
+    const clusters = findConcurrenceClusters({
+      events: chainRecent.map((r) => ({
+        maker: r.maker,
+        tokenAddress: r.token_address,
+        tradeAtSec: Math.floor(new Date(r.trade_at).getTime() / 1000),
+      })),
+      roster,
+      windowSec: cfg.windowSec,
+      minWallets: cfg.minWallets,
+    })
+    clusterCount += clusters.length
+    for (const cluster of clusters) {
+      chainClusters.push({ chain, cluster })
+      for (const m of cluster.makers) allClusterMakers.add(m)
+    }
+  }
+
+  const hitsMap = await getRosterHitsMap(Array.from(allClusterMakers))
+
+  for (const { chain, cluster } of chainClusters) {
+    if (await hasRecentConcurrenceSignal(cluster.tokenAddress, 6, chain)) {
+      skipped.push(`${chain}:${cluster.tokenAddress.slice(0, 8)}: recent signal`)
       continue
     }
 
@@ -141,6 +177,7 @@ export async function runRosterWatch(params?: {
     if (hitsSum < cfg.minRunnerHitsSum) {
       await insertConcurrenceSignal({
         tokenAddress: cluster.tokenAddress,
+        chain,
         symbol: cluster.tokenAddress.slice(0, 8),
         makers: cluster.makers,
         windowSec: cfg.windowSec,
@@ -149,7 +186,7 @@ export async function runRosterWatch(params?: {
         marketCapUsd: null,
         skipReason: `hits_sum ${hitsSum} < ${cfg.minRunnerHitsSum}`,
       })
-      skipped.push(`${cluster.tokenAddress.slice(0, 8)}: hits_sum`)
+      skipped.push(`${chain}:${cluster.tokenAddress.slice(0, 8)}: hits_sum`)
       continue
     }
 
@@ -157,27 +194,29 @@ export async function runRosterWatch(params?: {
     let security: Record<string, unknown> = {}
     try {
       ;[info, security] = await Promise.all([
-        tokenInfo({ chain: 'sol', address: cluster.tokenAddress }),
-        tokenSecurity({ chain: 'sol', address: cluster.tokenAddress }),
+        tokenInfo({ chain, address: cluster.tokenAddress }),
+        tokenSecurity({ chain, address: cluster.tokenAddress }),
       ])
     } catch (e) {
       skipped.push(
-        `${cluster.tokenAddress.slice(0, 8)}: info/security ${e instanceof Error ? e.message : String(e)}`,
+        `${chain}:${cluster.tokenAddress.slice(0, 8)}: info/security ${e instanceof Error ? e.message : String(e)}`,
       )
       continue
     }
 
     const ageH = tokenAgeHours(info)
     const mcap = marketCapUsd(info)
+    const chainRecent = byChain.get(chain) ?? []
     const symbol =
       (typeof info.symbol === 'string' && info.symbol) ||
-      recent.find((r) => r.token_address === cluster.tokenAddress)?.symbol ||
+      chainRecent.find((r) => r.token_address === cluster.tokenAddress)?.symbol ||
       cluster.tokenAddress.slice(0, 8)
 
-    const bandGate = passAgeMcapBand(ageH, mcap, cfg)
+    const bandGate = passAgeMcapBand(ageH, mcap, bandConfigForChain(cfg, chain))
     if (!bandGate.ok) {
       await insertConcurrenceSignal({
         tokenAddress: cluster.tokenAddress,
+        chain,
         symbol,
         makers: cluster.makers,
         windowSec: cfg.windowSec,
@@ -186,13 +225,13 @@ export async function runRosterWatch(params?: {
         marketCapUsd: mcap,
         skipReason: bandGate.reason,
       })
-      skipped.push(`${symbol}: band`)
+      skipped.push(`${chain}:${symbol}: band`)
       continue
     }
 
     const gate = evaluateGmgnSecurity({
       tokenAddress: cluster.tokenAddress,
-      chain: 'sol',
+      chain,
       info,
       security,
       config: strategy.config.security,
@@ -200,6 +239,7 @@ export async function runRosterWatch(params?: {
     if (!gate.pass) {
       await insertConcurrenceSignal({
         tokenAddress: cluster.tokenAddress,
+        chain,
         symbol,
         makers: cluster.makers,
         windowSec: cfg.windowSec,
@@ -208,12 +248,13 @@ export async function runRosterWatch(params?: {
         marketCapUsd: mcap,
         skipReason: gate.reasons.join('; '),
       })
-      skipped.push(`${symbol}: security`)
+      skipped.push(`${chain}:${symbol}: security`)
       continue
     }
 
     const signalId = await insertConcurrenceSignal({
       tokenAddress: cluster.tokenAddress,
+      chain,
       symbol,
       makers: cluster.makers,
       windowSec: cfg.windowSec,
@@ -225,7 +266,7 @@ export async function runRosterWatch(params?: {
     const shortMakers = cluster.makers.map((m) => `${m.slice(0, 4)}…${m.slice(-4)}`)
     const caption =
       `⚡ <b>Roster concurrence</b> — ${symbol}\n` +
-      `Band: ${bandGate.band} · hitsΣ ${hitsSum}\n` +
+      `Chain: ${chain} · Band: ${bandGate.band} · hitsΣ ${hitsSum}\n` +
       `${cluster.makers.length} followed wallets bought within ${Math.round(cfg.windowSec / 60)}m\n` +
       `Makers: ${shortMakers.join(', ')}\n` +
       (mcap != null ? `Mcap: $${Math.round(mcap).toLocaleString()}\n` : '') +
@@ -256,13 +297,14 @@ export async function runRosterWatch(params?: {
             ...gate.features,
             roster_makers: cluster.makers,
             roster_concurrence: true,
+            roster_chain: chain,
           },
           entryPriceUsd: priceUsd,
         })
         simOpened = true
       } catch (e) {
         log.warn('api_request', 'roster-watch sim open failed', { err: String(e) })
-        skipped.push(`${symbol}: sim ${e instanceof Error ? e.message : String(e)}`)
+        skipped.push(`${chain}:${symbol}: sim ${e instanceof Error ? e.message : String(e)}`)
       }
     }
 
@@ -272,10 +314,11 @@ export async function runRosterWatch(params?: {
 
   log.info('api_request', 'roster-watch tick', {
     ingested,
-    clusters: clusters.length,
+    clusters: clusterCount,
     fired,
     roster: roster.size,
+    chains: cfg.chains,
   })
 
-  return { ingested, clusters: clusters.length, fired, skipped }
+  return { ingested, clusters: clusterCount, fired, skipped }
 }

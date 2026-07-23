@@ -41,6 +41,7 @@ type DigRun = {
 type SignalRow = {
   id: number;
   token_address: string;
+  chain?: string | null;
   symbol: string | null;
   makers: string[];
   fired_at: string;
@@ -55,8 +56,20 @@ function shortAddr(a: string): string {
   return `${a.slice(0, 4)}…${a.slice(-4)}`;
 }
 
-function gmgnWalletUrl(address: string): string {
-  return `https://gmgn.ai/sol/address/${address}`;
+function guessGmgnChain(address: string, chain?: string | null): string {
+  if (chain === "robinhood" || chain === "sol" || chain === "bsc" || chain === "base" || chain === "eth") {
+    return chain;
+  }
+  if (/^0x[a-fA-F0-9]{40}$/.test(address.trim())) return "robinhood";
+  return "sol";
+}
+
+function gmgnWalletUrl(address: string, chain?: string | null): string {
+  return `https://gmgn.ai/${guessGmgnChain(address, chain)}/address/${address}`;
+}
+
+function gmgnTokenUrl(address: string, chain?: string | null): string {
+  return `https://gmgn.ai/${guessGmgnChain(address, chain)}/token/${address}`;
 }
 
 function exportLabel(row: RosterRow): string {
@@ -413,7 +426,19 @@ export default function RosterTab() {
             {signals.map((s) => (
               <li key={s.id} className="px-3 py-2 text-xs">
                 <div className="font-medium text-white">
-                  {s.symbol || shortAddr(s.token_address)} ·{" "}
+                  <a
+                    href={gmgnTokenUrl(s.token_address, s.chain)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline-offset-2 hover:underline"
+                  >
+                    {s.symbol || shortAddr(s.token_address)}
+                  </a>
+                  {" · "}
+                  <span className="text-amber-200/80">
+                    {guessGmgnChain(s.token_address, s.chain)}
+                  </span>
+                  {" · "}
                   {s.makers?.length ?? 0} wallets
                 </div>
                 <div className="text-gray-500">

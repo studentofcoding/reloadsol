@@ -219,9 +219,9 @@ export interface McapTrackerStrategy {
 
 export type GmgnDiscoverySource = 'smartmoney' | 'kol' | 'both' | 'roster'
 
-export type GmgnRosterConcurrenceConfig = {
-  minWallets: number
-  windowSec: number
+export type GmgnRosterChain = 'sol' | 'robinhood'
+
+export type GmgnRosterAgeMcapBands = {
   newMaxAgeHours: number
   newMinMcapUsd: number
   newMaxMcapUsd: number
@@ -229,6 +229,16 @@ export type GmgnRosterConcurrenceConfig = {
   oldMaxAgeHours: number
   oldMinMcapUsd: number
   oldMaxMcapUsd: number
+}
+
+export type GmgnRosterConcurrenceConfig = {
+  chains: GmgnRosterChain[]
+  bands: {
+    sol: GmgnRosterAgeMcapBands
+    robinhood: GmgnRosterAgeMcapBands
+  }
+  minWallets: number
+  windowSec: number
   minRunnerHitsSum: number
   digMarketCap: number
   rosterCap: number
