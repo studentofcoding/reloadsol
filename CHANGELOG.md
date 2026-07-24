@@ -8,6 +8,24 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — Dual-chain AppNetwork (batches 1–5)
+
+- **AppNetwork** (`sol` | `robinhood`) in header; sessionStorage; RH gated to dev wallets.
+- **Route registry** + `NetworkRouteGate` + network-aware `WalletConnectGate`.
+- **DB `chain` column** on `trading_records`, `wallet_watchlist`, `trading_signals`, `token_rug_list`, `dlmm_potential_list` (`db/init/23-app-network-chain.sql`).
+- **Trade**: RH buy/sell/swap via GMGN bound; RH ETH nav balance; stamp `chain` on track writes.
+- **Portfolio**: History/PnL/watchlist query `wallet + chain`; ETH vs SOL labels.
+- **Discovery**: chart default chain from AppNetwork; watchlist CRUD chain-scoped.
+- **Dev APIs**: `/api/signals`, `/api/rug`, `/api/potential` filter by `chain=`.
+
+### Added — RH Parent vs Bound wallet mode
+
+- Header toggle **Parent | Bound** on Robinhood (default Parent, `sessionStorage`).
+- **Parent**: Rabby address; buy/sell/swap via **UniV2 + Rabby sign** (GMGN swap is bound-only / `GMGN_PRIVATE_KEY` — spike: `GMGN_PARENT_FROM_SUPPORTED = false`).
+- **Bound**: existing GMGN server-sign path.
+- Active address drives holdings, ETH balance, History/PnL/watchlist.
+- RH nav temporarily trade+portfolio only (Signals / Strategies / DLMM sol-only until wired).
+
 ### Changed — Potential API + OHLC training / Radar Telegram
 
 - **`/api/potential`** — canonical potential watchlist (`markTokenPotential`: list + `trading_signals` label + OHLC capture). Clients use `usePotentialList`; `/api/dlmm/potential` is a thin alias only.

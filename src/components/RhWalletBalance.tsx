@@ -1,15 +1,15 @@
 'use client'
 
 import { useQuery } from '@tanstack/react-query'
-import { formatEther } from 'viem'
-import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
+import { formatEther, type Address } from 'viem'
+import { usePortfolioWallet } from '@/hooks/usePortfolioWallet'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
 
-/** ETH balance for Robinhood network nav chrome. */
+/** ETH balance for Robinhood network nav chrome (active parent/bound address). */
 export default function RhWalletBalance() {
   const rh = useRhEvmWallet()
-  const bound = useGmgnBoundWallets()
-  const address = rh.address ?? (bound.evm as `0x${string}` | null)
+  const { walletAddress, rhMode } = usePortfolioWallet()
+  const address = (walletAddress as Address | null) ?? null
 
   const { data: ethUi, isLoading } = useQuery({
     queryKey: ['rh-eth-balance', address],
@@ -23,6 +23,11 @@ export default function RhWalletBalance() {
   })
 
   if (!address) {
+    if (rhMode === 'bound') {
+      return (
+        <span className="text-sm text-gray-400 px-2 py-1">No bound EVM</span>
+      )
+    }
     return (
       <button
         type="button"
@@ -44,7 +49,7 @@ export default function RhWalletBalance() {
   return (
     <div
       className="text-sm font-medium text-white px-2 py-1 font-mono"
-      title={address}
+      title={`${rhMode}: ${address}`}
     >
       {label}
     </div>

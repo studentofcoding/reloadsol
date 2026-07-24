@@ -10,14 +10,17 @@ import {
   useDevWalletAccess,
 } from "../components/WalletProvider";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
+import { useRhWalletMode } from "@/contexts/RhWalletModeContext";
 import { useRpc } from "@/contexts/RpcContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { useGmgnTokenSearch } from "@/hooks/useGmgnTokenSearch";
 import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
+import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { useTrendingSearch } from "@/hooks/useTrendingSearch";
 import { useQuery } from "@tanstack/react-query";
+import type { Address } from "viem";
 import UniversalWalletButton from "./UniversalWalletButton";
 import TrendingTokens from "./TrendingTokens";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
@@ -71,6 +74,7 @@ import {
   buildGmgnBuyQuoteRequest,
   executeGmgnBulkBuy,
 } from "@/utils/gmgn-bulk-trade";
+import { executeRhParentBulkBuy } from "@/utils/dlmm/rh-univ2-swap";
 
 export default function BulkTokenBuyer() {
   const { signAllTransactions, connected } = useWallet();
@@ -119,6 +123,8 @@ export default function BulkTokenBuyer() {
     "SOL",
   );
   const { network } = useAppNetwork();
+  const { mode: rhMode } = useRhWalletMode();
+  const rhWallet = useRhEvmWallet();
   const [useGmgnOnSol, setUseGmgnOnSol] = useState(false);
   const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
@@ -133,19 +139,24 @@ export default function BulkTokenBuyer() {
   }, [effectiveChain]);
   const chainNative = GMGN_CHAIN_CURRENCIES[effectiveChain];
   const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
+  const useRhParentPath =
+    isDevUser && effectiveChain === "robinhood" && rhMode === "parent";
   const useGmgnPath =
     isDevUser &&
-    (effectiveChain === "robinhood" ||
+    ((effectiveChain === "robinhood" && rhMode === "bound") ||
       (effectiveChain === "sol" && effectiveUseGmgn));
-  const gmgnFromAddress =
+  const tradeFromAddress =
     effectiveChain === "robinhood"
-      ? boundWallets.evm
+      ? rhMode === "parent"
+        ? rhWallet.address
+        : boundWallets.evm
       : effectiveUseGmgn
         ? boundWallets.sol
         : null;
+  const gmgnFromAddress = useGmgnPath ? tradeFromAddress : null;
   const tradeReady =
     effectiveChain === "robinhood"
-      ? Boolean(boundWallets.evm)
+      ? Boolean(tradeFromAddress)
       : effectiveUseGmgn
         ? Boolean(connected && solGmgnSynced && boundWallets.sol)
         : Boolean(connected && publicKey && signAllTransactions);
@@ -599,9 +610,13 @@ export default function BulkTokenBuyer() {
   const refetchTokensRef = useRef(refetchTokens);
   refetchTokensRef.current = refetchTokens;
 
-  const runGmgnBulkBuy = useCallback(async () => {
-    if (!gmgnFromAddress) {
-      setError("GMGN bound wallet missing for this chain");
+  const runConfirmedRhBuy = useCallback(async () => {
+    if (!tradeFromAddress) {
+      setError(
+        useRhParentPath
+          ? "Connect Rabby (parent wallet)"
+          : "GMGN bound wallet missing for this chain",
+      );
       return;
     }
     setIsLoading(true);
@@ -609,27 +624,42 @@ export default function BulkTokenBuyer() {
     setPointsEarned(null);
     setError("");
     try {
-      const inputToken =
-        effectiveChain === "sol" && selectedCurrency === "USDC"
-          ? TOKENS.USDC
-          : gmgnNativeToken(effectiveChain);
-      const { results, success } = await executeGmgnBulkBuy({
-        chain: effectiveChain,
-        from: gmgnFromAddress,
-        amountHuman: parseFloat(solAmount),
-        inputToken,
-        tokenMints: validMints.map((m) => ({
-          tokenAddress: m,
-          symbol: tokenList.find((t) => t.address === m)?.symbol,
-        })),
-        slippageBps: slippage,
-      });
+      const tokenMints = validMints.map((m) => ({
+        tokenAddress: m,
+        symbol: tokenList.find((t) => t.address === m)?.symbol,
+      }));
+      let results: Awaited<ReturnType<typeof executeGmgnBulkBuy>>["results"];
+      let success: boolean;
+      if (useRhParentPath) {
+        const wc = await rhWallet.getWalletClient();
+        ({ results, success } = await executeRhParentBulkBuy({
+          publicClient: rhWallet.publicClient,
+          walletClient: wc,
+          account: tradeFromAddress as Address,
+          amountHuman: parseFloat(solAmount),
+          tokenMints,
+          slippageBps: slippage,
+        }));
+      } else {
+        const inputToken =
+          effectiveChain === "sol" && selectedCurrency === "USDC"
+            ? TOKENS.USDC
+            : gmgnNativeToken(effectiveChain);
+        ({ results, success } = await executeGmgnBulkBuy({
+          chain: effectiveChain,
+          from: tradeFromAddress,
+          amountHuman: parseFloat(solAmount),
+          inputToken,
+          tokenMints,
+          slippageBps: slippage,
+        }));
+      }
       const ok = results.filter((r) => r.success);
       const fail = results.filter((r) => !r.success);
       if (ok.length > 0) {
         try {
           await trackOperation({
-            walletAddress: gmgnFromAddress,
+            walletAddress: tradeFromAddress,
             operationType: "buy",
             chain: effectiveChain,
             tokens: ok.map((r) => ({
@@ -642,12 +672,12 @@ export default function BulkTokenBuyer() {
             solAmount: parseFloat(solAmount),
             feesPaid: 0,
             signatures: ok
-              .map((r) => r.orderId)
+              .map((r) => r.orderId || r.hash)
               .filter((id): id is string => Boolean(id)),
             slippage: slippage / 100,
           });
         } catch (trackError) {
-          console.error("Failed to track GMGN buy:", trackError);
+          console.error("Failed to track RH buy:", trackError);
         }
       }
       showOutcome({
@@ -661,7 +691,7 @@ export default function BulkTokenBuyer() {
         solAmount: parseFloat(solAmount),
         error: success
           ? undefined
-          : fail[0]?.error || "GMGN buy failed",
+          : fail[0]?.error || (useRhParentPath ? "Parent UniV2 buy failed" : "GMGN buy failed"),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -671,7 +701,9 @@ export default function BulkTokenBuyer() {
       setGmgnConfirmOpen(false);
     }
   }, [
-    gmgnFromAddress,
+    tradeFromAddress,
+    useRhParentPath,
+    rhWallet,
     effectiveChain,
     selectedCurrency,
     solAmount,
@@ -681,6 +713,8 @@ export default function BulkTokenBuyer() {
     showOutcome,
     trackOperation,
   ]);
+
+  const runGmgnBulkBuy = runConfirmedRhBuy;
 
   // Handle form submission
   const handleBulkBuy = useCallback(async () => {
@@ -701,20 +735,21 @@ export default function BulkTokenBuyer() {
       return;
     }
 
-    if (useGmgnPath) {
-      if (!gmgnFromAddress) {
+    if (useRhParentPath || useGmgnPath) {
+      if (!tradeFromAddress) {
         setError(
-          effectiveChain === "robinhood"
-            ? "GMGN-bound EVM wallet missing for Robinhood"
-            : "Connect the GMGN-bound Sol wallet or turn off Use GMGN",
+          useRhParentPath
+            ? "Connect Rabby (parent wallet)"
+            : effectiveChain === "robinhood"
+              ? "GMGN-bound EVM wallet missing for Robinhood"
+              : "Connect the GMGN-bound Sol wallet or turn off Use GMGN",
         );
         return;
       }
-      if (effectiveChain === "sol" && !solGmgnSynced) {
+      if (useGmgnPath && effectiveChain === "sol" && !solGmgnSynced) {
         setError("Connected wallet is not the GMGN-bound Sol address");
         return;
       }
-      // Quote first leg for confirm modal, then require explicit confirm
       setIsLoading(true);
       setError("");
       try {
@@ -724,32 +759,36 @@ export default function BulkTokenBuyer() {
             : gmgnNativeToken(effectiveChain);
         const legs: GmgnConfirmLeg[] = [];
         for (const mint of validMints) {
-          const shaped = buildGmgnBuyQuoteRequest({
-            chain: effectiveChain,
-            from: gmgnFromAddress,
-            tokenAddress: mint,
-            amountHuman: parseFloat(solAmount),
-            slippageBps: slippage,
-            inputToken,
-          });
           let estOut: string | undefined;
-          try {
-            const res = await fetch("/api/gmgn/trade/quote", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(shaped),
+          if (useGmgnPath) {
+            const shaped = buildGmgnBuyQuoteRequest({
+              chain: effectiveChain,
+              from: tradeFromAddress,
+              tokenAddress: mint,
+              amountHuman: parseFloat(solAmount),
+              slippageBps: slippage,
+              inputToken,
             });
-            const data = (await res.json()) as {
-              quote?: { output_amount?: string };
-            };
-            estOut = data.quote?.output_amount;
-          } catch {
-            /* quote optional for confirm display */
+            try {
+              const res = await fetch("/api/gmgn/trade/quote", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(shaped),
+              });
+              const data = (await res.json()) as {
+                quote?: { output_amount?: string };
+              };
+              estOut = data.quote?.output_amount;
+            } catch {
+              /* quote optional for confirm display */
+            }
           }
           legs.push({
             tokenAddress: mint,
             symbol: tokenList.find((t) => t.address === mint)?.symbol,
-            amountLabel: `${solAmount} ${effectiveChain === "robinhood" ? "ETH" : selectedCurrency}`,
+            amountLabel: `${solAmount} ${
+              effectiveChain === "robinhood" ? "ETH" : selectedCurrency
+            }${useRhParentPath ? " · UniV2 / Rabby" : ""}`,
             estOut,
             side: "buy",
           });
@@ -1028,6 +1067,8 @@ export default function BulkTokenBuyer() {
     triggerPostBuyRefresh,
     usdcBalance,
     useGmgnPath,
+    useRhParentPath,
+    tradeFromAddress,
     gmgnFromAddress,
     effectiveChain,
     solGmgnSynced,
@@ -1196,7 +1237,8 @@ export default function BulkTokenBuyer() {
     window.history.replaceState({}, "", newUrl);
   }, [solAmount, tokenMints, validMints]);
 
-  const showTradeUi = effectiveChain === "robinhood" || connected;
+  const showTradeUi =
+    effectiveChain === "robinhood" ? tradeReady : connected;
 
   return (
     <div
@@ -1205,11 +1247,11 @@ export default function BulkTokenBuyer() {
       <GmgnTradeConfirmModal
         open={gmgnConfirmOpen && isDevUser}
         chain={effectiveChain}
-        from={gmgnFromAddress || ""}
+        from={tradeFromAddress || ""}
         legs={gmgnConfirmLegs}
         busy={gmgnConfirmBusy}
         onCancel={() => setGmgnConfirmOpen(false)}
-        onConfirm={() => void runGmgnBulkBuy()}
+        onConfirm={() => void runConfirmedRhBuy()}
       />
 
       {/* Trending Tokens Column */}
@@ -1252,19 +1294,24 @@ export default function BulkTokenBuyer() {
           ) : null}
 
           {isDevUser && effectiveChain === "robinhood" ? (
-            <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300">
-              {boundWallets.evm ? (
-                <>
-                  GMGN-bound EVM:{" "}
-                  <span className="font-mono text-white break-all">
-                    {boundWallets.evm}
-                  </span>
-                </>
-              ) : (
+            <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300 space-y-1">
+              <div>
+                Mode:{" "}
+                <span className="text-white font-medium">
+                  {rhMode === "parent" ? "Parent (Rabby / UniV2)" : "Bound (GMGN)"}
+                </span>
+              </div>
+              <div>
+                Active:{" "}
+                <span className="font-mono text-white break-all">
+                  {tradeFromAddress || "—"}
+                </span>
+              </div>
+              {rhMode === "bound" && !boundWallets.evm ? (
                 <span className="text-amber-400">
                   No bound EVM wallet from GMGN API key / env
                 </span>
-              )}
+              ) : null}
             </div>
           ) : isDevUser && useGmgnOnSol && !solGmgnSynced ? (
             <div className="rounded-xl border border-amber-700/50 bg-amber-900/20 px-4 py-3 text-sm text-amber-200">

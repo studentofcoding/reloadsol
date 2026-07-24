@@ -15,6 +15,7 @@ import { WalletNotification } from "@/components/WalletNotification";
 import { WalletSessionProvider } from "@/components/WalletSessionContext";
 import { RpcProvider, useRpc } from "@/contexts/RpcContext";
 import { AppNetworkProvider } from "@/contexts/AppNetworkContext";
+import { RhWalletModeProvider } from "@/contexts/RhWalletModeContext";
 import { TradeProviderProvider } from "@/contexts/TradeProviderContext";
 import { isDevWallet, toWalletAddress } from "@/utils/dev-wallet";
 
@@ -32,7 +33,9 @@ const WALLET_APP_URL =
 function AppNetworkBridge({ children }: { children: React.ReactNode }) {
   const isDevUser = useDevWalletAccess();
   return (
-    <AppNetworkProvider isDevUser={isDevUser}>{children}</AppNetworkProvider>
+    <AppNetworkProvider isDevUser={isDevUser}>
+      <RhWalletModeProvider>{children}</RhWalletModeProvider>
+    </AppNetworkProvider>
   );
 }
 

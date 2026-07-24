@@ -1,7 +1,9 @@
 'use client'
 
 import { useState } from 'react'
+import type { Address } from 'viem'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
+import { useRhWalletMode } from '@/contexts/RhWalletModeContext'
 import { useTradingData } from '@/components/TradingDataProvider'
 import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
@@ -9,22 +11,29 @@ import {
   executeGmgnBulkBuy,
   executeGmgnBulkSell,
 } from '@/utils/gmgn-bulk-trade'
+import {
+  executeRhParentBulkBuy,
+  executeRhParentBulkSell,
+} from '@/utils/dlmm/rh-univ2-swap'
 import { gmgnNativeToken, isValidTradeTokenAddress } from '@/utils/gmgn-currencies'
+import { resolveRhActiveAddress } from '@/utils/rh-wallet-mode'
 import UniversalWalletButton from '@/components/UniversalWalletButton'
 
 type Side = 'buy' | 'sell'
 
-/** Single-leg GMGN swap for Robinhood (ETH ↔ token). */
+/** Single-leg RH swap: Bound=GMGN server-sign, Parent=UniV2 + Rabby. */
 export default function RhGmgnSwapPanel({
   initialToken = '',
 }: {
   initialToken?: string
 }) {
   const { network } = useAppNetwork()
+  const { mode: rhMode } = useRhWalletMode()
   const { trackOperation } = useTradingData()
   const rh = useRhEvmWallet()
   const bound = useGmgnBoundWallets()
-  const from = bound.evm || rh.address
+  const from = resolveRhActiveAddress(rhMode, rh.address, bound.evm)
+  const isParent = rhMode === 'parent'
 
   const [side, setSide] = useState<Side>('buy')
   const [token, setToken] = useState(initialToken)
@@ -41,7 +50,11 @@ export default function RhGmgnSwapPanel({
     setError('')
     setOkMsg('')
     if (!from) {
-      setError('Connect Rabby or bind a GMGN EVM wallet')
+      setError(
+        isParent
+          ? 'Connect Rabby (parent wallet)'
+          : 'Bind a GMGN EVM wallet or switch to Parent',
+      )
       return
     }
     const addr = token.trim()
@@ -56,14 +69,28 @@ export default function RhGmgnSwapPanel({
         if (!Number.isFinite(human) || human <= 0) {
           throw new Error('Enter a valid ETH amount')
         }
-        const { results, success } = await executeGmgnBulkBuy({
-          chain: 'robinhood',
-          from,
-          amountHuman: human,
-          inputToken: gmgnNativeToken('robinhood'),
-          tokenMints: [{ tokenAddress: addr }],
-          slippageBps,
-        })
+        let results: Awaited<ReturnType<typeof executeGmgnBulkBuy>>['results']
+        let success: boolean
+        if (isParent) {
+          const wc = await rh.getWalletClient()
+          ;({ results, success } = await executeRhParentBulkBuy({
+            publicClient: rh.publicClient,
+            walletClient: wc,
+            account: from as Address,
+            amountHuman: human,
+            tokenMints: [{ tokenAddress: addr }],
+            slippageBps,
+          }))
+        } else {
+          ;({ results, success } = await executeGmgnBulkBuy({
+            chain: 'robinhood',
+            from,
+            amountHuman: human,
+            inputToken: gmgnNativeToken('robinhood'),
+            tokenMints: [{ tokenAddress: addr }],
+            slippageBps,
+          }))
+        }
         const ok = results.filter((r) => r.success)
         if (ok.length > 0) {
           await trackOperation({
@@ -89,12 +116,25 @@ export default function RhGmgnSwapPanel({
         if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
           throw new Error('Sell % must be 1–100')
         }
-        const { results, success } = await executeGmgnBulkSell({
-          chain: 'robinhood',
-          from,
-          legs: [{ tokenAddress: addr, percent: pct }],
-          slippageBps,
-        })
+        let results: Awaited<ReturnType<typeof executeGmgnBulkSell>>['results']
+        let success: boolean
+        if (isParent) {
+          const wc = await rh.getWalletClient()
+          ;({ results, success } = await executeRhParentBulkSell({
+            publicClient: rh.publicClient,
+            walletClient: wc,
+            account: from as Address,
+            legs: [{ tokenAddress: addr, percent: pct }],
+            slippageBps,
+          }))
+        } else {
+          ;({ results, success } = await executeGmgnBulkSell({
+            chain: 'robinhood',
+            from,
+            legs: [{ tokenAddress: addr, percent: pct }],
+            slippageBps,
+          }))
+        }
         const ok = results.filter((r) => r.success)
         if (ok.length > 0) {
           await trackOperation({
@@ -129,7 +169,8 @@ export default function RhGmgnSwapPanel({
         <UniversalWalletButton />
       </div>
       <p className="text-xs text-gray-400">
-        GMGN single-leg · ETH ↔ token · bound EVM:{' '}
+        {isParent ? 'UniV2 · Rabby sign' : 'GMGN · bound server-sign'} · ETH ↔
+        token ·{' '}
         <span className="font-mono text-gray-300">
           {from ? `${from.slice(0, 6)}…${from.slice(-4)}` : 'none'}
         </span>
@@ -192,6 +233,7 @@ export default function RhGmgnSwapPanel({
         Slippage (bps)
         <input
           type="number"
+          min="1"
           value={slippageBps}
           onChange={(e) => setSlippageBps(Number(e.target.value) || 200)}
           className="mt-1 w-full rounded-lg bg-gray-800 border border-gray-600 px-3 py-2 text-white"
@@ -203,11 +245,11 @@ export default function RhGmgnSwapPanel({
 
       <button
         type="button"
-        disabled={busy}
+        disabled={busy || !from}
         onClick={() => void run()}
-        className="w-full rounded-lg bg-white text-black font-semibold py-2.5 disabled:bg-gray-600 disabled:text-gray-400"
+        className="w-full rounded-xl bg-white py-3 font-semibold text-gray-900 disabled:bg-gray-600 disabled:text-gray-400"
       >
-        {busy ? 'Swapping…' : side === 'buy' ? 'Buy with ETH' : 'Sell for ETH'}
+        {busy ? 'Swapping…' : side === 'buy' ? 'Confirm buy' : 'Confirm sell'}
       </button>
     </div>
   )

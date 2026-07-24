@@ -259,7 +259,45 @@ export const wethAbi = [
   },
 ] as const
 
+export const univ2FactoryAbi = [
+  {
+    type: 'function',
+    name: 'getPair',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'tokenA', type: 'address' },
+      { name: 'tokenB', type: 'address' },
+    ],
+    outputs: [{ type: 'address' }],
+  },
+] as const
+
 export const univ2RouterAbi = [
+  {
+    type: 'function',
+    name: 'swapExactETHForTokens',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'amountOutMin', type: 'uint256' },
+      { name: 'path', type: 'address[]' },
+      { name: 'to', type: 'address' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: 'amounts', type: 'uint256[]' }],
+  },
+  {
+    type: 'function',
+    name: 'swapExactTokensForETH',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'amountIn', type: 'uint256' },
+      { name: 'amountOutMin', type: 'uint256' },
+      { name: 'path', type: 'address[]' },
+      { name: 'to', type: 'address' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [{ name: 'amounts', type: 'uint256[]' }],
+  },
   {
     type: 'function',
     name: 'swapExactTokensForTokens',

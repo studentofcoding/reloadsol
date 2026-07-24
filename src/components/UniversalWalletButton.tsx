@@ -6,7 +6,10 @@ import {
   useUnifiedWalletContext,
 } from "@jup-ag/wallet-adapter";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
+import { useRhWalletMode } from "@/contexts/RhWalletModeContext";
+import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
 import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
+import { resolveRhActiveAddress } from "@/utils/rh-wallet-mode";
 
 interface UniversalWalletButtonProps {
   variant?: "default" | "jupiter";
@@ -24,7 +27,10 @@ export default function UniversalWalletButton({
   const { connected, connecting } = useUnifiedWallet();
   const { setShowModal } = useUnifiedWalletContext();
   const rh = useRhEvmWallet();
+  const bound = useGmgnBoundWallets();
   const { network, setNetwork, isDevUser } = useAppNetwork();
+  const { mode: rhMode, setMode: setRhMode } = useRhWalletMode();
+  const activeRh = resolveRhActiveAddress(rhMode, rh.address, bound.evm);
 
   if (variant === "jupiter") {
     return (
@@ -64,6 +70,35 @@ export default function UniversalWalletButton({
         </div>
       ) : null}
 
+      {network === "robinhood" && isDevUser ? (
+        <div className="flex rounded-lg border border-gray-600 overflow-hidden text-xs">
+          <button
+            type="button"
+            onClick={() => setRhMode("parent")}
+            className={`px-2.5 py-1 font-medium ${
+              rhMode === "parent"
+                ? "bg-white text-black"
+                : "bg-black text-gray-400 hover:text-white"
+            }`}
+            title={rh.address ?? "Connect Rabby"}
+          >
+            Parent
+          </button>
+          <button
+            type="button"
+            onClick={() => setRhMode("bound")}
+            className={`px-2.5 py-1 font-medium border-l border-gray-600 ${
+              rhMode === "bound"
+                ? "bg-white text-black"
+                : "bg-black text-gray-400 hover:text-white"
+            }`}
+            title={bound.evm ?? "No GMGN-bound EVM"}
+          >
+            Bound
+          </button>
+        </div>
+      ) : null}
+
       {network === "sol" ? (
         connected ? (
           <UnifiedWalletButton
@@ -92,6 +127,14 @@ export default function UniversalWalletButton({
             )}
           </button>
         )
+      ) : rhMode === "bound" && bound.evm ? (
+        <div
+          className="bg-black text-white px-4 py-2 rounded-lg font-medium border border-gray-600 font-mono text-sm"
+          title={`GMGN bound: ${bound.evm}`}
+        >
+          {shortAddr(bound.evm)}
+          <span className="text-gray-400 text-[10px] ml-1">bound</span>
+        </div>
       ) : rh.address ? (
         <div className="flex flex-col gap-1">
           <button
@@ -102,6 +145,9 @@ export default function UniversalWalletButton({
           >
             {shortAddr(rh.address)}
             {!rh.isCorrectChain ? " · switch RH" : ""}
+            {activeRh ? (
+              <span className="text-gray-400 text-[10px] ml-1">parent</span>
+            ) : null}
           </button>
           {rh.error ? (
             <span className="text-[10px] text-red-400 max-w-[180px]">{rh.error}</span>
@@ -125,7 +171,9 @@ export default function UniversalWalletButton({
             ? "No Rabby"
             : rh.connecting
               ? "Connecting…"
-              : "Connect Rabby"}
+              : rhMode === "bound"
+                ? "No bound · Connect Rabby"
+                : "Connect Rabby"}
         </button>
       )}
     </div>

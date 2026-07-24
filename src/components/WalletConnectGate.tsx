@@ -5,6 +5,7 @@ import TrendingTokens from '@/components/TrendingTokens'
 import UniversalWalletButton from '@/components/UniversalWalletButton'
 import { useWalletAddress } from '@/components/WalletProvider'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
+import { useRhWalletMode } from '@/contexts/RhWalletModeContext'
 import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
 import { useUnifiedWalletContext } from '@jup-ag/wallet-adapter'
@@ -26,6 +27,7 @@ export default function WalletConnectGate({
   showTrending = true,
 }: WalletConnectGateProps) {
   const { network } = useAppNetwork()
+  const { mode: rhMode } = useRhWalletMode()
   const solAddress = useWalletAddress()
   const rh = useRhEvmWallet()
   const bound = useGmgnBoundWallets()
@@ -33,7 +35,9 @@ export default function WalletConnectGate({
 
   const ready =
     network === 'robinhood'
-      ? Boolean(rh.address || bound.evm)
+      ? rhMode === 'parent'
+        ? Boolean(rh.address)
+        : Boolean(bound.evm)
       : Boolean(solAddress)
 
   if (ready) {
@@ -42,6 +46,7 @@ export default function WalletConnectGate({
 
   const openWallet = () => {
     if (network === 'robinhood') {
+      if (rhMode === 'bound' && bound.evm) return
       void rh.connect()
       return
     }
@@ -92,11 +97,19 @@ export default function WalletConnectGate({
             ) : (
               <p className="text-gray-400 mb-8">
                 {network === 'robinhood' ? (
-                  <>
-                    Connect Rabby (or bind GMGN EVM)
-                    <br />
-                    to trade on Robinhood
-                  </>
+                  rhMode === 'parent' ? (
+                    <>
+                      Connect Rabby (parent wallet)
+                      <br />
+                      to trade on Robinhood
+                    </>
+                  ) : (
+                    <>
+                      GMGN-bound EVM wallet missing
+                      <br />
+                      Set bound address or switch to Parent
+                    </>
+                  )
                 ) : (
                   <>
                     Buy any token in bulk,
