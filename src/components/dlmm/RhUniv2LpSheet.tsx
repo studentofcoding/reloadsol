@@ -1,13 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  formatUnits,
-  maxUint256,
-  parseUnits,
-  type Address,
-  type Hash,
-} from 'viem'
+import { parseUnits, type Address } from 'viem'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
 import {
   useCreateRhUniv2Position,
@@ -23,11 +17,8 @@ import { getLpTerminalPoolDeepLink } from '@/utils/dlmm/lp-terminal'
 import {
   DEFAULT_RH_SLIPPAGE_BPS,
   RH_AMOUNT_CHIPS,
-  RH_CHAIN,
   RH_USDG,
-  RH_V2_ROUTER,
   RH_WETH,
-  applySlippageMinOut,
   erc20Abi,
   exceedsTvlSoftWarn,
   explorerTxUrl,
@@ -35,11 +26,11 @@ import {
   normalizeAddress,
   pickHighestTvlUniv2QuotePool,
   quoteSymbolForAddress,
-  univ2PairAbi,
-  univ2RouterAbi,
-  wethAbi,
-  zapSplitQuote,
 } from '@/utils/dlmm/rh-univ2'
+import {
+  executeRhUniv2RemoveLp,
+  executeRhUniv2ZapAdd,
+} from '@/utils/dlmm/rh-univ2-lp'
 
 export type RhUniv2LpSheetProps = {
   open: boolean
@@ -56,15 +47,8 @@ export type RhUniv2LpSheetProps = {
 type Step =
   | 'idle'
   | 'resolve'
-  | 'wrap'
-  | 'approve_quote'
-  | 'swap'
-  | 'approve_base'
-  | 'approve_quote_add'
-  | 'add'
+  | 'batch'
   | 'persist'
-  | 'approve_lp'
-  | 'remove'
   | 'done'
   | 'error'
 
@@ -109,10 +93,6 @@ async function fetchPoolByAddress(address: string): Promise<{
       (p) => normalizeAddress(p.address) === normalizeAddress(address),
     ) ?? null
   return { pool, tokens: data.tokens ?? {} }
-}
-
-function deadline(): bigint {
-  return BigInt(Math.floor(Date.now() / 1000) + 20 * 60)
 }
 
 export default function RhUniv2LpSheet({
@@ -239,38 +219,6 @@ export default function RhUniv2LpSheet({
     return false
   }, [resolved, amountNum])
 
-  const ensureAllowance = useCallback(
-    async (
-      token: Address,
-      owner: Address,
-      spender: Address,
-      need: bigint,
-      label: string,
-    ) => {
-      if (need <= BigInt(0)) return
-      const { publicClient, getWalletClient } = wallet
-      const current = (await publicClient.readContract({
-        address: token,
-        abi: erc20Abi,
-        functionName: 'allowance',
-        args: [owner, spender],
-      })) as bigint
-      if (current >= need) return
-      setStatus(`Approve ${label}…`)
-      const wc = await getWalletClient()
-      const hash = await wc.writeContract({
-        address: token,
-        abi: erc20Abi,
-        functionName: 'approve',
-        args: [spender, maxUint256],
-        chain: RH_CHAIN,
-        account: owner,
-      })
-      await publicClient.waitForTransactionReceipt({ hash: hash as Hash })
-    },
-    [wallet],
-  )
-
   const runAdd = useCallback(async () => {
     if (!resolved) return
     if (!(amountNum > 0)) {
@@ -294,138 +242,20 @@ export default function RhUniv2LpSheet({
       const quoteAmount = parseUnits(amount, decimals)
       if (quoteAmount <= BigInt(0)) throw new Error('Amount too small')
 
-      // Wrap ETH → WETH if needed
-      if (resolved.quoteSymbol === 'WETH') {
-        const wethBal = (await publicClient.readContract({
-          address: RH_WETH,
-          abi: erc20Abi,
-          functionName: 'balanceOf',
-          args: [account],
-        })) as bigint
-        if (wethBal < quoteAmount) {
-          const need = quoteAmount - wethBal
-          const ethBal = await publicClient.getBalance({ address: account })
-          if (ethBal < need) {
-            throw new Error('Insufficient ETH/WETH for deposit')
-          }
-          setStep('wrap')
-          setStatus(`Wrap ${formatUnits(need, 18)} ETH → WETH…`)
-          const hash = await wc.writeContract({
-            address: RH_WETH,
-            abi: wethAbi,
-            functionName: 'deposit',
-            value: need,
-            chain: RH_CHAIN,
-            account,
-          })
-          await publicClient.waitForTransactionReceipt({ hash: hash as Hash })
-        }
-      }
-
-      const { swapAmount, remainAmount } = zapSplitQuote(quoteAmount)
-      if (swapAmount <= BigInt(0) || remainAmount <= BigInt(0)) {
-        throw new Error('Amount too small to zap (need both swap + remain legs)')
-      }
-      setStep('approve_quote')
-      await ensureAllowance(
-        resolved.quoteAddress,
+      setStep('batch')
+      setStatus('Batch wrap/approve/swap/add (one confirm when supported)…')
+      const { hash: addHash } = await executeRhUniv2ZapAdd({
+        publicClient,
+        walletClient: wc,
         account,
-        RH_V2_ROUTER,
+        quoteAddress: resolved.quoteAddress,
+        baseAddress: resolved.baseAddress,
         quoteAmount,
-        resolved.quoteSymbol,
-      )
-
-      // Quote expected out
-      const amountsOut = (await publicClient.readContract({
-        address: RH_V2_ROUTER,
-        abi: univ2RouterAbi,
-        functionName: 'getAmountsOut',
-        args: [
-          swapAmount,
-          [resolved.quoteAddress, resolved.baseAddress],
-        ],
-      })) as bigint[]
-      const expectedBase = amountsOut[1] ?? BigInt(0)
-      if (expectedBase <= BigInt(0)) {
-        throw new Error('Router returned 0 base out — check pool liquidity')
-      }
-      const minOut = applySlippageMinOut(expectedBase, slippageBps)
-
-      setStep('swap')
-      setStatus('Swap half quote → base…')
-      const swapHash = await wc.writeContract({
-        address: RH_V2_ROUTER,
-        abi: univ2RouterAbi,
-        functionName: 'swapExactTokensForTokens',
-        args: [
-          swapAmount,
-          minOut,
-          [resolved.quoteAddress, resolved.baseAddress],
-          account,
-          deadline(),
-        ],
-        chain: RH_CHAIN,
-        account,
+        slippageBps,
       })
-      await publicClient.waitForTransactionReceipt({ hash: swapHash as Hash })
-
-      const baseBal = (await publicClient.readContract({
-        address: resolved.baseAddress,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [account],
-      })) as bigint
-      // Use min(balance, expected) — prefer what we just got
-      const baseDesired =
-        baseBal < expectedBase ? baseBal : expectedBase > BigInt(0) ? expectedBase : baseBal
-      if (baseDesired <= BigInt(0)) {
-        throw new Error('No base tokens after swap')
-      }
-
-      setStep('approve_base')
-      await ensureAllowance(
-        resolved.baseAddress,
-        account,
-        RH_V2_ROUTER,
-        baseDesired,
-        'base',
-      )
-      setStep('approve_quote_add')
-      await ensureAllowance(
-        resolved.quoteAddress,
-        account,
-        RH_V2_ROUTER,
-        remainAmount,
-        resolved.quoteSymbol,
-      )
-
-      const amountAMin = applySlippageMinOut(remainAmount, slippageBps)
-      const amountBMin = applySlippageMinOut(baseDesired, slippageBps)
-
-      setStep('add')
-      setStatus('Add liquidity…')
-      const addHash = await wc.writeContract({
-        address: RH_V2_ROUTER,
-        abi: univ2RouterAbi,
-        functionName: 'addLiquidity',
-        args: [
-          resolved.quoteAddress,
-          resolved.baseAddress,
-          remainAmount,
-          baseDesired,
-          amountAMin,
-          amountBMin,
-          account,
-          deadline(),
-        ],
-        chain: RH_CHAIN,
-        account,
-      })
-      await publicClient.waitForTransactionReceipt({ hash: addHash as Hash })
       setTxHash(addHash)
 
-      const entryUsd =
-        resolved.quoteSymbol === 'USDG' ? amountNum : amountNum // WETH: store quote units as value until mark refresh
+      const entryUsd = amountNum
       setStep('persist')
       setStatus('Saving position…')
       await createPos.mutateAsync({
@@ -453,7 +283,6 @@ export default function RhUniv2LpSheet({
     amount,
     slippageBps,
     wallet,
-    ensureAllowance,
     createPos,
     wallet.ensureChain,
   ])
@@ -470,39 +299,14 @@ export default function RhUniv2LpSheet({
       const { publicClient } = wallet
       const lp = closePosition.lp_token_address as Address
 
-      const lpBal = (await publicClient.readContract({
-        address: lp,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [account],
-      })) as bigint
-      if (lpBal <= BigInt(0)) throw new Error('No LP tokens in wallet')
-
-      setStep('approve_lp')
-      await ensureAllowance(lp, account, RH_V2_ROUTER, lpBal, 'LP')
-
-      const token0 = (await publicClient.readContract({
-        address: lp,
-        abi: univ2PairAbi,
-        functionName: 'token0',
-      })) as Address
-      const token1 = (await publicClient.readContract({
-        address: lp,
-        abi: univ2PairAbi,
-        functionName: 'token1',
-      })) as Address
-
-      setStep('remove')
-      setStatus('Remove liquidity…')
-      const hash = await wc.writeContract({
-        address: RH_V2_ROUTER,
-        abi: univ2RouterAbi,
-        functionName: 'removeLiquidity',
-        args: [token0, token1, lpBal, BigInt(0), BigInt(0), account, deadline()],
-        chain: RH_CHAIN,
+      setStep('batch')
+      setStatus('Batch approve LP + remove (one confirm when supported)…')
+      const { hash } = await executeRhUniv2RemoveLp({
+        publicClient,
+        walletClient: wc,
         account,
+        lp,
       })
-      await publicClient.waitForTransactionReceipt({ hash: hash as Hash })
       setTxHash(hash)
 
       await patchPos.mutateAsync({
@@ -516,14 +320,7 @@ export default function RhUniv2LpSheet({
       setStep('error')
       setError(err instanceof Error ? err.message : 'Close failed')
     }
-  }, [
-    closePosition,
-    resolved,
-    wallet,
-    ensureAllowance,
-    patchPos,
-    wallet.ensureChain,
-  ])
+  }, [closePosition, resolved, wallet, patchPos, wallet.ensureChain])
 
   if (!open) return null
 
@@ -630,12 +427,7 @@ export default function RhUniv2LpSheet({
             <button
               type="button"
               onClick={() => void runClose()}
-              disabled={
-                !resolved ||
-                step === 'remove' ||
-                step === 'approve_lp' ||
-                step === 'done'
-              }
+              disabled={!resolved || step === 'batch' || step === 'done'}
               className="w-full py-2 bg-red-600 hover:bg-red-500 disabled:bg-gray-700 text-white text-sm rounded font-medium"
             >
               Remove liquidity
@@ -645,11 +437,7 @@ export default function RhUniv2LpSheet({
               type="button"
               onClick={() => void runAdd()}
               disabled={
-                !resolved ||
-                !amountNum ||
-                step === 'swap' ||
-                step === 'add' ||
-                step === 'done'
+                !resolved || !amountNum || step === 'batch' || step === 'done'
               }
               className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-black text-sm rounded font-medium"
             >

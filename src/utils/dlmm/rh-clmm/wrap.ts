@@ -165,6 +165,28 @@ export async function unwrapNative(
 }
 
 /**
+ * Native shortfall to wrap so ERC-20 balance ≥ needed. 0 if already covered.
+ * Does not send a tx — use with sendCalls batching.
+ */
+export async function planWrapShortfall(
+  chainId: SupportedChainId,
+  depositToken: Address,
+  needed: bigint,
+): Promise<bigint> {
+  if (!isWrappedNative(chainId, depositToken)) return BigInt(0);
+  const erc20 = await getTokenBalance(chainId, depositToken);
+  if (erc20 >= needed) return BigInt(0);
+  const shortfall = needed - erc20;
+  const wrappable = await getWrappableNative(chainId);
+  if (shortfall > wrappable) {
+    throw new Error(
+      `Not enough native to wrap (need ${formatUnits(shortfall, 18)}, wrappable ${formatUnits(wrappable, 18)} after gas reserve)`,
+    );
+  }
+  return shortfall;
+}
+
+/**
  * Ensure at least `needed` of wrapped token is held as ERC-20.
  * Wraps native shortfall if deposit token is WETH/WBNB.
  * Returns wrap tx info if a wrap was sent.
@@ -174,11 +196,7 @@ export async function ensureWrappedBalance(
   depositToken: Address,
   needed: bigint,
 ): Promise<WrapResult | null> {
-  if (!isWrappedNative(chainId, depositToken)) return null;
-
-  const erc20 = await getTokenBalance(chainId, depositToken);
-  if (erc20 >= needed) return null;
-
-  const shortfall = needed - erc20;
+  const shortfall = await planWrapShortfall(chainId, depositToken, needed);
+  if (shortfall <= BigInt(0)) return null;
   return wrapNative(chainId, shortfall);
 }

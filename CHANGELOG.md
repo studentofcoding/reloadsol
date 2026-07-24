@@ -14,6 +14,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Falls back to sequential `writeContract` / `sendTransaction` approve+swap per leg if `sendCalls` is unsupported.
 - Single-leg sell unchanged; Bound GMGN / Parent buy / Sol out of scope.
 
+### Changed — RH DAMM / DLMM fewer signs
+
+- Shared `executeRhWalletCalls` (`wallet_sendCalls` + sequential fallback).
+- **DAMM (UniV2 LP)**: zap-add and remove batch wrap/approve/swap/add (or approve+remove) into one Rabby confirm when supported.
+- **DLMM v3 mint**: wrap + approve + NPM mint batched; **v3 close**: burn folded into NPM `multicall` (fallback without burn).
+- **DLMM v4 mint**: wrap/unwrap + Permit2 approves + `modifyLiquidities` batched.
+
 ### Added — Dual-chain AppNetwork (batches 1–5)
 
 - **AppNetwork** (`sol` | `robinhood`) in header; sessionStorage; RH gated to dev wallets.

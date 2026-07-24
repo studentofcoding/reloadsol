@@ -3,6 +3,7 @@
  */
 import {
   encodeAbiParameters,
+  encodeFunctionData,
   encodePacked,
   keccak256,
   maxUint256,
@@ -11,6 +12,7 @@ import {
   type Hex,
   decodeEventLog,
 } from 'viem';
+import { executeRhWalletCalls, type RhTxCall } from '@/utils/dlmm/rh-send-calls';
 import {
   CHAINS,
   PERMIT2,
@@ -48,8 +50,9 @@ import {
   type SizeMode,
 } from './tokens';
 import {
-  ensureWrappedBalance,
   getEffectiveDepositBalance,
+  planWrapShortfall,
+  weth9Abi,
   type WrapResult,
 } from './wrap';
 import { assertOutOfRange, computeSingleSidedRange } from './ticks';
@@ -553,19 +556,19 @@ export async function loadV4Pool(
 
 // ── Permit2 ──────────────────────────────────────────────────────────
 
-async function ensurePermit2Allowance(
+/** Build ERC20→Permit2 and Permit2→POSM approve calls (no writes). */
+async function planPermit2Calls(
   chainId: SupportedChainId,
   token: Address,
   amount: bigint,
-): Promise<void> {
-  if (token.toLowerCase() === ZERO) return;
+): Promise<RhTxCall[]> {
+  if (token.toLowerCase() === ZERO) return [];
 
   const client = getPublicClient(chainId);
-  const wallet = getWalletClient(chainId);
   const owner = getHotWalletAddress();
   const posm = CHAINS[chainId].v4PositionManager;
+  const calls: RhTxCall[] = [];
 
-  // 1) ERC20 → Permit2
   const ercAllowance = await client.readContract({
     address: token,
     abi: erc20Abi,
@@ -573,18 +576,16 @@ async function ensurePermit2Allowance(
     args: [owner, PERMIT2],
   });
   if (ercAllowance < amount) {
-    const hash = await wallet.writeContract({
-      address: token,
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [PERMIT2, maxUint256],
-      account: wallet.account!,
-      chain: wallet.chain,
+    calls.push({
+      to: token,
+      data: encodeFunctionData({
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [PERMIT2, maxUint256],
+      }),
     });
-    await client.waitForTransactionReceipt({ hash });
   }
 
-  // 2) Permit2 → PositionManager
   const now = Math.floor(Date.now() / 1000);
   const [allowedAmt, expiration] = await client.readContract({
     address: PERMIT2,
@@ -592,20 +593,23 @@ async function ensurePermit2Allowance(
     functionName: 'allowance',
     args: [owner, token, posm],
   });
-  const need = amount > (BigInt(1) << BigInt(160)) - BigInt(1) ? (BigInt(1) << BigInt(160)) - BigInt(1) : amount;
+  const need =
+    amount > (BigInt(1) << BigInt(160)) - BigInt(1)
+      ? (BigInt(1) << BigInt(160)) - BigInt(1)
+      : amount;
   if (allowedAmt < need || Number(expiration) <= now + 60) {
     const max160 = (BigInt(1) << BigInt(160)) - BigInt(1);
-    const exp = (BigInt(1) << BigInt(48)) - BigInt(1); // max uint48
-    const hash = await wallet.writeContract({
-      address: PERMIT2,
-      abi: permit2Abi,
-      functionName: 'approve',
-      args: [token, posm, max160, Number(exp)],
-      account: wallet.account!,
-      chain: wallet.chain,
+    const exp = (BigInt(1) << BigInt(48)) - BigInt(1);
+    calls.push({
+      to: PERMIT2,
+      data: encodeFunctionData({
+        abi: permit2Abi,
+        functionName: 'approve',
+        args: [token, posm, max160, Number(exp)],
+      }),
     });
-    await client.waitForTransactionReceipt({ hash });
   }
+  return calls;
 }
 
 // ── Actions encoding ─────────────────────────────────────────────────
@@ -891,10 +895,11 @@ export async function mintV4SingleSided(params: V4MintParams): Promise<V4MintRes
     symbol: depMetaEarly.symbol,
   });
 
+  const preCalls: RhTxCall[] = [];
   let wrap: WrapResult | undefined;
   if (depositIsNativeCurrency) {
-    // Need native ETH/BNB as msg.value — unwrap WETH if short on native
-    const { getNativeBalance, unwrapNative } = await import('./wrap');
+    // Need native ETH as msg.value — plan unwrap WETH if short on native
+    const { getNativeBalance } = await import('./wrap');
     const nativeBal = await getNativeBalance(chainId);
     if (nativeBal < depositAmount) {
       const need = depositAmount - nativeBal;
@@ -905,14 +910,27 @@ export async function mintV4SingleSided(params: V4MintParams): Promise<V4MintRes
             `have native ${formatUnits(nativeBal, 18)} + WETH ${formatUnits(wethBal, 18)}`,
         );
       }
-      const u = await unwrapNative(chainId, need);
-      wrap = u; // surface as wrap/unwrap activity
-      console.log(`[v4 mint] unwrapped ${need} WETH → native for ETH pool`);
+      preCalls.push({
+        to: wrapped,
+        data: encodeFunctionData({
+          abi: weth9Abi,
+          functionName: 'withdraw',
+          args: [need],
+        }),
+      });
+      wrap = { hash: '0x' as Hash, amount: need };
+      console.log(`[v4 mint] plan unwrap ${need} WETH → native for ETH pool`);
     }
   } else if (balToken.toLowerCase() === wrapped.toLowerCase()) {
-    // ERC20 WETH currency: wrap native shortfall
-    const wrapResult = await ensureWrappedBalance(chainId, wrapped, depositAmount);
-    if (wrapResult) wrap = wrapResult;
+    const wrapAmount = await planWrapShortfall(chainId, wrapped, depositAmount);
+    if (wrapAmount > BigInt(0)) {
+      preCalls.push({
+        to: wrapped,
+        data: encodeFunctionData({ abi: weth9Abi, functionName: 'deposit' }),
+        value: wrapAmount,
+      });
+      wrap = { hash: '0x' as Hash, amount: wrapAmount };
+    }
   }
 
   pool = await loadV4Pool(chainId, poolKey);
@@ -984,11 +1002,10 @@ export async function mintV4SingleSided(params: V4MintParams): Promise<V4MintRes
     throw new Error('Amount exceeds uint128');
   }
 
-  // Approvals
   if (!depositIsNativeCurrency) {
-    await ensurePermit2Allowance(chainId, depositToken, depositAmount);
-  } else {
-    // Still may need wrap nothing; native sent as msg.value
+    preCalls.push(
+      ...(await planPermit2Calls(chainId, depositToken, depositAmount)),
+    );
   }
 
   // Refresh tick
@@ -1056,22 +1073,24 @@ export async function mintV4SingleSided(params: V4MintParams): Promise<V4MintRes
   const posm = CHAINS[chainId].v4PositionManager;
   const value = useNative ? depositAmount : BigInt(0);
 
-  try {
-    await client.simulateContract({
-      address: posm,
-      abi: v4PositionManagerAbi,
-      functionName: 'modifyLiquidities',
-      args: [unlockData, deadline],
-      account: recipient,
-      value,
-    });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error('[v4 mint simulate failed]', msg);
-    throw new Error(
-      `v4 mint would revert. tick=${pool.tick} range=[${finalLower},${finalUpper}] ` +
-        `deposit=${isToken0 ? 'token0' : 'token1'}. ${msg.slice(0, 240)}`,
-    );
+  if (preCalls.length === 0) {
+    try {
+      await client.simulateContract({
+        address: posm,
+        abi: v4PositionManagerAbi,
+        functionName: 'modifyLiquidities',
+        args: [unlockData, deadline],
+        account: recipient,
+        value,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[v4 mint simulate failed]', msg);
+      throw new Error(
+        `v4 mint would revert. tick=${pool.tick} range=[${finalLower},${finalUpper}] ` +
+          `deposit=${isToken0 ? 'token0' : 'token1'}. ${msg.slice(0, 240)}`,
+      );
+    }
   }
 
   const nextIdBefore = await client.readContract({
@@ -1080,16 +1099,24 @@ export async function mintV4SingleSided(params: V4MintParams): Promise<V4MintRes
     functionName: 'nextTokenId',
   });
 
-  const hash = await wallet.writeContract({
-    address: posm,
-    abi: v4PositionManagerAbi,
-    functionName: 'modifyLiquidities',
-    args: [unlockData, deadline],
-    account: wallet.account!,
-    chain: wallet.chain,
+  const mintCall: RhTxCall = {
+    to: posm,
+    data: encodeFunctionData({
+      abi: v4PositionManagerAbi,
+      functionName: 'modifyLiquidities',
+      args: [unlockData, deadline],
+    }),
     value,
     gas: BigInt('1200000'),
+  };
+  const { hash: batchHash } = await executeRhWalletCalls({
+    publicClient: client,
+    walletClient: wallet,
+    account: recipient,
+    calls: [...preCalls, mintCall],
   });
+  const hash = batchHash as Hash;
+  if (wrap) wrap = { hash, amount: wrap.amount };
 
   const receipt = await client.waitForTransactionReceipt({ hash });
   if (receipt.status !== 'success') {

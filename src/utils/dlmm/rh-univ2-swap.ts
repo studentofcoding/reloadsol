@@ -7,12 +7,16 @@ import {
   encodeFunctionData,
   parseEther,
   type Address,
-  type Hex,
   type PublicClient,
   type WalletClient,
 } from 'viem'
 import { sendCalls, waitForCallsStatus } from 'viem/actions'
 import type { GmgnBulkBuyItem, GmgnBulkLegResult } from '@/utils/gmgn-bulk-trade'
+import {
+  executeRhWalletCalls,
+  shouldFallbackFromSendCalls,
+  type RhTxCall,
+} from '@/utils/dlmm/rh-send-calls'
 import {
   RH_V2_FACTORY,
   RH_V2_ROUTER,
@@ -26,11 +30,7 @@ import {
 
 const ZERO = '0x0000000000000000000000000000000000000000'
 
-export type RhUniv2TxCall = {
-  to: Address
-  data: Hex
-  value?: bigint
-}
+export type RhUniv2TxCall = RhTxCall
 
 async function requireWethPair(
   publicClient: PublicClient,
@@ -130,51 +130,6 @@ export async function prepareRhUniv2SellLegCalls(params: {
   })
 }
 
-async function writeRhUniv2Calls(params: {
-  publicClient: PublicClient
-  walletClient: WalletClient
-  account: Address
-  calls: RhUniv2TxCall[]
-}): Promise<{ hash: string }> {
-  const { publicClient, walletClient, account, calls } = params
-  let lastHash: Hex | undefined
-  for (const call of calls) {
-    lastHash = await walletClient.sendTransaction({
-      account,
-      chain: walletClient.chain,
-      to: call.to,
-      data: call.data,
-      value: call.value ?? BigInt(0),
-    })
-    await publicClient.waitForTransactionReceipt({ hash: lastHash })
-  }
-  if (!lastHash) throw new Error('No swap calls to send')
-  return { hash: lastHash }
-}
-
-function shouldFallbackFromSendCalls(err: unknown): boolean {
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
-  if (
-    msg.includes('user rejected') ||
-    msg.includes('user denied') ||
-    msg.includes('rejected the request') ||
-    msg.includes('denied transaction')
-  ) {
-    return false
-  }
-  return (
-    msg.includes('wallet_sendcalls') ||
-    msg.includes('sendcalls') ||
-    msg.includes('method not found') ||
-    msg.includes('method not supported') ||
-    msg.includes('does not exist') ||
-    msg.includes('not supported') ||
-    msg.includes('unsupported') ||
-    msg.includes('capability') ||
-    msg.includes('atomic')
-  )
-}
-
 export async function rhUniv2BuyExactEth(params: {
   publicClient: PublicClient
   walletClient: WalletClient
@@ -224,12 +179,13 @@ export async function rhUniv2SellTokenPercent(params: {
     percent: params.percent,
     slippageBps: params.slippageBps,
   })
-  return writeRhUniv2Calls({
+  const { hash } = await executeRhWalletCalls({
     publicClient: params.publicClient,
     walletClient: params.walletClient,
     account: params.account,
     calls,
   })
+  return { hash }
 }
 
 /** Sequential parent buys — same shape as executeGmgnBulkBuy results. */
@@ -360,7 +316,7 @@ export async function executeRhParentBulkSell(params: {
   if (prepared.length === 1) {
     const only = prepared[0]!
     try {
-      const { hash } = await writeRhUniv2Calls({
+      const { hash } = await executeRhWalletCalls({
         publicClient: params.publicClient,
         walletClient: params.walletClient,
         account: params.account,

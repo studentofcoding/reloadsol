@@ -1,9 +1,11 @@
 import {
+  encodeFunctionData,
   maxUint256,
   type Address,
   type Hash,
   decodeEventLog,
 } from 'viem';
+import { executeRhWalletCalls, type RhTxCall } from '@/utils/dlmm/rh-send-calls';
 import { CHAINS, type SupportedChainId, txUrl } from './config';
 import { erc20Abi, npmAbi } from './abis';
 import { getHotWalletAddress, getPublicClient, getWalletClient } from './clients';
@@ -17,8 +19,9 @@ import {
   type SizeMode,
 } from './tokens';
 import {
-  ensureWrappedBalance,
   getEffectiveDepositBalance,
+  planWrapShortfall,
+  weth9Abi,
   type WrapResult,
 } from './wrap';
 import { formatCompactRange, formatSpotPrice } from './prices';
@@ -56,14 +59,13 @@ export type MintResult = {
   protocol?: 'v3' | 'v4';
 };
 
-async function ensureAllowance(
+async function planApproveCall(
   chainId: SupportedChainId,
   token: Address,
   spender: Address,
   amount: bigint,
-): Promise<void> {
+): Promise<RhTxCall | null> {
   const client = getPublicClient(chainId);
-  const wallet = getWalletClient(chainId);
   const owner = getHotWalletAddress();
   const current = await client.readContract({
     address: token,
@@ -71,17 +73,15 @@ async function ensureAllowance(
     functionName: 'allowance',
     args: [owner, spender],
   });
-  if (current >= amount) return;
-
-  const hash = await wallet.writeContract({
-    address: token,
-    abi: erc20Abi,
-    functionName: 'approve',
-    args: [spender, maxUint256],
-    account: wallet.account!,
-    chain: wallet.chain,
-  });
-  await client.waitForTransactionReceipt({ hash });
+  if (current >= amount) return null;
+  return {
+    to: token,
+    data: encodeFunctionData({
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [spender, maxUint256],
+    }),
+  };
 }
 
 export type MintParamsWithProtocol = MintParams & {
@@ -322,11 +322,13 @@ export async function mintSingleSided(params: MintParamsWithProtocol): Promise<M
     symbol: depMetaEarly.symbol,
   });
 
+  const wrapAmount = await planWrapShortfall(chainId, depositToken, depositAmount);
   let wrap: WrapResult | undefined;
-  const wrapResult = await ensureWrappedBalance(chainId, depositToken, depositAmount);
-  if (wrapResult) wrap = wrapResult;
+  if (wrapAmount > BigInt(0)) {
+    wrap = { hash: '0x' as Hash, amount: wrapAmount }; // hash filled after batch
+  }
 
-  // Re-load tick after wrap (time passed)
+  // Re-load tick (price may have moved while reading)
   pool = await loadPool(chainId, v3PoolAddress);
 
   const { tickLower, tickUpper, edgeBufferTicks, side } = computeSingleSidedRange({
@@ -361,7 +363,7 @@ export async function mintSingleSided(params: MintParamsWithProtocol): Promise<M
   }
 
   const npm = CHAINS[chainId].npm;
-  await ensureAllowance(chainId, depositToken, npm, depositAmount);
+  const approveCall = await planApproveCall(chainId, depositToken, npm, depositAmount);
 
   // Refresh tick once more right before submit (price may have moved)
   pool = await loadPool(chainId, v3PoolAddress);
@@ -413,34 +415,55 @@ export async function mintSingleSided(params: MintParamsWithProtocol): Promise<M
     deadline,
   } as const;
 
-  try {
-    await client.simulateContract({
-      address: npm,
+  const calls: RhTxCall[] = [];
+  if (wrapAmount > BigInt(0)) {
+    calls.push({
+      to: CHAINS[chainId].wrapped,
+      data: encodeFunctionData({ abi: weth9Abi, functionName: 'deposit' }),
+      value: wrapAmount,
+    });
+  }
+  if (approveCall) calls.push(approveCall);
+  calls.push({
+    to: npm,
+    data: encodeFunctionData({
       abi: npmAbi,
       functionName: 'mint',
       args: [mintArgs],
-      account: recipient,
-    });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error('[mint simulate failed]', msg);
-    throw new Error(
-      `Mint would revert (range below market, single-sided). ` +
-        `tick=${pool.tick} range=[${finalLower},${finalUpper}] ` +
-        `deposit=${isToken0 ? 'token0' : 'token1'}. ` +
-        `Try a larger % or more balance. Underlying: ${msg.slice(0, 200)}`,
-    );
-  }
-
-  const hash = await wallet.writeContract({
-    address: npm,
-    abi: npmAbi,
-    functionName: 'mint',
-    args: [mintArgs],
-    account: wallet.account!,
-    chain: wallet.chain,
+    }),
     gas: BigInt('900000'),
   });
+
+  // Simulate only when no prior batch legs (wrap/approve change state before mint)
+  if (calls.length === 1) {
+    try {
+      await client.simulateContract({
+        address: npm,
+        abi: npmAbi,
+        functionName: 'mint',
+        args: [mintArgs],
+        account: recipient,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[mint simulate failed]', msg);
+      throw new Error(
+        `Mint would revert (range below market, single-sided). ` +
+          `tick=${pool.tick} range=[${finalLower},${finalUpper}] ` +
+          `deposit=${isToken0 ? 'token0' : 'token1'}. ` +
+          `Try a larger % or more balance. Underlying: ${msg.slice(0, 200)}`,
+      );
+    }
+  }
+
+  const { hash: batchHash } = await executeRhWalletCalls({
+    publicClient: client,
+    walletClient: wallet,
+    account: recipient,
+    calls,
+  });
+  const hash = batchHash as Hash;
+  if (wrap) wrap = { hash, amount: wrapAmount };
 
   const receipt = await client.waitForTransactionReceipt({ hash });
   if (receipt.status !== 'success') {

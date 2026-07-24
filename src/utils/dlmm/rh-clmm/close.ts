@@ -1,4 +1,4 @@
-import { encodeFunctionData, type Address, type Hash } from 'viem';
+import { encodeFunctionData, type Address, type Hash, type Hex } from 'viem';
 import { CHAINS, type SupportedChainId, txUrl } from './config';
 import { npmAbi } from './abis';
 import { getHotWalletAddress, getPublicClient, getWalletClient } from './clients';
@@ -62,7 +62,6 @@ export async function closePosition(
 
   const npm = CHAINS[chainId].npm;
   const recipient = getHotWalletAddress();
-  const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800);
   const client = getPublicClient(chainId);
   const wallet = getWalletClient(chainId);
 
@@ -85,40 +84,14 @@ export async function closePosition(
   );
 
   // amount0Min/amount1Min = 0 → not a slippage-protected close (by design for meme/single-sided)
-  const decreaseCall =
-    liveLiq > BigInt(0)
-      ? encodeFunctionData({
-          abi: npmAbi,
-          functionName: 'decreaseLiquidity',
-          args: [
-            {
-              tokenId,
-              liquidity: liveLiq,
-              amount0Min: BigInt(0),
-              amount1Min: BigInt(0),
-              deadline,
-            },
-          ],
-        })
-      : null;
-
-  const collectCall = encodeFunctionData({
-    abi: npmAbi,
-    functionName: 'collect',
-    args: [
-      {
-        tokenId,
-        recipient,
-        amount0Max: MAX_UINT128,
-        amount1Max: MAX_UINT128,
-      },
-    ],
-  });
-
-  const safeCalls = decreaseCall ? [decreaseCall, collectCall] : [collectCall];
-
-  // Retries: up to 3 rounds × (multicall → sequential decrease/collect)
+  // Retries: up to 3 rounds × (multicall w/ burn → multicall w/o burn → sequential)
   const { withRetries } = await import('./retry');
+  const burnCall = encodeFunctionData({
+    abi: npmAbi,
+    functionName: 'burn',
+    args: [tokenId],
+  });
+  let burnedInMulticall = false;
   const hash = await withRetries(
     async (round) => {
       // Fresh liquidity each round
@@ -163,10 +136,11 @@ export async function closePosition(
           },
         ],
       });
-      const calls = dec ? [dec, col] : [col];
+      const baseCalls = dec ? [dec, col] : [col];
+      const withBurn = [...baseCalls, burnCall];
       console.log(`[close v3] round ${round} liq=${liq}`);
 
-      try {
+      const tryMulticall = async (calls: Hex[], label: string) => {
         await client.simulateContract({
           address: npm,
           abi: npmAbi,
@@ -184,60 +158,71 @@ export async function closePosition(
           gas: BigInt('900000'),
         });
         const receipt = await client.waitForTransactionReceipt({ hash: h });
-        if (receipt.status !== 'success') throw new Error(`multicall reverted ${h}`);
+        if (receipt.status !== 'success') throw new Error(`${label} reverted ${h}`);
         return h;
-      } catch (e1) {
-        console.warn(`[close v3] multicall fail r${round}:`, shortErr(e1));
-        // Sequential fallback
-        if (liq > BigInt(0)) {
-          const raw = await client.readContract({
-            address: npm,
-            abi: npmAbi,
-            functionName: 'positions',
-            args: [tokenId],
-          });
-          const liq2 = raw[7] as bigint;
-          if (liq2 > BigInt(0)) {
-            const h1 = await wallet.writeContract({
+      };
+
+      try {
+        const h = await tryMulticall(withBurn, 'multicall+burn');
+        burnedInMulticall = true;
+        return h;
+      } catch (eBurn) {
+        console.warn(`[close v3] multicall+burn fail r${round}:`, shortErr(eBurn));
+        try {
+          return await tryMulticall(baseCalls, 'multicall');
+        } catch (e1) {
+          console.warn(`[close v3] multicall fail r${round}:`, shortErr(e1));
+          // Sequential fallback
+          if (liq > BigInt(0)) {
+            const raw = await client.readContract({
               address: npm,
               abi: npmAbi,
-              functionName: 'decreaseLiquidity',
-              args: [
-                {
-                  tokenId,
-                  liquidity: liq2,
-                  amount0Min: BigInt(0),
-                  amount1Min: BigInt(0),
-                  deadline: BigInt(Math.floor(Date.now() / 1000) + 1800),
-                },
-              ],
-              account: wallet.account!,
-              chain: wallet.chain,
-              gas: BigInt('500000'),
+              functionName: 'positions',
+              args: [tokenId],
             });
-            const r1 = await client.waitForTransactionReceipt({ hash: h1 });
-            if (r1.status !== 'success') throw new Error(`decrease reverted ${h1}`);
+            const liq2 = raw[7] as bigint;
+            if (liq2 > BigInt(0)) {
+              const h1 = await wallet.writeContract({
+                address: npm,
+                abi: npmAbi,
+                functionName: 'decreaseLiquidity',
+                args: [
+                  {
+                    tokenId,
+                    liquidity: liq2,
+                    amount0Min: BigInt(0),
+                    amount1Min: BigInt(0),
+                    deadline: BigInt(Math.floor(Date.now() / 1000) + 1800),
+                  },
+                ],
+                account: wallet.account!,
+                chain: wallet.chain,
+                gas: BigInt('500000'),
+              });
+              const r1 = await client.waitForTransactionReceipt({ hash: h1 });
+              if (r1.status !== 'success') throw new Error(`decrease reverted ${h1}`);
+            }
           }
+          const h2 = await wallet.writeContract({
+            address: npm,
+            abi: npmAbi,
+            functionName: 'collect',
+            args: [
+              {
+                tokenId,
+                recipient,
+                amount0Max: MAX_UINT128,
+                amount1Max: MAX_UINT128,
+              },
+            ],
+            account: wallet.account!,
+            chain: wallet.chain,
+            gas: BigInt('400000'),
+          });
+          const r2 = await client.waitForTransactionReceipt({ hash: h2 });
+          if (r2.status !== 'success') throw new Error(`collect reverted ${h2}`);
+          return h2;
         }
-        const h2 = await wallet.writeContract({
-          address: npm,
-          abi: npmAbi,
-          functionName: 'collect',
-          args: [
-            {
-              tokenId,
-              recipient,
-              amount0Max: MAX_UINT128,
-              amount1Max: MAX_UINT128,
-            },
-          ],
-          account: wallet.account!,
-          chain: wallet.chain,
-          gas: BigInt('400000'),
-        });
-        const r2 = await client.waitForTransactionReceipt({ hash: h2 });
-        if (r2.status !== 'success') throw new Error(`collect reverted ${h2}`);
-        return h2;
       }
     },
     {
@@ -251,20 +236,22 @@ export async function closePosition(
     },
   );
 
-  // Best-effort burn NFT shell
-  try {
-    const burnHash = await wallet.writeContract({
-      address: npm,
-      abi: npmAbi,
-      functionName: 'burn',
-      args: [tokenId],
-      account: wallet.account!,
-      chain: wallet.chain,
-      gas: BigInt('200000'),
-    });
-    await client.waitForTransactionReceipt({ hash: burnHash });
-  } catch {
-    /* NFT may remain with 0 liquidity — OK */
+  // Best-effort burn NFT shell if not already in multicall
+  if (!burnedInMulticall) {
+    try {
+      const burnHash = await wallet.writeContract({
+        address: npm,
+        abi: npmAbi,
+        functionName: 'burn',
+        args: [tokenId],
+        account: wallet.account!,
+        chain: wallet.chain,
+        gas: BigInt('200000'),
+      });
+      await client.waitForTransactionReceipt({ hash: burnHash });
+    } catch {
+      /* NFT may remain with 0 liquidity — OK */
+    }
   }
 
   const amount0 = pos.amount0 + pos.tokensOwed0;
