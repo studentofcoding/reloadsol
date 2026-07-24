@@ -192,3 +192,25 @@ export interface DlmmManageCycleResult {
   activeCount: number;
   closedCount: number;
 }
+
+export type RhUniv2PositionStatus = 'open' | 'closed' | 'pending';
+
+export interface RhUniv2Position {
+  id: string;
+  pool_address: string;
+  pair_label: string | null;
+  token_address: string;
+  quote_symbol: 'USDG' | 'WETH';
+  owner_address: string;
+  lp_token_address: string;
+  entry_quote_amount: number;
+  entry_value_usd: number;
+  current_value_usd: number;
+  pnl_pct: number;
+  status: RhUniv2PositionStatus;
+  add_tx: string | null;
+  remove_tx: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}

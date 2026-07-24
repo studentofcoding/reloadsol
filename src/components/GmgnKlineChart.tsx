@@ -17,7 +17,7 @@ export default function GmgnKlineChart({
   symbol,
   height = 280,
   interval = "5",
-  chain = "sol",
+  chain,
   className = "",
 }: GmgnKlineChartProps) {
   const [loading, setLoading] = useState(true);

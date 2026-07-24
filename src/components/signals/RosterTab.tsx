@@ -1,10 +1,12 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 type HitToken = {
   token_address: string;
   profit_usd: number | null;
+  chain?: string;
 };
 
 type ScoreParts = {
@@ -154,50 +156,62 @@ function HoverTip({
   );
 }
 
+type RosterPayload = {
+  roster: RosterRow[];
+  needsFollow: RosterRow[];
+  digRuns: DigRun[];
+  signals: SignalRow[];
+};
+
+async function fetchRosterPayload(): Promise<RosterPayload> {
+  const res = await fetch("/api/gmgn/roster");
+  const data = (await res.json()) as {
+    success?: boolean;
+    error?: string;
+    roster?: RosterRow[];
+    needsFollow?: RosterRow[];
+    digRuns?: DigRun[];
+    signals?: SignalRow[];
+  };
+  if (!data.success) throw new Error(data.error || "load failed");
+  return {
+    roster: data.roster ?? [],
+    needsFollow: data.needsFollow ?? [],
+    digRuns: data.digRuns ?? [],
+    signals: data.signals ?? [],
+  };
+}
+
 export default function RosterTab() {
-  const [roster, setRoster] = useState<RosterRow[]>([]);
-  const [needsFollow, setNeedsFollow] = useState<RosterRow[]>([]);
-  const [digRuns, setDigRuns] = useState<DigRun[]>([]);
-  const [signals, setSignals] = useState<SignalRow[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/gmgn/roster");
-      const data = (await res.json()) as {
-        success?: boolean;
-        error?: string;
-        roster?: RosterRow[];
-        needsFollow?: RosterRow[];
-        digRuns?: DigRun[];
-        signals?: SignalRow[];
-      };
-      if (!data.success) throw new Error(data.error || "load failed");
-      setRoster(data.roster ?? []);
-      setNeedsFollow(data.needsFollow ?? []);
-      setDigRuns(data.digRuns ?? []);
-      setSignals(data.signals ?? []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const rosterQuery = useQuery({
+    queryKey: ["gmgn-roster-tab"],
+    queryFn: fetchRosterPayload,
+    staleTime: 30_000,
+  });
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const roster = rosterQuery.data?.roster ?? [];
+  const needsFollow = rosterQuery.data?.needsFollow ?? [];
+  const digRuns = rosterQuery.data?.digRuns ?? [];
+  const signals = rosterQuery.data?.signals ?? [];
+  const error =
+    actionError ||
+    (rosterQuery.error instanceof Error
+      ? rosterQuery.error.message
+      : rosterQuery.error
+        ? String(rosterQuery.error)
+        : null);
+  const loading = rosterQuery.isLoading;
 
   const patch = async (
     address: string,
     body: { follow_status?: string; status?: string },
   ) => {
     setBusy(address);
+    setActionError(null);
     try {
       const res = await fetch("/api/gmgn/roster", {
         method: "PATCH",
@@ -206,9 +220,9 @@ export default function RosterTab() {
       });
       const data = (await res.json()) as { success?: boolean; error?: string };
       if (!data.success) throw new Error(data.error || "patch failed");
-      await load();
+      await rosterQuery.refetch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setActionError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
     }
@@ -272,7 +286,7 @@ export default function RosterTab() {
             </button>
             <button
               type="button"
-              onClick={() => void load()}
+              onClick={() => void rosterQuery.refetch()}
               className="rounded bg-gray-800 px-3 py-1 text-xs text-gray-300 hover:bg-gray-700"
             >
               Refresh

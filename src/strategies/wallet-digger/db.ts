@@ -383,6 +383,7 @@ export async function countWalletRunnerHits(
 export type DigHitToken = {
   token_address: string
   profit_usd: number | null
+  chain: string
 }
 
 /** Distinct dig-hit tokens per wallet; profit summed across dig runs. */
@@ -396,12 +397,14 @@ export async function listDigHitsForWallets(
   const { rows } = await query<{
     wallet_address: string
     token_address: string
+    chain: string
     profit_usd: number | null
   }>(
-    `SELECT wallet_address, token_address, SUM(COALESCE(profit_usd, 0))::float8 AS profit_usd
+    `SELECT wallet_address, token_address, chain,
+            SUM(COALESCE(profit_usd, 0))::float8 AS profit_usd
      FROM alpha_wallet_dig_hits
      WHERE wallet_address = ANY($1::text[])
-     GROUP BY wallet_address, token_address
+     GROUP BY wallet_address, token_address, chain
      ORDER BY wallet_address, profit_usd DESC NULLS LAST`,
     [addresses],
   )
@@ -411,6 +414,7 @@ export async function listDigHitsForWallets(
     list.push({
       token_address: row.token_address,
       profit_usd: row.profit_usd != null ? Number(row.profit_usd) : null,
+      chain: row.chain || 'sol',
     })
     out[row.wallet_address] = list
   }

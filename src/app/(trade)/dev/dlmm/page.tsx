@@ -18,6 +18,7 @@ import type { DlmmPosition, DlmmLesson } from "@/types/dlmm";
 import HunterCandidateTabs, {
   type DisplayCandidate,
 } from "@/components/dlmm/HunterCandidateTabs";
+import RhUniv2PositionsPanel from "@/components/dlmm/RhUniv2PositionsPanel";
 import { formatAppTime } from "@/utils/datetime";
 
 function formatUsd(n: number) {
@@ -123,7 +124,7 @@ export default function DlmmDashboardPage() {
               DLMM Agent Dashboard
             </h1>
             <p className="text-gray-400">
-              Meteora DLMM Hunter + Healer — screen, deploy, monitor, manage
+              Meteora DLMM Hunter + Healer · Robinhood Uniswap V2 zap LP
             </p>
           </header>
 
@@ -246,6 +247,8 @@ export default function DlmmDashboardPage() {
             dbReady={!!dbReady}
             onDeploy={setDeployPool}
           />
+
+          <RhUniv2PositionsPanel />
 
           {/* Positions */}
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">

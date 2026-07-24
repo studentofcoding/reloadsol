@@ -17,12 +17,22 @@ export function getPoolChartMint(
 
 export type GmgnChain = 'sol' | 'bsc' | 'base' | 'eth' | 'robinhood'
 
+/** Sprint heuristic: EVM CA → robinhood; else sol. Explicit `chain` still wins. */
+export function inferGmgnChain(
+  tokenMint: string,
+  fallback: GmgnChain = 'sol',
+): GmgnChain {
+  const a = tokenMint.trim()
+  if (/^0x[a-fA-F0-9]{40}$/i.test(a)) return 'robinhood'
+  return fallback
+}
+
 export function getGmgnKlineUrl(
   tokenMint: string,
   options?: { interval?: string; theme?: 'dark' | 'light'; chain?: GmgnChain },
 ): string {
   const interval = options?.interval ?? '5'
-  const chain = options?.chain ?? 'sol'
+  const chain = options?.chain ?? inferGmgnChain(tokenMint)
   const params = new URLSearchParams({ interval })
   if (options?.theme) params.set('theme', options.theme)
   return `https://www.gmgn.cc/kline/${chain}/${tokenMint}?${params.toString()}`

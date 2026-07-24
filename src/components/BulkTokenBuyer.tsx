@@ -13,6 +13,8 @@ import { useRpc } from "@/contexts/RpcContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
+import { useGmgnTokenSearch } from "@/hooks/useGmgnTokenSearch";
+import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
 import { useTrendingSearch } from "@/hooks/useTrendingSearch";
 import { useQuery } from "@tanstack/react-query";
 import UniversalWalletButton from "./UniversalWalletButton";
@@ -20,14 +22,16 @@ import TrendingTokens from "./TrendingTokens";
 import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
 import RiskAnalysis from "./RiskAnalysis";
+import GmgnTradeConfirmModal, {
+  type GmgnConfirmLeg,
+} from "./GmgnTradeConfirmModal";
 import { LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import {
   executeBulkBuy,
-  parseMintAddresses,
-  isValidMintAddress,
   getAllFeeRates,
   setMetadataUpdateCallback,
   clearMetadataUpdateCallback,
+  isValidMintAddress,
   UserToken,
   MIN_BALANCE_UI,
 } from "@/utils/jupiter";
@@ -55,6 +59,17 @@ import {
   drainBuyPendingMints,
   type AddTokenToBuyDetail,
 } from "@/utils/add-token-to-buy";
+import {
+  type GmgnTradeChain,
+  GMGN_CHAIN_CURRENCIES,
+  gmgnNativeToken,
+  parseTradeTokenAddresses,
+  isValidTradeTokenAddress,
+} from "@/utils/gmgn-currencies";
+import {
+  buildGmgnBuyQuoteRequest,
+  executeGmgnBulkBuy,
+} from "@/utils/gmgn-bulk-trade";
 
 export default function BulkTokenBuyer() {
   const { signAllTransactions, connected } = useWallet();
@@ -102,6 +117,33 @@ export default function BulkTokenBuyer() {
   const [selectedCurrency, setSelectedCurrency] = useState<"SOL" | "USDC">(
     "SOL",
   );
+  const [tradeChain, setTradeChain] = useState<GmgnTradeChain>("sol");
+  const [useGmgnOnSol, setUseGmgnOnSol] = useState(false);
+  const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
+  const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
+  const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
+  const boundWallets = useGmgnBoundWallets();
+  // GMGN / Robinhood bulk is dev-wallet only; public users stay on Sol Jupiter.
+  const effectiveChain: GmgnTradeChain = isDevUser ? tradeChain : "sol";
+  const effectiveUseGmgn = isDevUser && useGmgnOnSol;
+  const chainNative = GMGN_CHAIN_CURRENCIES[effectiveChain];
+  const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
+  const useGmgnPath =
+    isDevUser &&
+    (effectiveChain === "robinhood" ||
+      (effectiveChain === "sol" && effectiveUseGmgn));
+  const gmgnFromAddress =
+    effectiveChain === "robinhood"
+      ? boundWallets.evm
+      : effectiveUseGmgn
+        ? boundWallets.sol
+        : null;
+  const tradeReady =
+    effectiveChain === "robinhood"
+      ? Boolean(boundWallets.evm)
+      : effectiveUseGmgn
+        ? Boolean(connected && solGmgnSynced && boundWallets.sol)
+        : Boolean(connected && publicKey && signAllTransactions);
 
   // URL parameter initialization state
   const [initialized] = useState<boolean>(true);
@@ -209,10 +251,18 @@ export default function BulkTokenBuyer() {
         ? String(tokensQueryError)
         : "";
 
-  // Token search state
+  // Token search — GMGN for dev; Jupiter for public Sol buy page
   const [searchTerm, setSearchTerm] = useState("");
   const deferredSearchTerm = useDeferredValue(searchTerm);
-  const searchQuery = useTrendingSearch(deferredSearchTerm);
+  const gmgnSearchQuery = useGmgnTokenSearch(
+    effectiveChain,
+    deferredSearchTerm,
+    { enabled: isDevUser },
+  );
+  const jupSearchQuery = useTrendingSearch(
+    isDevUser ? "" : deferredSearchTerm,
+  );
+  const searchQuery = isDevUser ? gmgnSearchQuery : jupSearchQuery;
   const searchResults = useMemo(
     () => (searchTerm ? (searchQuery.data ?? []) : []),
     [searchTerm, searchQuery.data],
@@ -221,6 +271,43 @@ export default function BulkTokenBuyer() {
   const [showResults, setShowResults] = useState(false);
   const searchBoxRef = useRef<HTMLDivElement>(null);
 
+  // Roster digger recommendations (dev only)
+  const rosterRecsQuery = useQuery({
+    queryKey: ["gmgn-roster-recs", effectiveChain],
+    queryFn: async () => {
+      const res = await fetch("/api/gmgn/roster");
+      if (!res.ok) return [] as Array<{ address: string; symbol?: string }>;
+      const data = (await res.json()) as {
+        roster?: Array<{
+          hit_tokens?: Array<{ token_address: string; chain?: string }>;
+        }>;
+      };
+      const seen = new Set<string>();
+      const out: Array<{ address: string }> = [];
+      for (const row of data.roster ?? []) {
+        for (const hit of row.hit_tokens ?? []) {
+          const addr = hit.token_address?.trim();
+          if (!addr) continue;
+          const hitChain = hit.chain === "robinhood" ? "robinhood" : "sol";
+          if (hitChain !== effectiveChain) continue;
+          if (!isValidTradeTokenAddress(effectiveChain, addr)) continue;
+          const key =
+            effectiveChain === "robinhood" ? addr.toLowerCase() : addr;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push({
+            address:
+              effectiveChain === "robinhood" ? addr.toLowerCase() : addr,
+          });
+          if (out.length >= 12) return out;
+        }
+      }
+      return out;
+    },
+    enabled: isDevUser,
+    staleTime: 60_000,
+  });
+
   // Risk analysis state
   const [axiomData, setAxiomData] = useState<
     Map<string, { data: any; risk: any; pairNotFound?: boolean }>
@@ -228,9 +315,19 @@ export default function BulkTokenBuyer() {
   const [loadingAxiom, setLoadingAxiom] = useState<Set<string>>(new Set());
   const [showRiskAnalysis, setShowRiskAnalysis] = useState<boolean>(false);
 
-  // Parse and validate mint addresses
-  const parsedMints = parseMintAddresses(tokenMints);
-  const validMints = parsedMints.filter(isValidMintAddress);
+  // Parse and validate mint addresses (chain-aware)
+  const validMints = useMemo(
+    () => parseTradeTokenAddresses(effectiveChain, tokenMints, 10),
+    [effectiveChain, tokenMints],
+  );
+  const parsedMints = useMemo(
+    () =>
+      tokenMints
+        .split(/[\n,\s]+/)
+        .map((a) => a.trim())
+        .filter(Boolean),
+    [tokenMints],
+  );
 
   // Auto-select first mint from URL params (display chart automatically)
   useEffect(() => {
@@ -241,22 +338,37 @@ export default function BulkTokenBuyer() {
   }, [initialized, validMints]);
 
   const metadataQuery = useQuery({
-    queryKey: ["buy-token-metadata", validMints.join(",")],
+    queryKey: [
+      "buy-token-metadata",
+      isDevUser ? effectiveChain : "jup",
+      validMints.join(","),
+    ],
     queryFn: async () => {
       const existingAddresses = new Set(tokenList.map((token) => token.address));
-      const addressesToFetch = validMints.filter(
-        (addr) => !existingAddresses.has(addr) && isValidMintAddress(addr),
-      );
+      const addressesToFetch = validMints.filter((addr) => {
+        if (existingAddresses.has(addr)) return false;
+        return isDevUser
+          ? isValidTradeTokenAddress(effectiveChain, addr)
+          : isValidMintAddress(addr);
+      });
       if (addressesToFetch.length === 0) return [] as TokenInfo[];
 
       const fetchPromises = addressesToFetch.map(
         async (address): Promise<TokenInfo | null> => {
           try {
-            const res = await fetch(`/api/trending/search?query=${address}`);
+            const res = await fetch(
+              isDevUser
+                ? `/api/gmgn/token/search?chain=${encodeURIComponent(effectiveChain)}&query=${encodeURIComponent(address)}`
+                : `/api/trending/search?query=${encodeURIComponent(address)}`,
+            );
             if (!res.ok) return null;
             const data = await res.json();
             const tokenInfo = Array.isArray(data)
-              ? data.find((t) => t.id === address)
+              ? data.find(
+                  (t: { id?: string; address?: string }) =>
+                    t.id === address ||
+                    t.address?.toLowerCase() === address.toLowerCase(),
+                )
               : null;
             if (tokenInfo) {
               return {
@@ -348,10 +460,14 @@ export default function BulkTokenBuyer() {
 
       // Try to find token info from existing sources first
       const searchToken = searchResults.find(
-        (token) => token.id === mintAddress,
+        (token) =>
+          token.id === mintAddress ||
+          token.address?.toLowerCase() === mintAddress.toLowerCase(),
       );
       const listToken = tokenList.find(
-        (token) => token.address === mintAddress,
+        (token) =>
+          token.address === mintAddress ||
+          token.address.toLowerCase() === mintAddress.toLowerCase(),
       );
       const userToken = userTokens.find(
         (token) => token.mintAddress === mintAddress,
@@ -378,11 +494,19 @@ export default function BulkTokenBuyer() {
       } else {
         // Fetch token metadata if not found anywhere
         try {
-          const res = await fetch(`/api/trending/search?query=${mintAddress}`);
+          const res = await fetch(
+            isDevUser
+              ? `/api/gmgn/token/search?chain=${encodeURIComponent(effectiveChain)}&query=${encodeURIComponent(mintAddress)}`
+              : `/api/trending/search?query=${encodeURIComponent(mintAddress)}`,
+          );
           if (res.ok) {
             const data = await res.json();
             const fetchedToken = Array.isArray(data)
-              ? data.find((t) => t.id === mintAddress)
+              ? data.find(
+                  (t: { id?: string; address?: string }) =>
+                    t.id === mintAddress ||
+                    t.address?.toLowerCase() === mintAddress.toLowerCase(),
+                )
               : null;
 
             if (fetchedToken) {
@@ -401,7 +525,7 @@ export default function BulkTokenBuyer() {
 
       setSelectedTokenInfo(tokenInfo);
     },
-    [searchResults, tokenList, userTokens],
+    [searchResults, tokenList, userTokens, isDevUser, effectiveChain],
   );
 
   // Listen for custom event to add token to list (+ open chart)
@@ -470,25 +594,146 @@ export default function BulkTokenBuyer() {
   const refetchTokensRef = useRef(refetchTokens);
   refetchTokensRef.current = refetchTokens;
 
-  // Handle form submission
-  const handleBulkBuy = useCallback(async () => {
-    if (!connected || !publicKey || !signAllTransactions) {
-      setError("Please connect your wallet first");
+  const runGmgnBulkBuy = useCallback(async () => {
+    if (!gmgnFromAddress) {
+      setError("GMGN bound wallet missing for this chain");
       return;
     }
+    setIsLoading(true);
+    setGmgnConfirmBusy(true);
+    setPointsEarned(null);
+    setError("");
+    try {
+      const inputToken =
+        effectiveChain === "sol" && selectedCurrency === "USDC"
+          ? TOKENS.USDC
+          : gmgnNativeToken(effectiveChain);
+      const { results, success } = await executeGmgnBulkBuy({
+        chain: effectiveChain,
+        from: gmgnFromAddress,
+        amountHuman: parseFloat(solAmount),
+        inputToken,
+        tokenMints: validMints.map((m) => ({
+          tokenAddress: m,
+          symbol: tokenList.find((t) => t.address === m)?.symbol,
+        })),
+        slippageBps: slippage,
+      });
+      const ok = results.filter((r) => r.success);
+      const fail = results.filter((r) => !r.success);
+      showOutcome({
+        success,
+        operation: "buy",
+        isSimulation: false,
+        tokenSymbol:
+          ok.length === 1
+            ? ok[0]?.symbol
+            : `${ok.length} tokens`,
+        solAmount: parseFloat(solAmount),
+        error: success
+          ? undefined
+          : fail[0]?.error || "GMGN buy failed",
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsLoading(false);
+      setGmgnConfirmBusy(false);
+      setGmgnConfirmOpen(false);
+    }
+  }, [
+    gmgnFromAddress,
+    effectiveChain,
+    selectedCurrency,
+    solAmount,
+    validMints,
+    tokenList,
+    slippage,
+    showOutcome,
+  ]);
 
+  // Handle form submission
+  const handleBulkBuy = useCallback(async () => {
     if (!solAmount || parseFloat(solAmount) <= 0) {
-      setError(`Please enter a valid ${selectedCurrency} amount`);
+      setError(
+        `Please enter a valid ${effectiveChain === "robinhood" ? "ETH" : selectedCurrency} amount`,
+      );
       return;
     }
 
     if (validMints.length === 0) {
-      setError("Please enter at least one valid token mint address");
+      setError("Please enter at least one valid token address");
       return;
     }
 
     if (validMints.length > 10) {
       setError("Maximum 10 token addresses allowed");
+      return;
+    }
+
+    if (useGmgnPath) {
+      if (!gmgnFromAddress) {
+        setError(
+          effectiveChain === "robinhood"
+            ? "GMGN-bound EVM wallet missing for Robinhood"
+            : "Connect the GMGN-bound Sol wallet or turn off Use GMGN",
+        );
+        return;
+      }
+      if (effectiveChain === "sol" && !solGmgnSynced) {
+        setError("Connected wallet is not the GMGN-bound Sol address");
+        return;
+      }
+      // Quote first leg for confirm modal, then require explicit confirm
+      setIsLoading(true);
+      setError("");
+      try {
+        const inputToken =
+          effectiveChain === "sol" && selectedCurrency === "USDC"
+            ? TOKENS.USDC
+            : gmgnNativeToken(effectiveChain);
+        const legs: GmgnConfirmLeg[] = [];
+        for (const mint of validMints) {
+          const shaped = buildGmgnBuyQuoteRequest({
+            chain: effectiveChain,
+            from: gmgnFromAddress,
+            tokenAddress: mint,
+            amountHuman: parseFloat(solAmount),
+            slippageBps: slippage,
+            inputToken,
+          });
+          let estOut: string | undefined;
+          try {
+            const res = await fetch("/api/gmgn/trade/quote", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(shaped),
+            });
+            const data = (await res.json()) as {
+              quote?: { output_amount?: string };
+            };
+            estOut = data.quote?.output_amount;
+          } catch {
+            /* quote optional for confirm display */
+          }
+          legs.push({
+            tokenAddress: mint,
+            symbol: tokenList.find((t) => t.address === mint)?.symbol,
+            amountLabel: `${solAmount} ${effectiveChain === "robinhood" ? "ETH" : selectedCurrency}`,
+            estOut,
+            side: "buy",
+          });
+        }
+        setGmgnConfirmLegs(legs);
+        setGmgnConfirmOpen(true);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    if (!connected || !publicKey || !signAllTransactions) {
+      setError("Please connect your wallet first");
       return;
     }
 
@@ -751,6 +996,10 @@ export default function BulkTokenBuyer() {
     trackOperation,
     triggerPostBuyRefresh,
     usdcBalance,
+    useGmgnPath,
+    gmgnFromAddress,
+    effectiveChain,
+    solGmgnSynced,
   ]);
 
   // Handle metadata updates from background enrichment
@@ -810,7 +1059,10 @@ export default function BulkTokenBuyer() {
   const handleTokenAreaPaste = (e: React.ClipboardEvent) => {
     e.preventDefault();
     const pastedText = e.clipboardData.getData("text");
-    const pastedAddresses = parseMintAddresses(pastedText);
+    const pastedAddresses = parseTradeTokenAddresses(
+      effectiveChain,
+      pastedText,
+    );
 
     if (pastedAddresses.length === 0) return;
 
@@ -913,14 +1165,29 @@ export default function BulkTokenBuyer() {
     window.history.replaceState({}, "", newUrl);
   }, [solAmount, tokenMints, validMints]);
 
+  const showTradeUi = effectiveChain === "robinhood" || connected;
+
   return (
     <div
-      className={`grid grid-cols-1 ${connected ? "lg:grid-cols-3" : "lg:grid-cols-1"} gap-8 max-w-6xl mx-auto`}
+      className={`grid grid-cols-1 ${showTradeUi ? "lg:grid-cols-3" : "lg:grid-cols-1"} gap-8 max-w-6xl mx-auto`}
     >
+      <GmgnTradeConfirmModal
+        open={gmgnConfirmOpen && isDevUser}
+        chain={effectiveChain}
+        from={gmgnFromAddress || ""}
+        legs={gmgnConfirmLegs}
+        busy={gmgnConfirmBusy}
+        onCancel={() => setGmgnConfirmOpen(false)}
+        onConfirm={() => void runGmgnBulkBuy()}
+      />
+
       {/* Trending Tokens Column */}
-      {connected && (
+      {showTradeUi && (
         <div className="lg:col-span-1">
-          <TrendingTokens onSelectToken={handleSelectToken} />
+          <TrendingTokens
+            onSelectToken={handleSelectToken}
+            chain={isDevUser ? effectiveChain : undefined}
+          />
         </div>
       )}
 
@@ -932,16 +1199,95 @@ export default function BulkTokenBuyer() {
             <div>
               <h2 className="text-3xl font-bold text-white mb-2">Buy bulk</h2>
               <p className="text-gray-400">
-                Split your SOL across multiple tokens instantly
+                Split your {effectiveChain === "robinhood" ? "ETH" : "SOL"}{" "}
+                across multiple tokens
               </p>
             </div>
             <div className="shrink-0">
-              <UniversalWalletButton />
+              {effectiveChain === "sol" ? <UniversalWalletButton /> : null}
             </div>
           </div>
 
-          {connected && (
+          {isDevUser ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs uppercase tracking-wide text-gray-400">
+                Chain (dev)
+              </span>
+              {(["sol", "robinhood"] as const).map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => {
+                    setTradeChain(c);
+                    if (c === "robinhood") setUseGmgnOnSol(false);
+                  }}
+                  className={`rounded-lg px-3 py-1.5 text-sm ${
+                    tradeChain === c
+                      ? "bg-white text-gray-900"
+                      : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+                  }`}
+                >
+                  {c === "sol" ? "Solana" : "Robinhood"}
+                </button>
+              ))}
+              {tradeChain === "sol" && solGmgnSynced ? (
+                <label className="ml-2 flex items-center gap-2 text-xs text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={useGmgnOnSol}
+                    onChange={(e) => setUseGmgnOnSol(e.target.checked)}
+                  />
+                  Use GMGN
+                  <span className="text-emerald-400">GMGN synced</span>
+                </label>
+              ) : null}
+            </div>
+          ) : null}
+
+          {isDevUser && effectiveChain === "robinhood" ? (
+            <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300">
+              {boundWallets.evm ? (
+                <>
+                  GMGN-bound EVM:{" "}
+                  <span className="font-mono text-white break-all">
+                    {boundWallets.evm}
+                  </span>
+                </>
+              ) : (
+                <span className="text-amber-400">
+                  No bound EVM wallet from GMGN API key / env
+                </span>
+              )}
+            </div>
+          ) : isDevUser && useGmgnOnSol && !solGmgnSynced ? (
+            <div className="rounded-xl border border-amber-700/50 bg-amber-900/20 px-4 py-3 text-sm text-amber-200">
+              Connect wallet {boundWallets.sol || "(GMGN-bound Sol)"} to use
+              GMGN on Solana
+            </div>
+          ) : null}
+
+          {showTradeUi && (
             <div className="space-y-8">
+              {isDevUser && (rosterRecsQuery.data?.length ?? 0) > 0 ? (
+                <div className="space-y-2">
+                  <div className="text-xs uppercase tracking-wide text-gray-400">
+                    Roster digger ({effectiveChain})
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {rosterRecsQuery.data!.map((rec) => (
+                      <button
+                        key={rec.address}
+                        type="button"
+                        onClick={() => handleAddFromSearch(rec.address)}
+                        className="rounded-lg bg-gray-800 px-2 py-1 font-mono text-xs text-gray-200 hover:bg-gray-700"
+                        title={rec.address}
+                      >
+                        {rec.address.slice(0, 6)}…{rec.address.slice(-4)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <div className="flex items-center space-x-4 text-xs">
@@ -1119,11 +1465,15 @@ export default function BulkTokenBuyer() {
                       </div>
                     )}
                     <iframe
-                      src={getGmgnKlineUrl(selectedToken, { interval: "1D", theme: "dark" })}
+                      src={getGmgnKlineUrl(selectedToken, {
+                        interval: "1D",
+                        theme: "dark",
+                        chain: effectiveChain,
+                      })}
                       height="400"
                       className="w-full"
                       style={{ border: "none" }}
-                      title={`Birdeye Chart - ${selectedToken}`}
+                      title={`GMGN Chart - ${selectedToken}`}
                       onLoad={() => setIsChartLoading(false)}
                       allowFullScreen
                       frameBorder="0"
@@ -1138,7 +1488,9 @@ export default function BulkTokenBuyer() {
                     htmlFor="solAmount"
                     className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
                   >
-                    {selectedCurrency} to spend
+                    {effectiveChain === "robinhood"
+                      ? "ETH to spend"
+                      : `${selectedCurrency} to spend`}
                   </label>
                   {walletBalance !== null && (
                     <div className="flex items-center space-x-3">
@@ -1173,14 +1525,20 @@ export default function BulkTokenBuyer() {
                     disabled={isLoading}
                   />
                   <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                    <button
-                      type="button"
-                      onClick={toggleCurrency}
-                      className="text-gray-400 hover:text-white font-mono text-sm px-2 py-1 rounded transition-colors duration-200 hover:bg-gray-700"
-                      disabled={isLoading}
-                    >
-                      {selectedCurrency}
-                    </button>
+                    {effectiveChain === "robinhood" ? (
+                      <span className="font-mono text-sm text-gray-400 px-2">
+                        ETH
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={toggleCurrency}
+                        className="text-gray-400 hover:text-white font-mono text-sm px-2 py-1 rounded transition-colors duration-200 hover:bg-gray-700"
+                        disabled={isLoading || effectiveUseGmgn}
+                      >
+                        {selectedCurrency}
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1717,32 +2075,39 @@ export default function BulkTokenBuyer() {
                   </select>
                 </div>
 
-                {/* Priority Fee */}
-                <div className="space-y-3">
-                  <label
-                    htmlFor="priorityFee"
-                    className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
-                  >
-                    Priority Fee
-                  </label>
-                  <select
-                    id="priorityFee"
-                    value={priorityFee}
-                    onChange={(e) => setPriorityFee(Number(e.target.value))}
-                    className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
-                    disabled={isLoading}
-                  >
-                    {PRIORITY_FEE_OPTIONS.map((option) => (
-                      <option
-                        key={option.value}
-                        value={option.value}
-                        className="bg-gray-800"
-                      >
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {/* Priority Fee (Jupiter Sol path only) */}
+                {effectiveChain === "sol" && !effectiveUseGmgn ? (
+                  <div className="space-y-3">
+                    <label
+                      htmlFor="priorityFee"
+                      className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
+                    >
+                      Priority Fee
+                    </label>
+                    <select
+                      id="priorityFee"
+                      value={priorityFee}
+                      onChange={(e) => setPriorityFee(Number(e.target.value))}
+                      className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl text-white focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
+                      disabled={isLoading}
+                    >
+                      {PRIORITY_FEE_OPTIONS.map((option) => (
+                        <option
+                          key={option.value}
+                          value={option.value}
+                          className="bg-gray-800"
+                        >
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : (
+                  <div className="space-y-3 text-xs text-gray-400">
+                    Execution via GMGN ({chainNative.nativeSymbol}). Fees set by
+                    the router.
+                  </div>
+                )}
 
                 {/* Dev-only: confirmation transport toggle */}
                 <ConfirmTransportSelect disabled={isLoading} />
@@ -1773,9 +2138,17 @@ export default function BulkTokenBuyer() {
               {/* Buy Button */}
               <button
                 onClick={handleBulkBuy}
-                disabled={isLoading || !solAmount || validMints.length === 0}
+                disabled={
+                  isLoading ||
+                  !tradeReady ||
+                  !solAmount ||
+                  validMints.length === 0
+                }
                 className={`w-full py-4 px-6 rounded-xl font-semibold text-lg transition-all duration-200 ${
-                  isLoading || !solAmount || validMints.length === 0
+                  isLoading ||
+                  !tradeReady ||
+                  !solAmount ||
+                  validMints.length === 0
                     ? "bg-gray-600 text-gray-400 cursor-not-allowed"
                     : "bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl"
                 }`}
@@ -1832,7 +2205,7 @@ export default function BulkTokenBuyer() {
             </div>
           )}
 
-          {!connected && (
+          {effectiveChain === "sol" && !connected && (
             <div className="text-center py-12">
               <div className="bg-gray-800 border border-gray-600 rounded-2xl p-8">
                 <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
@@ -1850,7 +2223,6 @@ export default function BulkTokenBuyer() {
                     />
                   </svg>
                 </div>
-                {/* <h3 className="text-xl font-semibold text-white mb-2">Connect Your Wallet</h3> */}
                 <p className="text-gray-400 mb-6 max-w-md mx-auto">
                   Buy any token in bulk, <br />
                   trade faster and smarter with us

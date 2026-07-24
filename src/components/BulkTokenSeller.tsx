@@ -7,7 +7,11 @@ import React, {
   useMemo,
   useRef,
 } from "react";
-import { useWallet, useConnection } from "../components/WalletProvider";
+import {
+  useWallet,
+  useConnection,
+  useDevWalletAccess,
+} from "../components/WalletProvider";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens, refreshWalletTokensData, type WalletTokensData } from "@/hooks/useWalletTokens";
 import { useSolPrice } from "@/hooks/useSolPrice";
@@ -16,6 +20,14 @@ import TradeOutcomeModal, { useTradeOutcome } from "./TradeOutcomeModal";
 import TokenSkeleton from "./TokenSkeleton";
 import ConfirmTransportSelect from "./ConfirmTransportSelect";
 import ProgressiveTokenItem from "./ProgressiveTokenItem";
+import GmgnTradeConfirmModal, {
+  type GmgnConfirmLeg,
+} from "./GmgnTradeConfirmModal";
+import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
+import { useQuery } from "@tanstack/react-query";
+import type { GmgnTradeChain } from "@/utils/gmgn-currencies";
+import { matchesTradeChainAddress } from "@/utils/gmgn-currencies";
+import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
 import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
@@ -125,6 +137,108 @@ export default function BulkTokenSeller() {
   >([]);
   const [slippage, setSlippage] = useState<number>(200); // 2%
   const [priorityFee, setPriorityFee] = useState<number>(30000); // 0.00003 SOL
+  const isDevUser = useDevWalletAccess();
+  const [tradeChain, setTradeChain] = useState<GmgnTradeChain>("sol");
+  const [useGmgnOnSol, setUseGmgnOnSol] = useState(false);
+  const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
+  const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
+  const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
+  const boundWallets = useGmgnBoundWallets();
+  const effectiveChain: GmgnTradeChain = isDevUser ? tradeChain : "sol";
+  const effectiveUseGmgn = isDevUser && useGmgnOnSol;
+  const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
+  const useGmgnPath =
+    isDevUser &&
+    (effectiveChain === "robinhood" ||
+      (effectiveChain === "sol" && effectiveUseGmgn));
+  const gmgnFromAddress =
+    effectiveChain === "robinhood"
+      ? boundWallets.evm
+      : effectiveUseGmgn
+        ? boundWallets.sol
+        : null;
+
+  const rhHoldingsQuery = useQuery({
+    queryKey: ["gmgn-holdings", effectiveChain, gmgnFromAddress],
+    queryFn: async () => {
+      if (!gmgnFromAddress) return [] as UserToken[];
+      const res = await fetch(
+        `/api/gmgn/wallet/holdings?chain=${encodeURIComponent(effectiveChain)}&wallet=${encodeURIComponent(gmgnFromAddress)}`,
+      );
+      const data = (await res.json()) as {
+        success?: boolean
+        holdings?: Array<Record<string, unknown>>
+      };
+      if (!data.success || !Array.isArray(data.holdings)) return [];
+      return data.holdings
+        .map((h): UserToken | null => {
+          const mint = String(
+            h.address ?? h.token_address ?? h.tokenAddress ?? "",
+          ).trim();
+          if (!mint || !matchesTradeChainAddress(effectiveChain, mint))
+            return null;
+          const uiAmount = Number(
+            h.ui_amount ?? h.balance ?? h.amount ?? h.token_amount_ui ?? 0,
+          );
+          const decimals = Number(h.decimals ?? 18);
+          const balance = Number(
+            h.balance_raw ?? h.amount_raw ?? Math.floor(uiAmount * 10 ** decimals),
+          );
+          return {
+            mintAddress:
+              effectiveChain === "robinhood" ? mint.toLowerCase() : mint,
+            balance: Number.isFinite(balance) ? balance : 0,
+            decimals: Number.isFinite(decimals) ? decimals : 18,
+            symbol: String(h.symbol ?? "???"),
+            name: String(h.name ?? h.symbol ?? "Unknown"),
+            logoURI:
+              typeof h.logo === "string"
+                ? h.logo
+                : typeof h.logo_url === "string"
+                  ? h.logo_url
+                  : undefined,
+            uiAmount: Number.isFinite(uiAmount) ? uiAmount : 0,
+            usdValue: Number(h.usd_value ?? h.value_usd ?? 0) || 0,
+          };
+        })
+        .filter((t): t is UserToken => t != null && t.uiAmount > 0);
+    },
+    enabled: useGmgnPath && Boolean(gmgnFromAddress),
+    staleTime: 30_000,
+  });
+
+  const rosterSellRecsQuery = useQuery({
+    queryKey: ["gmgn-roster-sell-recs", effectiveChain],
+    queryFn: async () => {
+      const res = await fetch("/api/gmgn/roster");
+      if (!res.ok) return [] as string[];
+      const data = (await res.json()) as {
+        roster?: Array<{
+          hit_tokens?: Array<{ token_address: string; chain?: string }>;
+        }>;
+      };
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const row of data.roster ?? []) {
+        for (const hit of row.hit_tokens ?? []) {
+          const addr = hit.token_address?.trim();
+          if (!addr) continue;
+          const hitChain = hit.chain === "robinhood" ? "robinhood" : "sol";
+          if (hitChain !== effectiveChain) continue;
+          if (!matchesTradeChainAddress(effectiveChain, addr)) continue;
+          const key =
+            effectiveChain === "robinhood" ? addr.toLowerCase() : addr;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          out.push(key);
+          if (out.length >= 12) return out;
+        }
+      }
+      return out;
+    },
+    enabled: isDevUser,
+    staleTime: 60_000,
+  });
 
   const {
     valuable: userTokens,
@@ -631,15 +745,90 @@ export default function BulkTokenSeller() {
     [publicKey, walletAddress, connection, patchTokens],
   );
 
+  const runGmgnBulkSell = useCallback(async () => {
+    if (!gmgnFromAddress || selectedTokens.length === 0) return;
+    setIsLoading(true);
+    setGmgnConfirmBusy(true);
+    setError("");
+    try {
+      const { results, success } = await executeGmgnBulkSell({
+        chain: effectiveChain,
+        from: gmgnFromAddress,
+        legs: selectedTokens.map((t) => ({
+          tokenAddress: t.mintAddress,
+          percent: t.sellPercentage || 100,
+          symbol: t.symbol,
+        })),
+        slippageBps: slippage,
+      });
+      const ok = results.filter((r) => r.success);
+      const fail = results.filter((r) => !r.success);
+      showOutcome({
+        success,
+        operation: "sell",
+        isSimulation: false,
+        tokenSymbol:
+          ok.length === 1 ? ok[0]?.symbol : `${ok.length} tokens`,
+        error: success ? undefined : fail[0]?.error || "GMGN sell failed",
+      });
+      if (success) {
+        setSelectedTokens([]);
+        void rhHoldingsQuery.refetch();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsLoading(false);
+      setGmgnConfirmBusy(false);
+      setGmgnConfirmOpen(false);
+    }
+  }, [
+    gmgnFromAddress,
+    selectedTokens,
+    effectiveChain,
+    slippage,
+    showOutcome,
+    rhHoldingsQuery,
+  ]);
+
   // Handle bulk sell with better error handling
   const handleBulkSell = useCallback(async () => {
-    if (!connected || !publicKey || !signAllTransactions) {
-      setError("Please connect your wallet first");
+    if (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0) {
+      setError("Please select at least one token");
       return;
     }
 
-    if (selectedTokens.length === 0 && selectedZeroBalanceTokens.length === 0) {
-      setError("Please select at least one token");
+    if (useGmgnPath) {
+      if (!gmgnFromAddress) {
+        setError(
+          effectiveChain === "robinhood"
+            ? "GMGN-bound EVM wallet missing for Robinhood"
+            : "Connect the GMGN-bound Sol wallet or turn off Use GMGN",
+        );
+        return;
+      }
+      if (effectiveChain === "sol" && !solGmgnSynced) {
+        setError("Connected wallet is not the GMGN-bound Sol address");
+        return;
+      }
+      if (selectedTokens.length === 0) {
+        setError("Select tokens to sell via GMGN");
+        return;
+      }
+      setGmgnConfirmLegs(
+        selectedTokens.map((t) => ({
+          tokenAddress: t.mintAddress,
+          symbol: t.symbol,
+          amountLabel: `${t.sellPercentage || 100}% → ${effectiveChain === "robinhood" ? "ETH" : "SOL"}`,
+          side: "sell" as const,
+        })),
+      );
+      setGmgnConfirmOpen(true);
+      return;
+    }
+
+    if (!connected || !publicKey || !signAllTransactions) {
+      setError("Please connect your wallet first");
       return;
     }
 
@@ -1013,6 +1202,10 @@ export default function BulkTokenSeller() {
     triggerPostTradeRefresh,
     showOutcome,
     trackOperation,
+    useGmgnPath,
+    gmgnFromAddress,
+    effectiveChain,
+    solGmgnSynced,
   ]);
 
   /** Close emptied ATAs offered on the post-sell success modal. */
@@ -1473,19 +1666,229 @@ export default function BulkTokenSeller() {
     setSelectedTokens([]);
   };
 
+  const toggleRhHolding = (token: UserToken) => {
+    setSelectedTokens((prev) => {
+      const exists = prev.some((t) => t.mintAddress === token.mintAddress);
+      if (exists) {
+        return prev.filter((t) => t.mintAddress !== token.mintAddress);
+      }
+      return [
+        ...prev,
+        { ...token, sellAmount: token.balance, sellPercentage: 100 },
+      ];
+    });
+  };
+
   return (
     <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 space-y-8 max-w-6xl mx-auto">
+      <GmgnTradeConfirmModal
+        open={gmgnConfirmOpen && isDevUser}
+        chain={effectiveChain}
+        from={gmgnFromAddress || ""}
+        legs={gmgnConfirmLegs}
+        busy={gmgnConfirmBusy}
+        onCancel={() => setGmgnConfirmOpen(false)}
+        onConfirm={() => void runGmgnBulkSell()}
+      />
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="flex justify-between items-center w-full">
           <h2 className="text-3xl font-bold text-white">
-            Sell Bulk & Reload your solana
+            Sell Bulk & Reload{" "}
+            {effectiveChain === "robinhood" ? "ETH" : "your solana"}
           </h2>
           <div className="shrink-0">
-            <UniversalWalletButton />
+            {effectiveChain === "sol" ? <UniversalWalletButton /> : null}
           </div>
         </div>
       </div>
+
+      {isDevUser ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-wide text-gray-400">
+            Chain (dev)
+          </span>
+          {(["sol", "robinhood"] as const).map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => {
+                setTradeChain(c);
+                setSelectedTokens([]);
+                if (c === "robinhood") setUseGmgnOnSol(false);
+              }}
+              className={`rounded-lg px-3 py-1.5 text-sm ${
+                tradeChain === c
+                  ? "bg-white text-gray-900"
+                  : "bg-gray-800 text-gray-300 hover:bg-gray-700"
+              }`}
+            >
+              {c === "sol" ? "Solana" : "Robinhood"}
+            </button>
+          ))}
+          {tradeChain === "sol" && solGmgnSynced ? (
+            <label className="ml-2 flex items-center gap-2 text-xs text-gray-300">
+              <input
+                type="checkbox"
+                checked={useGmgnOnSol}
+                onChange={(e) => setUseGmgnOnSol(e.target.checked)}
+              />
+              Use GMGN
+              <span className="text-emerald-400">GMGN synced</span>
+            </label>
+          ) : null}
+        </div>
+      ) : null}
+
+      {isDevUser && effectiveChain === "robinhood" ? (
+        <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300">
+          {boundWallets.evm ? (
+            <>
+              GMGN-bound EVM:{" "}
+              <span className="font-mono text-white break-all">
+                {boundWallets.evm}
+              </span>
+            </>
+          ) : (
+            <span className="text-amber-400">
+              No bound EVM wallet from GMGN API key / env
+            </span>
+          )}
+        </div>
+      ) : null}
+
+      {isDevUser && (rosterSellRecsQuery.data?.length ?? 0) > 0 ? (
+        <div className="space-y-2">
+          <div className="text-xs uppercase tracking-wide text-gray-400">
+            Roster digger ({effectiveChain})
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {rosterSellRecsQuery.data!.map((addr) => (
+              <button
+                key={addr}
+                type="button"
+                onClick={() => {
+                  const held = rhHoldingsQuery.data?.find(
+                    (t) => t.mintAddress === addr,
+                  );
+                  if (held) {
+                    toggleRhHolding(held);
+                    return;
+                  }
+                  // Not in holdings — still allow selecting for GMGN % sell
+                  toggleRhHolding({
+                    mintAddress: addr,
+                    balance: 0,
+                    decimals: 18,
+                    symbol: addr.slice(0, 4),
+                    name: addr,
+                    uiAmount: 0,
+                    usdValue: 0,
+                  });
+                }}
+                className="rounded-lg bg-gray-800 px-2 py-1 font-mono text-xs text-gray-200 hover:bg-gray-700"
+              >
+                {addr.slice(0, 6)}…{addr.slice(-4)}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {isDevUser && effectiveChain === "robinhood" && boundWallets.evm ? (
+        <div className="space-y-3">
+          <div className="text-sm font-semibold text-gray-200 uppercase tracking-wide">
+            GMGN holdings
+          </div>
+          {rhHoldingsQuery.isLoading ? (
+            <TokenSkeleton count={3} variant="progressive" />
+          ) : (rhHoldingsQuery.data?.length ?? 0) === 0 ? (
+            <p className="text-sm text-gray-400">
+              No holdings returned (or API key missing).
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {rhHoldingsQuery.data!.map((token) => {
+                const selected = selectedTokens.find(
+                  (t) => t.mintAddress === token.mintAddress,
+                );
+                return (
+                  <div
+                    key={token.mintAddress}
+                    className={`flex items-center justify-between rounded-xl border px-3 py-2 ${
+                      selected
+                        ? "border-white bg-gray-800"
+                        : "border-gray-700 bg-gray-900"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      className="text-left text-sm text-white"
+                      onClick={() => toggleRhHolding(token)}
+                    >
+                      <div className="font-medium">
+                        {token.symbol || "???"}
+                      </div>
+                      <div className="font-mono text-[10px] text-gray-500">
+                        {token.mintAddress}
+                      </div>
+                    </button>
+                    {selected ? (
+                      <select
+                        value={selected.sellPercentage}
+                        onChange={(e) => {
+                          const pct = Number(e.target.value);
+                          setSelectedTokens((prev) =>
+                            prev.map((t) =>
+                              t.mintAddress === token.mintAddress
+                                ? {
+                                    ...t,
+                                    sellPercentage: pct,
+                                    sellAmount: Math.floor(
+                                      (t.balance * pct) / 100,
+                                    ),
+                                  }
+                                : t,
+                            ),
+                          );
+                        }}
+                        className="rounded-lg bg-gray-800 px-2 py-1 text-sm text-white"
+                      >
+                        {[25, 50, 75, 100].map((p) => (
+                          <option key={p} value={p}>
+                            {p}%
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-xs text-gray-400">
+                        {token.uiAmount.toPrecision(4)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleBulkSell()}
+            disabled={
+              isLoading ||
+              selectedTokens.length === 0 ||
+              !boundWallets.evm
+            }
+            className="w-full rounded-xl bg-white py-3 font-semibold text-gray-900 disabled:bg-gray-600 disabled:text-gray-400"
+          >
+            Sell {selectedTokens.length} via GMGN → ETH
+          </button>
+          {error ? (
+            <p className="text-sm text-amber-300">{error}</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {effectiveChain === "sol" ? (
       <div className="space-y-8">
         {/* Token Chart Section */}
         {selectedToken && (
@@ -1505,11 +1908,15 @@ export default function BulkTokenSeller() {
                 </div>
               )}
               <iframe
-                src={getGmgnKlineUrl(selectedToken, { interval: "1D", theme: "dark" })}
+                src={getGmgnKlineUrl(selectedToken, {
+                  interval: "1D",
+                  theme: "dark",
+                  chain: effectiveChain,
+                })}
                 height="400"
                 className="w-full"
                 style={{ border: "none" }}
-                title={`Birdeye Chart - ${selectedToken}`}
+                title={`GMGN Chart - ${selectedToken}`}
                 onLoad={() => setIsChartLoading(false)}
                 allowFullScreen
                 frameBorder="0"
@@ -2374,9 +2781,9 @@ export default function BulkTokenSeller() {
           }
         />
       </div>
-
-      {/* {connected && (
-      )} */}
+      ) : (
+        <TradeOutcomeModal {...outcomeModalProps} />
+      )}
     </div>
   );
 }

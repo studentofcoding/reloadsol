@@ -173,15 +173,18 @@ export function signGmgnMessage(message: string, privateKeyPem: string): string 
   }
 }
 
-async function gmgnHttpGet(
+async function gmgnHttp(
+  method: 'GET' | 'POST',
   path: string,
   query: Record<string, string>,
   headers: Record<string, string>,
+  bodyStr: string | null = null,
+  autoRetryOnRateLimit = true,
 ): Promise<unknown> {
   const host = getHost()
   const params = new URLSearchParams(query)
   const url = `${host}${path}?${params.toString()}`
-  const maxAttempts = 2
+  const maxAttempts = autoRetryOnRateLimit ? 2 : 1
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const controller = new AbortController()
@@ -189,8 +192,9 @@ async function gmgnHttpGet(
 
     try {
       const response = await fetch(url, {
-        method: 'GET',
+        method,
         headers,
+        body: bodyStr ?? undefined,
         signal: controller.signal,
       })
 
@@ -218,8 +222,12 @@ async function gmgnHttpGet(
 
       if (!response.ok) {
         const msg =
-          body && typeof body === 'object' && 'msg' in body
-            ? String((body as Record<string, unknown>).msg)
+          body && typeof body === 'object'
+            ? String(
+                (body as Record<string, unknown>).msg ??
+                  (body as Record<string, unknown>).message ??
+                  `GMGN HTTP ${response.status}`,
+              )
             : `GMGN HTTP ${response.status}`
         throw new GmgnApiError(msg)
       }
@@ -239,23 +247,38 @@ async function gmgnHttpGet(
   throw new GmgnApiError('GMGN API failed after retries')
 }
 
-async function gmgnFetch(path: string, query: Record<string, string> = {}): Promise<unknown> {
+async function gmgnFetch(
+  path: string,
+  query: Record<string, string> = {},
+  method: 'GET' | 'POST' = 'GET',
+  body: unknown = null,
+): Promise<unknown> {
   const apiKey = getApiKey()
   const params = {
     ...query,
     timestamp: String(Math.floor(Date.now() / 1000)),
     client_id: randomUUID(),
   }
-  return gmgnHttpGet(path, params, {
-    Accept: 'application/json',
-    'X-APIKEY': apiKey,
-  })
+  const bodyStr = body != null ? JSON.stringify(body) : null
+  return gmgnHttp(
+    method,
+    path,
+    params,
+    {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-APIKEY': apiKey,
+    },
+    bodyStr,
+  )
 }
 
 /** Signed auth (follow-wallet / trade routes) — mirrors gmgn-cli OpenApiClient.authSignedRequest. */
 async function gmgnSignedFetch(
   path: string,
   query: Record<string, string> = {},
+  method: 'GET' | 'POST' = 'GET',
+  body: unknown = null,
 ): Promise<unknown> {
   const apiKey = getApiKey()
   const privateKeyPem = getPrivateKeyPem()
@@ -265,14 +288,33 @@ async function gmgnSignedFetch(
     timestamp: String(timestamp),
     client_id: randomUUID(),
   }
-  const message = buildGmgnSignMessage(path, params, '', timestamp)
+  // Signed POST includes JSON body in the message; GET uses empty body string.
+  const bodyStr = body != null ? JSON.stringify(body) : ''
+  const message = buildGmgnSignMessage(path, params, bodyStr, timestamp)
   const signature = signGmgnMessage(message, privateKeyPem)
-  return gmgnHttpGet(path, params, {
-    Accept: 'application/json',
-    'Content-Type': 'application/json',
-    'X-APIKEY': apiKey,
-    'X-Signature': signature,
-  })
+  // Never auto-retry POSTs that spend (swap) on 429.
+  const autoRetry = method !== 'POST'
+  return gmgnHttp(
+    method,
+    path,
+    params,
+    {
+      Accept: 'application/json',
+      'Content-Type': 'application/json',
+      'X-APIKEY': apiKey,
+      'X-Signature': signature,
+    },
+    bodyStr || null,
+    autoRetry,
+  )
+}
+
+/** Bound wallets + balances for the API key (`portfolio info`). */
+export async function userInfo(): Promise<Record<string, unknown>> {
+  const data = unwrapApiData<Record<string, unknown>>(
+    await gmgnFetch('/v1/user/info', {}),
+  )
+  return data ?? {}
 }
 
 export async function trackSmartMoney(params: {
@@ -460,4 +502,215 @@ export async function trackFollowWallet(params: {
     await gmgnSignedFetch('/v1/trade/follow_wallet', query),
   )
   return raw.list ?? []
+}
+
+export type GmgnTradeQuote = {
+  output_amount?: string
+  min_output_amount?: string
+  slippage?: number
+  [key: string]: unknown
+}
+
+export type GmgnTradeSwapResult = {
+  order_id?: string
+  hash?: string
+  status?: string
+  [key: string]: unknown
+}
+
+export type GmgnTradeOrder = {
+  order_id?: string
+  status?: string
+  hash?: string
+  report?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+/** Exist-auth quote — API key only. */
+export async function tradeQuote(params: {
+  chain: string
+  from: string
+  inputToken: string
+  outputToken: string
+  amount: string
+  slippage: number
+}): Promise<GmgnTradeQuote> {
+  const from =
+    params.chain === 'sol' ? params.from : params.from.toLowerCase()
+  return unwrapApiData<GmgnTradeQuote>(
+    await gmgnFetch('/v1/trade/quote', {
+      chain: params.chain,
+      from_address: from,
+      input_token: params.inputToken,
+      output_token: params.outputToken,
+      input_amount: params.amount,
+      slippage: String(params.slippage),
+    }),
+  )
+}
+
+/** Signed POST swap — spends funds; caller must have confirmed. */
+export async function tradeSwap(params: {
+  chain: string
+  from: string
+  inputToken: string
+  outputToken: string
+  amount: string
+  slippage?: number
+  autoSlippage?: boolean
+  /** Sell % of balance; sets input_amount_bps (percent × 100). */
+  percent?: number
+}): Promise<GmgnTradeSwapResult> {
+  const from =
+    params.chain === 'sol' ? params.from : params.from.toLowerCase()
+  const body: Record<string, unknown> = {
+    chain: params.chain,
+    from_address: from,
+    input_token: params.inputToken,
+    output_token: params.outputToken,
+    input_amount:
+      params.percent != null ? (params.amount || '0') : params.amount,
+  }
+  if (params.percent != null) {
+    body.input_amount_bps = String(Math.round(params.percent * 100))
+  }
+  if (params.autoSlippage) {
+    body.auto_slippage = true
+  } else if (params.slippage != null) {
+    body.slippage = params.slippage
+  }
+  if (params.chain === 'sol') {
+    body.is_anti_mev = true
+  }
+  return unwrapApiData<GmgnTradeSwapResult>(
+    await gmgnSignedFetch('/v1/trade/swap', {}, 'POST', body),
+  )
+}
+
+export async function tradeOrderGet(params: {
+  chain: string
+  orderId: string
+}): Promise<GmgnTradeOrder> {
+  return unwrapApiData<GmgnTradeOrder>(
+    await gmgnSignedFetch('/v1/trade/query_order', {
+      chain: params.chain,
+      order_id: params.orderId,
+    }),
+  )
+}
+
+export async function walletHoldings(params: {
+  chain: string
+  wallet: string
+  limit?: number
+}): Promise<Record<string, unknown>[]> {
+  const wallet =
+    params.chain === 'sol' ? params.wallet : params.wallet.toLowerCase()
+  const query: Record<string, string> = {
+    chain: params.chain,
+    wallet_address: wallet,
+  }
+  if (params.limit != null) query.limit = String(params.limit)
+  const data = unwrapApiData<{ holdings?: Record<string, unknown>[] } | Record<string, unknown>[]>(
+    await gmgnSignedFetch('/v1/user/wallet_holdings', query),
+  )
+  if (Array.isArray(data)) return data
+  if (data && typeof data === 'object' && Array.isArray(data.holdings)) {
+    return data.holdings
+  }
+  return []
+}
+
+/** Normalize a GMGN token/rank row to Jupiter-search-like shape for BulkTokenBuyer. */
+export function normalizeGmgnSearchToken(
+  row: Record<string, unknown>,
+): {
+  id: string
+  address: string
+  name: string
+  symbol: string
+  icon?: string
+  mcap?: number
+} | null {
+  const address = String(row.address ?? row.token_address ?? '').trim()
+  if (!address) return null
+  const symbol = String(row.symbol ?? row.token_symbol ?? '???')
+  const name = String(row.name ?? row.token_name ?? symbol)
+  const icon =
+    typeof row.logo === 'string'
+      ? row.logo
+      : typeof row.logo_url === 'string'
+        ? row.logo_url
+        : typeof row.icon === 'string'
+          ? row.icon
+          : undefined
+  const mcapRaw = row.market_cap ?? row.mcap ?? row.usd_market_cap
+  const mcap =
+    typeof mcapRaw === 'number'
+      ? mcapRaw
+      : typeof mcapRaw === 'string'
+        ? Number(mcapRaw)
+        : undefined
+  return {
+    id: address,
+    address,
+    name,
+    symbol,
+    icon,
+    mcap: Number.isFinite(mcap) ? mcap : undefined,
+  }
+}
+
+export async function searchTokensForChain(params: {
+  chain: string
+  query: string
+  limit?: number
+}): Promise<ReturnType<typeof normalizeGmgnSearchToken>[]> {
+  const q = params.query.trim()
+  const limit = params.limit ?? 20
+  if (!q) {
+    const rank = await marketTrending({
+      chain: params.chain,
+      interval: '1h',
+      limit,
+      orderBy: 'volume',
+      direction: 'desc',
+    })
+    return rank
+      .map((r) => normalizeGmgnSearchToken(r))
+      .filter((t): t is NonNullable<typeof t> => t != null)
+      .slice(0, limit)
+  }
+
+  const looksEvm = /^0x[a-fA-F0-9]{40}$/i.test(q)
+  const looksSol = !looksEvm && q.length >= 32 && q.length <= 44
+  if (looksEvm || looksSol) {
+    try {
+      const info = await tokenInfo({ chain: params.chain, address: q })
+      const one = normalizeGmgnSearchToken({ ...info, address: q })
+      return one ? [one] : []
+    } catch {
+      return []
+    }
+  }
+
+  const rank = await marketTrending({
+    chain: params.chain,
+    interval: '1h',
+    limit: 100,
+    orderBy: 'volume',
+    direction: 'desc',
+  })
+  const needle = q.toLowerCase()
+  return rank
+    .map((r) => normalizeGmgnSearchToken(r))
+    .filter((t): t is NonNullable<typeof t> => {
+      if (!t) return false
+      return (
+        t.symbol.toLowerCase().includes(needle) ||
+        t.name.toLowerCase().includes(needle) ||
+        t.address.toLowerCase().includes(needle)
+      )
+    })
+    .slice(0, limit)
 }

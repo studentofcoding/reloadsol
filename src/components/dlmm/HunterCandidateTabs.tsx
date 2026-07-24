@@ -18,6 +18,7 @@ import {
 } from '@/utils/dlmm/lp-terminal';
 import DlmmGeneralPoolsTable from '@/components/dlmm/DlmmGeneralPoolsTable';
 import LpTerminalPoolsTable from '@/components/dlmm/LpTerminalPoolsTable';
+import RhUniv2LpSheet from '@/components/dlmm/RhUniv2LpSheet';
 import ScrollableMenuRow from '@/components/ScrollableMenuRow';
 
 function formatUsd(n: number) {
@@ -214,6 +215,7 @@ function RobinhoodCard({ t }: { t: RobinhoodScreenToken }) {
   const website = socialHref(t.website, 'website');
   const lpTerminalUrl = getLpTerminalPoolsUrl(t.address);
   const [copied, setCopied] = useState(false);
+  const [lpOpen, setLpOpen] = useState(false);
 
   return (
     <div className="bg-gray-800 border border-gray-600 rounded-lg p-4 flex flex-col gap-3">
@@ -344,13 +346,20 @@ function RobinhoodCard({ t }: { t: RobinhoodScreenToken }) {
       </div>
 
       <div className="flex flex-col sm:flex-row gap-2 mt-1">
+        <button
+          type="button"
+          onClick={() => setLpOpen(true)}
+          className="flex-1 text-center py-2 bg-emerald-600 hover:bg-emerald-500 text-black text-sm font-medium rounded"
+        >
+          Add LP
+        </button>
         <a
           href={lpTerminalUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex-1 text-center py-2 bg-emerald-600 hover:bg-emerald-500 text-black text-sm font-medium rounded"
+          className="px-3 py-2 text-center text-xs text-gray-400 hover:text-gray-200 border border-gray-700 rounded"
         >
-          Open in LP Terminal
+          LP Terminal ↗
         </a>
         <button
           type="button"
@@ -362,15 +371,22 @@ function RobinhoodCard({ t }: { t: RobinhoodScreenToken }) {
             });
           }}
           className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded"
-          title="Copy CA for UNISWAP search in LP Terminal"
+          title="Copy token address"
         >
           {copied ? 'Copied CA' : 'Copy CA'}
         </button>
       </div>
       <p className="text-[11px] text-gray-500">
-        LP on Robinhood Chain (4663) via LP Terminal — connect wallet there; not
-        Meteora Deploy.
+        In-app Uniswap V2 zap (USDG/WETH) on Robinhood — not Meteora Deploy.
       </p>
+      {lpOpen ? (
+        <RhUniv2LpSheet
+          open
+          onClose={() => setLpOpen(false)}
+          tokenAddress={t.address}
+          tokenSymbol={t.symbol}
+        />
+      ) : null}
     </div>
   );
 }
@@ -543,17 +559,18 @@ export default function HunterCandidateTabs({
           </div>
           {robinhoodView === 'pools' ? (
             <p className="text-gray-500 text-sm">
-              Uni v2/v3 pools on Robinhood Chain (4663) via LP Terminal indexer.{' '}
-              <span className="text-gray-400">+ LP</span> opens{' '}
+              Uni v2/v3 pools on Robinhood Chain (4663).{' '}
+              <span className="text-gray-400">Add LP</span> = in-app V2 zap
+              (USDG/WETH);{' '}
               <a
                 href={getLpTerminalPoolsUrl()}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-emerald-400 hover:underline"
               >
-                LP Terminal
+                Terminal ↗
               </a>{' '}
-              — connect wallet there (not Meteora Deploy).
+              is the escape hatch (not Meteora Deploy).
             </p>
           ) : (
             <>

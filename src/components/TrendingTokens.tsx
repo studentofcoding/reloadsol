@@ -50,10 +50,13 @@ export default function TrendingTokens({
   onSelectToken,
   preview = false,
   onConnectRequest,
+  chain,
 }: {
   onSelectToken: (mintAddress: string) => void
   preview?: boolean
   onConnectRequest?: () => void
+  /** When set, load GMGN market rank for this chain (buy page). */
+  chain?: 'sol' | 'robinhood'
 }) {
   const [trendingTokens, setTrendingTokens] = useState<TrendingToken[]>([])
   const [isLoading, setIsLoading] = useState<boolean>(true)
@@ -76,25 +79,54 @@ export default function TrendingTokens({
       setError(null)
       
       try {
-        // Use the new filtered API endpoint specifically for TrendingTokens
-        const response = await fetch('/api/trending/filtered')
-        
-        if (!response.ok) {
-          throw new Error(`Failed to fetch trending tokens: ${response.status}`)
-        }
-        
-        const data = await response.json()
-        const tokens = data.tokens || []
-        
-        // Remove duplicate tokens with the same token_address
-        const tokenMap = new Map<string, TrendingToken>()
-        tokens.forEach((token: TrendingToken) => {
-          if (!tokenMap.has(token.token_address)) {
-            tokenMap.set(token.token_address, token)
+        let uniqueTokens: TrendingToken[] = []
+        if (chain) {
+          const response = await fetch(
+            `/api/gmgn/token/search?chain=${encodeURIComponent(chain)}&query=`,
+          )
+          if (!response.ok) {
+            throw new Error(`Failed to fetch GMGN trending: ${response.status}`)
           }
-        })
-        
-        const uniqueTokens = Array.from(tokenMap.values())
+          const rows = (await response.json()) as Array<{
+            id?: string
+            address?: string
+            symbol?: string
+            mcap?: number
+            icon?: string
+          }>
+          const tokenMap = new Map<string, TrendingToken>()
+          for (const row of Array.isArray(rows) ? rows : []) {
+            const addr = String(row.address ?? row.id ?? '')
+            if (!addr || tokenMap.has(addr)) continue
+            tokenMap.set(addr, {
+              token_symbol: row.symbol || '???',
+              token_address: addr,
+              price: 0,
+              change_1h: 0,
+              change_5m: 0,
+              volume_1h: 0,
+              mcap: row.mcap,
+              logo_url: row.icon,
+            })
+          }
+          uniqueTokens = Array.from(tokenMap.values())
+        } else {
+          // Legacy Sol-only Jupiter/filtered feed for other callers
+          const response = await fetch('/api/trending/filtered')
+          if (!response.ok) {
+            throw new Error(`Failed to fetch trending tokens: ${response.status}`)
+          }
+          const data = await response.json()
+          const tokens = data.tokens || []
+          const tokenMap = new Map<string, TrendingToken>()
+          tokens.forEach((token: TrendingToken) => {
+            if (!tokenMap.has(token.token_address)) {
+              tokenMap.set(token.token_address, token)
+            }
+          })
+          uniqueTokens = Array.from(tokenMap.values())
+        }
+
         setTrendingTokens(uniqueTokens.slice(0, 10)) // Take top 10 unique tokens
       } catch (err) {
         console.error('Error fetching trending tokens:', err)
@@ -110,12 +142,12 @@ export default function TrendingTokens({
     const intervalId = setInterval(fetchTrendingTokens, 5 * 60 * 1000)
     
     return () => clearInterval(intervalId)
-  }, [])
+  }, [chain])
 
-  // Fetch price updates every 10 seconds
+  // Fetch price updates every 10 seconds (Jupiter filtered feed only)
   useEffect(() => {
     // Only start price updates after initial token data is loaded
-    if (isLoading || error || trendingTokens.length === 0) return
+    if (chain || isLoading || error || trendingTokens.length === 0) return
 
     const updatePrices = async () => {
       setIsPriceUpdating(true)
@@ -173,7 +205,7 @@ export default function TrendingTokens({
     const priceIntervalId = setInterval(updatePrices, 10 * 1000)
     
     return () => clearInterval(priceIntervalId)
-  }, [isLoading, error, trendingTokens.length])
+  }, [chain, isLoading, error, trendingTokens.length])
 
   // Check if scrolling is needed
   useEffect(() => {

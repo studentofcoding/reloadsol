@@ -2,7 +2,7 @@
 
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useCallback, useRef, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useRpc } from "@/contexts/RpcContext";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
@@ -26,7 +26,7 @@ import {
 } from "@/utils/solana";
 import { BulkBuyRequest, BulkBuyResult } from "@/types";
 import { trackBuy } from "@/utils/operations-api";
-import { getGmgnKlineUrl } from "@/utils/gmgn";
+import { getGmgnKlineUrl, inferGmgnChain, type GmgnChain } from "@/utils/gmgn";
 import TradeProviderBar from "@/components/TradeProviderBar";
 
 interface TokenInfo {
@@ -51,13 +51,28 @@ interface RiskInfo {
 export default function ChartPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { publicKey, signAllTransactions, connected } = useWallet();
   const { connection } = useConnection();
   const { activeRpcUrl } = useRpc();
 
   const tokenAddress = params.tokenAddress as string;
+  const chainParam = searchParams.get("chain");
+  const chartChain: GmgnChain =
+    chainParam === "sol" ||
+    chainParam === "robinhood" ||
+    chainParam === "bsc" ||
+    chainParam === "base" ||
+    chainParam === "eth"
+      ? chainParam
+      : inferGmgnChain(tokenAddress);
   const validTokenAddress =
-    tokenAddress && isValidMintAddress(tokenAddress) ? tokenAddress : null;
+    tokenAddress &&
+    (chartChain === "robinhood"
+      ? /^0x[a-fA-F0-9]{40}$/i.test(tokenAddress)
+      : isValidMintAddress(tokenAddress))
+      ? tokenAddress
+      : null;
   const walletAddress = connected && publicKey ? publicKey.toString() : null;
 
   const lastUpdateRef = useRef<number>(Date.now());
@@ -155,7 +170,11 @@ export default function ChartPage() {
     };
   }, [axiomQuery.data]);
 
-  const gmgnChartUrl = getGmgnKlineUrl(tokenAddress, { interval: "5", theme: "dark" });
+  const gmgnChartUrl = getGmgnKlineUrl(tokenAddress, {
+    interval: "5",
+    theme: "dark",
+    chain: chartChain,
+  });
 
   // Buy form state
   const [buyAmount, setBuyAmount] = useState("0.1");

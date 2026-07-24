@@ -2,10 +2,19 @@
 
 import { useDeferredValue, useMemo, useState } from 'react'
 import { useLpTerminalPools } from '@/hooks/useLpTerminalPools'
+import RhUniv2LpSheet from '@/components/dlmm/RhUniv2LpSheet'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
 import { getLpTerminalPoolDeepLink } from '@/utils/dlmm/lp-terminal'
+import {
+  isRhUniv2QuotePool,
+  quoteSymbolForAddress,
+} from '@/utils/dlmm/rh-univ2'
 
 type ProtoFilter = '' | 'univ3' | 'univ2'
+
+function canInAppAdd(row: { proto: string; token0: string; token1: string }) {
+  return isRhUniv2QuotePool(row)
+}
 
 export default function LpTerminalPoolsTable() {
   const [q, setQ] = useState('')
@@ -13,6 +22,11 @@ export default function LpTerminalPoolsTable() {
   const [proto, setProto] = useState<ProtoFilter>('')
   const [hideDust, setHideDust] = useState(true)
   const [sort, setSort] = useState<'tvl' | 'vol' | 'created'>('vol')
+  const [addPool, setAddPool] = useState<{
+    address: string
+    tokenAddress: string
+    tokenSymbol?: string
+  } | null>(null)
 
   const { rows, count, totals, ready, isLoading, isFetching, error, refetch } =
     useLpTerminalPools(true, {
@@ -145,14 +159,36 @@ export default function LpTerminalPoolsTable() {
                     {formatApr(row.feeAprPct)}
                   </td>
                   <td className="px-3 py-2.5 text-right text-gray-600">—</td>
-                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                  <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-1">
+                    {canInAppAdd(row) ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const q0 = quoteSymbolForAddress(row.token0)
+                          const q1 = quoteSymbolForAddress(row.token1)
+                          const base = q0 ? row.token1 : row.token0
+                          const parts = row.pair.split('/')
+                          const baseSym = q0
+                            ? parts[1]?.trim()
+                            : parts[0]?.trim()
+                          setAddPool({
+                            address: row.address,
+                            tokenAddress: base,
+                            tokenSymbol: baseSym,
+                          })
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 border border-emerald-700 text-emerald-300 hover:bg-emerald-950/50"
+                      >
+                        Add LP
+                      </button>
+                    ) : null}
                     <a
                       href={getLpTerminalPoolDeepLink(row.address)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 px-2 py-1 border border-emerald-700 text-emerald-300 hover:bg-emerald-950/50"
+                      className="inline-flex items-center gap-1 px-2 py-1 border border-gray-700 text-gray-400 hover:text-gray-200"
                     >
-                      + LP ↗
+                      Terminal ↗
                     </a>
                   </td>
                 </tr>
@@ -161,6 +197,16 @@ export default function LpTerminalPoolsTable() {
           </table>
         </div>
       )}
+
+      {addPool ? (
+        <RhUniv2LpSheet
+          open
+          onClose={() => setAddPool(null)}
+          poolAddress={addPool.address}
+          tokenAddress={addPool.tokenAddress}
+          tokenSymbol={addPool.tokenSymbol}
+        />
+      ) : null}
     </div>
   )
 }

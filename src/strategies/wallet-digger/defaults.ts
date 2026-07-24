@@ -146,7 +146,7 @@ export function mergeRosterConfig(
 
   const chains =
     o.chains?.length && o.chains.every((c) => c === 'sol' || c === 'robinhood')
-      ? ([...new Set(o.chains)] as RosterChain[])
+      ? (Array.from(new Set(o.chains)) as RosterChain[])
       : [...DEFAULT_ROSTER_CONFIG.chains]
 
   return {
