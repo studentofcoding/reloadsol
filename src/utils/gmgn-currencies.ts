@@ -5,10 +5,18 @@ export type GmgnTradeChain = 'sol' | 'robinhood'
 export const GMGN_NATIVE_ETH = '0x0000000000000000000000000000000000000000'
 export const GMGN_SOL_NATIVE = 'So11111111111111111111111111111111111111112'
 export const GMGN_SOL_USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+/** Robinhood USDG — same as RH_USDG in rh-univ2. */
+export const GMGN_RH_USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168'
 
 export const GMGN_CHAIN_CURRENCIES: Record<
   GmgnTradeChain,
-  { native: string; nativeSymbol: string; nativeDecimals: number; usdc?: string }
+  {
+    native: string
+    nativeSymbol: string
+    nativeDecimals: number
+    usdc?: string
+    usdg?: string
+  }
 > = {
   sol: {
     native: GMGN_SOL_NATIVE,
@@ -20,7 +28,20 @@ export const GMGN_CHAIN_CURRENCIES: Record<
     native: GMGN_NATIVE_ETH,
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
+    usdg: GMGN_RH_USDG,
   },
+}
+
+/** Decimals for GMGN input/output token amount encoding. */
+export function gmgnTokenDecimals(
+  chain: GmgnTradeChain,
+  token: string,
+): number {
+  const meta = GMGN_CHAIN_CURRENCIES[chain]
+  const t = token.trim().toLowerCase()
+  if (meta.usdc && t === meta.usdc.toLowerCase()) return 6
+  if (meta.usdg && t === meta.usdg.toLowerCase()) return 6
+  return meta.nativeDecimals
 }
 
 export function isGmgnTradeChain(value: string): value is GmgnTradeChain {

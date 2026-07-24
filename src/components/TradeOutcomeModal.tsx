@@ -9,6 +9,8 @@ export type CloseableAccount = {
   symbol?: string;
 };
 
+export type TradeAmountUnit = 'SOL' | 'ETH' | 'USDC' | 'USDG';
+
 export type TradeOutcomeState = {
   isOpen: boolean;
   success: boolean;
@@ -17,6 +19,8 @@ export type TradeOutcomeState = {
   tokenSymbol?: string;
   mintAddress?: string;
   solAmount?: number;
+  /** Unit for solAmount display (default SOL). */
+  amountUnit?: TradeAmountUnit;
   error?: string;
   /** Successful 100% sells eligible for rent reclaim (post-sell CTA). */
   closeableAccounts?: CloseableAccount[];
@@ -87,6 +91,7 @@ export default function TradeOutcomeModal({
   tokenSymbol,
   mintAddress,
   solAmount,
+  amountUnit = 'SOL',
   error,
   closeableAccounts,
   onCloseAccounts,
@@ -152,7 +157,7 @@ export default function TradeOutcomeModal({
             <p className="text-gray-400 text-sm">
               {operation === 'buy' ? 'Spent' : 'Received'}:{' '}
               <span className="text-white font-mono">
-                {solAmount.toFixed(4)} SOL
+                {solAmount.toFixed(4)} {amountUnit}
               </span>
             </p>
           ) : null}

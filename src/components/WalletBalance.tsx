@@ -2,9 +2,9 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet, useConnection } from "./WalletProvider";
-import { fetchUserTokens, UserToken } from "@/utils/jupiter";
+import { fetchUserTokens } from "@/utils/jupiter";
 import { useSolPrice } from "@/hooks/useSolPrice";
-import { useWalletBalances } from "@/hooks/useWalletBalances";
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 
 interface WalletBalanceProps {
   onBalanceChange?: (balance: number) => void;
@@ -13,22 +13,15 @@ interface WalletBalanceProps {
 export default function WalletBalance({ onBalanceChange }: WalletBalanceProps) {
   const { publicKey, connected } = useWallet();
   const { connection } = useConnection();
-  const walletAddress = connected && publicKey ? publicKey.toString() : null;
+  const {
+    solBalance: balance,
+    isLoadingBalances: isLoading,
+    refreshBalances,
+  } = usePortfolioWallet();
   const [showUSD, setShowUSD] = useState<boolean>(false);
   const [totalPortfolioValue, setTotalPortfolioValue] = useState<number>(0);
   const [isLoadingPortfolio, setIsLoadingPortfolio] = useState<boolean>(false);
   const isFetchingRef = useRef(false);
-
-  const {
-    walletBalance: balance,
-    isLoadingBalances: isLoading,
-    refreshBalances,
-  } = useWalletBalances({
-    connection,
-    publicKey,
-    walletAddress,
-    enabled: connected && !!publicKey,
-  });
 
   const { data: solPrice = 0 } = useSolPrice(60_000);
 

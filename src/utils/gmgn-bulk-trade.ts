@@ -2,6 +2,7 @@ import type { GmgnTradeChain } from './gmgn-currencies'
 import {
   GMGN_CHAIN_CURRENCIES,
   gmgnNativeToken,
+  gmgnTokenDecimals,
   slippageBpsToGmgnPercent,
   toGmgnRawAmount,
 } from './gmgn-currencies'
@@ -114,10 +115,8 @@ async function pollOrder(
 export async function executeGmgnBulkBuy(
   params: GmgnBulkBuyParams,
 ): Promise<{ success: boolean; results: GmgnBulkLegResult[] }> {
-  const meta = GMGN_CHAIN_CURRENCIES[params.chain]
   const inputToken = params.inputToken ?? gmgnNativeToken(params.chain)
-  const decimals =
-    inputToken === meta.usdc ? 6 : meta.nativeDecimals
+  const decimals = gmgnTokenDecimals(params.chain, inputToken)
   const amountRaw = toGmgnRawAmount(params.amountHuman, decimals)
   const slippage = slippageBpsToGmgnPercent(params.slippageBps)
   const quoteFn = params.quoteFn ?? defaultQuote
@@ -270,7 +269,7 @@ export function buildGmgnBuyQuoteRequest(params: {
 } {
   const meta = GMGN_CHAIN_CURRENCIES[params.chain]
   const inputToken = params.inputToken ?? meta.native
-  const decimals = inputToken === meta.usdc ? 6 : meta.nativeDecimals
+  const decimals = gmgnTokenDecimals(params.chain, inputToken)
   return {
     chain: params.chain,
     from: params.from,

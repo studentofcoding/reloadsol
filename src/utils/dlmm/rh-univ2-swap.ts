@@ -6,6 +6,7 @@
 import {
   encodeFunctionData,
   parseEther,
+  parseUnits,
   type Address,
   type PublicClient,
   type WalletClient,
@@ -18,6 +19,8 @@ import {
   type RhTxCall,
 } from '@/utils/dlmm/rh-send-calls'
 import {
+  RH_USDG,
+  RH_USDG_DECIMALS,
   RH_V2_FACTORY,
   RH_V2_ROUTER,
   RH_WETH,
@@ -31,19 +34,29 @@ import {
 const ZERO = '0x0000000000000000000000000000000000000000'
 
 export type RhUniv2TxCall = RhTxCall
+/** Buy-from / sell-to quote currency on RH UniV2. */
+export type RhSwapQuote = 'ETH' | 'USDG'
 
-async function requireWethPair(
+function quoteAddress(quote: RhSwapQuote): Address {
+  return quote === 'USDG' ? RH_USDG : RH_WETH
+}
+
+async function requireQuotePair(
   publicClient: PublicClient,
   token: Address,
+  quote: RhSwapQuote,
 ): Promise<void> {
+  const q = quoteAddress(quote)
   const pair = await publicClient.readContract({
     address: RH_V2_FACTORY,
     abi: univ2FactoryAbi,
     functionName: 'getPair',
-    args: [RH_WETH, token],
+    args: [q, token],
   })
   if (!pair || normalizeAddress(pair) === ZERO) {
-    throw new Error('No UniV2 WETH pair for token — cannot parent-swap')
+    throw new Error(
+      `No UniV2 ${quote} pair for token — cannot parent-swap`,
+    )
   }
 }
 
@@ -51,7 +64,7 @@ function deadline(): bigint {
   return BigInt(Math.floor(Date.now() / 1000) + 20 * 60)
 }
 
-/** Pure encode: approve (if allowance < amountIn) + swapExactTokensForETH. */
+/** Pure encode: approve (if needed) + sell into ETH or USDG. */
 export function buildRhUniv2SellCalls(params: {
   token: Address
   account: Address
@@ -59,8 +72,17 @@ export function buildRhUniv2SellCalls(params: {
   minOut: bigint
   allowance: bigint
   deadlineTs: bigint
+  quote?: RhSwapQuote
 }): RhUniv2TxCall[] {
-  const { token, account, amountIn, minOut, allowance, deadlineTs } = params
+  const {
+    token,
+    account,
+    amountIn,
+    minOut,
+    allowance,
+    deadlineTs,
+    quote = 'ETH',
+  } = params
   const calls: RhUniv2TxCall[] = []
   if (allowance < amountIn) {
     calls.push({
@@ -72,15 +94,27 @@ export function buildRhUniv2SellCalls(params: {
       }),
     })
   }
-  const path = [token, RH_WETH] as Address[]
-  calls.push({
-    to: RH_V2_ROUTER,
-    data: encodeFunctionData({
-      abi: univ2RouterAbi,
-      functionName: 'swapExactTokensForETH',
-      args: [amountIn, minOut, path, account, deadlineTs],
-    }),
-  })
+  if (quote === 'ETH') {
+    const path = [token, RH_WETH] as Address[]
+    calls.push({
+      to: RH_V2_ROUTER,
+      data: encodeFunctionData({
+        abi: univ2RouterAbi,
+        functionName: 'swapExactTokensForETH',
+        args: [amountIn, minOut, path, account, deadlineTs],
+      }),
+    })
+  } else {
+    const path = [token, RH_USDG] as Address[]
+    calls.push({
+      to: RH_V2_ROUTER,
+      data: encodeFunctionData({
+        abi: univ2RouterAbi,
+        functionName: 'swapExactTokensForTokens',
+        args: [amountIn, minOut, path, account, deadlineTs],
+      }),
+    })
+  }
   return calls
 }
 
@@ -92,11 +126,12 @@ export async function prepareRhUniv2SellLegCalls(params: {
   percent: number
   slippageBps: number
   deadlineTs?: bigint
+  quote?: RhSwapQuote
 }): Promise<RhUniv2TxCall[]> {
-  const { publicClient, account, token, slippageBps } = params
+  const { publicClient, account, token, slippageBps, quote = 'ETH' } = params
   const pct = params.percent
   if (!(pct > 0) || pct > 100) throw new Error('Sell % must be 1–100')
-  await requireWethPair(publicClient, token)
+  await requireQuotePair(publicClient, token, quote)
   const balance = await publicClient.readContract({
     address: token,
     abi: erc20Abi,
@@ -105,7 +140,7 @@ export async function prepareRhUniv2SellLegCalls(params: {
   })
   const amountIn = (balance * BigInt(Math.floor(pct * 100))) / BigInt(10_000)
   if (amountIn <= BigInt(0)) throw new Error('No token balance to sell')
-  const path = [token, RH_WETH] as Address[]
+  const path = [token, quoteAddress(quote)] as Address[]
   const amounts = await publicClient.readContract({
     address: RH_V2_ROUTER,
     abi: univ2RouterAbi,
@@ -127,22 +162,60 @@ export async function prepareRhUniv2SellLegCalls(params: {
     minOut,
     allowance,
     deadlineTs: params.deadlineTs ?? deadline(),
+    quote,
   })
 }
 
-export async function rhUniv2BuyExactEth(params: {
+/** Buy token with ETH (native) or USDG ERC20. */
+export async function rhUniv2BuyExact(params: {
   publicClient: PublicClient
   walletClient: WalletClient
   account: Address
   token: Address
-  amountEthHuman: number
+  amountHuman: number
   slippageBps: number
+  quote?: RhSwapQuote
 }): Promise<{ hash: string }> {
-  const { publicClient, walletClient, account, token, slippageBps } = params
-  if (!(params.amountEthHuman > 0)) throw new Error('ETH amount must be > 0')
-  await requireWethPair(publicClient, token)
-  const amountIn = parseEther(String(params.amountEthHuman))
-  const path = [RH_WETH, token] as Address[]
+  const {
+    publicClient,
+    walletClient,
+    account,
+    token,
+    slippageBps,
+    quote = 'ETH',
+  } = params
+  if (!(params.amountHuman > 0)) {
+    throw new Error(`${quote} amount must be > 0`)
+  }
+  await requireQuotePair(publicClient, token, quote)
+  const dl = deadline()
+
+  if (quote === 'ETH') {
+    const amountIn = parseEther(String(params.amountHuman))
+    const path = [RH_WETH, token] as Address[]
+    const amounts = await publicClient.readContract({
+      address: RH_V2_ROUTER,
+      abi: univ2RouterAbi,
+      functionName: 'getAmountsOut',
+      args: [amountIn, path],
+    })
+    const expected = amounts[amounts.length - 1]!
+    const minOut = applySlippageMinOut(expected, slippageBps)
+    const hash = await walletClient.writeContract({
+      account,
+      chain: walletClient.chain,
+      address: RH_V2_ROUTER,
+      abi: univ2RouterAbi,
+      functionName: 'swapExactETHForTokens',
+      args: [minOut, path, account, dl],
+      value: amountIn,
+    })
+    await publicClient.waitForTransactionReceipt({ hash })
+    return { hash }
+  }
+
+  const amountIn = parseUnits(String(params.amountHuman), RH_USDG_DECIMALS)
+  const path = [RH_USDG, token] as Address[]
   const amounts = await publicClient.readContract({
     address: RH_V2_ROUTER,
     abi: univ2RouterAbi,
@@ -151,17 +224,53 @@ export async function rhUniv2BuyExactEth(params: {
   })
   const expected = amounts[amounts.length - 1]!
   const minOut = applySlippageMinOut(expected, slippageBps)
+  const allowance = await publicClient.readContract({
+    address: RH_USDG,
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [account, RH_V2_ROUTER],
+  })
+  if (allowance < amountIn) {
+    const approveHash = await walletClient.writeContract({
+      account,
+      chain: walletClient.chain,
+      address: RH_USDG,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [RH_V2_ROUTER, amountIn],
+    })
+    await publicClient.waitForTransactionReceipt({ hash: approveHash })
+  }
   const hash = await walletClient.writeContract({
     account,
     chain: walletClient.chain,
     address: RH_V2_ROUTER,
     abi: univ2RouterAbi,
-    functionName: 'swapExactETHForTokens',
-    args: [minOut, path, account, deadline()],
-    value: amountIn,
+    functionName: 'swapExactTokensForTokens',
+    args: [amountIn, minOut, path, account, dl],
   })
   await publicClient.waitForTransactionReceipt({ hash })
   return { hash }
+}
+
+/** @deprecated Use rhUniv2BuyExact({ quote: 'ETH', ... }) */
+export async function rhUniv2BuyExactEth(params: {
+  publicClient: PublicClient
+  walletClient: WalletClient
+  account: Address
+  token: Address
+  amountEthHuman: number
+  slippageBps: number
+}): Promise<{ hash: string }> {
+  return rhUniv2BuyExact({
+    publicClient: params.publicClient,
+    walletClient: params.walletClient,
+    account: params.account,
+    token: params.token,
+    amountHuman: params.amountEthHuman,
+    slippageBps: params.slippageBps,
+    quote: 'ETH',
+  })
 }
 
 export async function rhUniv2SellTokenPercent(params: {
@@ -171,6 +280,7 @@ export async function rhUniv2SellTokenPercent(params: {
   token: Address
   percent: number
   slippageBps: number
+  quote?: RhSwapQuote
 }): Promise<{ hash: string }> {
   const calls = await prepareRhUniv2SellLegCalls({
     publicClient: params.publicClient,
@@ -178,6 +288,7 @@ export async function rhUniv2SellTokenPercent(params: {
     token: params.token,
     percent: params.percent,
     slippageBps: params.slippageBps,
+    quote: params.quote,
   })
   const { hash } = await executeRhWalletCalls({
     publicClient: params.publicClient,
@@ -196,17 +307,20 @@ export async function executeRhParentBulkBuy(params: {
   amountHuman: number
   tokenMints: GmgnBulkBuyItem[]
   slippageBps: number
+  quote?: RhSwapQuote
 }): Promise<{ success: boolean; results: GmgnBulkLegResult[] }> {
+  const quote = params.quote ?? 'ETH'
   const results: GmgnBulkLegResult[] = []
   for (const item of params.tokenMints) {
     try {
-      const { hash } = await rhUniv2BuyExactEth({
+      const { hash } = await rhUniv2BuyExact({
         publicClient: params.publicClient,
         walletClient: params.walletClient,
         account: params.account,
         token: item.tokenAddress as Address,
-        amountEthHuman: params.amountHuman,
+        amountHuman: params.amountHuman,
         slippageBps: params.slippageBps,
+        quote,
       })
       results.push({
         tokenAddress: item.tokenAddress,
@@ -236,7 +350,9 @@ async function executeRhParentBulkSellSequential(params: {
   account: Address
   legs: Array<{ tokenAddress: string; percent: number; symbol?: string }>
   slippageBps: number
+  quote?: RhSwapQuote
 }): Promise<{ success: boolean; results: GmgnBulkLegResult[] }> {
+  const quote = params.quote ?? 'ETH'
   const results: GmgnBulkLegResult[] = []
   for (const leg of params.legs) {
     try {
@@ -247,6 +363,7 @@ async function executeRhParentBulkSellSequential(params: {
         token: leg.tokenAddress as Address,
         percent: leg.percent,
         slippageBps: params.slippageBps,
+        quote,
       })
       results.push({
         tokenAddress: leg.tokenAddress,
@@ -276,7 +393,9 @@ export async function executeRhParentBulkSell(params: {
   account: Address
   legs: Array<{ tokenAddress: string; percent: number; symbol?: string }>
   slippageBps: number
+  quote?: RhSwapQuote
 }): Promise<{ success: boolean; results: GmgnBulkLegResult[] }> {
+  const quote = params.quote ?? 'ETH'
   if (params.legs.length <= 1) {
     return executeRhParentBulkSellSequential(params)
   }
@@ -297,6 +416,7 @@ export async function executeRhParentBulkSell(params: {
         percent: leg.percent,
         slippageBps: params.slippageBps,
         deadlineTs,
+        quote,
       })
       prepared.push({ leg, calls })
     } catch (error) {

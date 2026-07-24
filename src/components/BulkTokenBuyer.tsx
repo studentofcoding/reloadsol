@@ -15,7 +15,7 @@ import { useRpc } from "@/contexts/RpcContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
-import { useWalletBalances } from "@/hooks/useWalletBalances";
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useGmgnTokenSearch } from "@/hooks/useGmgnTokenSearch";
 import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
 import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
@@ -67,6 +67,7 @@ import {
 import {
   type GmgnTradeChain,
   GMGN_CHAIN_CURRENCIES,
+  GMGN_RH_USDG,
   gmgnNativeToken,
   parseTradeTokenAddresses,
   isValidTradeTokenAddress,
@@ -75,7 +76,12 @@ import {
   buildGmgnBuyQuoteRequest,
   executeGmgnBulkBuy,
 } from "@/utils/gmgn-bulk-trade";
-import { executeRhParentBulkBuy } from "@/utils/dlmm/rh-univ2-swap";
+import {
+  executeRhParentBulkBuy,
+  type RhSwapQuote,
+} from "@/utils/dlmm/rh-univ2-swap";
+
+type SpendCurrency = "SOL" | "USDC" | "ETH" | "USDG";
 
 export default function BulkTokenBuyer() {
   const { signAllTransactions, connected } = useWallet();
@@ -123,9 +129,8 @@ export default function BulkTokenBuyer() {
   const [tokenMints, setTokenMints] = useState<string>(getInitialTokenMints);
   const [slippage, setSlippage] = useState<number>(200); // 1%
   const [priorityFee, setPriorityFee] = useState<number>(30000); // 0.0003 SOL
-  const [selectedCurrency, setSelectedCurrency] = useState<"SOL" | "USDC">(
-    "SOL",
-  );
+  const [solCurrency, setSolCurrency] = useState<"SOL" | "USDC">("SOL");
+  const [rhCurrency, setRhCurrency] = useState<RhSwapQuote>("ETH");
   const [useGmgnOnSol, setUseGmgnOnSol] = useState(false);
   const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
@@ -159,6 +164,9 @@ export default function BulkTokenBuyer() {
       : effectiveUseGmgn
         ? Boolean(connected && solGmgnSynced && boundWallets.sol)
         : Boolean(connected && publicKey && signAllTransactions);
+  const selectedCurrency: SpendCurrency = isRhChain ? rhCurrency : solCurrency;
+  const rhQuote: RhSwapQuote = rhCurrency;
+  const spendUnit: SpendCurrency = selectedCurrency;
 
   // URL parameter initialization state
   const [initialized] = useState<boolean>(true);
@@ -190,15 +198,14 @@ export default function BulkTokenBuyer() {
   const [balanceAfter, setBalanceAfter] = useState<number>(0);
 
   const {
-    walletBalance,
+    nativeBalance,
+    solBalance,
     usdcBalance,
+    usdgBalance,
+    connected: portfolioConnected,
     refreshBalances,
-  } = useWalletBalances({
-    connection,
-    publicKey,
-    walletAddress,
-    enabled: isWalletReady,
-  });
+  } = usePortfolioWallet();
+  const walletBalance = solBalance;
 
   const rhWalletTokens = useRhWalletTokens();
 
@@ -623,7 +630,11 @@ export default function BulkTokenBuyer() {
 
   // Handle currency toggle
   const toggleCurrency = () => {
-    setSelectedCurrency((prev) => (prev === "SOL" ? "USDC" : "SOL"));
+    if (isRhChain) {
+      setRhCurrency((prev) => (prev === "ETH" ? "USDG" : "ETH"));
+      return;
+    }
+    setSolCurrency((prev) => (prev === "SOL" ? "USDC" : "SOL"));
   };
 
   const refreshBalancesRef = useRef(refreshBalances);
@@ -661,12 +672,15 @@ export default function BulkTokenBuyer() {
           amountHuman: parseFloat(solAmount),
           tokenMints,
           slippageBps: slippage,
+          quote: rhQuote,
         }));
       } else {
         const inputToken =
           effectiveChain === "sol" && selectedCurrency === "USDC"
             ? TOKENS.USDC
-            : gmgnNativeToken(effectiveChain);
+            : effectiveChain === "robinhood" && selectedCurrency === "USDG"
+              ? GMGN_RH_USDG
+              : gmgnNativeToken(effectiveChain);
         ({ results, success } = await executeGmgnBulkBuy({
           chain: effectiveChain,
           from: tradeFromAddress,
@@ -711,6 +725,7 @@ export default function BulkTokenBuyer() {
             ? ok[0]?.symbol
             : `${ok.length} tokens`,
         solAmount: parseFloat(solAmount),
+        amountUnit: spendUnit,
         error: success
           ? undefined
           : fail[0]?.error || (useRhParentPath ? "Parent UniV2 buy failed" : "GMGN buy failed"),
@@ -728,6 +743,8 @@ export default function BulkTokenBuyer() {
     rhWallet,
     effectiveChain,
     selectedCurrency,
+    rhQuote,
+    spendUnit,
     solAmount,
     validMints,
     tokenList,
@@ -741,9 +758,7 @@ export default function BulkTokenBuyer() {
   // Handle form submission
   const handleBulkBuy = useCallback(async () => {
     if (!solAmount || parseFloat(solAmount) <= 0) {
-      setError(
-        `Please enter a valid ${isRhChain ? "ETH" : selectedCurrency} amount`,
-      );
+      setError(`Please enter a valid ${spendUnit} amount`);
       return;
     }
 
@@ -774,7 +789,8 @@ export default function BulkTokenBuyer() {
       setIsLoading(true);
       setError("");
       try {
-        const inputToken = gmgnNativeToken("robinhood");
+        const inputToken =
+          selectedCurrency === "USDG" ? GMGN_RH_USDG : gmgnNativeToken("robinhood");
         const legs: GmgnConfirmLeg[] = [];
         for (const mint of validMints) {
           let estOut: string | undefined;
@@ -804,7 +820,7 @@ export default function BulkTokenBuyer() {
           legs.push({
             tokenAddress: mint,
             symbol: tokenList.find((t) => t.address === mint)?.symbol,
-            amountLabel: `${solAmount} ETH${
+            amountLabel: `${solAmount} ${spendUnit}${
               useRhParentPath ? " · UniV2 / Rabby" : ""
             }`,
             estOut,
@@ -933,7 +949,7 @@ export default function BulkTokenBuyer() {
         tokenMints: validMints,
         slippage,
         priorityFee,
-        inputCurrency: selectedCurrency,
+        inputCurrency: selectedCurrency === "USDC" ? "USDC" : "SOL",
       };
 
       // Debug logging for USDC mode
@@ -976,6 +992,7 @@ export default function BulkTokenBuyer() {
               ? firstSymbol
               : `${buyResult.successfulPurchases.length} tokens`,
           solAmount: parseFloat(solAmount),
+          amountUnit: selectedCurrency === "USDC" ? "USDC" : "SOL",
           error: buyResult.success
             ? undefined
             : buyResult.failedPurchases[0]?.error || "Buy failed",
@@ -1151,6 +1168,7 @@ export default function BulkTokenBuyer() {
     isRhChain,
     isSolTrade,
     solGmgnSynced,
+    spendUnit,
   ]);
 
   // Handle metadata updates from background enrichment
@@ -1191,8 +1209,13 @@ export default function BulkTokenBuyer() {
 
   // Slider value (percentage of wallet balance)
   const maxPercent = 96;
-  const currentBalance =
-    selectedCurrency === "SOL" ? walletBalance : usdcBalance;
+  const currentBalance = isRhChain
+    ? selectedCurrency === "USDG"
+      ? usdgBalance
+      : nativeBalance
+    : selectedCurrency === "SOL"
+      ? walletBalance
+      : usdcBalance;
   const sliderValue =
     currentBalance && solAmount
       ? Math.round((parseFloat(solAmount) / currentBalance) * 100)
@@ -1200,9 +1223,9 @@ export default function BulkTokenBuyer() {
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!currentBalance) return;
     const percent = parseInt(e.target.value, 10);
-    const newAmount = ((currentBalance * percent) / 100).toFixed(
-      selectedCurrency === "SOL" ? 4 : 2,
-    );
+    const decimals =
+      spendUnit === "ETH" || spendUnit === "SOL" ? 4 : 2;
+    const newAmount = ((currentBalance * percent) / 100).toFixed(decimals);
     setSolAmount(newAmount);
   };
 
@@ -1621,11 +1644,9 @@ export default function BulkTokenBuyer() {
                     htmlFor="solAmount"
                     className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
                   >
-                    {effectiveChain === "robinhood"
-                      ? "ETH to spend"
-                      : `${selectedCurrency} to spend`}
+                    {`${spendUnit} to spend`}
                   </label>
-                  {walletBalance !== null && (
+                  {currentBalance !== null && (
                     <div className="flex items-center space-x-3">
                       <input
                         type="range"
@@ -1636,7 +1657,9 @@ export default function BulkTokenBuyer() {
                           sliderValue > maxPercent ? maxPercent : sliderValue
                         }
                         onChange={handleSliderChange}
-                        disabled={!connected || walletBalance === 0}
+                        disabled={
+                          !portfolioConnected || (currentBalance ?? 0) <= 0
+                        }
                         className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer"
                       />
                       <span className="text-xs text-gray-400 font-mono w-12 text-right">
@@ -1653,29 +1676,29 @@ export default function BulkTokenBuyer() {
                     min="0"
                     value={solAmount}
                     onChange={(e) => setSolAmount(e.target.value)}
-                    placeholder={isRhChain ? "0.001" : "0.1"}
+                    placeholder={
+                      isRhChain
+                        ? selectedCurrency === "USDG"
+                          ? "10"
+                          : "0.001"
+                        : "0.1"
+                    }
                     className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
                     disabled={isLoading}
                   />
                   <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                    {effectiveChain === "robinhood" ? (
-                      <span className="font-mono text-sm text-gray-400 px-2">
-                        ETH
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={toggleCurrency}
-                        className="text-gray-400 hover:text-white font-mono text-sm px-2 py-1 rounded transition-colors duration-200 hover:bg-gray-700"
-                        disabled={isLoading || effectiveUseGmgn}
-                      >
-                        {selectedCurrency}
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={toggleCurrency}
+                      className="text-gray-400 hover:text-white font-mono text-sm px-2 py-1 rounded transition-colors duration-200 hover:bg-gray-700"
+                      disabled={isLoading || (!isRhChain && effectiveUseGmgn)}
+                    >
+                      {spendUnit}
+                    </button>
                   </div>
                 </div>
 
-                {/* Balance Display — Sol wallet only */}
+                {/* Balance Display */}
                 {isSolTrade &&
                   connected &&
                   (walletBalance !== null || usdcBalance !== null) && (
@@ -1703,6 +1726,38 @@ export default function BulkTokenBuyer() {
                           USDC:{" "}
                           {usdcBalance !== null
                             ? usdcBalance.toFixed(2)
+                            : "0.00"}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                {isRhChain &&
+                  portfolioConnected &&
+                  (nativeBalance !== null || usdgBalance !== null) && (
+                    <div className="flex justify-between items-center text-xs text-gray-400 mt-2 px-1">
+                      <div className="flex space-x-4">
+                        <span
+                          className={
+                            selectedCurrency === "ETH"
+                              ? "text-white font-medium"
+                              : ""
+                          }
+                        >
+                          ETH:{" "}
+                          {nativeBalance !== null
+                            ? nativeBalance.toFixed(4)
+                            : "0.0000"}
+                        </span>
+                        <span
+                          className={
+                            selectedCurrency === "USDG"
+                              ? "text-white font-medium"
+                              : ""
+                          }
+                        >
+                          USDG:{" "}
+                          {usdgBalance !== null
+                            ? usdgBalance.toFixed(2)
                             : "0.00"}
                         </span>
                       </div>

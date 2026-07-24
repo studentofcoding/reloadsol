@@ -31,9 +31,16 @@ import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import { useQuery } from "@tanstack/react-query";
 import type { Address } from "viem";
 import type { GmgnTradeChain } from "@/utils/gmgn-currencies";
-import { matchesTradeChainAddress } from "@/utils/gmgn-currencies";
+import {
+  GMGN_RH_USDG,
+  gmgnNativeToken,
+  matchesTradeChainAddress,
+} from "@/utils/gmgn-currencies";
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
-import { executeRhParentBulkSell } from "@/utils/dlmm/rh-univ2-swap";
+import {
+  executeRhParentBulkSell,
+  type RhSwapQuote,
+} from "@/utils/dlmm/rh-univ2-swap";
 import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
@@ -151,23 +158,14 @@ export default function BulkTokenSeller() {
   const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
   const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
+  const [rhQuoteCurrency, setRhQuoteCurrency] =
+    useState<RhSwapQuote>("ETH");
   const boundWallets = useGmgnBoundWallets();
   const effectiveChain: GmgnTradeChain = isDevUser ? network : "sol";
   const isRhChain = effectiveChain === "robinhood";
   /** Sol-only: Raptor quotes + Jupiter/Sol RPC sell. Never true on Robinhood. */
   const isSolTrade = effectiveChain === "sol";
   const effectiveUseGmgn = isDevUser && isSolTrade && useGmgnOnSol;
-
-  const [tradeScopeKey, setTradeScopeKey] = useState(
-    () => `${effectiveChain}:${rhMode}`,
-  );
-  const nextTradeScopeKey = `${effectiveChain}:${rhMode}`;
-  if (tradeScopeKey !== nextTradeScopeKey) {
-    setTradeScopeKey(nextTradeScopeKey);
-    setSelectedTokens([]);
-    setQuotes({});
-    setError("");
-  }
 
   const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
   const useRhParentPath =
@@ -302,6 +300,18 @@ export default function BulkTokenSeller() {
   const [isGettingQuotes, setIsGettingQuotes] = useState<boolean>(false);
   const [lastQuoteTime, setLastQuoteTime] = useState<number>(0);
   const [showSettings, setShowSettings] = useState<boolean>(false);
+
+  // Reset selection when chain / RH wallet mode changes (after setters exist)
+  const [tradeScopeKey, setTradeScopeKey] = useState(
+    () => `${effectiveChain}:${rhMode}`,
+  );
+  const nextTradeScopeKey = `${effectiveChain}:${rhMode}`;
+  if (tradeScopeKey !== nextTradeScopeKey) {
+    setTradeScopeKey(nextTradeScopeKey);
+    setSelectedTokens([]);
+    setQuotes({});
+    setError("");
+  }
 
   const feeRates = getAllFeeRates();
 
@@ -780,11 +790,16 @@ export default function BulkTokenSeller() {
           account: tradeFromAddress as Address,
           legs,
           slippageBps: slippage,
+          quote: rhQuoteCurrency,
         }));
       } else {
         ({ results, success } = await executeGmgnBulkSell({
           chain: effectiveChain,
           from: tradeFromAddress,
+          outputToken:
+            effectiveChain === "robinhood" && rhQuoteCurrency === "USDG"
+              ? GMGN_RH_USDG
+              : gmgnNativeToken(effectiveChain),
           legs,
           slippageBps: slippage,
         }));
@@ -820,6 +835,7 @@ export default function BulkTokenSeller() {
         isSimulation: false,
         tokenSymbol:
           ok.length === 1 ? ok[0]?.symbol : `${ok.length} tokens`,
+        amountUnit: isRhChain ? rhQuoteCurrency : "SOL",
         error: success
           ? undefined
           : fail[0]?.error ||
@@ -842,6 +858,8 @@ export default function BulkTokenSeller() {
     rhWallet,
     selectedTokens,
     effectiveChain,
+    isRhChain,
+    rhQuoteCurrency,
     slippage,
     showOutcome,
     rhHoldingsQuery,
@@ -883,7 +901,7 @@ export default function BulkTokenSeller() {
         selectedTokens.map((t) => ({
           tokenAddress: t.mintAddress,
           symbol: t.symbol,
-          amountLabel: `${t.sellPercentage || 100}% → ETH${
+          amountLabel: `${t.sellPercentage || 100}% → ${rhQuoteCurrency}${
             useRhParentPath ? " · UniV2 / Rabby" : ""
           }`,
           side: "sell" as const,
@@ -1004,6 +1022,7 @@ export default function BulkTokenSeller() {
                 )?.symbol
               : `${sellResult.successfulSwaps.length} tokens`,
           solAmount: sellResult.totalReceived,
+          amountUnit: "SOL",
           error: sellResult.success
             ? undefined
             : sellResult.failedSwaps[0]?.error || "Sell failed",
@@ -1308,6 +1327,7 @@ export default function BulkTokenSeller() {
     isRhChain,
     isSolTrade,
     solGmgnSynced,
+    rhQuoteCurrency,
   ]);
 
   /** Close emptied ATAs offered on the post-sell success modal. */
@@ -1795,7 +1815,9 @@ export default function BulkTokenSeller() {
         <div className="flex justify-between items-center w-full">
           <h2 className="text-3xl font-bold text-white">
             Sell Bulk & Reload{" "}
-            {effectiveChain === "robinhood" ? "ETH" : "your solana"}
+            {effectiveChain === "robinhood"
+              ? rhQuoteCurrency
+              : "your solana"}
           </h2>
           <div className="shrink-0">
             {effectiveChain === "sol" ? <UniversalWalletButton /> : null}
@@ -1817,6 +1839,23 @@ export default function BulkTokenSeller() {
 
       {isDevUser && effectiveChain === "robinhood" ? (
         <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>Sell to:</span>
+            {(["ETH", "USDG"] as const).map((q) => (
+              <button
+                key={q}
+                type="button"
+                onClick={() => setRhQuoteCurrency(q)}
+                className={`px-2 py-0.5 rounded font-mono text-xs ${
+                  rhQuoteCurrency === q
+                    ? "bg-white text-black"
+                    : "bg-gray-700 text-gray-300 hover:text-white"
+                }`}
+              >
+                {q}
+              </button>
+            ))}
+          </div>
           <div>
             Mode:{" "}
             <span className="text-white font-medium">
@@ -1942,7 +1981,7 @@ export default function BulkTokenSeller() {
                   ) : (
                     <span className="font-bold">holdings</span>
                   )}{" "}
-                  to sell → ETH
+                  to sell → {rhQuoteCurrency}
                 </>
               ) : (
                 <>
@@ -2719,8 +2758,8 @@ export default function BulkTokenSeller() {
                                 ? selectedTokens[0].symbol || "token"
                                 : `${n} tokens`;
                             const via = useRhParentPath
-                              ? "UniV2 → ETH"
-                              : "GMGN → ETH";
+                              ? `UniV2 → ${rhQuoteCurrency}`
+                              : `GMGN → ${rhQuoteCurrency}`;
                             return usd > 0
                               ? `Sell ${label} (~$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })}) ${via}`
                               : `Sell ${label} ${via}`;

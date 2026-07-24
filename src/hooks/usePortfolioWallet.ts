@@ -1,13 +1,33 @@
 'use client'
 
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { formatEther, formatUnits, type Address } from 'viem'
 import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import { useRhWalletMode } from '@/contexts/RhWalletModeContext'
-import { useWalletAddress } from '@/components/WalletProvider'
+import {
+  useConnection,
+  useWallet,
+  useWalletAddress,
+} from '@/components/WalletProvider'
 import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
+import { useWalletBalances } from '@/hooks/useWalletBalances'
 import type { AppNetwork } from '@/utils/app-network'
 import type { RhWalletMode } from '@/utils/rh-wallet-mode'
 import { resolveRhActiveAddress } from '@/utils/rh-wallet-mode'
+import {
+  RH_USDG,
+  RH_USDG_DECIMALS,
+  erc20Abi,
+} from '@/utils/dlmm/rh-univ2'
+
+export function rhEthBalanceQueryKey(address: string | null) {
+  return ['rh-eth-balance', address] as const
+}
+
+export function rhUsdgBalanceQueryKey(address: string | null) {
+  return ['rh-usdg-balance', address] as const
+}
 
 /** Active trading wallet for the current app network (+ RH parent/bound mode). */
 export function usePortfolioWallet(): {
@@ -17,18 +37,99 @@ export function usePortfolioWallet(): {
   setRhMode: (m: RhWalletMode) => void
   parentAddress: string | null
   boundAddress: string | null
+  connected: boolean
+  nativeSymbol: 'SOL' | 'ETH'
+  nativeBalance: number | null
+  solBalance: number | null
+  usdcBalance: number | null
+  usdgBalance: number | null
+  refreshBalances: () => Promise<void>
+  isLoadingBalances: boolean
 } {
   const { network } = useAppNetwork()
   const { mode: rhMode, setMode: setRhMode } = useRhWalletMode()
-  const sol = useWalletAddress()
+  const solAddress = useWalletAddress()
+  const { connected: solConnected, publicKey } = useWallet()
+  const { connection } = useConnection()
   const rh = useRhEvmWallet()
   const bound = useGmgnBoundWallets()
+  const queryClient = useQueryClient()
+
   const parentAddress = rh.address
   const boundAddress = bound.evm
   const walletAddress =
     network === 'robinhood'
       ? resolveRhActiveAddress(rhMode, parentAddress, boundAddress)
-      : sol
+      : solAddress
+
+  const isRh = network === 'robinhood'
+  const connected = isRh ? Boolean(walletAddress) : solConnected
+  const nativeSymbol = isRh ? 'ETH' : 'SOL'
+
+  const solBalances = useWalletBalances({
+    connection,
+    publicKey,
+    walletAddress: solAddress,
+    enabled: !isRh && solConnected && !!publicKey,
+  })
+
+  const rhAddress = (walletAddress as Address | null) ?? null
+
+  const ethQuery = useQuery({
+    queryKey: rhEthBalanceQueryKey(rhAddress),
+    enabled: isRh && Boolean(rhAddress),
+    staleTime: 15_000,
+    refetchInterval: isRh && rhAddress ? 30_000 : false,
+    queryFn: async () => {
+      if (!rhAddress) return null
+      const wei = await rh.publicClient.getBalance({ address: rhAddress })
+      return Number(formatEther(wei))
+    },
+  })
+
+  const usdgQuery = useQuery({
+    queryKey: rhUsdgBalanceQueryKey(rhAddress),
+    enabled: isRh && Boolean(rhAddress),
+    staleTime: 15_000,
+    refetchInterval: isRh && rhAddress ? 30_000 : false,
+    queryFn: async () => {
+      if (!rhAddress) return null
+      const raw = await rh.publicClient.readContract({
+        address: RH_USDG,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [rhAddress],
+      })
+      return Number(formatUnits(raw, RH_USDG_DECIMALS))
+    },
+  })
+
+  const refreshBalances = async () => {
+    if (isRh) {
+      if (!rhAddress) return
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: rhEthBalanceQueryKey(rhAddress),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: rhUsdgBalanceQueryKey(rhAddress),
+        }),
+      ])
+      return
+    }
+    await solBalances.refreshBalances()
+  }
+
+  const nativeBalance = isRh
+    ? ethQuery.data ?? null
+    : solBalances.walletBalance
+  const solBalance = isRh ? null : solBalances.walletBalance
+  const usdcBalance = isRh ? null : solBalances.usdcBalance
+  const usdgBalance = isRh ? (usdgQuery.data ?? null) : null
+  const isLoadingBalances = isRh
+    ? ethQuery.isPending || usdgQuery.isPending
+    : solBalances.isLoadingBalances
+
   return {
     network,
     walletAddress,
@@ -36,5 +137,13 @@ export function usePortfolioWallet(): {
     setRhMode,
     parentAddress,
     boundAddress,
+    connected,
+    nativeSymbol,
+    nativeBalance,
+    solBalance,
+    usdcBalance,
+    usdgBalance,
+    refreshBalances,
+    isLoadingBalances,
   }
 }
