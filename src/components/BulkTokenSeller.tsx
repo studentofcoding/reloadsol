@@ -153,19 +153,24 @@ export default function BulkTokenSeller() {
   const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
   const boundWallets = useGmgnBoundWallets();
   const effectiveChain: GmgnTradeChain = isDevUser ? network : "sol";
+  const isRhChain = effectiveChain === "robinhood";
+  /** Sol-only: Raptor quotes + Jupiter/Sol RPC sell. Never true on Robinhood. */
+  const isSolTrade = effectiveChain === "sol";
   const effectiveUseGmgn = isDevUser && useGmgnOnSol;
 
   useEffect(() => {
-    if (effectiveChain === "robinhood") setUseGmgnOnSol(false);
+    if (isRhChain) setUseGmgnOnSol(false);
     setSelectedTokens([]);
-  }, [effectiveChain, rhMode]);
+    setQuotes({});
+    setError("");
+  }, [effectiveChain, rhMode, isRhChain]);
   const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
   const useRhParentPath =
-    isDevUser && effectiveChain === "robinhood" && rhMode === "parent";
+    isDevUser && isRhChain && rhMode === "parent";
   const useGmgnPath =
     isDevUser &&
-    ((effectiveChain === "robinhood" && rhMode === "bound") ||
-      (effectiveChain === "sol" && effectiveUseGmgn));
+    ((isRhChain && rhMode === "bound") ||
+      (isSolTrade && effectiveUseGmgn));
   const tradeFromAddress =
     effectiveChain === "robinhood"
       ? rhMode === "parent"
@@ -336,8 +341,9 @@ export default function BulkTokenSeller() {
     [fetchSolanaTrackerQuote],
   );
 
-  // Batch quote fetching for all selected tokens
+  // Batch quote fetching for all selected tokens (Sol / Raptor only)
   const fetchAllQuotes = useCallback(async () => {
+    if (!isSolTrade) return;
     // Only fetch for tokens that are not unsellable
     const tokensToQuote = selectedTokens.filter(
       (t) =>
@@ -387,13 +393,14 @@ export default function BulkTokenSeller() {
       setIsGettingQuotes(false);
     }
   }, [
+    isSolTrade,
     selectedTokens,
     selectedZeroBalanceTokens,
     fetchQuoteForToken,
     isGettingQuotes,
   ]);
 
-  // ===== Auto-quote effect =====
+  // ===== Auto-quote effect (Sol only) =====
   // 1. Runs immediately whenever token selection changes (or autoQuote toggles on)
   // 2. Refreshes every 5 s as long as the selection stays the same
   const tokensHash = useMemo(
@@ -412,7 +419,7 @@ export default function BulkTokenSeller() {
   }, [fetchAllQuotes]);
 
   useEffect(() => {
-    if (!autoQuote || selectedTokens.length === 0) return;
+    if (!isSolTrade || !autoQuote || selectedTokens.length === 0) return;
 
     // Fetch immediately on mount / token change
     fetchAllQuotesRef.current();
@@ -425,7 +432,7 @@ export default function BulkTokenSeller() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [autoQuote, tokensHash, selectedTokens.length]);
+  }, [isSolTrade, autoQuote, tokensHash, selectedTokens.length]);
 
   // Fetch SOL price using robust multi-API system — handled by useSolPrice
 
@@ -819,19 +826,18 @@ export default function BulkTokenSeller() {
       return;
     }
 
-    if (useRhParentPath || useGmgnPath) {
+    // Robinhood: Parent UniV2 / Bound GMGN only — never Sol Jupiter/Raptor.
+    if (isRhChain) {
+      if (!useRhParentPath && !useGmgnPath) {
+        setError("Robinhood sell requires Parent (Rabby) or Bound wallet mode");
+        return;
+      }
       if (!tradeFromAddress) {
         setError(
           useRhParentPath
             ? "Connect Rabby (parent wallet)"
-            : effectiveChain === "robinhood"
-              ? "GMGN-bound EVM wallet missing for Robinhood"
-              : "Connect the GMGN-bound Sol wallet or turn off Use GMGN",
+            : "GMGN-bound EVM wallet missing for Robinhood",
         );
-        return;
-      }
-      if (useGmgnPath && effectiveChain === "sol" && !solGmgnSynced) {
-        setError("Connected wallet is not the GMGN-bound Sol address");
         return;
       }
       if (selectedTokens.length === 0) {
@@ -846,9 +852,35 @@ export default function BulkTokenSeller() {
         selectedTokens.map((t) => ({
           tokenAddress: t.mintAddress,
           symbol: t.symbol,
-          amountLabel: `${t.sellPercentage || 100}% → ${
-            effectiveChain === "robinhood" ? "ETH" : "SOL"
-          }${useRhParentPath ? " · UniV2 / Rabby" : ""}`,
+          amountLabel: `${t.sellPercentage || 100}% → ETH${
+            useRhParentPath ? " · UniV2 / Rabby" : ""
+          }`,
+          side: "sell" as const,
+        })),
+      );
+      setGmgnConfirmOpen(true);
+      return;
+    }
+
+    // Sol: optional GMGN bound path
+    if (useGmgnPath) {
+      if (!tradeFromAddress) {
+        setError("Connect the GMGN-bound Sol wallet or turn off Use GMGN");
+        return;
+      }
+      if (!solGmgnSynced) {
+        setError("Connected wallet is not the GMGN-bound Sol address");
+        return;
+      }
+      if (selectedTokens.length === 0) {
+        setError("Select tokens to sell via GMGN");
+        return;
+      }
+      setGmgnConfirmLegs(
+        selectedTokens.map((t) => ({
+          tokenAddress: t.mintAddress,
+          symbol: t.symbol,
+          amountLabel: `${t.sellPercentage || 100}% → SOL`,
           side: "sell" as const,
         })),
       );
@@ -858,6 +890,11 @@ export default function BulkTokenSeller() {
 
     if (!connected || !publicKey || !signAllTransactions) {
       setError("Please connect your wallet first");
+      return;
+    }
+
+    if (!isSolTrade) {
+      setError("Solana sell is not available on Robinhood network");
       return;
     }
 
@@ -1238,6 +1275,8 @@ export default function BulkTokenSeller() {
     tradeFromAddress,
     gmgnFromAddress,
     effectiveChain,
+    isRhChain,
+    isSolTrade,
     solGmgnSynced,
   ]);
 
@@ -2464,38 +2503,45 @@ export default function BulkTokenSeller() {
                       </select>
                     </div>
 
-                    {/* Priority Fee */}
-                    <div className="space-y-3">
-                      <label
-                        htmlFor="priorityFee"
-                        className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
-                      >
-                        Priority Fee
-                      </label>
-                      <select
-                        id="priorityFee"
-                        value={priorityFee}
-                        onChange={(e) => setPriorityFee(Number(e.target.value))}
-                        className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-xl text-white focus:bg-gray-600 focus:border-gray-400 transition-all duration-200"
-                        disabled={isLoading}
-                      >
-                        {PRIORITY_FEE_OPTIONS.map((option) => (
-                          <option
-                            key={option.value}
-                            value={option.value}
-                            className="bg-gray-700"
-                          >
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    {/* Priority Fee — Sol Jupiter path only */}
+                    {isSolTrade ? (
+                      <div className="space-y-3">
+                        <label
+                          htmlFor="priorityFee"
+                          className="block text-sm font-semibold text-gray-200 uppercase tracking-wide"
+                        >
+                          Priority Fee
+                        </label>
+                        <select
+                          id="priorityFee"
+                          value={priorityFee}
+                          onChange={(e) =>
+                            setPriorityFee(Number(e.target.value))
+                          }
+                          className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-xl text-white focus:bg-gray-600 focus:border-gray-400 transition-all duration-200"
+                          disabled={isLoading}
+                        >
+                          {PRIORITY_FEE_OPTIONS.map((option) => (
+                            <option
+                              key={option.value}
+                              value={option.value}
+                              className="bg-gray-700"
+                            >
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ) : null}
 
-                    {/* Dev-only: confirmation transport toggle */}
-                    <ConfirmTransportSelect disabled={isLoading} />
+                    {/* Dev-only: confirmation transport toggle (Sol only) */}
+                    {isSolTrade ? (
+                      <ConfirmTransportSelect disabled={isLoading} />
+                    ) : null}
                   </div>
 
-                  {/* Quote Controls */}
+                  {/* Quote Controls — Sol / Raptor only */}
+                  {isSolTrade ? (
                   <div className="border-t border-gray-600 pt-4">
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                       <div>
@@ -2633,6 +2679,12 @@ export default function BulkTokenSeller() {
                       </div>
                     )}
                   </div>
+                  ) : (
+                    <p className="text-xs text-gray-500 border-t border-gray-600 pt-3">
+                      Robinhood: UniV2 (Parent) / GMGN (Bound) — no Solana Raptor
+                      quotes.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

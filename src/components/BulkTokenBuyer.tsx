@@ -133,21 +133,24 @@ export default function BulkTokenBuyer() {
   const boundWallets = useGmgnBoundWallets();
   // App network (header) is source of truth; non-dev coerced to sol in context.
   const effectiveChain: GmgnTradeChain = isDevUser ? network : "sol";
+  const isRhChain = effectiveChain === "robinhood";
+  /** Sol-only: Jupiter/Raptor buy. Never true on Robinhood. */
+  const isSolTrade = effectiveChain === "sol";
   const effectiveUseGmgn = isDevUser && useGmgnOnSol;
 
   useEffect(() => {
-    if (effectiveChain === "robinhood") setUseGmgnOnSol(false);
-  }, [effectiveChain]);
+    if (isRhChain) setUseGmgnOnSol(false);
+  }, [isRhChain]);
   const chainNative = GMGN_CHAIN_CURRENCIES[effectiveChain];
   const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
   const useRhParentPath =
-    isDevUser && effectiveChain === "robinhood" && rhMode === "parent";
+    isDevUser && isRhChain && rhMode === "parent";
   const useGmgnPath =
     isDevUser &&
-    ((effectiveChain === "robinhood" && rhMode === "bound") ||
-      (effectiveChain === "sol" && effectiveUseGmgn));
+    ((isRhChain && rhMode === "bound") ||
+      (isSolTrade && effectiveUseGmgn));
   const tradeFromAddress =
-    effectiveChain === "robinhood"
+    isRhChain
       ? rhMode === "parent"
         ? rhWallet.address
         : boundWallets.evm
@@ -202,7 +205,6 @@ export default function BulkTokenBuyer() {
     enabled: isWalletReady,
   });
 
-  const isRhChain = effectiveChain === "robinhood";
   const rhWalletTokens = useRhWalletTokens();
 
   const {
@@ -742,7 +744,7 @@ export default function BulkTokenBuyer() {
   const handleBulkBuy = useCallback(async () => {
     if (!solAmount || parseFloat(solAmount) <= 0) {
       setError(
-        `Please enter a valid ${effectiveChain === "robinhood" ? "ETH" : selectedCurrency} amount`,
+        `Please enter a valid ${isRhChain ? "ETH" : selectedCurrency} amount`,
       );
       return;
     }
@@ -757,34 +759,30 @@ export default function BulkTokenBuyer() {
       return;
     }
 
-    if (useRhParentPath || useGmgnPath) {
+    // Robinhood: Parent UniV2 / Bound GMGN only — never Sol Jupiter/Raptor.
+    if (isRhChain) {
+      if (!useRhParentPath && !useGmgnPath) {
+        setError("Robinhood buy requires Parent (Rabby) or Bound wallet mode");
+        return;
+      }
       if (!tradeFromAddress) {
         setError(
           useRhParentPath
             ? "Connect Rabby (parent wallet)"
-            : effectiveChain === "robinhood"
-              ? "GMGN-bound EVM wallet missing for Robinhood"
-              : "Connect the GMGN-bound Sol wallet or turn off Use GMGN",
+            : "GMGN-bound EVM wallet missing for Robinhood",
         );
-        return;
-      }
-      if (useGmgnPath && effectiveChain === "sol" && !solGmgnSynced) {
-        setError("Connected wallet is not the GMGN-bound Sol address");
         return;
       }
       setIsLoading(true);
       setError("");
       try {
-        const inputToken =
-          effectiveChain === "sol" && selectedCurrency === "USDC"
-            ? TOKENS.USDC
-            : gmgnNativeToken(effectiveChain);
+        const inputToken = gmgnNativeToken("robinhood");
         const legs: GmgnConfirmLeg[] = [];
         for (const mint of validMints) {
           let estOut: string | undefined;
           if (useGmgnPath) {
             const shaped = buildGmgnBuyQuoteRequest({
-              chain: effectiveChain,
+              chain: "robinhood",
               from: tradeFromAddress,
               tokenAddress: mint,
               amountHuman: parseFloat(solAmount),
@@ -808,9 +806,9 @@ export default function BulkTokenBuyer() {
           legs.push({
             tokenAddress: mint,
             symbol: tokenList.find((t) => t.address === mint)?.symbol,
-            amountLabel: `${solAmount} ${
-              effectiveChain === "robinhood" ? "ETH" : selectedCurrency
-            }${useRhParentPath ? " · UniV2 / Rabby" : ""}`,
+            amountLabel: `${solAmount} ETH${
+              useRhParentPath ? " · UniV2 / Rabby" : ""
+            }`,
             estOut,
             side: "buy",
           });
@@ -820,6 +818,66 @@ export default function BulkTokenBuyer() {
       } finally {
         setIsLoading(false);
       }
+      return;
+    }
+
+    // Sol: optional GMGN bound path
+    if (useGmgnPath) {
+      if (!tradeFromAddress) {
+        setError("Connect the GMGN-bound Sol wallet or turn off Use GMGN");
+        return;
+      }
+      if (!solGmgnSynced) {
+        setError("Connected wallet is not the GMGN-bound Sol address");
+        return;
+      }
+      setIsLoading(true);
+      setError("");
+      try {
+        const inputToken =
+          selectedCurrency === "USDC" ? TOKENS.USDC : gmgnNativeToken("sol");
+        const legs: GmgnConfirmLeg[] = [];
+        for (const mint of validMints) {
+          let estOut: string | undefined;
+          const shaped = buildGmgnBuyQuoteRequest({
+            chain: "sol",
+            from: tradeFromAddress,
+            tokenAddress: mint,
+            amountHuman: parseFloat(solAmount),
+            slippageBps: slippage,
+            inputToken,
+          });
+          try {
+            const res = await fetch("/api/gmgn/trade/quote", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(shaped),
+            });
+            const data = (await res.json()) as {
+              quote?: { output_amount?: string };
+            };
+            estOut = data.quote?.output_amount;
+          } catch {
+            /* quote optional */
+          }
+          legs.push({
+            tokenAddress: mint,
+            symbol: tokenList.find((t) => t.address === mint)?.symbol,
+            amountLabel: `${solAmount} ${selectedCurrency}`,
+            estOut,
+            side: "buy",
+          });
+        }
+        setGmgnConfirmLegs(legs);
+        setGmgnConfirmOpen(true);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    if (!isSolTrade) {
+      setError("Solana buy is not available on Robinhood network");
       return;
     }
 
@@ -1093,6 +1151,8 @@ export default function BulkTokenBuyer() {
     tradeFromAddress,
     gmgnFromAddress,
     effectiveChain,
+    isRhChain,
+    isSolTrade,
     solGmgnSynced,
   ]);
 
@@ -1618,8 +1678,9 @@ export default function BulkTokenBuyer() {
                   </div>
                 </div>
 
-                {/* Balance Display */}
-                {connected &&
+                {/* Balance Display — Sol wallet only */}
+                {isSolTrade &&
+                  connected &&
                   (walletBalance !== null || usdcBalance !== null) && (
                     <div className="flex justify-between items-center text-xs text-gray-400 mt-2 px-1">
                       <div className="flex space-x-4">
@@ -2178,8 +2239,8 @@ export default function BulkTokenBuyer() {
                   </select>
                 </div>
 
-                {/* Priority Fee (Jupiter Sol path only) */}
-                {effectiveChain === "sol" && !effectiveUseGmgn ? (
+                {/* Priority Fee — Sol Jupiter path only */}
+                {isSolTrade && !effectiveUseGmgn ? (
                   <div className="space-y-3">
                     <label
                       htmlFor="priorityFee"
@@ -2207,13 +2268,18 @@ export default function BulkTokenBuyer() {
                   </div>
                 ) : (
                   <div className="space-y-3 text-xs text-gray-400">
-                    Execution via GMGN ({chainNative.nativeSymbol}). Fees set by
-                    the router.
+                    {isRhChain
+                      ? useRhParentPath
+                        ? "Robinhood Parent: UniV2 + Rabby. No Solana Raptor/Jupiter."
+                        : "Robinhood Bound: GMGN server-sign. No Solana Raptor/Jupiter."
+                      : `Execution via GMGN (${chainNative.nativeSymbol}). Fees set by the router.`}
                   </div>
                 )}
 
-                {/* Dev-only: confirmation transport toggle */}
-                <ConfirmTransportSelect disabled={isLoading} />
+                {/* Dev-only: confirmation transport toggle (Sol only) */}
+                {isSolTrade ? (
+                  <ConfirmTransportSelect disabled={isLoading} />
+                ) : null}
               </div>
 
               {/* Fee Structure Display */}

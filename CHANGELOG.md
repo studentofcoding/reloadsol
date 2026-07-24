@@ -39,6 +39,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Holdings stay Blockscout REST (Arrow RPC ok for UniV2/balance; does not list ERC-20s).
 - Shared `normalizeSubscribeWallet` / `walletsMatch`; live Blockscout ERC-20 test for Parent sample `0x795b…603D` (WETH present).
 
+### Fixed — Buy/sell hard-split by AppNetwork
+
+- `/buy` + `/sell`: Robinhood never calls Solana Raptor quotes or `executeBulkBuy` / `executeBulkSellAlt`.
+- RH = Parent UniV2 / Bound GMGN only; Sol = Raptor + Jupiter (optional Sol GMGN toggle).
+- Hide Raptor Quotes, ConfirmTransport, Sol priority-fee chrome on Robinhood.
+
 ### Changed — Potential API + OHLC training / Radar Telegram
 
 - **`/api/potential`** — canonical potential watchlist (`markTokenPotential`: list + `trading_signals` label + OHLC capture). Clients use `usePotentialList`; `/api/dlmm/potential` is a thin alias only.
