@@ -8,6 +8,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed — RH Parent multi-sell batching
+
+- Parent multi-token UniV2 sell (`executeRhParentBulkSell`) uses EIP-5792 `wallet_sendCalls` when 2+ legs succeed prep (one Rabby confirm when supported).
+- Falls back to sequential `writeContract` / `sendTransaction` approve+swap per leg if `sendCalls` is unsupported.
+- Single-leg sell unchanged; Bound GMGN / Parent buy / Sol out of scope.
+
 ### Added — Dual-chain AppNetwork (batches 1–5)
 
 - **AppNetwork** (`sol` | `robinhood`) in header; sessionStorage; RH gated to dev wallets.
