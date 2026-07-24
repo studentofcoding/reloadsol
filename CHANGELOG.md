@@ -45,6 +45,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - RH = Parent UniV2 / Bound GMGN only; Sol = Raptor + Jupiter (optional Sol GMGN toggle).
 - Hide Raptor Quotes, ConfirmTransport, Sol priority-fee chrome on Robinhood.
 
+### Changed — RH sell list uses Sol “Your Tokens” UI
+
+- Parent/Bound holdings feed the same `ProgressiveTokenItem` list as Sol (Select All / Clear / % / chart).
+- Removed separate RH holdings strip; show `via {gmgn|blockscout}`; Refresh refetches holdings (not Raptor).
+
 ### Changed — Potential API + OHLC training / Radar Telegram
 
 - **`/api/potential`** — canonical potential watchlist (`markTokenPotential`: list + `trading_signals` label + OHLC capture). Clients use `usePotentialList`; `/api/dlmm/potential` is a thin alias only.

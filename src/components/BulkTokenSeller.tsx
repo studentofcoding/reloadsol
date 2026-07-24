@@ -240,16 +240,29 @@ export default function BulkTokenSeller() {
     walletAddress,
     activeRpcUrl,
     rpcLabel: selectedEndpoint?.provider ?? "RPC",
-    enabled: isWalletReady,
+    enabled: isWalletReady && isSolTrade,
   });
 
-  const allTokensCount = allTokens.length;
-  const fetchError =
-    tokensQueryError instanceof Error
+  const allTokensCount = isRhChain
+    ? rhHoldingsQuery.data?.length ?? 0
+    : allTokens.length;
+  const fetchError = isRhChain
+    ? rhWalletTokens.error instanceof Error
+      ? rhWalletTokens.error.message
+      : rhWalletTokens.error
+        ? String(rhWalletTokens.error)
+        : ""
+    : tokensQueryError instanceof Error
       ? tokensQueryError.message
       : tokensQueryError
         ? String(tokensQueryError)
         : lastFetchMeta?.error ?? "";
+  const isInitialLoadTokens = isRhChain
+    ? rhWalletTokens.isLoading && (rhHoldingsQuery.data?.length ?? 0) === 0
+    : isInitialLoad;
+  const isLoadingTokensList = isRhChain
+    ? rhWalletTokens.isFetching || rhWalletTokens.isLoading
+    : isLoadingTokens;
 
   const autoSelectRanAfterFetchRef = useRef(false);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -481,8 +494,14 @@ export default function BulkTokenSeller() {
   );
 
   const fetchTokens = useCallback(
-    (forceRefresh = false) => refetchTokens(forceRefresh),
-    [refetchTokens],
+    async (forceRefresh = false): Promise<void> => {
+      if (isRhChain) {
+        await rhWalletTokens.refetch();
+        return;
+      }
+      await refetchTokens(forceRefresh);
+    },
+    [isRhChain, rhWalletTokens, refetchTokens],
   );
 
   // Handle token selection
@@ -1674,6 +1693,7 @@ export default function BulkTokenSeller() {
   );
 
   const displayUserTokens = useMemo(() => {
+    if (isRhChain) return rhHoldingsQuery.data ?? [];
     if (showDustOnly) {
       return dustTokenList;
     }
@@ -1682,6 +1702,8 @@ export default function BulkTokenSeller() {
     }
     return allBalancedTokens;
   }, [
+    isRhChain,
+    rhHoldingsQuery.data,
     showDustOnly,
     showZeroBalance,
     dustTokenList,
@@ -1690,6 +1712,12 @@ export default function BulkTokenSeller() {
   ]);
 
   const filteredUserTokens = displayUserTokens;
+
+  /** RH: sum of holdings USD for header (no Sol fee/rent math). */
+  const rhHoldingsUsdTotal = useMemo(() => {
+    if (!isRhChain) return 0;
+    return (rhHoldingsQuery.data ?? []).reduce((s, t) => s + (t.usdValue || 0), 0);
+  }, [isRhChain, rhHoldingsQuery.data]);
 
   const incompleteRpcBanner = useMemo(() => {
     if (diagnostics.length === 0 || !selectedEndpoint) return null;
@@ -1737,19 +1765,6 @@ export default function BulkTokenSeller() {
     setShowDustOnly((prev) => !prev);
     // Clear selection when toggling filter to avoid confusion
     setSelectedTokens([]);
-  };
-
-  const toggleRhHolding = (token: UserToken) => {
-    setSelectedTokens((prev) => {
-      const exists = prev.some((t) => t.mintAddress === token.mintAddress);
-      if (exists) {
-        return prev.filter((t) => t.mintAddress !== token.mintAddress);
-      }
-      return [
-        ...prev,
-        { ...token, sellAmount: token.balance, sellPercentage: 100 },
-      ];
-    });
   };
 
   return (
@@ -1821,23 +1836,20 @@ export default function BulkTokenSeller() {
                 key={addr}
                 type="button"
                 onClick={() => {
-                  const held = rhHoldingsQuery.data?.find(
-                    (t) => t.mintAddress === addr,
-                  );
-                  if (held) {
-                    toggleRhHolding(held);
-                    return;
-                  }
-                  // Not in holdings — still allow selecting for GMGN % sell
-                  toggleRhHolding({
-                    mintAddress: addr,
-                    balance: 0,
-                    decimals: 18,
-                    symbol: addr.slice(0, 4),
-                    name: addr,
-                    uiAmount: 0,
-                    usdValue: 0,
-                  });
+                  const held =
+                    displayUserTokens.find((t) => t.mintAddress === addr) ??
+                    (isRhChain
+                      ? {
+                          mintAddress: addr,
+                          balance: 0,
+                          decimals: 18,
+                          symbol: addr.slice(0, 4),
+                          name: addr,
+                          uiAmount: 0,
+                          usdValue: 0,
+                        }
+                      : null);
+                  if (held) toggleTokenSelection(held);
                 }}
                 className="rounded-lg bg-gray-800 px-2 py-1 font-mono text-xs text-gray-200 hover:bg-gray-700"
               >
@@ -1848,116 +1860,6 @@ export default function BulkTokenSeller() {
         </div>
       ) : null}
 
-      {isDevUser && effectiveChain === "robinhood" && tradeFromAddress ? (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-sm font-semibold text-gray-200 uppercase tracking-wide">
-              {rhMode === "parent" ? "Parent holdings" : "Bound holdings"}
-            </div>
-            {rhHoldingsQuery.source ? (
-              <span className="text-[10px] text-gray-500 uppercase">
-                via {rhHoldingsQuery.source}
-              </span>
-            ) : null}
-          </div>
-          {rhHoldingsQuery.isLoading ? (
-            <TokenSkeleton count={3} variant="progressive" />
-          ) : (rhHoldingsQuery.data?.length ?? 0) === 0 ? (
-            <p className="text-sm text-gray-400">
-              No ERC-20 holdings found for this wallet.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {rhHoldingsQuery.data!.map((token) => {
-                const selected = selectedTokens.find(
-                  (t) => t.mintAddress === token.mintAddress,
-                );
-                const usdLabel =
-                  token.usdValue > 0
-                    ? `$${token.usdValue.toLocaleString(undefined, {
-                        maximumFractionDigits: 2,
-                      })}`
-                    : "$—";
-                return (
-                  <div
-                    key={token.mintAddress}
-                    className={`flex items-center justify-between rounded-xl border px-3 py-2 ${
-                      selected
-                        ? "border-white bg-gray-800"
-                        : "border-gray-700 bg-gray-900"
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      className="text-left text-sm text-white"
-                      onClick={() => toggleRhHolding(token)}
-                    >
-                      <div className="font-medium">
-                        {token.symbol || "???"}
-                        <span className="ml-2 text-xs font-normal text-gray-400">
-                          {usdLabel}
-                        </span>
-                      </div>
-                      <div className="font-mono text-[10px] text-gray-500">
-                        {token.mintAddress}
-                      </div>
-                    </button>
-                    {selected ? (
-                      <select
-                        value={selected.sellPercentage}
-                        onChange={(e) => {
-                          const pct = Number(e.target.value);
-                          setSelectedTokens((prev) =>
-                            prev.map((t) =>
-                              t.mintAddress === token.mintAddress
-                                ? {
-                                    ...t,
-                                    sellPercentage: pct,
-                                    sellAmount: Math.floor(
-                                      (t.balance * pct) / 100,
-                                    ),
-                                  }
-                                : t,
-                            ),
-                          );
-                        }}
-                        className="rounded-lg bg-gray-800 px-2 py-1 text-sm text-white"
-                      >
-                        {[25, 50, 75, 100].map((p) => (
-                          <option key={p} value={p}>
-                            {p}%
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="text-xs text-gray-400 text-right">
-                        {token.uiAmount.toPrecision(4)}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => void handleBulkSell()}
-            disabled={
-              isLoading ||
-              selectedTokens.length === 0 ||
-              !tradeFromAddress
-            }
-            className="w-full rounded-xl bg-white py-3 font-semibold text-gray-900 disabled:bg-gray-600 disabled:text-gray-400"
-          >
-            Sell {selectedTokens.length} via GMGN → ETH
-          </button>
-          {error ? (
-            <p className="text-sm text-amber-300">{error}</p>
-          ) : null}
-        </div>
-      ) : null}
-
-      {effectiveChain === "sol" ? (
       <div className="space-y-8">
         {/* Token Chart Section */}
         {selectedToken && (
@@ -1994,7 +1896,7 @@ export default function BulkTokenSeller() {
           </div>
         )}
 
-        {connected && (
+        {isSolTrade && connected ? (
           <RpcPanel
             expanded={showRpcPanel}
             onToggle={() => setShowRpcPanel((prev) => !prev)}
@@ -2009,32 +1911,69 @@ export default function BulkTokenSeller() {
             lastFetchMeta={lastFetchMeta}
             incompleteRpcBanner={incompleteRpcBanner}
           />
-        )}
+        ) : null}
 
         {/* Token Selection Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h3 className="text-xl font-light text-white mb-1">
-              You have{" "}
-              {(showDustOnly ? dustTokenList.length > 0 : userTokens.length > 0) &&
-                totalReloadEstimate > 0 && (
-                <span className="font-bold">
-                  ~ {totalReloadEstimate.toFixed(3)} SOL
-                </span>
-              )}{" "}
-              to reload 🚀
+              {isRhChain ? (
+                <>
+                  You have{" "}
+                  {rhHoldingsUsdTotal > 0 ? (
+                    <span className="font-bold">
+                      ~$
+                      {rhHoldingsUsdTotal.toLocaleString(undefined, {
+                        maximumFractionDigits: 2,
+                      })}
+                    </span>
+                  ) : (
+                    <span className="font-bold">holdings</span>
+                  )}{" "}
+                  to sell → ETH
+                </>
+              ) : (
+                <>
+                  You have{" "}
+                  {(showDustOnly
+                    ? dustTokenList.length > 0
+                    : userTokens.length > 0) &&
+                    totalReloadEstimate > 0 && (
+                      <span className="font-bold">
+                        ~ {totalReloadEstimate.toFixed(3)} SOL
+                      </span>
+                    )}{" "}
+                  to reload 🚀
+                </>
+              )}
             </h3>
             <p className="text-gray-400 text-sm">
               {selectedTokens.length} of {filteredUserTokens.length}{" "}
-              {showDustOnly ? "dust" : "valuable"} tokens selected
+              {isRhChain
+                ? "tokens"
+                : showDustOnly
+                  ? "dust"
+                  : "valuable"}{" "}
+              tokens selected
             </p>
           </div>
           <div className="flex items-center space-x-3">
             <button
-              onClick={refreshAllPrices}
-              disabled={isLoadingTokens || swappableTokens.length === 0}
+              onClick={() => {
+                if (isRhChain) {
+                  void fetchTokens(true);
+                  return;
+                }
+                void refreshAllPrices();
+              }}
+              disabled={
+                isLoadingTokensList ||
+                (isRhChain
+                  ? filteredUserTokens.length === 0 && !tradeFromAddress
+                  : swappableTokens.length === 0)
+              }
               className="p-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              title="Refresh Prices"
+              title={isRhChain ? "Refresh holdings" : "Refresh Prices"}
             >
               <svg
                 className="w-4 h-4"
@@ -2050,26 +1989,30 @@ export default function BulkTokenSeller() {
                 />
               </svg>
             </button>
-            <button
-              onClick={() => setShowZeroBalance((prev) => !prev)}
-              className={`px-4 py-2 rounded-lg transition-colors text-sm ${
-                showZeroBalance
-                  ? "bg-blue-600 hover:bg-blue-500 text-white"
-                  : "bg-gray-600 hover:bg-gray-500 text-white"
-              }`}
-            >
-              {showZeroBalance ? "Hide zero balance" : "Show zero balance"}
-            </button>
-            <button
-              onClick={toggleDustFilter}
-              className={`px-4 py-2 rounded-lg transition-colors text-sm flex items-center space-x-2 ${
-                showDustOnly
-                  ? "bg-gray-600 hover:bg-gray-500 text-white"
-                  : "bg-yellow-600 hover:bg-yellow-500 text-white"
-              }`}
-            >
-              <span>{showDustOnly ? "Show all" : "Dust only"}</span>
-            </button>
+            {!isRhChain ? (
+              <>
+                <button
+                  onClick={() => setShowZeroBalance((prev) => !prev)}
+                  className={`px-4 py-2 rounded-lg transition-colors text-sm ${
+                    showZeroBalance
+                      ? "bg-blue-600 hover:bg-blue-500 text-white"
+                      : "bg-gray-600 hover:bg-gray-500 text-white"
+                  }`}
+                >
+                  {showZeroBalance ? "Hide zero balance" : "Show zero balance"}
+                </button>
+                <button
+                  onClick={toggleDustFilter}
+                  className={`px-4 py-2 rounded-lg transition-colors text-sm flex items-center space-x-2 ${
+                    showDustOnly
+                      ? "bg-gray-600 hover:bg-gray-500 text-white"
+                      : "bg-yellow-600 hover:bg-yellow-500 text-white"
+                  }`}
+                >
+                  <span>{showDustOnly ? "Show all" : "Dust only"}</span>
+                </button>
+              </>
+            ) : null}
             <button
               onClick={selectAllTokens}
               disabled={filteredUserTokens.length === 0}
@@ -2088,7 +2031,14 @@ export default function BulkTokenSeller() {
         </div>
 
         <div className="flex justify-between items-center">
-          <h3 className="text-md font-semibold text-white mb-1">Your Tokens</h3>
+          <h3 className="text-md font-semibold text-white mb-1">
+            Your Tokens
+            {isRhChain && rhHoldingsQuery.source ? (
+              <span className="ml-2 text-xs font-normal text-gray-500 uppercase">
+                via {rhHoldingsQuery.source}
+              </span>
+            ) : null}
+          </h3>
           <p className="text-xs text-gray-400 flex items-center">
             <svg
               className="w-4 h-4 mr-1"
@@ -2120,7 +2070,8 @@ export default function BulkTokenSeller() {
         </div>
 
         {/* Token List */}
-        {isInitialLoad && isWalletReady ? (
+        {isInitialLoadTokens &&
+        (isRhChain ? Boolean(tradeFromAddress) : isWalletReady) ? (
           <div className="text-center py-12">
             <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
               <div className="w-6 h-6 border-2 border-gray-400 border-t-white rounded-full animate-spin"></div>
@@ -2130,7 +2081,7 @@ export default function BulkTokenSeller() {
             </h3>
             <TokenSkeleton count={3} variant="progressive" />
           </div>
-        ) : isLoadingTokens ? (
+        ) : isLoadingTokensList ? (
           <>
             <TokenSkeleton count={3} variant="progressive" />
           </>
@@ -2142,21 +2093,42 @@ export default function BulkTokenSeller() {
             <p className="text-gray-400 mb-4">{fetchError}</p>
             <div className="flex justify-center gap-3">
               <button
-                onClick={() => fetchTokens(true)}
+                onClick={() => void fetchTokens(true)}
                 className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
               >
                 Refresh Tokens
               </button>
-              <button
-                type="button"
-                onClick={() => setShowRpcPanel(true)}
-                className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors"
-              >
-                Check RPC
-              </button>
+              {!isRhChain ? (
+                <button
+                  type="button"
+                  onClick={() => setShowRpcPanel(true)}
+                  className="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors"
+                >
+                  Check RPC
+                </button>
+              ) : null}
             </div>
           </div>
-        ) : allTokensCount === 0 &&
+        ) : isRhChain && filteredUserTokens.length === 0 ? (
+          <div className="text-center py-12">
+            <h3 className="text-lg font-semibold text-gray-300 mb-2">
+              No ERC-20 holdings found
+            </h3>
+            <p className="text-gray-400 mb-4">
+              {tradeFromAddress
+                ? "Blockscout / GMGN returned no tokens for this wallet."
+                : "Connect Parent (Rabby) or Bound wallet."}
+            </p>
+            <button
+              onClick={() => void fetchTokens(true)}
+              disabled={!tradeFromAddress}
+              className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors disabled:opacity-50"
+            >
+              Refresh holdings
+            </button>
+          </div>
+        ) : !isRhChain &&
+          allTokensCount === 0 &&
           allBalancedTokens.length === 0 &&
           zeroBalanceTokens.length === 0 ? (
           <div className="text-center py-12">
@@ -2176,7 +2148,8 @@ export default function BulkTokenSeller() {
               Test RPCs
             </button>
           </div>
-        ) : allBalancedTokens.length === 0 &&
+        ) : !isRhChain &&
+          allBalancedTokens.length === 0 &&
           emptyAccountTokens.length > 0 &&
           !showZeroBalance ? (
           <div className="text-center py-12">
@@ -2194,7 +2167,9 @@ export default function BulkTokenSeller() {
               Show zero balance tokens
             </button>
           </div>
-        ) : allBalancedTokens.length === 0 && emptyAccountTokens.length === 0 ? (
+        ) : !isRhChain &&
+          allBalancedTokens.length === 0 &&
+          emptyAccountTokens.length === 0 ? (
           <div className="text-center py-12">
             <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
               <svg
@@ -2218,7 +2193,7 @@ export default function BulkTokenSeller() {
               You don&apos;t have any tokens to sell
             </p>
             <button
-              onClick={() => fetchTokens(true)}
+              onClick={() => void fetchTokens(true)}
               className="px-4 py-2 bg-white hover:bg-gray-100 text-black rounded-lg transition-colors"
             >
               Refresh Tokens
@@ -2318,8 +2293,11 @@ export default function BulkTokenSeller() {
           </div>
         )}
 
-        {/* Zero-Balance Tokens Section */}
-        {!showDustOnly && !showZeroBalance && zeroBalanceTokens.length > 0 && (
+        {/* Zero-Balance Tokens Section — Sol only */}
+        {isSolTrade &&
+          !showDustOnly &&
+          !showZeroBalance &&
+          zeroBalanceTokens.length > 0 && (
           <>
             <div className="border-t border-gray-600 pt-8">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
@@ -2694,10 +2672,16 @@ export default function BulkTokenSeller() {
               {/* Sell — only when sellable tokens selected */}
               {selectedTokens.length > 0 && (
                 <button
-                  onClick={handleBulkSell}
-                  disabled={isLoading}
-                  className={`md:w-3/4 w-full py-4 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
-                    isLoading
+                  onClick={() => void handleBulkSell()}
+                  disabled={
+                    isLoading || (isRhChain && !tradeFromAddress)
+                  }
+                  className={`${
+                    isRhChain || selectedZeroBalanceTokens.length === 0
+                      ? "w-full"
+                      : "md:w-3/4 w-full"
+                  } py-4 px-6 rounded-xl font-semibold text-sm transition-all duration-200 ${
+                    isLoading || (isRhChain && !tradeFromAddress)
                       ? "bg-gray-600 text-gray-400 cursor-not-allowed"
                       : "bg-white hover:bg-gray-100 text-black shadow-lg hover:shadow-xl"
                   }`}
@@ -2711,6 +2695,24 @@ export default function BulkTokenSeller() {
                     <div className="flex items-center justify-center space-x-2">
                       <span>
                         {(() => {
+                          if (isRhChain) {
+                            const usd = selectedTokens.reduce(
+                              (s, t) =>
+                                s + (t.usdValue * (t.sellPercentage || 100)) / 100,
+                              0,
+                            );
+                            const n = selectedTokens.length;
+                            const label =
+                              n === 1
+                                ? selectedTokens[0].symbol || "token"
+                                : `${n} tokens`;
+                            const via = useRhParentPath
+                              ? "UniV2 → ETH"
+                              : "GMGN → ETH";
+                            return usd > 0
+                              ? `Sell ${label} (~$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })}) ${via}`
+                              : `Sell ${label} ${via}`;
+                          }
                           const totalSolOutput = selectedTokens.reduce(
                             (total, token) => {
                               const quote = getQuoteForToken(
@@ -2770,9 +2772,10 @@ export default function BulkTokenSeller() {
                 </button>
               )}
 
-              {/* Direct close without sell — any selection (burn remaining balance) */}
-              {(selectedTokens.length > 0 ||
-                selectedZeroBalanceTokens.length > 0) && (
+              {/* Direct close without sell — Sol ATA rent reclaim only */}
+              {isSolTrade &&
+                (selectedTokens.length > 0 ||
+                  selectedZeroBalanceTokens.length > 0) && (
                 <button
                   onClick={handleCloseOnly}
                   disabled={isLoading}
@@ -2863,9 +2866,6 @@ export default function BulkTokenSeller() {
           }
         />
       </div>
-      ) : (
-        <TradeOutcomeModal {...outcomeModalProps} />
-      )}
     </div>
   );
 }

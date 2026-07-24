@@ -274,9 +274,12 @@ export default function BulkTokenBuyer() {
   const isInitialLoadTokens = isRhChain
     ? rhWalletTokens.isLoading && rhWalletTokens.tokens.length === 0
     : isInitialLoadSolTokens;
-  const refetchTokens = (force?: boolean) => {
-    if (isRhChain) return rhWalletTokens.refetch();
-    return refetchSolTokens(force);
+  const refetchTokens = async (force?: boolean): Promise<void> => {
+    if (isRhChain) {
+      await rhWalletTokens.refetch();
+      return;
+    }
+    await refetchSolTokens(force);
   };
 
   const tokensFetchError = isRhChain
