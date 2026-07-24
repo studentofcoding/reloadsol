@@ -214,3 +214,26 @@ export interface RhUniv2Position {
   updated_at: string;
   closed_at: string | null;
 }
+
+export type RhClmmPositionStatus = 'open' | 'closed' | 'pending';
+export type RhClmmProtocol = 'v3' | 'v4';
+
+export interface RhClmmPosition {
+  id: string;
+  token_id: string;
+  protocol: RhClmmProtocol;
+  pool_address: string;
+  pair_label: string | null;
+  token_address: string | null;
+  deposit_symbol: string | null;
+  owner_address: string;
+  entry_value_usd: number;
+  current_value_usd: number;
+  pnl_pct: number;
+  status: RhClmmPositionStatus;
+  mint_tx: string | null;
+  close_tx: string | null;
+  created_at: string;
+  updated_at: string;
+  closed_at: string | null;
+}

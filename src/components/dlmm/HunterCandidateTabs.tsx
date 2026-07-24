@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import GmgnKlineChart from '@/components/GmgnKlineChart';
 import DlmmChartActions from '@/components/dlmm/DlmmChartActions';
@@ -56,6 +56,7 @@ export type DisplayCandidate = DlmmScreenCandidate & {
 };
 
 type HunterCandidateTabsProps = {
+  network: 'sol' | 'robinhood';
   generalCandidates: DisplayCandidate[];
   pools: EnrichedPool[];
   poolsLoading: boolean;
@@ -392,6 +393,7 @@ function RobinhoodCard({ t }: { t: RobinhoodScreenToken }) {
 }
 
 export default function HunterCandidateTabs({
+  network,
   generalCandidates,
   pools,
   poolsLoading,
@@ -401,9 +403,14 @@ export default function HunterCandidateTabs({
   onDeploy,
 }: HunterCandidateTabsProps) {
   const [tab, setTab] = useState<'general' | 'potential' | 'robinhood'>(
-    'general',
+    network === 'robinhood' ? 'robinhood' : 'general',
   );
   const [robinhoodView, setRobinhoodView] = useState<'pools' | 'gmgn'>('pools');
+
+  useEffect(() => {
+    setTab(network === 'robinhood' ? 'robinhood' : 'general');
+  }, [network]);
+
   const { entries, remove, isLoading: potentialLoading } = usePotentialList();
   const {
     tokens: robinhoodTokens,
@@ -412,7 +419,9 @@ export default function HunterCandidateTabs({
     isFetching: robinhoodFetching,
     error: robinhoodError,
     refetch: refetchRobinhood,
-  } = useRobinhoodScreen(tab === 'robinhood' && robinhoodView === 'gmgn');
+  } = useRobinhoodScreen(
+    network === 'robinhood' && tab === 'robinhood' && robinhoodView === 'gmgn',
+  );
   const { addressSet: rugAddressSet, isLoading: rugLoading } = useRugList();
 
   const potentialCandidates: DisplayCandidate[] = useMemo(() => {
@@ -482,42 +491,35 @@ export default function HunterCandidateTabs({
   return (
     <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-        <h2 className="text-xl font-bold text-white">Hunter Candidates</h2>
-        <ScrollableMenuRow innerClassName="gap-2" bleed={false}>
-          <button
-            type="button"
-            onClick={() => setTab('general')}
-            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${
-              tab === 'general'
-                ? 'bg-white text-black'
-                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-            }`}
-          >
-            General ({visibleGeneral.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('potential')}
-            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${
-              tab === 'potential'
-                ? 'bg-purple-500 text-white'
-                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-            }`}
-          >
-            Potential ({visiblePotential.length})
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('robinhood')}
-            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${
-              tab === 'robinhood'
-                ? 'bg-emerald-500 text-black'
-                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-            }`}
-          >
-            Robinhood
-          </button>
-        </ScrollableMenuRow>
+        <h2 className="text-xl font-bold text-white">
+          {network === 'robinhood' ? 'Robinhood LP' : 'Hunter Candidates'}
+        </h2>
+        {network === 'sol' ? (
+          <ScrollableMenuRow innerClassName="gap-2" bleed={false}>
+            <button
+              type="button"
+              onClick={() => setTab('general')}
+              className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${
+                tab === 'general'
+                  ? 'bg-white text-black'
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              General ({visibleGeneral.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('potential')}
+              className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium ${
+                tab === 'potential'
+                  ? 'bg-purple-500 text-white'
+                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+              }`}
+            >
+              Potential ({visiblePotential.length})
+            </button>
+          </ScrollableMenuRow>
+        ) : null}
       </div>
 
       {tab === 'general' ? (

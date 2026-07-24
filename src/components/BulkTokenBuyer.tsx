@@ -9,6 +9,7 @@ import {
   useConnection,
   useDevWalletAccess,
 } from "../components/WalletProvider";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useRpc } from "@/contexts/RpcContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
@@ -117,15 +118,19 @@ export default function BulkTokenBuyer() {
   const [selectedCurrency, setSelectedCurrency] = useState<"SOL" | "USDC">(
     "SOL",
   );
-  const [tradeChain, setTradeChain] = useState<GmgnTradeChain>("sol");
+  const { network } = useAppNetwork();
   const [useGmgnOnSol, setUseGmgnOnSol] = useState(false);
   const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
   const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
   const boundWallets = useGmgnBoundWallets();
-  // GMGN / Robinhood bulk is dev-wallet only; public users stay on Sol Jupiter.
-  const effectiveChain: GmgnTradeChain = isDevUser ? tradeChain : "sol";
+  // App network (header) is source of truth; non-dev coerced to sol in context.
+  const effectiveChain: GmgnTradeChain = isDevUser ? network : "sol";
   const effectiveUseGmgn = isDevUser && useGmgnOnSol;
+
+  useEffect(() => {
+    if (effectiveChain === "robinhood") setUseGmgnOnSol(false);
+  }, [effectiveChain]);
   const chainNative = GMGN_CHAIN_CURRENCIES[effectiveChain];
   const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
   const useGmgnPath =
@@ -1208,40 +1213,16 @@ export default function BulkTokenBuyer() {
             </div>
           </div>
 
-          {isDevUser ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs uppercase tracking-wide text-gray-400">
-                Chain (dev)
-              </span>
-              {(["sol", "robinhood"] as const).map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => {
-                    setTradeChain(c);
-                    if (c === "robinhood") setUseGmgnOnSol(false);
-                  }}
-                  className={`rounded-lg px-3 py-1.5 text-sm ${
-                    tradeChain === c
-                      ? "bg-white text-gray-900"
-                      : "bg-gray-800 text-gray-300 hover:bg-gray-700"
-                  }`}
-                >
-                  {c === "sol" ? "Solana" : "Robinhood"}
-                </button>
-              ))}
-              {tradeChain === "sol" && solGmgnSynced ? (
-                <label className="ml-2 flex items-center gap-2 text-xs text-gray-300">
-                  <input
-                    type="checkbox"
-                    checked={useGmgnOnSol}
-                    onChange={(e) => setUseGmgnOnSol(e.target.checked)}
-                  />
-                  Use GMGN
-                  <span className="text-emerald-400">GMGN synced</span>
-                </label>
-              ) : null}
-            </div>
+          {isDevUser && effectiveChain === "sol" && solGmgnSynced ? (
+            <label className="flex items-center gap-2 text-xs text-gray-300">
+              <input
+                type="checkbox"
+                checked={useGmgnOnSol}
+                onChange={(e) => setUseGmgnOnSol(e.target.checked)}
+              />
+              Use GMGN
+              <span className="text-emerald-400">GMGN synced</span>
+            </label>
           ) : null}
 
           {isDevUser && effectiveChain === "robinhood" ? (

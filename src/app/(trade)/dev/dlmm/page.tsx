@@ -19,6 +19,9 @@ import HunterCandidateTabs, {
   type DisplayCandidate,
 } from "@/components/dlmm/HunterCandidateTabs";
 import RhUniv2PositionsPanel from "@/components/dlmm/RhUniv2PositionsPanel";
+import RhClmmPanel from "@/components/dlmm/RhClmmPanel";
+import UniversalWalletButton from "@/components/UniversalWalletButton";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { formatAppTime } from "@/utils/datetime";
 
 function formatUsd(n: number) {
@@ -33,6 +36,9 @@ function formatPct(n: number) {
 }
 
 export default function DlmmDashboardPage() {
+  const { network } = useAppNetwork();
+  const isSol = network === "sol";
+  const isRh = network === "robinhood";
   const { data: poolsData, isLoading: poolsLoading, isError: poolsError, error: poolsErrorMsg } = useDlmmPools(40);
   const { data: candidatesData } = useDlmmCandidates(25);
   const { data: positionsData, isLoading: posLoading } = useDlmmPositions();
@@ -124,11 +130,16 @@ export default function DlmmDashboardPage() {
               DLMM Agent Dashboard
             </h1>
             <p className="text-gray-400">
-              Meteora DLMM Hunter + Healer · Robinhood Uniswap V2 zap LP
+              {isSol
+                ? "Meteora DLMM Hunter + Healer"
+                : "Robinhood LP · DAMM v2 (UniV2) · CLMM v1 (Uni v3/v4)"}
             </p>
+            <div className="mt-4 flex justify-center">
+              <UniversalWalletButton />
+            </div>
           </header>
 
-          {!dbReady && (
+          {isSol && !dbReady && (
             <section className="bg-red-950/40 border border-red-700 rounded-lg p-4 text-sm text-red-200">
               <p className="font-semibold text-red-300 mb-2">Database not ready</p>
               <p className="mb-2">
@@ -150,95 +161,99 @@ export default function DlmmDashboardPage() {
             </section>
           )}
 
-          {configData?.usingEnvFallback && dbReady && (
+          {isSol && configData?.usingEnvFallback && dbReady && (
             <section className="bg-yellow-950/30 border border-yellow-700 rounded-lg p-3 text-sm text-yellow-200">
               Using environment defaults — connect Supabase to persist agent config and positions.
             </section>
           )}
 
-          {/* Agent config */}
-          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-4">Agent Config</h2>
-            {configLoading && (
-              <p className="text-gray-400 text-sm">Loading config...</p>
-            )}
-            {configError && (
-              <p className="text-red-400 text-sm mb-2">
-                {configErrorMsg instanceof Error ? configErrorMsg.message : "Config unavailable"}
-              </p>
-            )}
-            {config && (
-              <div className="flex flex-wrap gap-4 items-center">
-                <span
-                  className={`px-3 py-1 rounded text-sm font-semibold ${
-                    config.enabled
-                      ? "bg-green-900/40 text-green-400"
-                      : "bg-gray-800 text-gray-400"
-                  }`}
-                >
-                  {config.enabled ? "RUNNING" : "PAUSED"}
-                </span>
-                <span
-                  className={`px-3 py-1 rounded text-sm font-semibold ${
-                    config.dry_run
-                      ? "bg-yellow-900/40 text-yellow-400"
-                      : "bg-red-900/40 text-red-400"
-                  }`}
-                >
-                  {config.dry_run ? "DRY RUN" : "LIVE"}
-                </span>
-                <button
-                  onClick={() =>
-                    updateConfig.mutate({ enabled: !config.enabled })
-                  }
-                  disabled={!dbReady || updateConfig.isPending}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded text-sm"
-                >
-                  {config.enabled ? "Pause" : "Resume"}
-                </button>
-                <button
-                  onClick={() =>
-                    updateConfig.mutate({ dry_run: !config.dry_run })
-                  }
-                  disabled={!dbReady || updateConfig.isPending}
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded text-sm"
-                >
-                  Toggle dry-run
-                </button>
-                <span className="text-gray-400 text-sm">
-                  Open: {openPositions.length} | Cap: {config.max_sol_at_risk}{" "}
-                  SOL
-                </span>
-              </div>
-            )}
-          </section>
-
-          {/* Live decision feed */}
-          <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
-            <h2 className="text-xl font-bold text-white mb-4">Live Decisions</h2>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {lessons.length === 0 && (
-                <p className="text-gray-500 text-sm">No decisions yet.</p>
-              )}
-              {lessons.map((lesson: DlmmLesson) => (
-                <div
-                  key={lesson.id}
-                  className="bg-gray-800 rounded p-3 text-sm border border-gray-700"
-                >
-                  <div className="flex justify-between text-white">
-                    <span className="font-semibold">{lesson.decision}</span>
-                    <span className="text-gray-500">
-                      {formatAppTime(lesson.created_at)}
+          {isSol ? (
+            <>
+              {/* Agent config */}
+              <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+                <h2 className="text-xl font-bold text-white mb-4">Agent Config</h2>
+                {configLoading && (
+                  <p className="text-gray-400 text-sm">Loading config...</p>
+                )}
+                {configError && (
+                  <p className="text-red-400 text-sm mb-2">
+                    {configErrorMsg instanceof Error ? configErrorMsg.message : "Config unavailable"}
+                  </p>
+                )}
+                {config && (
+                  <div className="flex flex-wrap gap-4 items-center">
+                    <span
+                      className={`px-3 py-1 rounded text-sm font-semibold ${
+                        config.enabled
+                          ? "bg-green-900/40 text-green-400"
+                          : "bg-gray-800 text-gray-400"
+                      }`}
+                    >
+                      {config.enabled ? "RUNNING" : "PAUSED"}
+                    </span>
+                    <span
+                      className={`px-3 py-1 rounded text-sm font-semibold ${
+                        config.dry_run
+                          ? "bg-yellow-900/40 text-yellow-400"
+                          : "bg-red-900/40 text-red-400"
+                      }`}
+                    >
+                      {config.dry_run ? "DRY RUN" : "LIVE"}
+                    </span>
+                    <button
+                      onClick={() =>
+                        updateConfig.mutate({ enabled: !config.enabled })
+                      }
+                      disabled={!dbReady || updateConfig.isPending}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded text-sm"
+                    >
+                      {config.enabled ? "Pause" : "Resume"}
+                    </button>
+                    <button
+                      onClick={() =>
+                        updateConfig.mutate({ dry_run: !config.dry_run })
+                      }
+                      disabled={!dbReady || updateConfig.isPending}
+                      className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded text-sm"
+                    >
+                      Toggle dry-run
+                    </button>
+                    <span className="text-gray-400 text-sm">
+                      Open: {openPositions.length} | Cap: {config.max_sol_at_risk}{" "}
+                      SOL
                     </span>
                   </div>
-                  <div className="text-gray-400">{lesson.reason}</div>
-                </div>
-              ))}
-            </div>
-          </section>
+                )}
+              </section>
 
-          {/* Hunter candidates */}
+              {/* Live decision feed */}
+              <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
+                <h2 className="text-xl font-bold text-white mb-4">Live Decisions</h2>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {lessons.length === 0 && (
+                    <p className="text-gray-500 text-sm">No decisions yet.</p>
+                  )}
+                  {lessons.map((lesson: DlmmLesson) => (
+                    <div
+                      key={lesson.id}
+                      className="bg-gray-800 rounded p-3 text-sm border border-gray-700"
+                    >
+                      <div className="flex justify-between text-white">
+                        <span className="font-semibold">{lesson.decision}</span>
+                        <span className="text-gray-500">
+                          {formatAppTime(lesson.created_at)}
+                        </span>
+                      </div>
+                      <div className="text-gray-400">{lesson.reason}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </>
+          ) : null}
+
           <HunterCandidateTabs
+            network={network}
             generalCandidates={generalCandidates}
             pools={pools}
             poolsLoading={poolsLoading}
@@ -248,9 +263,14 @@ export default function DlmmDashboardPage() {
             onDeploy={setDeployPool}
           />
 
-          <RhUniv2PositionsPanel />
+          {isRh ? (
+            <>
+              <RhUniv2PositionsPanel />
+              <RhClmmPanel />
+            </>
+          ) : null}
 
-          {/* Positions */}
+          {isSol ? (
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
             <h2 className="text-xl font-bold text-white mb-4">
               Live Positions ({openPositions.length})
@@ -335,10 +355,11 @@ export default function DlmmDashboardPage() {
               </div>
             )}
           </section>
+          ) : null}
         </div>
 
         {/* Deploy modal */}
-        {deployPool && (
+        {isSol && deployPool && (
           <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
             <div className="bg-gray-900 border border-gray-600 rounded-xl p-6 max-w-md w-full">
               <h3 className="text-xl font-bold text-white mb-4">
@@ -380,7 +401,7 @@ export default function DlmmDashboardPage() {
         )}
 
         {/* Edit modal */}
-        {editPosition && (
+        {isSol && editPosition && (
           <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
             <div className="bg-gray-900 border border-gray-600 rounded-xl p-6 max-w-md w-full">
               <h3 className="text-xl font-bold text-white mb-4">

@@ -18,9 +18,56 @@ type EthereumProvider = {
   removeListener?: (event: string, handler: (...args: unknown[]) => void) => void
 }
 
-function getEthereum(): EthereumProvider | undefined {
+type Eip6963ProviderDetail = {
+  info: { uuid: string; name: string; rdns?: string; icon?: string }
+  provider: EthereumProvider
+}
+
+let cachedProvider: EthereumProvider | undefined
+let eip6963Providers: Eip6963ProviderDetail[] = []
+let listening6963 = false
+
+function isRabby(detail: Eip6963ProviderDetail): boolean {
+  const rdns = (detail.info.rdns ?? '').toLowerCase()
+  const name = detail.info.name.toLowerCase()
+  return rdns.includes('rabby') || name.includes('rabby')
+}
+
+function ensureEip6963Listeners() {
+  if (typeof window === 'undefined' || listening6963) return
+  listening6963 = true
+  window.addEventListener('eip6963:announceProvider', ((event: Event) => {
+    const detail = (event as CustomEvent<Eip6963ProviderDetail>).detail
+    if (!detail?.provider || !detail.info?.uuid) return
+    if (eip6963Providers.some((p) => p.info.uuid === detail.info.uuid)) return
+    eip6963Providers.push(detail)
+    cachedProvider = undefined
+  }) as EventListener)
+  window.dispatchEvent(new Event('eip6963:requestProvider'))
+}
+
+/** Prefer Rabby via EIP-6963; fall back to window.ethereum. */
+export function getEthereumProvider(): EthereumProvider | undefined {
   if (typeof window === 'undefined') return undefined
-  return (window as Window & { ethereum?: EthereumProvider }).ethereum
+  ensureEip6963Listeners()
+  if (cachedProvider) return cachedProvider
+
+  const rabby = eip6963Providers.find(isRabby)
+  if (rabby) {
+    cachedProvider = rabby.provider
+    return cachedProvider
+  }
+  if (eip6963Providers.length === 1) {
+    cachedProvider = eip6963Providers[0]!.provider
+    return cachedProvider
+  }
+
+  const eth = (window as Window & { ethereum?: EthereumProvider }).ethereum
+  if (eth) {
+    cachedProvider = eth
+    return cachedProvider
+  }
+  return undefined
 }
 
 function rhChainParams() {
@@ -38,9 +85,11 @@ export function useRhEvmWallet() {
   const [chainId, setChainId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [connecting, setConnecting] = useState(false)
+  const [hasProvider, setHasProvider] = useState(false)
 
   const refresh = useCallback(async () => {
-    const eth = getEthereum()
+    const eth = getEthereumProvider()
+    setHasProvider(Boolean(eth))
     if (!eth) return
     try {
       const [accounts, cid] = await Promise.all([
@@ -55,9 +104,16 @@ export function useRhEvmWallet() {
   }, [])
 
   useEffect(() => {
-    const eth = getEthereum()
-    if (!eth) return
-    // Defer: avoid sync setState-in-effect on mount (external wallet sync).
+    ensureEip6963Listeners()
+    const eth = getEthereumProvider()
+    setHasProvider(Boolean(eth))
+    if (!eth) {
+      // Late announce (Rabby after hydrate)
+      const t = window.setTimeout(() => {
+        void refresh()
+      }, 300)
+      return () => window.clearTimeout(t)
+    }
     queueMicrotask(() => {
       void refresh()
     })
@@ -78,8 +134,8 @@ export function useRhEvmWallet() {
   }, [refresh])
 
   const ensureChain = useCallback(async () => {
-    const eth = getEthereum()
-    if (!eth) throw new Error('No injected wallet (install MetaMask / Rabby)')
+    const eth = getEthereumProvider()
+    if (!eth) throw new Error('No Rabby (or EVM wallet) — install Rabby')
     const params = rhChainParams()
     const cid = (await eth.request({ method: 'eth_chainId' })) as string
     if (Number.parseInt(cid, 16) === RH_CHAIN_ID) return
@@ -108,8 +164,12 @@ export function useRhEvmWallet() {
     setConnecting(true)
     setError(null)
     try {
-      const eth = getEthereum()
-      if (!eth) throw new Error('No injected wallet (install MetaMask / Rabby)')
+      // Re-request announce in case Rabby loaded late
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('eip6963:requestProvider'))
+      }
+      const eth = getEthereumProvider()
+      if (!eth) throw new Error('No Rabby (or EVM wallet) — install Rabby')
       const accounts = (await eth.request({
         method: 'eth_requestAccounts',
       })) as string[]
@@ -134,8 +194,8 @@ export function useRhEvmWallet() {
   )
 
   const getWalletClient = useCallback(async (): Promise<WalletClient> => {
-    const eth = getEthereum()
-    if (!eth) throw new Error('No injected wallet')
+    const eth = getEthereumProvider()
+    if (!eth) throw new Error('No Rabby (or EVM wallet)')
     await ensureChain()
     const accounts = (await eth.request({
       method: 'eth_requestAccounts',
@@ -154,7 +214,7 @@ export function useRhEvmWallet() {
     address,
     chainId,
     isCorrectChain: chainId === RH_CHAIN_ID,
-    hasProvider: Boolean(getEthereum()),
+    hasProvider,
     connecting,
     error,
     connect,

@@ -8,13 +8,15 @@ import { tokenSymbol } from '@/utils/dlmm/lp-terminal-pools'
 /** Robinhood Chain mainnet */
 export const RH_CHAIN_ID = 4663 as const
 
-/** Default: ArrowRPC (no key). Override with RPC_4663 / NEXT_PUBLIC_RPC_4663. */
+/** Default ArrowRPC (no key). Prefer NEXT_PUBLIC_* in the browser for wallet_addEthereumChain. */
+export const RH_DEFAULT_RPC = 'https://rpc.arrowrpc.com'
+
 export function getRhRpcUrl(): string {
-  return (
-    process.env.RPC_4663 ||
+  const fromEnv =
     process.env.NEXT_PUBLIC_RPC_4663 ||
-    'https://rpc.arrowrpc.com'
-  )
+    process.env.RPC_4663 ||
+    ''
+  return fromEnv.trim() || RH_DEFAULT_RPC
 }
 
 export const RH_CHAIN = defineChain({

@@ -3,6 +3,7 @@
 import { useDeferredValue, useMemo, useState } from 'react'
 import { useLpTerminalPools } from '@/hooks/useLpTerminalPools'
 import RhUniv2LpSheet from '@/components/dlmm/RhUniv2LpSheet'
+import RhClmmLpSheet from '@/components/dlmm/RhClmmLpSheet'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
 import { getLpTerminalPoolDeepLink } from '@/utils/dlmm/lp-terminal'
 import {
@@ -12,8 +13,41 @@ import {
 
 type ProtoFilter = '' | 'univ3' | 'univ2'
 
-function canInAppAdd(row: { proto: string; token0: string; token1: string }) {
-  return isRhUniv2QuotePool(row)
+type AddTarget =
+  | {
+      kind: 'v2'
+      address: string
+      tokenAddress: string
+      tokenSymbol?: string
+    }
+  | {
+      kind: 'v1'
+      address: string
+      pairLabel: string
+      tokenAddress: string
+      tokenSymbol?: string
+    }
+
+function canAddV2(row: { proto: string; token0: string; token1: string }) {
+  return String(row.proto).toLowerCase() === 'univ2' && isRhUniv2QuotePool(row)
+}
+
+function canAddV1(row: { proto: string }) {
+  const p = String(row.proto).toLowerCase()
+  return p === 'univ3' || p === 'univ4'
+}
+
+function baseFromRow(row: {
+  token0: string
+  token1: string
+  pair: string
+}) {
+  const q0 = quoteSymbolForAddress(row.token0)
+  const q1 = quoteSymbolForAddress(row.token1)
+  const base = q0 ? row.token1 : q1 ? row.token0 : row.token0
+  const parts = row.pair.split('/')
+  const baseSym = q0 ? parts[1]?.trim() : parts[0]?.trim()
+  return { tokenAddress: base, tokenSymbol: baseSym }
 }
 
 export default function LpTerminalPoolsTable() {
@@ -22,11 +56,7 @@ export default function LpTerminalPoolsTable() {
   const [proto, setProto] = useState<ProtoFilter>('')
   const [hideDust, setHideDust] = useState(true)
   const [sort, setSort] = useState<'tvl' | 'vol' | 'created'>('vol')
-  const [addPool, setAddPool] = useState<{
-    address: string
-    tokenAddress: string
-    tokenSymbol?: string
-  } | null>(null)
+  const [addTarget, setAddTarget] = useState<AddTarget | null>(null)
 
   const { rows, count, totals, ready, isLoading, isFetching, error, refetch } =
     useLpTerminalPools(true, {
@@ -90,7 +120,13 @@ export default function LpTerminalPoolsTable() {
         </button>
       </div>
 
-      <p className="text-[11px] text-gray-500">{statusLine}</p>
+      <p className="text-[11px] text-gray-500">
+        {statusLine}
+        {' · '}
+        <span className="text-gray-400">
+          Add v1 = CLMM UniV3 · Add v2 = DAMM UniV2 zap
+        </span>
+      </p>
 
       {isLoading ? (
         <p className="text-gray-400 text-sm">Loading pools from LP Terminal indexer…</p>
@@ -99,54 +135,34 @@ export default function LpTerminalPoolsTable() {
           {error instanceof Error ? error.message : 'Failed to load pools'}
         </p>
       ) : rows.length === 0 ? (
-        <p className="text-gray-500 text-sm">No pools matched filters.</p>
+        <p className="text-gray-500 text-sm">No pools match.</p>
       ) : (
-        <div className="overflow-x-auto border border-gray-800 bg-black">
-          <table className="w-full text-left text-[11px] text-gray-300 min-w-[960px]">
-            <thead className="text-gray-500 border-b border-gray-800">
+        <div className="overflow-x-auto border border-gray-800">
+          <table className="w-full text-xs text-left">
+            <thead className="text-gray-500 border-b border-gray-800 uppercase tracking-wide">
               <tr>
-                <th className="px-3 py-2 font-normal">PAIR</th>
-                <th className="px-3 py-2 font-normal">PRICE / RESERVES</th>
-                <th className="px-3 py-2 font-normal text-right">
-                  <button
-                    type="button"
-                    className={sort === 'tvl' ? 'text-emerald-400' : ''}
-                    onClick={() => setSort('tvl')}
-                  >
-                    TVL{sort === 'tvl' ? ' ↓' : ''}
-                  </button>
-                </th>
-                <th className="px-3 py-2 font-normal text-right">
-                  <button
-                    type="button"
-                    className={sort === 'vol' ? 'text-emerald-400' : ''}
-                    onClick={() => setSort('vol')}
-                  >
-                    VOL 24H{sort === 'vol' ? ' ↓' : ''}
-                  </button>
-                </th>
-                <th className="px-3 py-2 font-normal text-right text-amber-500/90">
-                  FEES 24H
-                </th>
-                <th className="px-3 py-2 font-normal text-right">FEE APR</th>
-                <th className="px-3 py-2 font-normal text-right">REWARDS</th>
-                <th className="px-3 py-2 font-normal text-right" />
+                <th className="px-3 py-2 font-normal">Pair</th>
+                <th className="px-3 py-2 font-normal text-right">TVL</th>
+                <th className="px-3 py-2 font-normal text-right">Vol 24h</th>
+                <th className="px-3 py-2 font-normal text-right">Fees 24h</th>
+                <th className="px-3 py-2 font-normal text-right">Fee APR</th>
+                <th className="px-3 py-2 font-normal text-right">Rewards</th>
+                <th className="px-3 py-2 font-normal text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
                 <tr
-                  key={row.address}
-                  className="border-b border-gray-900 hover:bg-gray-950/80"
+                  key={`${row.proto}-${row.address}`}
+                  className="border-b border-gray-900 hover:bg-gray-900/60"
                 >
                   <td className="px-3 py-2.5">
-                    <div className="text-white">{row.pair}</div>
-                    <div className="text-gray-600">
+                    <div className="text-gray-100">{row.pair}</div>
+                    <div className="text-[10px] text-gray-600">
                       {row.protoLabel.toLowerCase()} · {row.feeTier}
                     </div>
                   </td>
-                  <td className="px-3 py-2.5 text-gray-400">{row.priceReserves}</td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">
+                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-200">
                     {formatUsd(row.tvlUsd)}
                   </td>
                   <td className="px-3 py-2.5 text-right tabular-nums">
@@ -160,26 +176,39 @@ export default function LpTerminalPoolsTable() {
                   </td>
                   <td className="px-3 py-2.5 text-right text-gray-600">—</td>
                   <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-1">
-                    {canInAppAdd(row) ? (
+                    {canAddV1(row) ? (
                       <button
                         type="button"
                         onClick={() => {
-                          const q0 = quoteSymbolForAddress(row.token0)
-                          const q1 = quoteSymbolForAddress(row.token1)
-                          const base = q0 ? row.token1 : row.token0
-                          const parts = row.pair.split('/')
-                          const baseSym = q0
-                            ? parts[1]?.trim()
-                            : parts[0]?.trim()
-                          setAddPool({
+                          const { tokenAddress, tokenSymbol } = baseFromRow(row)
+                          setAddTarget({
+                            kind: 'v1',
                             address: row.address,
-                            tokenAddress: base,
-                            tokenSymbol: baseSym,
+                            pairLabel: row.pair,
+                            tokenAddress,
+                            tokenSymbol,
+                          })
+                        }}
+                        className="inline-flex items-center gap-1 px-2 py-1 border border-sky-700 text-sky-300 hover:bg-sky-950/50"
+                      >
+                        Add v1
+                      </button>
+                    ) : null}
+                    {canAddV2(row) ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const { tokenAddress, tokenSymbol } = baseFromRow(row)
+                          setAddTarget({
+                            kind: 'v2',
+                            address: row.address,
+                            tokenAddress,
+                            tokenSymbol,
                           })
                         }}
                         className="inline-flex items-center gap-1 px-2 py-1 border border-emerald-700 text-emerald-300 hover:bg-emerald-950/50"
                       >
-                        Add LP
+                        Add v2
                       </button>
                     ) : null}
                     <a
@@ -198,13 +227,24 @@ export default function LpTerminalPoolsTable() {
         </div>
       )}
 
-      {addPool ? (
+      {addTarget?.kind === 'v2' ? (
         <RhUniv2LpSheet
           open
-          onClose={() => setAddPool(null)}
-          poolAddress={addPool.address}
-          tokenAddress={addPool.tokenAddress}
-          tokenSymbol={addPool.tokenSymbol}
+          onClose={() => setAddTarget(null)}
+          poolAddress={addTarget.address}
+          tokenAddress={addTarget.tokenAddress}
+          tokenSymbol={addTarget.tokenSymbol}
+        />
+      ) : null}
+
+      {addTarget?.kind === 'v1' ? (
+        <RhClmmLpSheet
+          open
+          onClose={() => setAddTarget(null)}
+          poolAddress={addTarget.address}
+          pairLabel={addTarget.pairLabel}
+          tokenAddress={addTarget.tokenAddress}
+          tokenSymbol={addTarget.tokenSymbol}
         />
       ) : null}
     </div>

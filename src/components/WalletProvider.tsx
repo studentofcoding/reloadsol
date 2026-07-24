@@ -14,6 +14,7 @@ import {
 import { WalletNotification } from "@/components/WalletNotification";
 import { WalletSessionProvider } from "@/components/WalletSessionContext";
 import { RpcProvider, useRpc } from "@/contexts/RpcContext";
+import { AppNetworkProvider } from "@/contexts/AppNetworkContext";
 import { TradeProviderProvider } from "@/contexts/TradeProviderContext";
 import { isDevWallet, toWalletAddress } from "@/utils/dev-wallet";
 
@@ -27,6 +28,13 @@ interface WalletProviderProps {
 
 const WALLET_APP_URL =
   process.env.NEXT_PUBLIC_SITE_URL ?? "https://reloadsol.app";
+
+function AppNetworkBridge({ children }: { children: React.ReactNode }) {
+  const isDevUser = useDevWalletAccess();
+  return (
+    <AppNetworkProvider isDevUser={isDevUser}>{children}</AppNetworkProvider>
+  );
+}
 
 function WalletContextBridge({ children }: { children: React.ReactNode }) {
   const wallet = useUnifiedWallet();
@@ -51,7 +59,9 @@ function WalletContextBridge({ children }: { children: React.ReactNode }) {
       <TradeProviderProvider>
         <RpcProvider>
           <ConnectionProvider>
-            <WalletSessionProvider>{children}</WalletSessionProvider>
+            <WalletSessionProvider>
+              <AppNetworkBridge>{children}</AppNetworkBridge>
+            </WalletSessionProvider>
           </ConnectionProvider>
         </RpcProvider>
       </TradeProviderProvider>

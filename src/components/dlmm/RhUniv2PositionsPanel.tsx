@@ -29,7 +29,7 @@ export default function RhUniv2PositionsPanel() {
     <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
       <div className="flex items-center justify-between gap-2 mb-4">
         <h2 className="text-xl font-bold text-white">
-          RH V2 LP ({positions.length})
+          DAMM v2 / UniV2 ({positions.length})
         </h2>
         <div className="flex gap-2">
           <button
@@ -47,8 +47,8 @@ export default function RhUniv2PositionsPanel() {
         </div>
       </div>
       <p className="text-xs text-gray-500 mb-3">
-        Uniswap V2 positions on Robinhood — dashboard marks only; close signs in
-        your injected wallet.
+        Constant-product (UniV2) LP on Robinhood — marks in DB; close signs with
+        Rabby on chain 4663 (ArrowRPC).
       </p>
       {isLoading ? (
         <p className="text-gray-400 text-sm">Loading…</p>
