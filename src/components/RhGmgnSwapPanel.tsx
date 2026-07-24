@@ -7,6 +7,7 @@ import { useRhWalletMode } from '@/contexts/RhWalletModeContext'
 import { useTradingData } from '@/components/TradingDataProvider'
 import { useGmgnBoundWallets } from '@/hooks/useGmgnBoundWallets'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
+import { useRhWalletTokens } from '@/hooks/useRhWalletTokens'
 import {
   executeGmgnBulkBuy,
   executeGmgnBulkSell,
@@ -34,6 +35,7 @@ export default function RhGmgnSwapPanel({
   const bound = useGmgnBoundWallets()
   const from = resolveRhActiveAddress(rhMode, rh.address, bound.evm)
   const isParent = rhMode === 'parent'
+  const holdings = useRhWalletTokens()
 
   const [side, setSide] = useState<Side>('buy')
   const [token, setToken] = useState(initialToken)
@@ -202,6 +204,48 @@ export default function RhGmgnSwapPanel({
           placeholder="0x…"
         />
       </label>
+
+      {from && holdings.tokens.length > 0 ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-[10px] uppercase text-gray-500">
+            <span>Holdings</span>
+            {holdings.source ? <span>via {holdings.source}</span> : null}
+          </div>
+          <div className="max-h-36 overflow-y-auto space-y-1 rounded-lg border border-gray-700 p-1.5">
+            {holdings.tokens.slice(0, 40).map((t) => {
+              const usd =
+                t.usdValue > 0
+                  ? `$${t.usdValue.toLocaleString(undefined, {
+                      maximumFractionDigits: 2,
+                    })}`
+                  : '$—'
+              const active =
+                token.trim().toLowerCase() === t.mintAddress.toLowerCase()
+              return (
+                <button
+                  key={t.mintAddress}
+                  type="button"
+                  onClick={() => setToken(t.mintAddress)}
+                  className={`w-full flex items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                    active
+                      ? 'bg-white text-black'
+                      : 'bg-gray-800/80 text-gray-200 hover:bg-gray-800'
+                  }`}
+                >
+                  <span className="font-medium truncate">
+                    {t.symbol || '???'}
+                  </span>
+                  <span className={active ? 'text-gray-700' : 'text-gray-400'}>
+                    {usd}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ) : from && holdings.isLoading ? (
+        <p className="text-xs text-gray-500">Loading holdings…</p>
+      ) : null}
 
       {side === 'buy' ? (
         <label className="block text-xs text-gray-400">

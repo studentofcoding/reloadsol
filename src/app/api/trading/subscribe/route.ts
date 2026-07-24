@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  normalizeSubscribeWallet,
+  walletsMatch,
+} from '@/utils/rh-wallet-holdings'
 
 // Store for active SSE connections
 interface Connection {
@@ -115,20 +119,20 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // Validate wallet address format
-  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(walletAddress)) {
+  const wallet = normalizeSubscribeWallet(walletAddress)
+  if (!wallet) {
     return NextResponse.json(
       { error: 'Invalid wallet address format' },
       { status: 400 }
     )
   }
 
-  console.log(`📡 New SSE connection for wallet: ${walletAddress.slice(0, 8)}...`)
+  console.log(`📡 New SSE connection for wallet: ${wallet.slice(0, 8)}...`)
 
   // ✅ NEW: Enhanced cleanup with delay to prevent race conditions
   const connectionsToCleanup: string[] = []
   for (const [id, conn] of Array.from(activeConnections.entries())) {
-    if (conn.walletAddress === walletAddress) {
+    if (walletsMatch(conn.walletAddress, wallet)) {
       console.log(`🔄 Cleaning up existing connection for wallet: ${id}`)
       connectionsToCleanup.push(id)
     }
@@ -145,13 +149,13 @@ export async function GET(request: NextRequest) {
 
   const stream = new ReadableStream({
     start(controller) {
-      const connectionId = `${walletAddress}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      const connectionId = `${wallet}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
       console.log(`✅ [${requestId}] Creating connection: ${connectionId}`)
 
       // Create enhanced connection object
       const connection: Connection = {
         controller,
-        walletAddress,
+        walletAddress: wallet,
         createdAt: Date.now(),
         connectionId,
         isActive: true,
@@ -174,7 +178,7 @@ export async function GET(request: NextRequest) {
       // Enhanced initial message logging
       const initialData = `id: ${connectionId}\ndata: ${JSON.stringify({
         type: 'connected',
-        wallet: walletAddress,
+        wallet,
         connectionId,
         timestamp: new Date().toISOString()
       })}\n\n`
@@ -187,10 +191,10 @@ export async function GET(request: NextRequest) {
     },
 
     cancel() {
-      console.log(`🔌 [${requestId}] Client cancelled connection for wallet: ${walletAddress?.slice(0, 8)}...`)
+      console.log(`🔌 [${requestId}] Client cancelled connection for wallet: ${wallet.slice(0, 8)}...`)
       // Find and clean up connection for this wallet
       for (const [id, conn] of Array.from(activeConnections.entries())) {
-        if (conn.walletAddress === walletAddress) {
+        if (walletsMatch(conn.walletAddress, wallet)) {
           console.log(`Client cancelled connection: ${id}`)
           cleanupConnection(id)
           activeConnections.delete(id)
@@ -255,7 +259,7 @@ export async function POST(request: NextRequest) {
 
     // Find all active connections for this wallet and try to notify them
     for (const [connectionId, connection] of Array.from(activeConnections.entries())) {
-      if (connection.walletAddress === walletAddress && connection.isActive) {
+      if (walletsMatch(connection.walletAddress, walletAddress) && connection.isActive) {
         const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`
         const message = `id: ${messageId}\ndata: ${JSON.stringify({
           type,

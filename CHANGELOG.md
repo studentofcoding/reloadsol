@@ -26,6 +26,18 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Active address drives holdings, ETH balance, History/PnL/watchlist.
 - RH nav temporarily trade+portfolio only (Signals / Strategies / DLMM sol-only until wired).
 
+### Added — RH wallet ERC-20 holdings (USD)
+
+- `/api/rh/wallet-tokens`: GMGN `wallet_holdings` first for active Parent/Bound address; fallback RH Blockscout ERC-20 + GMGN price fill.
+- Tokens only (no NFT / ERC-721·1155); show USD (`$—` if unpriced); Sell list + Swap holdings picker via `useRhWalletTokens`.
+
+### Fixed — RH Parent SSE subscribe
+
+- `/api/trading/subscribe` accepts Sol **or** `0x` EVM wallets (was Solana-only → 400 for Parent).
+- EVM connections stored/matched lowercased so POST notify hits the stream.
+- Holdings stay Blockscout REST (Arrow RPC ok for UniV2/balance; does not list ERC-20s).
+- Shared `normalizeSubscribeWallet` / `walletsMatch`; live Blockscout ERC-20 test for Parent sample `0x795b…603D` (WETH present).
+
 ### Changed — Potential API + OHLC training / Radar Telegram
 
 - **`/api/potential`** — canonical potential watchlist (`markTokenPotential`: list + `trading_signals` label + OHLC capture). Clients use `usePotentialList`; `/api/dlmm/potential` is a thin alias only.

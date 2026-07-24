@@ -27,6 +27,7 @@ import GmgnTradeConfirmModal, {
 } from "./GmgnTradeConfirmModal";
 import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
 import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
+import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import { useQuery } from "@tanstack/react-query";
 import type { Address } from "viem";
 import type { GmgnTradeChain } from "@/utils/gmgn-currencies";
@@ -174,58 +175,13 @@ export default function BulkTokenSeller() {
         ? boundWallets.sol
         : null;
   const gmgnFromAddress = useGmgnPath ? tradeFromAddress : null;
-  const rhHoldingsAddress =
-    effectiveChain === "robinhood" ? tradeFromAddress : gmgnFromAddress;
-
-  const rhHoldingsQuery = useQuery({
-    queryKey: ["gmgn-holdings", effectiveChain, rhHoldingsAddress],
-    queryFn: async () => {
-      if (!rhHoldingsAddress) return [] as UserToken[];
-      const res = await fetch(
-        `/api/gmgn/wallet/holdings?chain=${encodeURIComponent(effectiveChain)}&wallet=${encodeURIComponent(rhHoldingsAddress)}`,
-      );
-      const data = (await res.json()) as {
-        success?: boolean
-        holdings?: Array<Record<string, unknown>>
-      };
-      if (!data.success || !Array.isArray(data.holdings)) return [];
-      return data.holdings
-        .map((h): UserToken | null => {
-          const mint = String(
-            h.address ?? h.token_address ?? h.tokenAddress ?? "",
-          ).trim();
-          if (!mint || !matchesTradeChainAddress(effectiveChain, mint))
-            return null;
-          const uiAmount = Number(
-            h.ui_amount ?? h.balance ?? h.amount ?? h.token_amount_ui ?? 0,
-          );
-          const decimals = Number(h.decimals ?? 18);
-          const balance = Number(
-            h.balance_raw ?? h.amount_raw ?? Math.floor(uiAmount * 10 ** decimals),
-          );
-          return {
-            mintAddress:
-              effectiveChain === "robinhood" ? mint.toLowerCase() : mint,
-            balance: Number.isFinite(balance) ? balance : 0,
-            decimals: Number.isFinite(decimals) ? decimals : 18,
-            symbol: String(h.symbol ?? "???"),
-            name: String(h.name ?? h.symbol ?? "Unknown"),
-            logoURI:
-              typeof h.logo === "string"
-                ? h.logo
-                : typeof h.logo_url === "string"
-                  ? h.logo_url
-                  : undefined,
-            uiAmount: Number.isFinite(uiAmount) ? uiAmount : 0,
-            usdValue: Number(h.usd_value ?? h.value_usd ?? 0) || 0,
-          };
-        })
-        .filter((t): t is UserToken => t != null && t.uiAmount > 0);
-    },
-    enabled:
-      (useGmgnPath || useRhParentPath) && Boolean(rhHoldingsAddress),
-    staleTime: 30_000,
-  });
+  const rhWalletTokens = useRhWalletTokens();
+  const rhHoldingsQuery = {
+    data: rhWalletTokens.tokens,
+    isLoading: rhWalletTokens.isLoading,
+    refetch: rhWalletTokens.refetch,
+    source: rhWalletTokens.source,
+  };
 
   const rosterSellRecsQuery = useQuery({
     queryKey: ["gmgn-roster-sell-recs", effectiveChain],
@@ -1855,14 +1811,21 @@ export default function BulkTokenSeller() {
 
       {isDevUser && effectiveChain === "robinhood" && tradeFromAddress ? (
         <div className="space-y-3">
-          <div className="text-sm font-semibold text-gray-200 uppercase tracking-wide">
-            {rhMode === "parent" ? "Parent holdings" : "GMGN holdings"}
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-gray-200 uppercase tracking-wide">
+              {rhMode === "parent" ? "Parent holdings" : "Bound holdings"}
+            </div>
+            {rhHoldingsQuery.source ? (
+              <span className="text-[10px] text-gray-500 uppercase">
+                via {rhHoldingsQuery.source}
+              </span>
+            ) : null}
           </div>
           {rhHoldingsQuery.isLoading ? (
             <TokenSkeleton count={3} variant="progressive" />
           ) : (rhHoldingsQuery.data?.length ?? 0) === 0 ? (
             <p className="text-sm text-gray-400">
-              No holdings returned (or API key missing).
+              No ERC-20 holdings found for this wallet.
             </p>
           ) : (
             <div className="space-y-2">
@@ -1870,6 +1833,12 @@ export default function BulkTokenSeller() {
                 const selected = selectedTokens.find(
                   (t) => t.mintAddress === token.mintAddress,
                 );
+                const usdLabel =
+                  token.usdValue > 0
+                    ? `$${token.usdValue.toLocaleString(undefined, {
+                        maximumFractionDigits: 2,
+                      })}`
+                    : "$—";
                 return (
                   <div
                     key={token.mintAddress}
@@ -1886,6 +1855,9 @@ export default function BulkTokenSeller() {
                     >
                       <div className="font-medium">
                         {token.symbol || "???"}
+                        <span className="ml-2 text-xs font-normal text-gray-400">
+                          {usdLabel}
+                        </span>
                       </div>
                       <div className="font-mono text-[10px] text-gray-500">
                         {token.mintAddress}
@@ -1919,7 +1891,7 @@ export default function BulkTokenSeller() {
                         ))}
                       </select>
                     ) : (
-                      <span className="text-xs text-gray-400">
+                      <span className="text-xs text-gray-400 text-right">
                         {token.uiAmount.toPrecision(4)}
                       </span>
                     )}
