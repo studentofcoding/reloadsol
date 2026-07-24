@@ -30,6 +30,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `/api/rh/wallet-tokens`: GMGN `wallet_holdings` first for active Parent/Bound address; fallback RH Blockscout ERC-20 + GMGN price fill.
 - Tokens only (no NFT / ERC-721·1155); show USD (`$—` if unpriced); Sell list + Swap holdings picker via `useRhWalletTokens`.
+- `/buy` bag uses same RH holdings (click fills mint list like Sol `useWalletTokens`).
 
 ### Fixed — RH Parent SSE subscribe
 

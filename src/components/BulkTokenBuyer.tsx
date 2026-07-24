@@ -14,6 +14,7 @@ import { useRhWalletMode } from "@/contexts/RhWalletModeContext";
 import { useRpc } from "@/contexts/RpcContext";
 import { useResolvedWalletPublicKey } from "@/hooks/useResolvedWalletPublicKey";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
+import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
 import { useGmgnTokenSearch } from "@/hooks/useGmgnTokenSearch";
 import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
@@ -201,23 +202,26 @@ export default function BulkTokenBuyer() {
     enabled: isWalletReady,
   });
 
+  const isRhChain = effectiveChain === "robinhood";
+  const rhWalletTokens = useRhWalletTokens();
+
   const {
     valuable: valuableTokens,
     dust: dustTokens,
     zeroValue: zeroValueTokens,
     closeOnly: zeroBalanceTokens,
     allTokens,
-    isFetching: isLoadingUserTokens,
-    isPending: isInitialLoadTokens,
-    error: tokensQueryError,
-    refetchTokens,
+    isFetching: isLoadingSolTokens,
+    isPending: isInitialLoadSolTokens,
+    error: solTokensQueryError,
+    refetchTokens: refetchSolTokens,
     patchTokens,
   } = useWalletTokens({
     connection,
     publicKey,
     walletAddress,
     activeRpcUrl,
-    enabled: isWalletReady,
+    enabled: isWalletReady && !isRhChain,
   });
 
   const [showDustOnly, setShowDustOnly] = useState(false);
@@ -243,6 +247,7 @@ export default function BulkTokenBuyer() {
   );
 
   const displayUserTokens = useMemo(() => {
+    if (isRhChain) return rhWalletTokens.tokens;
     if (showDustOnly) {
       return dustTokenList.filter((token) => !token.isNFT);
     }
@@ -251,6 +256,8 @@ export default function BulkTokenBuyer() {
     }
     return allBalancedTokens;
   }, [
+    isRhChain,
+    rhWalletTokens.tokens,
     showDustOnly,
     showZeroBalance,
     dustTokenList,
@@ -259,12 +266,27 @@ export default function BulkTokenBuyer() {
   ]);
 
   const userTokens = displayUserTokens;
+  const isLoadingUserTokens = isRhChain
+    ? rhWalletTokens.isFetching || rhWalletTokens.isLoading
+    : isLoadingSolTokens;
+  const isInitialLoadTokens = isRhChain
+    ? rhWalletTokens.isLoading && rhWalletTokens.tokens.length === 0
+    : isInitialLoadSolTokens;
+  const refetchTokens = (force?: boolean) => {
+    if (isRhChain) return rhWalletTokens.refetch();
+    return refetchSolTokens(force);
+  };
 
-  const tokensFetchError =
-    tokensQueryError instanceof Error
-      ? tokensQueryError.message
-      : tokensQueryError
-        ? String(tokensQueryError)
+  const tokensFetchError = isRhChain
+    ? rhWalletTokens.error instanceof Error
+      ? rhWalletTokens.error.message
+      : rhWalletTokens.error
+        ? String(rhWalletTokens.error)
+        : ""
+    : solTokensQueryError instanceof Error
+      ? solTokensQueryError.message
+      : solTokensQueryError
+        ? String(solTokensQueryError)
         : "";
 
   // Token search — GMGN for dev; Jupiter for public Sol buy page
@@ -1656,33 +1678,44 @@ export default function BulkTokenBuyer() {
                         ({displayUserTokens.length})
                       </span>
                     )}
+                    {isRhChain && rhWalletTokens.source ? (
+                      <span className="ml-2 text-xs font-normal text-gray-500">
+                        via {rhWalletTokens.source}
+                      </span>
+                    ) : null}
                   </h3>
                   <div className="flex flex-wrap gap-2">
+                    {!isRhChain ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setShowZeroBalance((prev) => !prev)}
+                          className={`px-3 py-1.5 rounded-lg transition-colors text-xs ${
+                            showZeroBalance
+                              ? "bg-blue-600 hover:bg-blue-500 text-white"
+                              : "bg-gray-600 hover:bg-gray-500 text-white"
+                          }`}
+                        >
+                          {showZeroBalance
+                            ? "Hide zero balance"
+                            : "Show zero balance"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowDustOnly((prev) => !prev)}
+                          className={`px-3 py-1.5 rounded-lg transition-colors text-xs ${
+                            showDustOnly
+                              ? "bg-gray-600 hover:bg-gray-500 text-white"
+                              : "bg-yellow-600 hover:bg-yellow-500 text-white"
+                          }`}
+                        >
+                          {showDustOnly ? "Show all" : "Dust only"}
+                        </button>
+                      </>
+                    ) : null}
                     <button
                       type="button"
-                      onClick={() => setShowZeroBalance((prev) => !prev)}
-                      className={`px-3 py-1.5 rounded-lg transition-colors text-xs ${
-                        showZeroBalance
-                          ? "bg-blue-600 hover:bg-blue-500 text-white"
-                          : "bg-gray-600 hover:bg-gray-500 text-white"
-                      }`}
-                    >
-                      {showZeroBalance ? "Hide zero balance" : "Show zero balance"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowDustOnly((prev) => !prev)}
-                      className={`px-3 py-1.5 rounded-lg transition-colors text-xs ${
-                        showDustOnly
-                          ? "bg-gray-600 hover:bg-gray-500 text-white"
-                          : "bg-yellow-600 hover:bg-yellow-500 text-white"
-                      }`}
-                    >
-                      {showDustOnly ? "Show all" : "Dust only"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => refetchTokens(true)}
+                      onClick={() => void refetchTokens(true)}
                       disabled={isLoadingUserTokens}
                       className="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white rounded-lg transition-colors text-xs disabled:opacity-50"
                     >
@@ -1691,7 +1724,10 @@ export default function BulkTokenBuyer() {
                   </div>
                 </div>
 
-                {isInitialLoadTokens && isWalletReady ? (
+                {isInitialLoadTokens &&
+                (isRhChain
+                  ? Boolean(rhWalletTokens.walletAddress)
+                  : isWalletReady) ? (
                   <TokenSkeleton count={3} variant="progressive" />
                 ) : isLoadingUserTokens ? (
                   <TokenSkeleton count={2} variant="progressive" />
@@ -1709,15 +1745,21 @@ export default function BulkTokenBuyer() {
                 ) : displayUserTokens.length === 0 ? (
                   <div className="text-center py-8 border border-gray-600 rounded-xl">
                     <p className="text-gray-400 mb-3">
-                      {showDustOnly
-                        ? "No dust tokens found"
-                        : showZeroBalance
-                          ? "No tokens in wallet"
-                          : allBalancedTokens.length === 0 && dustTokenList.length > 0
-                            ? "No tokens worth $1+ — try Dust only"
-                            : "No tokens found"}
+                      {isRhChain
+                        ? "No ERC-20 holdings found"
+                        : showDustOnly
+                          ? "No dust tokens found"
+                          : showZeroBalance
+                            ? "No tokens in wallet"
+                            : allBalancedTokens.length === 0 &&
+                                dustTokenList.length > 0
+                              ? "No tokens worth $1+ — try Dust only"
+                              : "No tokens found"}
                     </p>
-                    {allBalancedTokens.length === 0 && dustTokenList.length > 0 && !showDustOnly && (
+                    {!isRhChain &&
+                      allBalancedTokens.length === 0 &&
+                      dustTokenList.length > 0 &&
+                      !showDustOnly && (
                       <button
                         type="button"
                         onClick={() => setShowDustOnly(true)}
@@ -1726,7 +1768,8 @@ export default function BulkTokenBuyer() {
                         Show dust tokens
                       </button>
                     )}
-                    {allBalancedTokens.length === 0 &&
+                    {!isRhChain &&
+                      allBalancedTokens.length === 0 &&
                       emptyAccountTokens.length > 0 &&
                       !showZeroBalance && (
                         <button
@@ -1741,7 +1784,13 @@ export default function BulkTokenBuyer() {
                 ) : (
                   <div className="grid max-h-72 overflow-y-auto border border-gray-600 rounded-xl divide-y divide-gray-700">
                     {displayUserTokens.map((token) => {
-                      const isAdded = parsedMints.includes(token.mintAddress);
+                      const isAdded = isRhChain
+                        ? parsedMints.some(
+                            (m) =>
+                              m.toLowerCase() ===
+                              token.mintAddress.toLowerCase(),
+                          )
+                        : parsedMints.includes(token.mintAddress);
                       const isEmptyAccount = token.uiAmount <= MIN_BALANCE_UI;
                       return (
                         <button
