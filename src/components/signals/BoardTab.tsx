@@ -1189,30 +1189,29 @@ function ChartsContent() {
     [signals, startCapture],
   );
 
-  const handleRemove = async (tokenAddress: string) => {
-    // Optimistic remove
-    let foundSection: SectionType | undefined;
-    setColumns((prev) => {
-      const next = { ...prev };
-      for (const key of Object.keys(next)) {
-        const k = key as SectionType;
-        if (next[k].includes(tokenAddress)) {
-          foundSection = k;
-          next[k] = next[k].filter((id) => id !== tokenAddress);
-          break;
+  const handleRemove = useCallback(
+    async (tokenAddress: string) => {
+      setColumns((prev) => {
+        const next = { ...prev };
+        for (const key of Object.keys(next)) {
+          const k = key as SectionType;
+          if (next[k].includes(tokenAddress)) {
+            next[k] = next[k].filter((id) => id !== tokenAddress);
+            break;
+          }
         }
-      }
-      return next;
-    });
+        return next;
+      });
 
-    // API Call to delete label (untrack)
-    try {
-      const qs = new URLSearchParams({ tokenAddress, chain: network });
-      await fetch(`/api/signals?${qs}`, { method: "DELETE" });
-    } catch (e) {
-      console.error("Failed to delete", e);
-    }
-  };
+      try {
+        const qs = new URLSearchParams({ tokenAddress, chain: network });
+        await fetch(`/api/signals?${qs}`, { method: "DELETE" });
+      } catch (e) {
+        console.error("Failed to delete", e);
+      }
+    },
+    [network],
+  );
 
   const handleAdd = async () => {
     if (!newAddr) return;
@@ -1266,7 +1265,12 @@ function ChartsContent() {
     (id: string) => handleEndTracking(id),
     [handleEndTracking],
   );
-  const onRemove = useCallback((id: string) => handleRemove(id), []);
+  const onRemove = useCallback(
+    (id: string) => {
+      void handleRemove(id);
+    },
+    [handleRemove],
+  );
   const onMove = useCallback(
     (id: string, target: SectionType) => moveToken(id, target),
     [moveToken],

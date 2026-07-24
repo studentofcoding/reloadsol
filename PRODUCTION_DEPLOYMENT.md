@@ -284,7 +284,7 @@ Look for `Ingest OK (200): N events`. After events exist, refresh rollups: `curl
 
 **Build OOM / deploy stops during `npm ci`:** on a **4 GB** VPS, `npm ci` + Puppeteer + `next build` can exceed RAM while the old web container is still running. Deploy mitigations in [`scripts/docker-deploy.sh`](scripts/docker-deploy.sh):
 
-- `PUPPETEER_SKIP_DOWNLOAD=true` (also in [`.npmrc`](.npmrc)) — skips Chromium download on the server
+- `PUPPETEER_SKIP_DOWNLOAD=true` (env in deploy/docker scripts, not `.npmrc`) — skips Chromium download on the server
 - `npm ci --omit=dev` via [`scripts/npm-ci-sync.sh`](scripts/npm-ci-sync.sh) — smaller install footprint
 - `NODE_OPTIONS=--max-old-space-size=2048` — leaves headroom for OS + Docker
 - Live-streamed npm output + `free -h` on failure (check `dmesg | tail` for OOM killer)
@@ -293,7 +293,7 @@ If the new web container fails health after swap, deploy **rolls back** to the p
 
 Override heap for larger hosts: `NODE_OPTIONS=--max-old-space-size=4096 npm run docker:deploy`.
 
-**Puppeteer capture locally:** `.npmrc` skips Chromium by default; run `PUPPETEER_SKIP_DOWNLOAD=false npm install` when you need `/api/capture`.
+**Puppeteer capture locally:** deploy sets `PUPPETEER_SKIP_DOWNLOAD=true` by default; run `PUPPETEER_SKIP_DOWNLOAD=false npm install` when you need `/api/capture`.
 
 **Postgres connection errors / circuit breaker:** web logs may show DB timeouts when `reloadsol-db` or PgBouncer is down. Mitigations: social rollup every 5m, rollup query without `raw_metadata`, 60s DB circuit breaker, job locks fail closed when DB is down. **Fix:** verify `DATABASE_URL` points at `reloadsol-bouncer`; run `bash scripts/deploy-tencent.sh schema`; `docker restart reloadsol-web`.
 

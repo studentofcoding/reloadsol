@@ -64,7 +64,7 @@ export async function fetchTopV4Pools(
     headers: {
       'content-type': 'application/json',
       origin: 'https://app.uniswap.org',
-      'user-agent': 'lp-uniswap-bot/1.0',
+      'user-agent': 'reloadsol-rh-clmm/1.0',
     },
     body: JSON.stringify({
       query,

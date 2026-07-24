@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { Address } from 'viem'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
 import { useCreateRhClmmMark } from '@/hooks/useRhClmmPositions'
@@ -24,28 +24,29 @@ export type RhClmmLpSheetProps = {
   tokenSymbol?: string
 }
 
-export default function RhClmmLpSheet({
-  open,
-  onClose,
+type PreviewMeta = {
+  symbol0: string
+  symbol1: string
+  fee: number
+  depositToken: Address
+}
+
+function RhClmmLpSheetBody({
   poolAddress,
   pairLabel,
   tokenAddress,
   tokenSymbol,
-}: RhClmmLpSheetProps) {
+  onClose,
+}: Omit<RhClmmLpSheetProps, 'open'>) {
   const wallet = useRhEvmWallet()
   const createMark = useCreateRhClmmMark()
   const [preview, setPreview] = useState<string | null>(null)
-  const [meta, setMeta] = useState<{
-    symbol0: string
-    symbol1: string
-    fee: number
-    depositToken: Address
-  } | null>(null)
-  const [busy, setBusy] = useState<string | null>(null)
+  const [meta, setMeta] = useState<PreviewMeta | null>(null)
+  const [busy, setBusy] = useState<string | null>('preview')
   const [error, setError] = useState<string | null>(null)
   const [txLink, setTxLink] = useState<string | null>(null)
 
-  async function ctx(): Promise<RhClmmCtx> {
+  const buildCtx = useCallback(async (): Promise<RhClmmCtx> => {
     if (!wallet.address) throw new Error('Connect Rabby first')
     await wallet.ensureChain()
     const walletClient = await wallet.getWalletClient()
@@ -55,24 +56,18 @@ export default function RhClmmLpSheet({
       walletClient,
       owner,
     }
-  }
+  }, [wallet])
 
   useEffect(() => {
-    if (!open || !poolAddress) return
+    if (!poolAddress) return
     let cancelled = false
-    setPreview(null)
-    setMeta(null)
-    setError(null)
-    setTxLink(null)
-    setBusy('preview')
     ;(async () => {
       try {
         if (!wallet.address) {
-          // Wait for connect — still show pool id
           if (!cancelled) setBusy(null)
           return
         }
-        const c = await ctx()
+        const c = await buildCtx()
         const r = await previewMintPool(poolAddress as Address, c)
         if (cancelled) return
         setPreview(r.text)
@@ -93,14 +88,14 @@ export default function RhClmmLpSheet({
     return () => {
       cancelled = true
     }
-  }, [open, poolAddress, wallet.address])
+  }, [poolAddress, wallet.address, buildCtx])
 
   async function runPreview() {
     setError(null)
     setBusy('preview')
     try {
       if (!wallet.address) await wallet.connect()
-      const c = await ctx()
+      const c = await buildCtx()
       const r = await previewMintPool(poolAddress as Address, c)
       setPreview(r.text)
       setMeta({
@@ -121,7 +116,7 @@ export default function RhClmmLpSheet({
     setBusy('mint')
     try {
       if (!wallet.address) await wallet.connect()
-      const c = await ctx()
+      const c = await buildCtx()
       const result = await mintPool(poolAddress as Address, c)
       await createMark.mutateAsync({
         token_id: result.tokenId.toString(),
@@ -144,8 +139,6 @@ export default function RhClmmLpSheet({
       setBusy(null)
     }
   }
-
-  if (!open) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-4">
@@ -239,5 +232,26 @@ export default function RhClmmLpSheet({
         </div>
       </div>
     </div>
+  )
+}
+
+export default function RhClmmLpSheet({
+  open,
+  onClose,
+  poolAddress,
+  pairLabel,
+  tokenAddress,
+  tokenSymbol,
+}: RhClmmLpSheetProps) {
+  if (!open) return null
+  return (
+    <RhClmmLpSheetBody
+      key={poolAddress}
+      poolAddress={poolAddress}
+      pairLabel={pairLabel}
+      tokenAddress={tokenAddress}
+      tokenSymbol={tokenSymbol}
+      onClose={onClose}
+    />
   )
 }

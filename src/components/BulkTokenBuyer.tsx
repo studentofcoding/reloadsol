@@ -88,11 +88,14 @@ export default function BulkTokenBuyer() {
   const triggerPostBuyRefresh = usePostBuyRefresh();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const searchParams = useSearchParams();
+  const { network } = useAppNetwork();
+  const { mode: rhMode } = useRhWalletMode();
+  const rhWallet = useRhEvmWallet();
 
   const getInitialSolAmount = () => {
     const sol = searchParams.get("sol");
     if (sol && !Number.isNaN(+sol) && +sol > 0) return sol;
-    return "0.1";
+    return network === "robinhood" ? "0.001" : "0.1";
   };
 
   // Chart mint from toast→/buy queue; drained once with initial tokenMints (not in an effect).
@@ -123,9 +126,6 @@ export default function BulkTokenBuyer() {
   const [selectedCurrency, setSelectedCurrency] = useState<"SOL" | "USDC">(
     "SOL",
   );
-  const { network } = useAppNetwork();
-  const { mode: rhMode } = useRhWalletMode();
-  const rhWallet = useRhEvmWallet();
   const [useGmgnOnSol, setUseGmgnOnSol] = useState(false);
   const [gmgnConfirmOpen, setGmgnConfirmOpen] = useState(false);
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
@@ -136,11 +136,7 @@ export default function BulkTokenBuyer() {
   const isRhChain = effectiveChain === "robinhood";
   /** Sol-only: Jupiter/Raptor buy. Never true on Robinhood. */
   const isSolTrade = effectiveChain === "sol";
-  const effectiveUseGmgn = isDevUser && useGmgnOnSol;
-
-  useEffect(() => {
-    if (isRhChain) setUseGmgnOnSol(false);
-  }, [isRhChain]);
+  const effectiveUseGmgn = isDevUser && isSolTrade && useGmgnOnSol;
   const chainNative = GMGN_CHAIN_CURRENCIES[effectiveChain];
   const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
   const useRhParentPath =
@@ -157,7 +153,6 @@ export default function BulkTokenBuyer() {
       : effectiveUseGmgn
         ? boundWallets.sol
         : null;
-  const gmgnFromAddress = useGmgnPath ? tradeFromAddress : null;
   const tradeReady =
     effectiveChain === "robinhood"
       ? Boolean(tradeFromAddress)
@@ -1152,7 +1147,6 @@ export default function BulkTokenBuyer() {
     useGmgnPath,
     useRhParentPath,
     tradeFromAddress,
-    gmgnFromAddress,
     effectiveChain,
     isRhChain,
     isSolTrade,
@@ -1659,7 +1653,7 @@ export default function BulkTokenBuyer() {
                     min="0"
                     value={solAmount}
                     onChange={(e) => setSolAmount(e.target.value)}
-                    placeholder="0.1"
+                    placeholder={isRhChain ? "0.001" : "0.1"}
                     className="w-full px-4 py-3 bg-gray-800 border border-gray-600 rounded-xl shadow-inner text-white placeholder-gray-400 focus:bg-gray-700 focus:border-gray-400 transition-all duration-200"
                     disabled={isLoading}
                   />

@@ -156,14 +156,19 @@ export default function BulkTokenSeller() {
   const isRhChain = effectiveChain === "robinhood";
   /** Sol-only: Raptor quotes + Jupiter/Sol RPC sell. Never true on Robinhood. */
   const isSolTrade = effectiveChain === "sol";
-  const effectiveUseGmgn = isDevUser && useGmgnOnSol;
+  const effectiveUseGmgn = isDevUser && isSolTrade && useGmgnOnSol;
 
-  useEffect(() => {
-    if (isRhChain) setUseGmgnOnSol(false);
+  const [tradeScopeKey, setTradeScopeKey] = useState(
+    () => `${effectiveChain}:${rhMode}`,
+  );
+  const nextTradeScopeKey = `${effectiveChain}:${rhMode}`;
+  if (tradeScopeKey !== nextTradeScopeKey) {
+    setTradeScopeKey(nextTradeScopeKey);
     setSelectedTokens([]);
     setQuotes({});
     setError("");
-  }, [effectiveChain, rhMode, isRhChain]);
+  }
+
   const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
   const useRhParentPath =
     isDevUser && isRhChain && rhMode === "parent";
@@ -179,14 +184,21 @@ export default function BulkTokenSeller() {
       : effectiveUseGmgn
         ? boundWallets.sol
         : null;
-  const gmgnFromAddress = useGmgnPath ? tradeFromAddress : null;
   const rhWalletTokens = useRhWalletTokens();
-  const rhHoldingsQuery = {
-    data: rhWalletTokens.tokens,
-    isLoading: rhWalletTokens.isLoading,
-    refetch: rhWalletTokens.refetch,
-    source: rhWalletTokens.source,
-  };
+  const rhHoldingsQuery = useMemo(
+    () => ({
+      data: rhWalletTokens.tokens,
+      isLoading: rhWalletTokens.isLoading,
+      refetch: rhWalletTokens.refetch,
+      source: rhWalletTokens.source,
+    }),
+    [
+      rhWalletTokens.tokens,
+      rhWalletTokens.isLoading,
+      rhWalletTokens.refetch,
+      rhWalletTokens.source,
+    ],
+  );
 
   const rosterSellRecsQuery = useQuery({
     queryKey: ["gmgn-roster-sell-recs", effectiveChain],
@@ -1292,7 +1304,6 @@ export default function BulkTokenSeller() {
     useGmgnPath,
     useRhParentPath,
     tradeFromAddress,
-    gmgnFromAddress,
     effectiveChain,
     isRhChain,
     isSolTrade,
@@ -1581,6 +1592,7 @@ export default function BulkTokenSeller() {
     trackOperation,
     triggerPostTradeRefresh,
     showOutcome,
+    effectiveChain,
   ]);
 
   useEffect(() => {

@@ -85,7 +85,9 @@ export function useRhEvmWallet() {
   const [chainId, setChainId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [connecting, setConnecting] = useState(false)
-  const [hasProvider, setHasProvider] = useState(false)
+  const [hasProvider, setHasProvider] = useState(() =>
+    typeof window !== 'undefined' ? Boolean(getEthereumProvider()) : false,
+  )
 
   const refresh = useCallback(async () => {
     const eth = getEthereumProvider()
@@ -106,9 +108,8 @@ export function useRhEvmWallet() {
   useEffect(() => {
     ensureEip6963Listeners()
     const eth = getEthereumProvider()
-    setHasProvider(Boolean(eth))
     if (!eth) {
-      // Late announce (Rabby after hydrate)
+      // Late announce (Rabby after hydrate) — refresh updates hasProvider
       const t = window.setTimeout(() => {
         void refresh()
       }, 300)

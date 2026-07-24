@@ -26,16 +26,6 @@ export default function SwapPageClient() {
       ? requestedTokenMint
       : null
 
-  if (network === 'robinhood') {
-    return (
-      <div
-        className="flex flex-col items-center justify-center gap-4 py-8"
-        style={{ minHeight: '550px' }}
-      >
-        <RhGmgnSwapPanel initialToken={requestedTokenMint} />
-      </div>
-    )
-  }
   const swapPresets = useMemo<SwapPreset[]>(
     () =>
       tokenMint
@@ -414,7 +404,18 @@ export default function SwapPageClient() {
     // Start the polling process
     pollForJupiterContent();
   }, [isPageReady]);
-  
+
+  if (network === 'robinhood') {
+    return (
+      <div
+        className="flex flex-col items-center justify-center gap-4 py-8"
+        style={{ minHeight: '550px' }}
+      >
+        <RhGmgnSwapPanel initialToken={requestedTokenMint} />
+      </div>
+    )
+  }
+
   return (
     <div
       className="flex flex-col items-center justify-center gap-4"

@@ -4,7 +4,6 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -31,13 +30,21 @@ export function AppNetworkProvider({
   children: ReactNode
   isDevUser: boolean
 }) {
-  const [network, setNetworkState] = useState<AppNetwork>('sol')
+  const [network, setNetworkState] = useState<AppNetwork>(() =>
+    coerceAppNetwork(readStoredAppNetwork(), isDevUser),
+  )
+  const [devGate, setDevGate] = useState(isDevUser)
 
-  useEffect(() => {
-    const stored = coerceAppNetwork(readStoredAppNetwork(), isDevUser)
-    setNetworkState(stored)
-    writeStoredAppNetwork(stored)
-  }, [isDevUser])
+  if (devGate !== isDevUser) {
+    setDevGate(isDevUser)
+    const next = coerceAppNetwork(network, isDevUser)
+    if (next !== network) {
+      setNetworkState(next)
+      writeStoredAppNetwork(next)
+    } else {
+      writeStoredAppNetwork(network)
+    }
+  }
 
   const setNetwork = useCallback(
     (n: AppNetwork) => {

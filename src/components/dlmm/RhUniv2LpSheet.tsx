@@ -284,7 +284,6 @@ export default function RhUniv2LpSheet({
     slippageBps,
     wallet,
     createPos,
-    wallet.ensureChain,
   ])
 
   const runClose = useCallback(async () => {
@@ -320,7 +319,7 @@ export default function RhUniv2LpSheet({
       setStep('error')
       setError(err instanceof Error ? err.message : 'Close failed')
     }
-  }, [closePosition, resolved, wallet, patchPos, wallet.ensureChain])
+  }, [closePosition, resolved, wallet, patchPos])
 
   if (!open) return null
 

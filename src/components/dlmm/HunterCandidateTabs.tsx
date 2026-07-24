@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import Link from 'next/link';
 import GmgnKlineChart from '@/components/GmgnKlineChart';
 import DlmmChartActions from '@/components/dlmm/DlmmChartActions';
@@ -402,14 +402,18 @@ export default function HunterCandidateTabs({
   dbReady,
   onDeploy,
 }: HunterCandidateTabsProps) {
-  const [tab, setTab] = useState<'general' | 'potential' | 'robinhood'>(
-    network === 'robinhood' ? 'robinhood' : 'general',
-  );
+  type HunterTab = 'general' | 'potential' | 'robinhood';
+  const defaultTab: HunterTab =
+    network === 'robinhood' ? 'robinhood' : 'general';
+  const [tabOverride, setTabOverride] = useState<HunterTab | null>(null);
+  const [prevNetwork, setPrevNetwork] = useState(network);
+  if (prevNetwork !== network) {
+    setPrevNetwork(network);
+    setTabOverride(null);
+  }
+  const tab = tabOverride ?? defaultTab;
+  const setTab = (next: HunterTab) => setTabOverride(next);
   const [robinhoodView, setRobinhoodView] = useState<'pools' | 'gmgn'>('pools');
-
-  useEffect(() => {
-    setTab(network === 'robinhood' ? 'robinhood' : 'general');
-  }, [network]);
 
   const { entries, remove, isLoading: potentialLoading } = usePotentialList();
   const {

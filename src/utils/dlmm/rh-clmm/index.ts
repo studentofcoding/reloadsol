@@ -31,7 +31,7 @@ function pickDepositFromLegs(token0: Address, token1: Address): Address {
 
   if (matches(chain.wrapped)) return chain.wrapped
   if (matches(chain.usdg)) return chain.usdg
-  // Fallback: token1 (often quote) — unicrit-style last resort
+  // Fallback: token1 (often quote)
   return token1
 }
 

@@ -38,7 +38,10 @@ export default function RhClmmPanel() {
     wallet.address,
     'open',
   )
-  const marks = marksData?.positions ?? []
+  const marks = useMemo(
+    () => marksData?.positions ?? [],
+    [marksData?.positions],
+  )
 
   const [ca, setCa] = useState('')
   const [preview, setPreview] = useState<string | null>(null)
