@@ -17,6 +17,7 @@ export default function GmgnTradeConfirmModal({
   from,
   legs,
   busy,
+  sequentialSignHint,
   onCancel,
   onConfirm,
 }: {
@@ -25,6 +26,8 @@ export default function GmgnTradeConfirmModal({
   from: string
   legs: GmgnConfirmLeg[]
   busy?: boolean
+  /** Parent Rabby: wallet may ask once per Approve / Swap (no EIP-5792 atomic). */
+  sequentialSignHint?: boolean
   onCancel: () => void
   onConfirm: () => void
 }) {
@@ -41,6 +44,12 @@ export default function GmgnTradeConfirmModal({
           Confirm GMGN {chain} trade
         </h3>
         <p className="mt-1 text-xs text-gray-400 break-all">From: {from}</p>
+        {sequentialSignHint ? (
+          <p className="mt-2 text-xs text-amber-200/90">
+            Rabby will ask once per Approve and once per Swap (wallet does not
+            batch these into one signature on Robinhood).
+          </p>
+        ) : null}
         <ul className="mt-4 max-h-64 space-y-2 overflow-y-auto text-sm text-gray-200">
           {legs.map((leg) => (
             <li

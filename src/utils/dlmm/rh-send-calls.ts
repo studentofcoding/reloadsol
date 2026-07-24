@@ -4,7 +4,8 @@
  */
 
 import type { Address, Hex, PublicClient, WalletClient } from 'viem'
-import { sendCalls, waitForCallsStatus } from 'viem/actions'
+import { getCapabilities, sendCalls, waitForCallsStatus } from 'viem/actions'
+import { RH_CHAIN_ID } from '@/utils/dlmm/rh-univ2'
 
 export type RhTxCall = {
   to: Address
@@ -32,8 +33,33 @@ export function shouldFallbackFromSendCalls(err: unknown): boolean {
     msg.includes('not supported') ||
     msg.includes('unsupported') ||
     msg.includes('capability') ||
-    msg.includes('atomic')
+    msg.includes('atomic') ||
+    msg.includes('4200')
   )
+}
+
+/** True when wallet advertises atomic batch for the active chain (EIP-5792). */
+export async function rhWalletSupportsAtomicBatch(params: {
+  walletClient: WalletClient
+  account: Address
+}): Promise<boolean> {
+  const { walletClient, account } = params
+  try {
+    const caps = await getCapabilities(walletClient, { account })
+    const chainId = walletClient.chain?.id ?? RH_CHAIN_ID
+    const hexKey = `0x${chainId.toString(16)}`
+    const byChain = caps as Record<
+      string,
+      { atomic?: { status?: string } } | undefined
+    >
+    const status =
+      byChain[hexKey]?.atomic?.status ??
+      byChain[hexKey.toLowerCase()]?.atomic?.status ??
+      byChain[String(chainId)]?.atomic?.status
+    return status === 'supported' || status === 'ready'
+  } catch {
+    return false
+  }
 }
 
 async function writeCallsSequential(params: {
@@ -61,7 +87,7 @@ async function writeCallsSequential(params: {
 
 /**
  * 1 call → sequential write.
- * 2+ → try wallet_sendCalls; on capability miss → sequential.
+ * 2+ → try wallet_sendCalls only if atomic capability present; else sequential.
  * `hash` is the last real tx hash when receipts exist (not the batch id).
  */
 export async function executeRhWalletCalls(params: {
@@ -73,6 +99,15 @@ export async function executeRhWalletCalls(params: {
   const { publicClient, walletClient, account, calls } = params
   if (calls.length === 0) throw new Error('No calls to send')
   if (calls.length === 1) {
+    const { hash } = await writeCallsSequential(params)
+    return { hash, batched: false }
+  }
+
+  const canBatch = await rhWalletSupportsAtomicBatch({ walletClient, account })
+  if (!canBatch) {
+    console.warn(
+      '[rh-send-calls] wallet lacks atomic batch on this chain — sequential Approve/Swap signs',
+    )
     const { hash } = await writeCallsSequential(params)
     return { hash, batched: false }
   }
@@ -104,6 +139,10 @@ export async function executeRhWalletCalls(params: {
     return { hash, batched: true }
   } catch (error) {
     if (!shouldFallbackFromSendCalls(error)) throw error
+    console.warn(
+      '[rh-send-calls] sendCalls failed — sequential fallback',
+      error instanceof Error ? error.message : error,
+    )
     const { hash } = await writeCallsSequential({
       publicClient,
       walletClient,

@@ -1809,6 +1809,7 @@ export default function BulkTokenSeller() {
         from={tradeFromAddress || ""}
         legs={gmgnConfirmLegs}
         busy={gmgnConfirmBusy}
+        sequentialSignHint={useRhParentPath}
         onCancel={() => setGmgnConfirmOpen(false)}
         onConfirm={() => void runConfirmedRhSell()}
       />

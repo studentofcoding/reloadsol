@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { encodeFunctionData, type Address } from 'viem'
+import { encodeFunctionData, maxUint256, type Address } from 'viem'
 import {
   RH_USDG,
   RH_V2_ROUTER,
@@ -34,7 +34,7 @@ describe('buildRhUniv2SellCalls', () => {
       encodeFunctionData({
         abi: erc20Abi,
         functionName: 'approve',
-        args: [RH_V2_ROUTER, AMOUNT_IN],
+        args: [RH_V2_ROUTER, maxUint256],
       }),
     )
     expect(calls[1]!.to).toBe(RH_V2_ROUTER)

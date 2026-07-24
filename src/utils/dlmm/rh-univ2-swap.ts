@@ -5,6 +5,7 @@
 
 import {
   encodeFunctionData,
+  maxUint256,
   parseEther,
   parseUnits,
   type Address,
@@ -90,12 +91,13 @@ export function buildRhUniv2SellCalls(params: {
   } = params
   const calls: RhUniv2TxCall[] = []
   if (allowance < amountIn) {
+    // Max approve so later legs/trades skip Approve (Rabby still signs Approve once).
     calls.push({
       to: token,
       data: encodeFunctionData({
         abi: erc20Abi,
         functionName: 'approve',
-        args: [RH_V2_ROUTER, amountIn],
+        args: [RH_V2_ROUTER, maxUint256],
       }),
     })
   }
@@ -291,7 +293,7 @@ export async function rhUniv2BuyExact(params: {
         data: encodeFunctionData({
           abi: erc20Abi,
           functionName: 'approve',
-          args: [RH_V2_ROUTER, amountIn],
+          args: [RH_V2_ROUTER, maxUint256],
         }),
       })
     }
@@ -416,7 +418,7 @@ export async function executeRhParentBulkBuy(params: {
         data: encodeFunctionData({
           abi: erc20Abi,
           functionName: 'approve',
-          args: [RH_V2_ROUTER, totalIn],
+          args: [RH_V2_ROUTER, maxUint256],
         }),
       })
     }
