@@ -251,7 +251,9 @@ export default function BulkTokenBuyer() {
   );
 
   const displayUserTokens = useMemo(() => {
-    if (isRhChain) return rhWalletTokens.tokens;
+    if (isRhChain) {
+      return rhWalletTokens.tokens.filter((t) => (t.usdValue ?? 0) > 0);
+    }
     if (showDustOnly) {
       return dustTokenList.filter((token) => !token.isNFT);
     }
@@ -661,6 +663,9 @@ export default function BulkTokenBuyer() {
         tokenAddress: m,
         symbol: tokenList.find((t) => t.address === m)?.symbol,
       }));
+      const totalHuman = parseFloat(solAmount);
+      const perTokenHuman =
+        tokenMints.length > 0 ? totalHuman / tokenMints.length : totalHuman;
       let results: Awaited<ReturnType<typeof executeGmgnBulkBuy>>["results"];
       let success: boolean;
       if (useRhParentPath) {
@@ -669,7 +674,7 @@ export default function BulkTokenBuyer() {
           publicClient: rhWallet.publicClient,
           walletClient: wc,
           account: tradeFromAddress as Address,
-          amountHuman: parseFloat(solAmount),
+          amountHuman: perTokenHuman,
           tokenMints,
           slippageBps: slippage,
           quote: rhQuote,
@@ -684,7 +689,8 @@ export default function BulkTokenBuyer() {
         ({ results, success } = await executeGmgnBulkBuy({
           chain: effectiveChain,
           from: tradeFromAddress,
-          amountHuman: parseFloat(solAmount),
+          amountHuman:
+            effectiveChain === "robinhood" ? perTokenHuman : totalHuman,
           inputToken,
           tokenMints,
           slippageBps: slippage,
@@ -791,6 +797,13 @@ export default function BulkTokenBuyer() {
       try {
         const inputToken =
           selectedCurrency === "USDG" ? GMGN_RH_USDG : gmgnNativeToken("robinhood");
+        const totalHuman = parseFloat(solAmount);
+        const perTokenHuman =
+          validMints.length > 0 ? totalHuman / validMints.length : totalHuman;
+        const perLabel =
+          spendUnit === "ETH"
+            ? perTokenHuman.toFixed(6)
+            : perTokenHuman.toFixed(4);
         const legs: GmgnConfirmLeg[] = [];
         for (const mint of validMints) {
           let estOut: string | undefined;
@@ -799,7 +812,7 @@ export default function BulkTokenBuyer() {
               chain: "robinhood",
               from: tradeFromAddress,
               tokenAddress: mint,
-              amountHuman: parseFloat(solAmount),
+              amountHuman: perTokenHuman,
               slippageBps: slippage,
               inputToken,
             });
@@ -820,7 +833,7 @@ export default function BulkTokenBuyer() {
           legs.push({
             tokenAddress: mint,
             symbol: tokenList.find((t) => t.address === mint)?.symbol,
-            amountLabel: `${solAmount} ${spendUnit}${
+            amountLabel: `${perLabel} ${spendUnit}${
               useRhParentPath ? " · UniV2 / Rabby" : ""
             }`,
             estOut,

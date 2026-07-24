@@ -11,11 +11,9 @@ import {
   type PublicClient,
   type WalletClient,
 } from 'viem'
-import { sendCalls, waitForCallsStatus } from 'viem/actions'
 import type { GmgnBulkBuyItem, GmgnBulkLegResult } from '@/utils/gmgn-bulk-trade'
 import {
   executeRhWalletCalls,
-  shouldFallbackFromSendCalls,
   type RhTxCall,
 } from '@/utils/dlmm/rh-send-calls'
 import {
@@ -62,6 +60,13 @@ async function requireQuotePair(
 
 function deadline(): bigint {
   return BigInt(Math.floor(Date.now() / 1000) + 20 * 60)
+}
+
+function parseQuoteAmount(amountHuman: number, quote: RhSwapQuote): bigint {
+  if (!(amountHuman > 0)) throw new Error(`${quote} amount must be > 0`)
+  return quote === 'USDG'
+    ? parseUnits(String(amountHuman), RH_USDG_DECIMALS)
+    : parseEther(String(amountHuman))
 }
 
 /** Pure encode: approve (if needed) + sell into ETH or USDG. */
@@ -118,6 +123,50 @@ export function buildRhUniv2SellCalls(params: {
   return calls
 }
 
+/** Pure encode: ETH payable swap or USDG token swap (approve handled separately for batches). */
+export function buildRhUniv2BuyCalls(params: {
+  token: Address
+  account: Address
+  amountIn: bigint
+  minOut: bigint
+  deadlineTs: bigint
+  quote?: RhSwapQuote
+}): RhUniv2TxCall[] {
+  const {
+    token,
+    account,
+    amountIn,
+    minOut,
+    deadlineTs,
+    quote = 'ETH',
+  } = params
+  if (quote === 'ETH') {
+    const path = [RH_WETH, token] as Address[]
+    return [
+      {
+        to: RH_V2_ROUTER,
+        data: encodeFunctionData({
+          abi: univ2RouterAbi,
+          functionName: 'swapExactETHForTokens',
+          args: [minOut, path, account, deadlineTs],
+        }),
+        value: amountIn,
+      },
+    ]
+  }
+  const path = [RH_USDG, token] as Address[]
+  return [
+    {
+      to: RH_V2_ROUTER,
+      data: encodeFunctionData({
+        abi: univ2RouterAbi,
+        functionName: 'swapExactTokensForTokens',
+        args: [amountIn, minOut, path, account, deadlineTs],
+      }),
+    },
+  ]
+}
+
 /** Reads balance / quote / allowance, then builds approve+swap calldata. */
 export async function prepareRhUniv2SellLegCalls(params: {
   publicClient: PublicClient
@@ -166,6 +215,49 @@ export async function prepareRhUniv2SellLegCalls(params: {
   })
 }
 
+/** Quote + encode one buy leg (no USDG approve — batch adds one for total). */
+export async function prepareRhUniv2BuyLegCalls(params: {
+  publicClient: PublicClient
+  account: Address
+  token: Address
+  amountHuman: number
+  slippageBps: number
+  deadlineTs?: bigint
+  quote?: RhSwapQuote
+}): Promise<{ calls: RhUniv2TxCall[]; amountIn: bigint }> {
+  const {
+    publicClient,
+    account,
+    token,
+    amountHuman,
+    slippageBps,
+    quote = 'ETH',
+  } = params
+  await requireQuotePair(publicClient, token, quote)
+  const amountIn = parseQuoteAmount(amountHuman, quote)
+  const path =
+    quote === 'ETH'
+      ? ([RH_WETH, token] as Address[])
+      : ([RH_USDG, token] as Address[])
+  const amounts = await publicClient.readContract({
+    address: RH_V2_ROUTER,
+    abi: univ2RouterAbi,
+    functionName: 'getAmountsOut',
+    args: [amountIn, path],
+  })
+  const expected = amounts[amounts.length - 1]!
+  const minOut = applySlippageMinOut(expected, slippageBps)
+  const calls = buildRhUniv2BuyCalls({
+    token,
+    account,
+    amountIn,
+    minOut,
+    deadlineTs: params.deadlineTs ?? deadline(),
+    quote,
+  })
+  return { calls, amountIn }
+}
+
 /** Buy token with ETH (native) or USDG ERC20. */
 export async function rhUniv2BuyExact(params: {
   publicClient: PublicClient
@@ -176,80 +268,41 @@ export async function rhUniv2BuyExact(params: {
   slippageBps: number
   quote?: RhSwapQuote
 }): Promise<{ hash: string }> {
-  const {
-    publicClient,
-    walletClient,
-    account,
-    token,
-    slippageBps,
-    quote = 'ETH',
-  } = params
-  if (!(params.amountHuman > 0)) {
-    throw new Error(`${quote} amount must be > 0`)
-  }
-  await requireQuotePair(publicClient, token, quote)
-  const dl = deadline()
-
-  if (quote === 'ETH') {
-    const amountIn = parseEther(String(params.amountHuman))
-    const path = [RH_WETH, token] as Address[]
-    const amounts = await publicClient.readContract({
-      address: RH_V2_ROUTER,
-      abi: univ2RouterAbi,
-      functionName: 'getAmountsOut',
-      args: [amountIn, path],
-    })
-    const expected = amounts[amounts.length - 1]!
-    const minOut = applySlippageMinOut(expected, slippageBps)
-    const hash = await walletClient.writeContract({
-      account,
-      chain: walletClient.chain,
-      address: RH_V2_ROUTER,
-      abi: univ2RouterAbi,
-      functionName: 'swapExactETHForTokens',
-      args: [minOut, path, account, dl],
-      value: amountIn,
-    })
-    await publicClient.waitForTransactionReceipt({ hash })
-    return { hash }
-  }
-
-  const amountIn = parseUnits(String(params.amountHuman), RH_USDG_DECIMALS)
-  const path = [RH_USDG, token] as Address[]
-  const amounts = await publicClient.readContract({
-    address: RH_V2_ROUTER,
-    abi: univ2RouterAbi,
-    functionName: 'getAmountsOut',
-    args: [amountIn, path],
+  const quote = params.quote ?? 'ETH'
+  const { calls, amountIn } = await prepareRhUniv2BuyLegCalls({
+    publicClient: params.publicClient,
+    account: params.account,
+    token: params.token,
+    amountHuman: params.amountHuman,
+    slippageBps: params.slippageBps,
+    quote,
   })
-  const expected = amounts[amounts.length - 1]!
-  const minOut = applySlippageMinOut(expected, slippageBps)
-  const allowance = await publicClient.readContract({
-    address: RH_USDG,
-    abi: erc20Abi,
-    functionName: 'allowance',
-    args: [account, RH_V2_ROUTER],
-  })
-  if (allowance < amountIn) {
-    const approveHash = await walletClient.writeContract({
-      account,
-      chain: walletClient.chain,
+  const allCalls: RhUniv2TxCall[] = []
+  if (quote === 'USDG') {
+    const allowance = await params.publicClient.readContract({
       address: RH_USDG,
       abi: erc20Abi,
-      functionName: 'approve',
-      args: [RH_V2_ROUTER, amountIn],
+      functionName: 'allowance',
+      args: [params.account, RH_V2_ROUTER],
     })
-    await publicClient.waitForTransactionReceipt({ hash: approveHash })
+    if (allowance < amountIn) {
+      allCalls.push({
+        to: RH_USDG,
+        data: encodeFunctionData({
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [RH_V2_ROUTER, amountIn],
+        }),
+      })
+    }
   }
-  const hash = await walletClient.writeContract({
-    account,
-    chain: walletClient.chain,
-    address: RH_V2_ROUTER,
-    abi: univ2RouterAbi,
-    functionName: 'swapExactTokensForTokens',
-    args: [amountIn, minOut, path, account, dl],
+  allCalls.push(...calls)
+  const { hash } = await executeRhWalletCalls({
+    publicClient: params.publicClient,
+    walletClient: params.walletClient,
+    account: params.account,
+    calls: allCalls,
   })
-  await publicClient.waitForTransactionReceipt({ hash })
   return { hash }
 }
 
@@ -299,7 +352,7 @@ export async function rhUniv2SellTokenPercent(params: {
   return { hash }
 }
 
-/** Sequential parent buys — same shape as executeGmgnBulkBuy results. */
+/** Parent bulk buy — amountHuman is per-token (caller splits). Batches via sendCalls. */
 export async function executeRhParentBulkBuy(params: {
   publicClient: PublicClient
   walletClient: WalletClient
@@ -310,27 +363,32 @@ export async function executeRhParentBulkBuy(params: {
   quote?: RhSwapQuote
 }): Promise<{ success: boolean; results: GmgnBulkLegResult[] }> {
   const quote = params.quote ?? 'ETH'
-  const results: GmgnBulkLegResult[] = []
+  if (params.tokenMints.length === 0) {
+    return { success: false, results: [] }
+  }
+
+  const deadlineTs = deadline()
+  const prepared: Array<{
+    item: GmgnBulkBuyItem
+    calls: RhUniv2TxCall[]
+    amountIn: bigint
+  }> = []
+  const prepFailures: GmgnBulkLegResult[] = []
+
   for (const item of params.tokenMints) {
     try {
-      const { hash } = await rhUniv2BuyExact({
+      const { calls, amountIn } = await prepareRhUniv2BuyLegCalls({
         publicClient: params.publicClient,
-        walletClient: params.walletClient,
         account: params.account,
         token: item.tokenAddress as Address,
         amountHuman: params.amountHuman,
         slippageBps: params.slippageBps,
+        deadlineTs,
         quote,
       })
-      results.push({
-        tokenAddress: item.tokenAddress,
-        symbol: item.symbol,
-        success: true,
-        hash,
-        status: 'confirmed',
-      })
+      prepared.push({ item, calls, amountIn })
     } catch (error) {
-      results.push({
+      prepFailures.push({
         tokenAddress: item.tokenAddress,
         symbol: item.symbol,
         success: false,
@@ -338,55 +396,70 @@ export async function executeRhParentBulkBuy(params: {
       })
     }
   }
-  return {
-    success: results.length > 0 && results.every((r) => r.success),
-    results,
-  }
-}
 
-async function executeRhParentBulkSellSequential(params: {
-  publicClient: PublicClient
-  walletClient: WalletClient
-  account: Address
-  legs: Array<{ tokenAddress: string; percent: number; symbol?: string }>
-  slippageBps: number
-  quote?: RhSwapQuote
-}): Promise<{ success: boolean; results: GmgnBulkLegResult[] }> {
-  const quote = params.quote ?? 'ETH'
-  const results: GmgnBulkLegResult[] = []
-  for (const leg of params.legs) {
-    try {
-      const { hash } = await rhUniv2SellTokenPercent({
-        publicClient: params.publicClient,
-        walletClient: params.walletClient,
-        account: params.account,
-        token: leg.tokenAddress as Address,
-        percent: leg.percent,
-        slippageBps: params.slippageBps,
-        quote,
-      })
-      results.push({
-        tokenAddress: leg.tokenAddress,
-        symbol: leg.symbol,
-        success: true,
-        hash,
-        status: 'confirmed',
-      })
-    } catch (error) {
-      results.push({
-        tokenAddress: leg.tokenAddress,
-        symbol: leg.symbol,
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
+  if (prepared.length === 0) {
+    return { success: false, results: prepFailures }
+  }
+
+  const flatCalls: RhUniv2TxCall[] = []
+  if (quote === 'USDG') {
+    const totalIn = prepared.reduce((s, p) => s + p.amountIn, BigInt(0))
+    const allowance = await params.publicClient.readContract({
+      address: RH_USDG,
+      abi: erc20Abi,
+      functionName: 'allowance',
+      args: [params.account, RH_V2_ROUTER],
+    })
+    if (allowance < totalIn) {
+      flatCalls.push({
+        to: RH_USDG,
+        data: encodeFunctionData({
+          abi: erc20Abi,
+          functionName: 'approve',
+          args: [RH_V2_ROUTER, totalIn],
+        }),
       })
     }
   }
-  return {
-    success: results.length > 0 && results.every((r) => r.success),
-    results,
+  for (const p of prepared) flatCalls.push(...p.calls)
+
+  try {
+    const { hash } = await executeRhWalletCalls({
+      publicClient: params.publicClient,
+      walletClient: params.walletClient,
+      account: params.account,
+      calls: flatCalls,
+    })
+    const batchResults: GmgnBulkLegResult[] = prepared.map(({ item }) => ({
+      tokenAddress: item.tokenAddress,
+      symbol: item.symbol,
+      success: true,
+      hash,
+      status: 'confirmed',
+    }))
+    const results = [...prepFailures, ...batchResults]
+    return {
+      success: results.length > 0 && results.every((r) => r.success),
+      results,
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return {
+      success: false,
+      results: [
+        ...prepFailures,
+        ...prepared.map(({ item }) => ({
+          tokenAddress: item.tokenAddress,
+          symbol: item.symbol,
+          success: false,
+          error: msg,
+        })),
+      ],
+    }
   }
 }
 
+/** Parent bulk sell — flatten legs → executeRhWalletCalls (batch or sequential). */
 export async function executeRhParentBulkSell(params: {
   publicClient: PublicClient
   walletClient: WalletClient
@@ -396,8 +469,8 @@ export async function executeRhParentBulkSell(params: {
   quote?: RhSwapQuote
 }): Promise<{ success: boolean; results: GmgnBulkLegResult[] }> {
   const quote = params.quote ?? 'ETH'
-  if (params.legs.length <= 1) {
-    return executeRhParentBulkSellSequential(params)
+  if (params.legs.length === 0) {
+    return { success: false, results: [] }
   }
 
   const deadlineTs = deadline()
@@ -433,108 +506,39 @@ export async function executeRhParentBulkSell(params: {
     return { success: false, results: prepFailures }
   }
 
-  if (prepared.length === 1) {
-    const only = prepared[0]!
-    try {
-      const { hash } = await executeRhWalletCalls({
-        publicClient: params.publicClient,
-        walletClient: params.walletClient,
-        account: params.account,
-        calls: only.calls,
-      })
-      return {
-        success: prepFailures.length === 0,
-        results: [
-          ...prepFailures,
-          {
-            tokenAddress: only.leg.tokenAddress,
-            symbol: only.leg.symbol,
-            success: true,
-            hash,
-            status: 'confirmed',
-          },
-        ],
-      }
-    } catch (error) {
-      return {
-        success: false,
-        results: [
-          ...prepFailures,
-          {
-            tokenAddress: only.leg.tokenAddress,
-            symbol: only.leg.symbol,
-            success: false,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        ],
-      }
-    }
-  }
-
   const flatCalls = prepared.flatMap((p) => p.calls)
   try {
-    const { id } = await sendCalls(params.walletClient, {
+    const { hash } = await executeRhWalletCalls({
+      publicClient: params.publicClient,
+      walletClient: params.walletClient,
       account: params.account,
-      chain: params.walletClient.chain,
-      calls: flatCalls.map((c) => ({
-        to: c.to,
-        data: c.data,
-        value: c.value ?? BigInt(0),
-      })),
+      calls: flatCalls,
     })
-    const status = await waitForCallsStatus(params.walletClient, { id })
-    const ok = status.status === 'success'
-    const hash =
-      status.receipts?.find((r) => r.transactionHash)?.transactionHash ?? id
-    const batchResults: GmgnBulkLegResult[] = prepared.map(({ leg }) =>
-      ok
-        ? {
-            tokenAddress: leg.tokenAddress,
-            symbol: leg.symbol,
-            success: true,
-            hash,
-            status: 'confirmed',
-          }
-        : {
-            tokenAddress: leg.tokenAddress,
-            symbol: leg.symbol,
-            success: false,
-            hash,
-            error: `Batch status: ${status.status ?? 'unknown'}`,
-          },
-    )
+    const batchResults: GmgnBulkLegResult[] = prepared.map(({ leg }) => ({
+      tokenAddress: leg.tokenAddress,
+      symbol: leg.symbol,
+      success: true,
+      hash,
+      status: 'confirmed',
+    }))
     const results = [...prepFailures, ...batchResults]
     return {
       success: results.length > 0 && results.every((r) => r.success),
       results,
     }
   } catch (error) {
-    if (!shouldFallbackFromSendCalls(error)) {
-      const msg = error instanceof Error ? error.message : String(error)
-      return {
-        success: false,
-        results: [
-          ...prepFailures,
-          ...prepared.map(({ leg }) => ({
-            tokenAddress: leg.tokenAddress,
-            symbol: leg.symbol,
-            success: false,
-            error: msg,
-          })),
-        ],
-      }
-    }
-    // Capability / method missing → existing sequential approve+swap per leg
-    const seq = await executeRhParentBulkSellSequential({
-      ...params,
-      legs: prepared.map((p) => p.leg),
-    })
+    const msg = error instanceof Error ? error.message : String(error)
     return {
-      success:
-        prepFailures.length === 0 &&
-        seq.results.length > 0 &&
-        seq.results.every((r) => r.success),
-      results: [...prepFailures, ...seq.results],
+      success: false,
+      results: [
+        ...prepFailures,
+        ...prepared.map(({ leg }) => ({
+          tokenAddress: leg.tokenAddress,
+          symbol: leg.symbol,
+          success: false,
+          error: msg,
+        })),
+      ],
     }
   }
 }

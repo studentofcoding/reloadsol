@@ -1725,7 +1725,9 @@ export default function BulkTokenSeller() {
   );
 
   const displayUserTokens = useMemo(() => {
-    if (isRhChain) return rhHoldingsQuery.data ?? [];
+    if (isRhChain) {
+      return (rhHoldingsQuery.data ?? []).filter((t) => (t.usdValue ?? 0) > 0);
+    }
     if (showDustOnly) {
       return dustTokenList;
     }
