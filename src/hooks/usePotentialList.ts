@@ -1,12 +1,16 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import type { DlmmPotentialEntry, DlmmPotentialSource } from '@/types/dlmm'
+import type { AppNetwork } from '@/utils/app-network'
 
 export const POTENTIAL_LIST_QUERY_KEY = ['potential-list'] as const
 
-async function fetchPotentialList(): Promise<DlmmPotentialEntry[]> {
-  const res = await fetch('/api/potential')
+async function fetchPotentialList(
+  chain: AppNetwork,
+): Promise<DlmmPotentialEntry[]> {
+  const res = await fetch(`/api/potential?chain=${encodeURIComponent(chain)}`)
   const data = await res.json()
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to fetch potential list')
@@ -15,11 +19,13 @@ async function fetchPotentialList(): Promise<DlmmPotentialEntry[]> {
 }
 
 export function usePotentialList() {
+  const { network } = useAppNetwork()
   const queryClient = useQueryClient()
+  const listKey = [...POTENTIAL_LIST_QUERY_KEY, network] as const
 
   const query = useQuery({
-    queryKey: POTENTIAL_LIST_QUERY_KEY,
-    queryFn: fetchPotentialList,
+    queryKey: listKey,
+    queryFn: () => fetchPotentialList(network),
     refetchInterval: 30_000,
   })
 
@@ -43,6 +49,7 @@ export function usePotentialList() {
           tokenSymbol: input.tokenSymbol,
           source: input.source,
           notes: input.notes,
+          chain: network,
         }),
       })
       const data = await res.json()
@@ -56,10 +63,11 @@ export function usePotentialList() {
 
   const removeMutation = useMutation({
     mutationFn: async (tokenAddress: string) => {
-      const res = await fetch(
-        `/api/potential?tokenAddress=${encodeURIComponent(tokenAddress)}`,
-        { method: 'DELETE' },
-      )
+      const qs = new URLSearchParams({
+        tokenAddress,
+        chain: network,
+      })
+      const res = await fetch(`/api/potential?${qs}`, { method: 'DELETE' })
       const data = await res.json()
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to remove from potential list')

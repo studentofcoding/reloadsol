@@ -5,7 +5,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import ScrollableMenuRow from "@/components/ScrollableMenuRow";
 import WalletBalance from "@/components/WalletBalance";
+import RhWalletBalance from "@/components/RhWalletBalance";
 import { useDevWalletAccess } from "@/components/WalletProvider";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
+import { routeSupportsNetwork } from "@/config/route-network";
 import { useIsClient } from "@/hooks/useIsClient";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
@@ -18,8 +21,12 @@ export default function NavigationTabs({
 }) {
   const pathname = usePathname();
   const isDevUser = useDevWalletAccess();
+  const { network } = useAppNetwork();
+  const can = (path: string) => routeSupportsNetwork(path, network);
   const mounted = useIsClient();
   const isMobile = useIsMobile();
+  const showSolChrome = network === "sol";
+  const showPortfolioChrome = true; // Batch 3: history/PnL on both networks
 
   const isActive = (path: string) => {
     // Check if it's an overlay tab (no leading slash)
@@ -62,6 +69,7 @@ export default function NavigationTabs({
             {/* Main Trading Tabs */}
             {showMainTabs && (
               <>
+                {can("/sell") ? (
                 <Link
                   href="/sell"
                   className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
@@ -84,10 +92,12 @@ export default function NavigationTabs({
                         d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                       />
                     </svg>
-                    <span>Reload SOL</span>
+                    <span>{network === "robinhood" ? "Sell" : "Reload SOL"}</span>
                   </div>
                 </Link>
+                ) : null}
 
+                {can("/buy") ? (
                 <Link
                   href="/buy"
                   className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
@@ -113,7 +123,9 @@ export default function NavigationTabs({
                     <span>Buy</span>
                   </div>
                 </Link>
+                ) : null}
 
+                {can("/swap") ? (
                 <Link
                   href="/swap"
                   className={`px-3 py-3 rounded-lg font-semibold transition-all duration-200 ${
@@ -139,9 +151,11 @@ export default function NavigationTabs({
                     <span>Swap</span>
                   </div>
                 </Link>
+                ) : null}
 
                 {mounted && isDevUser && (
                   <>
+                    {can("/dev/signals") ? (
                     <Link
                       href="/dev/signals"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
@@ -165,6 +179,8 @@ export default function NavigationTabs({
                         />
                       </svg>
                     </Link>
+                    ) : null}
+                    {can("/dev/algo-tester") ? (
                     <Link
                       href="/dev/algo-tester"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
@@ -188,6 +204,8 @@ export default function NavigationTabs({
                         />
                       </svg>
                     </Link>
+                    ) : null}
+                    {can("/dev/dlmm") ? (
                     <Link
                       href="/dev/dlmm"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
@@ -211,6 +229,8 @@ export default function NavigationTabs({
                         />
                       </svg>
                     </Link>
+                    ) : null}
+                    {can("/dev/social") ? (
                     <Link
                       href="/dev/social"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
@@ -234,6 +254,8 @@ export default function NavigationTabs({
                         />
                       </svg>
                     </Link>
+                    ) : null}
+                    {can("/dev/strategies") ? (
                     <Link
                       href="/dev/strategies"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
@@ -263,6 +285,8 @@ export default function NavigationTabs({
                         />
                       </svg>
                     </Link>
+                    ) : null}
+                    {can("/dev/token-search") ? (
                     <Link
                       href="/dev/token-search"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
@@ -286,6 +310,8 @@ export default function NavigationTabs({
                         />
                       </svg>
                     </Link>
+                    ) : null}
+                    {can("/dev/ohlc-labels") ? (
                     <Link
                       href="/dev/ohlc-labels"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
@@ -297,6 +323,8 @@ export default function NavigationTabs({
                     >
                       <span className="text-xs font-semibold">OHLC</span>
                     </Link>
+                    ) : null}
+                    {can("/dev/arbitrage") ? (
                     <Link
                       href="/dev/arbitrage"
                       className={`px-4 py-3 ml-1 rounded-lg font-medium transition-all duration-200 ${
@@ -308,12 +336,13 @@ export default function NavigationTabs({
                     >
                       <span className="text-xs font-semibold">Arb</span>
                     </Link>
+                    ) : null}
                   </>
                 )}
               </>
             )}
 
-            {/* Info Tabs */}
+            {showPortfolioChrome ? (
             <div className="border-l border-gray-600 pl-2 ml-2 flex shrink-0 items-center">
               <button
                 type="button"
@@ -364,24 +393,28 @@ export default function NavigationTabs({
                 </svg>
               </button>
             </div>
+            ) : null}
           </ScrollableMenuRow>
 
           {/* Wallet Balance Display */}
           <div className="h-full shrink-0">
-            {mounted && !isMobile && <WalletBalance />}
+            {mounted && !isMobile ? (
+              showSolChrome ? <WalletBalance /> : <RhWalletBalance />
+            ) : null}
           </div>
         </div>
       </div>
 
-      {/* Mobile Top Bar - SOL Balance & Info Tabs */}
+      {/* Mobile Top Bar - Balance & Info Tabs */}
       <div className="md:hidden max-w-4xl mx-auto mb-2 z-50 pt-2">
         <div className="flex items-center justify-between px-4 py-3 rounded-lg mb-4">
-          {/* SOL Balance on Left */}
           <div className="flex-1">
-            {mounted && isMobile && <WalletBalance />}
+            {mounted && isMobile ? (
+              showSolChrome ? <WalletBalance /> : <RhWalletBalance />
+            ) : null}
           </div>
 
-          {/* History & P&L on Right */}
+          {showPortfolioChrome ? (
           <div className="flex items-center space-x-2">
             <button
               type="button"
@@ -427,11 +460,12 @@ export default function NavigationTabs({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   strokeWidth={2}
-                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
+                  d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
                 />
               </svg>
             </button>
           </div>
+          ) : null}
         </div>
       </div>
 
@@ -439,7 +473,7 @@ export default function NavigationTabs({
       {showMainTabs && (
         <div className="md:hidden fixed bottom-0 left-0 right-0 bg-black border-t border-gray-800 z-9999">
           <ScrollableMenuRow className="py-3 px-2" innerClassName="gap-1 mx-auto" bleed={false}>
-            {/* Main Trading Tabs Only */}
+            {can("/sell") ? (
             <Link
               href="/sell"
               className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
@@ -459,9 +493,13 @@ export default function NavigationTabs({
                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                 />
               </svg>
-              <span className="text-xs font-medium">Reload</span>
+              <span className="text-xs font-medium">
+                {network === "robinhood" ? "Sell" : "Reload"}
+              </span>
             </Link>
+            ) : null}
 
+            {can("/buy") ? (
             <Link
               href="/buy"
               className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
@@ -483,7 +521,9 @@ export default function NavigationTabs({
               </svg>
               <span className="text-xs font-medium">Buy</span>
             </Link>
+            ) : null}
 
+            {can("/swap") ? (
             <Link
               href="/swap"
               className={`flex shrink-0 flex-col items-center px-4 py-2 rounded-lg transition-all duration-200 ${
@@ -505,9 +545,11 @@ export default function NavigationTabs({
               </svg>
               <span className="text-xs font-medium">Swap</span>
             </Link>
+            ) : null}
 
             {mounted && isDevUser && (
               <>
+                {can("/dev/signals") ? (
                 <Link
                   href="/dev/signals"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
@@ -531,6 +573,8 @@ export default function NavigationTabs({
                   </svg>
                   <span className="text-xs font-medium">Signals</span>
                 </Link>
+                ) : null}
+                {can("/dev/algo-tester") ? (
                 <Link
                   href="/dev/algo-tester"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
@@ -554,6 +598,8 @@ export default function NavigationTabs({
                   </svg>
                   <span className="text-xs font-medium">Algo</span>
                 </Link>
+                ) : null}
+                {can("/dev/dlmm") ? (
                 <Link
                   href="/dev/dlmm"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
@@ -577,6 +623,8 @@ export default function NavigationTabs({
                   </svg>
                   <span className="text-xs font-medium">DLMM</span>
                 </Link>
+                ) : null}
+                {can("/dev/social") ? (
                 <Link
                   href="/dev/social"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
@@ -600,6 +648,8 @@ export default function NavigationTabs({
                   </svg>
                   <span className="text-xs font-medium">Social</span>
                 </Link>
+                ) : null}
+                {can("/dev/strategies") ? (
                 <Link
                   href="/dev/strategies"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
@@ -629,6 +679,8 @@ export default function NavigationTabs({
                   </svg>
                   <span className="text-xs font-medium">Strategies</span>
                 </Link>
+                ) : null}
+                {can("/dev/token-search") ? (
                 <Link
                   href="/dev/token-search"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
@@ -652,6 +704,8 @@ export default function NavigationTabs({
                   </svg>
                   <span className="text-xs font-medium">Locate</span>
                 </Link>
+                ) : null}
+                {can("/dev/ohlc-labels") ? (
                 <Link
                   href="/dev/ohlc-labels"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
@@ -663,6 +717,8 @@ export default function NavigationTabs({
                   <span className="mb-1 text-sm font-bold">OHLC</span>
                   <span className="text-xs font-medium">Labels</span>
                 </Link>
+                ) : null}
+                {can("/dev/arbitrage") ? (
                 <Link
                   href="/dev/arbitrage"
                   className={`flex shrink-0 flex-col items-center px-3 py-2 rounded-lg transition-all duration-200 ${
@@ -674,6 +730,7 @@ export default function NavigationTabs({
                   <span className="mb-1 text-sm font-bold">Arb</span>
                   <span className="text-xs font-medium">Console</span>
                 </Link>
+                ) : null}
               </>
             )}
           </ScrollableMenuRow>

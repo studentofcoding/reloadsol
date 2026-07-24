@@ -7,6 +7,8 @@ import type {
   DlmmPotentialSource,
   DlmmScreenCandidate,
 } from '@/types/dlmm';
+import type { AppNetwork } from '@/utils/app-network';
+import { parseDbChain } from '@/utils/app-network-db';
 import { defaultAgentConfig } from '@/utils/dlmm/config';
 import {
   DbUnavailableError,
@@ -242,10 +244,13 @@ function mapPotentialEntry(row: Record<string, unknown>): DlmmPotentialEntry {
   };
 }
 
-export async function getPotentialList(): Promise<DlmmPotentialEntry[]> {
+export async function getPotentialList(
+  chain: AppNetwork = 'sol',
+): Promise<DlmmPotentialEntry[]> {
   try {
     const { rows } = await query<Record<string, unknown>>(
-      `SELECT * FROM dlmm_potential_list ORDER BY added_at DESC`,
+      `SELECT * FROM dlmm_potential_list WHERE chain = $1 ORDER BY added_at DESC`,
+      [parseDbChain(chain)],
     );
     return rows.map(mapPotentialEntry);
   } catch (error) {
@@ -259,12 +264,14 @@ export async function addPotentialEntry(input: {
   token_symbol?: string | null;
   source: DlmmPotentialSource;
   notes?: string | null;
+  chain?: AppNetwork;
 }): Promise<DlmmPotentialEntry> {
+  const chain = parseDbChain(input.chain);
   try {
     const row = await queryOne<Record<string, unknown>>(
-      `INSERT INTO dlmm_potential_list (token_address, token_symbol, source, notes, added_at)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (token_address) DO UPDATE SET
+      `INSERT INTO dlmm_potential_list (token_address, token_symbol, source, notes, added_at, chain)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (token_address, chain) DO UPDATE SET
          token_symbol = EXCLUDED.token_symbol,
          source = EXCLUDED.source,
          notes = EXCLUDED.notes,
@@ -276,6 +283,7 @@ export async function addPotentialEntry(input: {
         input.source,
         input.notes ?? null,
         new Date().toISOString(),
+        chain,
       ],
     );
     if (!row) throw new Error('Upsert failed');
@@ -286,11 +294,15 @@ export async function addPotentialEntry(input: {
   }
 }
 
-export async function removePotentialEntry(tokenAddress: string): Promise<void> {
+export async function removePotentialEntry(
+  tokenAddress: string,
+  chain: AppNetwork = 'sol',
+): Promise<void> {
   try {
-    await query(`DELETE FROM dlmm_potential_list WHERE token_address = $1`, [
-      tokenAddress,
-    ]);
+    await query(
+      `DELETE FROM dlmm_potential_list WHERE token_address = $1 AND chain = $2`,
+      [tokenAddress, parseDbChain(chain)],
+    );
     clearDlmmDbStatusCache();
   } catch (error) {
     assertDbWritable(error);

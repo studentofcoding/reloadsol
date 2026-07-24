@@ -2,6 +2,8 @@ import { query, queryOne } from '@/utils/db';
 import type { WalletWatchlistEntry } from '@/types/watchlist';
 import { assertDbWritable, formatDbError } from '@/utils/db-health';
 import { getTokenPrice } from '@/utils/jupiter-api';
+import type { AppNetwork } from '@/utils/app-network';
+import { parseDbChain } from '@/utils/app-network-db';
 
 export const MAX_WATCHLIST_SIZE = 30;
 
@@ -15,6 +17,9 @@ function mapEntry(row: Record<string, unknown>): WalletWatchlistEntry {
     initial_price_usd:
       row.initial_price_usd != null ? Number(row.initial_price_usd) : null,
     added_at: String(row.added_at),
+    chain: parseDbChain(
+      row.chain != null ? String(row.chain) : undefined,
+    ),
   };
 }
 
@@ -36,13 +41,14 @@ async function resolveInitialPrice(
 
 export async function getWatchlist(
   walletAddress: string,
+  chain: AppNetwork = 'sol',
 ): Promise<WalletWatchlistEntry[]> {
   try {
     const { rows } = await query<Record<string, unknown>>(
       `SELECT * FROM wallet_watchlist
-       WHERE wallet_address = $1
+       WHERE wallet_address = $1 AND chain = $2
        ORDER BY added_at DESC`,
-      [walletAddress],
+      [walletAddress, chain],
     );
     return rows.map(mapEntry);
   } catch (error) {
@@ -57,8 +63,10 @@ export async function addWatchlistEntry(input: {
   token_symbol?: string | null;
   logo_url?: string | null;
   initial_price_usd?: number | null;
+  chain?: AppNetwork;
 }): Promise<WalletWatchlistEntry> {
-  const existing = await getWatchlist(input.wallet_address);
+  const chain = parseDbChain(input.chain);
+  const existing = await getWatchlist(input.wallet_address, chain);
   const current = existing.find(
     (e) => e.token_address === input.token_address,
   );
@@ -71,13 +79,14 @@ export async function addWatchlistEntry(input: {
     try {
       const row = await queryOne<Record<string, unknown>>(
         `UPDATE wallet_watchlist SET
-           token_symbol = COALESCE($3, token_symbol),
-           logo_url = COALESCE($4, logo_url)
-         WHERE wallet_address = $1 AND token_address = $2
+           token_symbol = COALESCE($4, token_symbol),
+           logo_url = COALESCE($5, logo_url)
+         WHERE wallet_address = $1 AND token_address = $2 AND chain = $3
          RETURNING *`,
         [
           input.wallet_address,
           input.token_address,
+          chain,
           input.token_symbol ?? current.token_symbol,
           input.logo_url ?? current.logo_url,
         ],
@@ -98,8 +107,8 @@ export async function addWatchlistEntry(input: {
   try {
     const row = await queryOne<Record<string, unknown>>(
       `INSERT INTO wallet_watchlist (
-         wallet_address, token_address, token_symbol, logo_url, initial_price_usd
-       ) VALUES ($1, $2, $3, $4, $5)
+         wallet_address, token_address, token_symbol, logo_url, initial_price_usd, chain
+       ) VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
       [
         input.wallet_address,
@@ -107,6 +116,7 @@ export async function addWatchlistEntry(input: {
         input.token_symbol ?? null,
         input.logo_url ?? null,
         initial_price_usd,
+        chain,
       ],
     );
     if (!row) throw new Error('Insert failed');
@@ -120,11 +130,13 @@ export async function addWatchlistEntry(input: {
 export async function removeWatchlistEntry(
   walletAddress: string,
   tokenAddress: string,
+  chain: AppNetwork = 'sol',
 ): Promise<void> {
   try {
     await query(
-      `DELETE FROM wallet_watchlist WHERE wallet_address = $1 AND token_address = $2`,
-      [walletAddress, tokenAddress],
+      `DELETE FROM wallet_watchlist
+       WHERE wallet_address = $1 AND token_address = $2 AND chain = $3`,
+      [walletAddress, tokenAddress, chain],
     );
   } catch (error) {
     assertDbWritable(error);

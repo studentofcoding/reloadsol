@@ -626,6 +626,30 @@ export default function BulkTokenBuyer() {
       });
       const ok = results.filter((r) => r.success);
       const fail = results.filter((r) => !r.success);
+      if (ok.length > 0) {
+        try {
+          await trackOperation({
+            walletAddress: gmgnFromAddress,
+            operationType: "buy",
+            chain: effectiveChain,
+            tokens: ok.map((r) => ({
+              mintAddress: r.tokenAddress,
+              symbol: r.symbol,
+            })),
+            successCount: ok.length,
+            failureCount: fail.length,
+            totalTokens: results.length,
+            solAmount: parseFloat(solAmount),
+            feesPaid: 0,
+            signatures: ok
+              .map((r) => r.orderId)
+              .filter((id): id is string => Boolean(id)),
+            slippage: slippage / 100,
+          });
+        } catch (trackError) {
+          console.error("Failed to track GMGN buy:", trackError);
+        }
+      }
       showOutcome({
         success,
         operation: "buy",
@@ -655,6 +679,7 @@ export default function BulkTokenBuyer() {
     tokenList,
     slippage,
     showOutcome,
+    trackOperation,
   ]);
 
   // Handle form submission
@@ -936,6 +961,7 @@ export default function BulkTokenBuyer() {
           await trackOperation({
             walletAddress: publicKey.toString(),
             operationType: "buy",
+            chain: effectiveChain,
             tokens: enhancedTokenData.map((token) => ({
               ...token,
               solPrice: currentSolPrice,

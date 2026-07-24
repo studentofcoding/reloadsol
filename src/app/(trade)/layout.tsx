@@ -8,9 +8,11 @@ import GlobalWatchlistBar from "@/components/GlobalWatchlistBar";
 import TradingHistory from "@/components/TradingHistory";
 import PnLTracker from "@/components/PnLTracker";
 import WalletConnectGate from "@/components/WalletConnectGate";
+import NetworkRouteGate from "@/components/NetworkRouteGate";
 import DevRouteGate from "@/components/DevRouteGate";
 import TradingDataProvider from "@/components/TradingDataProvider";
 import TradeProviderBar from "@/components/TradeProviderBar";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import {
   isDevRoute,
   isWalletRequiredRoute,
@@ -35,6 +37,7 @@ export default function TradeLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const { network } = useAppNetwork();
   const [activeOverlayTab, setActiveOverlayTab] = useState<string | null>(
     null,
   );
@@ -60,6 +63,7 @@ export default function TradeLayout({
               <div className="w-full mt-8 border-t border-gray-800 pt-8 max-w-6xl mx-auto">
                 <h2 className="text-xl font-bold mb-4 text-white">
                   Trading History
+                  {network === "robinhood" ? " (Robinhood)" : ""}
                 </h2>
                 <TradingHistory />
               </div>
@@ -75,6 +79,7 @@ export default function TradeLayout({
               <div className="w-full mt-8 border-t border-gray-800 pt-8 max-w-6xl mx-auto">
                 <h2 className="text-xl font-bold mb-4 text-white">
                   Profit & Loss Tracker
+                  {network === "robinhood" ? " (ETH)" : ""}
                 </h2>
                 <PnLTracker />
               </div>
@@ -82,8 +87,10 @@ export default function TradeLayout({
           )}
 
           <div className="w-full mb-8">
-            <RouteAccessGate>{children}</RouteAccessGate>
-            <TradeProviderBar />
+            <NetworkRouteGate>
+              <RouteAccessGate>{children}</RouteAccessGate>
+            </NetworkRouteGate>
+            {network === "sol" ? <TradeProviderBar /> : null}
           </div>
         </div>
       </div>

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Script from 'next/script'
 import JupiterTerminal from '@/components/JupiterTerminal'
+import RhGmgnSwapPanel from '@/components/RhGmgnSwapPanel'
+import { useAppNetwork } from '@/contexts/AppNetworkContext'
 import { TOKENS } from '@/utils/solana'
 
 type SwapPreset = {
@@ -14,6 +16,7 @@ type SwapPreset = {
 }
 
 export default function SwapPageClient() {
+  const { network } = useAppNetwork()
   const searchParams = useSearchParams()
   const requestedTokenMint = searchParams.get('tokenMint')?.trim() ?? ''
   const tokenMint =
@@ -22,6 +25,17 @@ export default function SwapPageClient() {
     requestedTokenMint !== TOKENS.USDC
       ? requestedTokenMint
       : null
+
+  if (network === 'robinhood') {
+    return (
+      <div
+        className="flex flex-col items-center justify-center gap-4 py-8"
+        style={{ minHeight: '550px' }}
+      >
+        <RhGmgnSwapPanel initialToken={requestedTokenMint} />
+      </div>
+    )
+  }
   const swapPresets = useMemo<SwapPreset[]>(
     () =>
       tokenMint

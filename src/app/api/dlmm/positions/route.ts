@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { rejectWrongNetwork } from '@/utils/app-network-api';
 import { DbUnavailableError } from '@/utils/db-health';
 import { isDlmmApiAuthorized } from '@/utils/dlmm/config';
 import { deployPosition } from '@/utils/dlmm/actions';
@@ -10,6 +11,8 @@ function getPassword(req: NextRequest): string | null {
 }
 
 export async function GET(req: NextRequest) {
+  const wrong = rejectWrongNetwork(req, 'sol');
+  if (wrong) return wrong;
   try {
     const { searchParams } = new URL(req.url);
     const status = searchParams.get('status') ?? undefined;
@@ -39,6 +42,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const wrong = rejectWrongNetwork(req, 'sol');
+  if (wrong) return wrong;
   try {
     if (!isDlmmApiAuthorized(getPassword(req))) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, queryOne } from '@/utils/db'
-import { markTokenRug, unmarkTokenRug } from '@/utils/rug-list/service'
+import { parseDbChain } from '@/utils/app-network-db'
+import { getRugList, markTokenRug } from '@/utils/rug-list/service'
 import { removeRugEntry } from '@/utils/rug-list/db'
-import { getRugList } from '@/utils/rug-list/service'
 import {
   markTokenPotential,
   unmarkTokenPotential,
@@ -25,13 +25,16 @@ interface TradingSignalRow {
 
 export async function GET(request: NextRequest) {
   try {
+    const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     const { rows: data } = await query<TradingSignalRow>(
       `SELECT * FROM trading_signals
        WHERE label IN ('watching', 'potential', 'rugged')
+         AND chain = $1
        ORDER BY updated_at DESC`,
+      [chain],
     )
 
-    const rugEntries = await getRugList()
+    const rugEntries = await getRugList(chain)
     const byAddress = new Map(
       data.map((d) => [d.token_address, d]),
     )
@@ -85,7 +88,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { tokenAddress, label, tokenSymbol, price, mcap, initialPrice, result, imageReference, source } = await request.json()
+    const body = await request.json()
+    const {
+      tokenAddress,
+      label,
+      tokenSymbol,
+      price,
+      mcap,
+      initialPrice,
+      result,
+      imageReference,
+      source,
+    } = body
+    const chain = parseDbChain(body.chain)
 
     if (!tokenAddress) {
       return NextResponse.json({ success: false, error: 'Token address required' }, { status: 400 })
@@ -94,13 +109,13 @@ export async function POST(request: NextRequest) {
     const now = new Date().toISOString()
 
     const existing = await queryOne<TradingSignalRow>(
-      `SELECT * FROM trading_signals WHERE token_address = $1 LIMIT 1`,
-      [tokenAddress],
+      `SELECT * FROM trading_signals WHERE token_address = $1 AND chain = $2 LIMIT 1`,
+      [tokenAddress, chain],
     )
 
     if (existing) {
-      const setClauses: string[] = ['updated_at = $2']
-      const params: unknown[] = [tokenAddress, now]
+      const setClauses: string[] = ['updated_at = $3']
+      const params: unknown[] = [tokenAddress, chain, now]
 
       if (label) {
         setClauses.push(`label = $${params.length + 1}`)
@@ -136,15 +151,15 @@ export async function POST(request: NextRequest) {
       }
 
       await query(
-        `UPDATE trading_signals SET ${setClauses.join(', ')} WHERE token_address = $1`,
+        `UPDATE trading_signals SET ${setClauses.join(', ')} WHERE token_address = $1 AND chain = $2`,
         params,
       )
     } else {
       await query(
         `INSERT INTO trading_signals (
            token_address, token_symbol, market_cap, price, initial_price,
-           updated_at, label, result, image_reference, source
-         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           updated_at, label, result, image_reference, source, chain
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           tokenAddress,
           tokenSymbol || 'UNKNOWN',
@@ -156,6 +171,7 @@ export async function POST(request: NextRequest) {
           result ? JSON.stringify(result) : null,
           imageReference || null,
           source || 'manual',
+          chain,
         ],
       )
     }
@@ -165,9 +181,10 @@ export async function POST(request: NextRequest) {
         tokenAddress,
         tokenSymbol: tokenSymbol || existing?.token_symbol,
         source: 'board',
+        chain,
       })
     } else if (label === 'potential') {
-      await removeRugEntry(tokenAddress)
+      await removeRugEntry(tokenAddress, chain)
       const potSource =
         source === 'mcap_tracker'
           ? 'tracker'
@@ -178,11 +195,12 @@ export async function POST(request: NextRequest) {
         tokenAddress,
         tokenSymbol: tokenSymbol || existing?.token_symbol,
         source: potSource,
+        chain,
       })
     } else if (label) {
-      await removeRugEntry(tokenAddress)
+      await removeRugEntry(tokenAddress, chain)
       try {
-        await unmarkTokenPotential(tokenAddress)
+        await unmarkTokenPotential(tokenAddress, chain)
       } catch {
         /* ignore */
       }
@@ -198,14 +216,15 @@ export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const tokenAddress = searchParams.get('tokenAddress')
+    const chain = parseDbChain(searchParams.get('chain'))
 
     if (!tokenAddress) {
       return NextResponse.json({ success: false, error: 'Token address required' }, { status: 400 })
     }
 
     await query(
-      `UPDATE trading_signals SET label = NULL WHERE token_address = $1`,
-      [tokenAddress],
+      `UPDATE trading_signals SET label = NULL WHERE token_address = $1 AND chain = $2`,
+      [tokenAddress, chain],
     )
 
     return NextResponse.json({ success: true })

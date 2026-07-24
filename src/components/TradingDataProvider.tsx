@@ -7,10 +7,11 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { tradingTracker, TrackingRecord } from "@/utils/trading-tracker";
-import { useWallet, useWalletAddress } from "./WalletProvider";
 import { useWalletSession } from "./WalletSessionContext";
 import { queryClient } from "./AppQueryClientProvider";
 import { useSolPrice } from "@/hooks/useSolPrice";
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
+import type { AppNetwork } from "@/utils/app-network";
 
 // Trading data context
 interface TradingDataContextType {
@@ -46,7 +47,8 @@ export function useTradingData() {
 
 // Query keys
 const QUERY_KEYS = {
-  tradingRecords: (walletAddress: string) => ["trading-records", walletAddress],
+  tradingRecords: (walletAddress: string, chain: AppNetwork = "sol") =>
+    ["trading-records", walletAddress, chain] as const,
   walletTokens: (walletAddress: string) => ["wallet-tokens", walletAddress],
 } as const;
 
@@ -55,12 +57,17 @@ export function useTradingRecords(
   walletAddress?: string,
   sessionReady = true,
   refetchIntervalMs: number | false = 5_000,
+  chain: AppNetwork = "sol",
 ) {
   return useQuery({
-    queryKey: QUERY_KEYS.tradingRecords(walletAddress || ""),
+    queryKey: QUERY_KEYS.tradingRecords(walletAddress || "", chain),
     queryFn: async () => {
       if (!walletAddress) return [];
-      return await tradingTracker.getWalletRecords(walletAddress, false); // Force fresh fetch
+      return await tradingTracker.getWalletRecords(
+        walletAddress,
+        false,
+        chain,
+      );
     },
     retry: (failureCount, error) => {
       if (error instanceof Error && error.message === 'WALLET_SESSION_REQUIRED') {
@@ -88,14 +95,15 @@ export function useTrackOperation() {
     },
     onMutate: async (operation) => {
       const opWallet = operation.walletAddress;
+      const chain = operation.chain ?? "sol";
       if (!opWallet) return undefined;
 
       await queryClient.cancelQueries({
-        queryKey: QUERY_KEYS.tradingRecords(opWallet),
+        queryKey: QUERY_KEYS.tradingRecords(opWallet, chain),
       });
 
       const previous = queryClient.getQueryData<TrackingRecord[]>(
-        QUERY_KEYS.tradingRecords(opWallet),
+        QUERY_KEYS.tradingRecords(opWallet, chain),
       );
 
       const optimisticRecord: TrackingRecord = {
@@ -105,18 +113,19 @@ export function useTrackOperation() {
       };
 
       queryClient.setQueryData<TrackingRecord[]>(
-        QUERY_KEYS.tradingRecords(opWallet),
+        QUERY_KEYS.tradingRecords(opWallet, chain),
         (old) => [optimisticRecord, ...(old ?? [])],
       );
 
-      return { previous, optimisticId: optimisticRecord.id, opWallet };
+      return { previous, optimisticId: optimisticRecord.id, opWallet, chain };
     },
     onSuccess: (savedRecord, _operation, context) => {
       const opWallet = context?.opWallet ?? _operation.walletAddress;
+      const chain = context?.chain ?? _operation.chain ?? "sol";
       if (!opWallet) return;
 
       queryClient.setQueryData<TrackingRecord[]>(
-        QUERY_KEYS.tradingRecords(opWallet),
+        QUERY_KEYS.tradingRecords(opWallet, chain),
         (old) => {
           const withoutOptimistic = (old ?? []).filter(
             (r) => r.id !== context?.optimisticId && !r.id.startsWith('optimistic-'),
@@ -130,9 +139,10 @@ export function useTrackOperation() {
     },
     onError: (error, operation, context) => {
       const opWallet = context?.opWallet ?? operation.walletAddress;
+      const chain = context?.chain ?? operation.chain ?? "sol";
       if (opWallet && context?.previous !== undefined) {
         queryClient.setQueryData(
-          QUERY_KEYS.tradingRecords(opWallet),
+          QUERY_KEYS.tradingRecords(opWallet, chain),
           context.previous,
         );
       }
@@ -140,13 +150,14 @@ export function useTrackOperation() {
     },
     onSettled: (_data, _error, operation) => {
       const opWallet = operation.walletAddress;
+      const chain = operation.chain ?? "sol";
       if (!opWallet) return;
 
       queryClient.invalidateQueries({
-        queryKey: QUERY_KEYS.tradingRecords(opWallet),
+        queryKey: QUERY_KEYS.tradingRecords(opWallet, chain),
       });
       void queryClient.refetchQueries({
-        queryKey: QUERY_KEYS.tradingRecords(opWallet),
+        queryKey: QUERY_KEYS.tradingRecords(opWallet, chain),
       });
     },
   });
@@ -155,8 +166,7 @@ export function useTrackOperation() {
 // Delete record mutation
 export function useDeleteRecord() {
   const queryClient = useQueryClient();
-  const { publicKey } = useWallet();
-  const walletAddress = useWalletAddress();
+  const { network, walletAddress } = usePortfolioWallet();
 
   return useMutation({
     mutationFn: async (id: string) => {
@@ -166,12 +176,12 @@ export function useDeleteRecord() {
     onSuccess: () => {
       if (walletAddress) {
         queryClient.invalidateQueries({
-          queryKey: QUERY_KEYS.tradingRecords(walletAddress),
+          queryKey: QUERY_KEYS.tradingRecords(walletAddress, network),
         });
 
         setTimeout(() => {
           queryClient.refetchQueries({
-            queryKey: QUERY_KEYS.tradingRecords(walletAddress),
+            queryKey: QUERY_KEYS.tradingRecords(walletAddress, network),
           });
         }, 500);
       }
@@ -184,10 +194,12 @@ export function useDeleteRecord() {
 
 // Trading data provider component
 function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
-  const walletAddress = useWalletAddress();
+  const { network, walletAddress } = usePortfolioWallet();
   const { status: walletSessionStatus } = useWalletSession();
   const sessionReady =
-    walletSessionStatus === 'ready' || walletSessionStatus === 'checking';
+    network === "robinhood"
+      ? Boolean(walletAddress)
+      : walletSessionStatus === "ready" || walletSessionStatus === "checking";
 
   const [sseConnected, setSseConnected] = useState(false);
 
@@ -208,6 +220,7 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
     walletAddress ?? undefined,
     sessionReady,
     recordsRefetchInterval,
+    network,
   );
 
   // Track operation mutation
@@ -244,7 +257,7 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
 
     const refetchRecordsForWallet = () => {
       queryClient.invalidateQueries({
-        queryKey: QUERY_KEYS.tradingRecords(walletAddress),
+        queryKey: QUERY_KEYS.tradingRecords(walletAddress, network),
       });
       queryClient.invalidateQueries({
         queryKey: ["wallet-tokens", walletAddress],
@@ -270,7 +283,7 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
       window.removeEventListener("reloadsol-wallet-session", onSessionReady);
       unsubscribe();
     };
-  }, [walletAddress, sessionReady]);
+  }, [walletAddress, sessionReady, network]);
 
   const contextValue: TradingDataContextType = {
     records,

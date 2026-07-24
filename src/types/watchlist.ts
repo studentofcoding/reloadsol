@@ -6,4 +6,5 @@ export type WalletWatchlistEntry = {
   logo_url: string | null;
   initial_price_usd: number | null;
   added_at: string;
+  chain?: 'sol' | 'robinhood';
 };

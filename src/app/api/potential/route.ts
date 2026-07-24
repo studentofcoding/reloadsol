@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { DlmmPotentialSource } from '@/types/dlmm'
+import { parseDbChain } from '@/utils/app-network-db'
 import {
   getPotentialList,
   markTokenPotential,
@@ -17,9 +18,10 @@ const VALID_SOURCES: DlmmPotentialSource[] = [
   'dlmm-general',
 ]
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const entries = await getPotentialList()
+    const chain = parseDbChain(req.nextUrl.searchParams.get('chain'))
+    const entries = await getPotentialList(chain)
     return NextResponse.json({ success: true, entries })
   } catch (error) {
     return NextResponse.json(
@@ -45,6 +47,7 @@ export async function POST(req: NextRequest) {
     const source = (body.source ?? 'signals') as DlmmPotentialSource
     const notes = body.notes ?? null
     const action = body.action as 'mark' | 'unmark' | 'toggle' | undefined
+    const chain = parseDbChain(body.chain)
 
     if (!tokenAddress) {
       return NextResponse.json(
@@ -54,7 +57,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'unmark') {
-      await unmarkTokenPotential(tokenAddress)
+      await unmarkTokenPotential(tokenAddress, chain)
       return NextResponse.json({ success: true, potential: false })
     }
 
@@ -71,6 +74,7 @@ export async function POST(req: NextRequest) {
         tokenSymbol: tokenSymbol ? String(tokenSymbol) : null,
         source,
         notes: notes ? String(notes) : null,
+        chain,
       })
       return NextResponse.json({ success: true, potential })
     }
@@ -80,6 +84,7 @@ export async function POST(req: NextRequest) {
       tokenSymbol: tokenSymbol ? String(tokenSymbol) : null,
       source,
       notes: notes ? String(notes) : null,
+      chain,
     })
 
     return NextResponse.json({ success: true, entry, potential: true })
@@ -100,6 +105,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const tokenAddress = req.nextUrl.searchParams.get('tokenAddress')?.trim()
+    const chain = parseDbChain(req.nextUrl.searchParams.get('chain'))
     if (!tokenAddress) {
       return NextResponse.json(
         { success: false, error: 'tokenAddress query param is required' },
@@ -107,7 +113,7 @@ export async function DELETE(req: NextRequest) {
       )
     }
 
-    await unmarkTokenPotential(tokenAddress)
+    await unmarkTokenPotential(tokenAddress, chain)
     return NextResponse.json({ success: true })
   } catch (error) {
     return NextResponse.json(

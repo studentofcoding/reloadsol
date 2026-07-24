@@ -769,6 +769,29 @@ export default function BulkTokenSeller() {
       });
       const ok = results.filter((r) => r.success);
       const fail = results.filter((r) => !r.success);
+      if (ok.length > 0) {
+        try {
+          await trackOperation({
+            walletAddress: gmgnFromAddress,
+            operationType: "sell",
+            chain: effectiveChain,
+            tokens: ok.map((r) => ({
+              mintAddress: r.tokenAddress,
+              symbol: r.symbol,
+            })),
+            successCount: ok.length,
+            failureCount: fail.length,
+            totalTokens: results.length,
+            feesPaid: 0,
+            signatures: ok
+              .map((r) => r.orderId)
+              .filter((id): id is string => Boolean(id)),
+            slippage: slippage / 100,
+          });
+        } catch (trackError) {
+          console.error("Failed to track GMGN sell:", trackError);
+        }
+      }
       showOutcome({
         success,
         operation: "sell",
@@ -795,6 +818,7 @@ export default function BulkTokenSeller() {
     slippage,
     showOutcome,
     rhHoldingsQuery,
+    trackOperation,
   ]);
 
   // Handle bulk sell with better error handling
@@ -1009,6 +1033,7 @@ export default function BulkTokenSeller() {
             await trackOperation({
               walletAddress: publicKey.toString(),
               operationType: "sell",
+              chain: effectiveChain,
               tokens: enhancedTokenData.map((token) => ({
                 ...token,
                 solPrice: currentSolPrice,
@@ -1139,6 +1164,7 @@ export default function BulkTokenSeller() {
             await trackOperation({
               walletAddress: publicKey.toString(),
               operationType: "close",
+              chain: effectiveChain,
               tokens: closeTokenData.map((token) => ({
                 ...token,
                 solPrice: currentSolPrice,
@@ -1438,6 +1464,7 @@ export default function BulkTokenSeller() {
           await trackOperation({
             walletAddress: publicKey.toString(),
             operationType: "close",
+            chain: effectiveChain,
             tokens: closeTokenData.map((t) => ({
               ...t,
               solPrice: currentSolPrice,

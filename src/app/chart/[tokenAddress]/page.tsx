@@ -4,6 +4,7 @@ import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useState, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useWallet, useConnection } from "@/components/WalletProvider";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useRpc } from "@/contexts/RpcContext";
 import { useWalletTokens } from "@/hooks/useWalletTokens";
 import { useWalletBalances } from "@/hooks/useWalletBalances";
@@ -56,6 +57,7 @@ export default function ChartPage() {
   const { connection } = useConnection();
   const { activeRpcUrl } = useRpc();
 
+  const { network } = useAppNetwork();
   const tokenAddress = params.tokenAddress as string;
   const chainParam = searchParams.get("chain");
   const chartChain: GmgnChain =
@@ -65,7 +67,9 @@ export default function ChartPage() {
     chainParam === "base" ||
     chainParam === "eth"
       ? chainParam
-      : inferGmgnChain(tokenAddress);
+      : network === "robinhood" || network === "sol"
+        ? network
+        : inferGmgnChain(tokenAddress);
   const validTokenAddress =
     tokenAddress &&
     (chartChain === "robinhood"

@@ -1,5 +1,7 @@
 import { query, queryOne } from '@/utils/db';
 import type { TokenRugEntry, TokenRugSource } from '@/types/rug-list';
+import type { AppNetwork } from '@/utils/app-network';
+import { parseDbChain } from '@/utils/app-network-db';
 import {
   DbUnavailableError,
   assertDbWritable,
@@ -25,10 +27,13 @@ function mapRugEntry(row: Record<string, unknown>): TokenRugEntry {
   };
 }
 
-export async function getRugList(): Promise<TokenRugEntry[]> {
+export async function getRugList(
+  chain: AppNetwork = 'sol',
+): Promise<TokenRugEntry[]> {
   try {
     const { rows } = await query<Record<string, unknown>>(
-      `SELECT * FROM token_rug_list ORDER BY added_at DESC`,
+      `SELECT * FROM token_rug_list WHERE chain = $1 ORDER BY added_at DESC`,
+      [chain],
     );
     return rows.map(mapRugEntry);
   } catch (error) {
@@ -37,16 +42,22 @@ export async function getRugList(): Promise<TokenRugEntry[]> {
   }
 }
 
-export async function getRugAddressSet(): Promise<Set<string>> {
-  const entries = await getRugList();
+export async function getRugAddressSet(
+  chain: AppNetwork = 'sol',
+): Promise<Set<string>> {
+  const entries = await getRugList(chain);
   return new Set(entries.map((e) => e.token_address));
 }
 
-export async function isTokenRugged(tokenAddress: string): Promise<boolean> {
+export async function isTokenRugged(
+  tokenAddress: string,
+  chain: AppNetwork = 'sol',
+): Promise<boolean> {
   try {
     const row = await queryOne<{ token_address: string }>(
-      `SELECT token_address FROM token_rug_list WHERE token_address = $1 LIMIT 1`,
-      [tokenAddress],
+      `SELECT token_address FROM token_rug_list
+       WHERE token_address = $1 AND chain = $2 LIMIT 1`,
+      [tokenAddress, chain],
     );
     return Boolean(row);
   } catch (error) {
@@ -59,12 +70,14 @@ export async function addRugEntry(input: {
   token_address: string;
   token_symbol?: string | null;
   source: TokenRugSource;
+  chain?: AppNetwork;
 }): Promise<TokenRugEntry> {
+  const chain = parseDbChain(input.chain);
   try {
     const row = await queryOne<Record<string, unknown>>(
-      `INSERT INTO token_rug_list (token_address, token_symbol, source, added_at)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (token_address) DO UPDATE SET
+      `INSERT INTO token_rug_list (token_address, token_symbol, source, added_at, chain)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (token_address, chain) DO UPDATE SET
          token_symbol = EXCLUDED.token_symbol,
          source = EXCLUDED.source,
          added_at = EXCLUDED.added_at
@@ -74,6 +87,7 @@ export async function addRugEntry(input: {
         input.token_symbol ?? null,
         input.source,
         new Date().toISOString(),
+        chain,
       ],
     );
     if (!row) throw new Error('Upsert failed');
@@ -84,11 +98,15 @@ export async function addRugEntry(input: {
   }
 }
 
-export async function removeRugEntry(tokenAddress: string): Promise<void> {
+export async function removeRugEntry(
+  tokenAddress: string,
+  chain: AppNetwork = 'sol',
+): Promise<void> {
   try {
-    await query(`DELETE FROM token_rug_list WHERE token_address = $1`, [
-      tokenAddress,
-    ]);
+    await query(
+      `DELETE FROM token_rug_list WHERE token_address = $1 AND chain = $2`,
+      [tokenAddress, chain],
+    );
   } catch (error) {
     assertDbWritable(error);
   }

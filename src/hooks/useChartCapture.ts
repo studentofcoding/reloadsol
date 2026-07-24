@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { fetchTokenPricesForTracking } from "@/utils/trading-tracker";
 
 interface SignalData {
@@ -22,6 +23,7 @@ export interface CaptureResult {
 }
 
 export function useChartCapture() {
+  const { network } = useAppNetwork();
   const [isOpen, setIsOpen] = useState(false);
   const [data, setData] = useState<CaptureResult | null>(null);
   const [status, setStatus] = useState("");
@@ -133,6 +135,7 @@ export function useChartCapture() {
         price: currentContext?.price,
         initialPrice: currentContext?.initial_price,
         label: labelToSave,
+        chain: network,
       };
 
       await fetch("/api/signals", {
@@ -150,7 +153,7 @@ export function useChartCapture() {
       console.error("Save failed", e);
       setStatus("Failed to save result");
     }
-  }, [data, currentContext]);
+  }, [data, currentContext, network]);
 
   return {
     isOpen,

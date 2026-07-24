@@ -13,6 +13,7 @@ import DlmmChartActions from "@/components/dlmm/DlmmChartActions";
 import GlobalWatchlistButton from "@/components/GlobalWatchlistButton";
 import { useRugList } from "@/hooks/useRugList";
 import { useRouter } from "next/navigation";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import { useRpc } from "@/contexts/RpcContext";
 import { useTradingData } from "@/components/TradingDataProvider";
@@ -114,6 +115,7 @@ export default function LiveTab() {
   const { records, trackOperation } = useTradingData();
   const { data: currentSolPrice = 0 } = useSolPrice();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
+  const { network } = useAppNetwork();
   const { isRugged: isTokenRugged, markRug, unmarkRug } = useRugList();
   const walletAddress = connected && publicKey ? publicKey.toString() : null;
 
@@ -225,7 +227,9 @@ export default function LiveTab() {
   useEffect(() => {
     async function fetchLabels() {
       try {
-        const res = await fetch("/api/signals");
+        const res = await fetch(
+          `/api/signals?chain=${encodeURIComponent(network)}`,
+        );
         const json = await res.json();
         if (json.success && Array.isArray(json.data)) {
           const map: Record<string, string> = {};
@@ -255,7 +259,7 @@ export default function LiveTab() {
       }
     }
     fetchLabels();
-  }, []);
+  }, [network]);
 
   const handleLabelToken = async (
     token: TrendingToken,
@@ -316,6 +320,7 @@ export default function LiveTab() {
           price: token.price,
           initialPrice: token.price, // Explicitly set initial price
           label: targetLabel,
+          chain: network,
         }),
       });
       if (targetLabel === "potential") {
@@ -543,9 +548,11 @@ export default function LiveTab() {
         return next;
       });
       try {
-        await fetch(`/api/signals?tokenAddress=${token.token_address}`, {
-          method: "DELETE",
+        const qs = new URLSearchParams({
+          tokenAddress: token.token_address,
+          chain: network,
         });
+        await fetch(`/api/signals?${qs}`, { method: "DELETE" });
       } catch (e) {
         console.error(e);
       }
@@ -572,6 +579,7 @@ export default function LiveTab() {
             mcap: token.mcap,
             price: token.price,
             label: "watching",
+            chain: network,
           }),
         });
       } catch (e) {

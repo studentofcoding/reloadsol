@@ -26,8 +26,12 @@ const TRADING_RECORDS_REDIS_TTL_SECONDS = 10
 const MAX_CACHE_ENTRIES = 50
 const REQUEST_TIMEOUT = 10000
 
-function recordsRedisKey(walletAddress: string, limit: number): string {
-  return `records:${walletAddress}:${limit}`
+function recordsRedisKey(
+  walletAddress: string,
+  limit: number,
+  chain = 'sol',
+): string {
+  return `records:${walletAddress}:${chain}:${limit}`
 }
 
 function cleanupRecordsCache() {
@@ -56,15 +60,17 @@ function cleanupRecordsCache() {
 export function generateRecordsCacheKey(
   walletAddress: string,
   limit: number,
+  chain = 'sol',
 ): string {
-  return `${walletAddress}-${limit}`
+  return `${walletAddress}-${chain}-${limit}`
 }
 
 export async function getCachedRecords(
   walletAddress: string,
   limit: number,
+  chain = 'sol',
 ): Promise<unknown[] | null> {
-  const cacheKey = generateRecordsCacheKey(walletAddress, limit)
+  const cacheKey = generateRecordsCacheKey(walletAddress, limit, chain)
   const cached = tradingRecordsCache.get(cacheKey)
   if (cached) {
     const now = Date.now()
@@ -75,10 +81,10 @@ export async function getCachedRecords(
   }
 
   const fromRedis = await cacheGet<unknown[]>(
-    recordsRedisKey(walletAddress, limit),
+    recordsRedisKey(walletAddress, limit, chain),
   )
   if (fromRedis) {
-    setCachedRecords(walletAddress, limit, fromRedis)
+    setCachedRecords(walletAddress, limit, fromRedis, chain)
     return fromRedis
   }
 
@@ -89,9 +95,10 @@ export function setCachedRecords(
   walletAddress: string,
   limit: number,
   data: unknown[],
+  chain = 'sol',
 ) {
   const now = Date.now()
-  const cacheKey = generateRecordsCacheKey(walletAddress, limit)
+  const cacheKey = generateRecordsCacheKey(walletAddress, limit, chain)
 
   tradingRecordsCache.set(cacheKey, {
     data,
@@ -104,7 +111,7 @@ export function setCachedRecords(
   cleanupRecordsCache()
 
   void cacheSet(
-    recordsRedisKey(walletAddress, limit),
+    recordsRedisKey(walletAddress, limit, chain),
     data,
     TRADING_RECORDS_REDIS_TTL_SECONDS,
   )

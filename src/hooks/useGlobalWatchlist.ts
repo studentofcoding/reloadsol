@@ -2,8 +2,9 @@
 
 import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useWalletAddress } from '@/components/WalletProvider';
+import { usePortfolioWallet } from '@/hooks/usePortfolioWallet';
 import type { WalletWatchlistEntry } from '@/types/watchlist';
+import type { AppNetwork } from '@/utils/app-network';
 import {
   readWatchlistCache,
   writeWatchlistCache,
@@ -13,8 +14,13 @@ import { pctFromBaseline } from '@/utils/watchlist/pct';
 export const GLOBAL_WATCHLIST_QUERY_KEY = 'global-watchlist';
 export const GLOBAL_WATCHLIST_PRICES_KEY = 'global-watchlist-prices';
 
-async function fetchWatchlist(): Promise<WalletWatchlistEntry[]> {
-  const res = await fetch('/api/watchlist');
+async function fetchWatchlist(
+  chain: AppNetwork,
+  wallet: string,
+): Promise<WalletWatchlistEntry[]> {
+  const qs = new URLSearchParams({ chain });
+  if (chain === 'robinhood') qs.set('wallet', wallet);
+  const res = await fetch(`/api/watchlist?${qs}`);
   const data = await res.json();
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to fetch watchlist');
@@ -44,14 +50,15 @@ type WatchlistMutationInput = {
 };
 
 export function useGlobalWatchlist() {
-  const walletAddress = useWalletAddress();
+  const { network, walletAddress } = usePortfolioWallet();
   const queryClient = useQueryClient();
   const enabled = !!walletAddress;
+  const listKey = [GLOBAL_WATCHLIST_QUERY_KEY, walletAddress, network] as const;
 
   const listQuery = useQuery({
-    queryKey: [GLOBAL_WATCHLIST_QUERY_KEY, walletAddress],
+    queryKey: listKey,
     queryFn: async () => {
-      const entries = await fetchWatchlist();
+      const entries = await fetchWatchlist(network, walletAddress!);
       if (walletAddress) {
         writeWatchlistCache(walletAddress, entries);
       }
@@ -69,9 +76,10 @@ export function useGlobalWatchlist() {
   const mintsKey = tokenAddresses.join(',');
 
   const pricesQuery = useQuery({
-    queryKey: [GLOBAL_WATCHLIST_PRICES_KEY, walletAddress, mintsKey],
+    queryKey: [GLOBAL_WATCHLIST_PRICES_KEY, walletAddress, network, mintsKey],
     queryFn: () => fetchTokenPrices(tokenAddresses),
-    enabled: enabled && tokenAddresses.length > 0,
+    // Sol Jupiter prices only; skip for RH until dual price source exists
+    enabled: enabled && network === 'sol' && tokenAddresses.length > 0,
     staleTime: 55_000,
     refetchInterval: 60_000,
   });
@@ -95,19 +103,14 @@ export function useGlobalWatchlist() {
   const addressSet = new Set(tokenAddresses);
 
   const syncListCache = (nextEntries: WalletWatchlistEntry[]) => {
-    queryClient.setQueryData(
-      [GLOBAL_WATCHLIST_QUERY_KEY, walletAddress],
-      nextEntries,
-    );
+    queryClient.setQueryData(listKey, nextEntries);
     if (walletAddress) {
       writeWatchlistCache(walletAddress, nextEntries);
     }
   };
 
   const invalidateList = () => {
-    queryClient.invalidateQueries({
-      queryKey: [GLOBAL_WATCHLIST_QUERY_KEY, walletAddress],
-    });
+    queryClient.invalidateQueries({ queryKey: listKey });
   };
 
   const addMutation = useMutation({
@@ -120,6 +123,8 @@ export function useGlobalWatchlist() {
           tokenSymbol: input.tokenSymbol,
           logoUrl: input.logoUrl,
           initialPrice: input.initialPrice,
+          chain: network,
+          wallet: network === 'robinhood' ? walletAddress : undefined,
         }),
       });
       const data = await res.json();
@@ -129,13 +134,9 @@ export function useGlobalWatchlist() {
       return data.entry as WalletWatchlistEntry;
     },
     onMutate: async (input) => {
-      await queryClient.cancelQueries({
-        queryKey: [GLOBAL_WATCHLIST_QUERY_KEY, walletAddress],
-      });
-      const previous = queryClient.getQueryData<WalletWatchlistEntry[]>([
-        GLOBAL_WATCHLIST_QUERY_KEY,
-        walletAddress,
-      ]);
+      await queryClient.cancelQueries({ queryKey: listKey });
+      const previous =
+        queryClient.getQueryData<WalletWatchlistEntry[]>(listKey);
 
       const optimistic: WalletWatchlistEntry = {
         id: `optimistic-${input.tokenAddress}`,
@@ -148,6 +149,7 @@ export function useGlobalWatchlist() {
             ? input.initialPrice
             : null,
         added_at: new Date().toISOString(),
+        chain: network,
       };
 
       const withoutDup = (previous ?? []).filter(
@@ -159,16 +161,13 @@ export function useGlobalWatchlist() {
     },
     onSuccess: (entry) => {
       const current =
-        queryClient.getQueryData<WalletWatchlistEntry[]>([
-          GLOBAL_WATCHLIST_QUERY_KEY,
-          walletAddress,
-        ]) ?? [];
+        queryClient.getQueryData<WalletWatchlistEntry[]>(listKey) ?? [];
       const withoutDup = current.filter(
         (e) => e.token_address !== entry.token_address,
       );
       syncListCache([entry, ...withoutDup]);
       queryClient.invalidateQueries({
-        queryKey: [GLOBAL_WATCHLIST_PRICES_KEY, walletAddress],
+        queryKey: [GLOBAL_WATCHLIST_PRICES_KEY, walletAddress, network],
       });
     },
     onError: (_err, _input, context) => {
@@ -182,23 +181,23 @@ export function useGlobalWatchlist() {
 
   const removeMutation = useMutation({
     mutationFn: async (tokenAddress: string) => {
-      const res = await fetch(
-        `/api/watchlist?tokenAddress=${encodeURIComponent(tokenAddress)}`,
-        { method: 'DELETE' },
-      );
+      const qs = new URLSearchParams({
+        tokenAddress,
+        chain: network,
+      });
+      if (network === 'robinhood' && walletAddress) {
+        qs.set('wallet', walletAddress);
+      }
+      const res = await fetch(`/api/watchlist?${qs}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to remove from watchlist');
       }
     },
     onMutate: async (tokenAddress) => {
-      await queryClient.cancelQueries({
-        queryKey: [GLOBAL_WATCHLIST_QUERY_KEY, walletAddress],
-      });
-      const previous = queryClient.getQueryData<WalletWatchlistEntry[]>([
-        GLOBAL_WATCHLIST_QUERY_KEY,
-        walletAddress,
-      ]);
+      await queryClient.cancelQueries({ queryKey: listKey });
+      const previous =
+        queryClient.getQueryData<WalletWatchlistEntry[]>(listKey);
       syncListCache(
         (previous ?? []).filter((e) => e.token_address !== tokenAddress),
       );
@@ -206,7 +205,7 @@ export function useGlobalWatchlist() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
-        queryKey: [GLOBAL_WATCHLIST_PRICES_KEY, walletAddress],
+        queryKey: [GLOBAL_WATCHLIST_PRICES_KEY, walletAddress, network],
       });
     },
     onError: (_err, _input, context) => {

@@ -1,4 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
+import type { AppNetwork } from "@/utils/app-network";
 
 export type BoardSectionType = "mcap_tracker" | "watching" | "potential" | "rugged";
 
@@ -20,8 +22,11 @@ export type BoardInitData = {
   signals: Record<string, SignalData>;
 };
 
-async function fetchBoardInit(urlAddresses: string[]): Promise<BoardInitData> {
-  const res = await fetch("/api/signals");
+async function fetchBoardInit(
+  urlAddresses: string[],
+  chain: AppNetwork,
+): Promise<BoardInitData> {
+  const res = await fetch(`/api/signals?chain=${encodeURIComponent(chain)}`);
   const json = await res.json();
   if (!json.success) throw new Error(json.error || "Failed to load signals");
 
@@ -57,10 +62,11 @@ async function fetchBoardInit(urlAddresses: string[]): Promise<BoardInitData> {
 }
 
 export function useBoardInit(urlAddresses: string[]) {
+  const { network } = useAppNetwork();
   const urlKey = urlAddresses.join(",");
   return useQuery({
-    queryKey: ["board-init", urlKey],
-    queryFn: () => fetchBoardInit(urlAddresses),
+    queryKey: ["board-init", network, urlKey],
+    queryFn: () => fetchBoardInit(urlAddresses, network),
     staleTime: 60_000,
   });
 }

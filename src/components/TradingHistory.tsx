@@ -3,7 +3,7 @@
 import { OptimizedImage } from "@/components/OptimizedImage";
 import React, { useMemo, useState } from "react";
 import { TrackingRecord, TrackingStats } from "@/utils/trading-tracker";
-import { useWalletAddress } from "./WalletProvider";
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useTradingData } from "./TradingDataProvider";
 import { useWalletSession } from "./WalletSessionContext";
 import WalletSignInPrompt from "./WalletSignInPrompt";
@@ -150,7 +150,8 @@ function processTradingRecords(
 }
 
 export default function TradingHistory() {
-  const walletAddress = useWalletAddress();
+  const { network, walletAddress } = usePortfolioWallet();
+  const nativeUnit = network === "robinhood" ? "ETH" : "SOL";
   const { status: walletSessionStatus } = useWalletSession();
   const {
     records: rawRecords,
@@ -332,7 +333,11 @@ export default function TradingHistory() {
     );
   }
 
-  if (walletAddress && walletSessionStatus === "signing") {
+  if (
+    network === "sol" &&
+    walletAddress &&
+    walletSessionStatus === "signing"
+  ) {
     return (
       <div className="">
         <TokenSkeleton count={5} variant="trading-history" />
@@ -340,7 +345,11 @@ export default function TradingHistory() {
     );
   }
 
-  if (walletAddress && walletSessionStatus === "error") {
+  if (
+    network === "sol" &&
+    walletAddress &&
+    walletSessionStatus === "error"
+  ) {
     return (
       <WalletSignInPrompt title="Sign in to load trading history" />
     );
@@ -379,7 +388,7 @@ export default function TradingHistory() {
             </div>
             <div className="text-center">
               <div className="text-gray-400">Total Fees</div>
-              <div className="font-medium text-orange-400">{stats.totalFeesPaid.toFixed(4)} SOL</div>
+              <div className="font-medium text-orange-400">{stats.totalFeesPaid.toFixed(4)} {nativeUnit}</div>
             </div>
           </div>
         </div>
@@ -413,7 +422,7 @@ export default function TradingHistory() {
             value={sortMode}
             onChange={(e) => setSortMode(e.target.value as TradeListSortMode)}
             className="bg-gray-800 border border-gray-600 rounded-md px-2 py-1.5 text-xs text-white focus:outline-none focus:border-gray-400"
-            title="PnL = signed SOL (sell +, buy −)"
+            title={`PnL = signed ${nativeUnit} (sell +, buy −)`}
           >
             {TRADE_LIST_SORT_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
@@ -477,7 +486,7 @@ export default function TradingHistory() {
 
                 {record.solAmount && record.solAmount > 0 && (
                   <span className="text-xs font-mono text-gray-300">
-                    {record.solAmount.toFixed(4)} SOL
+                    {record.solAmount.toFixed(4)} {nativeUnit}
                   </span>
                 )}
               </div>

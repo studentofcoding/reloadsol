@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { TokenRugSource } from '@/types/rug-list';
+import { parseDbChain } from '@/utils/app-network-db';
 import {
   getRugList,
   markTokenRug,
   unmarkTokenRug,
+  toggleTokenRug,
 } from '@/utils/rug-list/service';
 
 const VALID_SOURCES: TokenRugSource[] = [
@@ -21,9 +23,10 @@ const VALID_SOURCES: TokenRugSource[] = [
   'freeview',
 ];
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const entries = await getRugList();
+    const chain = parseDbChain(req.nextUrl.searchParams.get('chain'));
+    const entries = await getRugList(chain);
     return NextResponse.json({ success: true, entries });
   } catch (error) {
     return NextResponse.json(
@@ -43,6 +46,7 @@ export async function POST(req: NextRequest) {
     const tokenSymbol = body.tokenSymbol ?? body.token_symbol ?? null;
     const source = (body.source ?? 'dlmm-general') as TokenRugSource;
     const action = body.action as 'mark' | 'unmark' | 'toggle' | undefined;
+    const chain = parseDbChain(body.chain);
 
     if (!tokenAddress) {
       return NextResponse.json(
@@ -52,7 +56,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'unmark') {
-      await unmarkTokenRug(tokenAddress);
+      await unmarkTokenRug(tokenAddress, chain);
       return NextResponse.json({ success: true, rugged: false });
     }
 
@@ -64,11 +68,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'toggle') {
-      const { toggleTokenRug } = await import('@/utils/rug-list/service');
       const rugged = await toggleTokenRug({
         tokenAddress,
         tokenSymbol: tokenSymbol ? String(tokenSymbol) : null,
         source,
+        chain,
       });
       return NextResponse.json({ success: true, rugged });
     }
@@ -77,6 +81,7 @@ export async function POST(req: NextRequest) {
       tokenAddress,
       tokenSymbol: tokenSymbol ? String(tokenSymbol) : null,
       source,
+      chain,
     });
 
     return NextResponse.json({ success: true, entry, rugged: true });
@@ -94,6 +99,7 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const tokenAddress = req.nextUrl.searchParams.get('tokenAddress')?.trim();
+    const chain = parseDbChain(req.nextUrl.searchParams.get('chain'));
     if (!tokenAddress) {
       return NextResponse.json(
         { success: false, error: 'tokenAddress query param is required' },
@@ -101,7 +107,7 @@ export async function DELETE(req: NextRequest) {
       );
     }
 
-    await unmarkTokenRug(tokenAddress);
+    await unmarkTokenRug(tokenAddress, chain);
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json(

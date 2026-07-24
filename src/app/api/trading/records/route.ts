@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { assertSessionWallet, requireWalletSession } from '@/utils/api-auth'
+import { parseDbChain } from '@/utils/app-network-db'
+import type { AppNetwork } from '@/utils/app-network'
 import { query } from '@/utils/db'
 import {
   insertTradingRecord,
@@ -20,20 +22,25 @@ interface DatabaseRecord {
   operation_type: string
   timestamp: string
   data: any
+  chain?: string
   created_at?: string
 }
 
 const REQUEST_TIMEOUT = 10000
 
 // Fetch trading records with caching and deduplication
-async function fetchTradingRecordsWithCache(walletAddress: string, limit: number): Promise<{ records: any[]; fromCache: boolean }> {
-  const cached = await getCachedRecords(walletAddress, limit)
+async function fetchTradingRecordsWithCache(
+  walletAddress: string,
+  limit: number,
+  chain: AppNetwork,
+): Promise<{ records: any[]; fromCache: boolean }> {
+  const cached = await getCachedRecords(walletAddress, limit, chain)
   if (cached) {
     console.log(`🎯 Cache hit for trading records: ${walletAddress.substring(0, 8)}... (${limit} records)`)
     return { records: cached as any[], fromCache: true }
   }
 
-  const cacheKey = generateRecordsCacheKey(walletAddress, limit)
+  const cacheKey = generateRecordsCacheKey(walletAddress, limit, chain)
 
   const ongoing = ongoingRecordsRequests.get(cacheKey)
   if (ongoing) {
@@ -46,7 +53,7 @@ async function fetchTradingRecordsWithCache(walletAddress: string, limit: number
     }
   }
 
-  const requestPromise = fetchTradingRecordsFromDB(walletAddress, limit)
+  const requestPromise = fetchTradingRecordsFromDB(walletAddress, limit, chain)
   ongoingRecordsRequests.set(cacheKey, {
     promise: requestPromise,
     walletAddress,
@@ -59,7 +66,7 @@ async function fetchTradingRecordsWithCache(walletAddress: string, limit: number
     ongoingRecordsRequests.delete(cacheKey)
 
     if (result && result.length >= 0) {
-      setCachedRecords(walletAddress, limit, result)
+      setCachedRecords(walletAddress, limit, result, chain)
     }
 
     return { records: result, fromCache: false }
@@ -69,16 +76,26 @@ async function fetchTradingRecordsWithCache(walletAddress: string, limit: number
   }
 }
 
-async function fetchTradingRecordsFromDB(walletAddress: string, limit: number): Promise<any[]> {
+async function fetchTradingRecordsFromDB(
+  walletAddress: string,
+  limit: number,
+  chain: AppNetwork,
+): Promise<any[]> {
   const { rows } = await query<DatabaseRecord>(
     `SELECT * FROM trading_records
-     WHERE wallet_address = $1
+     WHERE wallet_address = $1 AND chain = $2
      ORDER BY timestamp DESC
-     LIMIT $2`,
-    [walletAddress, limit],
+     LIMIT $3`,
+    [walletAddress, chain, limit],
   )
 
-  return rows.map((item) => item.data)
+  return rows.map((item) => {
+    const data = item.data
+    if (data && typeof data === 'object' && !data.chain) {
+      return { ...data, chain }
+    }
+    return data
+  })
 }
 
 function resolveAllowedOrigin(request: NextRequest): string | null {
@@ -106,14 +123,10 @@ function resolveAllowedOrigin(request: NextRequest): string | null {
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = requireWalletSession(request)
-    if (auth instanceof NextResponse) {
-      return auth
-    }
-
     const { searchParams } = new URL(request.url)
     const walletAddress = searchParams.get('wallet')
     const limit = parseInt(searchParams.get('limit') || '500')
+    const chain = parseDbChain(searchParams.get('chain'))
 
     if (!walletAddress) {
       return NextResponse.json(
@@ -122,12 +135,29 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const mismatch = assertSessionWallet(auth.session.address, walletAddress)
-    if (mismatch) {
-      return mismatch
+    // Sol: session wallet must match. RH: EVM portfolio wallet; Sol session optional
+    // (RH network is already gated to dev wallets in the client).
+    if (chain === 'sol') {
+      const auth = requireWalletSession(request)
+      if (auth instanceof NextResponse) {
+        return auth
+      }
+      const mismatch = assertSessionWallet(auth.session.address, walletAddress)
+      if (mismatch) {
+        return mismatch
+      }
+    } else if (!/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+      return NextResponse.json(
+        { error: 'Robinhood wallet must be a 0x address' },
+        { status: 400 },
+      )
     }
 
-    const { records, fromCache } = await fetchTradingRecordsWithCache(walletAddress, limit)
+    const { records, fromCache } = await fetchTradingRecordsWithCache(
+      walletAddress,
+      limit,
+      chain,
+    )
 
     const allowedOrigin = resolveAllowedOrigin(request)
 
@@ -176,6 +206,8 @@ export async function POST(request: NextRequest) {
     if (mismatch) {
       return mismatch
     }
+
+    record.chain = parseDbChain(record.chain)
 
     if (shouldSkipTradingRecord(record)) {
       return NextResponse.json({

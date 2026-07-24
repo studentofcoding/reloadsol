@@ -1,12 +1,14 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAppNetwork } from '@/contexts/AppNetworkContext';
 import type { TokenRugEntry, TokenRugSource } from '@/types/rug-list';
+import type { AppNetwork } from '@/utils/app-network';
 
 export const RUG_LIST_QUERY_KEY = ['rug-list'] as const;
 
-async function fetchRugList(): Promise<TokenRugEntry[]> {
-  const res = await fetch('/api/rug');
+async function fetchRugList(chain: AppNetwork): Promise<TokenRugEntry[]> {
+  const res = await fetch(`/api/rug?chain=${encodeURIComponent(chain)}`);
   const data = await res.json();
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to fetch rug list');
@@ -15,11 +17,13 @@ async function fetchRugList(): Promise<TokenRugEntry[]> {
 }
 
 export function useRugList() {
+  const { network } = useAppNetwork();
   const queryClient = useQueryClient();
+  const listKey = [...RUG_LIST_QUERY_KEY, network] as const;
 
   const query = useQuery({
-    queryKey: RUG_LIST_QUERY_KEY,
-    queryFn: fetchRugList,
+    queryKey: listKey,
+    queryFn: () => fetchRugList(network),
     refetchInterval: 30_000,
   });
 
@@ -41,6 +45,7 @@ export function useRugList() {
           tokenAddress: input.tokenAddress,
           tokenSymbol: input.tokenSymbol,
           source: input.source,
+          chain: network,
         }),
       });
       const data = await res.json();
@@ -54,10 +59,11 @@ export function useRugList() {
 
   const removeMutation = useMutation({
     mutationFn: async (tokenAddress: string) => {
-      const res = await fetch(
-        `/api/rug?tokenAddress=${encodeURIComponent(tokenAddress)}`,
-        { method: 'DELETE' },
-      );
+      const qs = new URLSearchParams({
+        tokenAddress,
+        chain: network,
+      });
+      const res = await fetch(`/api/rug?${qs}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to remove from rug list');

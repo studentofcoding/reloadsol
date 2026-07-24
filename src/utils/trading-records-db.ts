@@ -1,4 +1,5 @@
 import { query } from '@/utils/db'
+import { parseDbChain } from '@/utils/app-network-db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import { invalidateTradingRecordsCache } from '@/utils/trading-records-cache'
 import { broadcastTradeUpdateServer } from '@/utils/trading-notifications'
@@ -34,23 +35,27 @@ export async function insertTradingRecord(
     }
   }
 
+  const chain = parseDbChain(record.chain)
+  const data: TrackingRecord = { ...record, chain }
+
   const dbRecord: Omit<DatabaseRecord, 'created_at'> = {
     id: record.id,
     wallet_address: record.walletAddress,
     operation_type: record.operationType,
     timestamp: new Date(record.timestamp).toISOString(),
-    data: record,
+    data,
   }
 
   await query(
-    `INSERT INTO trading_records (id, wallet_address, operation_type, timestamp, data)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO trading_records (id, wallet_address, operation_type, timestamp, data, chain)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
     [
       dbRecord.id,
       dbRecord.wallet_address,
       dbRecord.operation_type,
       dbRecord.timestamp,
       JSON.stringify(dbRecord.data),
+      chain,
     ],
   )
 
@@ -65,12 +70,19 @@ export async function updateTradingRecordData(
   data: TrackingRecord,
 ): Promise<boolean> {
   try {
+    const chain = parseDbChain(data.chain)
+    const payload: TrackingRecord = { ...data, chain }
     const { rowCount } = await query(
-      `UPDATE trading_records SET data = $2, timestamp = $3 WHERE id = $1`,
-      [recordId, JSON.stringify(data), new Date(data.timestamp).toISOString()],
+      `UPDATE trading_records SET data = $2, timestamp = $3, chain = $4 WHERE id = $1`,
+      [
+        recordId,
+        JSON.stringify(payload),
+        new Date(data.timestamp).toISOString(),
+        chain,
+      ],
     )
     if (rowCount === 0) return false
-    await afterTradingRecordInserted(data)
+    await afterTradingRecordInserted(payload)
     return true
   } catch (error) {
     console.warn('[trading-records-db] update failed:', (error as Error).message)

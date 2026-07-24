@@ -6,6 +6,8 @@ export interface TrackingRecord {
   walletAddress: string
   operationType: 'buy' | 'sell' | 'close'
   timestamp: number
+  /** App network — sol | robinhood. Defaults to sol when omitted (legacy rows). */
+  chain?: 'sol' | 'robinhood'
 
   // Token information with prices and individual SOL amounts
   tokens: Array<{
@@ -402,7 +404,11 @@ class TradingTracker {
   }
 
   // Get records for specific wallet (with caching)
-  async getWalletRecords(walletAddress: string, useCache: boolean = true): Promise<TrackingRecord[]> {
+  async getWalletRecords(
+    walletAddress: string,
+    useCache: boolean = true,
+    chain: 'sol' | 'robinhood' = 'sol',
+  ): Promise<TrackingRecord[]> {
     // Add diagnostic logging to identify execution context
     console.log('🔍 getWalletRecords execution context:', {
       isServer: typeof window === 'undefined',
@@ -451,7 +457,7 @@ class TradingTracker {
         ? ''
         : ((typeof process !== 'undefined' ? (process.env.API_HOST || process.env.NEXT_PUBLIC_API_HOST) : undefined) || 'http://localhost:3000');
 
-      const apiUrl = `${baseUrl}/api/trading/records?wallet=${encodeURIComponent(walletAddress)}&limit=500`
+      const apiUrl = `${baseUrl}/api/trading/records?wallet=${encodeURIComponent(walletAddress)}&limit=500&chain=${encodeURIComponent(chain)}`
       const response = await fetch(apiUrl, { credentials: 'include' })
 
       if (response.status === 401 || response.status === 403) {

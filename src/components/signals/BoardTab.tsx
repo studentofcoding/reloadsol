@@ -11,6 +11,7 @@ import React, {
 import { useBoardInit } from "@/hooks/useBoardInit";
 import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
 import { useSearchParams, usePathname, useRouter } from "next/navigation";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import {
   executeBulkBuy,
@@ -395,6 +396,7 @@ function ChartsContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const pathname = usePathname();
+  const { network } = useAppNetwork();
   const { addressSet: rugAddressSet } = useRugList();
   const urlAddresses = useMemo(
     () => parseAddresses(searchParams.get("addresses")),
@@ -720,9 +722,8 @@ function ChartsContent() {
     try {
       if (targetSection === "mcap_tracker") {
         // Untrack (Delete from DB)
-        await fetch(`/api/signals?tokenAddress=${tokenAddress}`, {
-          method: "DELETE",
-        });
+        const qs = new URLSearchParams({ tokenAddress, chain: network });
+        await fetch(`/api/signals?${qs}`, { method: "DELETE" });
       } else {
         const signal = signals[tokenAddress];
         await fetch("/api/signals", {
@@ -731,6 +732,7 @@ function ChartsContent() {
           body: JSON.stringify({
             tokenAddress,
             label: targetSection,
+            chain: network,
             // If it came from mcap_tracker, set source. If existing, preserve source.
             source:
               sourceSection === "mcap_tracker"
@@ -748,7 +750,7 @@ function ChartsContent() {
       setStatus("Failed to save change to server");
     }
   },
-    [columns, signals],
+    [columns, signals, network],
   );
 
   // Handle Drag End
@@ -1205,9 +1207,8 @@ function ChartsContent() {
 
     // API Call to delete label (untrack)
     try {
-      await fetch(`/api/signals?tokenAddress=${tokenAddress}`, {
-        method: "DELETE",
-      });
+      const qs = new URLSearchParams({ tokenAddress, chain: network });
+      await fetch(`/api/signals?${qs}`, { method: "DELETE" });
     } catch (e) {
       console.error("Failed to delete", e);
     }
@@ -1235,6 +1236,7 @@ function ChartsContent() {
             tokenAddress: addr,
             label: "watching",
             source: "manual",
+            chain: network,
           }),
         });
       } catch (e) {

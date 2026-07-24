@@ -7,7 +7,8 @@ import {
   fetchTokenPricesForTracking,
 } from "@/utils/trading-tracker";
 import { getGmgnKlineUrl } from "@/utils/gmgn";
-import { useWallet, useConnection, useWalletAddress } from "./WalletProvider";
+import { useWallet, useConnection } from "./WalletProvider";
+import { usePortfolioWallet } from "@/hooks/usePortfolioWallet";
 import { useTradingData } from "./TradingDataProvider";
 import { useWalletSession } from "./WalletSessionContext";
 import WalletSignInPrompt from "./WalletSignInPrompt";
@@ -144,7 +145,8 @@ function pruneOpenPositionsByHoldings(
 
 export default function PnLTracker() {
   const { publicKey, connected, signAllTransactions } = useWallet();
-  const walletAddress = useWalletAddress();
+  const { network, walletAddress } = usePortfolioWallet();
+  const nativeUnit = network === "robinhood" ? "ETH" : "SOL";
   const { connection } = useConnection();
   const { status: walletSessionStatus } = useWalletSession();
   const { records, trackOperation, isLoadingRecords, recordsError } =
