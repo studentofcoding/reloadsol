@@ -37,10 +37,8 @@ import {
   matchesTradeChainAddress,
 } from "@/utils/gmgn-currencies";
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
-import {
-  executeRhParentBulkSell,
-  type RhSwapQuote,
-} from "@/utils/dlmm/rh-univ2-swap";
+import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
+import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
 import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
@@ -784,7 +782,7 @@ export default function BulkTokenSeller() {
       let success: boolean;
       if (useRhParentPath) {
         const wc = await rhWallet.getWalletClient();
-        ({ results, success } = await executeRhParentBulkSell({
+        ({ results, success } = await executeRhParentKyberSell({
           publicClient: rhWallet.publicClient,
           walletClient: wc,
           account: tradeFromAddress as Address,
@@ -839,7 +837,7 @@ export default function BulkTokenSeller() {
         error: success
           ? undefined
           : fail[0]?.error ||
-            (useRhParentPath ? "Parent UniV2 sell failed" : "GMGN sell failed"),
+            (useRhParentPath ? "Parent Kyber sell failed" : "GMGN sell failed"),
       });
       if (success) {
         setSelectedTokens([]);
@@ -875,7 +873,7 @@ export default function BulkTokenSeller() {
       return;
     }
 
-    // Robinhood: Parent UniV2 / Bound GMGN only — never Sol Jupiter/Raptor.
+    // Robinhood: Parent Kyber / Bound GMGN only — never Sol Jupiter/Raptor.
     if (isRhChain) {
       if (!useRhParentPath && !useGmgnPath) {
         setError("Robinhood sell requires Parent (Rabby) or Bound wallet mode");
@@ -892,7 +890,7 @@ export default function BulkTokenSeller() {
       if (selectedTokens.length === 0) {
         setError(
           useRhParentPath
-            ? "Select tokens to sell via UniV2 / Rabby"
+            ? "Select tokens to sell via Kyber / Rabby"
             : "Select tokens to sell via GMGN",
         );
         return;
@@ -902,7 +900,7 @@ export default function BulkTokenSeller() {
           tokenAddress: t.mintAddress,
           symbol: t.symbol,
           amountLabel: `${t.sellPercentage || 100}% → ${rhQuoteCurrency}${
-            useRhParentPath ? " · UniV2 / Rabby" : ""
+            useRhParentPath ? " · Kyber / Rabby" : ""
           }`,
           side: "sell" as const,
         })),
@@ -1862,7 +1860,7 @@ export default function BulkTokenSeller() {
           <div>
             Mode:{" "}
             <span className="text-white font-medium">
-              {rhMode === "parent" ? "Parent (Rabby / UniV2)" : "Bound (GMGN)"}
+              {rhMode === "parent" ? "Parent (Rabby / Kyber)" : "Bound (GMGN)"}
             </span>
           </div>
           <div>
@@ -2713,7 +2711,7 @@ export default function BulkTokenSeller() {
                   </div>
                   ) : (
                     <p className="text-xs text-gray-500 border-t border-gray-600 pt-3">
-                      Robinhood: UniV2 (Parent) / GMGN (Bound) — no Solana Raptor
+                      Robinhood: Kyber (Parent) / GMGN (Bound) — no Solana Raptor
                       quotes.
                     </p>
                   )}
@@ -2761,7 +2759,7 @@ export default function BulkTokenSeller() {
                                 ? selectedTokens[0].symbol || "token"
                                 : `${n} tokens`;
                             const via = useRhParentPath
-                              ? `UniV2 → ${rhQuoteCurrency}`
+                              ? `Kyber → ${rhQuoteCurrency}`
                               : `GMGN → ${rhQuoteCurrency}`;
                             return usd > 0
                               ? `Sell ${label} (~$${usd.toLocaleString(undefined, { maximumFractionDigits: 2 })}) ${via}`

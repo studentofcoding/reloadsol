@@ -46,8 +46,9 @@ export default function GmgnTradeConfirmModal({
         <p className="mt-1 text-xs text-gray-400 break-all">From: {from}</p>
         {sequentialSignHint ? (
           <p className="mt-2 text-xs text-amber-200/90">
-            Rabby will ask once per Approve and once per Swap (wallet does not
-            batch these into one signature on Robinhood).
+            Kyber via Rabby: one wallet confirmation when batching is
+            supported; otherwise Approve then Swap (two prompts, one app
+            click).
           </p>
         ) : null}
         <ul className="mt-4 max-h-64 space-y-2 overflow-y-auto text-sm text-gray-200">

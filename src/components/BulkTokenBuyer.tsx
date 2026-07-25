@@ -76,10 +76,8 @@ import {
   buildGmgnBuyQuoteRequest,
   executeGmgnBulkBuy,
 } from "@/utils/gmgn-bulk-trade";
-import {
-  executeRhParentBulkBuy,
-  type RhSwapQuote,
-} from "@/utils/dlmm/rh-univ2-swap";
+import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
+import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
 
 type SpendCurrency = "SOL" | "USDC" | "ETH" | "USDG";
 
@@ -670,7 +668,7 @@ export default function BulkTokenBuyer() {
       let success: boolean;
       if (useRhParentPath) {
         const wc = await rhWallet.getWalletClient();
-        ({ results, success } = await executeRhParentBulkBuy({
+        ({ results, success } = await executeRhParentKyberBuy({
           publicClient: rhWallet.publicClient,
           walletClient: wc,
           account: tradeFromAddress as Address,
@@ -734,7 +732,7 @@ export default function BulkTokenBuyer() {
         amountUnit: spendUnit,
         error: success
           ? undefined
-          : fail[0]?.error || (useRhParentPath ? "Parent UniV2 buy failed" : "GMGN buy failed"),
+          : fail[0]?.error || (useRhParentPath ? "Parent Kyber buy failed" : "GMGN buy failed"),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -778,7 +776,7 @@ export default function BulkTokenBuyer() {
       return;
     }
 
-    // Robinhood: Parent UniV2 / Bound GMGN only — never Sol Jupiter/Raptor.
+    // Robinhood: Parent Kyber / Bound GMGN only — never Sol Jupiter/Raptor.
     if (isRhChain) {
       if (!useRhParentPath && !useGmgnPath) {
         setError("Robinhood buy requires Parent (Rabby) or Bound wallet mode");
@@ -834,7 +832,7 @@ export default function BulkTokenBuyer() {
             tokenAddress: mint,
             symbol: tokenList.find((t) => t.address === mint)?.symbol,
             amountLabel: `${perLabel} ${spendUnit}${
-              useRhParentPath ? " · UniV2 / Rabby" : ""
+              useRhParentPath ? " · Kyber / Rabby" : ""
             }`,
             estOut,
             side: "buy",
@@ -1414,7 +1412,7 @@ export default function BulkTokenBuyer() {
               <div>
                 Mode:{" "}
                 <span className="text-white font-medium">
-                  {rhMode === "parent" ? "Parent (Rabby / UniV2)" : "Bound (GMGN)"}
+                  {rhMode === "parent" ? "Parent (Rabby / Kyber)" : "Bound (GMGN)"}
                 </span>
               </div>
               <div>
@@ -2336,7 +2334,7 @@ export default function BulkTokenBuyer() {
                   <div className="space-y-3 text-xs text-gray-400">
                     {isRhChain
                       ? useRhParentPath
-                        ? "Robinhood Parent: UniV2 + Rabby. No Solana Raptor/Jupiter."
+                        ? "Robinhood Parent: Kyber + Rabby. No Solana Raptor/Jupiter."
                         : "Robinhood Bound: GMGN server-sign. No Solana Raptor/Jupiter."
                       : `Execution via GMGN (${chainNative.nativeSymbol}). Fees set by the router.`}
                   </div>

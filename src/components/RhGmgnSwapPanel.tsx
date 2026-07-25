@@ -13,16 +13,16 @@ import {
   executeGmgnBulkSell,
 } from '@/utils/gmgn-bulk-trade'
 import {
-  executeRhParentBulkBuy,
-  executeRhParentBulkSell,
-} from '@/utils/dlmm/rh-univ2-swap'
+  executeRhParentKyberBuy,
+  executeRhParentKyberSell,
+} from '@/utils/dlmm/rh-kyber-swap'
 import { gmgnNativeToken, isValidTradeTokenAddress } from '@/utils/gmgn-currencies'
 import { resolveRhActiveAddress } from '@/utils/rh-wallet-mode'
 import UniversalWalletButton from '@/components/UniversalWalletButton'
 
 type Side = 'buy' | 'sell'
 
-/** Single-leg RH swap: Bound=GMGN server-sign, Parent=UniV2 + Rabby. */
+/** Single-leg RH swap: Bound=GMGN server-sign, Parent=Kyber + Rabby. */
 export default function RhGmgnSwapPanel({
   initialToken = '',
 }: {
@@ -75,7 +75,7 @@ export default function RhGmgnSwapPanel({
         let success: boolean
         if (isParent) {
           const wc = await rh.getWalletClient()
-          ;({ results, success } = await executeRhParentBulkBuy({
+          ;({ results, success } = await executeRhParentKyberBuy({
             publicClient: rh.publicClient,
             walletClient: wc,
             account: from as Address,
@@ -122,7 +122,7 @@ export default function RhGmgnSwapPanel({
         let success: boolean
         if (isParent) {
           const wc = await rh.getWalletClient()
-          ;({ results, success } = await executeRhParentBulkSell({
+          ;({ results, success } = await executeRhParentKyberSell({
             publicClient: rh.publicClient,
             walletClient: wc,
             account: from as Address,
@@ -171,7 +171,7 @@ export default function RhGmgnSwapPanel({
         <UniversalWalletButton />
       </div>
       <p className="text-xs text-gray-400">
-        {isParent ? 'UniV2 · Rabby sign' : 'GMGN · bound server-sign'} · ETH ↔
+        {isParent ? 'Kyber · Rabby sign' : 'GMGN · bound server-sign'} · ETH ↔
         token ·{' '}
         <span className="font-mono text-gray-300">
           {from ? `${from.slice(0, 6)}…${from.slice(-4)}` : 'none'}
