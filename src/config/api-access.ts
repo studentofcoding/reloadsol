@@ -86,7 +86,8 @@ export function isPublicTrendingRead(pathname: string, method: string): boolean 
   if (method !== 'GET') return false;
   return (
     pathname === '/api/trending/filtered' ||
-    pathname === '/api/trending/prices'
+    pathname === '/api/trending/prices' ||
+    pathname === '/api/gmgn/trending/filtered'
   );
 }
 

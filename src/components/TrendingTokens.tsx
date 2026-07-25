@@ -80,52 +80,24 @@ export default function TrendingTokens({
       
       try {
         let uniqueTokens: TrendingToken[] = []
-        if (chain) {
-          const response = await fetch(
-            `/api/gmgn/token/search?chain=${encodeURIComponent(chain)}&query=`,
-          )
-          if (!response.ok) {
-            throw new Error(`Failed to fetch GMGN trending: ${response.status}`)
-          }
-          const rows = (await response.json()) as Array<{
-            id?: string
-            address?: string
-            symbol?: string
-            mcap?: number
-            icon?: string
-          }>
-          const tokenMap = new Map<string, TrendingToken>()
-          for (const row of Array.isArray(rows) ? rows : []) {
-            const addr = String(row.address ?? row.id ?? '')
-            if (!addr || tokenMap.has(addr)) continue
-            tokenMap.set(addr, {
-              token_symbol: row.symbol || '???',
-              token_address: addr,
-              price: 0,
-              change_1h: 0,
-              change_5m: 0,
-              volume_1h: 0,
-              mcap: row.mcap,
-              logo_url: row.icon,
-            })
-          }
-          uniqueTokens = Array.from(tokenMap.values())
-        } else {
-          // Legacy Sol-only Jupiter/filtered feed for other callers
-          const response = await fetch('/api/trending/filtered')
-          if (!response.ok) {
-            throw new Error(`Failed to fetch trending tokens: ${response.status}`)
-          }
-          const data = await response.json()
-          const tokens = data.tokens || []
-          const tokenMap = new Map<string, TrendingToken>()
-          tokens.forEach((token: TrendingToken) => {
-            if (!tokenMap.has(token.token_address)) {
-              tokenMap.set(token.token_address, token)
-            }
-          })
-          uniqueTokens = Array.from(tokenMap.values())
+        // Sol (no chain / sol): Jupiter filtered. RH: GMGN filtered twin.
+        const url =
+          chain === 'robinhood'
+            ? '/api/gmgn/trending/filtered?chain=robinhood'
+            : '/api/trending/filtered'
+        const response = await fetch(url)
+        if (!response.ok) {
+          throw new Error(`Failed to fetch trending tokens: ${response.status}`)
         }
+        const data = (await response.json()) as { tokens?: TrendingToken[] }
+        const tokens = data.tokens || []
+        const tokenMap = new Map<string, TrendingToken>()
+        tokens.forEach((token: TrendingToken) => {
+          if (!tokenMap.has(token.token_address)) {
+            tokenMap.set(token.token_address, token)
+          }
+        })
+        uniqueTokens = Array.from(tokenMap.values())
 
         setTrendingTokens(uniqueTokens.slice(0, 10)) // Take top 10 unique tokens
       } catch (err) {

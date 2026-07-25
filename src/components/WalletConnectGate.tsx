@@ -53,25 +53,26 @@ export default function WalletConnectGate({
     setShowModal(true)
   }
 
-  const rhShowTrending = network === 'sol' && showTrending
+  const showTrendingCol = showTrending
 
   return (
     <div
       className={`grid grid-cols-1 gap-8 max-w-6xl mx-auto ${
-        rhShowTrending ? 'lg:grid-cols-3' : 'lg:grid-cols-1'
+        showTrendingCol ? 'lg:grid-cols-3' : 'lg:grid-cols-1'
       }`}
     >
-      {rhShowTrending ? (
+      {showTrendingCol ? (
         <div className="lg:col-span-1">
           <TrendingTokens
             preview
+            chain={network === 'robinhood' ? 'robinhood' : undefined}
             onSelectToken={openWallet}
             onConnectRequest={openWallet}
           />
         </div>
       ) : null}
 
-      <div className={rhShowTrending ? 'lg:col-span-2' : 'lg:col-span-1'}>
+      <div className={showTrendingCol ? 'lg:col-span-2' : 'lg:col-span-1'}>
         <div className="bg-gray-900/50 rounded-2xl shadow-lg border border-gray-700 p-8 min-h-[420px] flex flex-col justify-center">
           <div className="mx-auto w-full max-w-md text-center">
             <div className="w-16 h-16 mx-auto mb-6 bg-gray-800 border border-gray-600 rounded-full flex items-center justify-center">

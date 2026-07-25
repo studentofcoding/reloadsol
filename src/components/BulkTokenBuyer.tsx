@@ -1385,7 +1385,7 @@ export default function BulkTokenBuyer() {
   }, [solAmount, tokenMints, validMints]);
 
   const showTradeUi =
-    effectiveChain === "robinhood" ? tradeReady : connected;
+    effectiveChain === "robinhood" ? tradeReady : isWalletReady;
 
   return (
     <div
@@ -1407,7 +1407,7 @@ export default function BulkTokenBuyer() {
         <div className="lg:col-span-1">
           <TrendingTokens
             onSelectToken={handleSelectToken}
-            chain={isDevUser ? effectiveChain : undefined}
+            chain={isRhChain ? "robinhood" : undefined}
           />
         </div>
       )}
