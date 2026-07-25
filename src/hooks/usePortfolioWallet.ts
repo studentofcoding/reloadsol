@@ -18,6 +18,7 @@ import { resolveRhActiveAddress } from '@/utils/rh-wallet-mode'
 import {
   RH_USDG,
   RH_USDG_DECIMALS,
+  RH_WETH,
   erc20Abi,
 } from '@/utils/dlmm/rh-univ2'
 
@@ -28,6 +29,13 @@ export function rhEthBalanceQueryKey(address: string | null) {
 export function rhUsdgBalanceQueryKey(address: string | null) {
   return ['rh-usdg-balance', address] as const
 }
+
+export function rhWethBalanceQueryKey(address: string | null) {
+  return ['rh-weth-balance', address] as const
+}
+
+/** Native gas reserve kept when wrapping ETH→WETH (0.0005 ETH). */
+export const RH_WETH_GAS_RESERVE_ETH = 0.0005
 
 /** Active trading wallet for the current app network (+ RH parent/bound mode). */
 export function usePortfolioWallet(): {
@@ -43,6 +51,7 @@ export function usePortfolioWallet(): {
   solBalance: number | null
   usdcBalance: number | null
   usdgBalance: number | null
+  wethBalance: number | null
   refreshBalances: () => Promise<void>
   isLoadingBalances: boolean
 } {
@@ -104,6 +113,23 @@ export function usePortfolioWallet(): {
     },
   })
 
+  const wethQuery = useQuery({
+    queryKey: rhWethBalanceQueryKey(rhAddress),
+    enabled: isRh && Boolean(rhAddress),
+    staleTime: 15_000,
+    refetchInterval: isRh && rhAddress ? 30_000 : false,
+    queryFn: async () => {
+      if (!rhAddress) return null
+      const raw = await rh.publicClient.readContract({
+        address: RH_WETH,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [rhAddress],
+      })
+      return Number(formatUnits(raw, 18))
+    },
+  })
+
   const refreshBalances = async () => {
     if (isRh) {
       if (!rhAddress) return
@@ -113,6 +139,9 @@ export function usePortfolioWallet(): {
         }),
         queryClient.invalidateQueries({
           queryKey: rhUsdgBalanceQueryKey(rhAddress),
+        }),
+        queryClient.invalidateQueries({
+          queryKey: rhWethBalanceQueryKey(rhAddress),
         }),
       ])
       return
@@ -126,8 +155,9 @@ export function usePortfolioWallet(): {
   const solBalance = isRh ? null : solBalances.walletBalance
   const usdcBalance = isRh ? null : solBalances.usdcBalance
   const usdgBalance = isRh ? (usdgQuery.data ?? null) : null
+  const wethBalance = isRh ? (wethQuery.data ?? null) : null
   const isLoadingBalances = isRh
-    ? ethQuery.isPending || usdgQuery.isPending
+    ? ethQuery.isPending || usdgQuery.isPending || wethQuery.isPending
     : solBalances.isLoadingBalances
 
   return {
@@ -143,6 +173,7 @@ export function usePortfolioWallet(): {
     solBalance,
     usdcBalance,
     usdgBalance,
+    wethBalance,
     refreshBalances,
     isLoadingBalances,
   }

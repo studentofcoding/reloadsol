@@ -7,6 +7,8 @@ export const GMGN_SOL_NATIVE = 'So11111111111111111111111111111111111111112'
 export const GMGN_SOL_USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
 /** Robinhood USDG — same as RH_USDG in rh-univ2. */
 export const GMGN_RH_USDG = '0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168'
+/** Robinhood WETH — same as RH_WETH in rh-univ2. */
+export const GMGN_RH_WETH = '0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73'
 
 export const GMGN_CHAIN_CURRENCIES: Record<
   GmgnTradeChain,
@@ -16,6 +18,7 @@ export const GMGN_CHAIN_CURRENCIES: Record<
     nativeDecimals: number
     usdc?: string
     usdg?: string
+    weth?: string
   }
 > = {
   sol: {
@@ -29,6 +32,7 @@ export const GMGN_CHAIN_CURRENCIES: Record<
     nativeSymbol: 'ETH',
     nativeDecimals: 18,
     usdg: GMGN_RH_USDG,
+    weth: GMGN_RH_WETH,
   },
 }
 
@@ -41,6 +45,7 @@ export function gmgnTokenDecimals(
   const t = token.trim().toLowerCase()
   if (meta.usdc && t === meta.usdc.toLowerCase()) return 6
   if (meta.usdg && t === meta.usdg.toLowerCase()) return 6
+  if (meta.weth && t === meta.weth.toLowerCase()) return 18
   return meta.nativeDecimals
 }
 

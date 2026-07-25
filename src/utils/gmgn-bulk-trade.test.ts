@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   GMGN_NATIVE_ETH,
   GMGN_RH_USDG,
+  GMGN_RH_WETH,
   GMGN_SOL_NATIVE,
   gmgnNativeToken,
   gmgnTokenDecimals,
@@ -61,6 +62,21 @@ describe('buildGmgnBuyQuoteRequest', () => {
     })
     expect(req.inputToken).toBe(GMGN_RH_USDG)
     expect(req.amount).toBe('10000000')
+  })
+
+  it('shapes robinhood WETH buy with 18 decimals', () => {
+    expect(gmgnTokenDecimals('robinhood', GMGN_RH_WETH)).toBe(18)
+    expect(GMGN_RH_WETH.toLowerCase()).toBe(RH_WETH.toLowerCase())
+    const req = buildGmgnBuyQuoteRequest({
+      chain: 'robinhood',
+      from: '0xabc',
+      tokenAddress: '0x1111111111111111111111111111111111111111',
+      amountHuman: 0.01,
+      slippageBps: 100,
+      inputToken: GMGN_RH_WETH,
+    })
+    expect(req.inputToken).toBe(GMGN_RH_WETH)
+    expect(req.amount).toBe('10000000000000000')
   })
 })
 

@@ -16,11 +16,24 @@ import {
   executeRhParentKyberBuy,
   executeRhParentKyberSell,
 } from '@/utils/dlmm/rh-kyber-swap'
-import { gmgnNativeToken, isValidTradeTokenAddress } from '@/utils/gmgn-currencies'
+import {
+  GMGN_RH_USDG,
+  GMGN_RH_WETH,
+  gmgnNativeToken,
+  isValidTradeTokenAddress,
+} from '@/utils/gmgn-currencies'
+import type { RhSwapQuote } from '@/utils/dlmm/rh-univ2-swap'
+import { RH_WETH } from '@/utils/dlmm/rh-univ2'
 import { resolveRhActiveAddress } from '@/utils/rh-wallet-mode'
 import UniversalWalletButton from '@/components/UniversalWalletButton'
 
 type Side = 'buy' | 'sell'
+
+function gmgnQuoteToken(quote: RhSwapQuote): string {
+  if (quote === 'USDG') return GMGN_RH_USDG
+  if (quote === 'WETH') return GMGN_RH_WETH
+  return gmgnNativeToken('robinhood')
+}
 
 /** Single-leg RH swap: Bound=GMGN server-sign, Parent=Kyber + Rabby. */
 export default function RhGmgnSwapPanel({
@@ -38,6 +51,7 @@ export default function RhGmgnSwapPanel({
   const holdings = useRhWalletTokens()
 
   const [side, setSide] = useState<Side>('buy')
+  const [quote, setQuote] = useState<RhSwapQuote>('ETH')
   const [token, setToken] = useState(initialToken)
   const [amount, setAmount] = useState('0.01')
   const [sellPct, setSellPct] = useState('100')
@@ -64,12 +78,19 @@ export default function RhGmgnSwapPanel({
       setError('Enter a valid Robinhood token address')
       return
     }
+    if (
+      quote === 'WETH' &&
+      addr.toLowerCase() === RH_WETH.toLowerCase()
+    ) {
+      setError('Cannot trade WETH against WETH')
+      return
+    }
     setBusy(true)
     try {
       if (side === 'buy') {
         const human = parseFloat(amount)
         if (!Number.isFinite(human) || human <= 0) {
-          throw new Error('Enter a valid ETH amount')
+          throw new Error(`Enter a valid ${quote} amount`)
         }
         let results: Awaited<ReturnType<typeof executeGmgnBulkBuy>>['results']
         let success: boolean
@@ -82,13 +103,14 @@ export default function RhGmgnSwapPanel({
             amountHuman: human,
             tokenMints: [{ tokenAddress: addr }],
             slippageBps,
+            quote,
           }))
         } else {
           ;({ results, success } = await executeGmgnBulkBuy({
             chain: 'robinhood',
             from,
             amountHuman: human,
-            inputToken: gmgnNativeToken('robinhood'),
+            inputToken: gmgnQuoteToken(quote),
             tokenMints: [{ tokenAddress: addr }],
             slippageBps,
           }))
@@ -128,12 +150,14 @@ export default function RhGmgnSwapPanel({
             account: from as Address,
             legs: [{ tokenAddress: addr, percent: pct }],
             slippageBps,
+            quote,
           }))
         } else {
           ;({ results, success } = await executeGmgnBulkSell({
             chain: 'robinhood',
             from,
             legs: [{ tokenAddress: addr, percent: pct }],
+            outputToken: gmgnQuoteToken(quote),
             slippageBps,
           }))
         }
@@ -171,8 +195,8 @@ export default function RhGmgnSwapPanel({
         <UniversalWalletButton />
       </div>
       <p className="text-xs text-gray-400">
-        {isParent ? 'Kyber · Rabby sign' : 'GMGN · bound server-sign'} · ETH ↔
-        token ·{' '}
+        {isParent ? 'Kyber · Rabby sign' : 'GMGN · bound server-sign'} ·{' '}
+        {quote} ↔ token ·{' '}
         <span className="font-mono text-gray-300">
           {from ? `${from.slice(0, 6)}…${from.slice(-4)}` : 'none'}
         </span>
@@ -190,7 +214,27 @@ export default function RhGmgnSwapPanel({
                 : 'bg-black text-gray-400 hover:text-white'
             }`}
           >
-            {s === 'buy' ? 'Buy (ETH → token)' : 'Sell (token → ETH)'}
+            {s === 'buy'
+              ? `Buy (${quote} → token)`
+              : `Sell (token → ${quote})`}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-300">
+        <span>Quote:</span>
+        {(['ETH', 'USDG', 'WETH'] as const).map((q) => (
+          <button
+            key={q}
+            type="button"
+            onClick={() => setQuote(q)}
+            className={`px-2 py-0.5 rounded font-mono ${
+              quote === q
+                ? 'bg-white text-black'
+                : 'bg-gray-700 text-gray-300 hover:text-white'
+            }`}
+          >
+            {q}
           </button>
         ))}
       </div>
@@ -249,7 +293,7 @@ export default function RhGmgnSwapPanel({
 
       {side === 'buy' ? (
         <label className="block text-xs text-gray-400">
-          ETH amount
+          {quote} amount
           <input
             type="number"
             min="0"

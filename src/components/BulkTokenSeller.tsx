@@ -33,12 +33,14 @@ import type { Address } from "viem";
 import type { GmgnTradeChain } from "@/utils/gmgn-currencies";
 import {
   GMGN_RH_USDG,
+  GMGN_RH_WETH,
   gmgnNativeToken,
   matchesTradeChainAddress,
 } from "@/utils/gmgn-currencies";
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
+import { RH_WETH } from "@/utils/dlmm/rh-univ2";
 import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
@@ -773,6 +775,14 @@ export default function BulkTokenSeller() {
     setGmgnConfirmBusy(true);
     setError("");
     try {
+      if (
+        rhQuoteCurrency === "WETH" &&
+        selectedTokens.some(
+          (t) => t.mintAddress.toLowerCase() === RH_WETH.toLowerCase(),
+        )
+      ) {
+        throw new Error("Cannot sell WETH into WETH");
+      }
       const legs = selectedTokens.map((t) => ({
         tokenAddress: t.mintAddress,
         percent: t.sellPercentage || 100,
@@ -797,7 +807,9 @@ export default function BulkTokenSeller() {
           outputToken:
             effectiveChain === "robinhood" && rhQuoteCurrency === "USDG"
               ? GMGN_RH_USDG
-              : gmgnNativeToken(effectiveChain),
+              : effectiveChain === "robinhood" && rhQuoteCurrency === "WETH"
+                ? GMGN_RH_WETH
+                : gmgnNativeToken(effectiveChain),
           legs,
           slippageBps: slippage,
         }));
@@ -1842,7 +1854,7 @@ export default function BulkTokenSeller() {
         <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span>Sell to:</span>
-            {(["ETH", "USDG"] as const).map((q) => (
+            {(["ETH", "USDG", "WETH"] as const).map((q) => (
               <button
                 key={q}
                 type="button"

@@ -34,7 +34,7 @@ const ZERO = '0x0000000000000000000000000000000000000000'
 
 export type RhUniv2TxCall = RhTxCall
 /** Buy-from / sell-to quote currency on RH UniV2. */
-export type RhSwapQuote = 'ETH' | 'USDG'
+export type RhSwapQuote = 'ETH' | 'USDG' | 'WETH'
 
 function quoteAddress(quote: RhSwapQuote): Address {
   return quote === 'USDG' ? RH_USDG : RH_WETH
@@ -112,7 +112,7 @@ export function buildRhUniv2SellCalls(params: {
       }),
     })
   } else {
-    const path = [token, RH_USDG] as Address[]
+    const path = [token, quoteAddress(quote)] as Address[]
     calls.push({
       to: RH_V2_ROUTER,
       data: encodeFunctionData({
@@ -156,7 +156,7 @@ export function buildRhUniv2BuyCalls(params: {
       },
     ]
   }
-  const path = [RH_USDG, token] as Address[]
+  const path = [quoteAddress(quote), token] as Address[]
   return [
     {
       to: RH_V2_ROUTER,
@@ -240,7 +240,7 @@ export async function prepareRhUniv2BuyLegCalls(params: {
   const path =
     quote === 'ETH'
       ? ([RH_WETH, token] as Address[])
-      : ([RH_USDG, token] as Address[])
+      : ([quoteAddress(quote), token] as Address[])
   const amounts = await publicClient.readContract({
     address: RH_V2_ROUTER,
     abi: univ2RouterAbi,

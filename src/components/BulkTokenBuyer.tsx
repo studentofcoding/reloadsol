@@ -68,6 +68,7 @@ import {
   type GmgnTradeChain,
   GMGN_CHAIN_CURRENCIES,
   GMGN_RH_USDG,
+  GMGN_RH_WETH,
   gmgnNativeToken,
   parseTradeTokenAddresses,
   isValidTradeTokenAddress,
@@ -78,8 +79,12 @@ import {
 } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberBuy } from "@/utils/dlmm/rh-kyber-swap";
+import {
+  RH_WETH_GAS_RESERVE_ETH,
+} from "@/hooks/usePortfolioWallet";
+import { RH_WETH } from "@/utils/dlmm/rh-univ2";
 
-type SpendCurrency = "SOL" | "USDC" | "ETH" | "USDG";
+type SpendCurrency = "SOL" | "USDC" | "ETH" | "USDG" | "WETH";
 
 export default function BulkTokenBuyer() {
   const { signAllTransactions, connected } = useWallet();
@@ -200,6 +205,7 @@ export default function BulkTokenBuyer() {
     solBalance,
     usdcBalance,
     usdgBalance,
+    wethBalance,
     connected: portfolioConnected,
     refreshBalances,
   } = usePortfolioWallet();
@@ -631,7 +637,9 @@ export default function BulkTokenBuyer() {
   // Handle currency toggle
   const toggleCurrency = () => {
     if (isRhChain) {
-      setRhCurrency((prev) => (prev === "ETH" ? "USDG" : "ETH"));
+      setRhCurrency((prev) =>
+        prev === "ETH" ? "USDG" : prev === "USDG" ? "WETH" : "ETH",
+      );
       return;
     }
     setSolCurrency((prev) => (prev === "SOL" ? "USDC" : "SOL"));
@@ -657,6 +665,14 @@ export default function BulkTokenBuyer() {
     setPointsEarned(null);
     setError("");
     try {
+      if (
+        rhQuote === "WETH" &&
+        validMints.some(
+          (m) => m.toLowerCase() === RH_WETH.toLowerCase(),
+        )
+      ) {
+        throw new Error("Cannot buy WETH with WETH");
+      }
       const tokenMints = validMints.map((m) => ({
         tokenAddress: m,
         symbol: tokenList.find((t) => t.address === m)?.symbol,
@@ -683,7 +699,9 @@ export default function BulkTokenBuyer() {
             ? TOKENS.USDC
             : effectiveChain === "robinhood" && selectedCurrency === "USDG"
               ? GMGN_RH_USDG
-              : gmgnNativeToken(effectiveChain);
+              : effectiveChain === "robinhood" && selectedCurrency === "WETH"
+                ? GMGN_RH_WETH
+                : gmgnNativeToken(effectiveChain);
         ({ results, success } = await executeGmgnBulkBuy({
           chain: effectiveChain,
           from: tradeFromAddress,
@@ -794,12 +812,16 @@ export default function BulkTokenBuyer() {
       setError("");
       try {
         const inputToken =
-          selectedCurrency === "USDG" ? GMGN_RH_USDG : gmgnNativeToken("robinhood");
+          selectedCurrency === "USDG"
+            ? GMGN_RH_USDG
+            : selectedCurrency === "WETH"
+              ? GMGN_RH_WETH
+              : gmgnNativeToken("robinhood");
         const totalHuman = parseFloat(solAmount);
         const perTokenHuman =
           validMints.length > 0 ? totalHuman / validMints.length : totalHuman;
         const perLabel =
-          spendUnit === "ETH"
+          spendUnit === "ETH" || spendUnit === "WETH"
             ? perTokenHuman.toFixed(6)
             : perTokenHuman.toFixed(4);
         const legs: GmgnConfirmLeg[] = [];
@@ -1220,10 +1242,20 @@ export default function BulkTokenBuyer() {
 
   // Slider value (percentage of wallet balance)
   const maxPercent = 96;
+  const wrappableEth =
+    nativeBalance != null
+      ? Math.max(0, nativeBalance - RH_WETH_GAS_RESERVE_ETH)
+      : 0;
+  const parentWethSpend =
+    wethBalance != null ? wethBalance + wrappableEth : null;
   const currentBalance = isRhChain
     ? selectedCurrency === "USDG"
       ? usdgBalance
-      : nativeBalance
+      : selectedCurrency === "WETH"
+        ? useRhParentPath
+          ? parentWethSpend
+          : wethBalance
+        : nativeBalance
     : selectedCurrency === "SOL"
       ? walletBalance
       : usdcBalance;
@@ -1235,7 +1267,9 @@ export default function BulkTokenBuyer() {
     if (!currentBalance) return;
     const percent = parseInt(e.target.value, 10);
     const decimals =
-      spendUnit === "ETH" || spendUnit === "SOL" ? 4 : 2;
+      spendUnit === "ETH" || spendUnit === "WETH" || spendUnit === "SOL"
+        ? 4
+        : 2;
     const newAmount = ((currentBalance * percent) / 100).toFixed(decimals);
     setSolAmount(newAmount);
   };
@@ -1745,9 +1779,11 @@ export default function BulkTokenBuyer() {
                   )}
                 {isRhChain &&
                   portfolioConnected &&
-                  (nativeBalance !== null || usdgBalance !== null) && (
+                  (nativeBalance !== null ||
+                    usdgBalance !== null ||
+                    wethBalance !== null) && (
                     <div className="flex justify-between items-center text-xs text-gray-400 mt-2 px-1">
-                      <div className="flex space-x-4">
+                      <div className="flex flex-wrap gap-x-4 gap-y-1">
                         <span
                           className={
                             selectedCurrency === "ETH"
@@ -1771,6 +1807,27 @@ export default function BulkTokenBuyer() {
                           {usdgBalance !== null
                             ? usdgBalance.toFixed(2)
                             : "0.00"}
+                        </span>
+                        <span
+                          className={
+                            selectedCurrency === "WETH"
+                              ? "text-white font-medium"
+                              : ""
+                          }
+                          title={
+                            useRhParentPath
+                              ? "WETH + wrappable ETH (gas reserve withheld)"
+                              : "WETH ERC20 only (Bound)"
+                          }
+                        >
+                          WETH:{" "}
+                          {selectedCurrency === "WETH" &&
+                          useRhParentPath &&
+                          parentWethSpend != null
+                            ? parentWethSpend.toFixed(4)
+                            : wethBalance !== null
+                              ? wethBalance.toFixed(4)
+                              : "0.0000"}
                         </span>
                       </div>
                     </div>

@@ -3,7 +3,7 @@
  * Browser calls go through /api/kyber/* proxies (X-Client-Id server-side).
  */
 
-import { RH_USDG, RH_USDG_DECIMALS } from '@/utils/dlmm/rh-univ2'
+import { RH_USDG, RH_USDG_DECIMALS, RH_WETH } from '@/utils/dlmm/rh-univ2'
 
 export const KYBER_API_BASE = 'https://aggregator-api.kyberswap.com'
 export const KYBER_CHAIN = 'robinhood'
@@ -11,7 +11,7 @@ export const KYBER_CHAIN = 'robinhood'
 export const KYBER_NATIVE =
   '0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE' as const
 
-export type KyberQuoteCurrency = 'ETH' | 'USDG'
+export type KyberQuoteCurrency = 'ETH' | 'USDG' | 'WETH'
 
 export type KyberRouteSummary = Record<string, unknown>
 
@@ -36,7 +36,9 @@ export function isKyberNative(addr: string): boolean {
 }
 
 export function kyberQuoteTokenAddress(quote: KyberQuoteCurrency): string {
-  return quote === 'USDG' ? RH_USDG : KYBER_NATIVE
+  if (quote === 'USDG') return RH_USDG
+  if (quote === 'WETH') return RH_WETH
+  return KYBER_NATIVE
 }
 
 export function kyberQuoteDecimals(quote: KyberQuoteCurrency): number {

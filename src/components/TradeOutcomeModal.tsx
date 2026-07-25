@@ -9,7 +9,7 @@ export type CloseableAccount = {
   symbol?: string;
 };
 
-export type TradeAmountUnit = 'SOL' | 'ETH' | 'USDC' | 'USDG';
+export type TradeAmountUnit = 'SOL' | 'ETH' | 'USDC' | 'USDG' | 'WETH';
 
 export type TradeOutcomeState = {
   isOpen: boolean;

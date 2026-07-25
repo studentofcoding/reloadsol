@@ -15,7 +15,8 @@ import {
   executeRhWalletCalls,
   type RhTxCall,
 } from '@/utils/dlmm/rh-send-calls'
-import { erc20Abi } from '@/utils/dlmm/rh-univ2'
+import { GAS_RESERVE_WEI, weth9Abi } from '@/utils/dlmm/rh-clmm/wrap'
+import { RH_CHAIN_ID, RH_WETH, erc20Abi } from '@/utils/dlmm/rh-univ2'
 import type { RhSwapQuote } from '@/utils/dlmm/rh-univ2-swap'
 import {
   clientKyberBuild,
@@ -25,6 +26,53 @@ import {
   kyberQuoteTokenAddress,
   toKyberAmountRaw,
 } from '@/utils/kyber-aggregator'
+
+/** Wei to wrap so WETH balance covers `need` (0 if already covered). */
+export function wethWrapShortfall(need: bigint, wethBal: bigint): bigint {
+  return need > wethBal ? need - wethBal : BigInt(0)
+}
+
+function sameToken(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase()
+}
+
+function isRhWeth(addr: string): boolean {
+  return sameToken(addr, RH_WETH)
+}
+
+/**
+ * One deposit() call when WETH ERC20 is short — leaves gas reserve on native ETH.
+ * Callers prepend once for the full batch need (not per leg).
+ */
+export async function prepareWethWrapCalls(params: {
+  publicClient: PublicClient
+  account: Address
+  needWei: bigint
+}): Promise<RhTxCall[]> {
+  if (params.needWei <= BigInt(0)) return []
+  const wethBal = await params.publicClient.readContract({
+    address: RH_WETH,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [params.account],
+  })
+  const shortfall = wethWrapShortfall(params.needWei, wethBal)
+  if (shortfall <= BigInt(0)) return []
+  const ethBal = await params.publicClient.getBalance({
+    address: params.account,
+  })
+  const reserve = GAS_RESERVE_WEI[RH_CHAIN_ID]
+  if (ethBal < shortfall + reserve) {
+    throw new Error('Insufficient ETH/WETH (need wrap shortfall + gas reserve)')
+  }
+  return [
+    {
+      to: RH_WETH,
+      data: encodeFunctionData({ abi: weth9Abi, functionName: 'deposit' }),
+      value: shortfall,
+    },
+  ]
+}
 
 async function quoteAndBuild(params: {
   tokenIn: string
@@ -62,7 +110,7 @@ async function quoteAndBuild(params: {
   }
 }
 
-/** Approve (if needed) + Kyber swap calldata for one leg. */
+/** Approve (if needed) + Kyber swap calldata for one leg (no wrap). */
 export async function prepareKyberSwapCalls(params: {
   publicClient: PublicClient
   account: Address
@@ -71,6 +119,9 @@ export async function prepareKyberSwapCalls(params: {
   amountIn: string
   slippageBps: number
 }): Promise<RhTxCall[]> {
+  if (sameToken(params.tokenIn, params.tokenOut)) {
+    throw new Error('tokenIn and tokenOut must differ')
+  }
   const built = await quoteAndBuild({
     tokenIn: params.tokenIn,
     tokenOut: params.tokenOut,
@@ -116,12 +167,19 @@ export async function executeRhParentKyberSwap(params: {
   amountIn: string
   slippageBps: number
 }): Promise<{ hash: string }> {
-  const calls = await prepareKyberSwapCalls(params)
+  const swapCalls = await prepareKyberSwapCalls(params)
+  const wrapCalls = isRhWeth(params.tokenIn)
+    ? await prepareWethWrapCalls({
+        publicClient: params.publicClient,
+        account: params.account,
+        needWei: BigInt(params.amountIn),
+      })
+    : []
   const { hash } = await executeRhWalletCalls({
     publicClient: params.publicClient,
     walletClient: params.walletClient,
     account: params.account,
-    calls,
+    calls: [...wrapCalls, ...swapCalls],
   })
   return { hash }
 }
@@ -150,6 +208,9 @@ export async function executeRhParentKyberBuy(params: {
 
   for (const item of params.tokenMints) {
     try {
+      if (sameToken(tokenIn, item.tokenAddress)) {
+        throw new Error('Cannot buy WETH with WETH')
+      }
       const calls = await prepareKyberSwapCalls({
         publicClient: params.publicClient,
         account: params.account,
@@ -173,7 +234,34 @@ export async function executeRhParentKyberBuy(params: {
     return { success: false, results: prepFailures }
   }
 
-  const flatCalls = prepared.flatMap((p) => p.calls)
+  let wrapCalls: RhTxCall[] = []
+  try {
+    if (isRhWeth(tokenIn)) {
+      const totalNeed =
+        BigInt(amountIn) * BigInt(prepared.length)
+      wrapCalls = await prepareWethWrapCalls({
+        publicClient: params.publicClient,
+        account: params.account,
+        needWei: totalNeed,
+      })
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    return {
+      success: false,
+      results: [
+        ...prepFailures,
+        ...prepared.map(({ item }) => ({
+          tokenAddress: item.tokenAddress,
+          symbol: item.symbol,
+          success: false,
+          error: msg,
+        })),
+      ],
+    }
+  }
+
+  const flatCalls = [...wrapCalls, ...prepared.flatMap((p) => p.calls)]
   try {
     const { hash } = await executeRhWalletCalls({
       publicClient: params.publicClient,
@@ -210,7 +298,7 @@ export async function executeRhParentKyberBuy(params: {
   }
 }
 
-/** Parent bulk sell — % of each token → ETH or USDG via Kyber. */
+/** Parent bulk sell — % of each token → ETH, USDG, or WETH via Kyber. */
 export async function executeRhParentKyberSell(params: {
   publicClient: PublicClient
   walletClient: WalletClient
@@ -234,6 +322,9 @@ export async function executeRhParentKyberSell(params: {
 
   for (const leg of params.legs) {
     try {
+      if (sameToken(leg.tokenAddress, tokenOut)) {
+        throw new Error('Cannot sell WETH into WETH')
+      }
       const pct = leg.percent
       if (!(pct > 0) || pct > 100) throw new Error('Sell % must be 1–100')
       const token = leg.tokenAddress as Address

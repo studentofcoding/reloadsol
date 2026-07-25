@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { RH_USDG } from '@/utils/dlmm/rh-univ2'
+import { RH_USDG, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import {
   KYBER_NATIVE,
   isKyberNative,
@@ -14,12 +14,17 @@ describe('kyber-aggregator helpers', () => {
     expect(kyberQuoteTokenAddress('USDG').toLowerCase()).toBe(
       RH_USDG.toLowerCase(),
     )
+    expect(kyberQuoteTokenAddress('WETH').toLowerCase()).toBe(
+      RH_WETH.toLowerCase(),
+    )
     expect(isKyberNative(KYBER_NATIVE)).toBe(true)
     expect(isKyberNative(RH_USDG)).toBe(false)
+    expect(isKyberNative(RH_WETH)).toBe(false)
   })
 
   it('encodes human amounts to raw units', () => {
     expect(kyberQuoteDecimals('ETH')).toBe(18)
+    expect(kyberQuoteDecimals('WETH')).toBe(18)
     expect(kyberQuoteDecimals('USDG')).toBe(6)
     expect(toKyberAmountRaw(0.001, 18)).toBe('1000000000000000')
     expect(toKyberAmountRaw(10, 6)).toBe('10000000')
