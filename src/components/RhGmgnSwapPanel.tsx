@@ -23,9 +23,19 @@ import {
   isValidTradeTokenAddress,
 } from '@/utils/gmgn-currencies'
 import type { RhSwapQuote } from '@/utils/dlmm/rh-univ2-swap'
-import { RH_WETH } from '@/utils/dlmm/rh-univ2'
+import { RH_WETH, erc20Abi } from '@/utils/dlmm/rh-univ2'
 import { resolveRhActiveAddress } from '@/utils/rh-wallet-mode'
 import UniversalWalletButton from '@/components/UniversalWalletButton'
+import GmgnTradeConfirmModal, {
+  type GmgnConfirmLeg,
+} from '@/components/GmgnTradeConfirmModal'
+import {
+  fetchEthUsdSpot,
+  simulateRhBoundBuyLeg,
+  simulateRhBoundSellLeg,
+  simulateRhParentBuyLeg,
+  simulateRhParentSellLeg,
+} from '@/utils/rh-trade-sim'
 
 type Side = 'buy' | 'sell'
 
@@ -59,10 +69,12 @@ export default function RhGmgnSwapPanel({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [okMsg, setOkMsg] = useState('')
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [confirmLegs, setConfirmLegs] = useState<GmgnConfirmLeg[]>([])
 
   if (network !== 'robinhood') return null
 
-  const run = async () => {
+  const openConfirm = async () => {
     setError('')
     setOkMsg('')
     if (!from) {
@@ -78,20 +90,106 @@ export default function RhGmgnSwapPanel({
       setError('Enter a valid Robinhood token address')
       return
     }
-    if (
-      quote === 'WETH' &&
-      addr.toLowerCase() === RH_WETH.toLowerCase()
-    ) {
+    if (quote === 'WETH' && addr.toLowerCase() === RH_WETH.toLowerCase()) {
       setError('Cannot trade WETH against WETH')
       return
     }
     setBusy(true)
     try {
+      const ethUsd = await fetchEthUsdSpot()
+      let leg: GmgnConfirmLeg
       if (side === 'buy') {
         const human = parseFloat(amount)
         if (!Number.isFinite(human) || human <= 0) {
           throw new Error(`Enter a valid ${quote} amount`)
         }
+        const sim = isParent
+          ? await simulateRhParentBuyLeg({
+              amountHuman: human,
+              tokenAddress: addr,
+              quote,
+              ethUsd,
+            })
+          : await simulateRhBoundBuyLeg({
+              from,
+              amountHuman: human,
+              tokenAddress: addr,
+              quote,
+              slippageBps,
+              ethUsd,
+            })
+        leg = {
+          tokenAddress: addr,
+          amountLabel: `${human} ${quote}${isParent ? ' · Kyber' : ' · GMGN'}`,
+          side: 'buy',
+          estOut: sim.amountOutRaw ?? undefined,
+          fromUsd: sim.fromUsd,
+          toUsd: sim.toUsd,
+          priceImpactPct: sim.priceImpactPct,
+        }
+      } else {
+        const pct = parseFloat(sellPct)
+        if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
+          throw new Error('Sell % must be 1–100')
+        }
+        let sim
+        if (isParent) {
+          sim = await simulateRhParentSellLeg({
+            publicClient: rh.publicClient,
+            account: from as Address,
+            tokenAddress: addr,
+            percent: pct,
+            quote,
+            ethUsd,
+          })
+        } else {
+          const bal = (await rh.publicClient.readContract({
+            address: addr as Address,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [from as Address],
+          })) as bigint
+          const amountRaw = (
+            (bal * BigInt(Math.floor(pct * 100))) /
+            BigInt(10_000)
+          ).toString()
+          sim = await simulateRhBoundSellLeg({
+            from,
+            tokenAddress: addr,
+            percent: pct,
+            quote,
+            slippageBps,
+            ethUsd,
+            amountRaw,
+          })
+        }
+        leg = {
+          tokenAddress: addr,
+          amountLabel: `${pct}% → ${quote}${isParent ? ' · Kyber' : ' · GMGN'}`,
+          side: 'sell',
+          estOut: sim.amountOutRaw ?? undefined,
+          fromUsd: sim.fromUsd,
+          toUsd: sim.toUsd,
+          priceImpactPct: sim.priceImpactPct,
+        }
+      }
+      setConfirmLegs([leg])
+      setConfirmOpen(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runConfirmed = async () => {
+    if (!from) return
+    const addr = token.trim()
+    setBusy(true)
+    setError('')
+    try {
+      if (side === 'buy') {
+        const human = parseFloat(amount)
         let results: Awaited<ReturnType<typeof executeGmgnBulkBuy>>['results']
         let success: boolean
         if (isParent) {
@@ -137,9 +235,6 @@ export default function RhGmgnSwapPanel({
         setOkMsg('Buy confirmed')
       } else {
         const pct = parseFloat(sellPct)
-        if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
-          throw new Error('Sell % must be 1–100')
-        }
         let results: Awaited<ReturnType<typeof executeGmgnBulkSell>>['results']
         let success: boolean
         if (isParent) {
@@ -181,6 +276,7 @@ export default function RhGmgnSwapPanel({
         if (!success) throw new Error(results[0]?.error || 'Swap failed')
         setOkMsg('Sell confirmed')
       }
+      setConfirmOpen(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -190,6 +286,17 @@ export default function RhGmgnSwapPanel({
 
   return (
     <div className="w-full max-w-md mx-auto rounded-2xl border border-gray-700 bg-gray-900/80 p-6 space-y-4">
+      <GmgnTradeConfirmModal
+        open={confirmOpen}
+        chain="robinhood"
+        from={from || ''}
+        legs={confirmLegs}
+        busy={busy}
+        sequentialSignHint={isParent}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={() => void runConfirmed()}
+      />
+
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-lg font-semibold text-white">Robinhood Swap</h2>
         <UniversalWalletButton />
@@ -334,10 +441,10 @@ export default function RhGmgnSwapPanel({
       <button
         type="button"
         disabled={busy || !from}
-        onClick={() => void run()}
+        onClick={() => void openConfirm()}
         className="w-full rounded-xl bg-white py-3 font-semibold text-gray-900 disabled:bg-gray-600 disabled:text-gray-400"
       >
-        {busy ? 'Swapping…' : side === 'buy' ? 'Confirm buy' : 'Confirm sell'}
+        {busy ? 'Quoting…' : side === 'buy' ? 'Review buy' : 'Review sell'}
       </button>
     </div>
   )

@@ -40,7 +40,12 @@ import {
 import { executeGmgnBulkSell } from "@/utils/gmgn-bulk-trade";
 import type { RhSwapQuote } from "@/utils/dlmm/rh-univ2-swap";
 import { executeRhParentKyberSell } from "@/utils/dlmm/rh-kyber-swap";
-import { RH_WETH } from "@/utils/dlmm/rh-univ2";
+import { RH_WETH, erc20Abi } from "@/utils/dlmm/rh-univ2";
+import {
+  fetchEthUsdSpot,
+  simulateRhBoundSellLeg,
+  simulateRhParentSellLeg,
+} from "@/utils/rh-trade-sim";
 import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
@@ -907,17 +912,78 @@ export default function BulkTokenSeller() {
         );
         return;
       }
-      setGmgnConfirmLegs(
-        selectedTokens.map((t) => ({
-          tokenAddress: t.mintAddress,
-          symbol: t.symbol,
-          amountLabel: `${t.sellPercentage || 100}% → ${rhQuoteCurrency}${
-            useRhParentPath ? " · Kyber / Rabby" : ""
-          }`,
-          side: "sell" as const,
-        })),
-      );
-      setGmgnConfirmOpen(true);
+      setIsLoading(true);
+      setError("");
+      try {
+        const ethUsd = await fetchEthUsdSpot();
+        const legs: GmgnConfirmLeg[] = [];
+        for (const t of selectedTokens) {
+          const pct = t.sellPercentage || 100;
+          let fromUsd: number | null = null;
+          let toUsd: number | null = null;
+          let priceImpactPct: number | null = null;
+          let estOut: string | undefined;
+          try {
+            if (useRhParentPath) {
+              const sim = await simulateRhParentSellLeg({
+                publicClient: rhWallet.publicClient,
+                account: tradeFromAddress as Address,
+                tokenAddress: t.mintAddress,
+                percent: pct,
+                quote: rhQuoteCurrency,
+                ethUsd,
+                tokenDecimals: t.decimals,
+              });
+              fromUsd = sim.fromUsd;
+              toUsd = sim.toUsd;
+              priceImpactPct = sim.priceImpactPct;
+              estOut = sim.amountOutRaw ?? undefined;
+            } else {
+              const bal = (await rhWallet.publicClient.readContract({
+                address: t.mintAddress as Address,
+                abi: erc20Abi,
+                functionName: "balanceOf",
+                args: [tradeFromAddress as Address],
+              })) as bigint;
+              const amountRaw = (
+                (bal * BigInt(Math.floor(pct * 100))) /
+                BigInt(10_000)
+              ).toString();
+              const sim = await simulateRhBoundSellLeg({
+                from: tradeFromAddress,
+                tokenAddress: t.mintAddress,
+                percent: pct,
+                quote: rhQuoteCurrency,
+                slippageBps: slippage,
+                ethUsd,
+                amountRaw,
+              });
+              fromUsd = sim.fromUsd;
+              toUsd = sim.toUsd;
+              priceImpactPct = sim.priceImpactPct;
+              estOut = sim.amountOutRaw ?? undefined;
+            }
+          } catch {
+            /* sim optional */
+          }
+          legs.push({
+            tokenAddress: t.mintAddress,
+            symbol: t.symbol,
+            amountLabel: `${pct}% → ${rhQuoteCurrency}${
+              useRhParentPath ? " · Kyber / Rabby" : ""
+            }`,
+            side: "sell",
+            estOut,
+            fromUsd,
+            toUsd,
+            priceImpactPct,
+          });
+        }
+        setGmgnConfirmLegs(legs);
+        setGmgnConfirmOpen(true);
+      } finally {
+        setIsLoading(false);
+      }
       return;
     }
 
@@ -1338,6 +1404,7 @@ export default function BulkTokenSeller() {
     isSolTrade,
     solGmgnSynced,
     rhQuoteCurrency,
+    rhWallet.publicClient,
   ]);
 
   /** Close emptied ATAs offered on the post-sell success modal. */

@@ -1,29 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { formatRiskDisplay, calculateFeeToMarketCapRatio } from '@/utils/axiom';
-import { useAxiomRisk } from '@/hooks/useAxiomRisk';
+import {
+  formatRiskDisplay,
+  calculateFeeToMarketCapRatio,
+  type AxiomTokenInfo,
+  type RiskIndicators,
+} from '@/utils/axiom';
+import { useTokenRisk, type TokenRiskChain } from '@/hooks/useTokenRisk';
 
 type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
-
-interface AxiomTokenInfo {
-  numHolders: number;
-  numBotUsers: number;
-  top10HoldersPercent: number;
-  devHoldsPercent: number;
-  insidersHoldPercent: number;
-  bundlersHoldPercent: number;
-  snipersHoldPercent: number;
-  dexPaid: boolean;
-  totalPairFeesPaid: number;
-}
-
-interface RiskIndicators {
-  insiderRisk: RiskLevel;
-  bundlerRisk: RiskLevel;
-  sniperRisk: RiskLevel;
-  concentrationRisk: RiskLevel;
-  feeRisk: RiskLevel;
-  overallRisk: RiskLevel;
-}
 
 interface RiskAnalysisProps {
   tokenAddress: string;
@@ -32,6 +16,8 @@ interface RiskAnalysisProps {
   axiomData?: AxiomTokenInfo;
   riskData?: RiskIndicators;
   defaultExpanded?: boolean;
+  /** sol = Axiom; robinhood = GMGN security map */
+  chain?: TokenRiskChain;
 }
 
 const RiskBadge: React.FC<{ riskLevel: RiskLevel }> = ({ riskLevel }) => {
@@ -58,10 +44,11 @@ export default function RiskAnalysis({
   onLoad, 
   axiomData: propAxiomData, 
   riskData: propRiskData,
-  defaultExpanded = false 
+  defaultExpanded = false,
+  chain = 'sol',
 }: RiskAnalysisProps) {
   const hasPropData = !!(propAxiomData && propRiskData);
-  const query = useAxiomRisk(tokenAddress, marketCap, !hasPropData);
+  const query = useTokenRisk(tokenAddress, marketCap, chain, !hasPropData);
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const onLoadCalledRef = React.useRef(false);
 
@@ -179,7 +166,11 @@ export default function RiskAnalysis({
           </div>
           <div className="flex items-center justify-between">
             <span className="text-gray-400">Fees:</span>
-            <span className="text-white">{axiomData.totalPairFeesPaid.toFixed(1)} SOL</span>
+            <span className="text-white">
+              {chain === 'robinhood'
+                ? 'n/a (RH)'
+                : `${axiomData.totalPairFeesPaid.toFixed(1)} SOL`}
+            </span>
           </div>
         </div>
       </div>

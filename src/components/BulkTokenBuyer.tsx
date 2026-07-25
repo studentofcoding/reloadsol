@@ -83,6 +83,11 @@ import {
   RH_WETH_GAS_RESERVE_ETH,
 } from "@/hooks/usePortfolioWallet";
 import { RH_WETH } from "@/utils/dlmm/rh-univ2";
+import {
+  fetchEthUsdSpot,
+  simulateRhBoundBuyLeg,
+  simulateRhParentBuyLeg,
+} from "@/utils/rh-trade-sim";
 
 type SpendCurrency = "SOL" | "USDC" | "ETH" | "USDG" | "WETH";
 
@@ -811,12 +816,6 @@ export default function BulkTokenBuyer() {
       setIsLoading(true);
       setError("");
       try {
-        const inputToken =
-          selectedCurrency === "USDG"
-            ? GMGN_RH_USDG
-            : selectedCurrency === "WETH"
-              ? GMGN_RH_WETH
-              : gmgnNativeToken("robinhood");
         const totalHuman = parseFloat(solAmount);
         const perTokenHuman =
           validMints.length > 0 ? totalHuman / validMints.length : totalHuman;
@@ -824,31 +823,41 @@ export default function BulkTokenBuyer() {
           spendUnit === "ETH" || spendUnit === "WETH"
             ? perTokenHuman.toFixed(6)
             : perTokenHuman.toFixed(4);
+        const ethUsd = await fetchEthUsdSpot();
         const legs: GmgnConfirmLeg[] = [];
         for (const mint of validMints) {
           let estOut: string | undefined;
-          if (useGmgnPath) {
-            const shaped = buildGmgnBuyQuoteRequest({
-              chain: "robinhood",
-              from: tradeFromAddress,
-              tokenAddress: mint,
-              amountHuman: perTokenHuman,
-              slippageBps: slippage,
-              inputToken,
-            });
-            try {
-              const res = await fetch("/api/gmgn/trade/quote", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(shaped),
+          let fromUsd: number | null = null;
+          let toUsd: number | null = null;
+          let priceImpactPct: number | null = null;
+          try {
+            if (useRhParentPath) {
+              const sim = await simulateRhParentBuyLeg({
+                amountHuman: perTokenHuman,
+                tokenAddress: mint,
+                quote: rhQuote,
+                ethUsd,
               });
-              const data = (await res.json()) as {
-                quote?: { output_amount?: string };
-              };
-              estOut = data.quote?.output_amount;
-            } catch {
-              /* quote optional for confirm display */
+              estOut = sim.amountOutRaw ?? undefined;
+              fromUsd = sim.fromUsd;
+              toUsd = sim.toUsd;
+              priceImpactPct = sim.priceImpactPct;
+            } else {
+              const sim = await simulateRhBoundBuyLeg({
+                from: tradeFromAddress,
+                amountHuman: perTokenHuman,
+                tokenAddress: mint,
+                quote: rhQuote,
+                slippageBps: slippage,
+                ethUsd,
+              });
+              estOut = sim.amountOutRaw ?? undefined;
+              fromUsd = sim.fromUsd;
+              toUsd = sim.toUsd;
+              priceImpactPct = sim.priceImpactPct;
             }
+          } catch {
+            /* sim optional for confirm display */
           }
           legs.push({
             tokenAddress: mint,
@@ -857,6 +866,9 @@ export default function BulkTokenBuyer() {
               useRhParentPath ? " · Kyber / Rabby" : ""
             }`,
             estOut,
+            fromUsd,
+            toUsd,
+            priceImpactPct,
             side: "buy",
           });
         }
@@ -1202,6 +1214,7 @@ export default function BulkTokenBuyer() {
     isSolTrade,
     solGmgnSynced,
     spendUnit,
+    rhQuote,
   ]);
 
   // Handle metadata updates from background enrichment

@@ -9,6 +9,21 @@ export type GmgnConfirmLeg = {
   amountLabel: string
   estOut?: string
   side: 'buy' | 'sell'
+  fromUsd?: number | null
+  toUsd?: number | null
+  priceImpactPct?: number | null
+}
+
+function fmtUsd(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—'
+  if (Math.abs(n) >= 1000) return `$${n.toFixed(0)}`
+  if (Math.abs(n) >= 1) return `$${n.toFixed(2)}`
+  return `$${n.toFixed(4)}`
+}
+
+function fmtImpact(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—'
+  return `${n.toFixed(2)}%`
 }
 
 export default function GmgnTradeConfirmModal({
@@ -32,6 +47,8 @@ export default function GmgnTradeConfirmModal({
   onConfirm: () => void
 }) {
   if (!open) return null
+  const title =
+    chain === 'robinhood' ? 'Confirm RH trade' : `Confirm GMGN ${chain} trade`
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
       <div
@@ -41,7 +58,7 @@ export default function GmgnTradeConfirmModal({
         className="w-full max-w-md rounded-2xl border border-gray-600 bg-gray-900 p-6 shadow-xl"
       >
         <h3 id="gmgn-confirm-title" className="text-lg font-semibold text-white">
-          Confirm GMGN {chain} trade
+          {title}
         </h3>
         <p className="mt-1 text-xs text-gray-400 break-all">From: {from}</p>
         {sequentialSignHint ? (
@@ -62,6 +79,11 @@ export default function GmgnTradeConfirmModal({
                   {leg.side === 'buy' ? 'Buy' : 'Sell'} {leg.symbol || 'token'}
                 </span>
                 <span className="font-mono text-gray-300">{leg.amountLabel}</span>
+              </div>
+              <div className="mt-1 text-xs text-emerald-300/90 font-mono">
+                {fmtUsd(leg.fromUsd)} → {fmtUsd(leg.toUsd)}
+                {' · '}
+                impact {fmtImpact(leg.priceImpactPct)}
               </div>
               {leg.estOut ? (
                 <div className="mt-1 text-xs text-gray-400">

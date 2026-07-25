@@ -493,9 +493,10 @@ export default function TrendingTokens({
                 {/* Axiom Risk Indicators */}
                 {/* // In the token render section, replace the risk display with: */}
                 <div className="mt-2 pt-2 border-t border-gray-700">
-                  <RiskAnalysis 
-                    tokenAddress={token.token_address} 
-                    marketCap={token.mcap || 0} 
+                  <RiskAnalysis
+                    tokenAddress={token.token_address}
+                    marketCap={token.mcap || 0}
+                    chain={chain === 'robinhood' ? 'robinhood' : 'sol'}
                   />
                 </div>
               </div>
