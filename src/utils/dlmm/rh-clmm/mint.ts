@@ -10,7 +10,17 @@ import { CHAINS, type SupportedChainId, txUrl } from './config';
 import { erc20Abi, npmAbi } from './abis';
 import { getHotWalletAddress, getPublicClient, getWalletClient } from './clients';
 import { loadPool } from './pools';
-import { assertOutOfRange, computeSingleSidedRange } from './ticks';
+import {
+  assertInRange,
+  assertOutOfRange,
+  computeDualSidedRange,
+  computeSingleSidedRange,
+} from './ticks';
+import { planZapFromToken0, planZapFromToken1 } from './zap';
+import {
+  clientKyberBuild,
+  clientKyberRoute,
+} from '@/utils/kyber-aggregator';
 import {
   formatUnits,
   getTokenMeta,
@@ -629,4 +639,336 @@ export async function describeMintPreview(params: {
     `Pool: ${pool.token0.symbol}/${pool.token1.symbol} ${(pool.fee / 10000).toFixed(2)}% · ${sideNote}` +
     wrapNote
   );
+}
+
+export type DualMintPreview = {
+  text: string;
+  tickLower: number;
+  tickUpper: number;
+  currentTick: number;
+  amount0: bigint;
+  amount1: bigint;
+  amount0Human: number;
+  amount1Human: number;
+  symbol0: string;
+  symbol1: string;
+  depositToken: Address;
+  depositAmount: bigint;
+  depositSymbol: string;
+  fee: number;
+  priceImpactPct: number | null;
+  swapAmountIn: bigint;
+  swapDirection: '0to1' | '1to0' | 'none';
+};
+
+export type DualMintParams = {
+  chainId: SupportedChainId;
+  poolAddress: Address;
+  depositToken: Address;
+  balancePercent: number;
+  sizeMode?: SizeMode;
+  fixedAmountHuman?: number;
+  minPct: number;
+  maxPct: number;
+  fullRange?: boolean;
+  slippageBps?: number;
+};
+
+/** Preview dual-sided zap split (Kyber quote for swap leg). */
+export async function describeDualMintPreview(
+  params: DualMintParams,
+): Promise<DualMintPreview> {
+  const pool = await loadPool(params.chainId, params.poolAddress);
+  const { tickLower, tickUpper } = computeDualSidedRange({
+    currentTick: pool.tick,
+    tickSpacing: pool.tickSpacing,
+    minPct: params.minPct,
+    maxPct: params.maxPct,
+    fullRange: params.fullRange,
+  });
+  assertInRange({
+    currentTick: pool.tick,
+    tickLower,
+    tickUpper,
+  });
+
+  const depMeta = await getTokenMeta(params.chainId, params.depositToken);
+  const eff = await getEffectiveDepositBalance(
+    params.chainId,
+    params.depositToken,
+  );
+  const depositAmount = resolveDepositAmount(eff.effective, {
+    sizeMode: params.sizeMode ?? 'percent',
+    balancePercent: params.balancePercent,
+    fixedAmountHuman: params.fixedAmountHuman ?? 0.1,
+    decimals: depMeta.decimals,
+    symbol: depMeta.symbol,
+  });
+
+  const isToken0 =
+    pool.token0.address.toLowerCase() === params.depositToken.toLowerCase() ||
+    (params.depositToken.toLowerCase() === CHAINS[params.chainId].wrapped.toLowerCase() &&
+      pool.token0.address.toLowerCase() === CHAINS[params.chainId].wrapped.toLowerCase());
+  const isToken1 =
+    pool.token1.address.toLowerCase() === params.depositToken.toLowerCase() ||
+    (params.depositToken.toLowerCase() === CHAINS[params.chainId].wrapped.toLowerCase() &&
+      pool.token1.address.toLowerCase() === CHAINS[params.chainId].wrapped.toLowerCase());
+
+  if (!isToken0 && !isToken1) {
+    throw new Error(
+      'Dual zap currently requires deposit to be a pool token (WETH/USDG leg)',
+    );
+  }
+
+  let amount0 = 0n;
+  let amount1 = 0n;
+  let swapAmountIn = 0n;
+  let swapDirection: DualMintPreview['swapDirection'] = 'none';
+
+  if (isToken0) {
+    const plan = planZapFromToken0({
+      depositAmount,
+      sqrtPriceX96: pool.sqrtPriceX96,
+      tickLower,
+      tickUpper,
+    });
+    amount0 = plan.amount0;
+    amount1 = plan.amount1;
+    swapAmountIn = plan.swapToken0For1;
+    swapDirection = swapAmountIn > 0n ? '0to1' : 'none';
+  } else {
+    const plan = planZapFromToken1({
+      depositAmount,
+      sqrtPriceX96: pool.sqrtPriceX96,
+      tickLower,
+      tickUpper,
+    });
+    amount0 = plan.amount0;
+    amount1 = plan.amount1;
+    swapAmountIn = plan.swapToken1For0;
+    swapDirection = swapAmountIn > 0n ? '1to0' : 'none';
+  }
+
+  let priceImpactPct: number | null = null;
+  if (swapAmountIn > 0n) {
+    const tokenIn = isToken0 ? pool.token0.address : pool.token1.address;
+    const tokenOut = isToken0 ? pool.token1.address : pool.token0.address;
+    try {
+      const route = await clientKyberRoute({
+        tokenIn,
+        tokenOut,
+        amountIn: swapAmountIn.toString(),
+      });
+      const raw = route.routeSummary as { amountInUsd?: string; amountOutUsd?: string };
+      const inUsd = Number(raw.amountInUsd ?? NaN);
+      const outUsd = Number(raw.amountOutUsd ?? NaN);
+      if (Number.isFinite(inUsd) && Number.isFinite(outUsd) && inUsd > 0) {
+        priceImpactPct = ((outUsd - inUsd) / inUsd) * 100;
+      }
+    } catch {
+      priceImpactPct = null;
+    }
+  }
+
+  const range = formatCompactRange({
+    chainId: params.chainId,
+    token0: pool.token0.address,
+    token1: pool.token1.address,
+    decimals0: pool.token0.decimals,
+    decimals1: pool.token1.decimals,
+    symbol0: pool.token0.symbol,
+    symbol1: pool.token1.symbol,
+    tickLower,
+    tickUpper,
+    currentTick: pool.tick,
+  });
+
+  const a0h = humanToFloat(amount0, pool.token0.decimals);
+  const a1h = humanToFloat(amount1, pool.token1.decimals);
+  const impact =
+    priceImpactPct != null ? ` · impact ${priceImpactPct.toFixed(2)}%` : '';
+
+  const text =
+    `Mode: dual-sided zap\n` +
+    `Deposit: ${formatUnits(depositAmount, depMeta.decimals)} ${depMeta.symbol}\n` +
+    `→ ${a0h.toPrecision(6)} ${pool.token0.symbol} + ${a1h.toPrecision(6)} ${pool.token1.symbol}${impact}\n` +
+    `Range: ${range}\n` +
+    `Pool: ${pool.token0.symbol}/${pool.token1.symbol} ${(pool.fee / 10000).toFixed(2)}%`;
+
+  return {
+    text,
+    tickLower,
+    tickUpper,
+    currentTick: pool.tick,
+    amount0,
+    amount1,
+    amount0Human: a0h,
+    amount1Human: a1h,
+    symbol0: pool.token0.symbol,
+    symbol1: pool.token1.symbol,
+    depositToken: params.depositToken,
+    depositAmount,
+    depositSymbol: depMeta.symbol,
+    fee: pool.fee,
+    priceImpactPct,
+    swapAmountIn,
+    swapDirection,
+  };
+}
+
+/** Dual-sided: Kyber swap for missing leg, then NPM mint. v3 only. */
+export async function mintDualSided(params: DualMintParams): Promise<MintResult> {
+  const preview = await describeDualMintPreview(params);
+  const pool = await loadPool(params.chainId, params.poolAddress);
+  const client = getPublicClient(params.chainId);
+  const wallet = getWalletClient(params.chainId);
+  const recipient = getHotWalletAddress();
+  const npm = CHAINS[params.chainId].npm;
+  const slippage = params.slippageBps ?? 100;
+
+  const wrapAmount = await planWrapShortfall(
+    params.chainId,
+    params.depositToken,
+    preview.depositAmount,
+  );
+
+  const calls: RhTxCall[] = [];
+  if (wrapAmount > 0n) {
+    calls.push({
+      to: CHAINS[params.chainId].wrapped,
+      data: encodeFunctionData({ abi: weth9Abi, functionName: 'deposit' }),
+      value: wrapAmount,
+    });
+  }
+
+  if (preview.swapAmountIn > 0n && preview.swapDirection !== 'none') {
+    const tokenIn =
+      preview.swapDirection === '0to1'
+        ? pool.token0.address
+        : pool.token1.address;
+    const tokenOut =
+      preview.swapDirection === '0to1'
+        ? pool.token1.address
+        : pool.token0.address;
+    const route = await clientKyberRoute({
+      tokenIn,
+      tokenOut,
+      amountIn: preview.swapAmountIn.toString(),
+    });
+    const build = await clientKyberBuild({
+      routeSummary: route.routeSummary,
+      sender: recipient,
+      recipient,
+      slippageTolerance: slippage,
+    });
+    const approveSwap = await planApproveCall(
+      params.chainId,
+      tokenIn,
+      build.routerAddress as Address,
+      preview.swapAmountIn,
+    );
+    if (approveSwap) calls.push(approveSwap);
+    calls.push({
+      to: build.routerAddress as Address,
+      data: build.data,
+      value: build.valueWei,
+    });
+  }
+
+  const approve0 = await planApproveCall(
+    params.chainId,
+    pool.token0.address,
+    npm,
+    preview.amount0,
+  );
+  const approve1 = await planApproveCall(
+    params.chainId,
+    pool.token1.address,
+    npm,
+    preview.amount1,
+  );
+  if (approve0) calls.push(approve0);
+  if (approve1) calls.push(approve1);
+
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 1200);
+  const mintArgs = {
+    token0: pool.token0.address,
+    token1: pool.token1.address,
+    fee: pool.fee,
+    tickLower: preview.tickLower,
+    tickUpper: preview.tickUpper,
+    amount0Desired: preview.amount0,
+    amount1Desired: preview.amount1,
+    amount0Min: 0n,
+    amount1Min: 0n,
+    recipient,
+    deadline,
+  } as const;
+
+  calls.push({
+    to: npm,
+    data: encodeFunctionData({
+      abi: npmAbi,
+      functionName: 'mint',
+      args: [mintArgs],
+    }),
+    gas: 1_200_000n,
+  });
+
+  const { hash: batchHash } = await executeRhWalletCalls({
+    publicClient: client,
+    walletClient: wallet,
+    account: recipient,
+    calls,
+  });
+  const hash = batchHash as Hash;
+  const receipt = await client.waitForTransactionReceipt({ hash });
+  if (receipt.status !== 'success') {
+    throw new Error(`Dual mint tx reverted: ${hash}`);
+  }
+
+  let tokenId = 0n;
+  let amount0 = preview.amount0;
+  let amount1 = preview.amount1;
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== npm.toLowerCase()) continue;
+    try {
+      const decoded = decodeEventLog({
+        abi: npmAbi,
+        data: log.data,
+        topics: log.topics,
+      });
+      if (decoded.eventName === 'IncreaseLiquidity') {
+        const args = decoded.args as {
+          tokenId: bigint;
+          amount0: bigint;
+          amount1: bigint;
+        };
+        tokenId = args.tokenId;
+        amount0 = args.amount0;
+        amount1 = args.amount1;
+      }
+    } catch {
+      /* skip */
+    }
+  }
+
+  return {
+    hash,
+    tokenId,
+    amount0,
+    amount1,
+    tickLower: preview.tickLower,
+    tickUpper: preview.tickUpper,
+    currentTick: pool.tick,
+    depositToken: params.depositToken,
+    depositAmount: preview.depositAmount,
+    txLink: txUrl(params.chainId, hash),
+    poolAddress: params.poolAddress,
+    fee: pool.fee,
+    token0: pool.token0.address,
+    token1: pool.token1.address,
+    wrap:
+      wrapAmount > 0n ? { hash, amount: wrapAmount } : undefined,
+  };
 }

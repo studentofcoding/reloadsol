@@ -7,13 +7,23 @@ import {
 } from './config'
 import { withRhClmmCtx, type RhClmmCtx } from './clients'
 import { closePosition } from './close'
-import { describeMintPreview, mintSingleSided } from './mint'
+import {
+  describeDualMintPreview,
+  describeMintPreview,
+  mintDualSided,
+  mintSingleSided,
+  type DualMintPreview,
+} from './mint'
 import { listPoolsForToken, loadPool, type ListedPool } from './pools'
 import { listPositions } from './positions'
 
 export type QuickMintOptions = {
   widthPercent?: number
   balancePercent?: number
+  mode?: 'single' | 'dual'
+  minPct?: number
+  maxPct?: number
+  fullRange?: boolean
 }
 
 const ZERO = '0x0000000000000000000000000000000000000000'
@@ -58,6 +68,27 @@ export async function previewMintPool(
       pool.token0.address,
       pool.token1.address,
     )
+    if (opts.mode === 'dual') {
+      const dual: DualMintPreview = await describeDualMintPreview({
+        chainId: RH_CHAIN_ID,
+        poolAddress,
+        depositToken,
+        balancePercent: opts.balancePercent ?? DEFAULT_BALANCE_PERCENT,
+        minPct: opts.minPct ?? -10,
+        maxPct: opts.maxPct ?? 10,
+        fullRange: opts.fullRange,
+      })
+      return {
+        text: dual.text,
+        depositToken,
+        token0: pool.token0.address,
+        token1: pool.token1.address,
+        fee: pool.fee,
+        symbol0: pool.token0.symbol,
+        symbol1: pool.token1.symbol,
+        dual,
+      }
+    }
     const text = await describeMintPreview({
       chainId: RH_CHAIN_ID,
       poolAddress,
@@ -74,6 +105,7 @@ export async function previewMintPool(
       fee: pool.fee,
       symbol0: pool.token0.symbol,
       symbol1: pool.token1.symbol,
+      dual: null as DualMintPreview | null,
     }
   })
 }
@@ -89,6 +121,17 @@ export async function mintPool(
       pool.token0.address,
       pool.token1.address,
     )
+    if (opts.mode === 'dual') {
+      return mintDualSided({
+        chainId: RH_CHAIN_ID,
+        poolAddress,
+        depositToken,
+        balancePercent: opts.balancePercent ?? DEFAULT_BALANCE_PERCENT,
+        minPct: opts.minPct ?? -10,
+        maxPct: opts.maxPct ?? 10,
+        fullRange: opts.fullRange,
+      })
+    }
     return mintSingleSided({
       chainId: RH_CHAIN_ID,
       poolAddress,

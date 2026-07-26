@@ -336,6 +336,12 @@ export default function RhUniv2LpSheet({
                 ? `${resolved.pairLabel} · ${resolved.quoteSymbol} quote · Rabby · ArrowRPC`
                 : 'Resolving univ2 pool…'}
             </p>
+            {!isClose ? (
+              <p className="text-[11px] text-amber-400/90 mt-1">
+                Full range only (UniV2 / DAMM) — no custom min/max ticks. Entire
+                curve, both sides of the pool.
+              </p>
+            ) : null}
           </div>
           <button
             type="button"

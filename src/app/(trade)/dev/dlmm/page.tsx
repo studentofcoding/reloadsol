@@ -18,8 +18,6 @@ import type { DlmmPosition, DlmmLesson } from "@/types/dlmm";
 import HunterCandidateTabs, {
   type DisplayCandidate,
 } from "@/components/dlmm/HunterCandidateTabs";
-import RhUniv2PositionsPanel from "@/components/dlmm/RhUniv2PositionsPanel";
-import RhClmmPanel from "@/components/dlmm/RhClmmPanel";
 import UniversalWalletButton from "@/components/UniversalWalletButton";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { formatAppTime } from "@/utils/datetime";
@@ -38,7 +36,6 @@ function formatPct(n: number) {
 export default function DlmmDashboardPage() {
   const { network } = useAppNetwork();
   const isSol = network === "sol";
-  const isRh = network === "robinhood";
   const { data: poolsData, isLoading: poolsLoading, isError: poolsError, error: poolsErrorMsg } = useDlmmPools(40);
   const { data: candidatesData } = useDlmmCandidates(25);
   const { data: positionsData, isLoading: posLoading } = useDlmmPositions();
@@ -262,13 +259,6 @@ export default function DlmmDashboardPage() {
             dbReady={!!dbReady}
             onDeploy={setDeployPool}
           />
-
-          {isRh ? (
-            <>
-              <RhUniv2PositionsPanel />
-              <RhClmmPanel />
-            </>
-          ) : null}
 
           {isSol ? (
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">

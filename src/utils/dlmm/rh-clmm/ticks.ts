@@ -159,3 +159,60 @@ export function assertOutOfRange(params: {
 export function tickToPriceRatio(tick: number): number {
   return Math.pow(1.0001, tick);
 }
+
+export function assertInRange(params: {
+  currentTick: number;
+  tickLower: number;
+  tickUpper: number;
+}): void {
+  const { currentTick, tickLower, tickUpper } = params;
+  if (tickLower >= tickUpper) {
+    throw new Error(`Invalid ticks: lower ${tickLower} >= upper ${tickUpper}`);
+  }
+  if (currentTick < tickLower || currentTick >= tickUpper) {
+    throw new Error(
+      `Dual-sided needs spot inside range. current=${currentTick} [${tickLower},${tickUpper})`,
+    );
+  }
+}
+
+/**
+ * Dual-sided in-range ticks from % offsets around spot.
+ * Narrow ~±10, Wide ~±30; Full uses min/max usable ticks for the fee spacing.
+ */
+export function computeDualSidedRange(params: {
+  currentTick: number;
+  tickSpacing: number;
+  /** negative; e.g. -10 → ~10% below spot */
+  minPct: number;
+  /** positive; e.g. 10 → ~10% above spot */
+  maxPct: number;
+  fullRange?: boolean;
+}): { tickLower: number; tickUpper: number } {
+  const { currentTick, tickSpacing, fullRange } = params;
+  const spacing = tickSpacing;
+  const minTick = nearestUsableTick(TickMath.MIN_TICK, spacing);
+  const maxTick = nearestUsableTick(TickMath.MAX_TICK, spacing);
+
+  if (fullRange) {
+    const tickLower = minTick;
+    const tickUpper = maxTick;
+    assertInRange({ currentTick, tickLower, tickUpper });
+    return { tickLower, tickUpper };
+  }
+
+  const minPct = Math.min(params.minPct, -0.01);
+  const maxPct = Math.max(params.maxPct, 0.01);
+  const lowerOff = -ticksForPriceRatio(1 + Math.abs(minPct) / 100);
+  const upperOff = ticksForPriceRatio(1 + maxPct / 100);
+
+  let tickLower = alignDown(currentTick + lowerOff, spacing);
+  let tickUpper = alignUp(currentTick + upperOff, spacing);
+  if (tickLower >= currentTick) tickLower = alignDown(currentTick - spacing, spacing);
+  if (tickUpper <= currentTick) tickUpper = alignUp(currentTick + spacing, spacing);
+  tickLower = Math.max(minTick, tickLower);
+  tickUpper = Math.min(maxTick, tickUpper);
+
+  assertInRange({ currentTick, tickLower, tickUpper });
+  return { tickLower, tickUpper };
+}
