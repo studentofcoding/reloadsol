@@ -1,5 +1,6 @@
 import { query, queryOne } from '@/utils/db'
 import type {
+  RhClmmLiveRow,
   RhClmmPosition,
   RhClmmPositionStatus,
   RhClmmProtocol,
@@ -29,7 +30,15 @@ CREATE TABLE IF NOT EXISTS rh_clmm_positions (
   close_tx TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  closed_at TIMESTAMPTZ
+  closed_at TIMESTAMPTZ,
+  unclaimed_fees_usd NUMERIC NOT NULL DEFAULT 0,
+  in_range BOOLEAN,
+  tick_lower INTEGER,
+  tick_upper INTEGER,
+  symbol0 TEXT,
+  symbol1 TEXT,
+  liquidity TEXT,
+  live_synced_at TIMESTAMPTZ
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_rh_clmm_positions_token
   ON rh_clmm_positions (owner_address, protocol, token_id);
@@ -37,11 +46,27 @@ CREATE INDEX IF NOT EXISTS idx_rh_clmm_positions_status ON rh_clmm_positions(sta
 CREATE INDEX IF NOT EXISTS idx_rh_clmm_positions_owner ON rh_clmm_positions(owner_address);
 `
 
+const MIGRATE_LIVE_SQL = `
+ALTER TABLE rh_clmm_positions
+  ADD COLUMN IF NOT EXISTS unclaimed_fees_usd NUMERIC NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS in_range BOOLEAN,
+  ADD COLUMN IF NOT EXISTS tick_lower INTEGER,
+  ADD COLUMN IF NOT EXISTS tick_upper INTEGER,
+  ADD COLUMN IF NOT EXISTS symbol0 TEXT,
+  ADD COLUMN IF NOT EXISTS symbol1 TEXT,
+  ADD COLUMN IF NOT EXISTS liquidity TEXT,
+  ADD COLUMN IF NOT EXISTS live_synced_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_rh_clmm_positions_live_synced
+  ON rh_clmm_positions (owner_address, live_synced_at DESC)
+  WHERE status = 'open';
+`
+
 let ensured = false
 
 export async function ensureRhClmmPositionsTable(): Promise<void> {
   if (ensured) return
   await query(ENSURE_SQL)
+  await query(MIGRATE_LIVE_SQL)
   ensured = true
 }
 
@@ -66,6 +91,18 @@ function mapRow(row: Record<string, unknown>): RhClmmPosition {
     created_at: String(row.created_at),
     updated_at: String(row.updated_at),
     closed_at: row.closed_at != null ? String(row.closed_at) : null,
+    unclaimed_fees_usd: Number(row.unclaimed_fees_usd) || 0,
+    in_range:
+      row.in_range == null ? null : Boolean(row.in_range),
+    tick_lower:
+      row.tick_lower != null ? Number(row.tick_lower) : null,
+    tick_upper:
+      row.tick_upper != null ? Number(row.tick_upper) : null,
+    symbol0: row.symbol0 != null ? String(row.symbol0) : null,
+    symbol1: row.symbol1 != null ? String(row.symbol1) : null,
+    liquidity: row.liquidity != null ? String(row.liquidity) : null,
+    live_synced_at:
+      row.live_synced_at != null ? String(row.live_synced_at) : null,
   }
 }
 
@@ -175,6 +212,72 @@ export async function insertRhClmmPosition(
   } catch (error) {
     assertDbWritable(error)
     throw error
+  }
+}
+
+/** Upsert live on-chain snapshot fields for open positions (cold Redis fallback). */
+export async function upsertRhClmmLiveSnapshots(
+  owner: string,
+  rows: RhClmmLiveRow[],
+): Promise<void> {
+  try {
+    await ensureRhClmmPositionsTable()
+    for (const r of rows) {
+      const entry = r.entryValueUsd ?? r.valueUsd
+      const pnl =
+        entry > 0
+          ? ((r.valueUsd - entry) / entry) * 100
+          : (r.pnlPct ?? 0)
+      await query(
+        `INSERT INTO rh_clmm_positions (
+           token_id, protocol, pool_address, pair_label, owner_address,
+           entry_value_usd, current_value_usd, pnl_pct, status,
+           unclaimed_fees_usd, in_range, tick_lower, tick_upper,
+           symbol0, symbol1, liquidity, live_synced_at, updated_at
+         ) VALUES (
+           $1,$2,$3,$4,$5,$6,$7,$8,'open',$9,$10,$11,$12,$13,$14,$15,NOW(),NOW()
+         )
+         ON CONFLICT (owner_address, protocol, token_id) DO UPDATE SET
+           pool_address = EXCLUDED.pool_address,
+           pair_label = EXCLUDED.pair_label,
+           current_value_usd = EXCLUDED.current_value_usd,
+           pnl_pct = EXCLUDED.pnl_pct,
+           status = 'open',
+           closed_at = NULL,
+           unclaimed_fees_usd = EXCLUDED.unclaimed_fees_usd,
+           in_range = EXCLUDED.in_range,
+           tick_lower = EXCLUDED.tick_lower,
+           tick_upper = EXCLUDED.tick_upper,
+           symbol0 = EXCLUDED.symbol0,
+           symbol1 = EXCLUDED.symbol1,
+           liquidity = EXCLUDED.liquidity,
+           live_synced_at = NOW(),
+           updated_at = NOW()`,
+        [
+          r.tokenId,
+          r.protocol,
+          r.poolAddress || '0x0',
+          r.pairLabel,
+          owner,
+          entry,
+          r.valueUsd,
+          pnl,
+          r.unclaimedFeesUsd,
+          r.inRange,
+          r.tickLower,
+          r.tickUpper,
+          r.symbol0,
+          r.symbol1,
+          r.liquidity,
+        ],
+      )
+    }
+  } catch (error) {
+    if (isDbConnectivityError(error)) {
+      console.warn('[rh-clmm-db] upsert live skipped (db down)')
+      return
+    }
+    console.warn('[rh-clmm-db] upsert live:', formatDbError(error))
   }
 }
 

@@ -236,4 +236,39 @@ export interface RhClmmPosition {
   created_at: string;
   updated_at: string;
   closed_at: string | null;
+  /** Live snapshot (Redis hot / DB cold) */
+  unclaimed_fees_usd?: number;
+  in_range?: boolean | null;
+  tick_lower?: number | null;
+  tick_upper?: number | null;
+  symbol0?: string | null;
+  symbol1?: string | null;
+  liquidity?: string | null;
+  live_synced_at?: string | null;
 }
+
+/** JSON-safe CLMM live row for Redis + /api/dlmm/rh-clmm-live */
+export type RhClmmLiveRow = {
+  tokenId: string;
+  protocol: RhClmmProtocol;
+  poolAddress: string;
+  pairLabel: string;
+  symbol0: string;
+  symbol1: string;
+  decimals0: number;
+  decimals1: number;
+  valueUsd: number;
+  unclaimedFeesUsd: number;
+  inRange: boolean;
+  tickLower: number;
+  tickUpper: number;
+  liquidity: string;
+  tokensOwed0: string;
+  tokensOwed1: string;
+  token0: string;
+  token1: string;
+  entryValueUsd?: number;
+  pnlPct?: number | null;
+  createdAt?: string | null;
+  markId?: string | null;
+};

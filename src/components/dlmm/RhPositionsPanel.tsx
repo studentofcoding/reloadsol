@@ -1,7 +1,11 @@
 'use client'
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
 import {
   usePatchRhClmmMark,
@@ -16,11 +20,15 @@ import RhClmmClaimFeesSheet from '@/components/dlmm/RhClmmClaimFeesSheet'
 import RhUniv2LpSheet from '@/components/dlmm/RhUniv2LpSheet'
 import {
   closeOwnerPosition,
-  listOwnerPositions,
   type RhClmmCtx,
 } from '@/utils/dlmm/rh-clmm'
 import type { OnChainPosition } from '@/utils/dlmm/rh-clmm/positions'
-import type { RhClmmPosition, RhUniv2Position } from '@/types/dlmm'
+import type {
+  RhClmmLiveRow,
+  RhClmmPosition,
+  RhUniv2Position,
+} from '@/types/dlmm'
+import { liveRowToOnChain } from '@/utils/dlmm/rh-clmm-live'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
 
 type StatusFilter = 'open' | 'oor' | 'closed'
@@ -125,8 +133,29 @@ function PositionsTableShell({ children }: { children: ReactNode }) {
   )
 }
 
+async function fetchRhClmmLive(
+  owner: string,
+  fresh: boolean,
+): Promise<RhClmmLiveRow[]> {
+  const qs = new URLSearchParams({ owner, chain: 'robinhood' })
+  if (fresh) qs.set('fresh', '1')
+  const res = await fetch(`/api/dlmm/rh-clmm-live?${qs}`, {
+    headers: { 'x-app-network': 'robinhood' },
+  })
+  const data = (await res.json()) as {
+    success?: boolean
+    error?: string
+    positions?: RhClmmLiveRow[]
+  }
+  if (!res.ok || !data.success) {
+    throw new Error(data.error || 'Failed to load CLMM live')
+  }
+  return data.positions ?? []
+}
+
 export default function RhPositionsPanel() {
   const wallet = useRhEvmWallet()
+  const queryClient = useQueryClient()
   const patchClmm = usePatchRhClmmMark()
   const patchDamm = usePatchRhUniv2Position()
   const [filter, setFilter] = useState<StatusFilter>('open')
@@ -150,14 +179,6 @@ export default function RhPositionsPanel() {
   const closedClmmMarks = useMemo(
     () => closedClmmData?.positions ?? [],
     [closedClmmData?.positions],
-  )
-
-  const knownV4Ids = useMemo(
-    () =>
-      openMarks
-        .filter((m) => m.protocol === 'v4')
-        .map((m) => BigInt(m.token_id)),
-    [openMarks],
   )
 
   const markByKey = useMemo(() => {
@@ -210,37 +231,33 @@ export default function RhPositionsPanel() {
     }
   }
 
-  const clmmQuery = useQuery({
-    queryKey: [
-      'rh-clmm-onchain',
-      wallet.address,
-      knownV4Ids.map((id) => id.toString()).join(','),
-    ],
+  const liveQueryKey = ['rh-clmm-live', wallet.address] as const
+
+  const liveQuery = useQuery({
+    queryKey: liveQueryKey,
     enabled: Boolean(wallet.address),
-    staleTime: 60_000,
-    refetchInterval: 45_000,
+    staleTime: 25_000,
+    refetchInterval: 30_000,
     placeholderData: keepPreviousData,
-    queryFn: async () => {
-      const c = await ctx()
-      return listOwnerPositions(c, knownV4Ids)
-    },
+    queryFn: () => fetchRhClmmLive(wallet.address!, false),
   })
 
-  const onChain = useMemo(() => clmmQuery.data ?? [], [clmmQuery.data])
+  const liveRows = useMemo(() => liveQuery.data ?? [], [liveQuery.data])
   const isRefreshing = busy === 'refresh'
 
   async function refreshAll() {
     setError(null)
     setBusy('refresh')
     try {
-      await Promise.all([
-        clmmQuery.refetch(),
+      const [live] = await Promise.all([
+        fetchRhClmmLive(wallet.address!, true),
         refetchOpenMarks(),
         refetchClosedClmm(),
         dammOpenQ.refetch(),
         dammClosedQ.refetch(),
         patchDamm.mutateAsync({ action: 'refresh_all' }).catch(() => null),
       ])
+      queryClient.setQueryData(liveQueryKey, live)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Refresh failed')
     } finally {
@@ -248,12 +265,16 @@ export default function RhPositionsPanel() {
     }
   }
 
-  async function runCloseClmm(p: OnChainPosition, markId?: string) {
+  async function runCloseClmm(
+    tokenId: bigint,
+    protocol: 'v3' | 'v4',
+    markId?: string,
+  ) {
     setError(null)
-    setBusy(`close-${p.tokenId}`)
+    setBusy(`close-${tokenId}`)
     try {
       const c = await ctx()
-      const result = await closeOwnerPosition(c, p.tokenId, p.protocol)
+      const result = await closeOwnerPosition(c, tokenId, protocol)
       if (markId) {
         await patchClmm.mutateAsync({
           id: markId,
@@ -263,7 +284,7 @@ export default function RhPositionsPanel() {
           pnl_pct: 0,
         })
       }
-      await clmmQuery.refetch()
+      await queryClient.invalidateQueries({ queryKey: liveQueryKey })
       await refetchOpenMarks()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Close failed')
@@ -284,43 +305,70 @@ export default function RhPositionsPanel() {
         pair: m.pair_label || `#${m.token_id}`,
         protocolLabel: m.protocol.toUpperCase(),
         valueUsd: m.current_value_usd || m.entry_value_usd || 0,
-        unclaimedUsd: 0,
-        inRange: null,
+        unclaimedUsd: m.unclaimed_fees_usd ?? 0,
+        inRange: m.in_range ?? null,
         pnlPct: Number.isFinite(m.pnl_pct) ? m.pnl_pct : null,
         aprPct: aprByPool.get(m.pool_address.toLowerCase()) ?? null,
         ageMs: ageFromIso(m.created_at),
         poolAddress: m.pool_address,
-        live: false,
+        live: Boolean(m.live_synced_at),
         clmmMarkId: m.id,
+        clmm:
+          m.live_synced_at && m.symbol0
+            ? liveRowToOnChain({
+                tokenId: m.token_id,
+                protocol: m.protocol,
+                poolAddress: m.pool_address,
+                pairLabel: m.pair_label || `${m.symbol0}/${m.symbol1}`,
+                symbol0: m.symbol0 ?? '?',
+                symbol1: m.symbol1 ?? '?',
+                decimals0: 18,
+                decimals1: 18,
+                valueUsd: m.current_value_usd,
+                unclaimedFeesUsd: m.unclaimed_fees_usd ?? 0,
+                inRange: m.in_range ?? true,
+                tickLower: m.tick_lower ?? 0,
+                tickUpper: m.tick_upper ?? 0,
+                liquidity: m.liquidity ?? '0',
+                tokensOwed0: '0',
+                tokensOwed1: '0',
+                token0: '0x0000000000000000000000000000000000000000',
+                token1: '0x0000000000000000000000000000000000000000',
+                markId: m.id,
+              })
+            : undefined,
       })
     }
 
-    // Enrich / add from on-chain
-    for (const p of onChain) {
-      const key = `${p.protocol}:${p.tokenId.toString()}`
+    // Enrich from Redis/API live snapshot
+    for (const r of liveRows) {
+      const key = `${r.protocol}:${r.tokenId}`
       const mark = markByKey.get(key)
-      const entry = mark?.entry_value_usd ?? 0
-      const live = p.valueUsd
+      const entry = r.entryValueUsd ?? mark?.entry_value_usd ?? 0
       const pnl =
-        entry > 0 ? ((live - entry) / entry) * 100 : (mark?.pnl_pct ?? null)
-      const poolAddr = String(p.poolAddress ?? mark?.pool_address ?? '')
+        r.pnlPct != null
+          ? r.pnlPct
+          : entry > 0
+            ? ((r.valueUsd - entry) / entry) * 100
+            : (mark?.pnl_pct ?? null)
+      const poolAddr = r.poolAddress || mark?.pool_address || ''
       byKey.set(key, {
         key: `clmm-${key}`,
         kind: 'clmm',
-        pair: `${p.symbol0}/${p.symbol1}`,
-        protocolLabel: p.protocol.toUpperCase(),
-        valueUsd: live,
-        unclaimedUsd: p.unclaimedFeesUsd,
-        inRange: p.inRange,
+        pair: r.pairLabel,
+        protocolLabel: r.protocol.toUpperCase(),
+        valueUsd: r.valueUsd,
+        unclaimedUsd: r.unclaimedFeesUsd,
+        inRange: r.inRange,
         pnlPct: pnl != null && Number.isFinite(pnl) ? pnl : null,
         aprPct: poolAddr
           ? (aprByPool.get(poolAddr.toLowerCase()) ?? null)
           : null,
-        ageMs: ageFromIso(mark?.created_at),
+        ageMs: ageFromIso(r.createdAt ?? mark?.created_at),
         poolAddress: poolAddr,
         live: true,
-        clmm: p,
-        clmmMarkId: mark?.id,
+        clmm: liveRowToOnChain(r),
+        clmmMarkId: r.markId ?? mark?.id,
       })
     }
 
@@ -343,7 +391,7 @@ export default function RhPositionsPanel() {
       })
     }
     return rows
-  }, [openMarks, onChain, markByKey, dammOpen, aprByPool])
+  }, [openMarks, liveRows, markByKey, dammOpen, aprByPool])
 
   const closedRows: UnifiedRow[] = useMemo(() => {
     const rows: UnifiedRow[] = []
@@ -422,7 +470,7 @@ export default function RhPositionsPanel() {
     Boolean(wallet.address) &&
     !isRefreshing &&
     !marksReady &&
-    clmmQuery.isLoading &&
+    liveQuery.isLoading &&
     openRows.length === 0 &&
     filter !== 'closed'
 
@@ -644,7 +692,12 @@ export default function RhPositionsPanel() {
                         type="button"
                         disabled={!clmmActionsReady || !!busy}
                         onClick={() =>
-                          r.clmm && void runCloseClmm(r.clmm, r.clmmMarkId)
+                          r.clmm &&
+                          void runCloseClmm(
+                            r.clmm.tokenId,
+                            r.clmm.protocol,
+                            r.clmmMarkId,
+                          )
                         }
                         className="text-xs px-2 py-1 rounded bg-red-800 hover:bg-red-700 disabled:bg-gray-800 text-white"
                       >
@@ -675,7 +728,7 @@ export default function RhPositionsPanel() {
           onClose={() => setClaimTarget(null)}
           onDone={() => {
             setClaimTarget(null)
-            void clmmQuery.refetch()
+            void queryClient.invalidateQueries({ queryKey: liveQueryKey })
           }}
         />
       ) : null}
