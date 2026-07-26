@@ -3,8 +3,8 @@ import {
   isRhOwnerAddress,
   liveRowToOnChain,
   markToLiveRow,
-  rhClmmLiveCacheKey,
-} from '@/utils/dlmm/rh-clmm-live'
+} from '@/utils/dlmm/rh-clmm-live-row'
+import { rhClmmLiveCacheKey } from '@/utils/dlmm/rh-clmm-live'
 import type { RhClmmPosition } from '@/types/dlmm'
 
 describe('rh-clmm-live helpers', () => {

@@ -28,7 +28,7 @@ import type {
   RhClmmPosition,
   RhUniv2Position,
 } from '@/types/dlmm'
-import { liveRowToOnChain } from '@/utils/dlmm/rh-clmm-live'
+import { liveRowToOnChain } from '@/utils/dlmm/rh-clmm-live-row'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
 
 type StatusFilter = 'open' | 'oor' | 'closed'
