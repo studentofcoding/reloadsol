@@ -1,11 +1,29 @@
 'use client'
 
-import { useDeferredValue, useMemo, useState } from 'react'
+import { Fragment, useDeferredValue, useMemo, useState } from 'react'
 import type { DisplayCandidate } from '@/components/dlmm/HunterCandidateTabs'
 import type { EnrichedPool } from '@/hooks/useDlmmPools'
+import GmgnChartEmbed from '@/components/signals/shared/GmgnChartEmbed'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
+import { getPoolChartMint } from '@/utils/gmgn'
+import {
+  compareNum,
+  compareStr,
+  sortMarker,
+  toggleSort,
+  type SortDir,
+} from '@/utils/dlmm/table-sort'
 
-type SortKey = 'tvl' | 'apr' | 'score'
+type SortKey =
+  | 'pair'
+  | 'tvl'
+  | 'vol'
+  | 'fees'
+  | 'apr'
+  | 'rewards'
+  | 'actions'
+
+const NUMERIC_KEYS = new Set<SortKey>(['tvl', 'vol', 'fees', 'apr'])
 
 type Row = {
   key: string
@@ -17,7 +35,8 @@ type Row = {
   fees24h: number | null
   feeAprPct: number | null
   rewards: string
-  score: number
+  actionsLabel: string
+  chartMint: string | null
   candidate: DisplayCandidate
   matchedPool: EnrichedPool | undefined
 }
@@ -71,11 +90,48 @@ function buildRows(
       feeAprPct,
       rewards:
         c.organic_score > 0 ? `org ${c.organic_score.toFixed(1)}` : '—',
-      score: c.score,
+      actionsLabel: matched ? 'Deploy' : '—',
+      chartMint: getPoolChartMint(c.token_x_address, c.token_y_address),
       candidate: c,
       matchedPool: matched,
     }
   })
+}
+
+function SortTh({
+  label,
+  col,
+  sortKey,
+  sortDir,
+  align = 'left',
+  className = '',
+  onSort,
+}: {
+  label: string
+  col: SortKey
+  sortKey: SortKey
+  sortDir: SortDir
+  align?: 'left' | 'right'
+  className?: string
+  onSort: (col: SortKey) => void
+}) {
+  const active = sortKey === col
+  return (
+    <th
+      className={`px-3 py-2 font-normal ${align === 'right' ? 'text-right' : ''} ${className}`}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(col)}
+        className={`uppercase tracking-wide hover:text-gray-300 ${
+          active ? 'text-emerald-400' : ''
+        }`}
+      >
+        {label}
+        {sortMarker(active, sortDir)}
+      </button>
+    </th>
+  )
 }
 
 export default function DlmmGeneralPoolsTable({
@@ -91,7 +147,9 @@ export default function DlmmGeneralPoolsTable({
 }) {
   const [q, setQ] = useState('')
   const deferredQ = useDeferredValue(q)
-  const [sort, setSort] = useState<SortKey>('score')
+  const [sortKey, setSortKey] = useState<SortKey>('tvl')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
 
   const rows = useMemo(() => buildRows(candidates, pools), [candidates, pools])
 
@@ -112,12 +170,35 @@ export default function DlmmGeneralPoolsTable({
     }
     const sorted = [...list]
     sorted.sort((a, b) => {
-      if (sort === 'tvl') return b.tvl - a.tvl
-      if (sort === 'apr') return (b.feeAprPct ?? -1) - (a.feeAprPct ?? -1)
-      return b.score - a.score
+      switch (sortKey) {
+        case 'pair':
+          return compareStr(a.pair, b.pair, sortDir)
+        case 'tvl':
+          return compareNum(a.tvl, b.tvl, sortDir)
+        case 'vol':
+          return compareNum(a.vol24h, b.vol24h, sortDir)
+        case 'fees':
+          return compareNum(a.fees24h, b.fees24h, sortDir)
+        case 'apr':
+          return compareNum(a.feeAprPct, b.feeAprPct, sortDir)
+        case 'rewards':
+          return compareStr(a.rewards, b.rewards, sortDir)
+        case 'actions':
+          return compareStr(a.actionsLabel, b.actionsLabel, sortDir)
+        default:
+          return 0
+      }
     })
     return sorted
-  }, [rows, deferredQ, sort])
+  }, [rows, deferredQ, sortKey, sortDir])
+
+  const onSort = (col: SortKey) => {
+    const next = toggleSort(sortKey, sortDir, col, {
+      numericFirstDesc: NUMERIC_KEYS.has(col),
+    })
+    setSortKey(next.key)
+    setSortDir(next.dir)
+  }
 
   return (
     <div className="space-y-3 font-mono">
@@ -128,33 +209,10 @@ export default function DlmmGeneralPoolsTable({
           placeholder="pair / pool name / address"
           className="flex-1 bg-black border border-gray-700 text-gray-200 text-xs px-3 py-2 rounded-none focus:outline-none focus:border-emerald-600"
         />
-        <div className="flex flex-wrap gap-1.5 text-[11px] text-gray-500">
-          <span className="px-2 py-1 border border-gray-800">sort:</span>
-          {(
-            [
-              ['score', 'SCORE'],
-              ['tvl', 'TVL'],
-              ['apr', 'FEE APR'],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setSort(key)}
-              className={`px-2 py-1 border uppercase tracking-wide ${
-                sort === key
-                  ? 'border-emerald-500 text-emerald-300 bg-emerald-950/40'
-                  : 'border-gray-700 text-gray-400 hover:border-gray-500'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
       </div>
 
       <p className="text-[11px] text-gray-500">
-        {filtered.length} shown · hunter screen
+        {filtered.length} shown · hunter screen · click Pair for GMGN chart
       </p>
 
       {filtered.length === 0 ? (
@@ -164,65 +222,147 @@ export default function DlmmGeneralPoolsTable({
           <table className="w-full text-left text-[11px] text-gray-300 min-w-[960px]">
             <thead className="text-gray-500 border-b border-gray-800">
               <tr>
-                <th className="px-3 py-2 font-normal">PAIR</th>
+                <SortTh
+                  label="Pair"
+                  col="pair"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={onSort}
+                />
                 <th className="px-3 py-2 font-normal">PRICE / RESERVES</th>
-                <th className="px-3 py-2 font-normal text-right">TVL</th>
-                <th className="px-3 py-2 font-normal text-right">VOL 24H</th>
-                <th className="px-3 py-2 font-normal text-right text-amber-500/90">
-                  FEES 24H
-                </th>
-                <th className="px-3 py-2 font-normal text-right">FEE APR</th>
-                <th className="px-3 py-2 font-normal text-right">REWARDS</th>
-                <th className="px-3 py-2 font-normal text-right" />
+                <SortTh
+                  label="TVL"
+                  col="tvl"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Vol 24h"
+                  col="vol"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Fees 24h"
+                  col="fees"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  className="text-amber-500/90"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Fee APR"
+                  col="apr"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Rewards"
+                  col="rewards"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Actions"
+                  col="actions"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
               </tr>
             </thead>
             <tbody>
-              {filtered.map((row) => (
-                <tr
-                  key={row.key}
-                  className="border-b border-gray-900 hover:bg-gray-950/80"
-                >
-                  <td className="px-3 py-2.5">
-                    <div className="text-white">{row.pair}</div>
-                    <div className="text-gray-600">{row.feeTier}</div>
-                  </td>
-                  <td className="px-3 py-2.5 text-gray-400">
-                    {row.priceReserves}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">
-                    {formatUsd(row.tvl)}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">
-                    {row.vol24h != null ? formatUsd(row.vol24h) : '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-amber-400/90">
-                    {row.fees24h != null ? formatUsd(row.fees24h) : '—'}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">
-                    {formatApr(row.feeAprPct)}
-                  </td>
-                  <td className="px-3 py-2.5 text-right text-gray-500">
-                    {row.rewards}
-                  </td>
-                  <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                    <button
-                      type="button"
-                      disabled={!dbReady || !row.matchedPool}
-                      title={
-                        row.matchedPool
-                          ? 'Deploy LP position'
-                          : 'No Meteora pool loaded yet'
-                      }
-                      onClick={() => {
-                        if (row.matchedPool) onDeploy(row.matchedPool)
-                      }}
-                      className="inline-flex items-center gap-1 px-2 py-1 border border-green-700 text-green-300 hover:bg-green-950/50 disabled:border-gray-700 disabled:text-gray-600 disabled:cursor-not-allowed"
-                    >
-                      Deploy
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((row) => {
+                const open = expandedKey === row.key
+                return (
+                  <Fragment key={row.key}>
+                    <tr className="border-b border-gray-900 hover:bg-gray-950/80">
+                      <td className="px-3 py-2.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedKey(open ? null : row.key)
+                          }
+                          className="text-left w-full hover:opacity-90"
+                          title={
+                            row.chartMint
+                              ? 'Toggle GMGN chart'
+                              : 'No chartable token'
+                          }
+                          disabled={!row.chartMint}
+                        >
+                          <div className="text-white">
+                            {row.pair}
+                            {open ? ' ▾' : ' ▸'}
+                          </div>
+                          <div className="text-gray-600">{row.feeTier}</div>
+                        </button>
+                      </td>
+                      <td className="px-3 py-2.5 text-gray-400">
+                        {row.priceReserves}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        {formatUsd(row.tvl)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        {row.vol24h != null ? formatUsd(row.vol24h) : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-amber-400/90">
+                        {row.fees24h != null ? formatUsd(row.fees24h) : '—'}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        {formatApr(row.feeAprPct)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right text-gray-500">
+                        {row.rewards}
+                      </td>
+                      <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                        <button
+                          type="button"
+                          disabled={!dbReady || !row.matchedPool}
+                          title={
+                            row.matchedPool
+                              ? 'Deploy LP position'
+                              : 'No Meteora pool loaded yet'
+                          }
+                          onClick={() => {
+                            if (row.matchedPool) onDeploy(row.matchedPool)
+                          }}
+                          className="inline-flex items-center gap-1 px-2 py-1 border border-green-700 text-green-300 hover:bg-green-950/50 disabled:border-gray-700 disabled:text-gray-600 disabled:cursor-not-allowed"
+                        >
+                          Deploy
+                        </button>
+                      </td>
+                    </tr>
+                    {open && row.chartMint ? (
+                      <tr className="border-b border-gray-900 bg-gray-950/40">
+                        <td colSpan={8} className="px-3 py-3">
+                          <div className="relative h-[280px] w-full">
+                            <GmgnChartEmbed
+                              tokenAddress={row.chartMint}
+                              chain="sol"
+                              interval="5"
+                              className="w-full h-full"
+                              height="280px"
+                              title={`GMGN · ${row.pair}`}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                )
+              })}
             </tbody>
           </table>
         </div>

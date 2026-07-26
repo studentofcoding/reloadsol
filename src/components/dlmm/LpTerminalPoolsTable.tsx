@@ -1,17 +1,35 @@
 'use client'
 
-import { useDeferredValue, useMemo, useState } from 'react'
+import { Fragment, useDeferredValue, useMemo, useState } from 'react'
 import { useLpTerminalPools } from '@/hooks/useLpTerminalPools'
 import RhUniv2LpSheet from '@/components/dlmm/RhUniv2LpSheet'
 import RhClmmLpSheet from '@/components/dlmm/RhClmmLpSheet'
+import GmgnChartEmbed from '@/components/signals/shared/GmgnChartEmbed'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
-import { getLpTerminalPoolDeepLink } from '@/utils/dlmm/lp-terminal'
 import {
   isRhUniv2QuotePool,
   quoteSymbolForAddress,
 } from '@/utils/dlmm/rh-univ2'
+import {
+  compareNum,
+  compareStr,
+  sortMarker,
+  toggleSort,
+  type SortDir,
+} from '@/utils/dlmm/table-sort'
 
 type ProtoFilter = '' | 'univ3' | 'univ2'
+
+type SortKey =
+  | 'pair'
+  | 'tvl'
+  | 'vol'
+  | 'fees'
+  | 'apr'
+  | 'rewards'
+  | 'actions'
+
+const NUMERIC_KEYS = new Set<SortKey>(['tvl', 'vol', 'fees', 'apr'])
 
 type AddTarget =
   | {
@@ -50,12 +68,55 @@ function baseFromRow(row: {
   return { tokenAddress: base, tokenSymbol: baseSym }
 }
 
+function actionsLabel(row: { proto: string; token0: string; token1: string }) {
+  const parts: string[] = []
+  if (canAddV1(row)) parts.push('Add v1')
+  if (canAddV2(row)) parts.push('Add v2')
+  return parts.length ? parts.join(' ') : '—'
+}
+
+function SortTh({
+  label,
+  col,
+  sortKey,
+  sortDir,
+  align = 'left',
+  onSort,
+}: {
+  label: string
+  col: SortKey
+  sortKey: SortKey
+  sortDir: SortDir
+  align?: 'left' | 'right'
+  onSort: (col: SortKey) => void
+}) {
+  const active = sortKey === col
+  return (
+    <th
+      className={`px-3 py-2 font-normal ${align === 'right' ? 'text-right' : ''}`}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(col)}
+        className={`uppercase tracking-wide hover:text-gray-300 ${
+          active ? 'text-emerald-400' : ''
+        }`}
+      >
+        {label}
+        {sortMarker(active, sortDir)}
+      </button>
+    </th>
+  )
+}
+
 export default function LpTerminalPoolsTable() {
   const [q, setQ] = useState('')
   const deferredQ = useDeferredValue(q)
   const [proto, setProto] = useState<ProtoFilter>('')
   const [hideDust, setHideDust] = useState(true)
-  const [sort, setSort] = useState<'tvl' | 'vol' | 'created'>('vol')
+  const [sortKey, setSortKey] = useState<SortKey>('vol')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [expandedKey, setExpandedKey] = useState<string | null>(null)
   const [addTarget, setAddTarget] = useState<AddTarget | null>(null)
 
   const { rows, count, totals, ready, isLoading, isFetching, error, refetch } =
@@ -63,16 +124,49 @@ export default function LpTerminalPoolsTable() {
       q: deferredQ,
       proto,
       hideDust,
-      sort,
+      sort: 'vol',
       limit: 100,
     })
 
+  const sortedRows = useMemo(() => {
+    const list = [...rows]
+    list.sort((a, b) => {
+      switch (sortKey) {
+        case 'pair':
+          return compareStr(a.pair, b.pair, sortDir)
+        case 'tvl':
+          return compareNum(a.tvlUsd, b.tvlUsd, sortDir)
+        case 'vol':
+          return compareNum(a.vol24hUsd, b.vol24hUsd, sortDir)
+        case 'fees':
+          return compareNum(a.fees24hUsd, b.fees24hUsd, sortDir)
+        case 'apr':
+          return compareNum(a.feeAprPct, b.feeAprPct, sortDir)
+        case 'rewards':
+          return compareStr('—', '—', sortDir)
+        case 'actions':
+          return compareStr(actionsLabel(a), actionsLabel(b), sortDir)
+        default:
+          return 0
+      }
+    })
+    return list
+  }, [rows, sortKey, sortDir])
+
   const statusLine = useMemo(() => {
     const catalog = (totals.univ2 || 0) + (totals.univ3 || 0)
-    return `${rows.length} shown · uniswap catalog ${catalog.toLocaleString()}${
+    return `${sortedRows.length} shown · uniswap catalog ${catalog.toLocaleString()}${
       count ? ` · ${count.toLocaleString()} match` : ''
     }${!ready ? ' · indexer warming…' : ''}`
-  }, [rows.length, totals, count, ready])
+  }, [sortedRows.length, totals, count, ready])
+
+  const onSort = (col: SortKey) => {
+    const next = toggleSort(sortKey, sortDir, col, {
+      numericFirstDesc: NUMERIC_KEYS.has(col),
+    })
+    setSortKey(next.key)
+    setSortDir(next.dir)
+  }
 
   const chip = (id: ProtoFilter | 'dust', label: string, active: boolean) => (
     <button
@@ -124,7 +218,7 @@ export default function LpTerminalPoolsTable() {
         {statusLine}
         {' · '}
         <span className="text-gray-400">
-          Add v1 = CLMM UniV3 · Add v2 = DAMM UniV2 zap
+          Add v1 = CLMM UniV3 · Add v2 = DAMM UniV2 zap · click Pair for GMGN
         </span>
       </p>
 
@@ -134,94 +228,164 @@ export default function LpTerminalPoolsTable() {
         <p className="text-red-400 text-sm">
           {error instanceof Error ? error.message : 'Failed to load pools'}
         </p>
-      ) : rows.length === 0 ? (
+      ) : sortedRows.length === 0 ? (
         <p className="text-gray-500 text-sm">No pools match.</p>
       ) : (
         <div className="overflow-x-auto border border-gray-800">
           <table className="w-full text-xs text-left">
             <thead className="text-gray-500 border-b border-gray-800 uppercase tracking-wide">
               <tr>
-                <th className="px-3 py-2 font-normal">Pair</th>
-                <th className="px-3 py-2 font-normal text-right">TVL</th>
-                <th className="px-3 py-2 font-normal text-right">Vol 24h</th>
-                <th className="px-3 py-2 font-normal text-right">Fees 24h</th>
-                <th className="px-3 py-2 font-normal text-right">Fee APR</th>
-                <th className="px-3 py-2 font-normal text-right">Rewards</th>
-                <th className="px-3 py-2 font-normal text-right">Actions</th>
+                <SortTh
+                  label="Pair"
+                  col="pair"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="TVL"
+                  col="tvl"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Vol 24h"
+                  col="vol"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Fees 24h"
+                  col="fees"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Fee APR"
+                  col="apr"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Rewards"
+                  col="rewards"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
+                <SortTh
+                  label="Actions"
+                  col="actions"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  align="right"
+                  onSort={onSort}
+                />
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr
-                  key={`${row.proto}-${row.address}`}
-                  className="border-b border-gray-900 hover:bg-gray-900/60"
-                >
-                  <td className="px-3 py-2.5">
-                    <div className="text-gray-100">{row.pair}</div>
-                    <div className="text-[10px] text-gray-600">
-                      {row.protoLabel.toLowerCase()} · {row.feeTier}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-gray-200">
-                    {formatUsd(row.tvlUsd)}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">
-                    {formatUsd(row.vol24hUsd)}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums text-amber-400/90">
-                    {formatUsd(row.fees24hUsd)}
-                  </td>
-                  <td className="px-3 py-2.5 text-right tabular-nums">
-                    {formatApr(row.feeAprPct)}
-                  </td>
-                  <td className="px-3 py-2.5 text-right text-gray-600">—</td>
-                  <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-1">
-                    {canAddV1(row) ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const { tokenAddress, tokenSymbol } = baseFromRow(row)
-                          setAddTarget({
-                            kind: 'v1',
-                            address: row.address,
-                            pairLabel: row.pair,
-                            tokenAddress,
-                            tokenSymbol,
-                          })
-                        }}
-                        className="inline-flex items-center gap-1 px-2 py-1 border border-sky-700 text-sky-300 hover:bg-sky-950/50"
-                      >
-                        Add v1
-                      </button>
+              {sortedRows.map((row) => {
+                const rowKey = `${row.proto}-${row.address}`
+                const open = expandedKey === rowKey
+                const { tokenAddress, tokenSymbol } = baseFromRow(row)
+                return (
+                  <Fragment key={rowKey}>
+                    <tr className="border-b border-gray-900 hover:bg-gray-900/60">
+                      <td className="px-3 py-2.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedKey(open ? null : rowKey)
+                          }
+                          className="text-left w-full hover:opacity-90"
+                          title="Toggle GMGN chart"
+                        >
+                          <div className="text-gray-100">
+                            {row.pair}
+                            {open ? ' ▾' : ' ▸'}
+                          </div>
+                          <div className="text-[10px] text-gray-600">
+                            {row.protoLabel.toLowerCase()} · {row.feeTier}
+                          </div>
+                        </button>
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-gray-200">
+                        {formatUsd(row.tvlUsd)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        {formatUsd(row.vol24hUsd)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-amber-400/90">
+                        {formatUsd(row.fees24hUsd)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right tabular-nums">
+                        {formatApr(row.feeAprPct)}
+                      </td>
+                      <td className="px-3 py-2.5 text-right text-gray-600">—</td>
+                      <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-1">
+                        {canAddV1(row) ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAddTarget({
+                                kind: 'v1',
+                                address: row.address,
+                                pairLabel: row.pair,
+                                tokenAddress,
+                                tokenSymbol,
+                              })
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-1 border border-sky-700 text-sky-300 hover:bg-sky-950/50"
+                          >
+                            Add v1
+                          </button>
+                        ) : null}
+                        {canAddV2(row) ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAddTarget({
+                                kind: 'v2',
+                                address: row.address,
+                                tokenAddress,
+                                tokenSymbol,
+                              })
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-1 border border-emerald-700 text-emerald-300 hover:bg-emerald-950/50"
+                          >
+                            Add v2
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                    {open && tokenAddress ? (
+                      <tr className="border-b border-gray-900 bg-gray-950/40">
+                        <td colSpan={7} className="px-3 py-3">
+                          <div className="relative h-[280px] w-full">
+                            <GmgnChartEmbed
+                              tokenAddress={tokenAddress}
+                              chain="robinhood"
+                              interval="5"
+                              className="w-full h-full"
+                              height="280px"
+                              title={`GMGN · ${row.pair}`}
+                            />
+                          </div>
+                        </td>
+                      </tr>
                     ) : null}
-                    {canAddV2(row) ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const { tokenAddress, tokenSymbol } = baseFromRow(row)
-                          setAddTarget({
-                            kind: 'v2',
-                            address: row.address,
-                            tokenAddress,
-                            tokenSymbol,
-                          })
-                        }}
-                        className="inline-flex items-center gap-1 px-2 py-1 border border-emerald-700 text-emerald-300 hover:bg-emerald-950/50"
-                      >
-                        Add v2
-                      </button>
-                    ) : null}
-                    <a
-                      href={getLpTerminalPoolDeepLink(row.address)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 px-2 py-1 border border-gray-700 text-gray-400 hover:text-gray-200"
-                    >
-                      Terminal ↗
-                    </a>
-                  </td>
-                </tr>
-              ))}
+                  </Fragment>
+                )
+              })}
             </tbody>
           </table>
         </div>
