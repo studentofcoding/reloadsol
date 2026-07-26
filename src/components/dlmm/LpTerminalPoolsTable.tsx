@@ -4,6 +4,7 @@ import { Fragment, useDeferredValue, useMemo, useState } from 'react'
 import { useLpTerminalPools } from '@/hooks/useLpTerminalPools'
 import RhUniv2LpSheet from '@/components/dlmm/RhUniv2LpSheet'
 import RhClmmLpSheet from '@/components/dlmm/RhClmmLpSheet'
+import DlmmFastSwapModal from '@/components/dlmm/DlmmFastSwapModal'
 import GmgnChartEmbed from '@/components/signals/shared/GmgnChartEmbed'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
 import {
@@ -69,10 +70,10 @@ function baseFromRow(row: {
 }
 
 function actionsLabel(row: { proto: string; token0: string; token1: string }) {
-  const parts: string[] = []
+  const parts: string[] = ['Swap']
   if (canAddV1(row)) parts.push('Add v1')
   if (canAddV2(row)) parts.push('Add v2')
-  return parts.length ? parts.join(' ') : '—'
+  return parts.join(' ')
 }
 
 function SortTh({
@@ -118,6 +119,11 @@ export default function LpTerminalPoolsTable() {
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
   const [addTarget, setAddTarget] = useState<AddTarget | null>(null)
+  const [swapTarget, setSwapTarget] = useState<{
+    tokenAddress: string
+    tokenSymbol?: string
+    pairLabel: string
+  } | null>(null)
 
   const { rows, count, totals, ready, isLoading, isFetching, error, refetch } =
     useLpTerminalPools(true, {
@@ -332,6 +338,21 @@ export default function LpTerminalPoolsTable() {
                       </td>
                       <td className="px-3 py-2.5 text-right text-gray-600">—</td>
                       <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-1">
+                        {tokenAddress ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSwapTarget({
+                                tokenAddress,
+                                tokenSymbol,
+                                pairLabel: row.pair,
+                              })
+                            }
+                            className="inline-flex items-center gap-1 px-2 py-1 border border-violet-700 text-violet-300 hover:bg-violet-950/50"
+                          >
+                            Swap
+                          </button>
+                        ) : null}
                         {canAddV1(row) ? (
                           <button
                             type="button"
@@ -411,6 +432,15 @@ export default function LpTerminalPoolsTable() {
           tokenSymbol={addTarget.tokenSymbol}
         />
       ) : null}
+
+      <DlmmFastSwapModal
+        open={Boolean(swapTarget)}
+        onClose={() => setSwapTarget(null)}
+        network="robinhood"
+        tokenAddress={swapTarget?.tokenAddress ?? ''}
+        tokenSymbol={swapTarget?.tokenSymbol}
+        pairLabel={swapTarget?.pairLabel}
+      />
     </div>
   )
 }

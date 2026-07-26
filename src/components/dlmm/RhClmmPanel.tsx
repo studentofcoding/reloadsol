@@ -8,6 +8,7 @@ import {
   usePatchRhClmmMark,
   useRhClmmMarks,
 } from '@/hooks/useRhClmmPositions'
+import RhClmmClaimFeesSheet from '@/components/dlmm/RhClmmClaimFeesSheet'
 import {
   closeOwnerPosition,
   listOwnerPositions,
@@ -15,6 +16,7 @@ import {
   previewQuickMint,
   type RhClmmCtx,
 } from '@/utils/dlmm/rh-clmm'
+import type { OnChainPosition } from '@/utils/dlmm/rh-clmm/positions'
 import {
   DEFAULT_BALANCE_PERCENT,
   DEFAULT_WIDTH_PERCENT,
@@ -50,6 +52,7 @@ export default function RhClmmPanel() {
   const [onChain, setOnChain] = useState<
     Awaited<ReturnType<typeof listOwnerPositions>>
   >([])
+  const [claimTarget, setClaimTarget] = useState<OnChainPosition | null>(null)
 
   const knownV4Ids = useMemo(
     () =>
@@ -335,7 +338,24 @@ export default function RhClmmPanel() {
                         ? `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`
                         : '—'}
                     </td>
-                    <td className="py-2 pr-3">
+                    <td className="py-2 pr-3 whitespace-nowrap space-x-1">
+                      <button
+                        type="button"
+                        onClick={() => setClaimTarget(p)}
+                        disabled={
+                          !!busy ||
+                          (p.tokensOwed0 === BigInt(0) &&
+                            p.tokensOwed1 === BigInt(0))
+                        }
+                        title={
+                          p.unclaimedFeesUsd > 0
+                            ? `Claim ~$${p.unclaimedFeesUsd.toFixed(2)}`
+                            : 'No unclaimed fees'
+                        }
+                        className="text-xs px-2 py-1 rounded bg-amber-800 hover:bg-amber-700 disabled:bg-gray-800 text-white"
+                      >
+                        Claim
+                      </button>
                       <button
                         type="button"
                         onClick={() =>
@@ -354,6 +374,18 @@ export default function RhClmmPanel() {
           </table>
         </div>
       )}
+
+      {claimTarget ? (
+        <RhClmmClaimFeesSheet
+          open
+          position={claimTarget}
+          onClose={() => setClaimTarget(null)}
+          onDone={() => {
+            setClaimTarget(null)
+            void refreshPositions()
+          }}
+        />
+      ) : null}
     </section>
   )
 }

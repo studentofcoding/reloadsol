@@ -6,7 +6,7 @@ import {
   RH_CHAIN_ID,
 } from './config'
 import { withRhClmmCtx, type RhClmmCtx } from './clients'
-import { closePosition } from './close'
+import { claimFees, closePosition } from './close'
 import {
   describeDualMintPreview,
   describeMintPreview,
@@ -189,6 +189,14 @@ export async function closeOwnerPosition(
   protocol: 'v3' | 'v4',
 ) {
   return withRhClmmCtx(ctx, () => closePosition(RH_CHAIN_ID, tokenId, protocol))
+}
+
+export async function claimOwnerFees(
+  ctx: RhClmmCtx,
+  tokenId: bigint,
+  protocol: 'v3' | 'v4',
+) {
+  return withRhClmmCtx(ctx, () => claimFees(RH_CHAIN_ID, tokenId, protocol))
 }
 
 export type { RhClmmCtx } from './clients'

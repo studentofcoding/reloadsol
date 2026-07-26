@@ -3,6 +3,7 @@
 import { Fragment, useDeferredValue, useMemo, useState } from 'react'
 import type { DisplayCandidate } from '@/components/dlmm/HunterCandidateTabs'
 import type { EnrichedPool } from '@/hooks/useDlmmPools'
+import DlmmFastSwapModal from '@/components/dlmm/DlmmFastSwapModal'
 import GmgnChartEmbed from '@/components/signals/shared/GmgnChartEmbed'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
 import { getPoolChartMint } from '@/utils/gmgn'
@@ -90,7 +91,12 @@ function buildRows(
       feeAprPct,
       rewards:
         c.organic_score > 0 ? `org ${c.organic_score.toFixed(1)}` : '—',
-      actionsLabel: matched ? 'Deploy' : '—',
+      actionsLabel: [
+        getPoolChartMint(c.token_x_address, c.token_y_address) ? 'Swap' : null,
+        matched ? 'Deploy' : null,
+      ]
+        .filter(Boolean)
+        .join(' ') || '—',
       chartMint: getPoolChartMint(c.token_x_address, c.token_y_address),
       candidate: c,
       matchedPool: matched,
@@ -150,6 +156,11 @@ export default function DlmmGeneralPoolsTable({
   const [sortKey, setSortKey] = useState<SortKey>('tvl')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
+  const [swapTarget, setSwapTarget] = useState<{
+    tokenAddress: string
+    tokenSymbol?: string
+    pairLabel: string
+  } | null>(null)
 
   const rows = useMemo(() => buildRows(candidates, pools), [candidates, pools])
 
@@ -326,7 +337,24 @@ export default function DlmmGeneralPoolsTable({
                       <td className="px-3 py-2.5 text-right text-gray-500">
                         {row.rewards}
                       </td>
-                      <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                      <td className="px-3 py-2.5 text-right whitespace-nowrap space-x-1">
+                        {row.chartMint ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSwapTarget({
+                                tokenAddress: row.chartMint!,
+                                tokenSymbol:
+                                  row.candidate.token_x_symbol ||
+                                  row.candidate.token_y_symbol,
+                                pairLabel: row.pair,
+                              })
+                            }
+                            className="inline-flex items-center gap-1 px-2 py-1 border border-violet-700 text-violet-300 hover:bg-violet-950/50"
+                          >
+                            Swap
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           disabled={!dbReady || !row.matchedPool}
@@ -367,6 +395,15 @@ export default function DlmmGeneralPoolsTable({
           </table>
         </div>
       )}
+
+      <DlmmFastSwapModal
+        open={Boolean(swapTarget)}
+        onClose={() => setSwapTarget(null)}
+        network="sol"
+        tokenAddress={swapTarget?.tokenAddress ?? ''}
+        tokenSymbol={swapTarget?.tokenSymbol}
+        pairLabel={swapTarget?.pairLabel}
+      />
     </div>
   )
 }
