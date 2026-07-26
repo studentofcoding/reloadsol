@@ -18,8 +18,7 @@ import {
 } from '@/utils/dlmm/lp-terminal';
 import DlmmGeneralPoolsTable from '@/components/dlmm/DlmmGeneralPoolsTable';
 import LpTerminalPoolsTable from '@/components/dlmm/LpTerminalPoolsTable';
-import RhClmmPanel from '@/components/dlmm/RhClmmPanel';
-import RhUniv2PositionsPanel from '@/components/dlmm/RhUniv2PositionsPanel';
+import RhPositionsPanel from '@/components/dlmm/RhPositionsPanel';
 import RhUniv2LpSheet from '@/components/dlmm/RhUniv2LpSheet';
 import ScrollableMenuRow from '@/components/ScrollableMenuRow';
 
@@ -418,8 +417,6 @@ export default function HunterCandidateTabs({
   const [robinhoodView, setRobinhoodView] = useState<
     'pools' | 'gmgn' | 'positions'
   >('pools');
-  const [positionsProto, setPositionsProto] = useState<'clmm' | 'damm'>('clmm');
-
   const { entries, remove, isLoading: potentialLoading } = usePotentialList();
   const {
     tokens: robinhoodTokens,
@@ -580,35 +577,10 @@ export default function HunterCandidateTabs({
             </button>
           </div>
           {robinhoodView === 'positions' ? (
-            <div className="space-y-2">
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPositionsProto('clmm')}
-                  className={`px-3 py-1 text-xs font-medium rounded ${
-                    positionsProto === 'clmm'
-                      ? 'bg-sky-600 text-white'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
-                >
-                  CLMM
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPositionsProto('damm')}
-                  className={`px-3 py-1 text-xs font-medium rounded ${
-                    positionsProto === 'damm'
-                      ? 'bg-sky-600 text-white'
-                      : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  }`}
-                >
-                  DAMM v2
-                </button>
-              </div>
-              <p className="text-gray-500 text-sm">
-                Open RH LP marks — CLMM (UniV3/v4) or DAMM v2 (UniV2).
-              </p>
-            </div>
+            <p className="text-gray-500 text-sm">
+              Combined CLMM + DAMM v2 portfolio — auto-loads on-chain when Rabby
+              is connected.
+            </p>
           ) : robinhoodView === 'pools' ? (
             <p className="text-gray-500 text-sm">
               Uni v2/v3 pools on Robinhood Chain (4663).{' '}
@@ -659,11 +631,7 @@ export default function HunterCandidateTabs({
 
       {tab === 'robinhood' ? (
         robinhoodView === 'positions' ? (
-          positionsProto === 'clmm' ? (
-            <RhClmmPanel />
-          ) : (
-            <RhUniv2PositionsPanel />
-          )
+          <RhPositionsPanel />
         ) : robinhoodView === 'pools' ? (
           <LpTerminalPoolsTable />
         ) : robinhoodLoading ? (

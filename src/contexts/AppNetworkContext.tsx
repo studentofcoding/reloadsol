@@ -14,6 +14,7 @@ import {
   writeStoredAppNetwork,
   type AppNetwork,
 } from '@/utils/app-network'
+import { resolveNetworkOnRhGateChange } from '@/utils/app-network-gate'
 
 type AppNetworkContextValue = {
   network: AppNetwork
@@ -33,20 +34,23 @@ export function AppNetworkProvider({
   isDevUser: boolean
   canUseRh: boolean
 }) {
+  // Do not coerce on first paint — disconnected wallets report canUseRh=false and
+  // would wipe a stored robinhood preference before reconnect.
   const [network, setNetworkState] = useState<AppNetwork>(() =>
-    coerceAppNetwork(readStoredAppNetwork(), canUseRh),
+    readStoredAppNetwork(),
   )
   const [rhGate, setRhGate] = useState(canUseRh)
 
   if (rhGate !== canUseRh) {
+    const { network: next, shouldWrite } = resolveNetworkOnRhGateChange({
+      prevCanUseRh: rhGate,
+      canUseRh,
+      current: network,
+      stored: readStoredAppNetwork(),
+    })
     setRhGate(canUseRh)
-    const next = coerceAppNetwork(network, canUseRh)
-    if (next !== network) {
-      setNetworkState(next)
-      writeStoredAppNetwork(next)
-    } else {
-      writeStoredAppNetwork(network)
-    }
+    if (next !== network) setNetworkState(next)
+    if (shouldWrite) writeStoredAppNetwork(next)
   }
 
   const setNetwork = useCallback(

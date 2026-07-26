@@ -1,0 +1,597 @@
+'use client'
+
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
+import {
+  usePatchRhClmmMark,
+  useRhClmmMarks,
+} from '@/hooks/useRhClmmPositions'
+import {
+  usePatchRhUniv2Position,
+  useRhUniv2Positions,
+} from '@/hooks/useRhUniv2Positions'
+import { useLpTerminalPools } from '@/hooks/useLpTerminalPools'
+import RhClmmClaimFeesSheet from '@/components/dlmm/RhClmmClaimFeesSheet'
+import RhUniv2LpSheet from '@/components/dlmm/RhUniv2LpSheet'
+import {
+  closeOwnerPosition,
+  listOwnerPositions,
+  type RhClmmCtx,
+} from '@/utils/dlmm/rh-clmm'
+import type { OnChainPosition } from '@/utils/dlmm/rh-clmm/positions'
+import type { RhClmmPosition, RhUniv2Position } from '@/types/dlmm'
+import { formatApr, formatUsd } from '@/utils/dlmm/format'
+
+type StatusFilter = 'open' | 'oor' | 'closed'
+
+type UnifiedRow = {
+  key: string
+  kind: 'clmm' | 'damm'
+  pair: string
+  protocolLabel: string
+  valueUsd: number
+  unclaimedUsd: number
+  inRange: boolean | null
+  pnlPct: number | null
+  aprPct: number | null
+  ageMs: number | null
+  poolAddress: string
+  clmm?: OnChainPosition
+  clmmMarkId?: string
+  damm?: RhUniv2Position
+  closedClmm?: RhClmmPosition
+  closedDamm?: RhUniv2Position
+}
+
+function fmtAge(ms: number | null): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—'
+  const h = ms / 3_600_000
+  if (h < 1) return `${Math.max(1, Math.round(ms / 60_000))}m`
+  if (h < 48) return `${h.toFixed(h < 10 ? 1 : 0)}h`
+  return `${(h / 24).toFixed(1)}d`
+}
+
+function fmtPnl(n: number | null): string {
+  if (n == null || !Number.isFinite(n)) return '—'
+  const sign = n >= 0 ? '+' : ''
+  return `${sign}${n.toFixed(2)}%`
+}
+
+function ageFromIso(iso: string | null | undefined): number | null {
+  if (!iso) return null
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t)) return null
+  return Date.now() - t
+}
+
+export default function RhPositionsPanel() {
+  const wallet = useRhEvmWallet()
+  const patchClmm = usePatchRhClmmMark()
+  const patchDamm = usePatchRhUniv2Position()
+  const [filter, setFilter] = useState<StatusFilter>('open')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [claimTarget, setClaimTarget] = useState<OnChainPosition | null>(null)
+  const [closeDamm, setCloseDamm] = useState<RhUniv2Position | null>(null)
+
+  const { data: openMarksData, refetch: refetchOpenMarks } = useRhClmmMarks(
+    wallet.address,
+    'open',
+  )
+  const { data: closedClmmData, refetch: refetchClosedClmm } = useRhClmmMarks(
+    wallet.address,
+    'closed',
+  )
+  const openMarks = useMemo(
+    () => openMarksData?.positions ?? [],
+    [openMarksData?.positions],
+  )
+  const closedClmmMarks = useMemo(
+    () => closedClmmData?.positions ?? [],
+    [closedClmmData?.positions],
+  )
+
+  const knownV4Ids = useMemo(
+    () =>
+      openMarks
+        .filter((m) => m.protocol === 'v4')
+        .map((m) => BigInt(m.token_id)),
+    [openMarks],
+  )
+
+  const markByKey = useMemo(() => {
+    const map = new Map<string, RhClmmPosition>()
+    for (const m of openMarks) {
+      map.set(`${m.protocol}:${m.token_id}`, m)
+    }
+    return map
+  }, [openMarks])
+
+  const dammOpenQ = useRhUniv2Positions('open')
+  const dammClosedQ = useRhUniv2Positions('closed')
+
+  const ownerLc = wallet.address?.toLowerCase() ?? ''
+  const dammOpen = useMemo(
+    () =>
+      (dammOpenQ.data?.positions ?? []).filter(
+        (p) => !ownerLc || p.owner_address.toLowerCase() === ownerLc,
+      ),
+    [dammOpenQ.data?.positions, ownerLc],
+  )
+  const dammClosed = useMemo(
+    () =>
+      (dammClosedQ.data?.positions ?? []).filter(
+        (p) => !ownerLc || p.owner_address.toLowerCase() === ownerLc,
+      ),
+    [dammClosedQ.data?.positions, ownerLc],
+  )
+
+  const pools = useLpTerminalPools(true, {
+    hideDust: false,
+    sort: 'vol',
+    limit: 200,
+  })
+  const aprByPool = useMemo(() => {
+    const map = new Map<string, number | null>()
+    for (const r of pools.rows) {
+      map.set(r.address.toLowerCase(), r.feeAprPct)
+    }
+    return map
+  }, [pools.rows])
+
+  async function ctx(): Promise<RhClmmCtx> {
+    if (!wallet.address) throw new Error('Connect Rabby first')
+    const walletClient = await wallet.getWalletClient()
+    return {
+      publicClient: wallet.publicClient,
+      walletClient,
+      owner: wallet.address,
+    }
+  }
+
+  const clmmQuery = useQuery({
+    queryKey: [
+      'rh-clmm-onchain',
+      wallet.address,
+      knownV4Ids.map((id) => id.toString()).join(','),
+    ],
+    enabled: Boolean(wallet.address),
+    staleTime: 20_000,
+    refetchInterval: 45_000,
+    queryFn: async () => {
+      const c = await ctx()
+      return listOwnerPositions(c, knownV4Ids)
+    },
+  })
+
+  const onChain = useMemo(() => clmmQuery.data ?? [], [clmmQuery.data])
+
+  async function refreshAll() {
+    setError(null)
+    setBusy('refresh')
+    try {
+      await Promise.all([
+        clmmQuery.refetch(),
+        refetchOpenMarks(),
+        refetchClosedClmm(),
+        dammOpenQ.refetch(),
+        dammClosedQ.refetch(),
+        patchDamm.mutateAsync({ action: 'refresh_all' }).catch(() => null),
+      ])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Refresh failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function runCloseClmm(p: OnChainPosition, markId?: string) {
+    setError(null)
+    setBusy(`close-${p.tokenId}`)
+    try {
+      const c = await ctx()
+      const result = await closeOwnerPosition(c, p.tokenId, p.protocol)
+      if (markId) {
+        await patchClmm.mutateAsync({
+          id: markId,
+          status: 'closed',
+          close_tx: result.hash,
+          current_value_usd: 0,
+          pnl_pct: 0,
+        })
+      }
+      await clmmQuery.refetch()
+      await refetchOpenMarks()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Close failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const openRows: UnifiedRow[] = useMemo(() => {
+    const rows: UnifiedRow[] = []
+    for (const p of onChain) {
+      const key = `${p.protocol}:${p.tokenId.toString()}`
+      const mark = markByKey.get(key)
+      const entry = mark?.entry_value_usd ?? 0
+      const live = p.valueUsd
+      const pnl =
+        entry > 0 ? ((live - entry) / entry) * 100 : (mark?.pnl_pct ?? null)
+      const poolAddr = String(p.poolAddress ?? mark?.pool_address ?? '')
+      rows.push({
+        key: `clmm-${key}`,
+        kind: 'clmm',
+        pair: `${p.symbol0}/${p.symbol1}`,
+        protocolLabel: p.protocol.toUpperCase(),
+        valueUsd: live,
+        unclaimedUsd: p.unclaimedFeesUsd,
+        inRange: p.inRange,
+        pnlPct: pnl != null && Number.isFinite(pnl) ? pnl : null,
+        aprPct: poolAddr
+          ? (aprByPool.get(poolAddr.toLowerCase()) ?? null)
+          : null,
+        ageMs: ageFromIso(mark?.created_at),
+        poolAddress: poolAddr,
+        clmm: p,
+        clmmMarkId: mark?.id,
+      })
+    }
+    for (const p of dammOpen) {
+      rows.push({
+        key: `damm-${p.id}`,
+        kind: 'damm',
+        pair: p.pair_label || p.pool_address.slice(0, 10),
+        protocolLabel: 'V2',
+        valueUsd: p.current_value_usd,
+        unclaimedUsd: 0,
+        inRange: null,
+        pnlPct: Number.isFinite(p.pnl_pct) ? p.pnl_pct : null,
+        aprPct: aprByPool.get(p.pool_address.toLowerCase()) ?? null,
+        ageMs: ageFromIso(p.created_at),
+        poolAddress: p.pool_address,
+        damm: p,
+      })
+    }
+    return rows
+  }, [onChain, markByKey, dammOpen, aprByPool])
+
+  const closedRows: UnifiedRow[] = useMemo(() => {
+    const rows: UnifiedRow[] = []
+    for (const m of closedClmmMarks) {
+      rows.push({
+        key: `clmm-closed-${m.id}`,
+        kind: 'clmm',
+        pair: m.pair_label || `#${m.token_id}`,
+        protocolLabel: m.protocol.toUpperCase(),
+        valueUsd: m.current_value_usd,
+        unclaimedUsd: 0,
+        inRange: null,
+        pnlPct: Number.isFinite(m.pnl_pct) ? m.pnl_pct : null,
+        aprPct: aprByPool.get(m.pool_address.toLowerCase()) ?? null,
+        ageMs: ageFromIso(m.closed_at ?? m.created_at),
+        poolAddress: m.pool_address,
+        closedClmm: m,
+      })
+    }
+    for (const p of dammClosed) {
+      rows.push({
+        key: `damm-closed-${p.id}`,
+        kind: 'damm',
+        pair: p.pair_label || p.pool_address.slice(0, 10),
+        protocolLabel: 'V2',
+        valueUsd: p.current_value_usd,
+        unclaimedUsd: 0,
+        inRange: null,
+        pnlPct: Number.isFinite(p.pnl_pct) ? p.pnl_pct : null,
+        aprPct: aprByPool.get(p.pool_address.toLowerCase()) ?? null,
+        ageMs: ageFromIso(p.closed_at ?? p.created_at),
+        poolAddress: p.pool_address,
+        closedDamm: p,
+      })
+    }
+    return rows
+  }, [closedClmmMarks, dammClosed, aprByPool])
+
+  const visible = useMemo(() => {
+    if (filter === 'closed') return closedRows
+    if (filter === 'oor') {
+      return openRows.filter((r) => r.kind === 'clmm' && r.inRange === false)
+    }
+    return openRows
+  }, [filter, openRows, closedRows])
+
+  const totalValue = useMemo(
+    () => openRows.reduce((s, r) => s + (r.valueUsd || 0), 0),
+    [openRows],
+  )
+  const totalUnclaimed = useMemo(
+    () => openRows.reduce((s, r) => s + (r.unclaimedUsd || 0), 0),
+    [openRows],
+  )
+  const firstClaimable = useMemo(
+    () =>
+      openRows.find(
+        (r) =>
+          r.kind === 'clmm' &&
+          r.clmm &&
+          (r.clmm.tokensOwed0 > BigInt(0) || r.clmm.tokensOwed1 > BigInt(0)),
+      )?.clmm ?? null,
+    [openRows],
+  )
+
+  const openCount = openRows.length
+  const oorCount = openRows.filter(
+    (r) => r.kind === 'clmm' && r.inRange === false,
+  ).length
+  const closedCount = closedRows.length
+  const loading =
+    Boolean(wallet.address) &&
+    (clmmQuery.isLoading || dammOpenQ.isLoading) &&
+    openRows.length === 0
+
+  return (
+    <section className="bg-gray-900 border border-gray-700 rounded-lg p-5 space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-white">Positions</h2>
+          <p className="text-gray-500 text-sm mt-0.5">
+            CLMM + DAMM v2 · Rabby on chain 4663
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {!wallet.address ? (
+            <button
+              type="button"
+              onClick={() => void wallet.connect()}
+              disabled={wallet.connecting || !wallet.hasProvider}
+              className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white text-sm rounded"
+            >
+              {!wallet.hasProvider
+                ? 'No Rabby'
+                : wallet.connecting
+                  ? 'Connecting…'
+                  : 'Connect Rabby'}
+            </button>
+          ) : (
+            <span className="text-xs text-gray-400 font-mono">
+              {wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}
+              {!wallet.isCorrectChain ? ' · switch to RH (4663)' : ''}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => void refreshAll()}
+            disabled={!!busy || !wallet.address}
+            className="px-3 py-1 text-xs border border-gray-600 text-gray-300 hover:border-emerald-600 rounded disabled:opacity-50"
+          >
+            {busy === 'refresh' || clmmQuery.isFetching ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-4 border border-gray-800 rounded-lg px-4 py-3 bg-black/30">
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-gray-500">
+            Total value
+          </div>
+          <div className="text-lg font-semibold text-white tabular-nums">
+            {formatUsd(totalValue)}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-gray-500">
+            Unclaimed fees
+          </div>
+          <div className="text-lg font-semibold text-amber-400/90 tabular-nums">
+            {formatUsd(totalUnclaimed)}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={!firstClaimable || !!busy}
+          onClick={() => firstClaimable && setClaimTarget(firstClaimable)}
+          className="ml-auto px-3 py-1.5 text-sm rounded bg-emerald-700 hover:bg-emerald-600 disabled:bg-gray-800 text-white"
+        >
+          Claim
+        </button>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            ['open', `Open (${openCount})`],
+            ['oor', `Out of range (${oorCount})`],
+            ['closed', `Closed (${closedCount})`],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setFilter(id)}
+            className={`px-3 py-1.5 text-xs font-medium rounded ${
+              filter === id
+                ? 'bg-emerald-600 text-black'
+                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {error ? (
+        <p className="text-sm text-red-400 break-words">{error}</p>
+      ) : null}
+
+      {loading ? (
+        <p className="text-gray-400 text-sm">Loading positions…</p>
+      ) : !wallet.address ? (
+        <p className="text-gray-500 text-sm">
+          Connect Rabby to list on-chain CLMM + your DAMM marks.
+        </p>
+      ) : visible.length === 0 ? (
+        <p className="text-gray-500 text-sm">
+          {filter === 'closed'
+            ? 'No closed position marks.'
+            : filter === 'oor'
+              ? 'No out-of-range CLMM positions.'
+              : 'No open positions.'}
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left">
+            <thead className="text-gray-400 border-b border-gray-700 text-[11px] uppercase tracking-wide">
+              <tr>
+                <th className="py-2 pr-3">Pool</th>
+                <th className="py-2 pr-3 text-right">Value</th>
+                <th className="py-2 pr-3 text-right">Unclaimed</th>
+                <th className="py-2 pr-3">Range</th>
+                <th className="py-2 pr-3 text-right">PnL</th>
+                <th className="py-2 pr-3 text-right">APR</th>
+                <th className="py-2 pr-3 text-right">Age</th>
+                <th className="py-2 pr-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map((r) => {
+                const isClosed = filter === 'closed'
+                const canClaim =
+                  !isClosed &&
+                  r.kind === 'clmm' &&
+                  r.clmm &&
+                  (r.clmm.tokensOwed0 > BigInt(0) ||
+                    r.clmm.tokensOwed1 > BigInt(0))
+                return (
+                  <tr
+                    key={r.key}
+                    className="border-b border-gray-800 text-gray-200"
+                  >
+                    <td className="py-2.5 pr-3">
+                      <div className="text-white">{r.pair}</div>
+                      <div className="text-[10px] text-gray-500">
+                        {r.protocolLabel}
+                        {r.clmm
+                          ? ` · #${r.clmm.tokenId.toString()}`
+                          : r.closedClmm
+                            ? ` · #${r.closedClmm.token_id}`
+                            : ''}
+                      </div>
+                    </td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums">
+                      {formatUsd(r.valueUsd)}
+                    </td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums text-emerald-400/90">
+                      {r.unclaimedUsd > 0 ? formatUsd(r.unclaimedUsd) : '—'}
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      {r.inRange == null ? (
+                        <span className="text-xs text-gray-500">full</span>
+                      ) : (
+                        <span
+                          className={`inline-flex items-center gap-1.5 text-xs ${
+                            r.inRange ? 'text-emerald-400' : 'text-red-400'
+                          }`}
+                        >
+                          <span
+                            className={`h-1.5 w-10 rounded-full ${
+                              r.inRange ? 'bg-emerald-600' : 'bg-red-700'
+                            }`}
+                          />
+                          {r.inRange ? 'In' : 'OOR'}
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      className={`py-2.5 pr-3 text-right tabular-nums ${
+                        r.pnlPct != null && r.pnlPct >= 0
+                          ? 'text-emerald-400'
+                          : r.pnlPct != null
+                            ? 'text-red-400'
+                            : 'text-gray-500'
+                      }`}
+                    >
+                      {fmtPnl(r.pnlPct)}
+                    </td>
+                    <td className="py-2.5 pr-3 text-right tabular-nums text-gray-300">
+                      {formatApr(r.aprPct)}
+                    </td>
+                    <td className="py-2.5 pr-3 text-right text-gray-400">
+                      {fmtAge(r.ageMs)}
+                    </td>
+                    <td className="py-2.5 pr-3 text-right whitespace-nowrap space-x-1">
+                      {isClosed ? (
+                        <span className="text-xs text-gray-600">—</span>
+                      ) : (
+                        <>
+                          {r.kind === 'clmm' ? (
+                            <>
+                              <button
+                                type="button"
+                                disabled={!canClaim || !!busy}
+                                onClick={() =>
+                                  r.clmm && setClaimTarget(r.clmm)
+                                }
+                                className="text-xs px-2 py-1 rounded bg-amber-800 hover:bg-amber-700 disabled:bg-gray-800 text-white"
+                              >
+                                Claim
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!!busy}
+                                onClick={() =>
+                                  r.clmm &&
+                                  void runCloseClmm(r.clmm, r.clmmMarkId)
+                                }
+                                className="text-xs px-2 py-1 rounded bg-red-800 hover:bg-red-700 disabled:bg-gray-800 text-white"
+                              >
+                                Close
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={!!busy || !r.damm}
+                              onClick={() => r.damm && setCloseDamm(r.damm)}
+                              className="text-xs px-2 py-1 rounded bg-red-800 hover:bg-red-700 disabled:bg-gray-800 text-white"
+                            >
+                              Close
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {claimTarget ? (
+        <RhClmmClaimFeesSheet
+          open
+          position={claimTarget}
+          onClose={() => setClaimTarget(null)}
+          onDone={() => {
+            setClaimTarget(null)
+            void clmmQuery.refetch()
+          }}
+        />
+      ) : null}
+
+      {closeDamm ? (
+        <RhUniv2LpSheet
+          open
+          onClose={() => {
+            setCloseDamm(null)
+            void dammOpenQ.refetch()
+          }}
+          closePosition={closeDamm}
+        />
+      ) : null}
+    </section>
+  )
+}

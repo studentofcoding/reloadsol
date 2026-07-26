@@ -1328,7 +1328,7 @@ async function filterOwnedTokenIds(
  * 1) balanceOf — if 0, only verify open ledger ids and return
  * 2) open (+ recent closed) ledger ids
  * 3) Alchemy getNFTsForOwner when available (optional)
- * 4) short reverse-scan only if still short of balanceOf (≤80 ids)
+ * 4) short reverse-scan only if still short of balanceOf (≤300 ids)
  */
 async function discoverV4TokenIds(chainId: SupportedChainId, knownTokenIds: bigint[] = []): Promise<bigint[]> {
   const t0 = Date.now();
@@ -1379,7 +1379,7 @@ async function discoverV4TokenIds(chainId: SupportedChainId, knownTokenIds: bigi
       nextId = BigInt(0);
     }
     if (nextId > BigInt(1)) {
-      const maxScan = BigInt(80); // ~80 RPCs worst case, batched
+      const maxScan = BigInt(300); // ~300 RPCs worst case, batched
       const toCheck: string[] = [];
       let scanned = BigInt(0);
       for (let id = nextId - BigInt(1); id > BigInt(0) && scanned < maxScan; id--, scanned++) {
