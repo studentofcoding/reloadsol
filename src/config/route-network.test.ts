@@ -13,10 +13,10 @@ describe('routeSupportsNetwork', () => {
     expect(routeSupportsNetwork('/pnl', 'robinhood')).toBe(true)
   })
 
-  it('hides RH hubs not wired for parent/bound yet', () => {
+  it('allows DLMM on RH; hides other RH hubs not wired yet', () => {
+    expect(routeSupportsNetwork('/dev/dlmm', 'robinhood')).toBe(true)
     expect(routeSupportsNetwork('/dev/signals', 'robinhood')).toBe(false)
     expect(routeSupportsNetwork('/dev/strategies', 'robinhood')).toBe(false)
-    expect(routeSupportsNetwork('/dev/dlmm', 'robinhood')).toBe(false)
     expect(routeSupportsNetwork('/dev/algo-tester', 'robinhood')).toBe(false)
   })
 

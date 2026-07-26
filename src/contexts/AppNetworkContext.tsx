@@ -17,8 +17,9 @@ import {
 
 type AppNetworkContextValue = {
   network: AppNetwork
-  setNetwork: (n: AppNetwork) => void
+  setNetwork: (n: AppNetwork, opts?: { skipCoerce?: boolean }) => void
   isDevUser: boolean
+  canUseRh: boolean
 }
 
 const AppNetworkContext = createContext<AppNetworkContextValue | null>(null)
@@ -26,18 +27,20 @@ const AppNetworkContext = createContext<AppNetworkContextValue | null>(null)
 export function AppNetworkProvider({
   children,
   isDevUser,
+  canUseRh,
 }: {
   children: ReactNode
   isDevUser: boolean
+  canUseRh: boolean
 }) {
   const [network, setNetworkState] = useState<AppNetwork>(() =>
-    coerceAppNetwork(readStoredAppNetwork(), isDevUser),
+    coerceAppNetwork(readStoredAppNetwork(), canUseRh),
   )
-  const [devGate, setDevGate] = useState(isDevUser)
+  const [rhGate, setRhGate] = useState(canUseRh)
 
-  if (devGate !== isDevUser) {
-    setDevGate(isDevUser)
-    const next = coerceAppNetwork(network, isDevUser)
+  if (rhGate !== canUseRh) {
+    setRhGate(canUseRh)
+    const next = coerceAppNetwork(network, canUseRh)
     if (next !== network) {
       setNetworkState(next)
       writeStoredAppNetwork(next)
@@ -47,17 +50,20 @@ export function AppNetworkProvider({
   }
 
   const setNetwork = useCallback(
-    (n: AppNetwork) => {
-      const next = coerceAppNetwork(n, isDevUser)
+    (n: AppNetwork, opts?: { skipCoerce?: boolean }) => {
+      const next =
+        opts?.skipCoerce && n === 'robinhood'
+          ? 'robinhood'
+          : coerceAppNetwork(n, canUseRh)
       setNetworkState(next)
       writeStoredAppNetwork(next)
     },
-    [isDevUser],
+    [canUseRh],
   )
 
   const value = useMemo(
-    () => ({ network, setNetwork, isDevUser }),
-    [network, setNetwork, isDevUser],
+    () => ({ network, setNetwork, isDevUser, canUseRh }),
+    [network, setNetwork, isDevUser, canUseRh],
   )
 
   return (

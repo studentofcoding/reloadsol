@@ -14,11 +14,11 @@ describe('parseAppNetwork', () => {
 })
 
 describe('coerceAppNetwork', () => {
-  it('allows robinhood for dev', () => {
+  it('allows robinhood when canUseRh', () => {
     expect(coerceAppNetwork('robinhood', true)).toBe('robinhood')
   })
 
-  it('forces sol for non-dev', () => {
+  it('forces sol when !canUseRh', () => {
     expect(coerceAppNetwork('robinhood', false)).toBe('sol')
     expect(coerceAppNetwork('sol', false)).toBe('sol')
   })

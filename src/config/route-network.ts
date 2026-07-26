@@ -20,7 +20,7 @@ export const ROUTE_NETWORK_REGISTRY: readonly NetworkRouteEntry[] = [
   // ponytail: RH hubs hidden until parent/bound active-wallet is wired there
   { path: '/dev/signals', networks: ['sol'] },
   { path: '/dev/algo-tester', networks: ['sol'] },
-  { path: '/dev/dlmm', networks: ['sol'] },
+  { path: '/dev/dlmm', networks: ['sol', 'robinhood'] },
   { path: '/dev/strategies', networks: ['sol'] },
   { path: '/dev/rpc-tester', networks: ['sol'] },
   { path: '/dev/token-search', networks: ['sol'] },

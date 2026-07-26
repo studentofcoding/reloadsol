@@ -28,9 +28,11 @@ export default function UniversalWalletButton({
   const { setShowModal } = useUnifiedWalletContext();
   const rh = useRhEvmWallet();
   const bound = useGmgnBoundWallets();
-  const { network, setNetwork, isDevUser } = useAppNetwork();
+  const { network, setNetwork, canUseRh } = useAppNetwork();
   const { mode: rhMode, setMode: setRhMode } = useRhWalletMode();
   const activeRh = resolveRhActiveAddress(rhMode, rh.address, bound.evm);
+  // EVM-only whitelist: show toggle when Rabby is present so they can connect.
+  const showRhToggle = canUseRh || rh.hasProvider;
 
   if (variant === "jupiter") {
     return (
@@ -43,7 +45,7 @@ export default function UniversalWalletButton({
 
   return (
     <div className="inline-flex flex-col items-stretch gap-1.5">
-      {isDevUser ? (
+      {showRhToggle ? (
         <div className="flex rounded-lg border border-gray-600 overflow-hidden text-xs">
           <button
             type="button"
@@ -58,7 +60,10 @@ export default function UniversalWalletButton({
           </button>
           <button
             type="button"
-            onClick={() => setNetwork("robinhood")}
+            onClick={() => {
+              setNetwork("robinhood", { skipCoerce: true });
+              void rh.connect();
+            }}
             className={`px-2.5 py-1 font-medium border-l border-gray-600 ${
               network === "robinhood"
                 ? "bg-white text-black"
@@ -70,7 +75,7 @@ export default function UniversalWalletButton({
         </div>
       ) : null}
 
-      {network === "robinhood" && isDevUser ? (
+      {network === "robinhood" && canUseRh ? (
         <div className="flex rounded-lg border border-gray-600 overflow-hidden text-xs">
           <button
             type="button"

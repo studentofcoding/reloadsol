@@ -156,7 +156,7 @@ export default function BulkTokenSeller() {
   const [slippage, setSlippage] = useState<number>(200); // 2%
   const [priorityFee, setPriorityFee] = useState<number>(30000); // 0.00003 SOL
   const isDevUser = useDevWalletAccess();
-  const { network } = useAppNetwork();
+  const { network, canUseRh } = useAppNetwork();
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
   const [useGmgnOnSol, setUseGmgnOnSol] = useState(false);
@@ -166,19 +166,17 @@ export default function BulkTokenSeller() {
   const [rhQuoteCurrency, setRhQuoteCurrency] =
     useState<RhSwapQuote>("ETH");
   const boundWallets = useGmgnBoundWallets();
-  const effectiveChain: GmgnTradeChain = isDevUser ? network : "sol";
+  const effectiveChain: GmgnTradeChain = canUseRh ? network : "sol";
   const isRhChain = effectiveChain === "robinhood";
   /** Sol-only: Raptor quotes + Jupiter/Sol RPC sell. Never true on Robinhood. */
   const isSolTrade = effectiveChain === "sol";
   const effectiveUseGmgn = isDevUser && isSolTrade && useGmgnOnSol;
 
   const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
-  const useRhParentPath =
-    isDevUser && isRhChain && rhMode === "parent";
+  const useRhParentPath = canUseRh && isRhChain && rhMode === "parent";
   const useGmgnPath =
-    isDevUser &&
-    ((isRhChain && rhMode === "bound") ||
-      (isSolTrade && effectiveUseGmgn));
+    (canUseRh && isRhChain && rhMode === "bound") ||
+    (isDevUser && isSolTrade && effectiveUseGmgn);
   const tradeFromAddress =
     effectiveChain === "robinhood"
       ? rhMode === "parent"
@@ -1881,7 +1879,7 @@ export default function BulkTokenSeller() {
   return (
     <div className="bg-gray-900 rounded-2xl shadow-lg border border-gray-700 p-8 space-y-8 max-w-6xl mx-auto">
       <GmgnTradeConfirmModal
-        open={gmgnConfirmOpen && isDevUser}
+        open={gmgnConfirmOpen && (isDevUser || isRhChain)}
         chain={effectiveChain}
         from={tradeFromAddress || ""}
         legs={gmgnConfirmLegs}
@@ -1917,7 +1915,7 @@ export default function BulkTokenSeller() {
         </label>
       ) : null}
 
-      {isDevUser && effectiveChain === "robinhood" ? (
+      {isRhChain ? (
         <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <span>Sell to:</span>

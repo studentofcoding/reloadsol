@@ -102,7 +102,7 @@ export default function BulkTokenBuyer() {
   const triggerPostBuyRefresh = usePostBuyRefresh();
   const { showOutcome, outcomeModalProps } = useTradeOutcome();
   const searchParams = useSearchParams();
-  const { network } = useAppNetwork();
+  const { network, canUseRh } = useAppNetwork();
   const { mode: rhMode } = useRhWalletMode();
   const rhWallet = useRhEvmWallet();
 
@@ -144,20 +144,18 @@ export default function BulkTokenBuyer() {
   const [gmgnConfirmLegs, setGmgnConfirmLegs] = useState<GmgnConfirmLeg[]>([]);
   const [gmgnConfirmBusy, setGmgnConfirmBusy] = useState(false);
   const boundWallets = useGmgnBoundWallets();
-  // App network (header) is source of truth; non-dev coerced to sol in context.
-  const effectiveChain: GmgnTradeChain = isDevUser ? network : "sol";
+  // App network (header) is source of truth; !canUseRh coerced to sol in context.
+  const effectiveChain: GmgnTradeChain = canUseRh ? network : "sol";
   const isRhChain = effectiveChain === "robinhood";
   /** Sol-only: Jupiter/Raptor buy. Never true on Robinhood. */
   const isSolTrade = effectiveChain === "sol";
   const effectiveUseGmgn = isDevUser && isSolTrade && useGmgnOnSol;
   const chainNative = GMGN_CHAIN_CURRENCIES[effectiveChain];
   const solGmgnSynced = boundWallets.isSyncedSol(walletAddress);
-  const useRhParentPath =
-    isDevUser && isRhChain && rhMode === "parent";
+  const useRhParentPath = canUseRh && isRhChain && rhMode === "parent";
   const useGmgnPath =
-    isDevUser &&
-    ((isRhChain && rhMode === "bound") ||
-      (isSolTrade && effectiveUseGmgn));
+    (canUseRh && isRhChain && rhMode === "bound") ||
+    (isDevUser && isSolTrade && effectiveUseGmgn);
   const tradeFromAddress =
     isRhChain
       ? rhMode === "parent"
@@ -307,18 +305,19 @@ export default function BulkTokenBuyer() {
         ? String(solTokensQueryError)
         : "";
 
-  // Token search — GMGN for dev; Jupiter for public Sol buy page
+  // Token search — GMGN for RH / DEV; Jupiter for public Sol buy page
+  const useGmgnSearch = isDevUser || isRhChain;
   const [searchTerm, setSearchTerm] = useState("");
   const deferredSearchTerm = useDeferredValue(searchTerm);
   const gmgnSearchQuery = useGmgnTokenSearch(
     effectiveChain,
     deferredSearchTerm,
-    { enabled: isDevUser },
+    { enabled: useGmgnSearch },
   );
   const jupSearchQuery = useTrendingSearch(
-    isDevUser ? "" : deferredSearchTerm,
+    useGmgnSearch ? "" : deferredSearchTerm,
   );
-  const searchQuery = isDevUser ? gmgnSearchQuery : jupSearchQuery;
+  const searchQuery = useGmgnSearch ? gmgnSearchQuery : jupSearchQuery;
   const searchResults = useMemo(
     () => (searchTerm ? (searchQuery.data ?? []) : []),
     [searchTerm, searchQuery.data],
@@ -396,14 +395,14 @@ export default function BulkTokenBuyer() {
   const metadataQuery = useQuery({
     queryKey: [
       "buy-token-metadata",
-      isDevUser ? effectiveChain : "jup",
+      useGmgnSearch ? effectiveChain : "jup",
       validMints.join(","),
     ],
     queryFn: async () => {
       const existingAddresses = new Set(tokenList.map((token) => token.address));
       const addressesToFetch = validMints.filter((addr) => {
         if (existingAddresses.has(addr)) return false;
-        return isDevUser
+        return useGmgnSearch
           ? isValidTradeTokenAddress(effectiveChain, addr)
           : isValidMintAddress(addr);
       });
@@ -413,7 +412,7 @@ export default function BulkTokenBuyer() {
         async (address): Promise<TokenInfo | null> => {
           try {
             const res = await fetch(
-              isDevUser
+              useGmgnSearch
                 ? `/api/gmgn/token/search?chain=${encodeURIComponent(effectiveChain)}&query=${encodeURIComponent(address)}`
                 : `/api/trending/search?query=${encodeURIComponent(address)}`,
             );
@@ -551,7 +550,7 @@ export default function BulkTokenBuyer() {
         // Fetch token metadata if not found anywhere
         try {
           const res = await fetch(
-            isDevUser
+            useGmgnSearch
               ? `/api/gmgn/token/search?chain=${encodeURIComponent(effectiveChain)}&query=${encodeURIComponent(mintAddress)}`
               : `/api/trending/search?query=${encodeURIComponent(mintAddress)}`,
           );
@@ -581,7 +580,7 @@ export default function BulkTokenBuyer() {
 
       setSelectedTokenInfo(tokenInfo);
     },
-    [searchResults, tokenList, userTokens, isDevUser, effectiveChain],
+    [searchResults, tokenList, userTokens, useGmgnSearch, effectiveChain],
   );
 
   // Listen for custom event to add token to list (+ open chart)
@@ -1405,7 +1404,7 @@ export default function BulkTokenBuyer() {
       className={`grid grid-cols-1 ${showTradeUi ? "lg:grid-cols-3" : "lg:grid-cols-1"} gap-8 max-w-6xl mx-auto`}
     >
       <GmgnTradeConfirmModal
-        open={gmgnConfirmOpen && isDevUser}
+        open={gmgnConfirmOpen && (isDevUser || isRhChain)}
         chain={effectiveChain}
         from={tradeFromAddress || ""}
         legs={gmgnConfirmLegs}
@@ -1454,7 +1453,7 @@ export default function BulkTokenBuyer() {
             </label>
           ) : null}
 
-          {isDevUser && effectiveChain === "robinhood" ? (
+          {isRhChain ? (
             <div className="rounded-xl border border-gray-700 bg-gray-800/50 px-4 py-3 text-sm text-gray-300 space-y-1">
               <div>
                 Mode:{" "}

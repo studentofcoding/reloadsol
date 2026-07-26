@@ -17,7 +17,10 @@ import { RpcProvider, useRpc } from "@/contexts/RpcContext";
 import { AppNetworkProvider } from "@/contexts/AppNetworkContext";
 import { RhWalletModeProvider } from "@/contexts/RhWalletModeContext";
 import { TradeProviderProvider } from "@/contexts/TradeProviderContext";
+import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
+import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { isDevWallet, toWalletAddress } from "@/utils/dev-wallet";
+import { canUseRobinhoodNetwork, isRhWhitelisted } from "@/utils/rh-whitelist";
 
 type WalletContextState = ReturnType<typeof useUnifiedWallet>;
 
@@ -30,10 +33,26 @@ interface WalletProviderProps {
 const WALLET_APP_URL =
   process.env.NEXT_PUBLIC_SITE_URL ?? "https://reloadsol.app";
 
+/** DEV list or RH_WHITELIST (Sol / Parent / Bound EVM). */
+export function useRhNetworkAccess(): boolean {
+  const isDevUser = useDevWalletAccess();
+  const solAddress = useWalletAddress();
+  const rh = useRhEvmWallet();
+  const bound = useGmgnBoundWallets();
+  return (
+    canUseRobinhoodNetwork({
+      solAddress,
+      evmAddress: rh.address,
+      isDevUser,
+    }) || isRhWhitelisted(bound.evm)
+  );
+}
+
 function AppNetworkBridge({ children }: { children: React.ReactNode }) {
   const isDevUser = useDevWalletAccess();
+  const canUseRh = useRhNetworkAccess();
   return (
-    <AppNetworkProvider isDevUser={isDevUser}>
+    <AppNetworkProvider isDevUser={isDevUser} canUseRh={canUseRh}>
       <RhWalletModeProvider>{children}</RhWalletModeProvider>
     </AppNetworkProvider>
   );
