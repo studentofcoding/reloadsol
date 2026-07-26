@@ -1366,6 +1366,14 @@ async function discoverV4TokenIds(chainId: SupportedChainId, knownTokenIds: bigi
   // Verify current candidates before any reverse scan
   let owned = await filterOwnedTokenIds(chainId, posm, ownerLc, ids);
 
+  // Marks already cover balanceOf — skip reverse-scan
+  if (BigInt(owned.length) >= bal) {
+    console.log(
+      `[v4] discover skip scan chain=${chainId} balanceOf=${bal} owned=${owned.length} ${Date.now() - t0}ms`,
+    );
+    return owned;
+  }
+
   // Short reverse-scan only if still missing (no multi-minute 3k scan)
   if (BigInt(owned.length) < bal) {
     let nextId = BigInt(0);

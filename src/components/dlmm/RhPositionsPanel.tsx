@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMemo, useState, type ReactNode } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useRhEvmWallet } from '@/hooks/useRhEvmWallet'
 import {
   usePatchRhClmmMark,
@@ -37,6 +37,7 @@ type UnifiedRow = {
   aprPct: number | null
   ageMs: number | null
   poolAddress: string
+  live: boolean
   clmm?: OnChainPosition
   clmmMarkId?: string
   damm?: RhUniv2Position
@@ -63,6 +64,65 @@ function ageFromIso(iso: string | null | undefined): number | null {
   const t = Date.parse(iso)
   if (!Number.isFinite(t)) return null
   return Date.now() - t
+}
+
+function SkeletonRows({ count }: { count: number }) {
+  const n = Math.max(3, count)
+  return (
+    <>
+      {Array.from({ length: n }, (_, i) => (
+        <tr key={`sk-${i}`} className="border-b border-gray-800 animate-pulse">
+          <td className="py-3 pr-3">
+            <div className="h-3 w-28 rounded bg-gray-800 mb-1.5" />
+            <div className="h-2 w-16 rounded bg-gray-800/70" />
+          </td>
+          <td className="py-3 pr-3">
+            <div className="h-3 w-14 rounded bg-gray-800 ml-auto" />
+          </td>
+          <td className="py-3 pr-3">
+            <div className="h-3 w-12 rounded bg-gray-800 ml-auto" />
+          </td>
+          <td className="py-3 pr-3">
+            <div className="h-2 w-16 rounded bg-gray-800" />
+          </td>
+          <td className="py-3 pr-3">
+            <div className="h-3 w-12 rounded bg-gray-800 ml-auto" />
+          </td>
+          <td className="py-3 pr-3">
+            <div className="h-3 w-10 rounded bg-gray-800 ml-auto" />
+          </td>
+          <td className="py-3 pr-3">
+            <div className="h-3 w-8 rounded bg-gray-800 ml-auto" />
+          </td>
+          <td className="py-3 pr-3">
+            <div className="h-6 w-20 rounded bg-gray-800 ml-auto" />
+          </td>
+        </tr>
+      ))}
+    </>
+  )
+}
+
+function PositionsTableShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm text-left">
+        <thead className="text-gray-400 border-b border-gray-700 text-[11px] uppercase tracking-wide">
+          <tr>
+            <th className="py-2 pr-3">Pool</th>
+            <th className="py-2 pr-3 text-right">Value</th>
+            <th className="py-2 pr-3 text-right">Unclaimed</th>
+            <th className="py-2 pr-3">Range</th>
+            <th className="py-2 pr-3 text-right">PnL</th>
+            <th className="py-2 pr-3 text-right">APR</th>
+            <th className="py-2 pr-3 text-right">Age</th>
+            <th className="py-2 pr-3 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>{children}</tbody>
+      </table>
+    </div>
+  )
 }
 
 export default function RhPositionsPanel() {
@@ -157,8 +217,9 @@ export default function RhPositionsPanel() {
       knownV4Ids.map((id) => id.toString()).join(','),
     ],
     enabled: Boolean(wallet.address),
-    staleTime: 20_000,
+    staleTime: 60_000,
     refetchInterval: 45_000,
+    placeholderData: keepPreviousData,
     queryFn: async () => {
       const c = await ctx()
       return listOwnerPositions(c, knownV4Ids)
@@ -166,6 +227,7 @@ export default function RhPositionsPanel() {
   })
 
   const onChain = useMemo(() => clmmQuery.data ?? [], [clmmQuery.data])
+  const isRefreshing = busy === 'refresh'
 
   async function refreshAll() {
     setError(null)
@@ -211,7 +273,29 @@ export default function RhPositionsPanel() {
   }
 
   const openRows: UnifiedRow[] = useMemo(() => {
-    const rows: UnifiedRow[] = []
+    const byKey = new Map<string, UnifiedRow>()
+
+    // Seed CLMM from marks first (instant paint)
+    for (const m of openMarks) {
+      const key = `${m.protocol}:${m.token_id}`
+      byKey.set(key, {
+        key: `clmm-${key}`,
+        kind: 'clmm',
+        pair: m.pair_label || `#${m.token_id}`,
+        protocolLabel: m.protocol.toUpperCase(),
+        valueUsd: m.current_value_usd || m.entry_value_usd || 0,
+        unclaimedUsd: 0,
+        inRange: null,
+        pnlPct: Number.isFinite(m.pnl_pct) ? m.pnl_pct : null,
+        aprPct: aprByPool.get(m.pool_address.toLowerCase()) ?? null,
+        ageMs: ageFromIso(m.created_at),
+        poolAddress: m.pool_address,
+        live: false,
+        clmmMarkId: m.id,
+      })
+    }
+
+    // Enrich / add from on-chain
     for (const p of onChain) {
       const key = `${p.protocol}:${p.tokenId.toString()}`
       const mark = markByKey.get(key)
@@ -220,7 +304,7 @@ export default function RhPositionsPanel() {
       const pnl =
         entry > 0 ? ((live - entry) / entry) * 100 : (mark?.pnl_pct ?? null)
       const poolAddr = String(p.poolAddress ?? mark?.pool_address ?? '')
-      rows.push({
+      byKey.set(key, {
         key: `clmm-${key}`,
         kind: 'clmm',
         pair: `${p.symbol0}/${p.symbol1}`,
@@ -234,10 +318,13 @@ export default function RhPositionsPanel() {
           : null,
         ageMs: ageFromIso(mark?.created_at),
         poolAddress: poolAddr,
+        live: true,
         clmm: p,
         clmmMarkId: mark?.id,
       })
     }
+
+    const rows = [...byKey.values()]
     for (const p of dammOpen) {
       rows.push({
         key: `damm-${p.id}`,
@@ -251,11 +338,12 @@ export default function RhPositionsPanel() {
         aprPct: aprByPool.get(p.pool_address.toLowerCase()) ?? null,
         ageMs: ageFromIso(p.created_at),
         poolAddress: p.pool_address,
+        live: true,
         damm: p,
       })
     }
     return rows
-  }, [onChain, markByKey, dammOpen, aprByPool])
+  }, [openMarks, onChain, markByKey, dammOpen, aprByPool])
 
   const closedRows: UnifiedRow[] = useMemo(() => {
     const rows: UnifiedRow[] = []
@@ -272,6 +360,7 @@ export default function RhPositionsPanel() {
         aprPct: aprByPool.get(m.pool_address.toLowerCase()) ?? null,
         ageMs: ageFromIso(m.closed_at ?? m.created_at),
         poolAddress: m.pool_address,
+        live: true,
         closedClmm: m,
       })
     }
@@ -288,6 +377,7 @@ export default function RhPositionsPanel() {
         aprPct: aprByPool.get(p.pool_address.toLowerCase()) ?? null,
         ageMs: ageFromIso(p.closed_at ?? p.created_at),
         poolAddress: p.pool_address,
+        live: true,
         closedDamm: p,
       })
     }
@@ -326,10 +416,21 @@ export default function RhPositionsPanel() {
     (r) => r.kind === 'clmm' && r.inRange === false,
   ).length
   const closedCount = closedRows.length
-  const loading =
+
+  const marksReady = openMarks.length > 0 || dammOpen.length > 0
+  const coldSkeleton =
     Boolean(wallet.address) &&
-    (clmmQuery.isLoading || dammOpenQ.isLoading) &&
-    openRows.length === 0
+    !isRefreshing &&
+    !marksReady &&
+    clmmQuery.isLoading &&
+    openRows.length === 0 &&
+    filter !== 'closed'
+
+  const showEmpty =
+    Boolean(wallet.address) &&
+    !isRefreshing &&
+    !coldSkeleton &&
+    visible.length === 0
 
   return (
     <section className="bg-gray-900 border border-gray-700 rounded-lg p-5 space-y-4">
@@ -363,10 +464,16 @@ export default function RhPositionsPanel() {
           <button
             type="button"
             onClick={() => void refreshAll()}
-            disabled={!!busy || !wallet.address}
-            className="px-3 py-1 text-xs border border-gray-600 text-gray-300 hover:border-emerald-600 rounded disabled:opacity-50"
+            disabled={isRefreshing || !wallet.address || !!busy}
+            className="inline-flex items-center gap-1.5 px-3 py-1 text-xs border border-gray-600 text-gray-300 hover:border-emerald-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {busy === 'refresh' || clmmQuery.isFetching ? 'Refreshing…' : 'Refresh'}
+            <span
+              className={`inline-block ${isRefreshing ? 'animate-spin' : ''}`}
+              aria-hidden
+            >
+              ↻
+            </span>
+            {isRefreshing ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
       </div>
@@ -390,7 +497,7 @@ export default function RhPositionsPanel() {
         </div>
         <button
           type="button"
-          disabled={!firstClaimable || !!busy}
+          disabled={!firstClaimable || !!busy || isRefreshing}
           onClick={() => firstClaimable && setClaimTarget(firstClaimable)}
           className="ml-auto px-3 py-1.5 text-sm rounded bg-emerald-700 hover:bg-emerald-600 disabled:bg-gray-800 text-white"
         >
@@ -410,11 +517,12 @@ export default function RhPositionsPanel() {
             key={id}
             type="button"
             onClick={() => setFilter(id)}
+            disabled={isRefreshing}
             className={`px-3 py-1.5 text-xs font-medium rounded ${
               filter === id
                 ? 'bg-emerald-600 text-black'
                 : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-            }`}
+            } disabled:opacity-50`}
           >
             {label}
           </button>
@@ -425,13 +533,15 @@ export default function RhPositionsPanel() {
         <p className="text-sm text-red-400 break-words">{error}</p>
       ) : null}
 
-      {loading ? (
-        <p className="text-gray-400 text-sm">Loading positions…</p>
-      ) : !wallet.address ? (
+      {!wallet.address ? (
         <p className="text-gray-500 text-sm">
           Connect Rabby to list on-chain CLMM + your DAMM marks.
         </p>
-      ) : visible.length === 0 ? (
+      ) : isRefreshing || coldSkeleton ? (
+        <PositionsTableShell>
+          <SkeletonRows count={isRefreshing ? visible.length : 4} />
+        </PositionsTableShell>
+      ) : showEmpty ? (
         <p className="text-gray-500 text-sm">
           {filter === 'closed'
             ? 'No closed position marks.'
@@ -440,134 +550,122 @@ export default function RhPositionsPanel() {
               : 'No open positions.'}
         </p>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-left">
-            <thead className="text-gray-400 border-b border-gray-700 text-[11px] uppercase tracking-wide">
-              <tr>
-                <th className="py-2 pr-3">Pool</th>
-                <th className="py-2 pr-3 text-right">Value</th>
-                <th className="py-2 pr-3 text-right">Unclaimed</th>
-                <th className="py-2 pr-3">Range</th>
-                <th className="py-2 pr-3 text-right">PnL</th>
-                <th className="py-2 pr-3 text-right">APR</th>
-                <th className="py-2 pr-3 text-right">Age</th>
-                <th className="py-2 pr-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((r) => {
-                const isClosed = filter === 'closed'
-                const canClaim =
-                  !isClosed &&
-                  r.kind === 'clmm' &&
-                  r.clmm &&
-                  (r.clmm.tokensOwed0 > BigInt(0) ||
-                    r.clmm.tokensOwed1 > BigInt(0))
-                return (
-                  <tr
-                    key={r.key}
-                    className="border-b border-gray-800 text-gray-200"
-                  >
-                    <td className="py-2.5 pr-3">
-                      <div className="text-white">{r.pair}</div>
-                      <div className="text-[10px] text-gray-500">
-                        {r.protocolLabel}
-                        {r.clmm
-                          ? ` · #${r.clmm.tokenId.toString()}`
-                          : r.closedClmm
-                            ? ` · #${r.closedClmm.token_id}`
-                            : ''}
-                      </div>
-                    </td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums">
-                      {formatUsd(r.valueUsd)}
-                    </td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums text-emerald-400/90">
-                      {r.unclaimedUsd > 0 ? formatUsd(r.unclaimedUsd) : '—'}
-                    </td>
-                    <td className="py-2.5 pr-3">
-                      {r.inRange == null ? (
-                        <span className="text-xs text-gray-500">full</span>
-                      ) : (
-                        <span
-                          className={`inline-flex items-center gap-1.5 text-xs ${
-                            r.inRange ? 'text-emerald-400' : 'text-red-400'
-                          }`}
-                        >
-                          <span
-                            className={`h-1.5 w-10 rounded-full ${
-                              r.inRange ? 'bg-emerald-600' : 'bg-red-700'
-                            }`}
-                          />
-                          {r.inRange ? 'In' : 'OOR'}
-                        </span>
-                      )}
-                    </td>
-                    <td
-                      className={`py-2.5 pr-3 text-right tabular-nums ${
-                        r.pnlPct != null && r.pnlPct >= 0
-                          ? 'text-emerald-400'
-                          : r.pnlPct != null
-                            ? 'text-red-400'
-                            : 'text-gray-500'
+        <PositionsTableShell>
+          {visible.map((r) => {
+            const isClosed = filter === 'closed'
+            const canClaim =
+              !isClosed &&
+              r.kind === 'clmm' &&
+              r.live &&
+              r.clmm &&
+              (r.clmm.tokensOwed0 > BigInt(0) ||
+                r.clmm.tokensOwed1 > BigInt(0))
+            const clmmActionsReady = r.kind === 'clmm' && r.live && !!r.clmm
+            return (
+              <tr
+                key={r.key}
+                className="border-b border-gray-800 text-gray-200"
+              >
+                <td className="py-2.5 pr-3">
+                  <div className="text-white">{r.pair}</div>
+                  <div className="text-[10px] text-gray-500">
+                    {r.protocolLabel}
+                    {r.clmm
+                      ? ` · #${r.clmm.tokenId.toString()}`
+                      : r.closedClmm
+                        ? ` · #${r.closedClmm.token_id}`
+                        : r.clmmMarkId
+                          ? ' · mark'
+                          : ''}
+                    {r.kind === 'clmm' && !r.live && !isClosed
+                      ? ' · syncing…'
+                      : ''}
+                  </div>
+                </td>
+                <td className="py-2.5 pr-3 text-right tabular-nums">
+                  {formatUsd(r.valueUsd)}
+                </td>
+                <td className="py-2.5 pr-3 text-right tabular-nums text-emerald-400/90">
+                  {r.live && r.unclaimedUsd > 0
+                    ? formatUsd(r.unclaimedUsd)
+                    : '—'}
+                </td>
+                <td className="py-2.5 pr-3">
+                  {r.kind === 'damm' || isClosed ? (
+                    <span className="text-xs text-gray-500">full</span>
+                  ) : r.inRange == null ? (
+                    <span className="text-xs text-gray-600">—</span>
+                  ) : (
+                    <span
+                      className={`inline-flex items-center gap-1.5 text-xs ${
+                        r.inRange ? 'text-emerald-400' : 'text-red-400'
                       }`}
                     >
-                      {fmtPnl(r.pnlPct)}
-                    </td>
-                    <td className="py-2.5 pr-3 text-right tabular-nums text-gray-300">
-                      {formatApr(r.aprPct)}
-                    </td>
-                    <td className="py-2.5 pr-3 text-right text-gray-400">
-                      {fmtAge(r.ageMs)}
-                    </td>
-                    <td className="py-2.5 pr-3 text-right whitespace-nowrap space-x-1">
-                      {isClosed ? (
-                        <span className="text-xs text-gray-600">—</span>
-                      ) : (
-                        <>
-                          {r.kind === 'clmm' ? (
-                            <>
-                              <button
-                                type="button"
-                                disabled={!canClaim || !!busy}
-                                onClick={() =>
-                                  r.clmm && setClaimTarget(r.clmm)
-                                }
-                                className="text-xs px-2 py-1 rounded bg-amber-800 hover:bg-amber-700 disabled:bg-gray-800 text-white"
-                              >
-                                Claim
-                              </button>
-                              <button
-                                type="button"
-                                disabled={!!busy}
-                                onClick={() =>
-                                  r.clmm &&
-                                  void runCloseClmm(r.clmm, r.clmmMarkId)
-                                }
-                                className="text-xs px-2 py-1 rounded bg-red-800 hover:bg-red-700 disabled:bg-gray-800 text-white"
-                              >
-                                Close
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              type="button"
-                              disabled={!!busy || !r.damm}
-                              onClick={() => r.damm && setCloseDamm(r.damm)}
-                              className="text-xs px-2 py-1 rounded bg-red-800 hover:bg-red-700 disabled:bg-gray-800 text-white"
-                            >
-                              Close
-                            </button>
-                          )}
-                        </>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+                      <span
+                        className={`h-1.5 w-10 rounded-full ${
+                          r.inRange ? 'bg-emerald-600' : 'bg-red-700'
+                        }`}
+                      />
+                      {r.inRange ? 'In' : 'OOR'}
+                    </span>
+                  )}
+                </td>
+                <td
+                  className={`py-2.5 pr-3 text-right tabular-nums ${
+                    r.pnlPct != null && r.pnlPct >= 0
+                      ? 'text-emerald-400'
+                      : r.pnlPct != null
+                        ? 'text-red-400'
+                        : 'text-gray-500'
+                  }`}
+                >
+                  {fmtPnl(r.pnlPct)}
+                </td>
+                <td className="py-2.5 pr-3 text-right tabular-nums text-gray-300">
+                  {formatApr(r.aprPct)}
+                </td>
+                <td className="py-2.5 pr-3 text-right text-gray-400">
+                  {fmtAge(r.ageMs)}
+                </td>
+                <td className="py-2.5 pr-3 text-right whitespace-nowrap space-x-1">
+                  {isClosed ? (
+                    <span className="text-xs text-gray-600">—</span>
+                  ) : r.kind === 'clmm' ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={!canClaim || !!busy}
+                        onClick={() => r.clmm && setClaimTarget(r.clmm)}
+                        className="text-xs px-2 py-1 rounded bg-amber-800 hover:bg-amber-700 disabled:bg-gray-800 text-white"
+                      >
+                        Claim
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!clmmActionsReady || !!busy}
+                        onClick={() =>
+                          r.clmm && void runCloseClmm(r.clmm, r.clmmMarkId)
+                        }
+                        className="text-xs px-2 py-1 rounded bg-red-800 hover:bg-red-700 disabled:bg-gray-800 text-white"
+                      >
+                        Close
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={!!busy || !r.damm}
+                      onClick={() => r.damm && setCloseDamm(r.damm)}
+                      className="text-xs px-2 py-1 rounded bg-red-800 hover:bg-red-700 disabled:bg-gray-800 text-white"
+                    >
+                      Close
+                    </button>
+                  )}
+                </td>
+              </tr>
+            )
+          })}
+        </PositionsTableShell>
       )}
 
       {claimTarget ? (
