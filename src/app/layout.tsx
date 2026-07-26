@@ -61,15 +61,15 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
-        <WalletProvider>
-          <AppQueryClientProvider>
+        <AppQueryClientProvider>
+          <WalletProvider>
             <div className="min-h-screen bg-black">
               <Header />
               <main className="flex-1">{children}</main>
             </div>
             <McapSimOpenToastHost />
-          </AppQueryClientProvider>
-        </WalletProvider>
+          </WalletProvider>
+        </AppQueryClientProvider>
         {isVercelDeployment && <Analytics />}
         <Script
           src="https://scripts.simpleanalyticscdn.com/latest.js"
