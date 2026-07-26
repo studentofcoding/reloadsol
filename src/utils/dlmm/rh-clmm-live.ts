@@ -76,9 +76,10 @@ export async function crawlRhClmmLive(
   const knownV4Ids = marks
     .filter((m) => m.protocol === 'v4')
     .map((m) => BigInt(m.token_id))
-  const markByKey = new Map(
-    marks.map((m) => [`${m.protocol}:${m.token_id}`, m] as const),
-  )
+  const markByKey = new Map<string, RhClmmPosition>()
+  for (const m of marks) {
+    markByKey.set(`${m.protocol}:${m.token_id}`, m)
+  }
 
   const publicClient = createPublicClient({
     chain: RH_CHAIN,
