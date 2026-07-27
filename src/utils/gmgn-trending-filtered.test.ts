@@ -88,6 +88,25 @@ describe('filterAndSortGmgnTrending', () => {
     expect(passesGmgnFilteredCriteria(mapped!)).toBe(true)
   })
 
+  it('uses the real 5m field when GMGN sends it', () => {
+    const mapped = mapGmgnRankToFilteredToken({
+      ...base,
+      price_change_percent: 55.2,
+      price_change_percent5m: 9.3,
+    })
+    expect(mapped!.change_1h).toBeCloseTo(0.552)
+    expect(mapped!.change_5m).toBeCloseTo(0.093)
+  })
+
+  it('drops a row whose real 5m change is a hard dump even when 1h looks green', () => {
+    const mapped = mapGmgnRankToFilteredToken({
+      ...base,
+      price_change_percent: 929.5,
+      price_change_percent5m: -62.1,
+    })
+    expect(passesGmgnFilteredCriteria(mapped!)).toBe(false)
+  })
+
   it('sorts by organic then abs change', () => {
     const rows: GmgnMarketRankRow[] = [
       {

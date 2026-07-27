@@ -13,7 +13,7 @@ import {
   buildSignalScoringItem,
   type SignalScoringItem,
 } from './signals-scoring'
-import type { SignalsStrategy, SignalsStrategyConfig } from './types'
+import type { SignalsStrategy, SignalsStrategyConfig, StrategyChain } from './types'
 
 export type ScoredSignal = SignalScoringItem & {
   score: number
@@ -184,8 +184,9 @@ async function validateTokensAgainstRugPulls(
 
 export async function fetchAndScoreSignals(
   strategyConfig: SignalsStrategyConfig,
-  options?: { skipRugValidation?: boolean },
+  options?: { skipRugValidation?: boolean; chain?: StrategyChain },
 ): Promise<ScoredSignal[]> {
+  const chain = options?.chain ?? 'sol'
   const { query: queryConfig } = strategyConfig
   const limit = Math.min(queryConfig.limit, 100)
   const recencyMinutes = Math.max(queryConfig.recencyMinutes, 1)
@@ -216,6 +217,8 @@ export async function fetchAndScoreSignals(
   conditions.push(`last_updated_at >= $${params.length}`)
   params.push(Math.min(minGrowth, 10000))
   conditions.push(`mcap_growth_percent >= $${params.length}`)
+  params.push(chain)
+  conditions.push(`chain = $${params.length}`)
   params.push(limit * 5)
   const limitParam = `$${params.length}`
 
@@ -265,7 +268,10 @@ export async function fetchAndScoreSignals(
 
 export async function scoreSignalsForStrategy(
   strategy: SignalsStrategy,
-  options?: { skipRugValidation?: boolean },
+  options?: { skipRugValidation?: boolean; chain?: StrategyChain },
 ): Promise<ScoredSignal[]> {
-  return fetchAndScoreSignals(strategy.config, options)
+  return fetchAndScoreSignals(strategy.config, {
+    ...options,
+    chain: options?.chain ?? strategy.chain ?? 'sol',
+  })
 }

@@ -5,13 +5,21 @@ import { TRENDING_BOT_STRATEGIES } from './registry'
 import type {
   ActiveStrategiesResult,
   ExecutionMode,
+  StrategyChain,
   TokenFilterConfig,
   TrendingBotStrategy,
 } from './types'
 
-let cachedRegistry: Record<string, TrendingBotStrategy> | null = null
-let cacheLoadedAt = 0
+const cachedRegistries = new Map<
+  StrategyChain,
+  { registry: Record<string, TrendingBotStrategy>; loadedAt: number }
+>()
 const CACHE_TTL_MS = 30_000
+
+/** Fallback strategy id per chain (RH has no live path, so its default is the sim twin). */
+export function defaultTrendingStrategyId(chain: StrategyChain): string {
+  return chain === 'robinhood' ? 'att_rh' : 'att'
+}
 
 function getDayTypeInfo() {
   const now = new Date()
@@ -47,19 +55,21 @@ export function validateStrategyConfig(config: TrendingBotStrategy): boolean {
   return true
 }
 
-export async function getMergedTrendingBotRegistry(): Promise<
-  Record<string, TrendingBotStrategy>
-> {
+export async function getMergedTrendingBotRegistry(
+  chain: StrategyChain = 'sol',
+): Promise<Record<string, TrendingBotStrategy>> {
   const now = Date.now()
-  if (cachedRegistry && now - cacheLoadedAt < CACHE_TTL_MS) {
-    return cachedRegistry
+  const cached = cachedRegistries.get(chain)
+  if (cached && now - cached.loadedAt < CACHE_TTL_MS) {
+    return cached.registry
   }
 
-  const rows = await loadStrategyDefinitionRows('trending_bot')
+  const rows = await loadStrategyDefinitionRows('trending_bot', chain)
   const byId = new Map(rows.map((r) => [r.id, r]))
   const merged: Record<string, TrendingBotStrategy> = {}
 
   for (const [id, base] of Object.entries(TRENDING_BOT_STRATEGIES)) {
+    if ((base.chain ?? 'sol') !== chain) continue
     const row = byId.get(id)
     merged[id] = mergeStrategyOverride(
       base,
@@ -71,14 +81,12 @@ export async function getMergedTrendingBotRegistry(): Promise<
     if (row?.execution_mode) merged[id].execution_mode = row.execution_mode
   }
 
-  cachedRegistry = merged
-  cacheLoadedAt = now
+  cachedRegistries.set(chain, { registry: merged, loadedAt: now })
   return merged
 }
 
 export function invalidateStrategyCache(): void {
-  cachedRegistry = null
-  cacheLoadedAt = 0
+  cachedRegistries.clear()
 }
 
 export function isStrategyActive(
@@ -121,8 +129,10 @@ export function isStrategyActive(
   return strategy.is_active
 }
 
-export async function getActiveStrategiesWithState(): Promise<ActiveStrategiesResult> {
-  const registry = await getMergedTrendingBotRegistry()
+export async function getActiveStrategiesWithState(
+  chain: StrategyChain = 'sol',
+): Promise<ActiveStrategiesResult> {
+  const registry = await getMergedTrendingBotRegistry(chain)
 
   const activeStrategyIds = Object.keys(registry).filter((strategyId) =>
     isStrategyActive(strategyId, registry),
@@ -194,7 +204,7 @@ export async function getActiveStrategiesWithState(): Promise<ActiveStrategiesRe
     })
   }
 
-  const defRows = await loadStrategyDefinitionRows('trending_bot')
+  const defRows = await loadStrategyDefinitionRows('trending_bot', chain)
   const defById = new Map(defRows.map((r) => [r.id, r]))
   const executionModes: Record<string, ExecutionMode> = {}
   for (const strategyId of finalActiveStrategies) {
@@ -214,19 +224,24 @@ export async function getActiveStrategiesWithState(): Promise<ActiveStrategiesRe
 
 export async function getTradingStrategy(
   strategyId?: string,
+  chain: StrategyChain = 'sol',
 ): Promise<TrendingBotStrategy> {
-  const registry = await getMergedTrendingBotRegistry()
-  const selectedId = strategyId || process.env.DEFAULT_TRADING_STRATEGY || 'att'
+  const registry = await getMergedTrendingBotRegistry(chain)
+  const fallbackId = defaultTrendingStrategyId(chain)
+  const selectedId =
+    strategyId || process.env.DEFAULT_TRADING_STRATEGY || fallbackId
   const strategy = registry[selectedId]
 
   if (!strategy) {
-    console.warn(`Unknown trading strategy '${selectedId}', falling back to 'att'`)
-    return registry.att
+    console.warn(`Unknown trading strategy '${selectedId}', falling back to '${fallbackId}'`)
+    return registry[fallbackId]
   }
 
   if (!validateStrategyConfig(strategy)) {
-    console.error(`Invalid strategy configuration for '${selectedId}', falling back to 'att'`)
-    return registry.att
+    console.error(
+      `Invalid strategy configuration for '${selectedId}', falling back to '${fallbackId}'`,
+    )
+    return registry[fallbackId]
   }
 
   return strategy
@@ -273,16 +288,22 @@ export async function getUnionFilterForActiveStrategies(): Promise<{
   }
 }
 
-let syncRegistry: Record<string, TrendingBotStrategy> = {
-  ...TRENDING_BOT_STRATEGIES,
-}
+let syncRegistry: Record<string, TrendingBotStrategy> = Object.fromEntries(
+  Object.entries(TRENDING_BOT_STRATEGIES).filter(
+    ([, s]) => (s.chain ?? 'sol') === 'sol',
+  ),
+)
 let syncActiveState: ActiveStrategiesResult | null = null
+let syncChain: StrategyChain = 'sol'
 
-/** Load merged registry + active set once per track POST (sync helpers below). */
-export async function refreshTrackStrategyCache(): Promise<void> {
+/** Load merged registry + active set once per track POST, for one chain. */
+export async function refreshTrackStrategyCache(
+  chain: StrategyChain = 'sol',
+): Promise<void> {
   invalidateStrategyCache()
-  syncRegistry = await getMergedTrendingBotRegistry()
-  syncActiveState = await getActiveStrategiesWithState()
+  syncChain = chain
+  syncRegistry = await getMergedTrendingBotRegistry(chain)
+  syncActiveState = await getActiveStrategiesWithState(chain)
 }
 
 export function getTrackStrategyRegistry(): Record<string, TrendingBotStrategy> {
@@ -290,13 +311,12 @@ export function getTrackStrategyRegistry(): Record<string, TrendingBotStrategy> 
 }
 
 export function resolveTradingStrategy(strategyId?: string): TrendingBotStrategy {
-  const selectedId = strategyId || process.env.DEFAULT_TRADING_STRATEGY || 'att'
+  const fallbackId = defaultTrendingStrategyId(syncChain)
+  const selectedId =
+    strategyId || process.env.DEFAULT_TRADING_STRATEGY || fallbackId
   const strategy = syncRegistry[selectedId]
-  if (!strategy) {
-    return syncRegistry.att
-  }
-  if (!validateStrategyConfig(strategy)) {
-    return syncRegistry.att
+  if (!strategy || !validateStrategyConfig(strategy)) {
+    return syncRegistry[fallbackId]
   }
   return strategy
 }
@@ -321,5 +341,7 @@ export function getActiveStrategiesSync(): ActiveStrategiesResult {
 }
 
 export function getCurrentBotStrategySync(): string {
-  return getActiveStrategiesSync().strategies[0] || 'att'
+  return (
+    getActiveStrategiesSync().strategies[0] ?? defaultTrendingStrategyId(syncChain)
+  )
 }

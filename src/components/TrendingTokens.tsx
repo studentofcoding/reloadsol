@@ -74,10 +74,11 @@ export default function TrendingTokens({
 
   // Fetch complete token data
   useEffect(() => {
-    const fetchTrendingTokens = async () => {
-      setIsLoading(true)
+    const fetchTrendingTokens = async ({ initial }: { initial: boolean }) => {
+      // Background refreshes keep the current rows on screen instead of flashing the spinner.
+      if (initial) setIsLoading(true)
       setError(null)
-      
+
       try {
         let uniqueTokens: TrendingToken[] = []
         // Sol (no chain / sol): Jupiter filtered. RH: GMGN filtered twin.
@@ -108,11 +109,15 @@ export default function TrendingTokens({
       }
     }
     
-    fetchTrendingTokens()
-    
-    // Refresh every 5 minutes (300000 ms)
-    const intervalId = setInterval(fetchTrendingTokens, 5 * 60 * 1000)
-    
+    fetchTrendingTokens({ initial: true })
+
+    // Sol has a separate 10s price poll below; RH refreshes the whole list instead
+    // (server caches the GMGN call for 30s, so this costs one upstream call per window).
+    const refreshMs = chain === 'robinhood' ? 30 * 1000 : 5 * 60 * 1000
+    const intervalId = setInterval(() => {
+      void fetchTrendingTokens({ initial: false })
+    }, refreshMs)
+
     return () => clearInterval(intervalId)
   }, [chain])
 

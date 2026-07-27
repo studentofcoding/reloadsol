@@ -23,8 +23,10 @@ import {
   MCAP_TRACKER_SIM_WALLET,
   SIGNALS_SIM_WALLET,
   SOCIAL_SIM_WALLET,
+  TRENDING_BOT_SIM_WALLET,
+  simWalletForChain,
 } from './sim-wallets'
-import type { StrategyDomain, StrategyOutcomeRow } from './types'
+import type { StrategyChain, StrategyDomain, StrategyOutcomeRow } from './types'
 
 export type AlgoPosition = {
   id: string
@@ -176,7 +178,7 @@ export function mapWalletOpenToAlgoPosition(
     entryPriceUsd: number
   },
   strategyId: string,
-  domain: 'signals' | 'gmgn' | 'social',
+  domain: 'signals' | 'gmgn' | 'social' | 'trending_bot',
   nameById: Map<string, string>,
 ): AlgoPosition {
   return {
@@ -238,8 +240,11 @@ function getTrackerTableName(): string {
  */
 export async function getAlgoPositions(params?: {
   closedLimit?: number
+  chain?: StrategyChain
 }): Promise<AlgoPositionsResult> {
   const closedLimit = params?.closedLimit ?? 100
+  const chain = params?.chain ?? 'sol'
+  const isSol = chain === 'sol'
 
   const [
     defRows,
@@ -249,11 +254,14 @@ export async function getAlgoPositions(params?: {
     signalsRecords,
     gmgnRecords,
     socialRecords,
+    trendingRecords,
     dlmmPositions,
   ] = await Promise.all([
-    loadStrategyDefinitionRows(),
-    listStrategyOutcomes({ limit: closedLimit }),
+    loadStrategyDefinitionRows(undefined, chain),
+    listStrategyOutcomes({ limit: closedLimit, chain }),
     (async (): Promise<TrackerOpenRow[]> => {
+      // The Solana tracker table has no RH twin; RH trending sims live in trading_records.
+      if (!isSol) return []
       try {
         const { rows } = await query<TrackerOpenRow>(
           `SELECT id, token_address, token_symbol, token_name, logo_url,
@@ -268,11 +276,16 @@ export async function getAlgoPositions(params?: {
         throw error
       }
     })(),
-    fetchTradingRecordsForWallet(MCAP_TRACKER_SIM_WALLET),
-    fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET),
-    fetchTradingRecordsForWallet(GMGN_SIM_WALLET),
-    fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET),
-    getPositions(),
+    fetchTradingRecordsForWallet(simWalletForChain(MCAP_TRACKER_SIM_WALLET, chain)),
+    fetchTradingRecordsForWallet(simWalletForChain(SIGNALS_SIM_WALLET, chain)),
+    fetchTradingRecordsForWallet(simWalletForChain(GMGN_SIM_WALLET, chain)),
+    isSol ? fetchTradingRecordsForWallet(SOCIAL_SIM_WALLET) : [],
+    isSol
+      ? []
+      : fetchTradingRecordsForWallet(
+          simWalletForChain(TRENDING_BOT_SIM_WALLET, chain),
+        ),
+    isSol ? getPositions() : [],
   ])
 
   const nameById = new Map(defRows.map((d) => [d.id, d.name]))
@@ -298,6 +311,12 @@ export async function getAlgoPositions(params?: {
     } else if (def.domain === 'social') {
       for (const pos of getOpenStrategySimPositions(socialRecords, def.id)) {
         open.push(mapWalletOpenToAlgoPosition(pos, def.id, 'social', nameById))
+      }
+    } else if (def.domain === 'trending_bot' && !isSol) {
+      for (const pos of getOpenStrategySimPositions(trendingRecords, def.id)) {
+        open.push(
+          mapWalletOpenToAlgoPosition(pos, def.id, 'trending_bot', nameById),
+        )
       }
     }
   }

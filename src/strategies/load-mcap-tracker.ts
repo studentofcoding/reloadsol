@@ -1,28 +1,33 @@
 import { loadStrategyDefinitionRows } from './db'
 import { mergeMcapTrackerStrategy } from './merge-mcap-tracker'
 import { MCAP_TRACKER_STRATEGIES } from './registry'
-import type { McapTrackerStrategy } from './types'
+import type { McapTrackerStrategy, StrategyChain } from './types'
 
-let cached: Record<string, McapTrackerStrategy> | null = null
-let cacheLoadedAt = 0
+const cachedByChain = new Map<
+  StrategyChain,
+  { registry: Record<string, McapTrackerStrategy>; loadedAt: number }
+>()
 const CACHE_TTL_MS = 30_000
 
 export function invalidateMcapTrackerCache(): void {
-  cached = null
-  cacheLoadedAt = 0
+  cachedByChain.clear()
 }
 
-export async function getMergedMcapTrackerRegistry(): Promise<Record<string, McapTrackerStrategy>> {
+export async function getMergedMcapTrackerRegistry(
+  chain: StrategyChain = 'sol',
+): Promise<Record<string, McapTrackerStrategy>> {
   const now = Date.now()
-  if (cached && now - cacheLoadedAt < CACHE_TTL_MS) {
-    return cached
+  const cached = cachedByChain.get(chain)
+  if (cached && now - cached.loadedAt < CACHE_TTL_MS) {
+    return cached.registry
   }
 
-  const rows = await loadStrategyDefinitionRows('mcap_tracker')
+  const rows = await loadStrategyDefinitionRows('mcap_tracker', chain)
   const byId = new Map(rows.map((r) => [r.id, r]))
   const merged: Record<string, McapTrackerStrategy> = {}
 
   for (const [id, base] of Object.entries(MCAP_TRACKER_STRATEGIES)) {
+    if ((base.chain ?? 'sol') !== chain) continue
     const row = byId.get(id)
     merged[id] = mergeMcapTrackerStrategy(
       base,
@@ -57,13 +62,14 @@ export async function getMergedMcapTrackerRegistry(): Promise<Record<string, Mca
     merged[row.id] = mergeMcapTrackerStrategy(cloned, cfg, row.is_active)
   }
 
-  cached = merged
-  cacheLoadedAt = now
+  cachedByChain.set(chain, { registry: merged, loadedAt: now })
   return merged
 }
 
-export async function getActiveMcapTrackerStrategies(): Promise<McapTrackerStrategy[]> {
-  const registry = await getMergedMcapTrackerRegistry()
+export async function getActiveMcapTrackerStrategies(
+  chain: StrategyChain = 'sol',
+): Promise<McapTrackerStrategy[]> {
+  const registry = await getMergedMcapTrackerRegistry(chain)
   return Object.values(registry).filter(
     (s) =>
       s.is_active &&
@@ -74,6 +80,8 @@ export async function getActiveMcapTrackerStrategies(): Promise<McapTrackerStrat
 }
 
 /** @deprecated use getActiveMcapTrackerStrategies */
-export async function getActiveMcapTrackerForSim(): Promise<McapTrackerStrategy[]> {
-  return getActiveMcapTrackerStrategies()
+export async function getActiveMcapTrackerForSim(
+  chain: StrategyChain = 'sol',
+): Promise<McapTrackerStrategy[]> {
+  return getActiveMcapTrackerStrategies(chain)
 }

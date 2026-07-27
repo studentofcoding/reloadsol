@@ -4,10 +4,12 @@ import { isMissingSchemaError } from '@/utils/db-health'
 import { getAgentConfig } from '@/utils/dlmm/db'
 import type { DlmmPosition } from '@/types/dlmm'
 import { notifyStrategyClose } from './strategy-telegram-notify'
+import type { StrategyChain } from './types'
 
 export async function recordTrendingBotOutcome(params: {
   strategyId: string
   tokenAddress: string
+  chain?: StrategyChain
   entryAt?: string | null
   exitAt?: string | null
   pnlPct?: number | null
@@ -18,6 +20,7 @@ export async function recordTrendingBotOutcome(params: {
   await insertStrategyOutcome({
     strategy_id: params.strategyId,
     domain: 'trending_bot',
+    chain: params.chain ?? 'sol',
     token_address: params.tokenAddress,
     entry_at: params.entryAt ?? null,
     exit_at: params.exitAt ?? new Date().toISOString(),
@@ -31,6 +34,7 @@ export async function recordTrendingBotOutcome(params: {
 export async function recordSignalsOutcome(params: {
   strategyId: string
   tokenAddress: string
+  chain?: StrategyChain
   entryAt?: string | null
   exitAt?: string | null
   pnlPct?: number | null
@@ -41,6 +45,7 @@ export async function recordSignalsOutcome(params: {
   await insertStrategyOutcome({
     strategy_id: params.strategyId,
     domain: 'signals',
+    chain: params.chain ?? 'sol',
     token_address: params.tokenAddress,
     entry_at: params.entryAt ?? null,
     exit_at: params.exitAt ?? new Date().toISOString(),
@@ -126,6 +131,7 @@ export async function recordDlmmOutcome(params: {
 export async function recordMcapTrackerOutcome(params: {
   strategyId: string
   tokenAddress: string
+  chain?: StrategyChain
   entryAt?: string | null
   exitAt?: string | null
   pnlPct?: number | null
@@ -136,6 +142,7 @@ export async function recordMcapTrackerOutcome(params: {
   await insertStrategyOutcome({
     strategy_id: params.strategyId,
     domain: 'mcap_tracker',
+    chain: params.chain ?? 'sol',
     token_address: params.tokenAddress,
     entry_at: params.entryAt ?? null,
     exit_at: params.exitAt ?? new Date().toISOString(),
@@ -161,6 +168,7 @@ export async function recordMcapTrackerOutcome(params: {
 export async function recordGmgnOutcome(params: {
   strategyId: string
   tokenAddress: string
+  chain?: StrategyChain
   entryAt?: string | null
   exitAt?: string | null
   pnlPct?: number | null
@@ -171,6 +179,7 @@ export async function recordGmgnOutcome(params: {
   await insertStrategyOutcome({
     strategy_id: params.strategyId,
     domain: 'gmgn',
+    chain: params.chain ?? 'sol',
     token_address: params.tokenAddress,
     entry_at: params.entryAt ?? null,
     exit_at: params.exitAt ?? new Date().toISOString(),

@@ -419,6 +419,7 @@ function ChartsContent() {
     filters: mcapFilters,
     page: 1,
     limit: 50, // Fetch top 50
+    chain: network,
   });
 
   const [symbols, setSymbols] = useState<Record<string, string>>({});

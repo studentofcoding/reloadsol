@@ -47,6 +47,7 @@ import {
   readVolumeAtEntry,
 } from "@/strategies/outcome-features";
 import { DEFAULT_GMGN_RADAR } from "@/strategies/registry";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { notifySyncForActive, readNotifyFlags } from "@/strategies/strategy-notify";
 
 const OUTCOMES_PAGE_SIZE = 100;
@@ -426,6 +427,8 @@ function buildCsvHref(params: {
 
 export default function StrategyAdminHub() {
   const queryClient = useQueryClient();
+  const { network } = useAppNetwork();
+  const isRobinhood = network === "robinhood";
   const [tab, setTab] = useState<TabId>(() => {
     if (typeof window === "undefined") return "config";
     const params = new URLSearchParams(window.location.search);
@@ -501,6 +504,7 @@ export default function StrategyAdminHub() {
     () =>
       [
         "strategy-admin",
+        network,
         reportFrom,
         reportTo,
         reportTz,
@@ -515,6 +519,7 @@ export default function StrategyAdminHub() {
         outcomesOffset,
       ] as const,
     [
+      network,
       reportFrom,
       reportTo,
       reportTz,
@@ -556,6 +561,7 @@ export default function StrategyAdminHub() {
     queryKey: strategyAdminQueryKey,
     queryFn: async () => {
       const reportParams = new URLSearchParams();
+      reportParams.set("chain", network);
       if (reportFrom) reportParams.set("from", reportFrom);
       if (reportTo) reportParams.set("to", reportTo);
       if (reportDomain) reportParams.set("domain", reportDomain);
@@ -578,8 +584,8 @@ export default function StrategyAdminHub() {
       });
 
       const [strRes, outRes, repRes] = await Promise.all([
-        fetch("/api/strategies"),
-        fetch(`/api/strategies/outcomes?${outcomesQuery}`),
+        fetch(`/api/strategies?chain=${network}`),
+        fetch(`/api/strategies/outcomes?${outcomesQuery}&chain=${network}`),
         fetch(`/api/strategies/reports?${reportParams.toString()}`),
       ]);
       const strJson = await strRes.json();
@@ -1068,35 +1074,57 @@ export default function StrategyAdminHub() {
 
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
             <h2 className="text-xl font-bold text-white mb-4">Social strategies</h2>
-            <p className="text-gray-400 text-sm mb-4">
-              Social-only FOMO entry when a token is present only on{" "}
-              <code className="text-xs">social_token_rollups</code> with FOMO mentions &gt;7 in 30m.
-              Paper wallet: <code className="text-xs">social-sim</code>.
-            </p>
-            <div className="grid gap-4 md:grid-cols-2">
-              {social.map((s) => (
-                <SocialCard
-                  key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.entry.minMentions30m}`}
-                  strategy={s}
-                  saving={saving === s.id}
-                  onSave={saveStrategy}
-                />
-              ))}
-            </div>
+            {isRobinhood ? (
+              <p className="text-gray-400 text-sm">
+                Not available on Robinhood — social ingest only resolves Solana
+                mints, so there is no Robinhood candidate feed yet.
+              </p>
+            ) : (
+              <>
+                <p className="text-gray-400 text-sm mb-4">
+                  Social-only FOMO entry when a token is present only on{" "}
+                  <code className="text-xs">social_token_rollups</code> with FOMO mentions &gt;7 in 30m.
+                  Paper wallet: <code className="text-xs">social-sim</code>.
+                </p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {social.map((s) => (
+                    <SocialCard
+                      key={`${s.id}-${s.is_active}-${s.execution_mode}-${s.config.entry.minMentions30m}`}
+                      strategy={s}
+                      saving={saving === s.id}
+                      onSave={saveStrategy}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
           </section>
 
           <section className="bg-gray-900 border border-gray-700 rounded-lg p-6">
             <h2 className="text-xl font-bold text-white mb-4">DLMM thresholds</h2>
-            {dlmm && (
-              <DlmmCard
-                strategy={dlmm}
-                saving={saving === dlmm.id}
-                onSave={saveStrategy}
-              />
+            {isRobinhood ? (
+              <p className="text-gray-400 text-sm">
+                Not available on Robinhood — the LP agent is Meteora-specific.
+                Robinhood LP lives on the{" "}
+                <Link href="/dev/dlmm" className="text-blue-400 underline">
+                  DLMM dashboard
+                </Link>{" "}
+                instead.
+              </p>
+            ) : (
+              <>
+                {dlmm && (
+                  <DlmmCard
+                    strategy={dlmm}
+                    saving={saving === dlmm.id}
+                    onSave={saveStrategy}
+                  />
+                )}
+                <Link href="/dev/dlmm" className="text-blue-400 text-sm underline mt-3 inline-block">
+                  Open DLMM dashboard (enable / dry-run)
+                </Link>
+              </>
             )}
-            <Link href="/dev/dlmm" className="text-blue-400 text-sm underline mt-3 inline-block">
-              Open DLMM dashboard (enable / dry-run)
-            </Link>
           </section>
         </>
       )}

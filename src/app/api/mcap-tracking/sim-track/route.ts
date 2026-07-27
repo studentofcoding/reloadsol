@@ -17,7 +17,10 @@ import { logPatternGateCounterfactual } from '@/strategies/pattern-shadow-log'
 import { attachMlEntryShadow } from '@/strategies/ml-entry-shadow'
 import { mcapTrackerToCanonical } from '@/strategies/canonical-params'
 import { resolveExitOverlayForOpen } from '@/strategies/potential-exit-overlay'
-import type { McapTrackerStrategy } from '@/strategies/types'
+import type { McapTrackerStrategy, StrategyChain } from '@/strategies/types'
+import { STRATEGY_CHAINS } from '@/strategies/types'
+import { simWalletForChain } from '@/strategies/sim-wallets'
+import { getNativeUsd } from '@/utils/native-usd'
 import {
   annotateEntryFeatures,
   evaluateSocialGateFromContext,
@@ -134,6 +137,7 @@ async function ensureCompleteBuyFeaturesForOutcome(params: {
 
 async function openSimPosition(params: {
   strategyId: string
+  chain: StrategyChain
   mintAddress: string
   symbol: string
   solAmount: number
@@ -145,7 +149,9 @@ async function openSimPosition(params: {
   scoredEntryFeatures?: Record<string, unknown> | null
   strategy: McapTrackerStrategy
 }): Promise<void> {
-  const solPrice = await getSolPriceUSD()
+  const simWallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, params.chain)
+  // "sol" amounts are native-token amounts; on robinhood that's ETH.
+  const solPrice = await getNativeUsd(params.chain)
   const priceUsd = 0.000001
   const tokenAmount =
     priceUsd > 0 && solPrice > 0
@@ -210,7 +216,8 @@ async function openSimPosition(params: {
   scoredEntryFeatures = overlayResult.features
 
   const record = buildTradingRecord({
-    walletAddress: MCAP_TRACKER_SIM_WALLET,
+    walletAddress: simWallet,
+    chain: params.chain,
     operationType: 'buy',
     is_simulation: true,
     simulation_type: 'strategy',
@@ -313,6 +320,7 @@ async function openSimPosition(params: {
 
 async function closeSimPosition(params: {
   strategyId: string
+  chain: StrategyChain
   mintAddress: string
   symbol: string
   entryAt: string | null
@@ -321,13 +329,14 @@ async function closeSimPosition(params: {
   snapshot: McapSnapshot
   closeReason: NonNullable<ReturnType<typeof getMcapSimCloseReason>>
 }): Promise<number> {
-  const records = await fetchTradingRecordsForWallet(MCAP_TRACKER_SIM_WALLET)
+  const simWallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, params.chain)
+  const records = await fetchTradingRecordsForWallet(simWallet)
   const cycle = computeOpenTradeCycle(records, params.mintAddress, 'sim')
   if (!cycle) return 0
 
   const exitMcap = params.snapshot.current_mcap
   const pnlPct = computeMcapSimPnlPct(params.entryMcap, exitMcap)
-  const solPrice = await getSolPriceUSD()
+  const solPrice = await getNativeUsd(params.chain)
   const sellPriceUsd = 0.000001
   const remaining = cycle.remainingTokenAmount
   const solReceived =
@@ -336,7 +345,8 @@ async function closeSimPosition(params: {
       : cycle.totalSolBought * (1 + pnlPct / 100)
 
   const record = buildTradingRecord({
-    walletAddress: MCAP_TRACKER_SIM_WALLET,
+    walletAddress: simWallet,
+    chain: params.chain,
     operationType: 'sell',
     is_simulation: true,
     simulation_type: 'strategy',
@@ -407,6 +417,7 @@ async function closeSimPosition(params: {
 
   await recordMcapTrackerOutcome({
     strategyId: params.strategyId,
+    chain: params.chain,
     tokenAddress: params.mintAddress,
     entryAt: params.entryAt,
     exitAt: new Date().toISOString(),
@@ -655,15 +666,19 @@ export async function POST(request: NextRequest) {
   const runOpen = phase === 'open' || phase === 'all'
 
   try {
-    const strategies = await getActiveMcapTrackerStrategies()
     const liveAvailable = isMcapLiveTradingAvailable()
     const results: Array<{
       strategyId: string
+      chain: StrategyChain
       opened: number
       closed: number
       skipped: string[]
       mode: 'sim' | 'live'
     }> = []
+
+    for (const chain of STRATEGY_CHAINS) {
+    const strategies = await getActiveMcapTrackerStrategies(chain)
+    if (strategies.length === 0) continue
 
     const maxRecency = Math.max(
       240,
@@ -673,14 +688,20 @@ export async function POST(request: NextRequest) {
       recencyMinutes: maxRecency,
       recentLimit: 300,
       growthLimit: 100,
+      chain,
     })
     const trackingByMint = new Map(trackingRows.map((r) => [r.token_address, r]))
 
     for (const strategy of strategies) {
-      const execMode = resolveMcapExecutionMode(strategy.execution_mode, liveAvailable)
+      // Robinhood has no live execution path yet — every RH definition stays paper.
+      const execMode =
+        chain === 'robinhood'
+          ? resolveMcapExecutionMode('sim_only', false)
+          : resolveMcapExecutionMode(strategy.execution_mode, liveAvailable)
       if (!execMode.isSimulated && !isMcapLiveStrategyAllowed(strategy.id)) {
         results.push({
           strategyId: strategy.id,
+          chain,
           opened: 0,
           closed: 0,
           skipped: ['live not allowed for this strategy'],
@@ -690,8 +711,10 @@ export async function POST(request: NextRequest) {
       }
 
       const walletAddress = execMode.isSimulated
-        ? MCAP_TRACKER_SIM_WALLET
+        ? simWalletForChain(MCAP_TRACKER_SIM_WALLET, chain)
         : getMcapLiveWallet()
+      const nativeBuyAmount =
+        strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol
       const slippageBps = resolveMcapSlippageBps(strategy.config.execution.slippageBps)
       let records = await fetchTradingRecordsForWallet(walletAddress)
       const openPositions = getOpenPositionsForStrategy(
@@ -760,6 +783,7 @@ export async function POST(request: NextRequest) {
           if (execMode.isSimulated) {
             await closeSimPosition({
               strategyId: strategy.id,
+              chain,
               mintAddress: pos.mintAddress,
               symbol: pos.symbol,
               entryAt: pos.entryAt,
@@ -933,7 +957,7 @@ export async function POST(request: NextRequest) {
               strategyId: strategy.id,
               mintAddress: snapshot.token_address,
               symbol: snapshot.token_symbol,
-              solAmount: strategy.config.execution.simBuySol,
+              solAmount: nativeBuyAmount,
               slippageBps,
               entryMcap: entry.entryMcap,
               entryTemplate: strategy.config.entryTemplate,
@@ -953,9 +977,10 @@ export async function POST(request: NextRequest) {
         } else {
           await openSimPosition({
             strategyId: strategy.id,
+            chain,
             mintAddress: snapshot.token_address,
             symbol: snapshot.token_symbol,
-            solAmount: strategy.config.execution.simBuySol,
+            solAmount: nativeBuyAmount,
             entryMcap: entry.entryMcap,
             entryTemplate: strategy.config.entryTemplate,
             entryAt: entry.entryAt,
@@ -973,11 +998,13 @@ export async function POST(request: NextRequest) {
 
       results.push({
         strategyId: strategy.id,
+        chain,
         opened,
         closed,
         skipped,
         mode: execMode.isSimulated ? 'sim' : 'live',
       })
+    }
     }
 
     log.info('mcap_tracker', 'MCap tracker sim track cycle complete', {

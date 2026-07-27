@@ -119,7 +119,10 @@ export default function LiveTab() {
   const { isRugged: isTokenRugged, markRug, unmarkRug } = useRugList();
   const walletAddress = connected && publicKey ? publicKey.toString() : null;
 
-  const trendingQuery = useLiveTrendingTokens(5 * 60 * 1000);
+  const trendingQuery = useLiveTrendingTokens(
+    network === "robinhood" ? 30 * 1000 : 5 * 60 * 1000,
+    network,
+  );
   const { refetch: refetchTrending } = trendingQuery;
 
   const {
@@ -396,15 +399,21 @@ export default function LiveTab() {
         let fetchedTokens: TrendingToken[] = rawTokens ?? [];
 
         if (!rawTokens) {
-          const response = await fetch("/api/trending?cache=off", {
-            cache: "no-store",
-          });
+          const isRh = network === "robinhood";
+          const response = await fetch(
+            isRh
+              ? "/api/gmgn/trending/filtered?chain=robinhood"
+              : "/api/trending?cache=off",
+            { cache: "no-store" },
+          );
           if (!response.ok) throw new Error("Failed to fetch trending tokens");
           const data = await response.json();
-          fetchedTokens = (data.tokens ?? []).filter((token: TrendingToken) => {
-            const mcap = token.mcap || 0;
-            return mcap > 0 && mcap <= 300000;
-          });
+          fetchedTokens = isRh
+            ? (data.tokens ?? [])
+            : (data.tokens ?? []).filter((token: TrendingToken) => {
+                const mcap = token.mcap || 0;
+                return mcap > 0 && mcap <= 300000;
+              });
         }
 
         fetchedTokens = fetchedTokens.filter(
@@ -501,7 +510,7 @@ export default function LiveTab() {
         setError("Failed to load trending tokens");
       }
     },
-    [ignoredTokenIds, keptTokensData, keptTokenIds],
+    [ignoredTokenIds, keptTokensData, keptTokenIds, network],
   );
 
   const fetchTrendingTokens = useCallback(async () => {

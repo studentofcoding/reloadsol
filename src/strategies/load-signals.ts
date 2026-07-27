@@ -1,28 +1,33 @@
 import { loadStrategyDefinitionRows } from './db'
 import { mergeSignalsStrategy } from './merge-signals'
 import { SIGNALS_STRATEGIES } from './registry'
-import type { SignalsStrategy } from './types'
+import type { SignalsStrategy, StrategyChain } from './types'
 
-let cached: Record<string, SignalsStrategy> | null = null
-let cacheLoadedAt = 0
+const cachedByChain = new Map<
+  StrategyChain,
+  { registry: Record<string, SignalsStrategy>; loadedAt: number }
+>()
 const CACHE_TTL_MS = 30_000
 
 export function invalidateSignalsCache(): void {
-  cached = null
-  cacheLoadedAt = 0
+  cachedByChain.clear()
 }
 
-export async function getMergedSignalsRegistry(): Promise<Record<string, SignalsStrategy>> {
+export async function getMergedSignalsRegistry(
+  chain: StrategyChain = 'sol',
+): Promise<Record<string, SignalsStrategy>> {
   const now = Date.now()
-  if (cached && now - cacheLoadedAt < CACHE_TTL_MS) {
-    return cached
+  const cached = cachedByChain.get(chain)
+  if (cached && now - cached.loadedAt < CACHE_TTL_MS) {
+    return cached.registry
   }
 
-  const rows = await loadStrategyDefinitionRows('signals')
+  const rows = await loadStrategyDefinitionRows('signals', chain)
   const byId = new Map(rows.map((r) => [r.id, r]))
   const merged: Record<string, SignalsStrategy> = {}
 
   for (const [id, base] of Object.entries(SIGNALS_STRATEGIES)) {
+    if ((base.chain ?? 'sol') !== chain) continue
     const row = byId.get(id)
     merged[id] = mergeSignalsStrategy(
       base,
@@ -53,13 +58,14 @@ export async function getMergedSignalsRegistry(): Promise<Record<string, Signals
     )
   }
 
-  cached = merged
-  cacheLoadedAt = now
+  cachedByChain.set(chain, { registry: merged, loadedAt: now })
   return merged
 }
 
-export async function getActiveSignalsForSim(): Promise<SignalsStrategy[]> {
-  const registry = await getMergedSignalsRegistry()
+export async function getActiveSignalsForSim(
+  chain: StrategyChain = 'sol',
+): Promise<SignalsStrategy[]> {
+  const registry = await getMergedSignalsRegistry(chain)
   return Object.values(registry).filter(
     (s) =>
       s.is_active &&
@@ -67,7 +73,10 @@ export async function getActiveSignalsForSim(): Promise<SignalsStrategy[]> {
   )
 }
 
-export async function getSignalsStrategy(id: string): Promise<SignalsStrategy | null> {
-  const registry = await getMergedSignalsRegistry()
+export async function getSignalsStrategy(
+  id: string,
+  chain: StrategyChain = 'sol',
+): Promise<SignalsStrategy | null> {
+  const registry = await getMergedSignalsRegistry(chain)
   return registry[id] ?? null
 }

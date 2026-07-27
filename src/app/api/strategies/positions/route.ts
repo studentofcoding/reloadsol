@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAlgoPositions } from '@/strategies/algo-positions'
+import { parseStrategyChain } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -7,8 +8,9 @@ export async function GET(request: NextRequest) {
   try {
     const limitParam = request.nextUrl.searchParams.get('limit')
     const closedLimit = limitParam ? Math.min(Number(limitParam) || 100, 500) : 100
+    const chain = parseStrategyChain(request.nextUrl.searchParams.get('chain'))
 
-    const { open, closed } = await getAlgoPositions({ closedLimit })
+    const { open, closed } = await getAlgoPositions({ closedLimit, chain })
 
     return NextResponse.json(
       { success: true, open, closed },

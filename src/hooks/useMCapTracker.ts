@@ -63,6 +63,7 @@ interface UseMCapTrackerParams {
   limit: number;
   refetchInterval?: number | false;
   scanPredictive?: boolean;
+  chain?: 'sol' | 'robinhood';
 }
 
 export function useMCapTracker({
@@ -71,12 +72,14 @@ export function useMCapTracker({
   limit,
   refetchInterval = false,
   scanPredictive = false,
+  chain = 'sol',
 }: UseMCapTrackerParams) {
   return useQuery({
-    queryKey: ['mcap-tracker', filters, page, limit, scanPredictive],
+    queryKey: ['mcap-tracker', filters, page, limit, scanPredictive, chain],
     queryFn: async () => {
       const params = new URLSearchParams({
         action: 'list',
+        chain,
         page: page.toString(),
         limit: limit.toString(),
         search: filters.search,

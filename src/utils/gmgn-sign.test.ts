@@ -5,6 +5,7 @@ import {
   GmgnApiError,
   normalizeGmgnPrivateKeyPem,
   signGmgnMessage,
+  unwrapApiData,
 } from './gmgn-api'
 
 function freshEd25519Pem(): { privatePem: string; publicKey: ReturnType<typeof generateKeyPairSync>['publicKey'] } {
@@ -14,6 +15,43 @@ function freshEd25519Pem(): { privatePem: string; publicKey: ReturnType<typeof g
     publicKey,
   }
 }
+
+describe('unwrapApiData', () => {
+  it('unwraps the single envelope used by /v1/token/info', () => {
+    const info = { address: '0xabc', symbol: 'HOOD', price: 1.5 }
+    expect(unwrapApiData({ code: 0, data: info, message: '', reason: '' })).toEqual(info)
+  })
+
+  it('unwraps the double envelope used by /v1/market/rank', () => {
+    const rank = [{ address: '0xabc', symbol: 'HOOD' }]
+    expect(
+      unwrapApiData({
+        code: 0,
+        data: { code: 0, data: { rank }, message: 'success', reason: '' },
+      }),
+    ).toEqual({ rank })
+  })
+
+  it('throws on an error code carried by the inner envelope', () => {
+    expect(() =>
+      unwrapApiData({
+        code: 0,
+        data: { code: 50001, data: null, message: 'chain not supported', reason: '' },
+      }),
+    ).toThrow(/chain not supported/)
+  })
+
+  it('throws on an error code at the outer envelope', () => {
+    expect(() => unwrapApiData({ code: 429, msg: 'rate limited', data: null })).toThrow(
+      GmgnApiError,
+    )
+  })
+
+  it('keeps a payload whose own fields include code but is not an envelope', () => {
+    const payload = { code: 200, symbol: 'HOOD' }
+    expect(unwrapApiData({ code: 0, data: payload })).toEqual(payload)
+  })
+})
 
 describe('buildGmgnSignMessage', () => {
   it('matches gmgn-cli sorted query format', () => {

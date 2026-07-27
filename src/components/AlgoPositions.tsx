@@ -8,6 +8,7 @@ import {
   fetchTokenMetadataBatch,
   type TokenDisplayMeta,
 } from "@/utils/token-metadata-client";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 
 type PositionsResponse = {
   success: boolean;
@@ -170,11 +171,14 @@ function PositionCard({
 
 export default function AlgoPositions() {
   const [tab, setTab] = useState<"open" | "closed">("open");
+  const { network } = useAppNetwork();
 
   const { data, isLoading, error } = useQuery<PositionsResponse>({
-    queryKey: ["algo-positions"],
+    queryKey: ["algo-positions", network],
     queryFn: async () => {
-      const response = await fetch("/api/strategies/positions?limit=100");
+      const response = await fetch(
+        `/api/strategies/positions?limit=100&chain=${network}`,
+      );
       if (!response.ok) throw new Error(`Positions fetch failed (${response.status})`);
       return response.json();
     },

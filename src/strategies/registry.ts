@@ -1,5 +1,16 @@
 import type { TokenFilterConfig, TrendingBotStrategy } from './types'
 
+/**
+ * Robinhood mcap band. Live /v1/market/rank for chain=robinhood puts ~3/4 of the
+ * volume-ranked rows between these bounds; below 300k the book is too thin to fill.
+ */
+export const RH_MCAP_MIN = 300_000
+export const RH_MCAP_MAX = 2_000_000
+
+/** ETH-denominated sim sizes (~$5 entry, ~$3 paper size at 2-4k ETH). */
+export const RH_BUY_AMOUNT_ETH = 0.0015
+export const RH_SIM_BUY_ETH = 0.001
+
 export const DEFAULT_FILTER_CONFIG: TokenFilterConfig = {
   enabled: true,
   mcap: { min: 350_000, max: 3_000_000 },
@@ -143,6 +154,45 @@ export const TRENDING_BOT_STRATEGIES: Record<string, TrendingBotStrategy> = {
       checkManualTradingHistory: true,
     },
   },
+  att_rh: {
+    id: 'att_rh',
+    name: 'Attention Strategy (Robinhood)',
+    description: 'Attention on GMGN robinhood market rank — paper only',
+    is_active: true,
+    chain: 'robinhood',
+    execution_mode: 'sim_only',
+    take_profit_levels: {
+      tp1_percentage: 45,
+      tp1_sell_percentage: 90,
+      tp2_percentage: 100,
+      tp3_percentage: 30,
+      tp3_enabled: false,
+    },
+    // buy_amount_sol is unused on robinhood; buy_amount_native is the live figure.
+    buy_amount_sol: 0.035,
+    buy_amount_native: RH_BUY_AMOUNT_ETH,
+    priority_fee_lamports: 0,
+    stop_loss_percentage: -35,
+    max_hold_hours: 24,
+    conditions: {
+      min_market_cap: RH_MCAP_MIN,
+      max_market_cap: RH_MCAP_MAX,
+      min_organic_score: 0,
+      max_risk_level: 'high',
+    },
+    filtering: {
+      enabled: true,
+      mcap: { min: RH_MCAP_MIN, max: RH_MCAP_MAX },
+      priceChange5m: { max: -50.0 },
+      priceChange1h: { max: 150.0 },
+      priceChange6h: { max: 80.0 },
+      // The RH organic proxy saturates at 100, so a floor here would be a no-op.
+      organicScore: { min: 0 },
+      topHoldersPercentage: { max: 30 },
+      requireCompleteData: false,
+      checkManualTradingHistory: true,
+    },
+  },
 }
 
 export const DEFAULT_SIGNALS_SCORING = {
@@ -203,6 +253,32 @@ export const SIGNALS_STRATEGIES: Record<string, import('./types').SignalsStrateg
       execution: { simBuySol: 0.01, maxOpenPositions: 10 },
     },
   },
+  signals_default_rh: {
+    id: 'signals_default_rh',
+    name: 'Default momentum (Robinhood)',
+    description: 'Enter on strong growth + score floor, robinhood mcap tracking',
+    is_active: true,
+    chain: 'robinhood',
+    execution_mode: 'sim_only',
+    config: {
+      template: 'default',
+      enterScoreFloor: 50,
+      query: {
+        limit: 50,
+        recencyMinutes: 240,
+        minGrowth: 0,
+        holdGrowthFloor: 10,
+        includeStuck: false,
+        maxAgeMinutes: 2880,
+      },
+      scoring: { ...DEFAULT_SIGNALS_SCORING },
+      execution: {
+        simBuySol: 0.01,
+        simBuyNative: RH_SIM_BUY_ETH,
+        maxOpenPositions: 10,
+      },
+    },
+  },
 }
 
 export const DEFAULT_MCAP_TRACKER_EXIT = {
@@ -245,6 +321,44 @@ export const MCAP_TRACKER_STRATEGIES: Record<string, import('./types').McapTrack
       execution: { simBuySol: 0.01, maxOpenPositions: 10 },
       exit: { ...DEFAULT_MCAP_TRACKER_EXIT },
       entry: { ...DEFAULT_MCAP_TRACKER_ENTRY },
+    },
+  },
+  mcap_enter_first_seen_rh: {
+    id: 'mcap_enter_first_seen_rh',
+    name: 'Enter at first seen (Robinhood)',
+    description: 'Paper trade when a robinhood token enters mcap tracking',
+    is_active: true,
+    chain: 'robinhood',
+    execution_mode: 'sim_only',
+    config: {
+      entryTemplate: 'first_seen',
+      query: { recencyMinutes: 240, limit: 300 },
+      execution: {
+        simBuySol: 0.01,
+        simBuyNative: RH_SIM_BUY_ETH,
+        maxOpenPositions: 10,
+      },
+      exit: { ...DEFAULT_MCAP_TRACKER_EXIT },
+      entry: { ...DEFAULT_MCAP_TRACKER_ENTRY, mcapMin: RH_MCAP_MIN, mcapMax: RH_MCAP_MAX },
+    },
+  },
+  mcap_enter_at_80_rh: {
+    id: 'mcap_enter_at_80_rh',
+    name: 'Enter at 80% milestone (Robinhood)',
+    description: 'Paper trade when a robinhood token reaches 80% mcap growth',
+    is_active: true,
+    chain: 'robinhood',
+    execution_mode: 'sim_only',
+    config: {
+      entryTemplate: 'milestone_80',
+      query: { recencyMinutes: 240, limit: 300 },
+      execution: {
+        simBuySol: 0.01,
+        simBuyNative: RH_SIM_BUY_ETH,
+        maxOpenPositions: 10,
+      },
+      exit: { ...DEFAULT_MCAP_TRACKER_EXIT },
+      entry: { ...DEFAULT_MCAP_TRACKER_ENTRY, mcapMin: RH_MCAP_MIN, mcapMax: RH_MCAP_MAX },
     },
   },
 }
@@ -358,6 +472,69 @@ export const GMGN_STRATEGIES: Record<string, import('./types').GmgnStrategy> = {
       execution: { simBuySol: 0.02, maxOpenPositions: 5 },
       exit: { ...DEFAULT_GMGN_EXIT },
       radar: { ...DEFAULT_GMGN_RADAR, comeback: { ...DEFAULT_GMGN_RADAR.comeback }, telegram: { ...DEFAULT_GMGN_RADAR.telegram } },
+    },
+  },
+  gmgn_smartmoney_rh: {
+    id: 'gmgn_smartmoney_rh',
+    name: 'GMGN Smart Money (Robinhood)',
+    description: 'Enter on fresh robinhood smart-money buys that pass the GMGN security gate',
+    is_active: false,
+    chain: 'robinhood',
+    execution_mode: 'sim_only',
+    config: {
+      discovery: {
+        source: 'smartmoney',
+        chain: 'robinhood',
+        side: 'buy',
+        limit: 20,
+        minAmountUsd: 25,
+        maxTradeAgeMinutes: 30,
+        clusterMinWallets: 2,
+        cooldownHours: 24,
+      },
+      security: { ...DEFAULT_GMGN_SECURITY },
+      execution: {
+        simBuySol: 0.02,
+        simBuyNative: RH_SIM_BUY_ETH,
+        maxOpenPositions: 5,
+      },
+      exit: { ...DEFAULT_GMGN_EXIT },
+      radar: {
+        ...DEFAULT_GMGN_RADAR,
+        comeback: { ...DEFAULT_GMGN_RADAR.comeback },
+        telegram: { ...DEFAULT_GMGN_RADAR.telegram },
+      },
+    },
+  },
+  gmgn_kol_momentum_rh: {
+    id: 'gmgn_kol_momentum_rh',
+    name: 'GMGN KOL Momentum (Robinhood)',
+    description: 'Enter on fresh robinhood KOL buys that pass the GMGN security gate',
+    is_active: false,
+    chain: 'robinhood',
+    execution_mode: 'sim_only',
+    config: {
+      discovery: {
+        source: 'kol',
+        chain: 'robinhood',
+        side: 'buy',
+        limit: 20,
+        minAmountUsd: 50,
+        maxTradeAgeMinutes: 30,
+        cooldownHours: 24,
+      },
+      security: { ...DEFAULT_GMGN_SECURITY },
+      execution: {
+        simBuySol: 0.02,
+        simBuyNative: RH_SIM_BUY_ETH,
+        maxOpenPositions: 5,
+      },
+      exit: { ...DEFAULT_GMGN_EXIT },
+      radar: {
+        ...DEFAULT_GMGN_RADAR,
+        comeback: { ...DEFAULT_GMGN_RADAR.comeback },
+        telegram: { ...DEFAULT_GMGN_RADAR.telegram },
+      },
     },
   },
   gmgn_sm_kol_combined: {

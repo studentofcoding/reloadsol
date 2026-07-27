@@ -13,11 +13,12 @@ import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
-import { getSolPriceUSD } from '@/utils/solana'
+import { getNativeUsd } from '@/utils/native-usd'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
-import type { GmgnStrategy } from '@/strategies/types'
+import { simWalletForChain } from '@/strategies/sim-wallets'
+import { STRATEGY_CHAINS, type GmgnStrategy, type StrategyChain } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -153,19 +154,21 @@ function shouldClosePosition(params: {
 
 async function closeSimPosition(params: {
   strategyId: string
+  chain: StrategyChain
   mintAddress: string
   symbol: string
   entryAt: string | null
   entryFeatures: Record<string, unknown>
   closeReason: string
 }): Promise<number> {
-  const records = await fetchTradingRecordsForWallet(GMGN_SIM_WALLET)
+  const simWallet = simWalletForChain(GMGN_SIM_WALLET, params.chain)
+  const records = await fetchTradingRecordsForWallet(simWallet)
   const cycle = computeOpenSimCycle(records, params.mintAddress)
   if (!cycle) return 0
 
-  const prices = await getOpenPositionPrices([params.mintAddress])
+  const prices = await getOpenPositionPrices([params.mintAddress], params.chain)
   const sellPriceUsd = prices[params.mintAddress] || cycle.weightedBuyPriceUsd
-  const solPrice = await getSolPriceUSD()
+  const solPrice = await getNativeUsd(params.chain)
   const remaining = cycle.remainingTokenAmount
   const solReceived =
     sellPriceUsd && solPrice > 0
@@ -178,7 +181,8 @@ async function closeSimPosition(params: {
       : 0
 
   const record = buildTradingRecord({
-    walletAddress: GMGN_SIM_WALLET,
+    walletAddress: simWallet,
+    chain: params.chain,
     operationType: 'sell',
     is_simulation: true,
     simulation_type: 'strategy',
@@ -238,6 +242,7 @@ async function closeSimPosition(params: {
 
   await recordGmgnOutcome({
     strategyId: params.strategyId,
+    chain: params.chain,
     tokenAddress: params.mintAddress,
     entryAt: params.entryAt,
     exitAt: new Date().toISOString(),
@@ -267,15 +272,20 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const strategies = await getActiveGmgnForSim()
-    const records = await fetchTradingRecordsForWallet(GMGN_SIM_WALLET)
     const results: Array<{
       strategyId: string
+      chain: StrategyChain
       discovered: number
       opened: number
       closed: number
       skipped: string[]
     }> = []
+
+    for (const chain of STRATEGY_CHAINS) {
+    const strategies = await getActiveGmgnForSim(chain)
+    if (strategies.length === 0) continue
+    const simWallet = simWalletForChain(GMGN_SIM_WALLET, chain)
+    const records = await fetchTradingRecordsForWallet(simWallet)
 
     for (const strategy of strategies) {
       let opened = 0
@@ -288,12 +298,12 @@ export async function POST(request: NextRequest) {
       const mintsToPrice = openPositions.map((p) => p.mintAddress)
       const prices =
         mintsToPrice.length > 0
-          ? await getOpenPositionPrices(mintsToPrice)
+          ? await getOpenPositionPrices(mintsToPrice, chain)
           : ({} as Record<string, number>)
 
       for (const pos of openPositions) {
         await checkGmgnLiveBoostForOpenPosition({
-          walletAddress: GMGN_SIM_WALLET,
+          walletAddress: simWallet,
           strategyId: strategy.id,
           mintAddress: pos.mintAddress,
           entryAt: pos.entryAt,
@@ -310,6 +320,7 @@ export async function POST(request: NextRequest) {
         if (close) {
           await closeSimPosition({
             strategyId: strategy.id,
+            chain,
             mintAddress: pos.mintAddress,
             symbol: pos.symbol,
             entryAt: pos.entryAt,
@@ -327,7 +338,7 @@ export async function POST(request: NextRequest) {
         recentMints,
       })
 
-      const refreshedRecords = await fetchTradingRecordsForWallet(GMGN_SIM_WALLET)
+      const refreshedRecords = await fetchTradingRecordsForWallet(simWallet)
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 
@@ -359,6 +370,7 @@ export async function POST(request: NextRequest) {
 
       results.push({
         strategyId: strategy.id,
+        chain,
         discovered,
         opened,
         closed,
@@ -367,11 +379,13 @@ export async function POST(request: NextRequest) {
 
       log.info('api_request', 'GMGN sim track cycle', {
         strategy: strategy.id,
+        chain,
         discovered,
         opened,
         closed,
         skipped: skipped.length,
       })
+    }
     }
 
     return NextResponse.json({ success: true, results })

@@ -13,11 +13,13 @@ describe('routeSupportsNetwork', () => {
     expect(routeSupportsNetwork('/pnl', 'robinhood')).toBe(true)
   })
 
-  it('allows DLMM on RH; hides other RH hubs not wired yet', () => {
+  it('allows the strategy hubs on RH; keeps sol-only hubs closed', () => {
     expect(routeSupportsNetwork('/dev/dlmm', 'robinhood')).toBe(true)
-    expect(routeSupportsNetwork('/dev/signals', 'robinhood')).toBe(false)
-    expect(routeSupportsNetwork('/dev/strategies', 'robinhood')).toBe(false)
-    expect(routeSupportsNetwork('/dev/algo-tester', 'robinhood')).toBe(false)
+    expect(routeSupportsNetwork('/dev/signals', 'robinhood')).toBe(true)
+    expect(routeSupportsNetwork('/dev/strategies', 'robinhood')).toBe(true)
+    expect(routeSupportsNetwork('/dev/algo-tester', 'robinhood')).toBe(true)
+    expect(routeSupportsNetwork('/dev/social', 'robinhood')).toBe(false)
+    expect(routeSupportsNetwork('/dev/arbitrage', 'robinhood')).toBe(false)
   })
 
   it('allows sol everywhere in registry', () => {

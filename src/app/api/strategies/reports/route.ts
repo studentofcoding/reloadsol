@@ -4,6 +4,7 @@ import {
   DEFAULT_REPORT_TIMEZONE,
   resolveReportTimeZone,
 } from '@/strategies/best-trade-windows'
+import { parseStrategyChain } from '@/strategies/types'
 import type { StrategyDomain } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
@@ -34,6 +35,7 @@ export async function GET(request: NextRequest) {
       timezone,
     } = await aggregateStrategyReports({
       domain: domain ?? undefined,
+      chain: parseStrategyChain(searchParams.get('chain')),
       strategyId,
       isSimulated,
       from,

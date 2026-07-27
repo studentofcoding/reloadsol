@@ -1,6 +1,6 @@
 import { query, queryOne } from '@/utils/db'
 import type { QueryResultRow } from 'pg'
-import { isValidMintAddress } from '@/utils/jupiter'
+import { isValidAnyChainTokenAddress } from '@/utils/gmgn-currencies'
 import { fetchJupiterPriceRaw } from '@/utils/jupiter-api'
 import {
   fetchJupiterDatapiSearchRaw,
@@ -350,7 +350,7 @@ function buildStrategyPresence(params: {
 }
 
 export async function locateTokenByAddress(address: string): Promise<TokenLocateResult> {
-  if (!isValidMintAddress(address)) {
+  if (!isValidAnyChainTokenAddress(address)) {
     throw new Error('Invalid token address')
   }
 

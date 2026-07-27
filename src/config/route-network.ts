@@ -17,11 +17,11 @@ export const ROUTE_NETWORK_REGISTRY: readonly NetworkRouteEntry[] = [
   { path: '/swap', networks: ['sol', 'robinhood'] },
   { path: '/history', networks: ['sol', 'robinhood'] },
   { path: '/pnl', networks: ['sol', 'robinhood'] },
-  // ponytail: RH hubs hidden until parent/bound active-wallet is wired there
-  { path: '/dev/signals', networks: ['sol'] },
-  { path: '/dev/algo-tester', networks: ['sol'] },
+  // Strategy hubs are open on RH, but RH definitions are paper-only (sim_only).
+  { path: '/dev/signals', networks: ['sol', 'robinhood'] },
+  { path: '/dev/algo-tester', networks: ['sol', 'robinhood'] },
   { path: '/dev/dlmm', networks: ['sol', 'robinhood'] },
-  { path: '/dev/strategies', networks: ['sol'] },
+  { path: '/dev/strategies', networks: ['sol', 'robinhood'] },
   { path: '/dev/rpc-tester', networks: ['sol'] },
   { path: '/dev/token-search', networks: ['sol'] },
   { path: '/dev/ohlc-labels', networks: ['sol'] },

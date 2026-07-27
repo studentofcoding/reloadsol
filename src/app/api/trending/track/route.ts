@@ -43,6 +43,7 @@ import {
   getStrategyStatusSummary,
   getUnionFilterForActiveStrategies,
 } from '@/strategies/load-strategy'
+import { runTrendingBotRhSimCycle } from '@/strategies/trending-bot-rh-sim'
 import { resolveTrendingSimMode } from '@/utils/trending-execution-mode'
 import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
 
@@ -3607,6 +3608,31 @@ async function internalTrackPost(request: NextRequest, logger: any) {
   try {
     await refreshTrackStrategyCache()
 
+    // Validate authentication (server-side only)
+    const { searchParams } = new URL(request.url)
+    const secretKey = searchParams.get('key')
+    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
+
+    // Allow calls from:
+    // 1. Vercel cron jobs (internal calls)
+    // 2. Localhost in development (no secret needed)
+    // 3. Valid secret key (manual/external calls)
+    const isDevelopment = process.env.NODE_ENV === 'development'
+    const isLocalhost = request.headers.get('host')?.includes('localhost') || request.headers.get('host')?.includes('127.0.0.1')
+
+    if (isDevelopment && isLocalhost && !secretKey) {
+      console.log('🔓 Development mode: allowing combined tracking+summary API call without secret key')
+    } else if (secretKey !== expectedSecretKey) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // Robinhood twin runs on GMGN market rank; a failure there must not stop Solana.
+    try {
+      await runTrendingBotRhSimCycle()
+    } catch (rhError) {
+      logger.error('api_request', 'Robinhood trending sim cycle failed', rhError as Error)
+    }
+
     // Log incoming request
     logger.info('api_request', 'Tracking Request Started', {
       userAgent: request.headers.get('user-agent'),
@@ -3636,24 +3662,6 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     }
 
     console.log(`🚀 Starting trading cycle with ${activeStrategies.length} active strategies`)
-
-    // Validate authentication (server-side only)
-    const { searchParams } = new URL(request.url)
-    const secretKey = searchParams.get('key')
-    const expectedSecretKey = process.env.TRENDING_TRACKER_SECRET || 'r3l0ads0l-trending'
-
-    // Allow calls from:
-    // 1. Vercel cron jobs (internal calls)
-    // 2. Localhost in development (no secret needed)
-    // 3. Valid secret key (manual/external calls)
-    const isDevelopment = process.env.NODE_ENV === 'development'
-    const isLocalhost = request.headers.get('host')?.includes('localhost') || request.headers.get('host')?.includes('127.0.0.1')
-
-    if (isDevelopment && isLocalhost && !secretKey) {
-      console.log('🔓 Development mode: allowing combined tracking+summary API call without secret key')
-    } else if (secretKey !== expectedSecretKey) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
 
     // Check trading hours restriction
     const timeCheck = isWithinTradingHours()

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { loadTokenMapChart } from '@/strategies/token-map-chart'
-import { isValidMintAddress } from '@/utils/jupiter'
+import { isValidAnyChainTokenAddress } from '@/utils/gmgn-currencies'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,7 +10,7 @@ export async function GET(request: NextRequest) {
     const address = searchParams.get('address')?.trim() ?? ''
     const hours = Number(searchParams.get('hours') ?? 24)
 
-    if (!address || !isValidMintAddress(address)) {
+    if (!address || !isValidAnyChainTokenAddress(address)) {
       return NextResponse.json(
         { success: false, error: 'Valid address is required' },
         { status: 400 },

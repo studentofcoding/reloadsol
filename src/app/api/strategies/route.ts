@@ -13,11 +13,13 @@ import { getMergedSocialRegistry } from '@/strategies/load-social'
 import { getMergedDlmmStrategy } from '@/strategies/load-dlmm'
 import { TRENDING_BOT_STRATEGIES } from '@/strategies/registry'
 import { mapRegistryToCanonical } from '@/strategies/canonical-params'
+import { parseStrategyChain } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const chain = parseStrategyChain(request.nextUrl.searchParams.get('chain'))
     const [
       registry,
       active,
@@ -28,13 +30,16 @@ export async function GET() {
       socialRegistry,
       dlmmStrategy,
     ] = await Promise.all([
-      getMergedTrendingBotRegistry(),
-      getActiveStrategiesWithState(),
+      getMergedTrendingBotRegistry(chain),
+      getActiveStrategiesWithState(chain),
       getStrategyStatusSummary(),
-      getMergedSignalsRegistry(),
-      getMergedMcapTrackerRegistry(),
-      getMergedGmgnRegistry(),
-      getMergedSocialRegistry(),
+      getMergedSignalsRegistry(chain),
+      getMergedMcapTrackerRegistry(chain),
+      getMergedGmgnRegistry(chain),
+      // social and dlmm stay sol-only; RH gets an explicit not-available panel.
+      chain === 'sol'
+        ? getMergedSocialRegistry()
+        : Promise.resolve({} as Awaited<ReturnType<typeof getMergedSocialRegistry>>),
       getMergedDlmmStrategy(),
     ])
 
@@ -56,6 +61,7 @@ export async function GET() {
 
     return NextResponse.json({
       success: true,
+      chain,
       canonical,
       trending_bot: {
         defaults: TRENDING_BOT_STRATEGIES,

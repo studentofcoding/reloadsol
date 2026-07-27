@@ -1,25 +1,30 @@
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
-import { getSolPriceUSD } from '@/utils/solana'
-import { SIGNALS_SIM_WALLET } from '@/strategies/sim-wallets'
+import { getNativeUsd } from '@/utils/native-usd'
+import { SIGNALS_SIM_WALLET, simWalletForChain } from '@/strategies/sim-wallets'
+import type { StrategyChain } from '@/strategies/types'
 
 export { SIGNALS_SIM_WALLET }
 
 export async function openSignalsSimPosition(params: {
   strategyId: string
+  chain?: StrategyChain
   mintAddress: string
   symbol: string
   solAmount: number
   priceUsd: number
   entryFeatures: Record<string, unknown>
 }): Promise<void> {
-  const solPrice = await getSolPriceUSD()
+  const chain = params.chain ?? 'sol'
+  // solAmount / solPrice are native-token denominated; that's ETH on robinhood.
+  const solPrice = await getNativeUsd(chain)
   const tokenAmount =
     params.priceUsd > 0 && solPrice > 0
       ? (params.solAmount * solPrice) / params.priceUsd
       : params.solAmount * 1000
 
   const record = buildTradingRecord({
-    walletAddress: SIGNALS_SIM_WALLET,
+    walletAddress: simWalletForChain(SIGNALS_SIM_WALLET, chain),
+    chain,
     operationType: 'buy',
     is_simulation: true,
     simulation_type: 'strategy',

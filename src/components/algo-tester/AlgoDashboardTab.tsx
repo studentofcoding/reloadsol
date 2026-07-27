@@ -14,6 +14,7 @@ import { isSimulatedTrackerPosition } from "@/utils/trading-simulation";
 import { useTokenHistory } from "@/hooks/useTokenHistory";
 import { formatAppDate, formatAppDateTime, formatAppNow, getAppLocalDateString } from "@/utils/datetime";
 import { getSummaryTokenGainPct, getEffectiveDisplayStatus, isSkippedTrackerToken, resolveCompletedOutcome } from "@/utils/trending-profit";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 
 // Use alternate tables in local development to avoid prod collisions
 const TRACKER_TABLE =
@@ -157,6 +158,7 @@ function readTradingConfig(): TradingConfig {
 
 export default function AlgoDashboardTab() {
   const router = useRouter();
+  const { network } = useAppNetwork();
   const [statsSimFilter, setStatsSimFilter] = useState<
     "all" | "sim" | "live"
   >("all");
@@ -203,7 +205,7 @@ export default function AlgoDashboardTab() {
   });
 
   useEffect(() => {
-    fetch("/api/strategies")
+    fetch(`/api/strategies?chain=${network}`)
       .then((r) => r.json())
       .then((j) => {
         if (j.success && j.trending_bot) {
@@ -216,7 +218,7 @@ export default function AlgoDashboardTab() {
         }
       })
       .catch(() => {});
-  }, []);
+  }, [network]);
 
   const [activeTab, setActiveTab] = useState<
     "overview" | "tracking" | "winners" | "losers"
@@ -825,6 +827,14 @@ export default function AlgoDashboardTab() {
   return (
     <div className="text-white p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
+        {network === "robinhood" && (
+          <div className="mb-6 rounded-lg border border-amber-700/40 bg-amber-900/20 p-4 text-sm text-amber-200">
+            Robinhood strategies are paper-only and are not written to the
+            Solana trending tracker, so the tables below stay empty. Their
+            positions and outcomes show up under Positions and in the Strategies
+            reports.
+          </div>
+        )}
         <div className="flex items-center justify-between mb-8">
           <h1 className="text-3xl font-bold">reloadSOL Algo tester</h1>
           <button

@@ -1,6 +1,7 @@
 import { query, queryOne } from '@/utils/db'
 import { log } from '@/utils/unified-logger'
 import { formatAppTimeWithZone } from '@/utils/datetime'
+import type { AppNetwork } from '@/utils/app-network'
 
 /** Shared mcap tracker thresholds (no side effects — safe for unit tests). */
 export const STOP_LOSS_THRESHOLD = parseFloat(
@@ -22,6 +23,7 @@ export type TokenLabel = 'valid' | 'traded_live' | 'potential' | 'rugged' | 'wat
 export interface McapSnapshot {
   token_address: string
   token_symbol: string
+  chain?: AppNetwork
   first_mcap: number
   current_mcap: number
   first_seen_at: string
@@ -637,7 +639,8 @@ async function checkAndSendThresholdNotifications(
 export async function trackTokenMcap(
   tokenAddress: string,
   tokenSymbol: string,
-  currentMcap: number
+  currentMcap: number,
+  chain: AppNetwork = 'sol'
 ): Promise<McapTrackingResult> {
   // Validate input data
   if (!currentMcap || currentMcap <= 0) {
@@ -892,6 +895,7 @@ export async function trackTokenMcap(
       const newRecord: McapSnapshot = {
         token_address: tokenAddress,
         token_symbol: tokenSymbol,
+        chain,
         first_mcap: normalizedCurrentMcap,
         current_mcap: normalizedCurrentMcap,
         first_seen_at: currentTime,
@@ -1111,8 +1115,8 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
          when_drop_40pct, when_drop_80pct,
          peak_mcap, peak_growth_percent, peak_seen_at,
          is_tracking_stuck, label,
-         organic_score, top_holders_pct, volume_5m
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+         organic_score, top_holders_pct, volume_5m, chain
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
       [
         record.token_address,
         record.token_symbol,
@@ -1134,6 +1138,7 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
         record.organic_score ?? null,
         record.top_holders_pct ?? null,
         record.volume_5m ?? null,
+        record.chain ?? 'sol',
       ],
     )
 
@@ -1317,7 +1322,8 @@ export async function cleanupOldNotificationRecords(daysOld: number = 7): Promis
 
 // Function to get bulk MCap tracking for multiple tokens
 export async function bulkTrackTokenMcaps(
-  tokens: Array<{ address: string; symbol: string; mcap: number }>
+  tokens: Array<{ address: string; symbol: string; mcap: number }>,
+  chain: AppNetwork = 'sol'
 ): Promise<Map<string, McapTrackingResult>> {
   const results = new Map<string, McapTrackingResult>()
 
@@ -1326,7 +1332,7 @@ export async function bulkTrackTokenMcaps(
   for (let i = 0; i < tokens.length; i += BATCH_SIZE) {
     const batch = tokens.slice(i, i + BATCH_SIZE)
     const batchPromises = batch.map(async token => {
-      const result = await trackTokenMcap(token.address, token.symbol, token.mcap)
+      const result = await trackTokenMcap(token.address, token.symbol, token.mcap, chain)
       return { address: token.address, result }
     })
 
@@ -1438,6 +1444,9 @@ async function ensureMcapEntryMetaColumns(): Promise<void> {
       await query(
         `ALTER TABLE token_mcap_tracking ADD COLUMN IF NOT EXISTS volume_5m NUMERIC`,
       )
+      await query(
+        `ALTER TABLE token_mcap_tracking ADD COLUMN IF NOT EXISTS chain TEXT NOT NULL DEFAULT 'sol'`,
+      )
     })()
       .then(() => undefined)
       .catch((err) => {
@@ -1520,25 +1529,28 @@ export async function fetchMcapSimCandidateRows(params: {
   recentLimit?: number
   growthLimit?: number
   minGrowthPercent?: number
+  chain?: AppNetwork
 }): Promise<McapSnapshot[]> {
   const recencyMinutes = params.recencyMinutes ?? 240
   const recentLimit = params.recentLimit ?? 300
   const growthLimit = params.growthLimit ?? 100
   const minGrowth = params.minGrowthPercent ?? 80
+  const chain = params.chain ?? 'sol'
   const cutoff = new Date(Date.now() - recencyMinutes * 60 * 1000).toISOString()
 
+  await ensureMcapEntryMetaColumns()
   const { rows } = await query<McapSnapshot>(
     `(SELECT * FROM token_mcap_tracking
-      WHERE last_updated_at >= $1
+      WHERE last_updated_at >= $1 AND chain = $5
       ORDER BY last_updated_at DESC
       LIMIT $2)
      UNION ALL
      (SELECT * FROM token_mcap_tracking
-      WHERE last_updated_at >= $1
+      WHERE last_updated_at >= $1 AND chain = $5
         AND mcap_growth_percent >= $3
       ORDER BY mcap_growth_percent DESC
       LIMIT $4)`,
-    [cutoff, recentLimit, minGrowth, growthLimit],
+    [cutoff, recentLimit, minGrowth, growthLimit, chain],
   )
 
   const byAddress = new Map<string, McapSnapshot>()

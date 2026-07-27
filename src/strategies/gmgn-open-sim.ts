@@ -1,6 +1,7 @@
 import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
 import type { GmgnStrategy } from '@/strategies/types'
-import { getSolPriceUSD } from '@/utils/solana'
+import { getNativeUsd } from '@/utils/native-usd'
+import { simWalletForChain } from '@/strategies/sim-wallets'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 
 export const GMGN_SIM_WALLET =
@@ -28,8 +29,12 @@ export async function openGmgnSimPosition(params: {
   entryFeatures: Record<string, unknown>
   entryPriceUsd: number
 }): Promise<void> {
-  const solAmount = params.strategy.config.execution.simBuySol
-  const solPrice = await getSolPriceUSD()
+  const chain = params.strategy.chain ?? 'sol'
+  // solAmount / solPrice are native-token denominated; that's ETH on robinhood.
+  const solAmount =
+    params.strategy.config.execution.simBuyNative ??
+    params.strategy.config.execution.simBuySol
+  const solPrice = await getNativeUsd(chain)
   const priceUsd = params.entryPriceUsd > 0 ? params.entryPriceUsd : 0.000001
   const tokenAmount =
     priceUsd > 0 && solPrice > 0 ? (solAmount * solPrice) / priceUsd : solAmount * 1_000_000
@@ -52,7 +57,8 @@ export async function openGmgnSimPosition(params: {
   )
 
   const record = buildTradingRecord({
-    walletAddress: GMGN_SIM_WALLET,
+    walletAddress: simWalletForChain(GMGN_SIM_WALLET, chain),
+    chain,
     operationType: 'buy',
     is_simulation: true,
     simulation_type: 'strategy',

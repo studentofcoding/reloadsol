@@ -1,28 +1,33 @@
 import { loadStrategyDefinitionRows } from './db'
 import { mergeGmgnStrategy } from './merge-gmgn'
 import { GMGN_STRATEGIES } from './registry'
-import type { GmgnStrategy } from './types'
+import type { GmgnStrategy, StrategyChain } from './types'
 
-let cached: Record<string, GmgnStrategy> | null = null
-let cacheLoadedAt = 0
+const cachedByChain = new Map<
+  StrategyChain,
+  { registry: Record<string, GmgnStrategy>; loadedAt: number }
+>()
 const CACHE_TTL_MS = 30_000
 
 export function invalidateGmgnCache(): void {
-  cached = null
-  cacheLoadedAt = 0
+  cachedByChain.clear()
 }
 
-export async function getMergedGmgnRegistry(): Promise<Record<string, GmgnStrategy>> {
+export async function getMergedGmgnRegistry(
+  chain: StrategyChain = 'sol',
+): Promise<Record<string, GmgnStrategy>> {
   const now = Date.now()
-  if (cached && now - cacheLoadedAt < CACHE_TTL_MS) {
-    return cached
+  const cached = cachedByChain.get(chain)
+  if (cached && now - cached.loadedAt < CACHE_TTL_MS) {
+    return cached.registry
   }
 
-  const rows = await loadStrategyDefinitionRows('gmgn')
+  const rows = await loadStrategyDefinitionRows('gmgn', chain)
   const byId = new Map(rows.map((r) => [r.id, r]))
   const merged: Record<string, GmgnStrategy> = {}
 
   for (const [id, base] of Object.entries(GMGN_STRATEGIES)) {
+    if ((base.chain ?? 'sol') !== chain) continue
     const row = byId.get(id)
     merged[id] = mergeGmgnStrategy(
       base,
@@ -53,13 +58,14 @@ export async function getMergedGmgnRegistry(): Promise<Record<string, GmgnStrate
     )
   }
 
-  cached = merged
-  cacheLoadedAt = now
+  cachedByChain.set(chain, { registry: merged, loadedAt: now })
   return merged
 }
 
-export async function getActiveGmgnForSim(): Promise<GmgnStrategy[]> {
-  const registry = await getMergedGmgnRegistry()
+export async function getActiveGmgnForSim(
+  chain: StrategyChain = 'sol',
+): Promise<GmgnStrategy[]> {
+  const registry = await getMergedGmgnRegistry(chain)
   return Object.values(registry).filter(
     (s) =>
       s.is_active &&

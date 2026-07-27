@@ -8,6 +8,15 @@ export type StrategyDomain =
 
 export type ExecutionMode = 'sim_only' | 'live_only' | 'ab_parallel'
 
+/** Chain a strategy definition runs on. Mirrors AppNetwork / GmgnTradeChain. */
+export type StrategyChain = 'sol' | 'robinhood'
+
+export const STRATEGY_CHAINS: readonly StrategyChain[] = ['sol', 'robinhood']
+
+export function parseStrategyChain(raw: unknown): StrategyChain {
+  return raw === 'robinhood' ? 'robinhood' : 'sol'
+}
+
 export type RiskLevel = 'low' | 'medium' | 'high'
 
 export type SocialGateConfig = {
@@ -42,6 +51,7 @@ export interface TrendingBotStrategy {
   name: string
   description: string
   is_active: boolean
+  chain?: StrategyChain
   execution_mode?: ExecutionMode
   take_profit_levels: {
     tp1_percentage: number
@@ -51,6 +61,8 @@ export interface TrendingBotStrategy {
     tp3_enabled: boolean
   }
   buy_amount_sol: number
+  /** Size in the chain's native token (ETH on robinhood). Falls back to buy_amount_sol on sol. */
+  buy_amount_native?: number
   priority_fee_lamports: number
   stop_loss_percentage: number
   max_hold_hours: number
@@ -110,6 +122,8 @@ export interface SignalsStrategyConfig {
   social?: SocialGateConfig
   execution: {
     simBuySol: number
+    /** Sim size in the chain's native token (ETH on robinhood). */
+    simBuyNative?: number
     maxOpenPositions: number
   }
   notify?: StrategyNotifyConfig
@@ -130,6 +144,7 @@ export interface SignalsStrategy {
   name: string
   description: string
   is_active: boolean
+  chain?: StrategyChain
   execution_mode: ExecutionMode
   config: SignalsStrategyConfig
 }
@@ -179,6 +194,8 @@ export interface McapTrackerStrategyConfig {
   }
   execution: {
     simBuySol: number
+    /** Sim size in the chain's native token (ETH on robinhood). */
+    simBuyNative?: number
     maxOpenPositions: number
     slippageBps?: number
   }
@@ -213,6 +230,7 @@ export interface McapTrackerStrategy {
   name: string
   description: string
   is_active: boolean
+  chain?: StrategyChain
   execution_mode: ExecutionMode
   config: McapTrackerStrategyConfig
 }
@@ -287,7 +305,7 @@ export interface GmgnRadarConfig {
 export interface GmgnStrategyConfig {
   discovery: {
     source: GmgnDiscoverySource
-    chain: 'sol'
+    chain: StrategyChain
     side: 'buy'
     limit: number
     minAmountUsd?: number
@@ -310,6 +328,8 @@ export interface GmgnStrategyConfig {
   }
   execution: {
     simBuySol: number
+    /** Sim size in the chain's native token (ETH on robinhood). */
+    simBuyNative?: number
     maxOpenPositions: number
   }
   exit: {
@@ -344,6 +364,7 @@ export interface GmgnStrategy {
   name: string
   description: string
   is_active: boolean
+  chain?: StrategyChain
   execution_mode: ExecutionMode
   config: GmgnStrategyConfig
 }
@@ -422,6 +443,8 @@ export interface McapTrackerReportStats {
 export interface StrategyDefinitionRow {
   id: string
   domain: StrategyDomain
+  /** Always set by the DB mapper; optional so pre-chain payloads still type-check. */
+  chain?: StrategyChain
   name: string
   description: string | null
   config: Record<string, unknown>
@@ -435,6 +458,8 @@ export interface StrategyOutcomeRow {
   id: string
   strategy_id: string
   domain: StrategyDomain
+  /** Always set by the DB mapper; optional so pre-chain payloads still type-check. */
+  chain?: StrategyChain
   token_address: string | null
   entry_at: string | null
   exit_at: string | null

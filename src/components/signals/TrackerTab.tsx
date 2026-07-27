@@ -15,6 +15,7 @@ import {
   McapTrackingData,
 } from "@/hooks/useMCapTracker";
 import { useTokenAnalytics } from "@/hooks/useTokenAnalytics";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import type { EnrichedTokenData } from "@/utils/data-aggregation";
 import {
   deriveTrackerTokenInsights,
@@ -140,6 +141,7 @@ export default function TrackerTab() {
   const pathname = usePathname();
   const urlSearch = searchParams.get("search")?.trim() ?? "";
   const queryClient = useQueryClient();
+  const { network } = useAppNetwork();
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(100);
   const [refetchingTokens, setRefetchingTokens] = useState<Set<string>>(
@@ -219,6 +221,7 @@ export default function TrackerTab() {
     filters: queryFilters,
     page,
     limit,
+    chain: network,
   });
 
   const error = queryError ? queryError.message : "";

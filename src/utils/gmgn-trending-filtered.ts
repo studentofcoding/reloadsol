@@ -40,7 +40,12 @@ export function normalizePriceChangeToFraction(raw: unknown): number {
   return Math.abs(n) > 1 ? n / 100 : n
 }
 
-/** Proxy 0–100 from GMGN social/hot signals (no Jupiter organic_score). */
+/**
+ * Proxy 0–100 from GMGN social/hot signals (no Jupiter organic_score).
+ * ponytail: saturates at 100 on robinhood, where smart_degen_count/renowned_count
+ * run 50–150, so the >= 70 gate is a no-op there and the effective filter is the
+ * mcap band plus change_5m. Upgrade path: percentile-rank the counts per chain.
+ */
 export function gmgnOrganicScoreProxy(row: GmgnMarketRankRow): number {
   const hot = num(row.hot_level)
   const smart = num(row.smart_degen_count)
@@ -54,6 +59,10 @@ export function mapGmgnRankToFilteredToken(
   const address = String(row.address ?? '').trim()
   if (!address) return null
   const change = normalizePriceChangeToFraction(row.price_change_percent)
+  const change5m =
+    row.price_change_percent5m == null
+      ? change
+      : normalizePriceChangeToFraction(row.price_change_percent5m)
   const mcap = num(row.market_cap)
   const logo =
     typeof row.logo === 'string'
@@ -66,8 +75,7 @@ export function mapGmgnRankToFilteredToken(
     token_address: address,
     price: num((row as { price?: unknown }).price),
     change_1h: change,
-    // ponytail: one 1h rank call — reuse as change_5m until a second interval fetch
-    change_5m: change,
+    change_5m: change5m,
     volume_1h: num(row.volume),
     mcap,
     logo_url: logo,

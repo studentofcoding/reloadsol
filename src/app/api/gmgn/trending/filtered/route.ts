@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { GmgnApiError, marketTrending } from '@/utils/gmgn-api'
+import { GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
-import {
-  filterAndSortGmgnTrending,
-  GMGN_FILTERED_CRITERIA,
-} from '@/utils/gmgn-trending-filtered'
+import { GMGN_FILTERED_CRITERIA } from '@/utils/gmgn-trending-filtered'
+import { getFilteredGmgnTrending } from '@/utils/gmgn-trending-feed'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,24 +22,12 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const rank = await marketTrending({
-      chain,
-      interval: '1h',
-      limit: 100,
-      minMarketcap: GMGN_FILTERED_CRITERIA.min_mcap,
-      orderBy: 'volume',
-      direction: 'desc',
-    })
-
-    const { tokens, total_before_filter, total_after_filter } =
-      filterAndSortGmgnTrending(rank)
+    const feed = await getFilteredGmgnTrending(chain)
 
     return NextResponse.json({
-      tokens,
+      ...feed,
       filtered: true,
       filter_criteria: GMGN_FILTERED_CRITERIA,
-      total_before_filter,
-      total_after_filter,
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

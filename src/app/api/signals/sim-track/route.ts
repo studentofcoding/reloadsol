@@ -16,10 +16,12 @@ import { computeOpenSimCycle } from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
-import { getSolPriceUSD } from '@/utils/solana'
+import { getNativeUsd } from '@/utils/native-usd'
 import { computeMcapSimPnlPct } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
+import { simWalletForChain } from '@/strategies/sim-wallets'
+import { STRATEGY_CHAINS, type StrategyChain } from '@/strategies/types'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -79,6 +81,7 @@ function getOpenPositionsForStrategy(
 
 async function closeSimPosition(params: {
   strategyId: string
+  chain: StrategyChain
   mintAddress: string
   symbol: string
   entryAt: string | null
@@ -86,13 +89,14 @@ async function closeSimPosition(params: {
   exitMcap?: number | null
   exitGrowthPercent?: number | null
 }): Promise<number> {
-  const records = await fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET_LOCAL)
+  const simWallet = simWalletForChain(SIGNALS_SIM_WALLET_LOCAL, params.chain)
+  const records = await fetchTradingRecordsForWallet(simWallet)
   const cycle = computeOpenSimCycle(records, params.mintAddress)
   if (!cycle) return 0
 
-  const prices = await getOpenPositionPrices([params.mintAddress])
+  const prices = await getOpenPositionPrices([params.mintAddress], params.chain)
   const sellPriceUsd = prices[params.mintAddress] || cycle.weightedBuyPriceUsd
-  const solPrice = await getSolPriceUSD()
+  const solPrice = await getNativeUsd(params.chain)
   const remaining = cycle.remainingTokenAmount
   const solReceived =
     sellPriceUsd && solPrice > 0
@@ -119,7 +123,8 @@ async function closeSimPosition(params: {
   }
 
   const record = buildTradingRecord({
-    walletAddress: SIGNALS_SIM_WALLET_LOCAL,
+    walletAddress: simWallet,
+    chain: params.chain,
     operationType: 'sell',
     is_simulation: true,
     simulation_type: 'strategy',
@@ -189,6 +194,7 @@ async function closeSimPosition(params: {
 
   await recordSignalsOutcome({
     strategyId: params.strategyId,
+    chain: params.chain,
     tokenAddress: params.mintAddress,
     entryAt: params.entryAt,
     exitAt: new Date().toISOString(),
@@ -221,14 +227,19 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const strategies = await getActiveSignalsForSim()
-    const records = await fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET_LOCAL)
     const results: Array<{
       strategyId: string
+      chain: StrategyChain
       opened: number
       closed: number
       skipped: string[]
     }> = []
+
+    for (const chain of STRATEGY_CHAINS) {
+    const strategies = await getActiveSignalsForSim(chain)
+    if (strategies.length === 0) continue
+    const simWallet = simWalletForChain(SIGNALS_SIM_WALLET_LOCAL, chain)
+    const records = await fetchTradingRecordsForWallet(simWallet)
 
     for (const strategy of strategies) {
       const openPositions = getOpenPositionsForStrategy(records, strategy.id)
@@ -237,7 +248,7 @@ export async function POST(request: NextRequest) {
       let closed = 0
       const skipped: string[] = []
 
-      const scored = await scoreSignalsForStrategy(strategy)
+      const scored = await scoreSignalsForStrategy(strategy, { chain })
       const scoredByMint = new Map(scored.map((s) => [s.token_address, s]))
 
       for (const pos of openPositions) {
@@ -252,7 +263,7 @@ export async function POST(request: NextRequest) {
         })
 
         await checkGmgnLiveBoostForOpenPosition({
-          walletAddress: SIGNALS_SIM_WALLET_LOCAL,
+          walletAddress: simWallet,
           strategyId: strategy.id,
           mintAddress: pos.mintAddress,
           entryAt: pos.entryAt,
@@ -264,6 +275,7 @@ export async function POST(request: NextRequest) {
         if (decision === 'exit') {
           await closeSimPosition({
             strategyId: strategy.id,
+            chain,
             mintAddress: pos.mintAddress,
             symbol: signal?.token_symbol || pos.symbol,
             entryAt: pos.entryAt,
@@ -276,7 +288,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const refreshedRecords = await fetchTradingRecordsForWallet(SIGNALS_SIM_WALLET_LOCAL)
+      const refreshedRecords = await fetchTradingRecordsForWallet(simWallet)
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
       const maxOpen = strategy.config.execution.maxOpenPositions
 
@@ -353,9 +365,11 @@ export async function POST(request: NextRequest) {
 
         await openSignalsSimPosition({
           strategyId: strategy.id,
+          chain,
           mintAddress: signal.token_address,
           symbol,
-          solAmount: strategy.config.execution.simBuySol,
+          solAmount:
+            strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol,
           priceUsd,
           entryFeatures: overlayResult.features,
         })
@@ -363,7 +377,8 @@ export async function POST(request: NextRequest) {
         openMintSet.add(signal.token_address)
       }
 
-      results.push({ strategyId: strategy.id, opened, closed, skipped })
+      results.push({ strategyId: strategy.id, chain, opened, closed, skipped })
+    }
     }
 
     log.info('mcap_tracker', 'Sim track cycle complete', { results })

@@ -32,6 +32,11 @@ import {
 import { evaluateGmgnSecurity } from './gmgn-security-gate'
 import { fetchJupiterMarketHints } from '@/utils/jupiter-metadata'
 
+function positive(v: unknown): number | null {
+  const n = typeof v === 'number' ? v : Number(v)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
 export type GmgnDiscoveryCandidate = {
   tokenAddress: string
   symbol: string
@@ -214,10 +219,11 @@ export async function gateGmgnCandidates(params: {
       }),
     )
 
-    const hints = await fetchJupiterMarketHints(candidate.tokenAddress)
-    const priceUsd =
-      hints?.usdPrice != null && hints.usdPrice > 0 ? hints.usdPrice : null
-    const mcapUsd = hints?.mcap != null && hints.mcap > 0 ? hints.mcap : null
+    // Jupiter only knows Solana mints; on other chains GMGN's own token info is the price source.
+    const hints =
+      chain === 'sol' ? await fetchJupiterMarketHints(candidate.tokenAddress) : null
+    const priceUsd = positive(hints?.usdPrice) ?? positive(info.price)
+    const mcapUsd = positive(hints?.mcap) ?? positive(info.market_cap)
     const priceHistory = await fetchRecentSocialEvents(candidate.tokenAddress, 30)
     const { previousPriceUsd, stickyBaselineUsd, stickySinceIso } =
       extractRadarPriceStateFromEvents(priceHistory)

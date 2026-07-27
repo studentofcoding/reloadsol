@@ -31,7 +31,9 @@ import {
   DEFAULT_REPORT_TIMEZONE,
   resolveReportTimeZone,
 } from './best-trade-windows'
+import { parseStrategyChain } from './types'
 import type {
+  StrategyChain,
   StrategyDefinitionRow,
   StrategyDomain,
   StrategyOutcomeRow,
@@ -50,6 +52,28 @@ import type {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+let ensureChainColumnsPromise: Promise<void> | null = null
+
+/** Idempotent guard so chain reads/writes work before 24-strategy-chain.sql is applied. */
+async function ensureStrategyChainColumns(): Promise<void> {
+  if (!ensureChainColumnsPromise) {
+    ensureChainColumnsPromise = (async () => {
+      await query(
+        `ALTER TABLE strategy_definitions ADD COLUMN IF NOT EXISTS chain TEXT NOT NULL DEFAULT 'sol'`,
+      )
+      await query(
+        `ALTER TABLE strategy_outcomes ADD COLUMN IF NOT EXISTS chain TEXT NOT NULL DEFAULT 'sol'`,
+      )
+    })()
+      .then(() => undefined)
+      .catch((err) => {
+        ensureChainColumnsPromise = null
+        throw err
+      })
+  }
+  await ensureChainColumnsPromise
 }
 
 function toIso(value: unknown): string {
@@ -80,6 +104,7 @@ function mapStrategyDefinitionRow(row: Record<string, unknown>): StrategyDefinit
   return {
     id: String(row.id),
     domain: row.domain as StrategyDomain,
+    chain: parseStrategyChain(row.chain),
     name: String(row.name),
     description: row.description != null ? String(row.description) : null,
     config: parseJsonObject(row.config),
@@ -95,6 +120,7 @@ function mapStrategyOutcomeRow(row: Record<string, unknown>): StrategyOutcomeRow
     id: String(row.id),
     strategy_id: String(row.strategy_id),
     domain: row.domain as StrategyDomain,
+    chain: parseStrategyChain(row.chain),
     token_address: row.token_address != null ? String(row.token_address) : null,
     entry_at: toIsoOrNull(row.entry_at),
     exit_at: toIsoOrNull(row.exit_at),
@@ -116,6 +142,7 @@ function getTrackerTableName(): string {
 type OutcomeFilterParams = {
   strategyId?: string
   domain?: StrategyDomain
+  chain?: StrategyChain
   isSimulated?: boolean
   from?: string
   to?: string
@@ -142,6 +169,10 @@ function buildOutcomeWhereClause(params: OutcomeFilterParams): {
   if (params.domain) {
     values.push(params.domain)
     conditions.push(`domain = $${values.length}`)
+  }
+  if (params.chain) {
+    values.push(params.chain)
+    conditions.push(`chain = $${values.length}`)
   }
   if (params.isSimulated !== undefined) {
     values.push(params.isSimulated)
@@ -196,18 +227,23 @@ function buildOutcomeWhereClause(params: OutcomeFilterParams): {
 
 export async function loadStrategyDefinitionRows(
   domain?: StrategyDomain,
+  chain?: StrategyChain,
 ): Promise<StrategyDefinitionRow[]> {
   try {
+    await ensureStrategyChainColumns()
+    const wheres: string[] = []
+    const params: unknown[] = []
     if (domain) {
-      const { rows } = await query<Record<string, unknown>>(
-        `SELECT * FROM strategy_definitions WHERE domain = $1`,
-        [domain],
-      )
-      return rows.map(mapStrategyDefinitionRow)
+      params.push(domain)
+      wheres.push(`domain = $${params.length}`)
     }
-
+    if (chain) {
+      params.push(chain)
+      wheres.push(`chain = $${params.length}`)
+    }
     const { rows } = await query<Record<string, unknown>>(
-      `SELECT * FROM strategy_definitions`,
+      `SELECT * FROM strategy_definitions${wheres.length ? ` WHERE ${wheres.join(' AND ')}` : ''}`,
+      params,
     )
     return rows.map(mapStrategyDefinitionRow)
   } catch (error) {
@@ -414,6 +450,7 @@ export async function listMarketRegimeTags(limit = 30): Promise<
 async function strategyOutcomeExists(params: {
   strategy_id: string
   domain: StrategyDomain
+  chain: StrategyChain
   token_address: string
   entry_at: string
 }): Promise<boolean> {
@@ -424,8 +461,15 @@ async function strategyOutcomeExists(params: {
          AND domain = $2
          AND token_address = $3
          AND entry_at = $4
+         AND chain = $5
        LIMIT 1`,
-      [params.strategy_id, params.domain, params.token_address, params.entry_at],
+      [
+        params.strategy_id,
+        params.domain,
+        params.token_address,
+        params.entry_at,
+        params.chain,
+      ],
     )
     return !!row
   } catch (error) {
@@ -440,6 +484,7 @@ async function strategyOutcomeExists(params: {
 export async function insertStrategyOutcome(params: {
   strategy_id: string
   domain: StrategyDomain
+  chain?: StrategyChain
   token_address: string
   entry_at?: string | null
   exit_at?: string | null
@@ -448,6 +493,7 @@ export async function insertStrategyOutcome(params: {
   is_simulated?: boolean
   features?: Record<string, unknown> | null
 }): Promise<void> {
+  const chain = params.chain ?? 'sol'
   if (
     params.domain === 'mcap_tracker' &&
     params.token_address &&
@@ -456,6 +502,7 @@ export async function insertStrategyOutcome(params: {
     const exists = await strategyOutcomeExists({
       strategy_id: params.strategy_id,
       domain: params.domain,
+      chain,
       token_address: params.token_address,
       entry_at: params.entry_at,
     })
@@ -495,11 +542,12 @@ export async function insertStrategyOutcome(params: {
   })
 
   try {
+    await ensureStrategyChainColumns()
     const { rows: inserted } = await query<{ id: string }>(
       `INSERT INTO strategy_outcomes (
          strategy_id, domain, token_address, entry_at, exit_at,
-         pnl_pct, status, is_simulated, features
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         pnl_pct, status, is_simulated, features, chain
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
       [
         params.strategy_id,
@@ -511,6 +559,7 @@ export async function insertStrategyOutcome(params: {
         params.status ?? null,
         params.is_simulated ?? true,
         JSON.stringify(features),
+        chain,
       ],
     )
     const outcomeId = inserted[0]?.id ?? null
@@ -529,6 +578,7 @@ export async function insertStrategyOutcome(params: {
 export async function listStrategyOutcomes(params: {
   strategyId?: string
   domain?: StrategyDomain
+  chain?: StrategyChain
   isSimulated?: boolean
   from?: string
   to?: string
@@ -1240,6 +1290,7 @@ export async function listTopPnlByActiveStrategy(
 
 export async function aggregateStrategyReports(params: {
   domain?: StrategyDomain
+  chain?: StrategyChain
   strategyId?: string
   isSimulated?: boolean
   from?: string
@@ -1332,7 +1383,7 @@ export async function aggregateStrategyReports(params: {
 
   breakdown.sort((a, b) => b.win_rate - a.win_rate)
 
-  const defRows = await loadStrategyDefinitionRows()
+  const defRows = await loadStrategyDefinitionRows(undefined, params.chain)
   const breakdownByKey = new Map(
     breakdown.map((b) => [`${b.domain}|${b.strategy_id}|${b.is_simulated}`, b]),
   )

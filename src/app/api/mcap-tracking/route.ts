@@ -4,6 +4,7 @@ import { query, queryOne } from '@/utils/db'
 import { getSolPriceUSD } from '@/utils/solana'
 import { getAppLocalParts } from '@/utils/datetime'
 import { log } from '@/utils/unified-logger'
+import { parseStrategyChain } from '@/strategies/types'
 import {
   buildTrackActionToasts,
   pushHighPerformersToast,
@@ -31,6 +32,7 @@ function getTimeFilterCutoff(timeFilter: string): Date | null {
 }
 
 type McapListFilterParams = {
+  chain?: string
   search?: string
   timeFilter?: string
   performanceFilter?: string
@@ -51,6 +53,11 @@ function buildMcapListWhere(params: McapListFilterParams): { sql: string; values
     conditions.push('first_mcap IS NOT NULL')
     conditions.push('first_mcap > 0')
     conditions.push('current_mcap > 0')
+  }
+
+  if (params.chain) {
+    values.push(params.chain)
+    conditions.push(`chain = $${values.length}`)
   }
 
   if (params.search) {
@@ -148,6 +155,7 @@ export async function GET(request: NextRequest) {
       const solPriceUSD = await getSolPriceUSD()
 
       const filterParams: McapListFilterParams = {
+        chain: parseStrategyChain(searchParams.get('chain')),
         search,
         timeFilter,
         performanceFilter,

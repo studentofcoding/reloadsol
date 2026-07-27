@@ -90,6 +90,14 @@ export function isValidTradeTokenAddress(
   return /^[1-9A-HJ-NP-Za-km-z]+$/.test(a)
 }
 
+/** Address formats are disjoint across chains, so callers that don't know the chain can accept either. */
+export function isValidAnyChainTokenAddress(address: string): boolean {
+  return (
+    isValidTradeTokenAddress('sol', address) ||
+    isValidTradeTokenAddress('robinhood', address)
+  )
+}
+
 export function parseTradeTokenAddresses(
   chain: GmgnTradeChain,
   input: string,

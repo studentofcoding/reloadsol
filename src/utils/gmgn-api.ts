@@ -115,25 +115,41 @@ function parseResetAt(headers: Headers, body: unknown): number | undefined {
   return undefined
 }
 
-function unwrapApiData<T>(body: unknown): T {
+/** `{ code, data }` shape — `/v1/market/rank` nests one of these inside another. */
+function isGmgnEnvelope(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return (
+    (typeof record.code === 'number' || typeof record.code === 'string') &&
+    'data' in record
+  )
+}
+
+function readGmgnErrorMessage(record: Record<string, unknown>, code: unknown): string {
+  for (const key of ['msg', 'message', 'reason']) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  return `GMGN API error (code=${String(code)})`
+}
+
+export function unwrapApiData<T>(body: unknown): T {
   if (!body || typeof body !== 'object') {
     throw new GmgnApiError('Invalid GMGN API response')
   }
-  const record = body as Record<string, unknown>
-  const code = record.code
-  if (code !== 0 && code !== '0') {
-    const msg =
-      typeof record.msg === 'string'
-        ? record.msg
-        : typeof record.message === 'string'
-          ? record.message
-          : `GMGN API error (code=${String(code)})`
-    throw new GmgnApiError(msg, String(code))
+  let current: unknown = body
+  // Peel every envelope layer: each one carries its own code/message to check.
+  for (;;) {
+    const record = current as Record<string, unknown>
+    const code = record.code
+    if (code !== undefined && code !== 0 && code !== '0') {
+      throw new GmgnApiError(readGmgnErrorMessage(record, code), String(code))
+    }
+    if (!('data' in record)) return current as T
+    const inner = record.data
+    if (!isGmgnEnvelope(inner)) return inner as T
+    current = inner
   }
-  if ('data' in record) {
-    return record.data as T
-  }
-  return body as T
 }
 
 /** gmgn-cli signer.js buildMessage — exported for the self-check. */
@@ -385,6 +401,7 @@ export type GmgnMarketRankRow = Record<string, unknown> & {
   twitter_username?: string
   telegram?: string
   price_change_percent?: number
+  price_change_percent5m?: number
   hot_level?: number
   smart_degen_count?: number
   renowned_count?: number

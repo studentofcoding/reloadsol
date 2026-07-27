@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { listStrategyOutcomes } from '@/strategies/db'
 import { resolveEffectiveTrainingClass } from '@/strategies/ml-training-features'
+import { parseStrategyChain } from '@/strategies/types'
 import type { StrategyDomain, StrategyOutcomeRow } from '@/strategies/types'
 import {
   readEntryMcap,
@@ -166,6 +167,7 @@ export async function GET(request: NextRequest) {
     const { rows, total } = await listStrategyOutcomes({
       strategyId,
       domain: domain ?? undefined,
+      chain: parseStrategyChain(searchParams.get('chain')),
       isSimulated,
       from,
       to,

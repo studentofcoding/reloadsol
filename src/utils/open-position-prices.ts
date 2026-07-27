@@ -1,12 +1,16 @@
 import { cacheGet, cacheSet, publishJson } from '@/utils/redis-cache'
 import { GmgnApiError, tokenInfo } from '@/utils/gmgn-api'
 import { getTokenPrices } from '@/utils/jupiter-api'
+import type { GmgnTradeChain } from '@/utils/gmgn-currencies'
+import { RH_CHAIN_ID } from '@/utils/dlmm/rh-clmm/config'
+import { getTokenPriceUsd } from '@/utils/dlmm/rh-clmm/dexscreener'
+import type { Address } from 'viem'
 
 export const OPEN_PRICES_CHANNEL = 'prices:open'
 const OPEN_PRICE_TTL_SEC = 5
 const GMGN_CONCURRENCY = 4
 
-export type OpenPriceSource = 'gmgn' | 'jupiter'
+export type OpenPriceSource = 'gmgn' | 'jupiter' | 'dexscreener'
 
 export type OpenPriceEvent = {
   mint: string
@@ -78,10 +82,12 @@ async function writeAndPublish(
 
 /**
  * Near-realtime USD prices for open-position mints.
- * Redis TTL 5s → GMGN tokenInfo → Jupiter fallback. Publishes on write.
+ * Redis TTL 5s → GMGN tokenInfo → fallback (Jupiter on sol, DexScreener on robinhood).
+ * Publishes on write.
  */
 export async function getOpenPositionPrices(
   mints: string[],
+  chain: GmgnTradeChain = 'sol',
 ): Promise<Record<string, number>> {
   const unique = Array.from(new Set(mints.filter(Boolean)))
   if (unique.length === 0) return {}
@@ -107,7 +113,7 @@ export async function getOpenPositionPrices(
   if (!skipGmgn) {
     const gmgnResults = await mapPool(missing, GMGN_CONCURRENCY, async (mint) => {
       try {
-        const info = await tokenInfo({ chain: 'sol', address: mint })
+        const info = await tokenInfo({ chain, address: mint })
         const price = parseGmgnTokenPriceUsd(info)
         return { mint, price }
       } catch (err) {
@@ -131,17 +137,34 @@ export async function getOpenPositionPrices(
   }
 
   if (stillMissing.length > 0) {
-    try {
-      const jup = await getTokenPrices(stillMissing)
-      for (const mint of stillMissing) {
-        const price = jup[mint]
-        if (typeof price === 'number' && Number.isFinite(price) && price > 0) {
-          out[mint] = price
-          await writeAndPublish(mint, price, 'jupiter')
+    // Jupiter has no robinhood coverage; DexScreener indexes the RH DEXes.
+    if (chain === 'robinhood') {
+      await Promise.all(
+        stillMissing.map(async (mint) => {
+          try {
+            const price = await getTokenPriceUsd(RH_CHAIN_ID, mint as Address)
+            if (price != null && price > 0) {
+              out[mint] = price
+              await writeAndPublish(mint, price, 'dexscreener')
+            }
+          } catch (err) {
+            console.warn('[open-position-prices] DexScreener fallback failed:', err)
+          }
+        }),
+      )
+    } else {
+      try {
+        const jup = await getTokenPrices(stillMissing)
+        for (const mint of stillMissing) {
+          const price = jup[mint]
+          if (typeof price === 'number' && Number.isFinite(price) && price > 0) {
+            out[mint] = price
+            await writeAndPublish(mint, price, 'jupiter')
+          }
         }
+      } catch (err) {
+        console.warn('[open-position-prices] Jupiter fallback failed:', err)
       }
-    } catch (err) {
-      console.warn('[open-position-prices] Jupiter fallback failed:', err)
     }
   }
 
