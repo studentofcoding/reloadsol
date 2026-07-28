@@ -19,6 +19,21 @@ describe('rh-clmm-live helpers', () => {
     expect(rhClmmLiveCacheKey('0xABC')).toBe('rh-clmm-live:v1:0xabc')
   })
 
+  it('upsert conflict SQL keeps closed marks closed', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const src = readFileSync(
+      join(process.cwd(), 'src/utils/dlmm/rh-clmm-db.ts'),
+      'utf8',
+    )
+    expect(src).toContain(
+      "WHEN rh_clmm_positions.status = 'closed' THEN rh_clmm_positions.status",
+    )
+    expect(src).toContain(
+      "WHEN rh_clmm_positions.status = 'closed' THEN rh_clmm_positions.closed_at",
+    )
+  })
+
   it('round-trips mark → live → onChain for claim sheet', () => {
     const mark: RhClmmPosition = {
       id: 'm1',

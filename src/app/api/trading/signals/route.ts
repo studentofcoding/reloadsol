@@ -11,6 +11,7 @@ import {
   scoreStage1PatternBatch,
 } from '@/strategies/signals-early-pattern-cache'
 import type { SignalsStrategyConfig } from '@/strategies/types'
+import { parseDbChain } from '@/utils/app-network-db'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,6 +47,7 @@ export async function GET(request: NextRequest) {
     const strategyTemplate = (searchParams.get('strategy') || 'default') as
       | 'default'
       | 'sell_over_100'
+    const chain = parseDbChain(searchParams.get('chain'))
 
     const strategyConfig: SignalsStrategyConfig = {
       template: strategyTemplate,
@@ -74,7 +76,7 @@ export async function GET(request: NextRequest) {
       execution: { simBuySol: 0.01, maxOpenPositions: 10 },
     }
 
-    const rawSignals = await fetchAndScoreSignals(strategyConfig)
+    const rawSignals = await fetchAndScoreSignals(strategyConfig, { chain })
 
     // Pattern ML shadow on Stage-1 candidates (display only; never gates enter)
     const signals = await enrichSignalsWithPatternShadow(rawSignals)
@@ -96,6 +98,7 @@ export async function GET(request: NextRequest) {
           symbol: alert.tokenSymbol,
           entry_mcap: alert.entryMcap,
           rationale: alert.rationale,
+          chain,
         },
       }))
       void insertSocialEvents(earlyEvents).catch((err) => {
@@ -125,11 +128,18 @@ export async function GET(request: NextRequest) {
           const { resolveStrategyDisplayName } = await import(
             '@/strategies/strategy-telegram-notify'
           )
+          // RH has signals_default_rh only (no sell_over_100 twin).
           const signalsId =
-            strategyTemplate === 'sell_over_100'
-              ? 'signals_sell_over_100'
-              : 'signals_default'
-          const signalsStrategy = await getSignalsStrategy(signalsId)
+            chain === 'robinhood'
+              ? 'signals_default_rh'
+              : strategyTemplate === 'sell_over_100'
+                ? 'signals_sell_over_100'
+                : 'signals_default'
+          const mcapIds =
+            chain === 'robinhood'
+              ? (['mcap_enter_first_seen_rh', 'mcap_enter_at_80_rh'] as const)
+              : (['mcap_enter_first_seen', 'mcap_enter_at_80'] as const)
+          const signalsStrategy = await getSignalsStrategy(signalsId, chain)
           const notify = readNotifyFlags(signalsStrategy?.config.notify)
           if (!notify.telegram && !notify.ui) {
             return
@@ -140,8 +150,8 @@ export async function GET(request: NextRequest) {
             fetchMcapTrackingRow(alert.tokenAddress),
           ])
           if (tracked) {
-            const registry = await getMergedMcapTrackerRegistry()
-            for (const id of ['mcap_enter_first_seen', 'mcap_enter_at_80'] as const) {
+            const registry = await getMergedMcapTrackerRegistry(chain)
+            for (const id of mcapIds) {
               if (registry[id]?.is_active) strategyIds.push(id)
             }
           }
@@ -176,12 +186,28 @@ export async function GET(request: NextRequest) {
     log.info('mcap_tracker', 'Generated trading signals', {
       count: signals.length,
       earlyAlerts: earlyAlerts.length,
-      params: { limit, recencyMinutes, minGrowth, includeStuck, maxAgeMinutes, strategy: strategyTemplate },
+      params: {
+        limit,
+        recencyMinutes,
+        minGrowth,
+        includeStuck,
+        maxAgeMinutes,
+        strategy: strategyTemplate,
+        chain,
+      },
     })
 
     return NextResponse.json({
       success: true,
-      params: { limit, recencyMinutes, minGrowth, includeStuck, maxAgeMinutes, strategy: strategyTemplate },
+      params: {
+        limit,
+        recencyMinutes,
+        minGrowth,
+        includeStuck,
+        maxAgeMinutes,
+        strategy: strategyTemplate,
+        chain,
+      },
       stats: { returnedSignals: signals.length, earlyAlerts: earlyAlerts.length },
       signals,
     })

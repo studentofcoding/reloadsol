@@ -40,8 +40,23 @@ export function useCreateRhClmmMark() {
       if (!res.ok) throw new Error(data.error || 'Create failed')
       return data as { success: boolean; position: RhClmmPosition }
     },
-    onSuccess: () => {
+    onSuccess: async (data) => {
       void qc.invalidateQueries({ queryKey: ['rh-clmm-positions'] })
+      const owner = data.position?.owner_address
+      if (!owner) return
+      try {
+        const qs = new URLSearchParams({ owner, fresh: '1' })
+        const res = await fetch(`/api/dlmm/rh-clmm-live?${qs}`)
+        const json = (await res.json()) as {
+          success?: boolean
+          positions?: unknown[]
+        }
+        if (json.success && Array.isArray(json.positions)) {
+          qc.setQueryData(['rh-clmm-live', owner], json.positions)
+        }
+      } catch {
+        void qc.invalidateQueries({ queryKey: ['rh-clmm-live', owner] })
+      }
     },
   })
 }

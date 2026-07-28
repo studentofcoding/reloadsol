@@ -242,8 +242,15 @@ export async function upsertRhClmmLiveSnapshots(
            pair_label = EXCLUDED.pair_label,
            current_value_usd = EXCLUDED.current_value_usd,
            pnl_pct = EXCLUDED.pnl_pct,
-           status = 'open',
-           closed_at = NULL,
+           -- Never re-open a mark that the user already closed.
+           status = CASE
+             WHEN rh_clmm_positions.status = 'closed' THEN rh_clmm_positions.status
+             ELSE 'open'
+           END,
+           closed_at = CASE
+             WHEN rh_clmm_positions.status = 'closed' THEN rh_clmm_positions.closed_at
+             ELSE NULL
+           END,
            unclaimed_fees_usd = EXCLUDED.unclaimed_fees_usd,
            in_range = EXCLUDED.in_range,
            tick_lower = EXCLUDED.tick_lower,

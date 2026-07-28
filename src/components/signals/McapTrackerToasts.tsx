@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import type { McapToast } from "@/types/mcap-toasts";
 import { useFastBuy } from "@/hooks/useFastBuy";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import {
   queueBuyMint,
   requestAddTokenToBuy,
@@ -44,11 +45,19 @@ function formatEntryMcap(value?: number): string | null {
 
 function strategyBadgeLabel(strategyId?: string, entryTemplate?: string): string | null {
   if (entryTemplate === "signals_enter") return "Early enter";
-  if (strategyId === "mcap_enter_at_80" || entryTemplate === "milestone_80") {
-    return "Enter at 80%";
+  if (
+    strategyId === "mcap_enter_at_80" ||
+    strategyId === "mcap_enter_at_80_rh" ||
+    entryTemplate === "milestone_80"
+  ) {
+    return strategyId?.endsWith("_rh") ? "Enter at 80% (RH)" : "Enter at 80%";
   }
-  if (strategyId === "mcap_enter_first_seen" || entryTemplate === "first_seen") {
-    return "First seen";
+  if (
+    strategyId === "mcap_enter_first_seen" ||
+    strategyId === "mcap_enter_first_seen_rh" ||
+    entryTemplate === "first_seen"
+  ) {
+    return strategyId?.endsWith("_rh") ? "First seen (RH)" : "First seen";
   }
   return null;
 }
@@ -61,6 +70,8 @@ type McapTrackerToastsProps = {
 
 export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
   const { fastBuy, buyStates, buyConfig } = useFastBuy();
+  const { network } = useAppNetwork();
+  const isRobinhood = network === "robinhood";
   const router = useRouter();
   const pathname = usePathname();
   const [active, setActive] = useState<ActiveToast[]>([]);
@@ -220,16 +231,26 @@ export default function McapTrackerToasts({ toasts }: McapTrackerToastsProps) {
 
             {isCopyTrade && item && (
               <div className="mt-3 flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={buyStates[item.address]?.loading}
-                  onClick={() => void fastBuy(item.address, item.symbol)}
-                  className="rounded bg-white px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {buyStates[item.address]?.loading
-                    ? "Buying…"
-                    : `Buy ${buyConfig.solAmount} SOL`}
-                </button>
+                {isRobinhood ? (
+                  <button
+                    type="button"
+                    onClick={() => handleAddTokenToBuy(item.address)}
+                    className="rounded bg-white px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-gray-100"
+                  >
+                    Open on /buy
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={buyStates[item.address]?.loading}
+                    onClick={() => void fastBuy(item.address, item.symbol)}
+                    className="rounded bg-white px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {buyStates[item.address]?.loading
+                      ? "Buying…"
+                      : `Buy ${buyConfig.solAmount} SOL`}
+                  </button>
+                )}
                 {buyStates[item.address]?.error && (
                   <span className="text-[10px] text-red-200">
                     {buyStates[item.address]?.error}

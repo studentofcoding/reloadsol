@@ -9,6 +9,7 @@ import { useWalletSession } from "./WalletSessionContext";
 import WalletSignInPrompt from "./WalletSignInPrompt";
 import TokenSkeleton from "./TokenSkeleton";
 import { useSolPrice } from "@/hooks/useSolPrice";
+import { RH_CHAIN_ID, txUrl } from "@/utils/dlmm/rh-clmm/config";
 import {
   TRADE_LIST_SORT_OPTIONS,
   compareBySortMode,
@@ -34,6 +35,7 @@ function processTradingRecords(
   walletAddress: string | null,
   rawRecords: TrackingRecord[] | undefined,
   solPriceUsd: number,
+  chain: "sol" | "robinhood" = "sol",
 ): { processedRecords: TrackingRecord[]; stats: TrackingStats | null } {
   if (!walletAddress || !rawRecords) {
     return { processedRecords: [], stats: null };
@@ -41,7 +43,9 @@ function processTradingRecords(
 
   const successfulRecords = rawRecords.filter((record) => record.successCount > 0);
   const processedForConversion = successfulRecords.map((record) => {
+    // Legacy sol quirk: some buys stored USD in solAmount. Skip on RH (amounts are ETH).
     if (
+      chain === "sol" &&
       record.operationType === "buy" &&
       record.solAmount &&
       solPriceUsd > 0 &&
@@ -166,8 +170,8 @@ export default function TradingHistory() {
   const { data: solPriceUsd = 145 } = useSolPrice(300_000);
 
   const { processedRecords, stats } = useMemo(
-    () => processTradingRecords(walletAddress, rawRecords, solPriceUsd),
-    [walletAddress, rawRecords, solPriceUsd],
+    () => processTradingRecords(walletAddress, rawRecords, solPriceUsd, network),
+    [walletAddress, rawRecords, solPriceUsd, network],
   );
 
   const filteredRecords = useMemo(() => {
@@ -306,12 +310,14 @@ export default function TradingHistory() {
     return `${days} day${days !== 1 ? "s" : ""} ago`;
   };
 
-  const openTransactionOnSolscan = (signatures: string[]) => {
+  const openTransactionOnExplorer = (signatures: string[]) => {
     if (signatures && signatures.length > 0) {
-      // Open the first signature on Solscan
       const signature = signatures[0];
-      const solscanUrl = `https://solscan.io/tx/${signature}`;
-      window.open(solscanUrl, "_blank", "noopener,noreferrer");
+      const url =
+        network === "robinhood"
+          ? txUrl(RH_CHAIN_ID, signature)
+          : `https://solscan.io/tx/${signature}`;
+      window.open(url, "_blank", "noopener,noreferrer");
     }
   };
 
@@ -456,8 +462,12 @@ export default function TradingHistory() {
                   ? 'border-purple-500/30 bg-purple-900/10' 
                   : 'border-gray-600/30'
               }`}
-              onClick={() => openTransactionOnSolscan(record.signatures)}
-              title="Click to view transaction on Solscan"
+              onClick={() => openTransactionOnExplorer(record.signatures)}
+              title={
+                network === "robinhood"
+                  ? "Click to view transaction on Blockscout"
+                  : "Click to view transaction on Solscan"
+              }
             > 
               {/* Delete Button */}
               <button

@@ -34,6 +34,10 @@ import { trackSell, trackClose } from "@/utils/operations-api";
 import { usePnLShare } from "@/hooks/usePnLShare";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
 import { useSolPrice } from "@/hooks/useSolPrice";
+import { useRhWalletTokens } from "@/hooks/useRhWalletTokens";
+import { fetchEthUsdSpot } from "@/utils/rh-trade-sim";
+import { RH_CHAIN_ID, txUrl } from "@/utils/dlmm/rh-clmm/config";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import PnLShareModal from "./PnLShareModal";
 import { pnlShareService } from "@/utils/pnl-share-service";
@@ -147,16 +151,27 @@ export default function PnLTracker() {
   const { publicKey, connected, signAllTransactions } = useWallet();
   const { network, walletAddress } = usePortfolioWallet();
   const nativeUnit = network === "robinhood" ? "ETH" : "SOL";
+  const isRobinhood = network === "robinhood";
   const { connection } = useConnection();
   const { status: walletSessionStatus } = useWalletSession();
   const { records, trackOperation, isLoadingRecords, recordsError } =
     useTradingData();
+  const rhWalletTokens = useRhWalletTokens();
   const [pnlRecords, setPnlRecords] = useState<PnLRecord[]>([]);
   const [openPositions, setOpenPositions] = useState<OpenPosition[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const solPriceQuery = useSolPrice();
-  const solPriceUsd = solPriceQuery.data ?? 145;
+  const ethPriceQuery = useQuery({
+    queryKey: ["eth-usd-spot"],
+    queryFn: fetchEthUsdSpot,
+    enabled: isRobinhood,
+    staleTime: 60_000,
+  });
+  const nativePriceUsd = isRobinhood
+    ? (ethPriceQuery.data ?? 3000)
+    : (solPriceQuery.data ?? 145);
+  const solPriceUsd = nativePriceUsd;
   const [activeTab, setActiveTab] = useState<"completed" | "open">("completed");
   const [modeFilter, setModeFilter] = useState<"all" | "real" | "sim">("all");
   const [showAlgoStrategies, setShowAlgoStrategies] = useState<boolean>(() => {
@@ -820,25 +835,33 @@ export default function PnLTracker() {
 
         if (openCycles.size > 0) {
           try {
-            // Prefer Jupiter Portfolio (same as /sell) so Token-2022 / portfolio
-            // holdings attach for Fast Sell; RPC fetchUserTokens as fallback.
             let walletTokens: UserToken[] = [];
-            try {
-              const portfolio = await fetchJupiterPortfolio(
-                publicKey!.toString(),
-              );
-              walletTokens = mapPortfolioToUserTokens(portfolio);
-            } catch (portfolioErr) {
-              console.warn(
-                "Jupiter portfolio unavailable for open positions, falling back to RPC",
-                portfolioErr,
-              );
-              walletTokens = await fetchUserTokens(
-                connection,
-                publicKey!,
-                false,
-                false,
-              );
+            if (isRobinhood) {
+              // RH holdings come from GMGN/Blockscout, not Jupiter portfolio.
+              walletTokens =
+                rhWalletTokens.tokens.length > 0
+                  ? rhWalletTokens.tokens
+                  : (await rhWalletTokens.refetch()).data?.tokens ?? [];
+            } else {
+              // Prefer Jupiter Portfolio (same as /sell) so Token-2022 / portfolio
+              // holdings attach for Fast Sell; RPC fetchUserTokens as fallback.
+              try {
+                const portfolio = await fetchJupiterPortfolio(
+                  publicKey!.toString(),
+                );
+                walletTokens = mapPortfolioToUserTokens(portfolio);
+              } catch (portfolioErr) {
+                console.warn(
+                  "Jupiter portfolio unavailable for open positions, falling back to RPC",
+                  portfolioErr,
+                );
+                walletTokens = await fetchUserTokens(
+                  connection,
+                  publicKey!,
+                  false,
+                  false,
+                );
+              }
             }
 
             // Holdings are source of truth for real opens (drop ghost / sold tokens)
@@ -921,7 +944,7 @@ export default function PnLTracker() {
     } finally {
       setIsLoading(false);
     }
-  }, [walletAddress, records, solPriceUsd, connection, publicKey]);
+  }, [walletAddress, records, solPriceUsd, connection, publicKey, isRobinhood, rhWalletTokens]);
 
   const recordsKey = useMemo(
     () => records.map((r) => `${r.id}:${r.timestamp}`).join("|"),
@@ -1687,7 +1710,7 @@ export default function PnLTracker() {
       const res = await fetch("/api/prices/open/refresh", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mints: mintAddresses }),
+        body: JSON.stringify({ mints: mintAddresses, chain: network }),
       });
       const data = (await res.json()) as {
         success?: boolean;
@@ -1705,7 +1728,7 @@ export default function PnLTracker() {
     } finally {
       setIsRefreshingPrices(false);
     }
-  }, [openMintsKey, applyOpenPrices]);
+  }, [openMintsKey, applyOpenPrices, network]);
 
   // Redis pub/sub → SSE for near-realtime open-card prices
   useEffect(() => {
@@ -2268,11 +2291,13 @@ export default function PnLTracker() {
     return `${days}d ago`;
   };
 
-  const openTransactionOnSolscan = (signatures: string[]) => {
+  const openTransactionOnExplorer = (signatures: string[]) => {
     if (signatures && signatures.length > 0) {
       const signature = signatures[0];
-      const solscanUrl = `https://solscan.io/tx/${signature}`;
-      window.open(solscanUrl, "_blank", "noopener,noreferrer");
+      const url = isRobinhood
+        ? txUrl(RH_CHAIN_ID, signature)
+        : `https://solscan.io/tx/${signature}`;
+      window.open(url, "_blank", "noopener,noreferrer");
     }
   };
 
@@ -2293,7 +2318,7 @@ export default function PnLTracker() {
     return (
       <span className={color}>
         {prefix}
-        {pnl.toFixed(4)} SOL
+        {pnl.toFixed(4)} {nativeUnit}
       </span>
     );
   };
@@ -2316,11 +2341,15 @@ export default function PnLTracker() {
     );
   }
 
-  if (recordsError === "WALLET_SESSION_REQUIRED") {
+  if (recordsError === "WALLET_SESSION_REQUIRED" && !isRobinhood) {
     return <WalletSignInPrompt title="Sign in to load P&amp;L" />;
   }
 
-  if (walletAddress && walletSessionStatus === "signing") {
+  if (
+    !isRobinhood &&
+    walletAddress &&
+    walletSessionStatus === "signing"
+  ) {
     return (
       <div className="">
         <TokenSkeleton count={3} variant="trading-history" />
@@ -2328,7 +2357,11 @@ export default function PnLTracker() {
     );
   }
 
-  if (walletAddress && walletSessionStatus === "error") {
+  if (
+    !isRobinhood &&
+    walletAddress &&
+    walletSessionStatus === "error"
+  ) {
     return <WalletSignInPrompt title="Sign in to load P&amp;L" />;
   }
 
@@ -2518,7 +2551,9 @@ export default function PnLTracker() {
 
         <div className="flex items-center space-x-2">
           {/* ✅ NEW: Bulk sell controls */}
-          {activeTab === "open" && filteredDisplayOpenPositions.length > 0 && (
+          {activeTab === "open" &&
+            !isRobinhood &&
+            filteredDisplayOpenPositions.length > 0 && (
             <div className="flex items-center space-x-2">
               {selectedTokens.size > 0 ? (
                 <>
@@ -2710,7 +2745,7 @@ export default function PnLTracker() {
                               : "border-gray-600/30"
                           }`}
                           onClick={() =>
-                            openTransactionOnSolscan(record.sellSignatures)
+                            openTransactionOnExplorer(record.sellSignatures)
                           }
                           title="Click to view transaction on Solscan"
                         >
@@ -3077,6 +3112,16 @@ export default function PnLTracker() {
                                     📈
                                   </button>
 
+                                  {isRobinhood && !position.isSimulation ? (
+                                    <Link
+                                      href="/sell"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="px-1.5 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                                      title="Sell on /sell"
+                                    >
+                                      Sell
+                                    </Link>
+                                  ) : (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -3111,6 +3156,7 @@ export default function PnLTracker() {
                                       "🔴"
                                     )}
                                   </button>
+                                  )}
                                 </div>
                               </div>
 

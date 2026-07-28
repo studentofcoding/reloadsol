@@ -21,6 +21,7 @@ import {
   readSignalsStrategyTemplate,
   writeSignalsStrategyTemplate,
 } from "@/utils/signals-strategy-id";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
 
 /** ponytail: replace react-draggable — pointer drag on handle selector only */
 function FreeDrag({
@@ -205,6 +206,7 @@ function getInitialChartsState(): {
 
 export default function SignalsTab() {
   const queryClient = useQueryClient();
+  const { network } = useAppNetwork();
   const { connected, publicKey, signAllTransactions } = useWallet();
   const { connection } = useConnection();
   const isClient = useIsClient();
@@ -235,6 +237,7 @@ export default function SignalsTab() {
     includeStuck,
     maxAgeMinutes,
     strategy,
+    chain: network,
   });
 
   const error = queryError ? queryError.message : "";

@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import type { AppNetwork } from '@/utils/app-network';
 
 export interface TradingSignalsParams {
   limit: number;
@@ -7,6 +8,7 @@ export interface TradingSignalsParams {
   includeStuck: boolean;
   maxAgeMinutes: number;
   strategy: "default" | "sell_over_100";
+  chain?: AppNetwork;
 }
 
 export interface SignalItem {
@@ -53,6 +55,7 @@ export function useTradingSignals(params: TradingSignalsParams) {
         includeStuck: params.includeStuck.toString(),
         maxAgeMinutes: params.maxAgeMinutes.toString(),
         strategy: params.strategy,
+        chain: params.chain ?? 'sol',
       }).toString();
 
       const res = await fetch(`/api/trading/signals?${query}`);

@@ -4,7 +4,7 @@
  */
 
 import { createPublicClient, http, type Address } from 'viem'
-import { cacheGet, cacheSet } from '@/utils/redis-cache'
+import { cacheGet, cacheSet, cacheDel } from '@/utils/redis-cache'
 import type { RhClmmLiveRow, RhClmmPosition } from '@/types/dlmm'
 import {
   listRhClmmPositions,
@@ -114,6 +114,13 @@ export async function readRhClmmLiveRedis(
   owner: string,
 ): Promise<RhClmmLiveCachePayload | null> {
   return cacheGet<RhClmmLiveCachePayload>(rhClmmLiveCacheKey(owner))
+}
+
+/** Drop Redis live snapshot so the next poll cannot resurrect a closed NFT. */
+export async function invalidateRhClmmLiveCache(owner: string): Promise<void> {
+  const trimmed = owner.trim()
+  if (!trimmed) return
+  await cacheDel(rhClmmLiveCacheKey(trimmed))
 }
 
 export async function readRhClmmLiveFromDb(

@@ -188,11 +188,6 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = requireWalletSession(request)
-    if (auth instanceof NextResponse) {
-      return auth
-    }
-
     const record = await request.json()
 
     if (!record.id || !record.walletAddress || !record.operationType) {
@@ -202,12 +197,25 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const mismatch = assertSessionWallet(auth.session.address, record.walletAddress)
-    if (mismatch) {
-      return mismatch
-    }
-
     record.chain = parseDbChain(record.chain)
+
+    // Mirror GET: Sol requires signed session; RH accepts 0x portfolio wallet
+    // (RH network is already gated to dev wallets in the client).
+    if (record.chain === 'sol') {
+      const auth = requireWalletSession(request)
+      if (auth instanceof NextResponse) {
+        return auth
+      }
+      const mismatch = assertSessionWallet(auth.session.address, record.walletAddress)
+      if (mismatch) {
+        return mismatch
+      }
+    } else if (!/^0x[a-fA-F0-9]{40}$/.test(String(record.walletAddress))) {
+      return NextResponse.json(
+        { error: 'Robinhood wallet must be a 0x address' },
+        { status: 400 },
+      )
+    }
 
     if (shouldSkipTradingRecord(record)) {
       return NextResponse.json({

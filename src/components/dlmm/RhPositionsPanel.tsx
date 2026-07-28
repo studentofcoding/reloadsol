@@ -30,6 +30,12 @@ import type {
 } from '@/types/dlmm'
 import { liveRowToOnChain } from '@/utils/dlmm/rh-clmm-live-row'
 import { formatApr, formatUsd } from '@/utils/dlmm/format'
+import {
+  alreadyEmptyNotice,
+  clmmPositionKey,
+  findOrphanOpenMarkIds,
+  isAlreadyEmptyCloseError,
+} from '@/utils/dlmm/rh-clmm-already-empty'
 
 type StatusFilter = 'open' | 'oor' | 'closed'
 
@@ -161,6 +167,7 @@ export default function RhPositionsPanel() {
   const [filter, setFilter] = useState<StatusFilter>('open')
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [claimTarget, setClaimTarget] = useState<OnChainPosition | null>(null)
   const [closeDamm, setCloseDamm] = useState<RhUniv2Position | null>(null)
 
@@ -245,11 +252,24 @@ export default function RhPositionsPanel() {
   const liveRows = useMemo(() => liveQuery.data ?? [], [liveQuery.data])
   const isRefreshing = busy === 'refresh'
 
+  async function afterClmmMarkClosed() {
+    const live = await fetchRhClmmLive(wallet.address!, true)
+    queryClient.setQueryData(liveQueryKey, live)
+    await refetchOpenMarks()
+    await refetchClosedClmm()
+  }
+
+  async function markClmmAlreadyEmpty(markId: string) {
+    // Keep last value/PnL; omit close_tx (no on-chain burn).
+    await patchClmm.mutateAsync({ id: markId, status: 'closed' })
+  }
+
   async function refreshAll() {
     setError(null)
+    setNotice(null)
     setBusy('refresh')
     try {
-      const [live] = await Promise.all([
+      const [live, openResult] = await Promise.all([
         fetchRhClmmLive(wallet.address!, true),
         refetchOpenMarks(),
         refetchClosedClmm(),
@@ -258,6 +278,20 @@ export default function RhPositionsPanel() {
         patchDamm.mutateAsync({ action: 'refresh_all' }).catch(() => null),
       ])
       queryClient.setQueryData(liveQueryKey, live)
+
+      const marks = openResult.data?.positions ?? []
+      const liveKeys = new Set(
+        live.map((r) => clmmPositionKey(r.protocol, r.tokenId)),
+      )
+      const orphans = findOrphanOpenMarkIds(marks, liveKeys)
+      if (orphans.length > 0) {
+        for (const o of orphans) {
+          await markClmmAlreadyEmpty(o.markId)
+        }
+        setNotice(alreadyEmptyNotice(orphans.map((o) => o.tokenId)))
+        await refetchOpenMarks()
+        await refetchClosedClmm()
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Refresh failed')
     } finally {
@@ -271,6 +305,7 @@ export default function RhPositionsPanel() {
     markId?: string,
   ) {
     setError(null)
+    setNotice(null)
     setBusy(`close-${tokenId}`)
     try {
       const c = await ctx()
@@ -284,10 +319,24 @@ export default function RhPositionsPanel() {
           pnl_pct: 0,
         })
       }
-      await queryClient.invalidateQueries({ queryKey: liveQueryKey })
-      await refetchOpenMarks()
+      // Same path as manual Refresh — do not re-serve stale Redis via fresh=false.
+      await afterClmmMarkClosed()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Close failed')
+      const msg = e instanceof Error ? e.message : 'Close failed'
+      if (markId && isAlreadyEmptyCloseError(msg)) {
+        try {
+          await markClmmAlreadyEmpty(markId)
+          await afterClmmMarkClosed()
+          setNotice(alreadyEmptyNotice([String(tokenId)]))
+          return
+        } catch (patchErr) {
+          setError(
+            patchErr instanceof Error ? patchErr.message : 'Failed to mark closed',
+          )
+          return
+        }
+      }
+      setError(msg)
     } finally {
       setBusy(null)
     }
@@ -340,18 +389,20 @@ export default function RhPositionsPanel() {
       })
     }
 
-    // Enrich from Redis/API live snapshot
+    // Enrich from Redis/API live snapshot — only for marks still open.
+    // Live-only rows after a close must not resurrect into the Open list.
     for (const r of liveRows) {
       const key = `${r.protocol}:${r.tokenId}`
       const mark = markByKey.get(key)
-      const entry = r.entryValueUsd ?? mark?.entry_value_usd ?? 0
+      if (!mark) continue
+      const entry = r.entryValueUsd ?? mark.entry_value_usd ?? 0
       const pnl =
         r.pnlPct != null
           ? r.pnlPct
           : entry > 0
             ? ((r.valueUsd - entry) / entry) * 100
-            : (mark?.pnl_pct ?? null)
-      const poolAddr = r.poolAddress || mark?.pool_address || ''
+            : (mark.pnl_pct ?? null)
+      const poolAddr = r.poolAddress || mark.pool_address || ''
       byKey.set(key, {
         key: `clmm-${key}`,
         kind: 'clmm',
@@ -364,11 +415,11 @@ export default function RhPositionsPanel() {
         aprPct: poolAddr
           ? (aprByPool.get(poolAddr.toLowerCase()) ?? null)
           : null,
-        ageMs: ageFromIso(r.createdAt ?? mark?.created_at),
+        ageMs: ageFromIso(r.createdAt ?? mark.created_at),
         poolAddress: poolAddr,
         live: true,
         clmm: liveRowToOnChain(r),
-        clmmMarkId: r.markId ?? mark?.id,
+        clmmMarkId: r.markId ?? mark.id,
       })
     }
 
@@ -580,6 +631,9 @@ export default function RhPositionsPanel() {
       {error ? (
         <p className="text-sm text-red-400 break-words">{error}</p>
       ) : null}
+      {notice ? (
+        <p className="text-sm text-emerald-400/90 break-words">{notice}</p>
+      ) : null}
 
       {!wallet.address ? (
         <p className="text-gray-500 text-sm">
@@ -728,7 +782,11 @@ export default function RhPositionsPanel() {
           onClose={() => setClaimTarget(null)}
           onDone={() => {
             setClaimTarget(null)
-            void queryClient.invalidateQueries({ queryKey: liveQueryKey })
+            void (async () => {
+              if (!wallet.address) return
+              const live = await fetchRhClmmLive(wallet.address, true)
+              queryClient.setQueryData(liveQueryKey, live)
+            })()
           }}
         />
       ) : null}

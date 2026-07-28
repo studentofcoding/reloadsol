@@ -17,6 +17,8 @@ describe('mcap-sim-open-alerts', () => {
   it('recognizes manual trade strategies', () => {
     expect(isMcapManualTradeStrategy('mcap_enter_first_seen')).toBe(true)
     expect(isMcapManualTradeStrategy('mcap_enter_at_80')).toBe(true)
+    expect(isMcapManualTradeStrategy('mcap_enter_first_seen_rh')).toBe(true)
+    expect(isMcapManualTradeStrategy('mcap_enter_at_80_rh')).toBe(true)
     expect(isMcapManualTradeStrategy('other')).toBe(false)
   })
 
@@ -27,6 +29,41 @@ describe('mcap-sim-open-alerts', () => {
     expect(strategyLabelForManualTrade('mcap_enter_at_80')).toBe(
       'Enter at 80% milestone',
     )
+    expect(strategyLabelForManualTrade('mcap_enter_first_seen_rh')).toBe(
+      'Enter at first seen (RH)',
+    )
+    expect(strategyLabelForManualTrade('mcap_enter_at_80_rh')).toBe(
+      'Enter at 80% milestone (RH)',
+    )
+  })
+
+  it('records RH manual-trade sim opens into the toast buffer', () => {
+    const first = recordSimOpenAlert({
+      strategyId: 'mcap_enter_first_seen_rh',
+      tokenAddress: '0xMintRH',
+      tokenSymbol: 'RHT',
+      entryMcap: 90_000,
+      entryAt: '2026-07-09T00:00:00.000Z',
+      entryTemplate: 'first_seen',
+    })
+    expect(first).not.toBeNull()
+
+    const eighty = recordSimOpenAlert({
+      strategyId: 'mcap_enter_at_80_rh',
+      tokenAddress: '0xMintRH',
+      tokenSymbol: 'RHT',
+      entryMcap: 160_000,
+      entryAt: '2026-07-09T00:00:00.000Z',
+      entryTemplate: 'milestone_80',
+    })
+    expect(eighty).not.toBeNull()
+
+    const toasts = drainSimOpenAlerts()
+    expect(toasts).toHaveLength(2)
+    expect(toasts.map((t) => t.items?.[0]?.strategyId).sort()).toEqual([
+      'mcap_enter_at_80_rh',
+      'mcap_enter_first_seen_rh',
+    ])
   })
 
   it('records alert once per strategy+mint and peeks as toast without consume', () => {

@@ -4,6 +4,8 @@ import { formatMcapUsd } from '@/utils/telegram'
 export const MCAP_MANUAL_TRADE_STRATEGIES = [
   'mcap_enter_first_seen',
   'mcap_enter_at_80',
+  'mcap_enter_first_seen_rh',
+  'mcap_enter_at_80_rh',
 ] as const
 
 export type McapManualTradeStrategyId = (typeof MCAP_MANUAL_TRADE_STRATEGIES)[number]
@@ -37,8 +39,17 @@ export function isMcapManualTradeStrategy(
 export function strategyLabelForManualTrade(
   strategyId: McapManualTradeStrategyId,
 ): string {
-  if (strategyId === 'mcap_enter_at_80') return 'Enter at 80% milestone'
-  return 'Enter at first seen'
+  if (
+    strategyId === 'mcap_enter_at_80' ||
+    strategyId === 'mcap_enter_at_80_rh'
+  ) {
+    return strategyId.endsWith('_rh')
+      ? 'Enter at 80% milestone (RH)'
+      : 'Enter at 80% milestone'
+  }
+  return strategyId.endsWith('_rh')
+    ? 'Enter at first seen (RH)'
+    : 'Enter at first seen'
 }
 
 function pruneRecentKeys(now: number): void {

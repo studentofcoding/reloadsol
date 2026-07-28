@@ -8,6 +8,7 @@ import {
   listRhClmmPositions,
   updateRhClmmPosition,
 } from '@/utils/dlmm/rh-clmm-db'
+import { invalidateRhClmmLiveCache } from '@/utils/dlmm/rh-clmm-live'
 import { getDlmmDbStatus } from '@/utils/dlmm/db-status'
 
 function getPassword(req: NextRequest): string | null {
@@ -63,6 +64,7 @@ export async function POST(req: NextRequest) {
       mint_tx: body.mint_tx != null ? String(body.mint_tx) : null,
       status: 'open',
     })
+    await invalidateRhClmmLiveCache(position.owner_address)
     return NextResponse.json({ success: true, position })
   } catch (error) {
     if (error instanceof DbUnavailableError) {
@@ -112,6 +114,7 @@ export async function PATCH(req: NextRequest) {
           : undefined,
       pnl_pct: body.pnl_pct != null ? Number(body.pnl_pct) : undefined,
     })
+    await invalidateRhClmmLiveCache(position.owner_address)
     return NextResponse.json({ success: true, position })
   } catch (error) {
     if (error instanceof DbUnavailableError) {
