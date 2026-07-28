@@ -36,6 +36,7 @@ import {
   findOrphanOpenMarkIds,
   isAlreadyEmptyCloseError,
 } from '@/utils/dlmm/rh-clmm-already-empty'
+import { nextCloseProtocolAfterEmpty } from '@/utils/dlmm/rh-clmm-pool-protocol'
 
 type StatusFilter = 'open' | 'oor' | 'closed'
 
@@ -54,6 +55,9 @@ type UnifiedRow = {
   live: boolean
   clmm?: OnChainPosition
   clmmMarkId?: string
+  /** From mark when live OnChainPosition is missing */
+  clmmTokenId?: bigint
+  clmmProtocol?: 'v3' | 'v4'
   damm?: RhUniv2Position
   closedClmm?: RhClmmPosition
   closedDamm?: RhUniv2Position
@@ -309,7 +313,34 @@ export default function RhPositionsPanel() {
     setBusy(`close-${tokenId}`)
     try {
       const c = await ctx()
-      const result = await closeOwnerPosition(c, tokenId, protocol)
+      let result: Awaited<ReturnType<typeof closeOwnerPosition>>
+      try {
+        result = await closeOwnerPosition(c, tokenId, protocol)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Close failed'
+        const retry = nextCloseProtocolAfterEmpty(protocol)
+        if (retry && isAlreadyEmptyCloseError(msg)) {
+          try {
+            result = await closeOwnerPosition(c, tokenId, retry)
+          } catch (e2) {
+            const msg2 = e2 instanceof Error ? e2.message : 'Close failed'
+            if (markId && isAlreadyEmptyCloseError(msg2)) {
+              await markClmmAlreadyEmpty(markId)
+              await afterClmmMarkClosed()
+              setNotice(alreadyEmptyNotice([String(tokenId)]))
+              return
+            }
+            throw e2 instanceof Error ? e2 : new Error(msg2)
+          }
+        } else if (markId && isAlreadyEmptyCloseError(msg)) {
+          await markClmmAlreadyEmpty(markId)
+          await afterClmmMarkClosed()
+          setNotice(alreadyEmptyNotice([String(tokenId)]))
+          return
+        } else {
+          throw e instanceof Error ? e : new Error(msg)
+        }
+      }
       if (markId) {
         await patchClmm.mutateAsync({
           id: markId,
@@ -362,6 +393,8 @@ export default function RhPositionsPanel() {
         poolAddress: m.pool_address,
         live: Boolean(m.live_synced_at),
         clmmMarkId: m.id,
+        clmmTokenId: BigInt(m.token_id),
+        clmmProtocol: m.protocol === 'v4' ? 'v4' : 'v3',
         clmm:
           m.live_synced_at && m.symbol0
             ? liveRowToOnChain({
@@ -420,6 +453,8 @@ export default function RhPositionsPanel() {
         live: true,
         clmm: liveRowToOnChain(r),
         clmmMarkId: r.markId ?? mark.id,
+        clmmTokenId: BigInt(r.tokenId),
+        clmmProtocol: r.protocol === 'v4' ? 'v4' : 'v3',
       })
     }
 
@@ -662,7 +697,13 @@ export default function RhPositionsPanel() {
               r.clmm &&
               (r.clmm.tokensOwed0 > BigInt(0) ||
                 r.clmm.tokensOwed1 > BigInt(0))
-            const clmmActionsReady = r.kind === 'clmm' && r.live && !!r.clmm
+            const closeTokenId = r.clmm?.tokenId ?? r.clmmTokenId
+            const closeProtocol = r.clmm?.protocol ?? r.clmmProtocol
+            const canCloseClmm =
+              r.kind === 'clmm' &&
+              closeTokenId != null &&
+              closeProtocol != null &&
+              !!r.clmmMarkId
             return (
               <tr
                 key={r.key}
@@ -672,8 +713,8 @@ export default function RhPositionsPanel() {
                   <div className="text-white">{r.pair}</div>
                   <div className="text-[10px] text-gray-500">
                     {r.protocolLabel}
-                    {r.clmm
-                      ? ` · #${r.clmm.tokenId.toString()}`
+                    {closeTokenId != null
+                      ? ` · #${closeTokenId.toString()}`
                       : r.closedClmm
                         ? ` · #${r.closedClmm.token_id}`
                         : r.clmmMarkId
@@ -744,12 +785,13 @@ export default function RhPositionsPanel() {
                       </button>
                       <button
                         type="button"
-                        disabled={!clmmActionsReady || !!busy}
+                        disabled={!canCloseClmm || !!busy}
                         onClick={() =>
-                          r.clmm &&
+                          closeTokenId != null &&
+                          closeProtocol != null &&
                           void runCloseClmm(
-                            r.clmm.tokenId,
-                            r.clmm.protocol,
+                            closeTokenId,
+                            closeProtocol,
                             r.clmmMarkId,
                           )
                         }

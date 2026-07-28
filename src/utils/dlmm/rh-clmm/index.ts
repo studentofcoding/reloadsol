@@ -1,4 +1,4 @@
-import type { Address } from 'viem'
+import type { Address, Hex } from 'viem'
 import {
   CHAINS,
   DEFAULT_BALANCE_PERCENT,
@@ -16,6 +16,7 @@ import {
 } from './mint'
 import { listPoolsForToken, loadPool, type ListedPool } from './pools'
 import { listPositions } from './positions'
+import { resolvePoolMintProtocol } from '../rh-clmm-pool-protocol'
 
 export type QuickMintOptions = {
   widthPercent?: number
@@ -24,9 +25,12 @@ export type QuickMintOptions = {
   minPct?: number
   maxPct?: number
   fullRange?: boolean
+  /** LP Terminal: 'v3' | 'v4' | 'univ3' | 'univ4' */
+  protocol?: string
 }
 
 const ZERO = '0x0000000000000000000000000000000000000000'
+const DUAL_V4_ERROR = 'Dual mint is v3-only'
 
 function pickDepositFromLegs(token0: Address, token1: Address): Address {
   const chain = CHAINS[RH_CHAIN_ID]
@@ -56,14 +60,47 @@ async function topPoolAndDeposit(ca: Address) {
   return { pool, depositToken: pickDepositAsset(pool) }
 }
 
-/** Mint into a specific univ3 pool contract (LP Terminal row). */
+/** Mint into a specific univ3 pool contract or univ4 poolId (LP Terminal row). */
 export async function previewMintPool(
-  poolAddress: Address,
+  poolAddress: Address | string,
   ctx: RhClmmCtx,
   opts: QuickMintOptions = {},
 ) {
   return withRhClmmCtx(ctx, async () => {
-    const pool = await loadPool(RH_CHAIN_ID, poolAddress)
+    const protocol = resolvePoolMintProtocol(String(poolAddress), opts.protocol)
+    if (protocol === 'v4') {
+      if (opts.mode === 'dual') throw new Error(DUAL_V4_ERROR)
+      const { loadV4Pool } = await import('./v4')
+      const pool = await loadV4Pool(RH_CHAIN_ID, String(poolAddress) as Hex)
+      const depositToken = pickDepositFromLegs(
+        pool.token0.address,
+        pool.token1.address,
+      )
+      const text = await describeMintPreview({
+        chainId: RH_CHAIN_ID,
+        poolAddress: pool.poolId,
+        poolId: pool.poolId,
+        poolKey: pool.poolKey,
+        protocol: 'v4',
+        depositToken,
+        widthPercent: opts.widthPercent ?? DEFAULT_WIDTH_PERCENT,
+        balancePercent: opts.balancePercent ?? DEFAULT_BALANCE_PERCENT,
+      })
+      return {
+        text,
+        depositToken,
+        token0: pool.token0.address,
+        token1: pool.token1.address,
+        fee: pool.fee,
+        symbol0: pool.token0.symbol,
+        symbol1: pool.token1.symbol,
+        dual: null as DualMintPreview | null,
+        protocol: 'v4' as const,
+      }
+    }
+
+    const addr = poolAddress as Address
+    const pool = await loadPool(RH_CHAIN_ID, addr)
     const depositToken = pickDepositFromLegs(
       pool.token0.address,
       pool.token1.address,
@@ -71,7 +108,7 @@ export async function previewMintPool(
     if (opts.mode === 'dual') {
       const dual: DualMintPreview = await describeDualMintPreview({
         chainId: RH_CHAIN_ID,
-        poolAddress,
+        poolAddress: addr,
         depositToken,
         balancePercent: opts.balancePercent ?? DEFAULT_BALANCE_PERCENT,
         minPct: opts.minPct ?? -10,
@@ -87,11 +124,12 @@ export async function previewMintPool(
         symbol0: pool.token0.symbol,
         symbol1: pool.token1.symbol,
         dual,
+        protocol: 'v3' as const,
       }
     }
     const text = await describeMintPreview({
       chainId: RH_CHAIN_ID,
-      poolAddress,
+      poolAddress: addr,
       protocol: 'v3',
       depositToken,
       widthPercent: opts.widthPercent ?? DEFAULT_WIDTH_PERCENT,
@@ -106,17 +144,40 @@ export async function previewMintPool(
       symbol0: pool.token0.symbol,
       symbol1: pool.token1.symbol,
       dual: null as DualMintPreview | null,
+      protocol: 'v3' as const,
     }
   })
 }
 
 export async function mintPool(
-  poolAddress: Address,
+  poolAddress: Address | string,
   ctx: RhClmmCtx,
   opts: QuickMintOptions = {},
 ) {
   return withRhClmmCtx(ctx, async () => {
-    const pool = await loadPool(RH_CHAIN_ID, poolAddress)
+    const protocol = resolvePoolMintProtocol(String(poolAddress), opts.protocol)
+    if (protocol === 'v4') {
+      if (opts.mode === 'dual') throw new Error(DUAL_V4_ERROR)
+      const { loadV4Pool } = await import('./v4')
+      const pool = await loadV4Pool(RH_CHAIN_ID, String(poolAddress) as Hex)
+      const depositToken = pickDepositFromLegs(
+        pool.token0.address,
+        pool.token1.address,
+      )
+      return mintSingleSided({
+        chainId: RH_CHAIN_ID,
+        poolAddress: pool.poolId,
+        poolId: pool.poolId,
+        poolKey: pool.poolKey,
+        protocol: 'v4',
+        depositToken,
+        widthPercent: opts.widthPercent ?? DEFAULT_WIDTH_PERCENT,
+        balancePercent: opts.balancePercent ?? DEFAULT_BALANCE_PERCENT,
+      })
+    }
+
+    const addr = poolAddress as Address
+    const pool = await loadPool(RH_CHAIN_ID, addr)
     const depositToken = pickDepositFromLegs(
       pool.token0.address,
       pool.token1.address,
@@ -124,7 +185,7 @@ export async function mintPool(
     if (opts.mode === 'dual') {
       return mintDualSided({
         chainId: RH_CHAIN_ID,
-        poolAddress,
+        poolAddress: addr,
         depositToken,
         balancePercent: opts.balancePercent ?? DEFAULT_BALANCE_PERCENT,
         minPct: opts.minPct ?? -10,
@@ -134,7 +195,7 @@ export async function mintPool(
     }
     return mintSingleSided({
       chainId: RH_CHAIN_ID,
-      poolAddress,
+      poolAddress: addr,
       protocol: 'v3',
       depositToken,
       widthPercent: opts.widthPercent ?? DEFAULT_WIDTH_PERCENT,

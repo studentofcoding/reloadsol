@@ -15,11 +15,14 @@ import {
   DEFAULT_BALANCE_PERCENT,
   DEFAULT_WIDTH_PERCENT,
 } from '@/utils/dlmm/rh-clmm/config'
+import { resolvePoolMintProtocol } from '@/utils/dlmm/rh-clmm-pool-protocol'
 
 export type RhClmmLpSheetProps = {
   open: boolean
   onClose: () => void
   poolAddress: string
+  /** LP Terminal proto: univ3 | univ4 (or v3 | v4) */
+  proto?: string
   pairLabel?: string
   tokenAddress?: string
   tokenSymbol?: string
@@ -36,6 +39,7 @@ type PreviewMeta = {
 
 function RhClmmLpSheetBody({
   poolAddress,
+  proto,
   pairLabel,
   tokenAddress,
   tokenSymbol,
@@ -43,6 +47,7 @@ function RhClmmLpSheetBody({
 }: Omit<RhClmmLpSheetProps, 'open'>) {
   const wallet = useRhEvmWallet()
   const createMark = useCreateRhClmmMark()
+  const mintProtocol = resolvePoolMintProtocol(poolAddress, proto)
   const [mode, setMode] = useState<Mode>('single')
   const [widthPercent, setWidthPercent] = useState(DEFAULT_WIDTH_PERCENT)
   const [minPct, setMinPct] = useState(-10)
@@ -74,17 +79,20 @@ function RhClmmLpSheetBody({
           maxPct,
           fullRange,
           balancePercent,
+          protocol: proto,
         }
       : {
           mode: 'single' as const,
           widthPercent,
           balancePercent,
+          protocol: proto,
         }
 
   const previewQuery = useQuery({
     queryKey: [
       'rh-clmm-lp-preview',
       poolAddress,
+      proto,
       wallet.address,
       mode,
       widthPercent,
@@ -131,9 +139,10 @@ function RhClmmLpSheetBody({
       if (!wallet.address) await wallet.connect()
       const c = await buildCtx()
       const result = await mintPool(poolAddress as Address, c, mintOpts)
+      const protocol = result.protocol === 'v4' ? 'v4' : 'v3'
       await createMark.mutateAsync({
         token_id: result.tokenId.toString(),
-        protocol: 'v3',
+        protocol,
         pool_address: String(result.poolAddress),
         pair_label:
           pairLabel ||
@@ -145,7 +154,7 @@ function RhClmmLpSheetBody({
         mint_tx: result.hash,
       })
       setTxLink(result.txLink)
-      setMintedText(`Minted #${result.tokenId}\n${result.txLink}`)
+      setMintedText(`Minted #${result.tokenId} (${protocol})\n${result.txLink}`)
     } catch (e) {
       setMintError(e instanceof Error ? e.message : 'Mint failed')
     } finally {
@@ -204,6 +213,12 @@ function RhClmmLpSheetBody({
             <button
               key={m}
               type="button"
+              disabled={m === 'dual' && mintProtocol === 'v4'}
+              title={
+                m === 'dual' && mintProtocol === 'v4'
+                  ? 'Dual mint is v3-only'
+                  : undefined
+              }
               onClick={() => {
                 setMintedText(null)
                 setMintError(null)
@@ -214,7 +229,7 @@ function RhClmmLpSheetBody({
                 mode === m
                   ? 'bg-emerald-600 text-black'
                   : 'bg-gray-800 text-gray-300'
-              }`}
+              } disabled:opacity-40 disabled:cursor-not-allowed`}
             >
               {m === 'single' ? 'Single-sided' : 'Dual-sided'}
             </button>
@@ -464,6 +479,7 @@ export default function RhClmmLpSheet({
   open,
   onClose,
   poolAddress,
+  proto,
   pairLabel,
   tokenAddress,
   tokenSymbol,
@@ -472,6 +488,7 @@ export default function RhClmmLpSheet({
   return (
     <RhClmmLpSheetBody
       poolAddress={poolAddress}
+      proto={proto}
       pairLabel={pairLabel}
       tokenAddress={tokenAddress}
       tokenSymbol={tokenSymbol}

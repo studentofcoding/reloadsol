@@ -42,6 +42,7 @@ type AddTarget =
   | {
       kind: 'v1'
       address: string
+      proto: string
       pairLabel: string
       tokenAddress: string
       tokenSymbol?: string
@@ -360,6 +361,7 @@ export default function LpTerminalPoolsTable() {
                               setAddTarget({
                                 kind: 'v1',
                                 address: row.address,
+                                proto: String(row.proto).toLowerCase(),
                                 pairLabel: row.pair,
                                 tokenAddress,
                                 tokenSymbol,
@@ -427,6 +429,7 @@ export default function LpTerminalPoolsTable() {
           open
           onClose={() => setAddTarget(null)}
           poolAddress={addTarget.address}
+          proto={addTarget.proto}
           pairLabel={addTarget.pairLabel}
           tokenAddress={addTarget.tokenAddress}
           tokenSymbol={addTarget.tokenSymbol}
