@@ -48,6 +48,23 @@ export async function POST(req: NextRequest) {
     }
     const body = await req.json()
     const protocol = body.protocol === 'v4' ? 'v4' : 'v3'
+    const rawKey = body.pool_key
+    const pool_key =
+      rawKey &&
+      typeof rawKey === 'object' &&
+      typeof rawKey.currency0 === 'string' &&
+      typeof rawKey.currency1 === 'string' &&
+      Number.isFinite(Number(rawKey.fee)) &&
+      Number.isFinite(Number(rawKey.tickSpacing)) &&
+      typeof rawKey.hooks === 'string'
+        ? {
+            currency0: String(rawKey.currency0),
+            currency1: String(rawKey.currency1),
+            fee: Number(rawKey.fee),
+            tickSpacing: Number(rawKey.tickSpacing),
+            hooks: String(rawKey.hooks),
+          }
+        : null
     const position = await insertRhClmmPosition({
       token_id: String(body.token_id ?? ''),
       protocol,
@@ -63,6 +80,13 @@ export async function POST(req: NextRequest) {
         Number(body.current_value_usd) || Number(body.entry_value_usd) || 0,
       mint_tx: body.mint_tx != null ? String(body.mint_tx) : null,
       status: 'open',
+      pool_id: body.pool_id != null ? String(body.pool_id) : null,
+      pool_key,
+      fee: body.fee != null && Number.isFinite(Number(body.fee)) ? Number(body.fee) : null,
+      tick_spacing:
+        body.tick_spacing != null && Number.isFinite(Number(body.tick_spacing))
+          ? Number(body.tick_spacing)
+          : null,
     })
     await invalidateRhClmmLiveCache(position.owner_address)
     return NextResponse.json({ success: true, position })

@@ -218,6 +218,15 @@ export interface RhUniv2Position {
 export type RhClmmPositionStatus = 'open' | 'closed' | 'pending';
 export type RhClmmProtocol = 'v3' | 'v4';
 
+/** JSON-safe v4 PoolKey persisted in the RH CLMM ledger at mint time. */
+export type RhV4PoolKeyJson = {
+  currency0: string;
+  currency1: string;
+  fee: number;
+  tickSpacing: number;
+  hooks: string;
+};
+
 export interface RhClmmPosition {
   id: string;
   token_id: string;
@@ -245,6 +254,11 @@ export interface RhClmmPosition {
   symbol1?: string | null;
   liquidity?: string | null;
   live_synced_at?: string | null;
+  /** v4 pool identity recorded at mint (rec 3.3) — skips fee/spacing brute-force */
+  pool_id?: string | null;
+  pool_key?: RhV4PoolKeyJson | null;
+  fee?: number | null;
+  tick_spacing?: number | null;
 }
 
 /** JSON-safe CLMM live row for Redis + /api/dlmm/rh-clmm-live */

@@ -241,6 +241,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `DLMM_SCREEN_INTERVAL` | 300 | dlmm screen |
 | `DLMM_SIM_TRACK_INTERVAL` | 300 | dlmm sim-track |
 | `DLMM_MANAGE_INTERVAL` | 60 | dlmm manage |
+| `RH_CLMM_MANAGE_INTERVAL` | 300 | rh_clmm_manage (alert-only RH CLMM cycle) |
 | `STRATEGY_REPORT_INTERVAL` | 86400 (0=off) | report digest |
 | `CRON_SERVICE_URL` | `http://cron:8080` in Docker compose | Next.js proxy to cron |
 | `TELEGRAM_BOT_TOKEN` | — | Sim open copy-trade alerts (with `TELEGRAM_ALERT_CHAT_ID`) |
@@ -258,6 +259,7 @@ Process: [`main.go`](../main.go) — container `reloadsol-cron`, port **8080** (
 | `POST /trigger/mcap-tracker-sim-track` | Run mcap sim full cycle (`phase=all`) |
 | `POST /trigger/trending` | Run trending track now |
 | `POST /trigger/dlmm-screen` | Run DLMM screen now |
+| `POST /trigger/rh-clmm-manage` | Run RH CLMM manage now (alert-only: OOR + fee-threshold Telegram alerts, no signing) |
 | … | See `main.go` for all `/trigger/*` |
 
 **Note:** Go `/trigger/*` endpoints have no auth. The app proxies triggers via `POST /api/workers/trigger`.

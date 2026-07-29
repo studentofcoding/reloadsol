@@ -1,13 +1,17 @@
-import { Keypair } from '@solana/web3.js';
+import { Keypair, sendAndConfirmTransaction } from '@solana/web3.js';
 import { loadTradingKeypair } from '@/utils/trade-executors';
 import {
   buildAddLiquidityTx,
   buildRemoveLiquidityTx,
+  createDlmmPool,
   estimatePositionInRange,
   getActiveBinInfo,
+  getDlmmConnection,
 } from '@/utils/dlmm-sdk';
 import type { DlmmActionResult, DlmmStrategyType } from '@/types/dlmm';
 import { getAgentConfig } from '@/utils/dlmm/db';
+
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 export interface DeployExecutorParams {
   poolAddress: string;
@@ -24,10 +28,18 @@ export interface RemoveExecutorParams {
   maxBinId: number;
 }
 
+export interface ClaimFeesExecutorParams {
+  poolAddress: string;
+  positionPubkey: string;
+  /** Claim only when the SOL-leg claimable fee reaches this many SOL. */
+  thresholdSol: number;
+}
+
 export interface DlmmExecutor {
   deploy(params: DeployExecutorParams): Promise<DlmmActionResult>;
   remove(params: RemoveExecutorParams): Promise<DlmmActionResult>;
   checkRange(poolAddress: string, minBinId: number, maxBinId: number): Promise<{ inRange: boolean; activeBinId: number }>;
+  claimFeesIfAbove(params: ClaimFeesExecutorParams): Promise<DlmmActionResult & { claimed?: boolean }>;
 }
 
 class SimulationDlmmExecutor implements DlmmExecutor {
@@ -64,6 +76,15 @@ class SimulationDlmmExecutor implements DlmmExecutor {
     } catch {
       return { inRange: true, activeBinId: 0 };
     }
+  }
+
+  async claimFeesIfAbove(_params: ClaimFeesExecutorParams) {
+    return {
+      success: true,
+      dryRun: true,
+      claimed: false,
+      message: '[DRY RUN] fee claim skipped (simulation)',
+    };
   }
 }
 
@@ -131,6 +152,75 @@ class RealDlmmExecutor implements DlmmExecutor {
 
   async checkRange(poolAddress: string, minBinId: number, maxBinId: number) {
     return estimatePositionInRange(poolAddress, minBinId, maxBinId);
+  }
+
+  async claimFeesIfAbove(params: ClaimFeesExecutorParams) {
+    try {
+      const pool = await createDlmmPool(params.poolAddress);
+      const { userPositions } = await pool.getPositionsByUserAndLbPair(
+        this.keypair.publicKey,
+      );
+      const lbPosition = userPositions.find(
+        (p) => p.publicKey.toBase58() === params.positionPubkey,
+      );
+      if (!lbPosition) {
+        return {
+          success: true,
+          dryRun: false,
+          claimed: false,
+          message: 'Position not found on-chain — fee claim skipped',
+        };
+      }
+
+      // Threshold applies to the SOL leg of claimable fees.
+      const xIsSol = pool.tokenX.publicKey.toBase58() === SOL_MINT;
+      const yIsSol = pool.tokenY.publicKey.toBase58() === SOL_MINT;
+      const solFeeLamports = xIsSol
+        ? BigInt(lbPosition.positionData.feeX.toString())
+        : yIsSol
+          ? BigInt(lbPosition.positionData.feeY.toString())
+          : BigInt(0);
+      const thresholdLamports = BigInt(
+        Math.max(0, Math.floor(params.thresholdSol * 1e9)),
+      );
+      if (solFeeLamports < thresholdLamports) {
+        return {
+          success: true,
+          dryRun: false,
+          claimed: false,
+          message: 'Claimable fees below auto-claim threshold',
+        };
+      }
+
+      const txs = await pool.claimSwapFee({
+        owner: this.keypair.publicKey,
+        position: lbPosition,
+      });
+      let lastSig: string | undefined;
+      for (const tx of txs) {
+        lastSig = await sendAndConfirmTransaction(
+          getDlmmConnection(),
+          tx,
+          [this.keypair],
+          { skipPreflight: false, maxRetries: 2 },
+        );
+      }
+      return {
+        success: true,
+        dryRun: false,
+        claimed: true,
+        signature: lastSig,
+        message: `Auto-claimed ~${(Number(solFeeLamports) / 1e9).toFixed(4)} SOL in swap fees`,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        dryRun: false,
+        claimed: false,
+        message: 'Fee claim failed',
+        error: error instanceof Error ? error.message : 'Fee claim failed',
+      };
+    }
   }
 }
 

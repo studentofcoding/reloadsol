@@ -4,6 +4,7 @@ import type {
   RhClmmPosition,
   RhClmmPositionStatus,
   RhClmmProtocol,
+  RhV4PoolKeyJson,
 } from '@/types/dlmm'
 import {
   DbUnavailableError,
@@ -61,12 +62,24 @@ CREATE INDEX IF NOT EXISTS idx_rh_clmm_positions_live_synced
   WHERE status = 'open';
 `
 
+const MIGRATE_POOL_KEY_SQL = `
+ALTER TABLE rh_clmm_positions
+  ADD COLUMN IF NOT EXISTS pool_id TEXT,
+  ADD COLUMN IF NOT EXISTS pool_key JSONB,
+  ADD COLUMN IF NOT EXISTS fee INTEGER,
+  ADD COLUMN IF NOT EXISTS tick_spacing INTEGER;
+CREATE INDEX IF NOT EXISTS idx_rh_clmm_positions_pool_id
+  ON rh_clmm_positions (pool_id)
+  WHERE status = 'open';
+`
+
 let ensured = false
 
 export async function ensureRhClmmPositionsTable(): Promise<void> {
   if (ensured) return
   await query(ENSURE_SQL)
   await query(MIGRATE_LIVE_SQL)
+  await query(MIGRATE_POOL_KEY_SQL)
   ensured = true
 }
 
@@ -103,6 +116,13 @@ function mapRow(row: Record<string, unknown>): RhClmmPosition {
     liquidity: row.liquidity != null ? String(row.liquidity) : null,
     live_synced_at:
       row.live_synced_at != null ? String(row.live_synced_at) : null,
+    pool_id: row.pool_id != null ? String(row.pool_id) : null,
+    pool_key:
+      row.pool_key != null && typeof row.pool_key === 'object'
+        ? (row.pool_key as RhClmmPosition['pool_key'])
+        : null,
+    fee: row.fee != null ? Number(row.fee) : null,
+    tick_spacing: row.tick_spacing != null ? Number(row.tick_spacing) : null,
   }
 }
 
@@ -171,6 +191,10 @@ export type InsertRhClmmPositionInput = {
   current_value_usd?: number
   mint_tx?: string | null
   status?: RhClmmPositionStatus
+  pool_id?: string | null
+  pool_key?: RhV4PoolKeyJson | null
+  fee?: number | null
+  tick_spacing?: number | null
 }
 
 export async function insertRhClmmPosition(
@@ -181,14 +205,19 @@ export async function insertRhClmmPosition(
     const inserted = await queryOne<Record<string, unknown>>(
       `INSERT INTO rh_clmm_positions (
          token_id, protocol, pool_address, pair_label, token_address, deposit_symbol,
-         owner_address, entry_value_usd, current_value_usd, pnl_pct, status, mint_tx, updated_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,NOW())
+         owner_address, entry_value_usd, current_value_usd, pnl_pct, status, mint_tx,
+         pool_id, pool_key, fee, tick_spacing, updated_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,0,$10,$11,$12,$13,$14,$15,NOW())
        ON CONFLICT (owner_address, protocol, token_id) DO UPDATE SET
          pool_address = EXCLUDED.pool_address,
          pair_label = EXCLUDED.pair_label,
          entry_value_usd = EXCLUDED.entry_value_usd,
          current_value_usd = EXCLUDED.current_value_usd,
          mint_tx = COALESCE(EXCLUDED.mint_tx, rh_clmm_positions.mint_tx),
+         pool_id = COALESCE(EXCLUDED.pool_id, rh_clmm_positions.pool_id),
+         pool_key = COALESCE(EXCLUDED.pool_key, rh_clmm_positions.pool_key),
+         fee = COALESCE(EXCLUDED.fee, rh_clmm_positions.fee),
+         tick_spacing = COALESCE(EXCLUDED.tick_spacing, rh_clmm_positions.tick_spacing),
          status = 'open',
          closed_at = NULL,
          updated_at = NOW()
@@ -205,6 +234,10 @@ export async function insertRhClmmPosition(
         row.current_value_usd ?? row.entry_value_usd,
         row.status ?? 'open',
         row.mint_tx ?? null,
+        row.pool_id ?? null,
+        row.pool_key ? JSON.stringify(row.pool_key) : null,
+        row.fee ?? null,
+        row.tick_spacing ?? null,
       ],
     )
     if (!inserted) throw new Error('Insert failed')

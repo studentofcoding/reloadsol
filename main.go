@@ -237,6 +237,7 @@ type Config struct {
     DLMMScreenInterval int    // seconds
     DLMMSimTrackInterval int // seconds
     DLMMManageInterval int    // seconds
+    RhClmmManageInterval int  // seconds
     DLMMSecret         string
     SolArbScanInterval int // seconds (0 = disabled)
 }
@@ -375,6 +376,14 @@ func NewCronService() *CronService {
                 }
             }
             return 60
+        }(),
+        RhClmmManageInterval: func() int {
+            if v := os.Getenv("RH_CLMM_MANAGE_INTERVAL"); v != "" {
+                if iv, err := strconv.Atoi(v); err == nil && iv > 0 {
+                    return iv
+                }
+            }
+            return 300 // 5m — alert-only cycle
         }(),
         DLMMSecret: getEnv("DLMM_MANAGE_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
         SolArbScanInterval: func() int {
@@ -595,6 +604,15 @@ func (cs *CronService) Start() {
     }
     cs.workers.BindEntry(dlmmManageEntryID, "dlmm_manage")
 
+    // RH CLMM manage (alert-only) – every N seconds (default 300)
+    rhClmmManageSpec := fmt.Sprintf("@every %ds", cs.config.RhClmmManageInterval)
+    rhClmmManageEntryID, err := cs.cron.AddFunc(rhClmmManageSpec, cs.runRhClmmManage)
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("Failed to add RH CLMM manage cron job: %v", err))
+        log.Fatal("Failed to add RH CLMM manage cron job:", err)
+    }
+    cs.workers.BindEntry(rhClmmManageEntryID, "rh_clmm_manage")
+
     if cs.config.SolArbScanInterval > 0 {
         solArbSpec := fmt.Sprintf("@every %ds", cs.config.SolArbScanInterval)
         solArbEntryID, err := cs.cron.AddFunc(solArbSpec, cs.runSolArbScan)
@@ -646,6 +664,7 @@ func (cs *CronService) Start() {
     http.HandleFunc("/trigger/dlmm-screen", cs.manualDLMMScreenTrigger)
     http.HandleFunc("/trigger/dlmm-sim-track", cs.manualDLMMSimTrackTrigger)
     http.HandleFunc("/trigger/dlmm-manage", cs.manualDLMMManageTrigger)
+    http.HandleFunc("/trigger/rh-clmm-manage", cs.manualRhClmmManageTrigger)
     http.HandleFunc("/trigger/sol-arb-scan", cs.manualSolArbScanTrigger)
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
@@ -684,6 +703,7 @@ func (cs *CronService) Start() {
     cs.logger.Info(fmt.Sprintf("🌊 DLMM screen: every %d seconds", cs.config.DLMMScreenInterval))
     cs.logger.Info(fmt.Sprintf("🧪 DLMM sim track: every %d seconds", cs.config.DLMMSimTrackInterval))
     cs.logger.Info(fmt.Sprintf("🩺 DLMM manage: every %d seconds", cs.config.DLMMManageInterval))
+    cs.logger.Info(fmt.Sprintf("🩺 RH CLMM manage (alert-only): every %d seconds", cs.config.RhClmmManageInterval))
     if cs.config.SolArbScanInterval > 0 {
         cs.logger.Info(fmt.Sprintf("⚡ SOL arb scan: every %d seconds", cs.config.SolArbScanInterval))
     } else {
@@ -1491,6 +1511,36 @@ func (cs *CronService) manualDLMMManageTrigger(w http.ResponseWriter, r *http.Re
     w.Header().Set("Content-Type", "application/json")
     json.NewEncoder(w).Encode(map[string]string{
         "message":   "DLMM manage triggered manually",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+    })
+}
+
+func (cs *CronService) runRhClmmManage() {
+    cs.workers.Begin("rh_clmm_manage")
+    cs.logger.Info("🩺 Running RH CLMM manage (alert-only)...")
+    url := fmt.Sprintf("%s/api/dlmm/rh-clmm-manage", cs.config.APIBaseURL)
+    resp, err := cs.makeRequest("POST", url, map[string]string{
+        "key": cs.config.DLMMSecret,
+    })
+    if err != nil {
+        cs.logger.Error(fmt.Sprintf("❌ RH CLMM manage failed: %v", err))
+        cs.workers.Fail("rh_clmm_manage", err.Error())
+        return
+    }
+    cs.logger.Success(fmt.Sprintf("✅ RH CLMM manage completed: %s", resp))
+    cs.workers.Success("rh_clmm_manage")
+}
+
+func (cs *CronService) manualRhClmmManageTrigger(w http.ResponseWriter, r *http.Request) {
+    if r.Method != "POST" {
+        http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    cs.logger.Info("🔧 Manual RH CLMM manage trigger")
+    cs.runRhClmmManage()
+    w.Header().Set("Content-Type", "application/json")
+    json.NewEncoder(w).Encode(map[string]string{
+        "message":   "RH CLMM manage triggered manually",
         "timestamp": time.Now().UTC().Format(time.RFC3339),
     })
 }

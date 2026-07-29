@@ -45,6 +45,8 @@ export const DLMM_CONFIG = {
   maxSolPerPosition: parseFloatEnv('DLMM_MAX_SOL_PER_POSITION', 1),
   maxSolAtRisk: parseFloatEnv('DLMM_MAX_SOL_AT_RISK', parseFloatEnv('MAX_SOL_AT_RISK', 5)),
   binRangeInterval: parseIntEnv('DLMM_BIN_RANGE_INTERVAL', 10),
+  /** Auto-claim Meteora swap fees when the SOL-leg claimable exceeds this (SOL). */
+  autoClaimFeeSol: parseFloatEnv('DLMM_AUTO_CLAIM_FEE_SOL', 0.005),
   useLlmReasoner: parseBoolEnv('DLMM_USE_LLM_REASONER', false),
   poolsCacheTtlMs: parseIntEnv('DLMM_POOLS_CACHE_TTL_MS', 5 * 60 * 1000),
 };

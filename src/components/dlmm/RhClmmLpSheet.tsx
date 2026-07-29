@@ -152,6 +152,14 @@ function RhClmmLpSheetBody({
         owner_address: c.owner,
         entry_value_usd: 0,
         mint_tx: result.hash,
+        ...(protocol === 'v4' && result.poolKey
+          ? {
+              pool_id: result.poolId ?? String(result.poolAddress),
+              pool_key: result.poolKey,
+              fee: result.fee,
+              tick_spacing: result.tickSpacing ?? result.poolKey.tickSpacing,
+            }
+          : {}),
       })
       setTxLink(result.txLink)
       setMintedText(`Minted #${result.tokenId} (${protocol})\n${result.txLink}`)

@@ -67,6 +67,16 @@ export type MintResult = {
   token1: Address;
   wrap?: WrapResult;
   protocol?: 'v3' | 'v4';
+  /** v4 only — for ledger persistence (rec 3.3) */
+  poolId?: string;
+  tickSpacing?: number;
+  poolKey?: {
+    currency0: string;
+    currency1: string;
+    fee: number;
+    tickSpacing: number;
+    hooks: string;
+  };
 };
 
 async function planApproveCall(
@@ -201,6 +211,15 @@ export async function mintSingleSided(params: MintParamsWithProtocol): Promise<M
       token1: r.token1,
       wrap: r.wrap,
       protocol: 'v4',
+      poolId: r.poolId,
+      tickSpacing: r.tickSpacing,
+      poolKey: {
+        currency0: r.poolKey.currency0,
+        currency1: r.poolKey.currency1,
+        fee: r.poolKey.fee,
+        tickSpacing: r.poolKey.tickSpacing,
+        hooks: r.poolKey.hooks,
+      },
     };
   }
 

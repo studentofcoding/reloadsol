@@ -241,6 +241,7 @@ func (cs *CronService) initWorkerRegistry() {
 		{ID: "dlmm_screen", Name: "DLMM screen", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.DLMMScreenInterval, TriggerPath: "/trigger/dlmm-screen", CanTrigger: true},
 		{ID: "dlmm_sim_track", Name: "DLMM sim track", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.DLMMSimTrackInterval, TriggerPath: "/trigger/dlmm-sim-track", CanTrigger: true},
 		{ID: "dlmm_manage", Name: "DLMM manage", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.DLMMManageInterval, TriggerPath: "/trigger/dlmm-manage", CanTrigger: true},
+		{ID: "rh_clmm_manage", Name: "RH CLMM manage (alert-only)", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.RhClmmManageInterval, TriggerPath: "/trigger/rh-clmm-manage", CanTrigger: true},
 		{ID: "sol_arb_scan", Name: "SOL arb scan", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.SolArbScanInterval, TriggerPath: "/trigger/sol-arb-scan", CanTrigger: true, Disabled: cs.config.SolArbScanInterval <= 0},
 		{ID: "strategy_report", Name: "Strategy report digest", Domain: "algo", Schedule: "every Ns", IntervalSec: cs.config.StrategyReportInterval, TriggerPath: "/trigger/strategy-report", CanTrigger: true, Disabled: cs.config.StrategyReportInterval <= 0},
 		{ID: "sltp_monitor", Name: "SL/TP monitor", Domain: "infra", Schedule: "every Ns", IntervalSec: cs.config.SLTPMonitorInterval, TriggerPath: "/trigger/sltp", CanTrigger: true},

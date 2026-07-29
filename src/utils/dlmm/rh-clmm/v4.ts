@@ -818,6 +818,9 @@ export type V4MintResult = {
   poolAddress: string;
   poolId: Hex;
   fee: number;
+  tickSpacing: number;
+  /** Full pool key at mint time — persisted in the ledger so reads skip discovery */
+  poolKey: V4PoolKey;
   token0: Address;
   token1: Address;
   wrap?: WrapResult;
@@ -1179,6 +1182,8 @@ export async function mintV4SingleSided(params: V4MintParams): Promise<V4MintRes
     poolAddress: poolId,
     poolId,
     fee: poolKey.fee,
+    tickSpacing: poolKey.tickSpacing,
+    poolKey,
     token0: token0Addr,
     token1: token1Addr,
     wrap,
