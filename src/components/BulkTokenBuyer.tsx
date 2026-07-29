@@ -756,6 +756,15 @@ export default function BulkTokenBuyer() {
           ? undefined
           : fail[0]?.error || (useRhParentPath ? "Parent Kyber buy failed" : "GMGN buy failed"),
       });
+      if (ok.length > 0) {
+        setSolAmount("");
+        setTokenMints("");
+        triggerPostBuyRefresh({
+          refreshWalletTokens: (forceRefresh) =>
+            refetchTokensRef.current(forceRefresh),
+          refreshBalances: () => refreshBalancesRef.current(),
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -777,6 +786,7 @@ export default function BulkTokenBuyer() {
     slippage,
     showOutcome,
     trackOperation,
+    triggerPostBuyRefresh,
   ]);
 
   const runGmgnBulkBuy = runConfirmedRhBuy;
