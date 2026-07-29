@@ -14,6 +14,21 @@ export type RhTxCall = {
   gas?: bigint
 }
 
+/** Fired after each call is confirmed in sequential mode (not batched mode). */
+export type RhCallProgress = (callIndex: number, hash: Hex) => void
+
+/** Sequential write failed at a specific call index; earlier calls confirmed. */
+export class RhSequentialWriteError extends Error {
+  readonly callIndex: number
+  readonly lastHash?: Hex
+  constructor(message: string, callIndex: number, lastHash?: Hex) {
+    super(message)
+    this.name = 'RhSequentialWriteError'
+    this.callIndex = callIndex
+    this.lastHash = lastHash
+  }
+}
+
 export function shouldFallbackFromSendCalls(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
   if (
@@ -67,19 +82,27 @@ async function writeCallsSequential(params: {
   walletClient: WalletClient
   account: Address
   calls: RhTxCall[]
+  onProgress?: RhCallProgress
 }): Promise<{ hash: Hex }> {
-  const { publicClient, walletClient, account, calls } = params
+  const { publicClient, walletClient, account, calls, onProgress } = params
   let lastHash: Hex | undefined
-  for (const call of calls) {
-    lastHash = await walletClient.sendTransaction({
-      account,
-      chain: walletClient.chain,
-      to: call.to,
-      data: call.data,
-      value: call.value ?? BigInt(0),
-      ...(call.gas != null ? { gas: call.gas } : {}),
-    })
-    await publicClient.waitForTransactionReceipt({ hash: lastHash })
+  for (let i = 0; i < calls.length; i++) {
+    const call = calls[i]
+    try {
+      lastHash = await walletClient.sendTransaction({
+        account,
+        chain: walletClient.chain,
+        to: call.to,
+        data: call.data,
+        value: call.value ?? BigInt(0),
+        ...(call.gas != null ? { gas: call.gas } : {}),
+      })
+      await publicClient.waitForTransactionReceipt({ hash: lastHash })
+      onProgress?.(i, lastHash)
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      throw new RhSequentialWriteError(msg, i, lastHash)
+    }
   }
   if (!lastHash) throw new Error('No calls to send')
   return { hash: lastHash }
@@ -95,6 +118,7 @@ export async function executeRhWalletCalls(params: {
   walletClient: WalletClient
   account: Address
   calls: RhTxCall[]
+  onProgress?: RhCallProgress
 }): Promise<{ hash: Hex; batched: boolean }> {
   const { publicClient, walletClient, account, calls } = params
   if (calls.length === 0) throw new Error('No calls to send')
@@ -148,6 +172,7 @@ export async function executeRhWalletCalls(params: {
       walletClient,
       account,
       calls,
+      onProgress: params.onProgress,
     })
     return { hash, batched: false }
   }
