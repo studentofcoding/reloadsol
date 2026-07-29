@@ -11,6 +11,14 @@ export const RH_MCAP_MAX = 2_000_000
 export const RH_BUY_AMOUNT_ETH = 0.0015
 export const RH_SIM_BUY_ETH = 0.001
 
+/**
+ * Fallback cap on concurrent RH sim positions when a strategy row does not
+ * set max_open_positions in strategy_definitions.config. RH has no live
+ * balance check, so the cap lives in per-strategy config (tunable via
+ * /dev/strategies without a redeploy).
+ */
+export const RH_MAX_OPEN_POSITIONS_DEFAULT = 10
+
 export const DEFAULT_FILTER_CONFIG: TokenFilterConfig = {
   enabled: true,
   mcap: { min: 350_000, max: 3_000_000 },
@@ -171,6 +179,7 @@ export const TRENDING_BOT_STRATEGIES: Record<string, TrendingBotStrategy> = {
     // buy_amount_sol is unused on robinhood; buy_amount_native is the live figure.
     buy_amount_sol: 0.035,
     buy_amount_native: RH_BUY_AMOUNT_ETH,
+    max_open_positions: RH_MAX_OPEN_POSITIONS_DEFAULT,
     priority_fee_lamports: 0,
     stop_loss_percentage: -35,
     max_hold_hours: 24,

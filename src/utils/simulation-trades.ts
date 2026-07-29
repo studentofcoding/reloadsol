@@ -21,6 +21,79 @@ export function computeOpenSimCycle(
   return computeOpenTradeCycle(records, mintAddress, 'sim')
 }
 
+/**
+ * Batched twin of computeOpenSimCycle: one sort + one walk over the records
+ * computes every requested mint's open sim cycle. Same per-mint arithmetic as
+ * the single-mint version — use when reconstructing many positions at once.
+ */
+export function computeOpenSimCycles(
+  records: TrackingRecord[],
+  mintAddresses: ReadonlySet<string>,
+): Map<string, OpenSimCycle> {
+  const sorted = [...records].sort((a, b) => a.timestamp - b.timestamp)
+  const cycles = new Map<string, OpenSimCycle>()
+
+  for (const op of sorted) {
+    if (op.is_simulation !== true) continue
+    if (op.successCount === 0 || !op.solAmount) continue
+
+    const tokensInOp = op.tokens || []
+    const solPerToken = op.solAmount / op.successCount
+
+    for (const tkn of tokensInOp) {
+      if (!mintAddresses.has(tkn.mintAddress)) continue
+      const mintAddress = tkn.mintAddress
+
+      if (op.operationType === 'buy') {
+        let cycle = cycles.get(mintAddress)
+        if (!cycle) {
+          cycle = {
+            mintAddress,
+            symbol: tkn.symbol,
+            name: tkn.name,
+            logoURI: tkn.logoURI,
+            remainingTokenAmount: 0,
+            totalSolBought: 0,
+            simulationType: op.simulation_type,
+            weightedBuyPriceUsd: tkn.priceUsd || 0,
+          }
+          cycles.set(mintAddress, cycle)
+        }
+
+        const tokenAmt = tkn.tokenAmount || 0
+        cycle.totalSolBought += solPerToken
+        cycle.remainingTokenAmount += tokenAmt
+        if (tkn.priceUsd) {
+          cycle.weightedBuyPriceUsd = tkn.priceUsd
+        }
+        if (op.simulation_type) {
+          cycle.simulationType = op.simulation_type
+        }
+      } else if (op.operationType === 'sell') {
+        const cycle = cycles.get(mintAddress)
+        if (!cycle) continue
+        let tokenAmt = tkn.tokenAmount || 0
+        if (op.close_position) {
+          tokenAmt = cycle.remainingTokenAmount
+        } else if (tokenAmt >= cycle.remainingTokenAmount * 0.99) {
+          tokenAmt = cycle.remainingTokenAmount
+        }
+
+        cycle.remainingTokenAmount = Math.max(
+          0,
+          cycle.remainingTokenAmount - tokenAmt,
+        )
+      }
+    }
+  }
+
+  for (const [mint, cycle] of cycles) {
+    if (cycle.remainingTokenAmount <= 1e-6) cycles.delete(mint)
+  }
+
+  return cycles
+}
+
 /** Compute open trade cycle for sim or live wallet records. */
 export function computeOpenTradeCycle(
   records: TrackingRecord[],

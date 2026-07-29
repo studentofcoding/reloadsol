@@ -121,6 +121,41 @@ export async function getPatternTrainingStats(): Promise<{
   }
 }
 
+export type PatternFeatureCoverage = Record<
+  PatternFeatureKey,
+  { nonNull: number; nonZero: number; nonNullRate: number; nonZeroRate: number }
+>
+
+/**
+ * Per-feature non-null / non-zero rates at export time. Social features with
+ * 0 model importance can be missing upstream (all-zero here) or merely
+ * uninformative (covered but no signal) — this distinguishes the two.
+ */
+export function patternTrainingFeatureCoverage(
+  rows: PatternTrainingRow[],
+): PatternFeatureCoverage {
+  const n = rows.length
+  const coverage = {} as PatternFeatureCoverage
+  for (const key of PATTERN_FEATURE_KEYS) {
+    let nonNull = 0
+    let nonZero = 0
+    for (const row of rows) {
+      const value = row[key]
+      if (value != null && !Number.isNaN(value)) {
+        nonNull++
+        if (value !== 0) nonZero++
+      }
+    }
+    coverage[key] = {
+      nonNull,
+      nonZero,
+      nonNullRate: n > 0 ? nonNull / n : 0,
+      nonZeroRate: n > 0 ? nonZero / n : 0,
+    }
+  }
+  return coverage
+}
+
 export function patternTrainingCsvHeader(): string {
   return [
     'token_address',

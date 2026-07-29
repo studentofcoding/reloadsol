@@ -5,13 +5,23 @@
 
 import { createPublicClient, http, type Address } from 'viem'
 import { cacheGet, cacheSet, cacheDel } from '@/utils/redis-cache'
-import type { RhClmmLiveRow, RhClmmPosition } from '@/types/dlmm'
+import type { RhClmmLiveRow, RhClmmPosition, RhV4PoolKeyJson } from '@/types/dlmm'
 import {
   listRhClmmPositions,
   upsertRhClmmLiveSnapshots,
 } from '@/utils/dlmm/rh-clmm-db'
 import { listOwnerPositions } from '@/utils/dlmm/rh-clmm'
 import type { OnChainPosition } from '@/utils/dlmm/rh-clmm/positions'
+import {
+  computePoolId,
+  type V4LedgerHint,
+  type V4PoolKey,
+  type V4PoolStateSnapshot,
+} from '@/utils/dlmm/rh-clmm/v4'
+import {
+  readV4PoolStateCache,
+  writeV4PoolStateCache,
+} from '@/utils/dlmm/rh-clmm-pool-state.server'
 import { RH_CHAIN, getRhRpcUrl } from '@/utils/dlmm/rh-univ2'
 import { markToLiveRow } from '@/utils/dlmm/rh-clmm-live-row'
 
@@ -68,6 +78,21 @@ function onChainToLiveRow(
   }
 }
 
+/** Ledger pool_key (rec 3.3) → typed V4PoolKey; null when incomplete. */
+function ledgerPoolKey(mark: RhClmmPosition): V4PoolKey | null {
+  const k = mark.pool_key as RhV4PoolKeyJson | null | undefined
+  if (!k) return null
+  if (!k.currency0 || !k.currency1 || !k.hooks) return null
+  if (!Number.isFinite(k.fee) || !Number.isFinite(k.tickSpacing)) return null
+  return {
+    currency0: k.currency0 as Address,
+    currency1: k.currency1 as Address,
+    fee: Number(k.fee),
+    tickSpacing: Number(k.tickSpacing),
+    hooks: k.hooks as Address,
+  }
+}
+
 export async function crawlRhClmmLive(
   owner: string,
 ): Promise<RhClmmLiveRow[]> {
@@ -81,6 +106,25 @@ export async function crawlRhClmmLive(
     markByKey.set(`${m.protocol}:${m.token_id}`, m)
   }
 
+  // Ledger hints skip per-position getPoolAndPositionInfo discovery reads;
+  // cached pool state skips slot0/liquidity reads within the short TTL.
+  const ledgerHints: V4LedgerHint[] = []
+  const ledgerPoolIds: string[] = []
+  for (const m of marks) {
+    if (m.protocol !== 'v4') continue
+    const key = ledgerPoolKey(m)
+    if (!key || m.tick_lower == null || m.tick_upper == null) continue
+    ledgerHints.push({
+      tokenId: BigInt(m.token_id),
+      poolKey: key,
+      tickLower: m.tick_lower,
+      tickUpper: m.tick_upper,
+    })
+    ledgerPoolIds.push(computePoolId(key))
+  }
+  const knownPoolStates = await readV4PoolStateCache(ledgerPoolIds)
+  const poolStatesOut = new Map<string, V4PoolStateSnapshot>()
+
   const publicClient = createPublicClient({
     chain: RH_CHAIN,
     transport: http(getRhRpcUrl()),
@@ -89,7 +133,18 @@ export async function crawlRhClmmLive(
   const onChain = await listOwnerPositions(
     { publicClient, owner: ownerAddr },
     knownV4Ids,
+    { ledgerHints, knownPoolStates, poolStatesOut },
   )
+
+  // Persist freshly read pool states for the next refresh (best-effort).
+  if (poolStatesOut.size > 0) {
+    await writeV4PoolStateCache(poolStatesOut).catch((e) => {
+      console.warn(
+        '[rh-clmm-live] pool-state cache write failed',
+        e instanceof Error ? e.message : e,
+      )
+    })
+  }
 
   return onChain.map((p) => {
     const key = `${p.protocol}:${p.tokenId.toString()}`

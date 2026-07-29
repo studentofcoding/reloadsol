@@ -53,6 +53,18 @@ export function getCronServiceUrl(): string {
   ).replace(/\/$/, '')
 }
 
+/**
+ * Shared secret the Go cron expects on /trigger/* (X-Trigger-Secret header).
+ * Mirrors the Go fallback chain: TRIGGER_SECRET → TRENDING_TRACKER_SECRET.
+ */
+export function getCronTriggerSecret(): string {
+  return (
+    process.env.TRIGGER_SECRET ||
+    process.env.TRENDING_TRACKER_SECRET ||
+    ''
+  )
+}
+
 export function isKnownWorkerId(id: string): id is WorkerId {
   return id in WORKER_TRIGGER_PATHS
 }

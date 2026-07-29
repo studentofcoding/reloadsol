@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   getCronServiceUrl,
+  getCronTriggerSecret,
   isKnownWorkerId,
   WORKER_TRIGGER_PATHS,
 } from '@/utils/workers/config'
@@ -24,6 +25,7 @@ export async function POST(request: NextRequest) {
 
     const res = await fetch(`${cronUrl}${triggerPath}`, {
       method: 'POST',
+      headers: { 'X-Trigger-Secret': getCronTriggerSecret() },
       cache: 'no-store',
       signal: AbortSignal.timeout(120_000),
     })

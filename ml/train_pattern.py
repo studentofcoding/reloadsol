@@ -13,12 +13,19 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     classification_report,
     f1_score,
     precision_recall_fscore_support,
 )
 
-from pattern_features import MIN_PATTERN_MACRO_F1, MIN_PATTERN_ROWS, PATTERN_FEATURE_COLUMNS
+from pattern_features import (
+    MIN_PATTERN_MACRO_F1,
+    MIN_PATTERN_ROWS,
+    PATTERN_FEATURE_COLUMNS,
+    PATTERN_SOCIAL_FEATURE_COLUMNS,
+    feature_coverage_report,
+)
 
 MIN_TEST_WINNERS = 5
 MIN_TEST_LOSERS = 5
@@ -60,6 +67,30 @@ def time_split(
             )
 
     return train_df, test_df
+
+
+def three_way_split(
+    df: pd.DataFrame,
+    test_ratio: float,
+    valid_ratio: float,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Time-ordered train/valid/test split.
+
+    The decision threshold and early stopping must never see the test split:
+    test is carved off first (with class-minimum backstop), then valid is
+    carved off the remaining head. Valid has no class minimums — with tiny
+    cohorts it may be single-class, which only weakens threshold tuning, not
+    test honesty.
+    """
+    temp_df, test_df = time_split(df, test_ratio)
+    valid_ratio_of_temp = valid_ratio / max(1e-9, 1.0 - test_ratio)
+    train_df, valid_df = time_split(
+        temp_df,
+        valid_ratio_of_temp,
+        min_test_winners=0,
+        min_test_losers=0,
+    )
+    return train_df, valid_df, test_df
 
 
 def compute_scale_pos_weight(y_train: pd.Series) -> float:
@@ -104,7 +135,8 @@ def train_pattern_gate(
     feature_columns: list[str],
     test_ratio: float,
     min_rows: int,
-) -> tuple[lgb.Booster, pd.DataFrame, pd.DataFrame, dict]:
+    valid_ratio: float = 0.2,
+) -> tuple[lgb.Booster, pd.DataFrame, pd.DataFrame, pd.DataFrame, dict]:
     if "pattern_class" not in df.columns:
         raise SystemExit("Missing pattern_class column — re-export pattern training data")
 
@@ -115,9 +147,11 @@ def train_pattern_gate(
     if len(class_counts) < 2:
         print("WARNING: single pattern class — model will be trivial.", class_counts)
 
-    train_df, test_df = time_split(df, test_ratio)
+    train_df, valid_df, test_df = three_way_split(df, test_ratio, valid_ratio)
     x_train = train_df[feature_columns]
     y_train = train_df["pattern_class"].astype(int)
+    x_valid = valid_df[feature_columns]
+    y_valid = valid_df["pattern_class"].astype(int)
     x_test = test_df[feature_columns]
     y_test = test_df["pattern_class"].astype(int)
 
@@ -126,7 +160,8 @@ def train_pattern_gate(
     scale_pos_weight = compute_scale_pos_weight(y_train)
 
     train_set = lgb.Dataset(x_train, label=y_train, feature_name=feature_columns)
-    valid_set = lgb.Dataset(x_test, label=y_test, feature_name=feature_columns, reference=train_set)
+    # Early stopping watches VALID, not test — test stays untouched until metrics.
+    valid_set = lgb.Dataset(x_valid, label=y_valid, feature_name=feature_columns, reference=train_set)
 
     params = {
         "objective": "binary",
@@ -153,16 +188,27 @@ def train_pattern_gate(
         ],
     )
 
+    # Tune the decision threshold on VALID only (previously tuned on test — leak).
+    valid_proba = booster.predict(x_valid, num_iteration=booster.best_iteration)
+    valid_true = y_valid.to_numpy()
+    decision_threshold, valid_macro_f1 = tune_decision_threshold(valid_proba, valid_true)
+
+    # Final metrics on TEST, untouched by training and threshold tuning.
     proba = booster.predict(x_test, num_iteration=booster.best_iteration)
     y_true = y_test.to_numpy()
-    decision_threshold, macro_f1 = tune_decision_threshold(proba, y_true)
     pred = (proba >= decision_threshold).astype(int)
+    macro_f1 = float(f1_score(y_true, pred, average="macro", zero_division=0))
 
-    precision, recall, _, _ = precision_recall_fscore_support(
+    precision, recall, f1_per_class, _ = precision_recall_fscore_support(
         y_true,
         pred,
         labels=[0, 1],
         zero_division=0,
+    )
+    pr_auc = (
+        float(average_precision_score(y_true, proba))
+        if len(set(y_true.tolist())) > 1
+        else 0.0
     )
     pattern_ready = macro_f1 >= MIN_PATTERN_MACRO_F1 and len(test_df) >= 10
 
@@ -176,13 +222,17 @@ def train_pattern_gate(
             "scale_pos_weight": scale_pos_weight,
             "early_stopping_metric": "auc",
             "decision_threshold": decision_threshold,
+            "threshold_tuned_on": "valid",
             "train_class_counts": {"0": n_neg, "1": n_pos},
         },
         "metrics": {
             "macro_f1": macro_f1,
+            "valid_macro_f1": valid_macro_f1,
+            "pr_auc": pr_auc,
             "accuracy": float(accuracy_score(y_true, pred)),
             "winner_recall": float(recall[1]),
             "winner_precision": float(precision[1]),
+            "winner_f1": float(f1_per_class[1]),
             "decision_threshold": decision_threshold,
             "classification_report": classification_report(
                 y_true, pred, zero_division=0, output_dict=True
@@ -191,7 +241,7 @@ def train_pattern_gate(
             "min_macro_f1_pattern": MIN_PATTERN_MACRO_F1,
         },
     }
-    return booster, train_df, test_df, meta_extra
+    return booster, train_df, valid_df, test_df, meta_extra
 
 
 def main() -> None:
@@ -200,6 +250,12 @@ def main() -> None:
     parser.add_argument("--version", default="pattern-gate")
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--test-ratio", type=float, default=0.2)
+    parser.add_argument(
+        "--valid-ratio",
+        type=float,
+        default=0.2,
+        help="Validation share (of the full dataset) used for early stopping + threshold tuning",
+    )
     parser.add_argument("--min-rows", type=int, default=MIN_PATTERN_ROWS)
     args = parser.parse_args()
 
@@ -212,11 +268,24 @@ def main() -> None:
     if missing:
         raise SystemExit(f"Missing feature columns: {missing}")
 
-    booster, train_df, test_df, meta_extra = train_pattern_gate(
+    coverage = feature_coverage_report(df, PATTERN_FEATURE_COLUMNS)
+    print("Feature coverage (non-zero rate):")
+    for col in PATTERN_FEATURE_COLUMNS:
+        info = coverage["features"][col]
+        marker = "  <-- SOCIAL, all-zero" if (
+            col in PATTERN_SOCIAL_FEATURE_COLUMNS and info["non_zero"] == 0
+        ) else ""
+        print(
+            f"  {col}: non-null {info['non_null_rate']:.1%} "
+            f"non-zero {info['non_zero_rate']:.1%}{marker}"
+        )
+
+    booster, train_df, valid_df, test_df, meta_extra = train_pattern_gate(
         df,
         PATTERN_FEATURE_COLUMNS,
         args.test_ratio,
         args.min_rows,
+        args.valid_ratio,
     )
 
     importance = booster.feature_importance(importance_type="gain")
@@ -243,7 +312,9 @@ def main() -> None:
         "trained_at": datetime.now(timezone.utc).isoformat(),
         "feature_columns": PATTERN_FEATURE_COLUMNS,
         "train_rows": len(train_df),
+        "valid_rows": len(valid_df),
         "test_rows": len(test_df),
+        "feature_coverage": coverage,
         "feature_importance": feature_importance,
         "best_iteration": booster.best_iteration,
         "artifacts": {
@@ -258,14 +329,15 @@ def main() -> None:
 
     metrics = meta_extra["metrics"]
     training = meta_extra["training"]
-    print(f"Train rows: {len(train_df)}  Test rows: {len(test_df)}")
+    print(f"Train rows: {len(train_df)}  Valid rows: {len(valid_df)}  Test rows: {len(test_df)}")
     print(
-        f"Macro-F1: {metrics['macro_f1']:.4f}  Accuracy: {metrics['accuracy']:.4f}  "
-        f"threshold: {training['decision_threshold']:.2f}"
+        f"Macro-F1 (test): {metrics['macro_f1']:.4f}  Accuracy: {metrics['accuracy']:.4f}  "
+        f"PR-AUC: {metrics['pr_auc']:.4f}  threshold (tuned on valid): {training['decision_threshold']:.2f}"
     )
     print(
         f"Winner recall: {metrics['winner_recall']:.4f}  "
-        f"precision: {metrics['winner_precision']:.4f}"
+        f"precision: {metrics['winner_precision']:.4f}  "
+        f"F1: {metrics['winner_f1']:.4f}"
     )
     print(f"Pattern ready: {metrics['pattern_ready']}")
     print(f"Saved {lgb_path}")

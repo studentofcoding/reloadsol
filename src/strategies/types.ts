@@ -63,6 +63,8 @@ export interface TrendingBotStrategy {
   buy_amount_sol: number
   /** Size in the chain's native token (ETH on robinhood). Falls back to buy_amount_sol on sol. */
   buy_amount_native?: number
+  /** Cap on concurrent open sim positions (DB-overridable via strategy_definitions.config). */
+  max_open_positions?: number
   priority_fee_lamports: number
   stop_loss_percentage: number
   max_hold_hours: number

@@ -7,6 +7,8 @@ import {
   encodePacked,
   keccak256,
   maxUint256,
+  pad,
+  toHex,
   type Address,
   type Hash,
   type Hex,
@@ -56,6 +58,7 @@ import {
   type WrapResult,
 } from './wrap';
 import { assertOutOfRange, computeSingleSidedRange } from './ticks';
+import { feesFromGrowth } from './fees';
 import { formatCompactRange, formatSpotPrice } from './prices';
 import type { OnChainPosition } from './positions';
 import {
@@ -1597,13 +1600,382 @@ export async function getV4Position(
   };
 }
 
-export async function listV4Positions(chainId: SupportedChainId, knownTokenIds?: bigint[]): Promise<OnChainPosition[]> {
-  const ids = await discoverV4TokenIds(chainId, knownTokenIds);
-  const out: OnChainPosition[] = [];
-  for (const id of ids) {
-    const p = await getV4Position(chainId, id);
-    if (p) out.push(p);
+/** Canonical Multicall3 — deployed on RH chain (same address pattern as rh-clmm-manage.server.ts). */
+const MULTICALL3 = '0xca11bde06177c9f5c1b90fd73a40a41c9d3cCA11' as Address;
+const MULTICALL_CHUNK = 100;
+
+/** Ledger-known v4 position identity — skips getPoolAndPositionInfo discovery reads. */
+export type V4LedgerHint = {
+  tokenId: bigint;
+  poolKey: V4PoolKey;
+  tickLower: number;
+  tickUpper: number;
+};
+
+/** Pool slot0/liquidity snapshot (serializable via strings server-side). */
+export type V4PoolStateSnapshot = {
+  sqrtPriceX96: bigint;
+  tick: number;
+  liquidity: bigint;
+};
+
+export type V4ListExtras = {
+  /** Ledger pool_key/ticks per tokenId (rec 3.3) — skips per-position info reads. */
+  ledgerHints?: V4LedgerHint[];
+  /** Server-supplied short-TTL pool state cache (rec 3.2) — skips slot0/liquidity reads. */
+  knownPoolStates?: ReadonlyMap<string, V4PoolStateSnapshot>;
+  /** Filled with freshly read pool states so the server can persist them to its cache. */
+  poolStatesOut?: Map<string, V4PoolStateSnapshot>;
+};
+
+type V4ListStage = {
+  tokenId: bigint;
+  poolKey: V4PoolKey | null;
+  tickLower: number | null;
+  tickUpper: number | null;
+  liquidity: bigint | null;
+  failed: boolean;
+};
+
+/** Batched multicall helper: run contracts in chunks, keep per-call failure isolation. */
+async function runV4Multicall<T extends { address: Address; abi: unknown; functionName: string; args?: readonly unknown[] }>(
+  chainId: SupportedChainId,
+  contracts: T[],
+): Promise<{ status: 'success' | 'failure'; result?: unknown }[]> {
+  const client = getPublicClient(chainId);
+  const out: { status: 'success' | 'failure'; result?: unknown }[] = [];
+  for (let i = 0; i < contracts.length; i += MULTICALL_CHUNK) {
+    const slice = contracts.slice(i, i + MULTICALL_CHUNK);
+    const results = await client.multicall({
+      allowFailure: true,
+      multicallAddress: MULTICALL3,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      contracts: slice as any,
+    });
+    for (const r of results) {
+      out.push(
+        r.status === 'success'
+          ? { status: 'success', result: r.result as unknown }
+          : { status: 'failure' },
+      );
+    }
   }
+  return out;
+}
+
+/**
+ * List v4 positions with batched Multicall3 reads (rec 3.2/6.4):
+ * ~3 chunked multicalls total instead of ~8 sequential reads per NFT.
+ * A failed position read excludes only that position, never the list.
+ */
+export async function listV4Positions(
+  chainId: SupportedChainId,
+  knownTokenIds?: bigint[],
+  extras: V4ListExtras = {},
+): Promise<OnChainPosition[]> {
+  const t0 = Date.now();
+  const ids = await discoverV4TokenIds(chainId, knownTokenIds);
+  if (ids.length === 0) return [];
+
+  const cfg = CHAINS[chainId];
+  const posm = cfg.v4PositionManager;
+  const stateView = cfg.v4StateView;
+  const hintById = new Map<string, V4LedgerHint>(
+    (extras.ledgerHints ?? []).map((h) => [h.tokenId.toString(), h]),
+  );
+
+  const stages: V4ListStage[] = ids.map((tokenId) => {
+    const hint = hintById.get(tokenId.toString());
+    return {
+      tokenId,
+      poolKey: hint?.poolKey ?? null,
+      tickLower: hint?.tickLower ?? null,
+      tickUpper: hint?.tickUpper ?? null,
+      liquidity: null,
+      failed: false,
+    };
+  });
+
+  // ── Batch 1: POSM reads (getPoolAndPositionInfo only when no ledger hint) ──
+  type Call1 = { stage: V4ListStage; kind: 'info' | 'liq' };
+  const calls1: Call1[] = [];
+  const contracts1: {
+    address: Address;
+    abi: typeof v4PositionManagerAbi;
+    functionName: 'getPoolAndPositionInfo' | 'getPositionLiquidity';
+    args: readonly [bigint];
+  }[] = [];
+  for (const s of stages) {
+    if (s.poolKey == null || s.tickLower == null || s.tickUpper == null) {
+      contracts1.push({
+        address: posm,
+        abi: v4PositionManagerAbi,
+        functionName: 'getPoolAndPositionInfo',
+        args: [s.tokenId],
+      });
+      calls1.push({ stage: s, kind: 'info' });
+    }
+    contracts1.push({
+      address: posm,
+      abi: v4PositionManagerAbi,
+      functionName: 'getPositionLiquidity',
+      args: [s.tokenId],
+    });
+    calls1.push({ stage: s, kind: 'liq' });
+  }
+  const results1 = await runV4Multicall(chainId, contracts1);
+  results1.forEach((res, idx) => {
+    const { stage, kind } = calls1[idx];
+    if (res.status !== 'success') {
+      // getV4Position treats any POSM read failure as position-missing
+      stage.failed = true;
+      return;
+    }
+    if (kind === 'info') {
+      const raw = res.result as readonly [
+        { currency0: Address; currency1: Address; fee: number | bigint; tickSpacing: number | bigint; hooks: Address },
+        bigint,
+      ];
+      stage.poolKey = {
+        currency0: raw[0].currency0,
+        currency1: raw[0].currency1,
+        fee: Number(raw[0].fee),
+        tickSpacing: Number(raw[0].tickSpacing),
+        hooks: raw[0].hooks,
+      };
+      const decoded = decodeV4PositionInfo(raw[1]);
+      stage.tickLower = decoded.tickLower;
+      stage.tickUpper = decoded.tickUpper;
+    } else {
+      stage.liquidity = res.result as bigint;
+    }
+  });
+
+  const alive = stages.filter(
+    (s): s is V4ListStage & { poolKey: V4PoolKey; tickLower: number; tickUpper: number; liquidity: bigint } =>
+      !s.failed &&
+      s.poolKey != null &&
+      s.tickLower != null &&
+      s.tickUpper != null &&
+      s.liquidity != null &&
+      s.liquidity > BigInt(0),
+  );
+  if (alive.length === 0) return [];
+
+  // ── Batch 2: slot0 + pool liquidity for unique pools (minus server cache hits) ──
+  const poolIdByStage = new Map<string, Hex>();
+  const poolKeyByPoolId = new Map<string, V4PoolKey>();
+  for (const s of alive) {
+    const poolId = computePoolId(s.poolKey);
+    poolIdByStage.set(s.tokenId.toString(), poolId);
+    poolKeyByPoolId.set(poolId, s.poolKey);
+  }
+  const poolStates = new Map<string, V4PoolStateSnapshot>();
+  const missingPoolIds: string[] = [];
+  for (const poolId of poolKeyByPoolId.keys()) {
+    const cached = extras.knownPoolStates?.get(poolId);
+    if (cached) poolStates.set(poolId, cached);
+    else missingPoolIds.push(poolId);
+  }
+  type Call2 = { poolId: string; kind: 'slot0' | 'liq' };
+  const calls2: Call2[] = [];
+  const contracts2: {
+    address: Address;
+    abi: typeof stateViewAbi;
+    functionName: 'getSlot0' | 'getLiquidity';
+    args: readonly [Hex];
+  }[] = [];
+  for (const poolId of missingPoolIds) {
+    contracts2.push({
+      address: stateView,
+      abi: stateViewAbi,
+      functionName: 'getSlot0',
+      args: [poolId as Hex],
+    });
+    calls2.push({ poolId, kind: 'slot0' });
+    contracts2.push({
+      address: stateView,
+      abi: stateViewAbi,
+      functionName: 'getLiquidity',
+      args: [poolId as Hex],
+    });
+    calls2.push({ poolId, kind: 'liq' });
+  }
+  if (contracts2.length > 0) {
+    const results2 = await runV4Multicall(chainId, contracts2);
+    const slot0ByPool = new Map<string, { sqrtPriceX96: bigint; tick: number }>();
+    const liqByPool = new Map<string, bigint>();
+    results2.forEach((res, idx) => {
+      if (res.status !== 'success') return;
+      const { poolId, kind } = calls2[idx];
+      if (kind === 'slot0') {
+        const raw = res.result as readonly [bigint, number, number, number];
+        slot0ByPool.set(poolId, { sqrtPriceX96: raw[0], tick: Number(raw[1]) });
+      } else {
+        liqByPool.set(poolId, res.result as bigint);
+      }
+    });
+    for (const poolId of missingPoolIds) {
+      const slot0 = slot0ByPool.get(poolId);
+      const liquidity = liqByPool.get(poolId);
+      if (slot0 == null || liquidity == null) continue;
+      const snapshot: V4PoolStateSnapshot = {
+        sqrtPriceX96: slot0.sqrtPriceX96,
+        tick: slot0.tick,
+        liquidity,
+      };
+      poolStates.set(poolId, snapshot);
+      extras.poolStatesOut?.set(poolId, snapshot);
+    }
+  }
+
+  // ── Batch 3: fee-growth reads per position (live unclaimed fees) ──
+  type Call3 = { stage: (typeof alive)[number]; kind: 'inside' | 'posInfo' };
+  const calls3: Call3[] = [];
+  const contracts3: {
+    address: Address;
+    abi: typeof stateViewAbi;
+    functionName: 'getFeeGrowthInside' | 'getPositionInfo';
+    args: readonly unknown[];
+  }[] = [];
+  for (const s of alive) {
+    const poolId = poolIdByStage.get(s.tokenId.toString())!;
+    const salt = pad(toHex(s.tokenId), { size: 32 });
+    contracts3.push({
+      address: stateView,
+      abi: stateViewAbi,
+      functionName: 'getFeeGrowthInside',
+      args: [poolId, s.tickLower, s.tickUpper],
+    });
+    calls3.push({ stage: s, kind: 'inside' });
+    contracts3.push({
+      address: stateView,
+      abi: stateViewAbi,
+      functionName: 'getPositionInfo',
+      args: [poolId, posm, s.tickLower, s.tickUpper, salt],
+    });
+    calls3.push({ stage: s, kind: 'posInfo' });
+  }
+  const feesByToken = new Map<string, { fees0: bigint; fees1: bigint }>();
+  const results3 = await runV4Multicall(chainId, contracts3);
+  const insideByToken = new Map<string, readonly [bigint, bigint]>();
+  const posInfoByToken = new Map<string, readonly [bigint, bigint, bigint]>();
+  results3.forEach((res, idx) => {
+    if (res.status !== 'success') return;
+    const { stage, kind } = calls3[idx];
+    const key = stage.tokenId.toString();
+    if (kind === 'inside') insideByToken.set(key, res.result as readonly [bigint, bigint]);
+    else posInfoByToken.set(key, res.result as readonly [bigint, bigint, bigint]);
+  });
+  for (const s of alive) {
+    const key = s.tokenId.toString();
+    const inside = insideByToken.get(key);
+    const posInfo = posInfoByToken.get(key);
+    if (!inside || !posInfo) {
+      // mirror computeV4UnclaimedFees catch: failed fee reads → 0 owed
+      feesByToken.set(key, { fees0: BigInt(0), fees1: BigInt(0) });
+      continue;
+    }
+    const liq = posInfo[0] || s.liquidity;
+    feesByToken.set(key, {
+      fees0: feesFromGrowth(inside[0], posInfo[1], liq),
+      fees1: feesFromGrowth(inside[1], posInfo[2], liq),
+    });
+  }
+
+  // ── Assemble (off-chain meta + prices; per-position failure isolation) ──
+  const wrapped = cfg.wrapped;
+  const out: OnChainPosition[] = [];
+  for (const s of alive) {
+    try {
+      const poolId = poolIdByStage.get(s.tokenId.toString())!;
+      const token0Addr =
+        s.poolKey.currency0.toLowerCase() === ZERO ? wrapped : s.poolKey.currency0;
+      const token1Addr =
+        s.poolKey.currency1.toLowerCase() === ZERO ? wrapped : s.poolKey.currency1;
+      const [meta0, meta1] = await Promise.all([
+        getTokenMeta(chainId, token0Addr),
+        getTokenMeta(chainId, token1Addr),
+      ]);
+
+      const state = poolStates.get(poolId);
+      const currentTick = state?.tick ?? 0;
+      let amount0 = BigInt(0);
+      let amount1 = BigInt(0);
+      let inRange = false;
+      if (state) {
+        try {
+          inRange = currentTick >= s.tickLower && currentTick < s.tickUpper;
+          const t0Tok = new Token(chainId, token0Addr, meta0.decimals, meta0.symbol);
+          const t1Tok = new Token(chainId, token1Addr, meta1.decimals, meta1.symbol);
+          const v4Pool = new V4Pool(
+            t0Tok,
+            t1Tok,
+            s.poolKey.fee,
+            s.poolKey.tickSpacing,
+            s.poolKey.hooks,
+            state.sqrtPriceX96.toString(),
+            state.liquidity.toString(),
+            currentTick,
+          );
+          const position = new V4Position({
+            pool: v4Pool,
+            liquidity: s.liquidity.toString(),
+            tickLower: s.tickLower,
+            tickUpper: s.tickUpper,
+          });
+          amount0 = BigInt(position.amount0.quotient.toString());
+          amount1 = BigInt(position.amount1.quotient.toString());
+        } catch (e) {
+          console.warn('[v4 position amounts]', s.tokenId.toString(), e instanceof Error ? e.message : e);
+        }
+      }
+
+      const fees = feesByToken.get(s.tokenId.toString()) ?? { fees0: BigInt(0), fees1: BigInt(0) };
+      const a0 = humanToFloat(amount0, meta0.decimals);
+      const a1 = humanToFloat(amount1, meta1.decimals);
+      const f0 = humanToFloat(fees.fees0, meta0.decimals);
+      const f1 = humanToFloat(fees.fees1, meta1.decimals);
+      const [p0, p1] = await Promise.all([
+        getTokenPriceUsd(chainId, token0Addr),
+        getTokenPriceUsd(chainId, token1Addr),
+      ]);
+
+      out.push({
+        tokenId: s.tokenId,
+        chainId,
+        protocol: 'v4',
+        token0: token0Addr,
+        token1: token1Addr,
+        fee: s.poolKey.fee,
+        tickLower: s.tickLower,
+        tickUpper: s.tickUpper,
+        liquidity: s.liquidity,
+        tokensOwed0: fees.fees0,
+        tokensOwed1: fees.fees1,
+        symbol0: meta0.symbol,
+        symbol1: meta1.symbol,
+        decimals0: meta0.decimals,
+        decimals1: meta1.decimals,
+        amount0,
+        amount1,
+        inRange,
+        currentTick,
+        poolAddress: poolId as unknown as Address,
+        valueUsd: a0 * (p0 ?? 0) + a1 * (p1 ?? 0),
+        unclaimedFeesUsd: f0 * (p0 ?? 0) + f1 * (p1 ?? 0),
+        amount0Human: a0,
+        amount1Human: a1,
+        poolKey: s.poolKey,
+        poolId,
+      });
+    } catch (e) {
+      console.warn('[v4 list] assemble failed', s.tokenId.toString(), e instanceof Error ? e.message : e);
+    }
+  }
+  console.log(
+    `[v4] list chain=${chainId} ids=${ids.length} listed=${out.length} cachedPools=${poolStates.size - missingPoolIds.length} ${Date.now() - t0}ms`,
+  );
   return out;
 }
 

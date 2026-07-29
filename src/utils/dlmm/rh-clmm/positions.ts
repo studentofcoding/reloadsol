@@ -13,7 +13,7 @@ import {
   uniswapPositionUrl,
 } from './prices';
 import type { ProtocolVersion } from './config';
-import type { V4PoolKey } from './v4';
+import type { V4PoolKey, V4ListExtras } from './v4';
 import type { Hex } from 'viem';
 
 export type OnChainPosition = {
@@ -199,12 +199,12 @@ export async function getPosition(
   };
 }
 
-export async function listPositions(chainId: SupportedChainId, knownV4TokenIds?: bigint[]): Promise<OnChainPosition[]> {
+export async function listPositions(chainId: SupportedChainId, knownV4TokenIds?: bigint[], v4Extras?: V4ListExtras): Promise<OnChainPosition[]> {
   const t0 = Date.now();
   const { listV4Positions } = await import('./v4');
   const [v3Ids, v4] = await Promise.all([
     listNpmTokenIds(chainId),
-    listV4Positions(chainId, knownV4TokenIds).catch((e) => {
+    listV4Positions(chainId, knownV4TokenIds, v4Extras).catch((e) => {
       console.warn('[list] v4 failed', e instanceof Error ? e.message : e);
       return [] as OnChainPosition[];
     }),

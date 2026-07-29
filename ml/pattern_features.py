@@ -24,6 +24,53 @@ MIN_PATTERN_ROWS = 60
 MIN_PATTERN_ROWS_PER_CLASS = 30
 MIN_PATTERN_MACRO_F1 = 0.60
 
+# Social-side features that historically show 0 importance — coverage logging
+# exists to tell "missing at export time" apart from "present but uninformative".
+PATTERN_SOCIAL_FEATURE_COLUMNS = [
+    "log_mention_count_30m",
+    "unique_channels_30m",
+    "minutes_to_first_mention",
+    "smart_wallet_buy_count_1h",
+    "has_smart_wallet_buy",
+    "source_gmgn_smart_money_fomo",
+    "gmgn_activity_score_60m",
+    "log_gmgn_sm_wallets_60m",
+    "has_gmgn_hot_before_entry",
+]
+
+
+def feature_coverage_report(
+    df: "pd.DataFrame",
+    feature_columns: list[str] | None = None,
+) -> dict[str, Any]:
+    """Per-feature non-null / non-zero rates over an exported training frame."""
+    import pandas as pd  # local import: keeps module importable without pandas
+
+    columns = feature_columns or PATTERN_FEATURE_COLUMNS
+    n = len(df)
+    features: dict[str, dict[str, Any]] = {}
+    for col in columns:
+        if col not in df.columns:
+            features[col] = {
+                "present": False,
+                "non_null": 0,
+                "non_zero": 0,
+                "non_null_rate": 0.0,
+                "non_zero_rate": 0.0,
+            }
+            continue
+        series = pd.to_numeric(df[col], errors="coerce")
+        non_null = int(series.notna().sum())
+        non_zero = int((series.fillna(0) != 0).sum())
+        features[col] = {
+            "present": True,
+            "non_null": non_null,
+            "non_zero": non_zero,
+            "non_null_rate": (non_null / n) if n else 0.0,
+            "non_zero_rate": (non_zero / n) if n else 0.0,
+        }
+    return {"rows": n, "features": features}
+
 WINDOW_30M_MS = 30 * 60 * 1000
 WINDOW_1H_MS = 60 * 60 * 1000
 

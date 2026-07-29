@@ -6,23 +6,26 @@
  */
 
 import { fetchTradingRecordsForWallet } from './db'
+import { decideRhTrendingExit } from './exit-ladder'
 import { getActiveStrategiesWithState } from './load-strategy'
 import { recordTrendingBotOutcome } from './outcomes'
+import { RH_MAX_OPEN_POSITIONS_DEFAULT } from './registry'
 import { simWalletForChain, TRENDING_BOT_SIM_WALLET } from './sim-wallets'
 import type { TrendingBotStrategy } from './types'
 import { getFilteredGmgnTrending } from '@/utils/gmgn-trending-feed'
 import { getNativeUsd } from '@/utils/native-usd'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
-import { computeOpenSimCycle } from '@/utils/simulation-trades'
+import {
+  computeOpenSimCycles,
+  type OpenSimCycle,
+} from '@/utils/simulation-trades'
 import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
 import { log } from '@/utils/unified-logger'
 
-const CHAIN = 'robinhood' as const
+// Re-export so existing consumers/tests keep their import path.
+export { decideRhTrendingExit }
 
-// ponytail: flat cap instead of a per-strategy field — the Solana cycle bounds
-// itself with live balance checks that have no RH equivalent. Upgrade path:
-// max_open_positions on TrendingBotStrategy once RH sizing gets a budget.
-const MAX_OPEN_POSITIONS = 10
+const CHAIN = 'robinhood' as const
 
 const SIM_WALLET = simWalletForChain(TRENDING_BOT_SIM_WALLET, CHAIN)
 
@@ -33,6 +36,7 @@ type OpenPosition = {
   entryPriceUsd: number
   tp1Done: boolean
   entryFeatures: Record<string, unknown>
+  cycle: OpenSimCycle
 }
 
 type Records = Awaited<ReturnType<typeof fetchTradingRecordsForWallet>>
@@ -46,86 +50,68 @@ export type RhTrendingSimResult = {
   skipped: string[]
 }
 
+/**
+ * Single-pass position reconstruction: group records by mint once (candidate
+ * discovery, first buy record, tp1-marker sells), then compute all open sim
+ * cycles in one sorted walk instead of re-scanning records per position.
+ */
 function openPositionsFor(records: Records, strategyId: string): OpenPosition[] {
-  const seen = new Set<string>()
-  const open: OpenPosition[] = []
+  const candidateMints = new Set<string>()
+  const candidateOrder: string[] = []
+  const candidateToken = new Map<string, { symbol?: string }>()
+  const buyByMint = new Map<string, Records[number]>()
+  const tp1Mints = new Set<string>()
 
   for (const r of records) {
-    if (!r.is_simulation || r.bot_strategy !== strategyId) continue
+    const isCandidate = r.is_simulation === true && r.bot_strategy === strategyId
+    const isBuy = r.operationType === 'buy' && r.bot_strategy === strategyId
+    const isTp1Sell =
+      r.operationType === 'sell' &&
+      r.bot_strategy === strategyId &&
+      !r.close_position
+    if (!isCandidate && !isBuy && !isTp1Sell) continue
+
     for (const t of r.tokens ?? []) {
-      if (seen.has(t.mintAddress)) continue
-      const cycle = computeOpenSimCycle(records, t.mintAddress)
-      if (!cycle || cycle.simulationType !== 'strategy') continue
-      seen.add(t.mintAddress)
-
-      const buy = records.find(
-        (rec) =>
-          rec.operationType === 'buy' &&
-          rec.bot_strategy === strategyId &&
-          rec.tokens?.some((tk) => tk.mintAddress === t.mintAddress),
-      )
-      const sim = (buy?.trading_simulation ?? {}) as Record<string, unknown>
-      const tp1Done = records.some(
-        (rec) =>
-          rec.operationType === 'sell' &&
-          rec.bot_strategy === strategyId &&
-          !rec.close_position &&
-          rec.tokens?.some((tk) => tk.mintAddress === t.mintAddress),
-      )
-
-      open.push({
-        mintAddress: t.mintAddress,
-        symbol: t.symbol ?? t.mintAddress.slice(0, 8),
-        entryAt: typeof sim.entry_at === 'string' ? sim.entry_at : null,
-        entryPriceUsd:
-          typeof sim.entry_price_usd === 'number' && sim.entry_price_usd > 0
-            ? sim.entry_price_usd
-            : cycle.weightedBuyPriceUsd,
-        tp1Done,
-        entryFeatures:
-          sim.entry_features && typeof sim.entry_features === 'object'
-            ? (sim.entry_features as Record<string, unknown>)
-            : {},
-      })
+      const mint = t.mintAddress
+      if (isCandidate && !candidateMints.has(mint)) {
+        candidateMints.add(mint)
+        candidateOrder.push(mint)
+        candidateToken.set(mint, t)
+      }
+      if (isBuy && !buyByMint.has(mint)) buyByMint.set(mint, r)
+      if (isTp1Sell) tp1Mints.add(mint)
     }
   }
 
+  const cycles = computeOpenSimCycles(records, candidateMints)
+  const open: OpenPosition[] = []
+
+  for (const mint of candidateOrder) {
+    const cycle = cycles.get(mint)
+    if (!cycle || cycle.simulationType !== 'strategy') continue
+
+    const buy = buyByMint.get(mint)
+    const sim = (buy?.trading_simulation ?? {}) as Record<string, unknown>
+    const t = candidateToken.get(mint)
+
+    open.push({
+      mintAddress: mint,
+      symbol: t?.symbol ?? mint.slice(0, 8),
+      entryAt: typeof sim.entry_at === 'string' ? sim.entry_at : null,
+      entryPriceUsd:
+        typeof sim.entry_price_usd === 'number' && sim.entry_price_usd > 0
+          ? sim.entry_price_usd
+          : cycle.weightedBuyPriceUsd,
+      tp1Done: tp1Mints.has(mint),
+      entryFeatures:
+        sim.entry_features && typeof sim.entry_features === 'object'
+          ? (sim.entry_features as Record<string, unknown>)
+          : {},
+      cycle,
+    })
+  }
+
   return open
-}
-
-type ExitDecision =
-  | { action: 'hold' }
-  | { action: 'partial'; sellPct: number; reason: string }
-  | { action: 'close'; reason: string }
-
-/** Same ladder the Solana bot uses: TP1 partial, TP2/TP3 full, SL, max hold. */
-export function decideRhTrendingExit(params: {
-  strategy: TrendingBotStrategy
-  gainPct: number
-  heldHours: number
-  tp1Done: boolean
-}): ExitDecision {
-  const { strategy, gainPct, heldHours, tp1Done } = params
-  const tp = strategy.take_profit_levels
-
-  if (gainPct <= strategy.stop_loss_percentage) {
-    return { action: 'close', reason: 'stop_loss' }
-  }
-  if (tp.tp3_enabled && gainPct >= tp.tp3_percentage) {
-    return { action: 'close', reason: 'tp3' }
-  }
-  if (gainPct >= tp.tp2_percentage) {
-    return { action: 'close', reason: 'tp2' }
-  }
-  if (!tp1Done && gainPct >= tp.tp1_percentage) {
-    return tp.tp1_sell_percentage >= 100
-      ? { action: 'close', reason: 'tp1' }
-      : { action: 'partial', sellPct: tp.tp1_sell_percentage, reason: 'tp1' }
-  }
-  if (strategy.max_hold_hours > 0 && heldHours >= strategy.max_hold_hours) {
-    return { action: 'close', reason: 'max_hold' }
-  }
-  return { action: 'hold' }
 }
 
 function passesConditions(
@@ -145,14 +131,13 @@ function passesConditions(
 async function sellSim(params: {
   strategyId: string
   position: OpenPosition
-  records: Records
   sellPriceUsd: number
   fraction: number
   reason: string
   closePosition: boolean
 }): Promise<void> {
-  const cycle = computeOpenSimCycle(params.records, params.position.mintAddress)
-  if (!cycle) return
+  // Reuse the cycle computed during single-pass position reconstruction.
+  const cycle = params.position.cycle
 
   const nativeUsd = await getNativeUsd(CHAIN)
   const tokenAmount = params.closePosition
@@ -337,7 +322,6 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
       await sellSim({
         strategyId,
         position: pos,
-        records,
         sellPriceUsd: price,
         fraction:
           decision.action === 'partial' ? decision.sellPct / 100 : 1,
@@ -352,9 +336,11 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
     }
 
     const candidates = tokens.filter((t) => passesConditions(strategy, t))
+    const maxOpenPositions =
+      strategy.max_open_positions ?? RH_MAX_OPEN_POSITIONS_DEFAULT
     for (const token of candidates) {
       if (openMints.has(token.token_address)) continue
-      if (openMints.size >= MAX_OPEN_POSITIONS) {
+      if (openMints.size >= maxOpenPositions) {
         skipped.push(`${token.token_symbol}: max positions`)
         break
       }

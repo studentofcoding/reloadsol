@@ -44,6 +44,7 @@ import {
   getUnionFilterForActiveStrategies,
 } from '@/strategies/load-strategy'
 import { runTrendingBotRhSimCycle } from '@/strategies/trending-bot-rh-sim'
+import { decideTrendingExit } from '@/strategies/exit-ladder'
 import { resolveTrendingSimMode } from '@/utils/trending-execution-mode'
 import { buildFullEntryFeatureSnapshot } from '@/strategies/resolve-entry-snapshot'
 
@@ -2924,58 +2925,59 @@ function shouldSellToken(token: TrackedToken, simulation: TradingSimulation): { 
     sellOperationsCount: simulation.sell_operations.length
   })
 
-  // Check stop loss (-50%)
-  if (currentGain <= simulation.stop_loss_percentage) {
-    console.log(`🛑 STOP LOSS TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% <= ${simulation.stop_loss_percentage}%`)
-    return {
-      shouldSell: true,
-      sellPercentage: 100, // Sell everything
-      reason: `🛑 Stop loss triggered: ${currentGain.toFixed(2)}% <= ${simulation.stop_loss_percentage}%`
-    }
-  }
-
-  // Check TP1 (80%) - Sell 80% of position
-  if (!hasTP1 && currentGain >= simulation.take_profit_levels.tp1_percentage) {
-    console.log(`🎯 TP1 TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp1_percentage}%`)
-    return {
-      shouldSell: true,
-      sellPercentage: simulation.take_profit_levels.tp1_sell_percentage,
-      reason: `🎯 TP1 reached: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp1_percentage}%`
-    }
-  }
-
-  // Check TP2 (100%) - Sell remaining position
-  if (hasTP1 && currentGain >= simulation.take_profit_levels.tp2_percentage) {
-    console.log(`🎯 TP2 TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp2_percentage}%`)
-    return {
-      shouldSell: true,
-      sellPercentage: 100,
-      reason: `🎯 TP2 reached: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp2_percentage}%`
-    }
-  }
-
-  // Check TP3 (30% after TP1) - Sell remaining position
-  if (hasTP1 && simulation.take_profit_levels.tp3_enabled && currentGain <= simulation.take_profit_levels.tp3_percentage) {
-    console.log(`📉 TP3 TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% <= ${simulation.take_profit_levels.tp3_percentage}% after TP1`)
-    return {
-      shouldSell: true,
-      sellPercentage: 100,
-      reason: `📉 TP3 triggered: ${currentGain.toFixed(2)}% <= ${simulation.take_profit_levels.tp3_percentage}% after TP1`
-    }
-  }
-
-  // Check max hold time
   const simulationStart = new Date(simulation.simulation_started_at)
   const now = new Date()
   const holdDurationHours = (now.getTime() - simulationStart.getTime()) / (1000 * 60 * 60)
 
-  if (holdDurationHours >= simulation.max_hold_hours) {
-    console.log(`⏰ MAX HOLD TIME TRIGGERED for ${token.token_symbol}: ${holdDurationHours.toFixed(1)}h >= ${simulation.max_hold_hours}h`)
-    return {
-      shouldSell: true,
-      sellPercentage: 100,
-      reason: `⏰ Max hold time reached: ${holdDurationHours.toFixed(1)}h >= ${simulation.max_hold_hours}h`
-    }
+  // Shared exit ladder (src/strategies/exit-ladder.ts) — solana semantics:
+  // tp3 is a trailing stop after TP1, tp2 only fires once TP1 executed.
+  const decision = decideTrendingExit({
+    takeProfitLevels: simulation.take_profit_levels,
+    stopLossPct: simulation.stop_loss_percentage,
+    maxHoldHours: simulation.max_hold_hours,
+    gainPct: currentGain,
+    heldHours: holdDurationHours,
+    tp1Done: hasTP1,
+    tp3Style: 'trailing',
+    tp2RequiresTp1: true,
+  })
+
+  if (decision.action !== 'hold') switch (decision.reason) {
+    case 'stop_loss':
+      console.log(`🛑 STOP LOSS TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% <= ${simulation.stop_loss_percentage}%`)
+      return {
+        shouldSell: true,
+        sellPercentage: 100, // Sell everything
+        reason: `🛑 Stop loss triggered: ${currentGain.toFixed(2)}% <= ${simulation.stop_loss_percentage}%`
+      }
+    case 'tp1':
+      console.log(`🎯 TP1 TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp1_percentage}%`)
+      return {
+        shouldSell: true,
+        sellPercentage: simulation.take_profit_levels.tp1_sell_percentage,
+        reason: `🎯 TP1 reached: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp1_percentage}%`
+      }
+    case 'tp2':
+      console.log(`🎯 TP2 TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp2_percentage}%`)
+      return {
+        shouldSell: true,
+        sellPercentage: 100,
+        reason: `🎯 TP2 reached: ${currentGain.toFixed(2)}% >= ${simulation.take_profit_levels.tp2_percentage}%`
+      }
+    case 'tp3':
+      console.log(`📉 TP3 TRIGGERED for ${token.token_symbol}: ${currentGain.toFixed(2)}% <= ${simulation.take_profit_levels.tp3_percentage}% after TP1`)
+      return {
+        shouldSell: true,
+        sellPercentage: 100,
+        reason: `📉 TP3 triggered: ${currentGain.toFixed(2)}% <= ${simulation.take_profit_levels.tp3_percentage}% after TP1`
+      }
+    case 'max_hold':
+      console.log(`⏰ MAX HOLD TIME TRIGGERED for ${token.token_symbol}: ${holdDurationHours.toFixed(1)}h >= ${simulation.max_hold_hours}h`)
+      return {
+        shouldSell: true,
+        sellPercentage: 100,
+        reason: `⏰ Max hold time reached: ${holdDurationHours.toFixed(1)}h >= ${simulation.max_hold_hours}h`
+      }
   }
 
   console.log(`✅ No sell conditions met for ${token.token_symbol}`)

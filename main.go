@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -221,6 +222,7 @@ type Config struct {
     APIBaseURL     string
     TrendingSecret string
     PnLSecret      string
+    TriggerSecret  string
     DiscordWebhook string
     SLTPMonitorInterval  int    // seconds
     SignalRefreshInterval int   // seconds
@@ -256,6 +258,10 @@ func NewCronService() *CronService {
         APIBaseURL:     getEnv("API_BASE_URL", "https://reloadsol.app"),
         TrendingSecret: getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending"),
         PnLSecret:      getEnv("PNL_UPDATE_SECRET", "r3l0ads0l-pnl"),
+        // Shared secret for the /trigger/* HTTP endpoints (X-Trigger-Secret
+        // header). Falls back to the trending secret so existing deploys keep
+        // working once the web proxy sends the same value.
+        TriggerSecret:  getEnv("TRIGGER_SECRET", getEnv("TRENDING_TRACKER_SECRET", "r3l0ads0l-trending")),
         DiscordWebhook: getEnv("DISCORD_WEBHOOK_URL", ""),
         SLTPMonitorInterval: func() int {
             if v := os.Getenv("SLTP_MONITOR_INTERVAL"); v != "" {
@@ -639,33 +645,34 @@ func (cs *CronService) Start() {
 	}
 	cs.workers.BindEntry(pnlEntryID, "pnl_update")
 
-	// Health check endpoint
+	// Health check endpoint (public)
 	http.HandleFunc("/health", cs.healthCheck)
 	http.HandleFunc("/status", cs.statusCheck)
 	http.HandleFunc("/workers", cs.workersCheck)
-	http.HandleFunc("/trigger/trending", cs.manualTrendingTrigger)
-	http.HandleFunc("/trigger/summary", cs.manualSummaryTrigger)
-	http.HandleFunc("/trigger/pnl", cs.manualPnLTrigger)
-	http.HandleFunc("/trigger/sltp", cs.manualSLTPTrigger)
-	http.HandleFunc("/trigger/signals-refresh", cs.manualSignalsRefreshTrigger)
-    http.HandleFunc("/trigger/signals-sim-track", cs.manualSignalsSimTrackTrigger)
-    http.HandleFunc("/trigger/mcap-tracker-sim-track", cs.manualMcapTrackerSimTrackTrigger)
-    http.HandleFunc("/trigger/mcap-tracker-sim-open", cs.manualMcapTrackerSimOpenTrigger)
-    http.HandleFunc("/trigger/gmgn-sim-track", cs.manualGmgnSimTrackTrigger)
-    http.HandleFunc("/trigger/gmgn-wallet-digger", cs.manualGmgnWalletDiggerTrigger)
-    http.HandleFunc("/trigger/gmgn-roster-watch", cs.manualGmgnRosterWatchTrigger)
-    http.HandleFunc("/trigger/social-sim-track", cs.manualSocialSimTrackTrigger)
-    http.HandleFunc("/trigger/gmgn-activity-poll", cs.manualGmgnActivityPollTrigger)
-    http.HandleFunc("/trigger/gmgn-radar-digest", cs.manualGmgnRadarDigestTrigger)
-    http.HandleFunc("/trigger/social-rollup", cs.manualSocialRollupTrigger)
-    http.HandleFunc("/trigger/social-cleanup", cs.manualSocialCleanupTrigger)
-    http.HandleFunc("/trigger/social-wallet-poll", cs.manualSocialWalletPollTrigger)
-    http.HandleFunc("/trigger/strategy-report", cs.manualStrategyReportTrigger)
-    http.HandleFunc("/trigger/dlmm-screen", cs.manualDLMMScreenTrigger)
-    http.HandleFunc("/trigger/dlmm-sim-track", cs.manualDLMMSimTrackTrigger)
-    http.HandleFunc("/trigger/dlmm-manage", cs.manualDLMMManageTrigger)
-    http.HandleFunc("/trigger/rh-clmm-manage", cs.manualRhClmmManageTrigger)
-    http.HandleFunc("/trigger/sol-arb-scan", cs.manualSolArbScanTrigger)
+	// Manual triggers require the X-Trigger-Secret header (401 otherwise).
+	http.HandleFunc("/trigger/trending", cs.requireTriggerSecret(cs.manualTrendingTrigger))
+	http.HandleFunc("/trigger/summary", cs.requireTriggerSecret(cs.manualSummaryTrigger))
+	http.HandleFunc("/trigger/pnl", cs.requireTriggerSecret(cs.manualPnLTrigger))
+	http.HandleFunc("/trigger/sltp", cs.requireTriggerSecret(cs.manualSLTPTrigger))
+	http.HandleFunc("/trigger/signals-refresh", cs.requireTriggerSecret(cs.manualSignalsRefreshTrigger))
+    http.HandleFunc("/trigger/signals-sim-track", cs.requireTriggerSecret(cs.manualSignalsSimTrackTrigger))
+    http.HandleFunc("/trigger/mcap-tracker-sim-track", cs.requireTriggerSecret(cs.manualMcapTrackerSimTrackTrigger))
+    http.HandleFunc("/trigger/mcap-tracker-sim-open", cs.requireTriggerSecret(cs.manualMcapTrackerSimOpenTrigger))
+    http.HandleFunc("/trigger/gmgn-sim-track", cs.requireTriggerSecret(cs.manualGmgnSimTrackTrigger))
+    http.HandleFunc("/trigger/gmgn-wallet-digger", cs.requireTriggerSecret(cs.manualGmgnWalletDiggerTrigger))
+    http.HandleFunc("/trigger/gmgn-roster-watch", cs.requireTriggerSecret(cs.manualGmgnRosterWatchTrigger))
+    http.HandleFunc("/trigger/social-sim-track", cs.requireTriggerSecret(cs.manualSocialSimTrackTrigger))
+    http.HandleFunc("/trigger/gmgn-activity-poll", cs.requireTriggerSecret(cs.manualGmgnActivityPollTrigger))
+    http.HandleFunc("/trigger/gmgn-radar-digest", cs.requireTriggerSecret(cs.manualGmgnRadarDigestTrigger))
+    http.HandleFunc("/trigger/social-rollup", cs.requireTriggerSecret(cs.manualSocialRollupTrigger))
+    http.HandleFunc("/trigger/social-cleanup", cs.requireTriggerSecret(cs.manualSocialCleanupTrigger))
+    http.HandleFunc("/trigger/social-wallet-poll", cs.requireTriggerSecret(cs.manualSocialWalletPollTrigger))
+    http.HandleFunc("/trigger/strategy-report", cs.requireTriggerSecret(cs.manualStrategyReportTrigger))
+    http.HandleFunc("/trigger/dlmm-screen", cs.requireTriggerSecret(cs.manualDLMMScreenTrigger))
+    http.HandleFunc("/trigger/dlmm-sim-track", cs.requireTriggerSecret(cs.manualDLMMSimTrackTrigger))
+    http.HandleFunc("/trigger/dlmm-manage", cs.requireTriggerSecret(cs.manualDLMMManageTrigger))
+    http.HandleFunc("/trigger/rh-clmm-manage", cs.requireTriggerSecret(cs.manualRhClmmManageTrigger))
+    http.HandleFunc("/trigger/sol-arb-scan", cs.requireTriggerSecret(cs.manualSolArbScanTrigger))
     http.HandleFunc("/logs/test", cs.testDiscordLogs)
 
     cs.cron.Start()
@@ -719,6 +726,20 @@ func (cs *CronService) Start() {
 	port := getEnv("PORT", "8080")
 	cs.logger.Info(fmt.Sprintf("🌐 HTTP server starting on port %s", port))
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+// requireTriggerSecret guards /trigger/* handlers with a shared-secret header
+// (X-Trigger-Secret). Unauthenticated requests get 401; /health stays public.
+func (cs *CronService) requireTriggerSecret(next http.HandlerFunc) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        provided := r.Header.Get("X-Trigger-Secret")
+        if provided == "" || cs.config.TriggerSecret == "" ||
+            subtle.ConstantTimeCompare([]byte(provided), []byte(cs.config.TriggerSecret)) != 1 {
+            http.Error(w, "Unauthorized", http.StatusUnauthorized)
+            return
+        }
+        next(w, r)
+    }
 }
 
 // Manual trigger for signals refresh

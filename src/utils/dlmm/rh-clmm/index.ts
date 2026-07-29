@@ -16,6 +16,7 @@ import {
 } from './mint'
 import { listPoolsForToken, loadPool, type ListedPool } from './pools'
 import { listPositions } from './positions'
+import type { V4ListExtras } from './v4'
 import { resolvePoolMintProtocol } from '../rh-clmm-pool-protocol'
 
 export type QuickMintOptions = {
@@ -240,8 +241,12 @@ export async function mintQuick(ca: Address, ctx: RhClmmCtx, opts: QuickMintOpti
   })
 }
 
-export async function listOwnerPositions(ctx: RhClmmCtx, knownV4TokenIds?: bigint[]) {
-  return withRhClmmCtx(ctx, () => listPositions(RH_CHAIN_ID, knownV4TokenIds))
+export async function listOwnerPositions(
+  ctx: RhClmmCtx,
+  knownV4TokenIds?: bigint[],
+  v4Extras?: V4ListExtras,
+) {
+  return withRhClmmCtx(ctx, () => listPositions(RH_CHAIN_ID, knownV4TokenIds, v4Extras))
 }
 
 export async function closeOwnerPosition(

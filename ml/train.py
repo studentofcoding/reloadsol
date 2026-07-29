@@ -11,7 +11,13 @@ from pathlib import Path
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, classification_report, f1_score
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    classification_report,
+    f1_score,
+    precision_recall_fscore_support,
+)
 
 from features import (
     FEATURE_COLUMNS,
@@ -33,6 +39,20 @@ def time_split(df: pd.DataFrame, test_ratio: float) -> tuple[pd.DataFrame, pd.Da
     if split_idx >= len(ordered):
         split_idx = len(ordered) - 1
     return ordered.iloc[:split_idx], ordered.iloc[split_idx:]
+
+
+def carve_valid(
+    train_df: pd.DataFrame, valid_ratio: float = 0.2
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Carve a validation tail off the (time-ordered) train split so early
+    stopping never watches the test holdout. Falls back to reusing train when
+    the cohort is too small to spare rows."""
+    if len(train_df) < 20:
+        return train_df, train_df
+    split_idx = max(1, int(len(train_df) * (1 - valid_ratio)))
+    if split_idx >= len(train_df):
+        split_idx = len(train_df) - 1
+    return train_df.iloc[:split_idx], train_df.iloc[split_idx:]
 
 
 def export_onnx(model: lgb.Booster, output_path: Path, num_features: int) -> bool:
@@ -73,13 +93,19 @@ def train_binary_gate(
         print("WARNING: single gate class — model will be trivial.", class_counts)
 
     train_df, test_df = time_split(df, test_ratio)
+    train_df, valid_df = carve_valid(train_df)
     x_train = train_df[feature_columns]
     y_train = train_df["gate_class"].astype(int)
     x_test = test_df[feature_columns]
     y_test = test_df["gate_class"].astype(int)
 
     train_set = lgb.Dataset(x_train, label=y_train, feature_name=feature_columns)
-    valid_set = lgb.Dataset(x_test, label=y_test, feature_name=feature_columns, reference=train_set)
+    valid_set = lgb.Dataset(
+        valid_df[feature_columns],
+        label=valid_df["gate_class"].astype(int),
+        feature_name=feature_columns,
+        reference=train_set,
+    )
 
     params = {
         "objective": "binary",
@@ -105,6 +131,14 @@ def train_binary_gate(
     pred = (proba >= 0.5).astype(int)
     y_true = y_test.to_numpy()
     macro_f1 = float(f1_score(y_true, pred, average="macro", zero_division=0))
+    precision, recall, f1_per_class, _ = precision_recall_fscore_support(
+        y_true, pred, labels=[0, 1], zero_division=0
+    )
+    pr_auc = (
+        float(average_precision_score(y_true, proba))
+        if len(set(y_true.tolist())) > 1
+        else 0.0
+    )
     min_f1_gate = 0.65
     gate_ready = macro_f1 >= min_f1_gate and len(test_df) >= 20
 
@@ -116,6 +150,10 @@ def train_binary_gate(
         "class_counts": {str(k): int(v) for k, v in class_counts.items()},
         "metrics": {
             "macro_f1": macro_f1,
+            "pr_auc": pr_auc,
+            "winner_recall": float(recall[1]),
+            "winner_precision": float(precision[1]),
+            "winner_f1": float(f1_per_class[1]),
             "accuracy": float(accuracy_score(y_true, pred)),
             "classification_report": classification_report(
                 y_true, pred, zero_division=0, output_dict=True
@@ -152,6 +190,7 @@ def train_potential_tier(
         )
 
     train_df, test_df = time_split(winners, test_ratio)
+    train_df, valid_df = carve_valid(train_df)
     x_train = train_df[feature_columns]
     # LightGBM multiclass expects 0-indexed labels
     y_train = train_df["potential_tier"].astype(int) - 1
@@ -159,7 +198,12 @@ def train_potential_tier(
     y_test = test_df["potential_tier"].astype(int) - 1
 
     train_set = lgb.Dataset(x_train, label=y_train, feature_name=feature_columns)
-    valid_set = lgb.Dataset(x_test, label=y_test, feature_name=feature_columns, reference=train_set)
+    valid_set = lgb.Dataset(
+        valid_df[feature_columns],
+        label=valid_df["potential_tier"].astype(int) - 1,
+        feature_name=feature_columns,
+        reference=train_set,
+    )
 
     params = {
         "objective": "multiclass",

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   listPatternTrainingRows,
   patternTrainingCsvHeader,
+  patternTrainingFeatureCoverage,
   patternTrainingRowToCsv,
 } from '@/strategies/social/pattern-training-export'
 import { isSocialRollupAuthorized } from '@/utils/social/config'
@@ -24,6 +25,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, error, rows: [], skipped }, { status: 503 })
   }
 
+  // Coverage logging: are zero-importance (social) features missing at export
+  // time or just uninformative? Logged per export, returned in the JSON payload.
+  const featureCoverage = patternTrainingFeatureCoverage(rows)
+  console.info(
+    '[mcap-patterns/training-export] feature coverage (non-zero rate):',
+    Object.fromEntries(
+      Object.entries(featureCoverage).map(([k, v]) => [
+        k,
+        `${(v.nonZeroRate * 100).toFixed(1)}%`,
+      ]),
+    ),
+  )
+
   if (format === 'csv') {
     const lines = [patternTrainingCsvHeader(), ...rows.map(patternTrainingRowToCsv)]
     return new NextResponse(lines.join('\n'), {
@@ -38,6 +52,7 @@ export async function GET(request: NextRequest) {
     success: true,
     rowCount: rows.length,
     skipped,
+    featureCoverage,
     rows,
     error,
   })
