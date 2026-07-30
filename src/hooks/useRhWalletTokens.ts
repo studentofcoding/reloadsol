@@ -9,7 +9,7 @@ export const RH_WALLET_TOKENS_KEY = 'rh-wallet-tokens'
 
 async function fetchRhWalletTokens(wallet: string): Promise<{
   tokens: UserToken[]
-  source: 'gmgn' | 'blockscout'
+  source: 'gmgn' | 'blockscout' | 'rpc'
 }> {
   const res = await fetch(
     `/api/rh/wallet-tokens?wallet=${encodeURIComponent(wallet)}`,
@@ -18,7 +18,7 @@ async function fetchRhWalletTokens(wallet: string): Promise<{
     success?: boolean
     error?: string
     tokens?: UserToken[]
-    source?: 'gmgn' | 'blockscout'
+    source?: 'gmgn' | 'blockscout' | 'rpc'
   }
   if (!res.ok || !data.success) {
     throw new Error(data.error || 'Failed to load RH wallet tokens')

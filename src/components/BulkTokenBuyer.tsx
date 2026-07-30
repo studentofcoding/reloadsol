@@ -88,6 +88,10 @@ import {
   simulateRhBoundBuyLeg,
   simulateRhParentBuyLeg,
 } from "@/utils/rh-trade-sim";
+import {
+  buildRhBuyToken,
+  rhQuoteUsdPerUnit,
+} from "@/utils/rh-trade-record";
 
 type SpendCurrency = "SOL" | "USDC" | "ETH" | "USDG" | "WETH";
 
@@ -720,24 +724,64 @@ export default function BulkTokenBuyer() {
       const fail = results.filter((r) => !r.success);
       if (ok.length > 0) {
         try {
-          await trackOperation({
-            walletAddress: tradeFromAddress,
-            operationType: "buy",
-            chain: effectiveChain,
-            tokens: ok.map((r) => ({
-              mintAddress: r.tokenAddress,
-              symbol: r.symbol,
-            })),
-            successCount: ok.length,
-            failureCount: fail.length,
-            totalTokens: results.length,
-            solAmount: parseFloat(solAmount),
-            feesPaid: 0,
-            signatures: ok
-              .map((r) => r.orderId || r.hash)
-              .filter((id): id is string => Boolean(id)),
-            slippage: slippage / 100,
-          });
+          if (effectiveChain === "robinhood") {
+            // Enriched record: bought token amounts + USD value so history
+            // shows what was bought and PnL can close cycles.
+            const ethUsd =
+              rhQuote === "USDG" ? 0 : await fetchEthUsdSpot().catch(() => 0);
+            const usdPerUnit = rhQuoteUsdPerUnit(rhQuote, ethUsd);
+            const built = ok.map((r) => {
+              const held = rhWalletTokens.tokens.find(
+                (t) =>
+                  t.mintAddress.toLowerCase() === r.tokenAddress.toLowerCase(),
+              );
+              return buildRhBuyToken({
+                mintAddress: r.tokenAddress,
+                symbol: r.symbol ?? held?.symbol,
+                spentQuote: perTokenHuman,
+                usdPerUnit,
+                estOutRaw: r.estOut,
+                tokenDecimals: held?.decimals ?? 18,
+              });
+            });
+            const totalUsd = built.reduce((s, b) => s + b.usdValue, 0);
+            await trackOperation({
+              walletAddress: tradeFromAddress,
+              operationType: "buy",
+              chain: effectiveChain,
+              tokens: built.map((b) => b.token),
+              successCount: ok.length,
+              failureCount: fail.length,
+              totalTokens: results.length,
+              solAmount: parseFloat(solAmount),
+              totalUsdValue: totalUsd > 0 ? totalUsd : undefined,
+              solPriceUsd: usdPerUnit > 0 ? usdPerUnit : undefined,
+              feesPaid: 0,
+              signatures: ok
+                .map((r) => r.orderId || r.hash)
+                .filter((id): id is string => Boolean(id)),
+              slippage: slippage / 100,
+            });
+          } else {
+            await trackOperation({
+              walletAddress: tradeFromAddress,
+              operationType: "buy",
+              chain: effectiveChain,
+              tokens: ok.map((r) => ({
+                mintAddress: r.tokenAddress,
+                symbol: r.symbol,
+              })),
+              successCount: ok.length,
+              failureCount: fail.length,
+              totalTokens: results.length,
+              solAmount: parseFloat(solAmount),
+              feesPaid: 0,
+              signatures: ok
+                .map((r) => r.orderId || r.hash)
+                .filter((id): id is string => Boolean(id)),
+              slippage: slippage / 100,
+            });
+          }
         } catch (trackError) {
           console.error("Failed to track RH buy:", trackError);
         }
@@ -787,6 +831,7 @@ export default function BulkTokenBuyer() {
     showOutcome,
     trackOperation,
     triggerPostBuyRefresh,
+    rhWalletTokens.tokens,
   ]);
 
   const runGmgnBulkBuy = runConfirmedRhBuy;

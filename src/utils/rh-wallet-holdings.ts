@@ -1,5 +1,7 @@
 import type { UserToken } from '@/utils/jupiter'
 import { isValidSolanaAddress } from '@/utils/solana-address'
+import { createPublicClient, http, type Address } from 'viem'
+import { RH_CHAIN, getRhRpcUrl } from '@/utils/dlmm/rh-univ2'
 
 const EVM_RE = /^0x[a-fA-F0-9]{40}$/
 export const RH_BLOCKSCOUT_BASE =
@@ -203,6 +205,90 @@ export async function fetchBlockscoutErc20Tokens(
       if (v != null) qs.set(k, String(v))
     }
     url = `${RH_BLOCKSCOUT_BASE}/api/v2/addresses/${wallet}/tokens?${qs}`
+  }
+  return out
+}
+
+/** Static metadata for a RH ERC-20 used by the raw-RPC fallback. */
+export type RhTokenMeta = {
+  address: string
+  symbol?: string
+  name?: string
+  decimals?: number
+  logoURI?: string
+}
+
+const BALANCE_OF_ABI = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+] as const
+
+/**
+ * Last-resort holdings lookup via direct ethereum calls (no indexer):
+ * balanceOf over a candidate token list. Candidates come from tokens the
+ * wallet was previously seen holding (cached by the API route) plus the
+ * quote currencies, so no GMGN/Blockscout availability is required.
+ */
+export async function fetchRpcErc20Tokens(
+  wallet: string,
+  candidates: RhTokenMeta[],
+  opts?: { rpcUrl?: string; concurrency?: number },
+): Promise<UserToken[]> {
+  const client = createPublicClient({
+    chain: RH_CHAIN,
+    transport: http(opts?.rpcUrl ?? getRhRpcUrl()),
+  })
+  const account = wallet as Address
+  const seen = new Set<string>()
+  const unique = candidates.filter((c) => {
+    const addr = String(c.address ?? '').trim().toLowerCase()
+    if (!isEvmAddress(addr) || seen.has(addr)) return false
+    seen.add(addr)
+    return true
+  })
+
+  const out: UserToken[] = []
+  const concurrency = Math.max(1, opts?.concurrency ?? 8)
+  for (let i = 0; i < unique.length; i += concurrency) {
+    const chunk = unique.slice(i, i + concurrency)
+    const results = await Promise.all(
+      chunk.map(async (c) => {
+        try {
+          const bal = await client.readContract({
+            address: c.address as Address,
+            abi: BALANCE_OF_ABI,
+            functionName: 'balanceOf',
+            args: [account],
+          })
+          return { c, bal }
+        } catch {
+          return null
+        }
+      }),
+    )
+    for (const r of results) {
+      if (!r || r.bal <= BigInt(0)) continue
+      const decimals = Math.max(0, Math.floor(r.c.decimals ?? 18))
+      const balanceRaw = Number(r.bal)
+      const uiAmount = decimals > 0 ? balanceRaw / 10 ** decimals : balanceRaw
+      if (!(uiAmount > 0)) continue
+      out.push({
+        mintAddress: r.c.address.toLowerCase(),
+        balance: balanceRaw,
+        decimals,
+        symbol: r.c.symbol ?? '???',
+        name: r.c.name ?? r.c.symbol ?? 'Unknown',
+        logoURI: r.c.logoURI,
+        uiAmount,
+        usdValue: 0,
+        isNFT: false,
+      })
+    }
   }
   return out
 }

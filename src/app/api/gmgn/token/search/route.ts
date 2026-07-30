@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { searchTokensForChain, GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
+import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 export const dynamic = 'force-dynamic'
+
+const SEARCH_TTL_S = 30
 
 export async function GET(request: NextRequest) {
   try {
@@ -20,7 +23,13 @@ export async function GET(request: NextRequest) {
         { status: 400 },
       )
     }
+    const cacheKey = `gmgn:search:${chain}:${query.toLowerCase()}`
+    const cached = await cacheGet<unknown[]>(cacheKey)
+    if (cached) {
+      return NextResponse.json(cached)
+    }
     const tokens = await searchTokensForChain({ chain, query, limit: 20 })
+    void cacheSet(cacheKey, tokens, SEARCH_TTL_S)
     // Array shape matches BulkTokenBuyer expectations (Jupiter search used `id`).
     return NextResponse.json(tokens)
   } catch (error) {

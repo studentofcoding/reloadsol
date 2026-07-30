@@ -37,6 +37,10 @@ import {
   simulateRhBoundBuyLeg,
   simulateRhParentBuyLeg,
 } from '@/utils/rh-trade-sim'
+import {
+  buildRhBuyToken,
+  rhQuoteUsdPerUnit,
+} from '@/utils/rh-trade-record'
 import { fetchJupiterLiteQuote } from '@/utils/jupiter-lite-swap'
 import { executeBulkBuy } from '@/utils/jupiter'
 import { getSolPriceUSD, TOKENS } from '@/utils/solana'
@@ -196,12 +200,16 @@ function DlmmFastSwapModalBody({
           throw new Error('Invalid token address')
         }
         const ethUsd = await fetchEthUsdSpot()
+        const held = rhTokens.tokens.find(
+          (x) => x.mintAddress.toLowerCase() === tokenAddress.toLowerCase(),
+        )
         const sim = isParent
           ? await simulateRhParentBuyLeg({
               amountHuman: human,
               tokenAddress,
               quote: rhQuote,
               ethUsd,
+              tokenDecimals: held?.decimals ?? 18,
             })
           : await simulateRhBoundBuyLeg({
               from: fromRh!,
@@ -210,12 +218,14 @@ function DlmmFastSwapModalBody({
               quote: rhQuote,
               slippageBps,
               ethUsd,
+              tokenDecimals: held?.decimals ?? 18,
             })
         return {
           fromUsd: sim.fromUsd,
           toUsd: sim.toUsd,
           priceImpactPct: sim.priceImpactPct,
           amountOutRaw: sim.amountOutRaw,
+          ethUsd,
           label: `${human} ${rhQuote}${isParent ? ' · Kyber' : ' · GMGN'}`,
         }
       }
@@ -322,15 +332,34 @@ function DlmmFastSwapModalBody({
         }
         const ok = results.filter((r) => r.success)
         if (ok.length > 0) {
+          const held = rhTokens.tokens.find(
+            (x) => x.mintAddress.toLowerCase() === tokenAddress.toLowerCase(),
+          )
+          const simData = simQuery.data
+          const ethUsd = simData && 'ethUsd' in simData ? (simData.ethUsd as number) : 0
+          const usdPerUnit = rhQuoteUsdPerUnit(rhQuote, ethUsd)
+          const built = ok.map((r) =>
+            buildRhBuyToken({
+              mintAddress: r.tokenAddress,
+              symbol: tokenSymbol ?? held?.symbol,
+              spentQuote: human,
+              usdPerUnit,
+              estOutRaw: r.estOut ?? simData?.amountOutRaw,
+              tokenDecimals: held?.decimals ?? 18,
+            }),
+          )
+          const totalUsd = built.reduce((s, b) => s + b.usdValue, 0)
           await trackOperation({
             walletAddress: fromRh,
             operationType: 'buy',
             chain: 'robinhood',
-            tokens: [{ mintAddress: tokenAddress }],
+            tokens: built.map((b) => b.token),
             successCount: ok.length,
             failureCount: results.length - ok.length,
             totalTokens: results.length,
             solAmount: human,
+            totalUsdValue: totalUsd > 0 ? totalUsd : undefined,
+            solPriceUsd: usdPerUnit > 0 ? usdPerUnit : undefined,
             feesPaid: 0,
             signatures: ok
               .map((r) => r.orderId || r.hash)

@@ -60,9 +60,18 @@ interface PnLRecord {
   sellTimestamp: number;
   buyPrice: number; // SOL price when bought
   sellPrice: number; // SOL price when sold
-  solAmountBought: number; // SOL spent on buying (proportional for this sell)
-  solAmountSold: number; // SOL received from selling
-  pnlSOL: number; // Profit/Loss in SOL
+  /** Chain this trade cycle belongs to (defaults to sol for legacy rows). */
+  chain?: "sol" | "robinhood";
+  /** Display unit for the native amounts: SOL | ETH | USDG. */
+  nativeLabel?: string;
+  /** USD per unit of the native/quote currency at trade time. */
+  quoteUsdPerUnit?: number;
+  solAmountBought: number; // SOL spent on buying — solana cycles only (0 for RH)
+  solAmountSold: number; // SOL received from selling — solana cycles only (0 for RH)
+  pnlSOL: number; // Profit/Loss in SOL — solana cycles only (0 for RH)
+  ethAmountBought?: number; // Quote/native spent — robinhood cycles only
+  ethAmountSold?: number; // Quote/native received — robinhood cycles only
+  pnlETH?: number; // Profit/Loss in quote/native units — robinhood cycles only
   pnlUSD: number; // Profit/Loss in USD
   pnlPercentage: number; // Percentage gain/loss
   buySignatures: string[];
@@ -93,7 +102,14 @@ interface OpenPosition {
   name?: string;
   logoURI?: string;
   buyTimestamp: number;
-  solAmountBought: number; // SOL spent on buying
+  /** Chain this position belongs to (defaults to sol for legacy rows). */
+  chain?: "sol" | "robinhood";
+  /** Display unit for the native amount: SOL | ETH | USDG. */
+  nativeLabel?: string;
+  /** USD per unit of the native/quote currency at buy time. */
+  quoteUsdPerUnit?: number;
+  solAmountBought: number; // SOL spent on buying — solana only (0 for RH)
+  ethAmountBought?: number; // Quote/native spent — robinhood only
   buySignatures: string[];
   isOpen: boolean; // Always true for open positions
   currentUsdValue?: number; // Current USD value of the position
@@ -172,6 +188,59 @@ export default function PnLTracker() {
     ? (ethPriceQuery.data ?? 3000)
     : (solPriceQuery.data ?? 145);
   const solPriceUsd = nativePriceUsd;
+
+  // Chain-aware native amount helpers — SOL fields are solana-only, ETH
+  // fields robinhood-only. Legacy rows without `chain` fall back to the
+  // currently viewed network.
+  const chainOf = useCallback(
+    (c?: "sol" | "robinhood"): "sol" | "robinhood" =>
+      c ?? (isRobinhood ? "robinhood" : "sol"),
+    [isRobinhood],
+  );
+  const nativeBoughtOf = useCallback(
+    (r: {
+      chain?: "sol" | "robinhood";
+      solAmountBought: number;
+      ethAmountBought?: number;
+    }): number =>
+      chainOf(r.chain) === "robinhood"
+        ? (r.ethAmountBought ?? 0)
+        : r.solAmountBought,
+    [chainOf],
+  );
+  const nativeSoldOf = useCallback(
+    (r: {
+      chain?: "sol" | "robinhood";
+      solAmountSold: number;
+      ethAmountSold?: number;
+    }): number =>
+      chainOf(r.chain) === "robinhood"
+        ? (r.ethAmountSold ?? 0)
+        : r.solAmountSold,
+    [chainOf],
+  );
+  const nativeLabelOf = useCallback(
+    (r: { chain?: "sol" | "robinhood"; nativeLabel?: string }): string =>
+      r.nativeLabel ?? (chainOf(r.chain) === "robinhood" ? "ETH" : "SOL"),
+    [chainOf],
+  );
+  const usdPerUnitOf = useCallback(
+    (r: { quoteUsdPerUnit?: number }): number =>
+      r.quoteUsdPerUnit && r.quoteUsdPerUnit > 0
+        ? r.quoteUsdPerUnit
+        : nativePriceUsd,
+    [nativePriceUsd],
+  );
+  // Decimals per unit: stables 2, large amounts 2, normal 4, tiny 4 sig figs.
+  const formatNativeAmount = (n: number, label: string): string => {
+    if (!Number.isFinite(n)) return "0";
+    if (label === "USDG" || label === "USDC" || label === "USDT") {
+      return n.toFixed(2);
+    }
+    if (n >= 100) return n.toFixed(2);
+    if (n >= 1) return n.toFixed(4);
+    return n.toPrecision(4);
+  };
   const [activeTab, setActiveTab] = useState<"completed" | "open">("completed");
   const [modeFilter, setModeFilter] = useState<"all" | "real" | "sim">("all");
   const [showAlgoStrategies, setShowAlgoStrategies] = useState<boolean>(() => {
@@ -543,7 +612,9 @@ export default function PnLTracker() {
       return;
     }
 
-    if (!connection) {
+    // Sol holdings use the RPC connection; RH holdings come via API, so a
+    // missing Solana connection must not block RH PnL.
+    if (!isRobinhood && !connection) {
       return;
     }
 
@@ -621,11 +692,21 @@ export default function PnLTracker() {
         // Helper type for an open trade cycle
         type Cycle = {
           mintAddress: string;
+          /** Chain of this cycle — sol cycles use totalSol*, RH cycles totalEth*. */
+          chain: "sol" | "robinhood";
+          /** Display unit for native amounts: SOL | ETH | USDG. */
+          nativeLabel: string;
+          /** USD per unit of the native/quote currency (latest known). */
+          quoteUsdPerUnit: number;
           symbol?: string;
           name?: string;
           logoURI?: string;
           totalSolBought: number;
           totalSolSold: number;
+          totalEthBought: number;
+          totalEthSold: number;
+          totalUsdBought: number;
+          totalUsdSold: number;
           totalTokenBought: number;
           remainingTokenAmount: number;
           weightedBuyPriceUsd: number; // simple average for now
@@ -655,29 +736,38 @@ export default function PnLTracker() {
           const isBuy = op.operationType === "buy";
           const tokensInOp = op.tokens || [];
 
-          // Guard – skip malformed records
-          if (!op.solAmount || op.successCount === 0) continue;
+          // Guard – skip malformed records. RH sells legitimately have no
+          // solAmount (received quote unknown), so only successCount gates.
+          if (op.successCount === 0) continue;
 
-          // Evenly distribute SOL across tokens in the operation (we usually have 1 token)
-          const solPerToken = op.solAmount / op.successCount;
+          // Evenly distribute across tokens in the operation (we usually have 1 token)
+          const solPerToken = (op.solAmount ?? 0) / op.successCount;
 
           for (const tkn of tokensInOp) {
             const mint = tkn.mintAddress;
             if (!mint) continue;
 
             const isSim = !!op.is_simulation;
-            const cycleKey = `${mint}-${isSim ? "sim" : "real"}`;
+            const opChain: "sol" | "robinhood" = op.chain ?? "sol";
+            const cycleKey = `${opChain}:${mint}-${isSim ? "sim" : "real"}`;
 
             if (isBuy) {
               let cycle = openCycles.get(cycleKey);
               if (!cycle) {
                 cycle = {
                   mintAddress: mint,
+                  chain: opChain,
+                  nativeLabel: opChain === "robinhood" ? "ETH" : "SOL",
+                  quoteUsdPerUnit: 0,
                   symbol: tkn.symbol,
                   name: tkn.name,
                   logoURI: tkn.logoURI,
                   totalSolBought: 0,
                   totalSolSold: 0,
+                  totalEthBought: 0,
+                  totalEthSold: 0,
+                  totalUsdBought: 0,
+                  totalUsdSold: 0,
                   totalTokenBought: 0,
                   remainingTokenAmount: 0,
                   weightedBuyPriceUsd: 0,
@@ -709,7 +799,29 @@ export default function PnLTracker() {
               ) {
                 tokenAmt = (solForToken * solPrice) / tkn.priceUsd;
               }
-              cycle.totalSolBought += solPerToken;
+              // USD at trade time: prefer recorded token price, then the
+              // operation's USD total, then quote-amount × quote USD price.
+              const usdForToken =
+                tkn.priceUsd && tokenAmt > 0
+                  ? tkn.priceUsd * tokenAmt
+                  : op.totalUsdValue && op.successCount > 0
+                    ? op.totalUsdValue / op.successCount
+                    : solForToken * solPrice;
+              // Native amounts are chain-separated: SOL for solana, the
+              // quote/native unit (ETH/USDG/WETH) for robinhood.
+              const usdPerUnitRecorded = op.solPriceUsd ?? tkn.solPrice ?? 0;
+              if (opChain === "robinhood") {
+                cycle.totalEthBought += solForToken;
+                if (usdPerUnitRecorded > 0) {
+                  cycle.quoteUsdPerUnit = usdPerUnitRecorded;
+                  cycle.nativeLabel =
+                    usdPerUnitRecorded === 1 ? "USDG" : "ETH";
+                }
+              } else {
+                cycle.totalSolBought += solForToken;
+                cycle.quoteUsdPerUnit = solPrice;
+              }
+              cycle.totalUsdBought += usdForToken;
               cycle.totalTokenBought += tokenAmt;
               cycle.remainingTokenAmount += tokenAmt;
               if (tkn.priceUsd) {
@@ -745,7 +857,28 @@ export default function PnLTracker() {
                 deducted = cycle.remainingTokenAmount;
               }
 
-              cycle.totalSolSold += solPerToken;
+              const solForToken = tkn.solAmount ?? solPerToken;
+              const solPrice =
+                op.solPriceUsd ?? tkn.solPrice ?? solPriceCache;
+              const usdForToken =
+                tkn.priceUsd && tokenAmt > 0
+                  ? tkn.priceUsd * tokenAmt
+                  : op.totalUsdValue && op.successCount > 0
+                    ? op.totalUsdValue / op.successCount
+                    : solForToken * solPrice;
+              const usdPerUnitRecorded = op.solPriceUsd ?? tkn.solPrice ?? 0;
+              if (opChain === "robinhood") {
+                cycle.totalEthSold += solForToken;
+                if (usdPerUnitRecorded > 0) {
+                  cycle.quoteUsdPerUnit = usdPerUnitRecorded;
+                  cycle.nativeLabel =
+                    usdPerUnitRecorded === 1 ? "USDG" : "ETH";
+                }
+              } else {
+                cycle.totalSolSold += solForToken;
+                cycle.quoteUsdPerUnit = solPrice;
+              }
+              cycle.totalUsdSold += usdForToken;
               cycle.remainingTokenAmount = Math.max(
                 0,
                 cycle.remainingTokenAmount - deducted,
@@ -767,11 +900,25 @@ export default function PnLTracker() {
 
               // If the cycle is fully closed, compute PnL record and remove from open map
               if (cycle.remainingTokenAmount <= 1e-6) {
-                const pnlSOL = cycle.totalSolSold - cycle.totalSolBought;
-                const pnlUSD = pnlSOL * solPriceCache;
-                const pnlPerc =
-                  cycle.totalSolBought > 0
-                    ? (pnlSOL / cycle.totalSolBought) * 100
+                const isRhCycle = cycle.chain === "robinhood";
+                const nativeBought = isRhCycle
+                  ? cycle.totalEthBought
+                  : cycle.totalSolBought;
+                const nativeSold = isRhCycle
+                  ? cycle.totalEthSold
+                  : cycle.totalSolSold;
+                const pnlNative = nativeSold - nativeBought;
+                // Prefer trade-time USD values (exact for any quote currency,
+                // incl. RH USDG/WETH) over native-units × current price.
+                const hasUsd =
+                  cycle.totalUsdBought > 0 && cycle.totalUsdSold > 0;
+                const pnlUSD = hasUsd
+                  ? cycle.totalUsdSold - cycle.totalUsdBought
+                  : pnlNative * solPriceCache;
+                const pnlPerc = hasUsd
+                  ? (pnlUSD / cycle.totalUsdBought) * 100
+                  : nativeBought > 0
+                    ? (pnlNative / nativeBought) * 100
                     : 0;
 
                 const pnlRecord: PnLRecord = {
@@ -780,13 +927,22 @@ export default function PnLTracker() {
                   symbol: cycle.symbol,
                   name: cycle.name,
                   logoURI: cycle.logoURI,
+                  chain: cycle.chain,
+                  nativeLabel: cycle.nativeLabel,
+                  quoteUsdPerUnit:
+                    cycle.quoteUsdPerUnit > 0
+                      ? cycle.quoteUsdPerUnit
+                      : undefined,
                   buyTimestamp: cycle.firstBuyTimestamp,
                   sellTimestamp: op.timestamp,
                   buyPrice: cycle.weightedBuyPriceUsd,
                   sellPrice: cycle.weightedSellPriceUsd,
-                  solAmountBought: cycle.totalSolBought,
-                  solAmountSold: cycle.totalSolSold,
-                  pnlSOL,
+                  solAmountBought: isRhCycle ? 0 : nativeBought,
+                  solAmountSold: isRhCycle ? 0 : nativeSold,
+                  pnlSOL: isRhCycle ? 0 : pnlNative,
+                  ethAmountBought: isRhCycle ? nativeBought : undefined,
+                  ethAmountSold: isRhCycle ? nativeSold : undefined,
+                  pnlETH: isRhCycle ? pnlNative : undefined,
                   pnlUSD,
                   pnlPercentage: pnlPerc,
                   buySignatures: cycle.buySignatures,
@@ -819,7 +975,14 @@ export default function PnLTracker() {
           name: cycle.name,
           logoURI: cycle.logoURI,
           buyTimestamp: cycle.firstBuyTimestamp,
-          solAmountBought: cycle.totalSolBought,
+          chain: cycle.chain,
+          nativeLabel: cycle.nativeLabel,
+          quoteUsdPerUnit:
+            cycle.quoteUsdPerUnit > 0 ? cycle.quoteUsdPerUnit : undefined,
+          solAmountBought:
+            cycle.chain === "robinhood" ? 0 : cycle.totalSolBought,
+          ethAmountBought:
+            cycle.chain === "robinhood" ? cycle.totalEthBought : undefined,
           buySignatures: cycle.buySignatures,
           isOpen: true,
           buyPriceUsd: cycle.weightedBuyPriceUsd,
@@ -856,7 +1019,7 @@ export default function PnLTracker() {
                   portfolioErr,
                 );
                 walletTokens = await fetchUserTokens(
-                  connection,
+                  connection!,
                   publicKey!,
                   false,
                   false,
@@ -887,7 +1050,10 @@ export default function PnLTracker() {
                   name: wt.name || "Unknown Token",
                   logoURI: wt.logoURI,
                   buyTimestamp: Date.now(), // Show as recent
+                  chain: isRobinhood ? "robinhood" : "sol",
+                  nativeLabel: nativeUnit,
                   solAmountBought: 0, // Unknown
+                  ethAmountBought: isRobinhood ? 0 : undefined,
                   buySignatures: [],
                   isOpen: true,
                   buyPriceUsd: 0, // Unknown
@@ -944,7 +1110,7 @@ export default function PnLTracker() {
     } finally {
       setIsLoading(false);
     }
-  }, [walletAddress, records, solPriceUsd, connection, publicKey, isRobinhood, rhWalletTokens]);
+  }, [walletAddress, records, solPriceUsd, connection, publicKey, isRobinhood, nativeUnit, rhWalletTokens]);
 
   const recordsKey = useMemo(
     () => records.map((r) => `${r.id}:${r.timestamp}`).join("|"),
@@ -1626,7 +1792,8 @@ export default function PnLTracker() {
               ((currentTokenPriceUsd - position.buyPriceUsd) /
                 position.buyPriceUsd) *
               100;
-            const initialUsdValue = position.solAmountBought * solPriceUsd;
+            const initialUsdValue =
+              nativeBoughtOf(position) * usdPerUnitOf(position);
             const priceMultiplier =
               currentTokenPriceUsd / position.buyPriceUsd;
             const estimatedCurrentValue = initialUsdValue * priceMultiplier;
@@ -1640,7 +1807,7 @@ export default function PnLTracker() {
           }
 
           // External / wallet-only opens: no cost basis — keep live price, do not fake 0% PnL
-          if (position.solAmountBought === 0) {
+          if (nativeBoughtOf(position) === 0) {
             const currentUsdValue =
               (position.actualWalletBalance || 0) * currentTokenPriceUsd;
             return {
@@ -1652,8 +1819,9 @@ export default function PnLTracker() {
             };
           }
 
-          const initialUsdValue = position.solAmountBought * solPriceUsd;
-          const currentSolValue = position.solAmountBought;
+          const initialUsdValue =
+            nativeBoughtOf(position) * usdPerUnitOf(position);
+          const currentSolValue = nativeBoughtOf(position);
           const priceMultiplier =
             currentTokenPriceUsd / (initialUsdValue / currentSolValue);
           const estimatedCurrentValue =
@@ -1685,7 +1853,7 @@ export default function PnLTracker() {
         return updatedPositions;
       });
     },
-    [solPriceUsd],
+    [nativeBoughtOf, usdPerUnitOf],
   );
 
   const openMintsKey = useMemo(
@@ -2731,8 +2899,9 @@ export default function PnLTracker() {
                 ) : (
                   <div className="flex space-x-2 overflow-x-auto mb-3 scrollbar-hide">
                     {filteredDisplayRecords.map((record) => {
-                      // Calculate USD amounts
-                      const buyAmountUSD = record.solAmountBought * solPriceUsd;
+                      // Calculate USD amounts (chain-aware native × trade-time unit price)
+                      const buyAmountUSD =
+                        nativeBoughtOf(record) * usdPerUnitOf(record);
                       const pnlAmountUSD =
                         buyAmountUSD * (record.pnlPercentage / 100);
 
@@ -2849,11 +3018,19 @@ export default function PnLTracker() {
                             </span>
                           </div>
 
-                          {/* SOL amounts - Hidden when global toggle is active */}
+                          {/* Native amounts (SOL on solana, ETH/USDG on robinhood) - Hidden when global toggle is active */}
                           {!globalPnLHidden && (
                             <div className="text-xs text-gray-300 mb-1">
-                              {record.solAmountBought.toFixed(3)} →{" "}
-                              {record.solAmountSold.toFixed(3)} SOL
+                              {formatNativeAmount(
+                                nativeBoughtOf(record),
+                                nativeLabelOf(record),
+                              )}{" "}
+                              →{" "}
+                              {formatNativeAmount(
+                                nativeSoldOf(record),
+                                nativeLabelOf(record),
+                              )}{" "}
+                              {nativeLabelOf(record)}
                             </div>
                           )}
 
@@ -3006,7 +3183,7 @@ export default function PnLTracker() {
                       {filteredDisplayOpenPositions.map((position) => {
                         const isSelected = selectedTokens.has(position.id);
                         const buyAmountUSD =
-                          position.solAmountBought * solPriceUsd;
+                          nativeBoughtOf(position) * usdPerUnitOf(position);
                         const pnlAmountUSD =
                           position.pnlPercentage !== undefined
                             ? buyAmountUSD * (position.pnlPercentage / 100)
@@ -3208,9 +3385,9 @@ export default function PnLTracker() {
                                         : null;
                                     const fromSol =
                                       !fromUsd &&
-                                      position.solAmountBought > 0 &&
+                                      nativeBoughtOf(position) > 0 &&
                                       buyAmountUSD > 0
-                                        ? buyAmountUSD / position.solAmountBought
+                                        ? buyAmountUSD / nativeBoughtOf(position)
                                         : null;
                                     const price = fromUsd ?? fromSol;
                                     return price != null && Number.isFinite(price)
@@ -3240,10 +3417,14 @@ export default function PnLTracker() {
                                 )}
                               </div>
 
-                              {/* SOL amount - Hidden when global toggle is active */}
-                              {!globalPnLHidden && (
+                              {/* Native amount (SOL on solana, ETH/USDG on robinhood) - Hidden when global toggle is active */}
+                              {!globalPnLHidden && nativeBoughtOf(position) > 0 && (
                                 <div className="text-xs text-gray-300 mb-1">
-                                  {position.solAmountBought.toFixed(3)} SOL
+                                  {formatNativeAmount(
+                                    nativeBoughtOf(position),
+                                    nativeLabelOf(position),
+                                  )}{" "}
+                                  {nativeLabelOf(position)}
                                 </div>
                               )}
 

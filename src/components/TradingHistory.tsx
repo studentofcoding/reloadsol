@@ -310,6 +310,26 @@ export default function TradingHistory() {
     return `${days} day${days !== 1 ? "s" : ""} ago`;
   };
 
+  const formatTokenAmount = (n: number) => {
+    if (!Number.isFinite(n) || n <= 0) return "";
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
+    if (n >= 1) return n.toFixed(2);
+    return n.toPrecision(3);
+  };
+
+  // A buy should show what token we bought (amount + symbol), not what we spent.
+  const buyTokenLabel = (record: TrackingRecord): string | null => {
+    if (record.operationType !== "buy") return null;
+    const bought = record.tokens.filter(
+      (t) => t.tokenAmount && t.tokenAmount > 0,
+    );
+    if (bought.length === 0) return null;
+    const first = bought[0];
+    const label = `+${formatTokenAmount(first.tokenAmount!)} ${first.symbol || first.name || "token"}`;
+    return bought.length > 1 ? `${label} +${bought.length - 1}` : label;
+  };
+
   const openTransactionOnExplorer = (signatures: string[]) => {
     if (signatures && signatures.length > 0) {
       const signature = signatures[0];
@@ -494,11 +514,21 @@ export default function TradingHistory() {
                   <StatusIndicator record={record} />
                 </div>
 
-                {record.solAmount && record.solAmount > 0 && (
-                  <span className="text-xs font-mono text-gray-300">
-                    {record.solAmount.toFixed(4)} {nativeUnit}
-                  </span>
-                )}
+                {(() => {
+                  const boughtLabel = buyTokenLabel(record);
+                  if (boughtLabel) {
+                    return (
+                      <span className="text-xs font-mono text-emerald-300">
+                        {boughtLabel}
+                      </span>
+                    );
+                  }
+                  return record.solAmount && record.solAmount > 0 ? (
+                    <span className="text-xs font-mono text-gray-300">
+                      {record.solAmount.toFixed(4)} {nativeUnit}
+                    </span>
+                  ) : null;
+                })()}
               </div>
 
               {/* Tokens display */}

@@ -47,6 +47,10 @@ import {
   simulateRhParentSellLeg,
 } from "@/utils/rh-trade-sim";
 import {
+  buildRhSellToken,
+  rhQuoteUsdPerUnit,
+} from "@/utils/rh-trade-record";
+import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import {
@@ -821,23 +825,70 @@ export default function BulkTokenSeller() {
       const fail = results.filter((r) => !r.success);
       if (ok.length > 0) {
         try {
-          await trackOperation({
-            walletAddress: tradeFromAddress,
-            operationType: "sell",
-            chain: effectiveChain,
-            tokens: ok.map((r) => ({
-              mintAddress: r.tokenAddress,
-              symbol: r.symbol,
-            })),
-            successCount: ok.length,
-            failureCount: fail.length,
-            totalTokens: results.length,
-            feesPaid: 0,
-            signatures: ok
-              .map((r) => r.orderId || r.hash)
-              .filter((id): id is string => Boolean(id)),
-            slippage: slippage / 100,
-          });
+          if (effectiveChain === "robinhood") {
+            // Enriched record: token amount sold + USD estimate (from the
+            // pre-sell holdings value) so PnL cycles can close.
+            const ethUsd =
+              rhQuoteCurrency === "USDG"
+                ? 0
+                : await fetchEthUsdSpot().catch(() => 0);
+            const usdPerUnit = rhQuoteUsdPerUnit(rhQuoteCurrency, ethUsd);
+            const built = ok.map((r) => {
+              const sel = selectedTokens.find(
+                (t) =>
+                  t.mintAddress.toLowerCase() === r.tokenAddress.toLowerCase(),
+              );
+              const pct = sel?.sellPercentage || 100;
+              const soldTokenAmount =
+                sel && sel.uiAmount > 0 ? (sel.uiAmount * pct) / 100 : undefined;
+              const tokenPriceUsd =
+                sel && sel.usdValue > 0 && sel.uiAmount > 0
+                  ? sel.usdValue / sel.uiAmount
+                  : undefined;
+              return buildRhSellToken({
+                mintAddress: r.tokenAddress,
+                symbol: r.symbol ?? sel?.symbol,
+                soldTokenAmount,
+                tokenPriceUsd,
+                usdPerUnit,
+              });
+            });
+            const totalUsd = built.reduce((s, b) => s + b.usdValue, 0);
+            await trackOperation({
+              walletAddress: tradeFromAddress,
+              operationType: "sell",
+              chain: effectiveChain,
+              tokens: built.map((b) => b.token),
+              successCount: ok.length,
+              failureCount: fail.length,
+              totalTokens: results.length,
+              totalUsdValue: totalUsd > 0 ? totalUsd : undefined,
+              solPriceUsd: usdPerUnit > 0 ? usdPerUnit : undefined,
+              feesPaid: 0,
+              signatures: ok
+                .map((r) => r.orderId || r.hash)
+                .filter((id): id is string => Boolean(id)),
+              slippage: slippage / 100,
+            });
+          } else {
+            await trackOperation({
+              walletAddress: tradeFromAddress,
+              operationType: "sell",
+              chain: effectiveChain,
+              tokens: ok.map((r) => ({
+                mintAddress: r.tokenAddress,
+                symbol: r.symbol,
+              })),
+              successCount: ok.length,
+              failureCount: fail.length,
+              totalTokens: results.length,
+              feesPaid: 0,
+              signatures: ok
+                .map((r) => r.orderId || r.hash)
+                .filter((id): id is string => Boolean(id)),
+              slippage: slippage / 100,
+            });
+          }
         } catch (trackError) {
           console.error("Failed to track RH sell:", trackError);
         }

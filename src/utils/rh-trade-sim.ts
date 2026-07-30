@@ -27,6 +27,9 @@ export type RhTradeSimLeg = {
   priceImpactPct: number | null
   amountOutHuman: number | null
   amountOutRaw: string | null
+  /** Human/raw units of the input side (quote spent on buys, token sold on sells). */
+  amountInHuman: number | null
+  amountInRaw: string | null
 }
 
 export function quoteCurrencyUsdPerUnit(
@@ -135,6 +138,7 @@ export async function simulateRhParentBuyLeg(params: {
   tokenAddress: string
   quote: RhSwapQuote
   ethUsd: number
+  tokenDecimals?: number
 }): Promise<RhTradeSimLeg> {
   const tokenIn = kyberQuoteTokenAddress(params.quote)
   const decimals = kyberQuoteDecimals(params.quote)
@@ -147,8 +151,9 @@ export async function simulateRhParentBuyLeg(params: {
   const fromUsd =
     params.amountHuman * quoteCurrencyUsdPerUnit(params.quote, params.ethUsd)
   const outRaw = route.amountOut ?? null
+  const tokenDec = params.tokenDecimals ?? 18
   const outHuman =
-    outRaw != null ? rawAmountToHuman(outRaw, 18) : null // token decimals unknown → assume 18; refine below
+    outRaw != null ? rawAmountToHuman(outRaw, tokenDec) : null
   let toUsd: number | null = null
   const summary = route.routeSummary as Record<string, unknown>
   const apiInUsd = numField(summary, ['amountInUsd', 'amount_in_usd'])
@@ -156,8 +161,7 @@ export async function simulateRhParentBuyLeg(params: {
   if (apiOutUsd != null) toUsd = apiOutUsd
   else if (outRaw != null) {
     const tokenUsd = await fetchTokenUsd(params.tokenAddress)
-    // Prefer tokenInfo decimals when available; default 18 for RH memes
-    const human = rawAmountToHuman(outRaw, 18)
+    const human = rawAmountToHuman(outRaw, tokenDec)
     if (tokenUsd != null) toUsd = human * tokenUsd
   }
   const impact =
@@ -171,6 +175,8 @@ export async function simulateRhParentBuyLeg(params: {
     priceImpactPct: impact,
     amountOutHuman: outHuman,
     amountOutRaw: outRaw,
+    amountInHuman: params.amountHuman,
+    amountInRaw: amountIn,
   }
 }
 
@@ -181,6 +187,7 @@ export async function simulateRhBoundBuyLeg(params: {
   quote: RhSwapQuote
   slippageBps: number
   ethUsd: number
+  tokenDecimals?: number
 }): Promise<RhTradeSimLeg> {
   const inputToken = gmgnQuoteToken(params.quote)
   const decimals = gmgnTokenDecimals('robinhood', inputToken)
@@ -220,9 +227,10 @@ export async function simulateRhBoundBuyLeg(params: {
     'priceImpact',
     'price_impact_pct',
   ])
+  const tokenDec = params.tokenDecimals ?? 18
   if (toUsd == null && outRaw) {
     const tokenUsd = await fetchTokenUsd(params.tokenAddress)
-    const human = rawAmountToHuman(outRaw, 18)
+    const human = rawAmountToHuman(outRaw, tokenDec)
     if (tokenUsd != null) toUsd = human * tokenUsd
   }
   return {
@@ -236,8 +244,10 @@ export async function simulateRhBoundBuyLeg(params: {
         : toUsd != null
           ? computePriceImpactPct(fromUsd, toUsd)
           : null,
-    amountOutHuman: outRaw != null ? rawAmountToHuman(outRaw, 18) : null,
+    amountOutHuman: outRaw != null ? rawAmountToHuman(outRaw, tokenDec) : null,
     amountOutRaw: outRaw,
+    amountInHuman: params.amountHuman,
+    amountInRaw: amount,
   }
 }
 
@@ -300,6 +310,8 @@ export async function simulateRhParentSellLeg(params: {
     priceImpactPct: impact,
     amountOutHuman: outHuman,
     amountOutRaw: outRaw,
+    amountInHuman: inHuman,
+    amountInRaw: amountIn.toString(),
   }
 }
 
@@ -312,6 +324,7 @@ export async function simulateRhBoundSellLeg(params: {
   ethUsd: number
   /** Raw amount already computed by caller (preferred). */
   amountRaw?: string
+  tokenDecimals?: number
 }): Promise<RhTradeSimLeg> {
   const outputToken = gmgnQuoteToken(params.quote)
   const amount = params.amountRaw ?? '0'
@@ -352,7 +365,7 @@ export async function simulateRhBoundSellLeg(params: {
     outHuman != null
       ? outHuman * quoteCurrencyUsdPerUnit(params.quote, params.ethUsd)
       : numField(q, ['to_usd', 'amount_out_usd'])
-  const inHuman = rawAmountToHuman(amount, 18)
+  const inHuman = rawAmountToHuman(amount, params.tokenDecimals ?? 18)
   const tokenUsd = await fetchTokenUsd(params.tokenAddress)
   const fromUsd = tokenUsd != null ? inHuman * tokenUsd : null
   const impactApi = numField(q, ['price_impact', 'priceImpact'])
@@ -369,6 +382,8 @@ export async function simulateRhBoundSellLeg(params: {
           : null,
     amountOutHuman: outHuman,
     amountOutRaw: outRaw,
+    amountInHuman: inHuman,
+    amountInRaw: amount,
   }
 }
 

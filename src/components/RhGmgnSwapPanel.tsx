@@ -36,6 +36,11 @@ import {
   simulateRhParentBuyLeg,
   simulateRhParentSellLeg,
 } from '@/utils/rh-trade-sim'
+import {
+  buildRhBuyToken,
+  buildRhSellToken,
+  rhQuoteUsdPerUnit,
+} from '@/utils/rh-trade-record'
 
 type Side = 'buy' | 'sell'
 
@@ -71,6 +76,16 @@ export default function RhGmgnSwapPanel({
   const [okMsg, setOkMsg] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmLegs, setConfirmLegs] = useState<GmgnConfirmLeg[]>([])
+  // Sim snapshot captured at review time; reused to record the trade so we
+  // don't re-quote and so the tracked record carries real token amounts.
+  const [pendingSim, setPendingSim] = useState<{
+    side: Side
+    ethUsd: number
+    estOutRaw: string | null
+    amountOutHuman: number | null
+    amountInHuman: number | null
+    toUsd: number | null
+  } | null>(null)
 
   if (network !== 'robinhood') return null
 
@@ -97,6 +112,10 @@ export default function RhGmgnSwapPanel({
     setBusy(true)
     try {
       const ethUsd = await fetchEthUsdSpot()
+      const held = holdings.tokens.find(
+        (t) => t.mintAddress.toLowerCase() === addr.toLowerCase(),
+      )
+      const tokenDecimals = held?.decimals ?? 18
       let leg: GmgnConfirmLeg
       if (side === 'buy') {
         const human = parseFloat(amount)
@@ -109,6 +128,7 @@ export default function RhGmgnSwapPanel({
               tokenAddress: addr,
               quote,
               ethUsd,
+              tokenDecimals,
             })
           : await simulateRhBoundBuyLeg({
               from,
@@ -117,6 +137,7 @@ export default function RhGmgnSwapPanel({
               quote,
               slippageBps,
               ethUsd,
+              tokenDecimals,
             })
         leg = {
           tokenAddress: addr,
@@ -127,6 +148,14 @@ export default function RhGmgnSwapPanel({
           toUsd: sim.toUsd,
           priceImpactPct: sim.priceImpactPct,
         }
+        setPendingSim({
+          side: 'buy',
+          ethUsd,
+          estOutRaw: sim.amountOutRaw,
+          amountOutHuman: sim.amountOutHuman,
+          amountInHuman: sim.amountInHuman,
+          toUsd: sim.toUsd,
+        })
       } else {
         const pct = parseFloat(sellPct)
         if (!Number.isFinite(pct) || pct <= 0 || pct > 100) {
@@ -141,6 +170,7 @@ export default function RhGmgnSwapPanel({
             percent: pct,
             quote,
             ethUsd,
+            tokenDecimals,
           })
         } else {
           const bal = (await rh.publicClient.readContract({
@@ -161,6 +191,7 @@ export default function RhGmgnSwapPanel({
             slippageBps,
             ethUsd,
             amountRaw,
+            tokenDecimals,
           })
         }
         leg = {
@@ -172,6 +203,14 @@ export default function RhGmgnSwapPanel({
           toUsd: sim.toUsd,
           priceImpactPct: sim.priceImpactPct,
         }
+        setPendingSim({
+          side: 'sell',
+          ethUsd,
+          estOutRaw: sim.amountOutRaw,
+          amountOutHuman: sim.amountOutHuman,
+          amountInHuman: sim.amountInHuman,
+          toUsd: sim.toUsd,
+        })
       }
       setConfirmLegs([leg])
       setConfirmOpen(true)
@@ -215,15 +254,33 @@ export default function RhGmgnSwapPanel({
         }
         const ok = results.filter((r) => r.success)
         if (ok.length > 0) {
+          const held = holdings.tokens.find(
+            (t) => t.mintAddress.toLowerCase() === addr.toLowerCase(),
+          )
+          const ethUsd = pendingSim?.ethUsd ?? 0
+          const usdPerUnit = rhQuoteUsdPerUnit(quote, ethUsd)
+          const built = ok.map((r) =>
+            buildRhBuyToken({
+              mintAddress: r.tokenAddress,
+              symbol: held?.symbol,
+              spentQuote: human,
+              usdPerUnit,
+              estOutRaw: r.estOut ?? pendingSim?.estOutRaw,
+              tokenDecimals: held?.decimals ?? 18,
+            }),
+          )
+          const totalUsd = built.reduce((s, b) => s + b.usdValue, 0)
           await trackOperation({
             walletAddress: from,
             operationType: 'buy',
             chain: 'robinhood',
-            tokens: [{ mintAddress: addr }],
+            tokens: built.map((b) => b.token),
             successCount: ok.length,
             failureCount: results.length - ok.length,
             totalTokens: results.length,
             solAmount: human,
+            totalUsdValue: totalUsd > 0 ? totalUsd : undefined,
+            solPriceUsd: usdPerUnit > 0 ? usdPerUnit : undefined,
             feesPaid: 0,
             signatures: ok
               .map((r) => r.orderId || r.hash)
@@ -258,14 +315,36 @@ export default function RhGmgnSwapPanel({
         }
         const ok = results.filter((r) => r.success)
         if (ok.length > 0) {
+          const held = holdings.tokens.find(
+            (t) => t.mintAddress.toLowerCase() === addr.toLowerCase(),
+          )
+          const ethUsd = pendingSim?.ethUsd ?? 0
+          const usdPerUnit = rhQuoteUsdPerUnit(quote, ethUsd)
+          const receivedQuote =
+            pendingSim?.amountOutHuman && pendingSim.amountOutHuman > 0
+              ? pendingSim.amountOutHuman
+              : undefined
+          const built = ok.map((r) =>
+            buildRhSellToken({
+              mintAddress: r.tokenAddress,
+              symbol: held?.symbol,
+              soldTokenAmount: pendingSim?.amountInHuman ?? undefined,
+              receivedQuote,
+              usdPerUnit,
+            }),
+          )
+          const totalUsd = built.reduce((s, b) => s + b.usdValue, 0)
           await trackOperation({
             walletAddress: from,
             operationType: 'sell',
             chain: 'robinhood',
-            tokens: [{ mintAddress: addr }],
+            tokens: built.map((b) => b.token),
             successCount: ok.length,
             failureCount: results.length - ok.length,
             totalTokens: results.length,
+            solAmount: receivedQuote,
+            totalUsdValue: totalUsd > 0 ? totalUsd : undefined,
+            solPriceUsd: usdPerUnit > 0 ? usdPerUnit : undefined,
             feesPaid: 0,
             signatures: ok
               .map((r) => r.orderId || r.hash)

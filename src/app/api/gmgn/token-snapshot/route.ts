@@ -7,8 +7,11 @@ import {
   isValidTradeTokenAddress,
 } from '@/utils/gmgn-currencies'
 import { isValidMintAddress } from '@/utils/jupiter'
+import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 export const dynamic = 'force-dynamic'
+
+const SNAPSHOT_TTL_S = 10
 
 function isHoneypot(security: Record<string, unknown>): boolean {
   return (
@@ -34,6 +37,13 @@ export async function GET(request: NextRequest) {
         { success: false, error: 'Valid address is required' },
         { status: 400 },
       )
+    }
+
+    // Short-TTL cache: this endpoint is hit once per simulated trade leg.
+    const cacheKey = `gmgn:token-snapshot:${chain}:${address.toLowerCase()}`
+    const cached = await cacheGet<Record<string, unknown>>(cacheKey)
+    if (cached) {
+      return NextResponse.json(cached)
     }
 
     const [info, security] = await Promise.all([
@@ -76,20 +86,19 @@ export async function GET(request: NextRequest) {
       security,
     })
 
-    return NextResponse.json(
-      {
-        success: true,
-        address,
-        chain,
-        ...snapshot,
-        holders: Number.isFinite(holders) ? holders : null,
-        price_usd: Number.isFinite(priceUsd) ? priceUsd : null,
-        isHoneypot: isHoneypot(security as Record<string, unknown>),
-        concentrationBanned: concBan.banned,
-        concentrationReasons: concBan.reasons,
-      },
-      { headers: { 'Cache-Control': 'no-store' } },
-    )
+    const payload = {
+      success: true,
+      address,
+      chain,
+      ...snapshot,
+      holders: Number.isFinite(holders) ? holders : null,
+      price_usd: Number.isFinite(priceUsd) ? priceUsd : null,
+      isHoneypot: isHoneypot(security as Record<string, unknown>),
+      concentrationBanned: concBan.banned,
+      concentrationReasons: concBan.reasons,
+    }
+    void cacheSet(cacheKey, payload, SNAPSHOT_TTL_S)
+    return NextResponse.json(payload)
   } catch (error) {
     return NextResponse.json(
       {
