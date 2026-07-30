@@ -1,0 +1,20 @@
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+script = "script"
+solc_version = "0.8.24"
+# Robinhood Chain (4663) is a young OP-stack-style chain; shanghai is the safe
+# EVM target (no PUSH0/MCOPY/TSTORE assumptions beyond shanghai).
+evm_version = "shanghai"
+optimizer = true
+optimizer_runs = 200
+via_ir = false
+# Project is self-contained on purpose: no git submodules / external libs so
+# `forge build` works offline. Tests declare their own minimal Vm interface.
+libs = []
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = false

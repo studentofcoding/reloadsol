@@ -30,3 +30,4 @@ graphify-out/cache/
 .cursor
 graphify-out/
 .agents
+contracts/out/
