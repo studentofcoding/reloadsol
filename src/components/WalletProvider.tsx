@@ -8,6 +8,7 @@ import React, {
   useState,
 } from "react";
 import {
+  HARDCODED_WALLET_STANDARDS,
   UnifiedWalletProvider,
   useUnifiedWallet,
 } from "@jup-ag/wallet-adapter";
@@ -21,6 +22,9 @@ import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
 import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
 import { isDevWallet, toWalletAddress } from "@/utils/dev-wallet";
 import { canUseRobinhoodNetwork, isRhWhitelisted } from "@/utils/rh-whitelist";
+import { shouldAutoConnectWallet } from "@/utils/wallet-auto-connect";
+
+const WALLET_STORAGE_KEY = "reloadsol-wallet";
 
 type WalletContextState = ReturnType<typeof useUnifiedWallet>;
 
@@ -92,11 +96,19 @@ function WalletContextBridge({ children }: { children: React.ReactNode }) {
 }
 
 export function WalletProvider({ children }: WalletProviderProps) {
-  const [autoConnect] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      !sessionStorage.getItem("hasDisconnected"),
-  );
+  const [autoConnect] = useState(() => {
+    if (typeof window === "undefined") return false;
+    let prior: string | null = null;
+    try {
+      prior = localStorage.getItem(WALLET_STORAGE_KEY);
+    } catch {
+      prior = null;
+    }
+    return shouldAutoConnectWallet({
+      hasDisconnected: Boolean(sessionStorage.getItem("hasDisconnected")),
+      priorWalletName: prior,
+    });
+  });
 
   const metadata = useMemo(
     () => ({
@@ -113,6 +125,9 @@ export function WalletProvider({ children }: WalletProviderProps) {
       autoConnect,
       env: "mainnet-beta" as const,
       metadata,
+      // Show Phantom / popular wallets even when Wallet Standard is empty
+      // (otherwise the modal only shows the "New here?" onboarding screen).
+      hardcodedWallets: HARDCODED_WALLET_STANDARDS,
       notificationCallback: WalletNotification,
       walletlistExplanation: {
         href: "https://developers.jup.ag/docs/tool-kits/wallet-kit",
@@ -127,7 +142,7 @@ export function WalletProvider({ children }: WalletProviderProps) {
     <UnifiedWalletProvider
       wallets={[]}
       config={walletConfig}
-      localStorageKey="reloadsol-wallet"
+      localStorageKey={WALLET_STORAGE_KEY}
     >
       <WalletContextBridge>{children}</WalletContextBridge>
     </UnifiedWalletProvider>

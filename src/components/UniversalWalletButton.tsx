@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   UnifiedWalletButton,
   useUnifiedWallet,
@@ -15,6 +16,9 @@ interface UniversalWalletButtonProps {
   variant?: "default" | "jupiter";
   connectLabel?: string;
 }
+
+/** After this, allow opening the modal even if adapter `connecting` is stuck. */
+const CONNECTING_STUCK_MS = 8_000;
 
 function shortAddr(a: string) {
   return `${a.slice(0, 6)}…${a.slice(-4)}`;
@@ -33,6 +37,19 @@ export default function UniversalWalletButton({
   const activeRh = resolveRhActiveAddress(rhMode, rh.address, bound.evm);
   // EVM-only whitelist: show toggle when Rabby is present so they can connect.
   const showRhToggle = canUseRh || rh.hasProvider;
+  const [connectingStuck, setConnectingStuck] = useState(false);
+  const [rhHint, setRhHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!connecting) {
+      setConnectingStuck(false);
+      return;
+    }
+    const t = window.setTimeout(() => setConnectingStuck(true), CONNECTING_STUCK_MS);
+    return () => window.clearTimeout(t);
+  }, [connecting]);
+
+  const solConnectBlocked = connecting && !connectingStuck;
 
   if (variant === "jupiter") {
     return (
@@ -62,7 +79,9 @@ export default function UniversalWalletButton({
             type="button"
             onClick={() => {
               setNetwork("robinhood", { skipCoerce: true });
-              void rh.connect();
+              void rh.connect().catch(() => {
+                /* rh.error surfaces below */
+              });
             }}
             className={`px-2.5 py-1 font-medium border-l border-gray-600 ${
               network === "robinhood"
@@ -110,27 +129,37 @@ export default function UniversalWalletButton({
             currentUserClassName="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium transition-colors border border-gray-600"
           />
         ) : (
-          <button
-            onClick={() => setShowModal(true)}
-            disabled={connecting}
-            className={`
-              flex items-center justify-center space-x-2 px-3 py-2 rounded-lg font-semibold transition-all duration-200 border
-              ${
-                connecting
-                  ? "bg-gray-600 text-gray-400 cursor-not-allowed border-gray-500"
-                  : "bg-white hover:bg-gray-100 text-black border-gray-300 shadow-lg hover:shadow-xl"
-              }
-            `}
-          >
-            {connecting ? (
-              <>
-                <div className="w-4 h-4 border-2 border-gray-400 border-t-black rounded-full animate-spin" />
-                <span>Connecting...</span>
-              </>
-            ) : (
-              <span>{connectLabel}</span>
-            )}
-          </button>
+          <div className="flex flex-col gap-1">
+            <button
+              type="button"
+              onClick={() => setShowModal(true)}
+              disabled={solConnectBlocked}
+              className={`
+                flex items-center justify-center space-x-2 px-3 py-2 rounded-lg font-semibold transition-all duration-200 border
+                ${
+                  solConnectBlocked
+                    ? "bg-gray-600 text-gray-400 cursor-not-allowed border-gray-500"
+                    : "bg-white hover:bg-gray-100 text-black border-gray-300 shadow-lg hover:shadow-xl"
+                }
+              `}
+            >
+              {solConnectBlocked ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-gray-400 border-t-black rounded-full animate-spin" />
+                  <span>Connecting...</span>
+                </>
+              ) : (
+                <span>
+                  {connectingStuck ? "Retry connect" : connectLabel}
+                </span>
+              )}
+            </button>
+            {connectingStuck ? (
+              <span className="text-[10px] text-amber-400 max-w-[180px]">
+                Wallet stuck connecting — click to open wallet list
+              </span>
+            ) : null}
+          </div>
         )
       ) : rhMode === "bound" && bound.evm ? (
         <div
@@ -159,27 +188,43 @@ export default function UniversalWalletButton({
           ) : null}
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={() => void rh.connect()}
-          disabled={rh.connecting || !rh.hasProvider}
-          className={`
-            flex items-center justify-center px-3 py-2 rounded-lg font-semibold border
-            ${
-              rh.connecting || !rh.hasProvider
-                ? "bg-gray-600 text-gray-400 cursor-not-allowed border-gray-500"
-                : "bg-white hover:bg-gray-100 text-black border-gray-300"
-            }
-          `}
-        >
-          {!rh.hasProvider
-            ? "No Rabby"
-            : rh.connecting
-              ? "Connecting…"
-              : rhMode === "bound"
-                ? "No bound · Connect Rabby"
-                : "Connect Rabby"}
-        </button>
+        <div className="flex flex-col gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              if (!rh.hasProvider) {
+                setRhHint("Install / unlock Rabby, then refresh");
+                return;
+              }
+              setRhHint(null);
+              void rh.connect().catch(() => {
+                /* rh.error surfaces below */
+              });
+            }}
+            disabled={rh.connecting}
+            className={`
+              flex items-center justify-center px-3 py-2 rounded-lg font-semibold border
+              ${
+                rh.connecting
+                  ? "bg-gray-600 text-gray-400 cursor-not-allowed border-gray-500"
+                  : "bg-white hover:bg-gray-100 text-black border-gray-300"
+              }
+            `}
+          >
+            {!rh.hasProvider
+              ? "No Rabby"
+              : rh.connecting
+                ? "Connecting…"
+                : rhMode === "bound"
+                  ? "No bound · Connect Rabby"
+                  : "Connect Rabby"}
+          </button>
+          {rh.error || rhHint ? (
+            <span className="text-[10px] text-red-400 max-w-[180px]">
+              {rh.error ?? rhHint}
+            </span>
+          ) : null}
+        </div>
       )}
     </div>
   );
