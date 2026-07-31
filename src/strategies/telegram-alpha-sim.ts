@@ -2,6 +2,7 @@ import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records
 import { getNativeUsd } from '@/utils/native-usd'
 import { SIGNALS_SIM_WALLET, simWalletForChain } from '@/strategies/sim-wallets'
 import type { StrategyChain } from '@/strategies/types'
+import type { TrackingRecord } from '@/utils/trading-tracker'
 
 export { SIGNALS_SIM_WALLET }
 
@@ -13,6 +14,9 @@ export async function openSignalsSimPosition(params: {
   solAmount: number
   priceUsd: number
   entryFeatures: Record<string, unknown>
+  /** REL-20: when provided, the record is collected for a later bulk insert
+   *  instead of being inserted here (caller's flush surfaces DB errors). */
+  collect?: (record: TrackingRecord) => void
 }): Promise<void> {
   const chain = params.chain ?? 'sol'
   // solAmount / solPrice are native-token denominated; that's ETH on robinhood.
@@ -55,7 +59,11 @@ export async function openSignalsSimPosition(params: {
     },
   })
 
-  await insertTradingRecord(record)
+  if (params.collect) {
+    params.collect(record)
+  } else {
+    await insertTradingRecord(record)
+  }
 
   const entryMcap =
     typeof params.entryFeatures.entry_mcap === 'number'

@@ -1,4 +1,4 @@
-import { query } from '@/utils/db'
+import { bulkInsert, query, type BulkWriteStats } from '@/utils/db'
 import { parseDbChain } from '@/utils/app-network-db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import { invalidateTradingRecordsCache } from '@/utils/trading-records-cache'
@@ -62,6 +62,63 @@ export async function insertTradingRecord(
   await afterTradingRecordInserted(record)
 
   return { inserted: true }
+}
+
+const TRADING_RECORD_COLUMNS = [
+  { name: 'id', type: 'text' },
+  { name: 'wallet_address', type: 'text' },
+  { name: 'operation_type', type: 'text' },
+  { name: 'timestamp', type: 'timestamptz' },
+  { name: 'data', type: 'jsonb' },
+  { name: 'chain', type: 'text' },
+] as const
+
+/**
+ * REL-20: bulk variant of insertTradingRecord — same validation, skip rules,
+ * and per-record post-insert side effects, but one round-trip per chunk
+ * (UNNEST) instead of one per record. Throws on DB error exactly like
+ * insertTradingRecord so failures surface to the caller unchanged.
+ */
+export async function insertTradingRecords(
+  records: TrackingRecord[],
+): Promise<{ inserted: number; skipped: number; stats: BulkWriteStats }> {
+  const accepted: { record: TrackingRecord; values: unknown[] }[] = []
+  let skipped = 0
+
+  for (const record of records) {
+    if (!record.id || !record.walletAddress || !record.operationType) {
+      throw new Error('Missing required fields: id, walletAddress, operationType')
+    }
+    if (shouldSkipTradingRecord(record)) {
+      skipped++
+      continue
+    }
+    const chain = parseDbChain(record.chain)
+    const data: TrackingRecord = { ...record, chain }
+    accepted.push({
+      record,
+      values: [
+        record.id,
+        record.walletAddress,
+        record.operationType,
+        new Date(record.timestamp).toISOString(),
+        JSON.stringify(data),
+        chain,
+      ],
+    })
+  }
+
+  const stats = await bulkInsert({
+    table: 'trading_records',
+    columns: [...TRADING_RECORD_COLUMNS],
+    rows: accepted.map((a) => a.values),
+  })
+
+  for (const { record } of accepted) {
+    await afterTradingRecordInserted(record)
+  }
+
+  return { inserted: accepted.length, skipped, stats }
 }
 
 /** Update stored JSON for an existing trading record (server-side). */

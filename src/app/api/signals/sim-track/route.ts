@@ -13,7 +13,8 @@ import { appendSimPositionMonitorSnapshot, resolveTokenMonitorSnapshot } from '@
 import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
 import { fetchTradingRecordsForWallet } from '@/strategies/db'
 import { computeOpenSimCycle } from '@/utils/simulation-trades'
-import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
+import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
+import type { TrackingRecord } from '@/utils/trading-tracker'
 import { fetchTokenPricesForTracking } from '@/utils/trading-tracker'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 import { getNativeUsd } from '@/utils/native-usd'
@@ -88,6 +89,8 @@ async function closeSimPosition(params: {
   entryFeatures: Record<string, unknown>
   exitMcap?: number | null
   exitGrowthPercent?: number | null
+  /** REL-20: records are collected and bulk-inserted by the route per phase. */
+  collect: (record: TrackingRecord) => void
 }): Promise<number> {
   const simWallet = simWalletForChain(SIGNALS_SIM_WALLET_LOCAL, params.chain)
   const records = await fetchTradingRecordsForWallet(simWallet)
@@ -150,7 +153,7 @@ async function closeSimPosition(params: {
     status: pnlPct >= 0 ? 'won' : 'lost',
   })
 
-  await insertTradingRecord(record)
+  params.collect(record)
 
   const buyRecord = [...records]
     .reverse()
@@ -248,6 +251,31 @@ export async function POST(request: NextRequest) {
       let closed = 0
       const skipped: string[] = []
 
+      // REL-20: collect this strategy's trading-record writes and flush once
+      // per phase (UNNEST bulk insert) instead of one insert per position.
+      // Close-phase writes MUST flush before records are re-fetched below.
+      let pendingRecords: TrackingRecord[] = []
+      const collect = (record: TrackingRecord) => {
+        pendingRecords.push(record)
+      }
+      const flushPending = async (phase: 'close' | 'open'): Promise<void> => {
+        if (pendingRecords.length === 0) return
+        const batch = pendingRecords
+        pendingRecords = []
+        const startedAt = Date.now()
+        const res = await insertTradingRecords(batch)
+        log.info('mcap_tracker', 'REL-20 batched trading-record writes', {
+          strategyId: strategy.id,
+          chain,
+          phase,
+          inserted: res.inserted,
+          skipped: res.skipped,
+          statements: res.stats.chunks,
+          ms: Date.now() - startedAt,
+          replacedRoundTrips: res.inserted,
+        })
+      }
+
       const scored = await scoreSignalsForStrategy(strategy, { chain })
       const scoredByMint = new Map(scored.map((s) => [s.token_address, s]))
 
@@ -282,11 +310,15 @@ export async function POST(request: NextRequest) {
             entryFeatures: pos.entryFeatures,
             exitMcap: signal?.current_mcap ?? null,
             exitGrowthPercent: signal?.mcap_growth_percent ?? null,
+            collect,
           })
           closed++
           openMintSet.delete(pos.mintAddress)
         }
       }
+
+      // REL-20: flush close-phase writes before re-fetching records
+      await flushPending('close')
 
       const refreshedRecords = await fetchTradingRecordsForWallet(simWallet)
       const currentOpen = getOpenPositionsForStrategy(refreshedRecords, strategy.id).length
@@ -372,10 +404,14 @@ export async function POST(request: NextRequest) {
             strategy.config.execution.simBuyNative ?? strategy.config.execution.simBuySol,
           priceUsd,
           entryFeatures: overlayResult.features,
+          collect,
         })
         opened++
         openMintSet.add(signal.token_address)
       }
+
+      // REL-20: flush open-phase writes before the next strategy is processed
+      await flushPending('open')
 
       results.push({ strategyId: strategy.id, chain, opened, closed, skipped })
     }

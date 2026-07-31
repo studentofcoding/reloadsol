@@ -49,7 +49,8 @@ import {
   resolveMcapSlippageBps,
 } from '@/utils/mcap-raptor-trade'
 import { computeOpenTradeCycle } from '@/utils/simulation-trades'
-import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
+import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
+import type { TrackingRecord } from '@/utils/trading-tracker'
 import { getSolPriceUSD } from '@/utils/solana'
 import { log } from '@/utils/unified-logger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
@@ -148,6 +149,8 @@ async function openSimPosition(params: {
   socialCtx?: SocialContext | null
   scoredEntryFeatures?: Record<string, unknown> | null
   strategy: McapTrackerStrategy
+  /** REL-20: records are collected and bulk-inserted by the route per phase. */
+  collect: (record: TrackingRecord) => void
 }): Promise<void> {
   const simWallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, params.chain)
   // "sol" amounts are native-token amounts; on robinhood that's ETH.
@@ -251,7 +254,7 @@ async function openSimPosition(params: {
     },
   })
 
-  await insertTradingRecord(record)
+  params.collect(record)
 
   const {
     isMcapManualTradeStrategy,
@@ -328,6 +331,8 @@ async function closeSimPosition(params: {
   entryTemplate: 'first_seen' | 'milestone_80'
   snapshot: McapSnapshot
   closeReason: NonNullable<ReturnType<typeof getMcapSimCloseReason>>
+  /** REL-20: records are collected and bulk-inserted by the route per phase. */
+  collect: (record: TrackingRecord) => void
 }): Promise<number> {
   const simWallet = simWalletForChain(MCAP_TRACKER_SIM_WALLET, params.chain)
   const records = await fetchTradingRecordsForWallet(simWallet)
@@ -372,7 +377,7 @@ async function closeSimPosition(params: {
     status: pnlPct >= 0 ? 'won' : 'lost',
   })
 
-  await insertTradingRecord(record)
+  params.collect(record)
 
   const buyRecord = [...records]
     .reverse()
@@ -446,6 +451,8 @@ async function openLivePosition(params: {
   snapshot: McapSnapshot
   scoredEntryFeatures?: Record<string, unknown> | null
   strategy: McapTrackerStrategy
+  /** REL-20: records are collected and bulk-inserted by the route per phase. */
+  collect: (record: TrackingRecord) => void
 }): Promise<void> {
   const buy = await executeMcapRaptorBuy(
     params.mintAddress,
@@ -508,7 +515,7 @@ async function openLivePosition(params: {
     },
   })
 
-  await insertTradingRecord(record)
+  params.collect(record)
 
   const { notifyStrategyOpen } = await import('@/strategies/strategy-telegram-notify')
   notifyStrategyOpen({
@@ -535,6 +542,8 @@ async function closeLivePosition(params: {
   snapshot: McapSnapshot
   closeReason: NonNullable<ReturnType<typeof getMcapSimCloseReason>>
   slippageBps: number
+  /** REL-20: records are collected and bulk-inserted by the route per phase. */
+  collect: (record: TrackingRecord) => void
 }): Promise<number> {
   const records = await fetchTradingRecordsForWallet(params.walletAddress)
   const cycle = computeOpenTradeCycle(records, params.mintAddress, 'live')
@@ -605,7 +614,7 @@ async function closeLivePosition(params: {
     status: pnlPct >= 0 ? 'won' : 'lost',
   })
 
-  await insertTradingRecord(record)
+  params.collect(record)
 
   const exitMcap = params.snapshot.current_mcap
   const completeBuyFeatures = await ensureCompleteBuyFeaturesForOutcome({
@@ -732,6 +741,31 @@ export async function POST(request: NextRequest) {
         trackingRows.map((row) => row.token_address),
       )
 
+      // REL-20: collect this strategy's trading-record writes per phase and
+      // flush once (UNNEST bulk insert) instead of one insert per position.
+      // The manage phase MUST flush before the open phase re-fetches records.
+      let pendingRecords: TrackingRecord[] = []
+      const collect = (record: TrackingRecord) => {
+        pendingRecords.push(record)
+      }
+      const flushPending = async (phase: 'manage' | 'open'): Promise<void> => {
+        if (pendingRecords.length === 0) return
+        const batch = pendingRecords
+        pendingRecords = []
+        const startedAt = Date.now()
+        const res = await insertTradingRecords(batch)
+        log.info('mcap_tracker', 'REL-20 batched trading-record writes', {
+          strategyId: strategy.id,
+          chain,
+          phase,
+          inserted: res.inserted,
+          skipped: res.skipped,
+          statements: res.stats.chunks,
+          ms: Date.now() - startedAt,
+          replacedRoundTrips: res.inserted,
+        })
+      }
+
       if (runManage) {
       for (const pos of openPositions) {
         const snapshot =
@@ -791,6 +825,7 @@ export async function POST(request: NextRequest) {
               entryTemplate: pos.entryTemplate,
               snapshot: enrichedSnapshot,
               closeReason,
+              collect,
             })
           } else {
             await closeLivePosition({
@@ -804,6 +839,7 @@ export async function POST(request: NextRequest) {
               snapshot: enrichedSnapshot,
               closeReason,
               slippageBps,
+              collect,
             })
           }
           closed++
@@ -816,6 +852,16 @@ export async function POST(request: NextRequest) {
 
         openMintSet.delete(pos.mintAddress)
         closedOutcomeKeys.add(pos.mintAddress)
+      }
+      // REL-20: flush manage-phase writes before the open phase re-fetches
+      // records; a failed close write previously surfaced per position via the
+      // try/catch above, so keep it non-fatal and record it in skipped.
+      try {
+        await flushPending('manage')
+      } catch (flushError) {
+        skipped.push(
+          `close_writes_failed (${flushError instanceof Error ? flushError.message : String(flushError)})`,
+        )
       }
       }
 
@@ -965,6 +1011,7 @@ export async function POST(request: NextRequest) {
               snapshot,
               scoredEntryFeatures,
               strategy,
+              collect,
             })
           } catch (openError) {
             skipped.push(
@@ -988,12 +1035,16 @@ export async function POST(request: NextRequest) {
             socialCtx,
             scoredEntryFeatures,
             strategy,
+            collect,
           })
         }
 
         opened++
         openMintSet.add(snapshot.token_address)
       }
+      // REL-20: flush open-phase writes before the next strategy re-fetches
+      // records. Open insert errors previously propagated (500), so throw.
+      await flushPending('open')
       }
 
       results.push({

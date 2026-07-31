@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { NextRequest } from 'next/server'
-import { query, queryOne } from '@/utils/db'
+import { query, queryOne, bulkInsert, bulkUpdateByKey, WriteBatch, type BulkWriteStats } from '@/utils/db'
 import { Connection, VersionedTransaction, Keypair, PublicKey } from '@solana/web3.js'
 import { getSwapQuote } from '@/utils/jupiter'
 import { prepareSwapTransaction, submitSignedSwap, confirmSwapSignature } from '@/utils/swap-executor'
@@ -3852,6 +3852,146 @@ async function internalTrackPost(request: NextRequest, logger: any) {
     let tokensLost = 0
     let updatesPromises: Promise<any>[] = []
 
+    // ------------------------------------------------------------------
+    // REL-20: batched tracker-table writes. Rows are collected during the
+    // per-token loop and flushed as single UNNEST statements afterwards,
+    // replacing one round-trip per token. Conditions per token are
+    // unchanged — rows are only collected where the old code awaited a
+    // write.
+    // ------------------------------------------------------------------
+    const rel20Stats: { name: string; stats: BulkWriteStats; ok: boolean }[] = []
+
+    const upsertErrorHooks = (token: any, existingAnyStatus: unknown) => ({
+      onError: (err: unknown) => {
+        const pgErr = err as { code?: string; message?: string }
+        logTradeOperation('Database Upsert Error', {
+          tokenSymbol: token.token_symbol,
+          tokenAddress: token.token_address,
+          errorCode: pgErr.code,
+          errorMessage: pgErr.message,
+          isRestart: !!existingAnyStatus
+        }, err instanceof Error ? err : new Error(String(err)))
+        console.error(`❌ Failed to upsert token ${token.token_symbol}:`, err)
+      },
+    })
+
+    const flushBatch = (batch: WriteBatch) =>
+      batch.flush().then(({ stats, ok }) => {
+        rel20Stats.push({ name: batch.name, stats, ok })
+        return ok
+          ? { success: true, tokenSymbol: batch.name }
+          : { success: false, error: 'batch flush failed', tokenSymbol: batch.name }
+      })
+
+    const cText = (name: string) => ({ name, type: 'text' })
+    const cFloat = (name: string) => ({ name, type: 'float8' })
+    const cJsonb = (name: string) => ({ name, type: 'jsonb' })
+    const cTs = (name: string) => ({ name, type: 'timestamptz' })
+
+    // INSERT ... ON CONFLICT (token_address) upserts. Values are deduped by
+    // token_address (last wins) inside the statement because one INSERT cannot
+    // upsert the same key twice; hooks still fire per collected row, matching
+    // the old per-row upsert behavior.
+    const makeUpsertBatch = (
+      name: string,
+      columns: { name: string; type: string }[],
+    ) =>
+      new WriteBatch(name, (rows) => {
+        const deduped = new Map<string, unknown[]>()
+        for (const r of rows) deduped.set(r[1] as string, r)
+        return bulkInsert({
+          table: TRACKER_TABLE,
+          columns,
+          rows: [...deduped.values()],
+          conflictTarget: '(token_address)',
+          updateColumns: columns.map((c) => c.name).filter((c) => c !== 'token_address'),
+          extraSet: ['updated_at = NOW()'],
+        })
+      })
+
+    const waitingUpsert = makeUpsertBatch('waiting-upsert', [
+      cText('id'), cText('token_address'), cText('token_symbol'), cText('token_name'), cText('logo_url'),
+      cFloat('initial_price_usd'), cFloat('last_price_usd'), cFloat('peak_price_usd'),
+      cFloat('current_gain_percentage'), cFloat('peak_gain_percentage'), cText('status'),
+      cFloat('organic_score'), cFloat('market_cap'), cFloat('volume_1h'), cTs('tracking_started_at'),
+      cJsonb('trading_simulation'), cJsonb('price_history'), cTs('waiting_started_at'), cFloat('waiting_initial_price'),
+    ])
+
+    const trackingUpsert = makeUpsertBatch('tracking-upsert', [
+      cText('id'), cText('token_address'), cText('token_symbol'), cText('token_name'), cText('logo_url'),
+      cFloat('initial_price_usd'), cFloat('last_price_usd'), cFloat('peak_price_usd'),
+      cFloat('current_gain_percentage'), cFloat('peak_gain_percentage'), cText('status'),
+      cFloat('organic_score'), cFloat('market_cap'), cFloat('volume_1h'), cTs('tracking_started_at'),
+      cJsonb('trading_simulation'), cJsonb('price_history'),
+    ])
+
+    const makeUpdateBatch = (
+      name: string,
+      columns: { name: string; type: string }[],
+    ) =>
+      new WriteBatch(name, (rows) =>
+        bulkUpdateByKey({
+          table: TRACKER_TABLE,
+          key: cText('id'),
+          columns,
+          rows,
+          extraSet: ['updated_at = NOW()'],
+        }),
+      )
+
+    // waiting → skipped on 1h timeout (initial and peak both reset to waiting initial)
+    const waitingTimeoutUpdate = makeUpdateBatch('waiting-timeout-update', [
+      cText('status'), cTs('status_changed_at'), cFloat('last_price_usd'),
+      cFloat('initial_price_usd'), cFloat('peak_price_usd'),
+      cFloat('current_gain_percentage'), cFloat('peak_gain_percentage'),
+    ])
+
+    // waiting → tracking conversion after 15% dip buy
+    const dipConvertUpdate = makeUpdateBatch('dip-convert-update', [
+      cText('status'), cTs('status_changed_at'), cFloat('initial_price_usd'),
+      cFloat('last_price_usd'), cFloat('peak_price_usd'),
+      cFloat('current_gain_percentage'), cFloat('peak_gain_percentage'),
+      cJsonb('trading_simulation'),
+    ])
+
+    // waiting price-only touch (failed dip buy / conversion error)
+    const waitingPriceTouch = makeUpdateBatch('waiting-price-touch', [
+      cFloat('last_price_usd'),
+    ])
+
+    // still-waiting price/metrics update
+    const waitingMetricsUpdate = makeUpdateBatch('waiting-metrics-update', [
+      cFloat('last_price_usd'), cFloat('organic_score'), cFloat('market_cap'), cFloat('volume_1h'),
+    ])
+
+    // stale / too-old → stopped
+    const stoppedUpdate = makeUpdateBatch('stopped-update', [
+      cText('status'), cTs('status_changed_at'), cFloat('last_price_usd'),
+      cFloat('current_gain_percentage'), cFloat('peak_gain_percentage'),
+      cFloat('organic_score'), cFloat('market_cap'), cFloat('volume_1h'),
+    ])
+
+    // main-loop terminal/periodic update (lost + tracking share one shape)
+    const trackingStateUpdate = makeUpdateBatch('tracking-state-update', [
+      cFloat('last_price_usd'), cFloat('peak_price_usd'), cFloat('current_gain_percentage'),
+      cFloat('peak_gain_percentage'), cText('status'), cTs('status_changed_at'),
+      cFloat('organic_score'), cFloat('market_cap'), cFloat('volume_1h'),
+      cJsonb('trading_simulation'), cJsonb('price_history'),
+    ])
+
+    // orphaned token lost update
+    const orphanLostUpdate = makeUpdateBatch('orphan-lost-update', [
+      cFloat('last_price_usd'), cFloat('peak_price_usd'), cFloat('current_gain_percentage'),
+      cFloat('peak_gain_percentage'), cText('status'), cTs('status_changed_at'),
+      cJsonb('trading_simulation'), cJsonb('price_history'),
+    ])
+
+    // orphaned token periodic update
+    const orphanUpdate = makeUpdateBatch('orphan-update', [
+      cFloat('last_price_usd'), cFloat('peak_price_usd'), cFloat('current_gain_percentage'),
+      cFloat('peak_gain_percentage'), cJsonb('trading_simulation'), cJsonb('price_history'),
+    ])
+
     // at the top of POST handler, just after you fetch `trackedTokens`
     const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000)
     const purgeIds = trackedTokens
@@ -3974,76 +4114,30 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
           const currentTime = new Date().toISOString()
 
-          updatesPromises.push(
-            (async () => {
-              try {
-                await query(
-                  `INSERT INTO ${TRACKER_TABLE} (
-                     id, token_address, token_symbol, token_name, logo_url,
-                     initial_price_usd, last_price_usd, peak_price_usd,
-                     current_gain_percentage, peak_gain_percentage, status,
-                     organic_score, market_cap, volume_1h, tracking_started_at,
-                     trading_simulation, price_history, waiting_started_at, waiting_initial_price
-                   ) VALUES (
-                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
-                   )
-                   ON CONFLICT (token_address) DO UPDATE SET
-                     id = EXCLUDED.id,
-                     token_symbol = EXCLUDED.token_symbol,
-                     token_name = EXCLUDED.token_name,
-                     logo_url = EXCLUDED.logo_url,
-                     initial_price_usd = EXCLUDED.initial_price_usd,
-                     last_price_usd = EXCLUDED.last_price_usd,
-                     peak_price_usd = EXCLUDED.peak_price_usd,
-                     current_gain_percentage = EXCLUDED.current_gain_percentage,
-                     peak_gain_percentage = EXCLUDED.peak_gain_percentage,
-                     status = EXCLUDED.status,
-                     organic_score = EXCLUDED.organic_score,
-                     market_cap = EXCLUDED.market_cap,
-                     volume_1h = EXCLUDED.volume_1h,
-                     tracking_started_at = EXCLUDED.tracking_started_at,
-                     trading_simulation = EXCLUDED.trading_simulation,
-                     price_history = EXCLUDED.price_history,
-                     waiting_started_at = EXCLUDED.waiting_started_at,
-                     waiting_initial_price = EXCLUDED.waiting_initial_price,
-                     updated_at = NOW()`,
-                  [
-                    tokenId,
-                    token.token_address,
-                    token.token_symbol,
-                    token.token_name,
-                    token.logo_url,
-                    token.current_price,
-                    token.current_price,
-                    0,
-                    0,
-                    0,
-                    'waiting',
-                    token.organic_score,
-                    token.market_cap,
-                    token.volume_1h,
-                    currentTime,
-                    null,
-                    JSON.stringify([initialPriceRecord]),
-                    currentTime,
-                    token.current_price,
-                  ],
-                )
-              } catch (err) {
-                const pgErr = err as { code?: string; message?: string }
-                logTradeOperation('Database Upsert Error', {
-                  tokenSymbol: token.token_symbol,
-                  tokenAddress: token.token_address,
-                  errorCode: pgErr.code,
-                  errorMessage: pgErr.message,
-                  isRestart: !!existingAnyStatus
-                }, err instanceof Error ? err : new Error(String(err)))
-                console.error(`❌ Failed to upsert waiting token ${token.token_symbol}:`, err)
-                // Don't re-throw to prevent unhandled rejection - let Promise.allSettled handle it
-                return { success: false, error: err, tokenSymbol: token.token_symbol }
-              }
-              return { success: true, tokenSymbol: token.token_symbol }
-            })()
+          // REL-20: collected and flushed as one UNNEST upsert after the loop
+          waitingUpsert.add(
+            [
+              tokenId,
+              token.token_address,
+              token.token_symbol,
+              token.token_name,
+              token.logo_url,
+              token.current_price,
+              token.current_price,
+              0,
+              0,
+              0,
+              'waiting',
+              token.organic_score,
+              token.market_cap,
+              token.volume_1h,
+              currentTime,
+              null,
+              JSON.stringify([initialPriceRecord]),
+              currentTime,
+              token.current_price,
+            ],
+            upsertErrorHooks(token, existingAnyStatus),
           )
 
           newTokensAdded++
@@ -4236,60 +4330,32 @@ async function internalTrackPost(request: NextRequest, logger: any) {
           }
 
           if (tradingSimulation) {
-          updatesPromises.push(
-            (async () => {
-              try {
-                // Use UPSERT to handle race conditions and duplicate token addresses
-                await query(
-                  `INSERT INTO ${TRACKER_TABLE} (
-                     id, token_address, token_symbol, token_name, logo_url,
-                     initial_price_usd, last_price_usd, peak_price_usd,
-                     current_gain_percentage, peak_gain_percentage, status,
-                     organic_score, market_cap, volume_1h, tracking_started_at,
-                     trading_simulation, price_history
-                   ) VALUES (
-                     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
-                   )
-                   ON CONFLICT (token_address) DO UPDATE SET
-                     id = EXCLUDED.id,
-                     token_symbol = EXCLUDED.token_symbol,
-                     token_name = EXCLUDED.token_name,
-                     logo_url = EXCLUDED.logo_url,
-                     initial_price_usd = EXCLUDED.initial_price_usd,
-                     last_price_usd = EXCLUDED.last_price_usd,
-                     peak_price_usd = EXCLUDED.peak_price_usd,
-                     current_gain_percentage = EXCLUDED.current_gain_percentage,
-                     peak_gain_percentage = EXCLUDED.peak_gain_percentage,
-                     status = EXCLUDED.status,
-                     organic_score = EXCLUDED.organic_score,
-                     market_cap = EXCLUDED.market_cap,
-                     volume_1h = EXCLUDED.volume_1h,
-                     tracking_started_at = EXCLUDED.tracking_started_at,
-                     trading_simulation = EXCLUDED.trading_simulation,
-                     price_history = EXCLUDED.price_history,
-                     updated_at = NOW()`,
-                  [
-                    tokenId,
-                    token.token_address,
-                    token.token_symbol,
-                    token.token_name,
-                    token.logo_url,
-                    token.current_price,
-                    token.current_price,
-                    0,
-                    0,
-                    0,
-                    'tracking',
-                    token.organic_score,
-                    token.market_cap,
-                    token.volume_1h,
-                    new Date().toISOString(),
-                    JSON.stringify(tradingSimulation),
-                    JSON.stringify([initialPriceRecord]),
-                  ],
-                )
-
-                // Send Discord notification for new token detection (MOVED BEFORE RETURN)
+          // REL-20: collected and flushed as one UNNEST upsert after the loop;
+          // Discord notification stays gated on the batched write succeeding.
+          trackingUpsert.add(
+            [
+              tokenId,
+              token.token_address,
+              token.token_symbol,
+              token.token_name,
+              token.logo_url,
+              token.current_price,
+              token.current_price,
+              0,
+              0,
+              0,
+              'tracking',
+              token.organic_score,
+              token.market_cap,
+              token.volume_1h,
+              new Date().toISOString(),
+              JSON.stringify(tradingSimulation),
+              JSON.stringify([initialPriceRecord]),
+            ],
+            {
+              ...upsertErrorHooks(token, existingAnyStatus),
+              after: async () => {
+                // Send Discord notification for new token detection
                 if (shouldEnableNotifications()) {
                   try {
                     await sendNewTokenDetectionDiscord({
@@ -4307,22 +4373,8 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                     // Don't fail the operation if Discord fails
                   }
                 }
-
-                return { success: true, tokenSymbol: token.token_symbol }
-              } catch (err) {
-                const pgErr = err as { code?: string; message?: string }
-                logTradeOperation('Database Upsert Error', {
-                  tokenSymbol: token.token_symbol,
-                  tokenAddress: token.token_address,
-                  errorCode: pgErr.code,
-                  errorMessage: pgErr.message,
-                  isRestart: !!existingAnyStatus
-                }, err instanceof Error ? err : new Error(String(err)))
-                console.error(`❌ Failed to upsert token ${token.token_symbol}:`, err)
-                // Don't re-throw to prevent unhandled rejection - let Promise.allSettled handle it
-                return { success: false, error: err, tokenSymbol: token.token_symbol }
-              }
-            })()
+              },
+            },
           )
 
           newTokensAdded++
@@ -4349,27 +4401,20 @@ async function internalTrackPost(request: NextRequest, logger: any) {
             console.log(`⏰ Waiting timeout for ${token.token_symbol} after ${waitingDurationHours.toFixed(1)}h - removing from queue`)
 
             // Remove from waiting queue (mark as skipped due to timeout)
-            updatesPromises.push(
-              (async () => {
-                const waitingInitial = existingToken.waiting_initial_price ?? token.current_price
-                await query(
-                  `UPDATE ${TRACKER_TABLE}
-                   SET status = $1, status_changed_at = $2, last_price_usd = $3,
-                       initial_price_usd = $4, peak_price_usd = $4,
-                       current_gain_percentage = $5, peak_gain_percentage = $5,
-                       updated_at = NOW()
-                   WHERE id = $6`,
-                  [
-                    'skipped',
-                    currentTime.toISOString(),
-                    token.current_price,
-                    waitingInitial,
-                    0,
-                    existingToken.id,
-                  ],
-                )
-              })()
-            )
+            // REL-20: collected for batched flush
+            {
+              const waitingInitial = existingToken.waiting_initial_price ?? token.current_price
+              waitingTimeoutUpdate.add([
+                'skipped',
+                currentTime.toISOString(),
+                token.current_price,
+                waitingInitial,
+                waitingInitial,
+                0,
+                0,
+                existingToken.id,
+              ])
+            }
             continue
           }
 
@@ -4550,29 +4595,18 @@ async function internalTrackPost(request: NextRequest, logger: any) {
                 }
 
                 // Update token status to tracking with buy simulation
-                updatesPromises.push(
-                  (async () => {
-                    await query(
-                      `UPDATE ${TRACKER_TABLE}
-                       SET status = $1, status_changed_at = $2, initial_price_usd = $3,
-                           last_price_usd = $4, peak_price_usd = $5,
-                           current_gain_percentage = $6, peak_gain_percentage = $7,
-                           trading_simulation = $8, updated_at = NOW()
-                       WHERE id = $9`,
-                      [
-                        'tracking',
-                        currentTime.toISOString(),
-                        token.current_price,
-                        token.current_price,
-                        token.current_price,
-                        0,
-                        0,
-                        JSON.stringify(initialSimulation),
-                        existingToken.id,
-                      ],
-                    )
-                  })()
-                )
+                // REL-20: collected for batched flush
+                dipConvertUpdate.add([
+                  'tracking',
+                  currentTime.toISOString(),
+                  token.current_price,
+                  token.current_price,
+                  token.current_price,
+                  0,
+                  0,
+                  JSON.stringify(initialSimulation),
+                  existingToken.id,
+                ])
 
                 // Send Discord notification for successful dip buy
                 if (shouldEnableNotifications()) {
@@ -4597,48 +4631,27 @@ async function internalTrackPost(request: NextRequest, logger: any) {
               } else {
                 console.warn(`❌ Buy operation failed for waiting token ${token.token_symbol}`)
                 // Keep in waiting status for next attempt
-                updatesPromises.push(
-                  (async () => {
-                    await query(
-                      `UPDATE ${TRACKER_TABLE} SET last_price_usd = $1, updated_at = NOW() WHERE id = $2`,
-                      [token.current_price, existingToken.id],
-                    )
-                  })()
-                )
+                // REL-20: collected for batched flush
+                waitingPriceTouch.add([token.current_price, existingToken.id])
               }
               }
             } catch (error) {
               console.error(`❌ Error converting waiting token ${token.token_symbol} to tracking:`, error)
               // Keep in waiting status for next attempt
-              updatesPromises.push(
-                (async () => {
-                  await query(
-                    `UPDATE ${TRACKER_TABLE} SET last_price_usd = $1, updated_at = NOW() WHERE id = $2`,
-                    [token.current_price, existingToken.id],
-                  )
-                })()
-              )
+              // REL-20: collected for batched flush
+              waitingPriceTouch.add([token.current_price, existingToken.id])
             }
             continue
           } else {
             // Still waiting - just update price
-            updatesPromises.push(
-              (async () => {
-                await query(
-                  `UPDATE ${TRACKER_TABLE}
-                   SET last_price_usd = $1, organic_score = $2, market_cap = $3,
-                       volume_1h = $4, updated_at = NOW()
-                   WHERE id = $5`,
-                  [
-                    token.current_price,
-                    token.organic_score,
-                    token.market_cap,
-                    token.volume_1h,
-                    existingToken.id,
-                  ],
-                )
-              })()
-            )
+            // REL-20: collected for batched flush
+            waitingMetricsUpdate.add([
+              token.current_price,
+              token.organic_score,
+              token.market_cap,
+              token.volume_1h,
+              existingToken.id,
+            ])
             continue
           }
         }
@@ -4695,28 +4708,18 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
         if (isStaleData || isTooOld) {
           // Mark as stopped due to staleness or age
-          updatesPromises.push(
-            (async () => {
-              await query(
-                `UPDATE ${TRACKER_TABLE}
-                 SET status = $1, status_changed_at = $2, last_price_usd = $3,
-                     current_gain_percentage = $4, peak_gain_percentage = $5,
-                     organic_score = $6, market_cap = $7, volume_1h = $8, updated_at = NOW()
-                 WHERE id = $9`,
-                [
-                  'stopped',
-                  new Date().toISOString(),
-                  token.current_price,
-                  currentGain,
-                  peakGain,
-                  token.organic_score,
-                  token.market_cap,
-                  token.volume_1h,
-                  existingToken.id,
-                ],
-              )
-            })()
-          )
+          // REL-20: collected for batched flush
+          stoppedUpdate.add([
+            'stopped',
+            new Date().toISOString(),
+            token.current_price,
+            currentGain,
+            peakGain,
+            token.organic_score,
+            token.market_cap,
+            token.volume_1h,
+            existingToken.id,
+          ])
 
           const reason = isStaleData ? 'stale data' : 'tracking age exceeded';
           console.log(`🛑 Token stopped due to ${reason} (${Math.round(trackingAgeDays)} days): ${token.token_symbol} (${token.token_address})`)
@@ -4875,63 +4878,41 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
         if (isLost && existingToken.status === 'tracking') {
           // Mark as lost (original logic)
-          updatesPromises.push(
-            (async () => {
-              await query(
-                `UPDATE ${TRACKER_TABLE}
-                 SET last_price_usd = $1, peak_price_usd = $2, current_gain_percentage = $3,
-                     peak_gain_percentage = $4, status = $5, status_changed_at = $6,
-                     organic_score = $7, market_cap = $8, volume_1h = $9,
-                     trading_simulation = $10, price_history = $11, updated_at = NOW()
-                 WHERE id = $12`,
-                [
-                  token.current_price,
-                  newPeakPrice,
-                  currentGain,
-                  peakGain,
-                  'lost',
-                  new Date().toISOString(),
-                  token.organic_score,
-                  token.market_cap,
-                  token.volume_1h,
-                  JSON.stringify(existingToken.trading_simulation),
-                  JSON.stringify(updatedPriceHistory),
-                  existingToken.id,
-                ],
-              )
-            })()
-          )
+          // REL-20: collected for batched flush
+          trackingStateUpdate.add([
+            token.current_price,
+            newPeakPrice,
+            currentGain,
+            peakGain,
+            'lost',
+            new Date().toISOString(),
+            token.organic_score,
+            token.market_cap,
+            token.volume_1h,
+            JSON.stringify(existingToken.trading_simulation),
+            JSON.stringify(updatedPriceHistory),
+            existingToken.id,
+          ])
 
           tokensLost++
           console.log(`❌ Token lost (${currentGain.toFixed(2)}%): ${token.token_symbol} (${token.token_address})`)
         } else if (existingToken.status === 'tracking') {
           // Update tracking token with new price data and simulation results
-          updatesPromises.push(
-            (async () => {
-              await query(
-                `UPDATE ${TRACKER_TABLE}
-                 SET last_price_usd = $1, peak_price_usd = $2, current_gain_percentage = $3,
-                     peak_gain_percentage = $4, status = $5, status_changed_at = $6,
-                     organic_score = $7, market_cap = $8, volume_1h = $9,
-                     trading_simulation = $10, price_history = $11, updated_at = NOW()
-                 WHERE id = $12`,
-                [
-                  token.current_price,
-                  newPeakPrice,
-                  currentGain,
-                  peakGain,
-                  existingToken.status,
-                  existingToken.status_changed_at,
-                  token.organic_score,
-                  token.market_cap,
-                  token.volume_1h,
-                  JSON.stringify(existingToken.trading_simulation),
-                  JSON.stringify(updatedPriceHistory),
-                  existingToken.id,
-                ],
-              )
-            })()
-          )
+          // REL-20: collected for batched flush
+          trackingStateUpdate.add([
+            token.current_price,
+            newPeakPrice,
+            currentGain,
+            peakGain,
+            existingToken.status,
+            existingToken.status_changed_at,
+            token.organic_score,
+            token.market_cap,
+            token.volume_1h,
+            JSON.stringify(existingToken.trading_simulation),
+            JSON.stringify(updatedPriceHistory),
+            existingToken.id,
+          ])
 
           tokensUpdated++
           if (currentGain > 10) {
@@ -5120,50 +5101,54 @@ async function internalTrackPost(request: NextRequest, logger: any) {
 
         // Add update promise
         if (isLost && existingToken.status === 'tracking') {
-          updatesPromises.push((async () => {
-            await query(
-              `UPDATE ${TRACKER_TABLE}
-               SET last_price_usd = $1, peak_price_usd = $2, current_gain_percentage = $3,
-                   peak_gain_percentage = $4, status = $5, status_changed_at = $6,
-                   trading_simulation = $7, price_history = $8, updated_at = NOW()
-               WHERE id = $9`,
-              [
-                currentPrice,
-                newPeakPrice,
-                currentGain,
-                peakGain,
-                'lost',
-                new Date().toISOString(),
-                JSON.stringify(existingToken.trading_simulation),
-                JSON.stringify(updatedPriceHistory),
-                existingToken.id,
-              ],
-            )
-          })())
+          // REL-20: collected for batched flush
+          orphanLostUpdate.add([
+            currentPrice,
+            newPeakPrice,
+            currentGain,
+            peakGain,
+            'lost',
+            new Date().toISOString(),
+            JSON.stringify(existingToken.trading_simulation),
+            JSON.stringify(updatedPriceHistory),
+            existingToken.id,
+          ])
           tokensLost++
           console.log(`❌ Orphaned Token lost (${currentGain.toFixed(2)}%): ${token.token_symbol}`)
         } else {
-          updatesPromises.push((async () => {
-            await query(
-              `UPDATE ${TRACKER_TABLE}
-               SET last_price_usd = $1, peak_price_usd = $2, current_gain_percentage = $3,
-                   peak_gain_percentage = $4, trading_simulation = $5, price_history = $6,
-                   updated_at = NOW()
-               WHERE id = $7`,
-              [
-                currentPrice,
-                newPeakPrice,
-                currentGain,
-                peakGain,
-                JSON.stringify(existingToken.trading_simulation),
-                JSON.stringify(updatedPriceHistory),
-                existingToken.id,
-              ],
-            )
-          })())
+          // REL-20: collected for batched flush
+          orphanUpdate.add([
+            currentPrice,
+            newPeakPrice,
+            currentGain,
+            peakGain,
+            JSON.stringify(existingToken.trading_simulation),
+            JSON.stringify(updatedPriceHistory),
+            existingToken.id,
+          ])
           tokensUpdated++
         }
       }
+    }
+
+    // REL-20: flush collected batched writes alongside any remaining promises.
+    // Ordering matches the old semantics: waiting/dip writes and tracking-state
+    // writes are independent rows (keyed by id / token_address), so flushes can
+    // run concurrently just like the old per-row promises did.
+    const rel20Batches: WriteBatch[] = [
+      waitingUpsert,
+      trackingUpsert,
+      waitingTimeoutUpdate,
+      dipConvertUpdate,
+      waitingPriceTouch,
+      waitingMetricsUpdate,
+      stoppedUpdate,
+      trackingStateUpdate,
+      orphanLostUpdate,
+      orphanUpdate,
+    ]
+    for (const batch of rel20Batches) {
+      if (batch.size > 0) updatesPromises.push(flushBatch(batch))
     }
 
     // Execute all updates in parallel
@@ -5181,6 +5166,29 @@ async function internalTrackPost(request: NextRequest, logger: any) {
         rejectedReasons: rejectedPromises.map(r => r.reason),
         failedTokens: failedOperations.map(op => op.tokenSymbol)
       })
+    }
+
+    // REL-20 (rec 6.3): per-cycle statement timing for the batched writes
+    if (rel20Stats.length > 0) {
+      const totalRows = rel20Stats.reduce((sum, s) => sum + s.stats.rows, 0)
+      const totalChunks = rel20Stats.reduce((sum, s) => sum + s.stats.chunks, 0)
+      const totalMs = rel20Stats.reduce((sum, s) => sum + s.stats.ms, 0)
+      log.info('api_request', 'REL-20 batched tracker writes', {
+        batches: rel20Stats.map((s) => ({
+          name: s.name,
+          rows: s.stats.rows,
+          chunks: s.stats.chunks,
+          ms: s.stats.ms,
+          ok: s.ok,
+        })),
+        totalRows,
+        totalStatements: totalChunks,
+        totalMs,
+        replacedRoundTrips: totalRows,
+      })
+      console.log(
+        `📦 REL-20 batched writes: ${totalRows} rows in ${totalChunks} statements (${totalMs}ms total) — replaced ${totalRows} per-row round-trips`,
+      )
     }
 
     // Get updated statistics

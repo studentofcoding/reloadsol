@@ -19,7 +19,8 @@ import {
   computeOpenSimCycles,
   type OpenSimCycle,
 } from '@/utils/simulation-trades'
-import { buildTradingRecord, insertTradingRecord } from '@/utils/trading-records-db'
+import { buildTradingRecord, insertTradingRecords } from '@/utils/trading-records-db'
+import type { TrackingRecord } from '@/utils/trading-tracker'
 import { log } from '@/utils/unified-logger'
 
 // Re-export so existing consumers/tests keep their import path.
@@ -135,6 +136,8 @@ async function sellSim(params: {
   fraction: number
   reason: string
   closePosition: boolean
+  /** REL-20: records are collected and bulk-inserted by the cycle caller. */
+  collect: (record: TrackingRecord) => void
 }): Promise<void> {
   // Reuse the cycle computed during single-pass position reconstruction.
   const cycle = params.position.cycle
@@ -155,7 +158,7 @@ async function sellSim(params: {
         100
       : 0
 
-  await insertTradingRecord(
+  params.collect(
     buildTradingRecord({
       walletAddress: SIM_WALLET,
       chain: CHAIN,
@@ -211,6 +214,8 @@ async function sellSim(params: {
 
 async function buySim(params: {
   strategy: TrendingBotStrategy
+  /** REL-20: records are collected and bulk-inserted by the cycle caller. */
+  collect: (record: TrackingRecord) => void
   token: {
     token_address: string
     token_symbol: string
@@ -241,7 +246,7 @@ async function buySim(params: {
     domain: 'trending_bot',
   }
 
-  await insertTradingRecord(
+  params.collect(
     buildTradingRecord({
       walletAddress: SIM_WALLET,
       chain: CHAIN,
@@ -289,6 +294,12 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
     const strategy = configs[strategyId]
     if (!strategy) continue
 
+    // REL-20: collect this strategy's trading-record writes and flush once
+    const pendingRecords: TrackingRecord[] = []
+    const collect = (record: TrackingRecord) => {
+      pendingRecords.push(record)
+    }
+
     const open = openPositionsFor(records, strategyId)
     const openMints = new Set(open.map((p) => p.mintAddress))
     const skipped: string[] = []
@@ -327,6 +338,7 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
           decision.action === 'partial' ? decision.sellPct / 100 : 1,
         reason: decision.reason,
         closePosition: decision.action === 'close',
+        collect,
       })
 
       if (decision.action === 'close') {
@@ -344,9 +356,24 @@ export async function runTrendingBotRhSimCycle(): Promise<RhTrendingSimResult[]>
         skipped.push(`${token.token_symbol}: max positions`)
         break
       }
-      await buySim({ strategy, token })
+      await buySim({ strategy, token, collect })
       openMints.add(token.token_address)
       opened++
+    }
+
+    // REL-20: one round-trip per chunk replaces one insert per position.
+    // Throws on DB error exactly as the per-row inserts did.
+    if (pendingRecords.length > 0) {
+      const startedAt = Date.now()
+      const res = await insertTradingRecords(pendingRecords)
+      log.info('api_request', 'REL-20 RH sim batched trading-record writes', {
+        strategyId,
+        inserted: res.inserted,
+        skipped: res.skipped,
+        statements: res.stats.chunks,
+        ms: Date.now() - startedAt,
+        replacedRoundTrips: res.inserted,
+      })
     }
 
     results.push({
