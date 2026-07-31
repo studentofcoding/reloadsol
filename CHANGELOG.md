@@ -8,6 +8,18 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added — 2026-07 infra audit deliverables (see recommendations.md)
+
+- **REL-20 batched DB writes**: `bulkInsert`/`bulkUpdateByKey` UNNEST helpers + `WriteBatch` collector (`src/utils/db.ts`); `insertTradingRecords` bulk twin (`trading-records-db.ts`). Hot cron paths converted (trending track 10 write shapes, RH sim, mcap sim, signals sim): a typical tick drops from ~50–80 sequential round-trips to ≤ ~15 statements. Per-cycle write timing logs added (rec 6.3).
+- **RH batch speed**: parallel Kyber route+build for all legs; per-leg success/hash attribution in sequential fallback (`RhSequentialWriteError`).
+- **BatchExecutor contract** (`contracts/`): owner-scoped atomic `executeBatch` (wrap + Permit2 pulls + N swaps + sweep) for Robinhood Chain 4663; 10/10 Foundry tests incl. fork vs real Permit2/WETH. Enabled via `RH_BATCH_EXECUTOR_ADDRESS` (unset = legacy behavior).
+- **Permit2 swap approvals** behind `RH_PERMIT2_SWAPS` (default off).
+- **RH CLMM**: pool_key/fee/tick_spacing ledger at mint (`db/init/25-rh-clmm-pool-key.sql`); `listV4Positions` via 3 Multicall3 batches + 15s Redis slot0 cache; `rh_clmm_manage` alert-only worker (OOR + fee-threshold Telegram, 300s).
+- **Solana DLMM**: real REDEPLOY (remove + re-deploy ±bin_range_interval); Meteora auto-fee-claim (`DLMM_AUTO_CLAIM_FEE_SOL`, default 0.005); pools fetched once per manage cycle.
+- **Strategies**: shared `exit-ladder.ts` (Solana trailing-TP3 + RH profit-target-TP3 semantics preserved); RH sim O(n²)→O(n); RH caps/mcap bands DB-tunable via `strategy_definitions.config`.
+- **ML**: train/valid/test 3-way split (threshold tuned on valid only — test-split leak fixed in both trainers); PR-AUC + winner P/R/F1 + feature-coverage in model meta; coverage logged at export.
+- **Security**: all Go `/trigger/*` endpoints require `X-Trigger-Secret` (env `TRIGGER_SECRET`, falls back to `TRENDING_TRACKER_SECRET`); `/health`, `/status`, `/workers` stay public.
+
 ### Changed — RH Parent multi-sell batching
 
 - Parent multi-token UniV2 sell (`executeRhParentBulkSell`) uses EIP-5792 `wallet_sendCalls` when 2+ legs succeed prep (one Rabby confirm when supported).
