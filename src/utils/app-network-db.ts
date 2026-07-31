@@ -6,6 +6,11 @@ export function parseDbChain(raw: string | null | undefined): AppNetwork {
   return parseAppNetwork(raw)
 }
 
+/** RH strategy ids are seeded with `_rh` suffix (see registry-chain.test). */
+export function chainFromStrategyId(strategyId: string): AppNetwork {
+  return strategyId.endsWith('_rh') ? 'robinhood' : 'sol'
+}
+
 /** Keep only records whose chain matches (missing chain treated as sol). */
 export function filterRecordsByChain<T extends { chain?: string | null }>(
   records: T[],

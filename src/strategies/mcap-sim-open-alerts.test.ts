@@ -58,12 +58,13 @@ describe('mcap-sim-open-alerts', () => {
     })
     expect(eighty).not.toBeNull()
 
-    const toasts = drainSimOpenAlerts()
+    const toasts = drainSimOpenAlerts('robinhood')
     expect(toasts).toHaveLength(2)
     expect(toasts.map((t) => t.items?.[0]?.strategyId).sort()).toEqual([
       'mcap_enter_at_80_rh',
       'mcap_enter_first_seen_rh',
     ])
+    expect(drainSimOpenAlerts('sol')).toHaveLength(0)
   })
 
   it('records alert once per strategy+mint and peeks as toast without consume', () => {
@@ -97,7 +98,7 @@ describe('mcap-sim-open-alerts', () => {
     })
     expect(otherStrategy).not.toBeNull()
 
-    const toasts = drainSimOpenAlerts()
+    const toasts = drainSimOpenAlerts('sol')
     expect(toasts).toHaveLength(2)
     expect(toasts[0].category).toBe('sim_open')
     expect(toasts[0].key).toBe(simOpenDedupKey('mcap_enter_at_80', 'MintABC'))
@@ -109,7 +110,34 @@ describe('mcap-sim-open-alerts', () => {
       entryTemplate: 'milestone_80',
     })
 
-    expect(drainSimOpenAlerts()).toHaveLength(2)
+    expect(drainSimOpenAlerts('sol')).toHaveLength(2)
+  })
+
+  it('scopes drain by chain — sol drain hides *_rh', () => {
+    recordSimOpenAlert({
+      strategyId: 'mcap_enter_at_80',
+      tokenAddress: 'MintSol',
+      tokenSymbol: 'SOLT',
+      entryMcap: 100_000,
+      entryAt: '2026-07-09T00:00:00.000Z',
+      entryTemplate: 'milestone_80',
+    })
+    recordSimOpenAlert({
+      strategyId: 'mcap_enter_at_80_rh',
+      tokenAddress: '0xMintRh',
+      tokenSymbol: 'RHT',
+      entryMcap: 100_000,
+      entryAt: '2026-07-09T00:00:00.000Z',
+      entryTemplate: 'milestone_80',
+    })
+
+    const sol = drainSimOpenAlerts('sol')
+    expect(sol).toHaveLength(1)
+    expect(sol[0].items?.[0]?.strategyId).toBe('mcap_enter_at_80')
+
+    const rh = drainSimOpenAlerts('robinhood')
+    expect(rh).toHaveLength(1)
+    expect(rh[0].items?.[0]?.strategyId).toBe('mcap_enter_at_80_rh')
   })
 
   it('ignores non-manual strategies', () => {
@@ -123,7 +151,7 @@ describe('mcap-sim-open-alerts', () => {
         entryTemplate: 'first_seen',
       }),
     ).toBeNull()
-    expect(drainSimOpenAlerts()).toHaveLength(0)
+    expect(drainSimOpenAlerts('sol')).toHaveLength(0)
   })
 
   it('builds toast message with strategy and entry mcap', () => {

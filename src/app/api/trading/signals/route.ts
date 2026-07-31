@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
     const signals = await enrichSignalsWithPatternShadow(rawSignals)
 
     // Stage-1 copy-trade alerts: enter + growth < 100% (24h dedup; safe on UI + worker polls)
-    const earlyAlerts = emitSignalsEarlyAlertsFromScored(signals)
+    const earlyAlerts = emitSignalsEarlyAlertsFromScored(signals, chain)
     if (earlyAlerts.length > 0) {
       const { sendSignalsEarlyEnterAlert } = await import('@/utils/telegram')
       const { insertSocialEvents } = await import('@/strategies/social/db')

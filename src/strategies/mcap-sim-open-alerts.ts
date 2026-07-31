@@ -1,4 +1,6 @@
 import type { McapToast } from '@/types/mcap-toasts'
+import type { AppNetwork } from '@/utils/app-network'
+import { chainFromStrategyId } from '@/utils/app-network-db'
 import { formatMcapUsd } from '@/utils/telegram'
 
 export const MCAP_MANUAL_TRADE_STRATEGIES = [
@@ -130,11 +132,15 @@ function prunePending(now: number): void {
   }
 }
 
-export function drainSimOpenAlerts(): McapToast[] {
+export function drainSimOpenAlerts(chain: AppNetwork): McapToast[] {
   const now = Date.now()
   prunePending(now)
   return pending
-    .filter((a) => now - a.recordedAt <= PEEK_WINDOW_MS)
+    .filter(
+      (a) =>
+        now - a.recordedAt <= PEEK_WINDOW_MS &&
+        chainFromStrategyId(a.strategyId) === chain,
+    )
     .map(buildSimOpenToast)
 }
 

@@ -81,17 +81,49 @@ describe('signals-early-alerts', () => {
     })
     expect(dup).toBeNull()
 
-    const toasts = drainSignalsEarlyAlerts()
+    const toasts = drainSignalsEarlyAlerts('sol')
     expect(toasts).toHaveLength(1)
     expect(toasts[0].category).toBe('signals_enter')
     expect(toasts[0].title).toBe('Early Enter')
-    expect(toasts[0].key).toBe(signalsEnterDedupKey('MintEarly'))
+    expect(toasts[0].key).toBe(signalsEnterDedupKey('MintEarly', 'sol'))
     expect(toasts[0].items?.[0]).toMatchObject({
       symbol: 'EARLY',
       address: 'MintEarly',
       entryTemplate: 'signals_enter',
     })
-    expect(drainSignalsEarlyAlerts()).toHaveLength(0)
+    expect(drainSignalsEarlyAlerts('sol')).toHaveLength(0)
+  })
+
+  it('scopes drain by chain — sol drain does not consume robinhood', () => {
+    expect(
+      recordSignalsEarlyAlert({
+        tokenAddress: 'MintShared',
+        tokenSymbol: 'SOL',
+        entryMcap: 70_000,
+        growthPercent: 30,
+        score: 55,
+        chain: 'sol',
+      }),
+    ).not.toBeNull()
+    expect(
+      recordSignalsEarlyAlert({
+        tokenAddress: 'MintShared',
+        tokenSymbol: 'RH',
+        entryMcap: 70_000,
+        growthPercent: 30,
+        score: 55,
+        chain: 'robinhood',
+      }),
+    ).not.toBeNull()
+
+    const sol = drainSignalsEarlyAlerts('sol')
+    expect(sol).toHaveLength(1)
+    expect(sol[0].key).toBe(signalsEnterDedupKey('MintShared', 'sol'))
+
+    expect(drainSignalsEarlyAlerts('sol')).toHaveLength(0)
+    const rh = drainSignalsEarlyAlerts('robinhood')
+    expect(rh).toHaveLength(1)
+    expect(rh[0].key).toBe(signalsEnterDedupKey('MintShared', 'robinhood'))
   })
 
   it('emitSignalsEarlyAlertsFromScored filters and records eligible signals', () => {
@@ -130,6 +162,7 @@ describe('signals-early-alerts', () => {
       entryAt: '2026-07-09T00:00:00.000Z',
       recordedAt: Date.now(),
       delivered: false,
+      chain: 'sol',
       mlShadow: true,
       pWinner: 0.42,
       predicted: 'loser',

@@ -2,6 +2,8 @@ import { queryOne } from '@/utils/db'
 import type { TrackingRecord } from '@/utils/trading-tracker'
 import { updateTradingRecordData } from '@/utils/trading-records-db'
 import type { McapToast } from '@/types/mcap-toasts'
+import type { AppNetwork } from '@/utils/app-network'
+import { chainFromStrategyId } from '@/utils/app-network-db'
 import { fetchFirstGmgnHotAfter } from './social/db'
 import { findStrategyBuyRecord } from './sim-monitor-snapshots'
 import { fetchTradingRecordsForWallet } from './db'
@@ -268,8 +270,17 @@ function recordGmgnConfirmToast(params: {
   while (pendingGmgnToasts.length > 50) pendingGmgnToasts.shift()
 }
 
-export function drainGmgnLiveBoostToasts(): McapToast[] {
-  return pendingGmgnToasts.splice(0, pendingGmgnToasts.length)
+export function drainGmgnLiveBoostToasts(chain: AppNetwork): McapToast[] {
+  const out: McapToast[] = []
+  for (let i = pendingGmgnToasts.length - 1; i >= 0; i--) {
+    const toast = pendingGmgnToasts[i]
+    const strategyId = toast.items?.[0]?.strategyId ?? ''
+    if (chainFromStrategyId(strategyId) === chain) {
+      out.unshift(toast)
+      pendingGmgnToasts.splice(i, 1)
+    }
+  }
+  return out
 }
 
 async function boostOpenSimForWallet(params: {

@@ -344,7 +344,10 @@ async function main(): Promise<void> {
     printBoostState('After boost', after.entryFeatures)
   }
 
-  const toasts = drainGmgnLiveBoostToasts()
+  const toasts = [
+    ...drainGmgnLiveBoostToasts('sol'),
+    ...drainGmgnLiveBoostToasts('robinhood'),
+  ]
   if (toasts.length > 0) {
     console.log('\nToasts queued:', toasts.length)
     for (const t of toasts) console.log(' ', t.title, '—', t.message)

@@ -1,4 +1,6 @@
 import type { McapToast } from '@/types/mcap-toasts'
+import type { AppNetwork } from '@/utils/app-network'
+import { parseDbChain } from '@/utils/app-network-db'
 import { formatMcapUsd } from '@/utils/telegram'
 import { formatPatternShadowLabel } from './signals-early-pattern-cache'
 import type { ScoredSignal } from './signals-pipeline'
@@ -13,6 +15,7 @@ export type SignalsEarlyAlert = {
   entryAt: string
   recordedAt: number
   delivered: boolean
+  chain: AppNetwork
   /** Pattern ML shadow — display only; never gates Stage-1 */
   mlShadow: true
   pWinner: number | null
@@ -35,8 +38,11 @@ function pruneRecentKeys(now: number): void {
   keysToDelete.forEach((key) => recentKeys.delete(key))
 }
 
-export function signalsEnterDedupKey(tokenAddress: string): string {
-  return `signals_enter:${tokenAddress}`
+export function signalsEnterDedupKey(
+  tokenAddress: string,
+  chain: AppNetwork = 'sol',
+): string {
+  return `signals_enter:${chain}:${tokenAddress}`
 }
 
 export function shouldEmitSignalsEarlyAlert(signal: {
@@ -58,6 +64,7 @@ export function recordSignalsEarlyAlert(params: {
   entryMcap: number
   growthPercent: number
   score: number
+  chain?: AppNetwork | string | null
   rationale?: string
   entryAt?: string
   pWinner?: number | null
@@ -66,8 +73,9 @@ export function recordSignalsEarlyAlert(params: {
 }): SignalsEarlyAlert | null {
   const now = Date.now()
   pruneRecentKeys(now)
+  const chain = parseDbChain(params.chain)
 
-  const key = signalsEnterDedupKey(params.tokenAddress)
+  const key = signalsEnterDedupKey(params.tokenAddress, chain)
   const last = recentKeys.get(key)
   if (last && now - last <= DEDUP_WINDOW_MS) return null
 
@@ -83,6 +91,7 @@ export function recordSignalsEarlyAlert(params: {
     entryAt: params.entryAt || new Date(now).toISOString(),
     recordedAt: now,
     delivered: false,
+    chain,
     mlShadow: true,
     pWinner: params.pWinner ?? null,
     predicted: params.predicted ?? null,
@@ -125,7 +134,7 @@ export function buildSignalsEarlyToast(alert: SignalsEarlyAlert): McapToast {
     category: 'signals_enter',
     title: 'Early Enter',
     message: `${alert.tokenSymbol} ${growthLabel} @ ${mcapLabel} — score ${alert.score.toFixed(0)}${mlSnippet}`,
-    key: signalsEnterDedupKey(alert.tokenAddress),
+    key: signalsEnterDedupKey(alert.tokenAddress, alert.chain),
     items: [
       {
         symbol: alert.tokenSymbol,
@@ -140,8 +149,8 @@ export function buildSignalsEarlyToast(alert: SignalsEarlyAlert): McapToast {
   }
 }
 
-export function drainSignalsEarlyAlerts(): McapToast[] {
-  const undelivered = pending.filter((a) => !a.delivered)
+export function drainSignalsEarlyAlerts(chain: AppNetwork): McapToast[] {
+  const undelivered = pending.filter((a) => !a.delivered && a.chain === chain)
   for (const alert of undelivered) {
     alert.delivered = true
   }
@@ -161,6 +170,7 @@ export function discardPendingSignalsEarlyToasts(tokenAddresses: string[]): void
 /** Emit Stage-1 alerts for eligible scored signals. Returns newly recorded alerts. */
 export function emitSignalsEarlyAlertsFromScored(
   signals: ScoredSignal[],
+  chain: AppNetwork = 'sol',
 ): SignalsEarlyAlert[] {
   const recorded: SignalsEarlyAlert[] = []
   for (const signal of signals) {
@@ -175,6 +185,7 @@ export function emitSignalsEarlyAlertsFromScored(
       entryAt: signal.last_updated_at || signal.first_seen_at,
       pWinner: signal.ml_pattern_p_winner ?? null,
       predicted: signal.ml_pattern_predicted ?? null,
+      chain,
     })
     if (alert) recorded.push(alert)
   }

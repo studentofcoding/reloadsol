@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { filterRecordsByChain, parseDbChain } from './app-network-db'
+import {
+  chainFromStrategyId,
+  filterRecordsByChain,
+  parseDbChain,
+} from './app-network-db'
 
 describe('parseDbChain', () => {
   it('accepts robinhood', () => {
@@ -9,6 +13,13 @@ describe('parseDbChain', () => {
   it('defaults to sol', () => {
     expect(parseDbChain(null)).toBe('sol')
     expect(parseDbChain('eth')).toBe('sol')
+  })
+})
+
+describe('chainFromStrategyId', () => {
+  it('maps _rh suffix to robinhood', () => {
+    expect(chainFromStrategyId('mcap_enter_at_80_rh')).toBe('robinhood')
+    expect(chainFromStrategyId('mcap_enter_at_80')).toBe('sol')
   })
 })
 
