@@ -1,6 +1,7 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getPatternTrainingStats } from '@/strategies/social/pattern-training-export'
 import { patternRules } from '@/strategies/social/mcap-patterns-24h'
+import { parseDbChain } from '@/utils/app-network-db'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,9 +11,10 @@ function getPatternArtifactMeta(): Promise<PatternArtifactMetaModule> {
   return import('@/strategies/pattern-artifact-meta.server')
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const stats = await getPatternTrainingStats()
+    const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
+    const stats = await getPatternTrainingStats(chain)
     const patternMeta = await getPatternArtifactMeta()
     const [patternReady, modelVersion, pipeline, model] = await Promise.all([
       patternMeta.getPatternModelReadyFromMeta(),
@@ -24,6 +26,7 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       rules: patternRules(),
+      chain,
       ...stats,
       patternModelReady: patternReady,
       patternModelVersion: modelVersion,

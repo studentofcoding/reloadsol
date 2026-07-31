@@ -1,4 +1,6 @@
 import { query } from '@/utils/db'
+import type { AppNetwork } from '@/utils/app-network'
+import { parseDbChain } from '@/utils/app-network-db'
 import {
   extractPatternFeaturesFromSnapshot,
   patternClassFromCohort,
@@ -33,11 +35,14 @@ function toIso(value: unknown, fallback: string): string {
   return fallback
 }
 
-export async function listPatternTrainingRows(): Promise<{
+export async function listPatternTrainingRows(
+  chain: AppNetwork = 'sol',
+): Promise<{
   rows: PatternTrainingRow[]
   skipped: number
   error?: string
 }> {
+  const scoped = parseDbChain(chain)
   try {
     const { rows: dbRows } = await query<{
       token_address: string
@@ -48,8 +53,9 @@ export async function listPatternTrainingRows(): Promise<{
     }>(
       `SELECT token_address, cohort, first_seen_at, snapshot, updated_at
        FROM mcap_social_pattern_24h
-       WHERE cohort IN ('winner', 'loser')
+       WHERE cohort IN ('winner', 'loser') AND chain = $1
        ORDER BY first_seen_at ASC`,
+      [scoped],
     )
 
     const rows: PatternTrainingRow[] = []
@@ -98,7 +104,9 @@ export async function listPatternTrainingRows(): Promise<{
   }
 }
 
-export async function getPatternTrainingStats(): Promise<{
+export async function getPatternTrainingStats(
+  chain: AppNetwork = 'sol',
+): Promise<{
   winnerCount: number
   loserCount: number
   exportableRows: number
@@ -106,7 +114,7 @@ export async function getPatternTrainingStats(): Promise<{
   trainReady: boolean
   error?: string
 }> {
-  const { rows, skipped, error } = await listPatternTrainingRows()
+  const { rows, skipped, error } = await listPatternTrainingRows(chain)
   const winnerCount = rows.filter((r) => r.cohort === 'winner').length
   const loserCount = rows.filter((r) => r.cohort === 'loser').length
   const trainReady = winnerCount >= 30 && loserCount >= 30
@@ -179,10 +187,15 @@ export function patternTrainingRowToCsv(row: PatternTrainingRow): string {
   return cells.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')
 }
 
-export async function fetchPatternCohortByToken(): Promise<Map<string, 'winner' | 'loser'>> {
+export async function fetchPatternCohortByToken(
+  chain: AppNetwork = 'sol',
+): Promise<Map<string, 'winner' | 'loser'>> {
+  const scoped = parseDbChain(chain)
   try {
     const { rows } = await query<{ token_address: string; cohort: string }>(
-      `SELECT token_address, cohort FROM mcap_social_pattern_24h WHERE cohort IN ('winner', 'loser')`,
+      `SELECT token_address, cohort FROM mcap_social_pattern_24h
+       WHERE cohort IN ('winner', 'loser') AND chain = $1`,
+      [scoped],
     )
     const map = new Map<string, 'winner' | 'loser'>()
     for (const row of rows) {

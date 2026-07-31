@@ -536,9 +536,11 @@ export default function StrategyAdminHub() {
   );
 
   const patternCohortQuery = useQuery({
-    queryKey: ["pattern-cohort-map"],
+    queryKey: ["pattern-cohort-map", network],
     queryFn: async () => {
-      const res = await fetch("/api/mcap-patterns/24h");
+      const res = await fetch(
+        `/api/mcap-patterns/24h?chain=${encodeURIComponent(network)}`,
+      );
       const json = await res.json();
       const map = new Map<string, "winner" | "loser">();
       if (json.success) {

@@ -1,5 +1,7 @@
 import { query } from '@/utils/db'
 import { toUtcIso } from '@/utils/datetime'
+import type { AppNetwork } from '@/utils/app-network'
+import { parseDbChain } from '@/utils/app-network-db'
 import {
   WINNER_MIN_GROWTH_PCT,
   LOSER_MAX_GROWTH_PCT,
@@ -10,6 +12,31 @@ import {
 import { fetchSocialEventsForTokenSince } from './db'
 
 const WINDOW_MS = 24 * 60 * 60 * 1000
+
+/** SQL fragments used by refresh — exported for unit assert. */
+export function mcapPatternRefreshSql(chain: AppNetwork): {
+  sourceSelect: string
+  staleDelete: string
+  neutralDelete: string
+  upsert: string
+  chain: AppNetwork
+} {
+  return {
+    chain,
+    sourceSelect: `SELECT * FROM token_mcap_tracking WHERE first_seen_at >= $1 AND chain = $2 ORDER BY first_seen_at DESC`,
+    staleDelete: `DELETE FROM mcap_social_pattern_24h WHERE first_seen_at < $1 AND chain = $2`,
+    neutralDelete: `DELETE FROM mcap_social_pattern_24h WHERE token_address = $1 AND chain = $2`,
+    upsert: `INSERT INTO mcap_social_pattern_24h (
+         token_address, chain, cohort, mcap_growth_percent, first_seen_at, snapshot, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (token_address, chain) DO UPDATE SET
+         cohort = EXCLUDED.cohort,
+         mcap_growth_percent = EXCLUDED.mcap_growth_percent,
+         first_seen_at = EXCLUDED.first_seen_at,
+         snapshot = EXCLUDED.snapshot,
+         updated_at = EXCLUDED.updated_at`,
+  }
+}
 
 function isMissingTableError(error: unknown): boolean {
   if (typeof error === 'object' && error !== null) {
@@ -37,6 +64,7 @@ type McapTrackingRow = Record<string, unknown>
 
 export type McapPattern24hRow = {
   token_address: string
+  chain: AppNetwork
   cohort: 'winner' | 'loser'
   mcap_growth_percent: number
   first_seen_at: string
@@ -60,12 +88,17 @@ function parseSnapshot(value: unknown): CombinedInternalExport {
   return value as CombinedInternalExport
 }
 
-export async function listMcapSocialPatterns24h(): Promise<McapPatterns24hResult> {
+export async function listMcapSocialPatterns24h(
+  chain: AppNetwork = 'sol',
+): Promise<McapPatterns24hResult> {
+  const scoped = parseDbChain(chain)
   try {
     const { rows } = await query<McapPattern24hRow>(
-      `SELECT token_address, cohort, mcap_growth_percent, first_seen_at, snapshot, updated_at
+      `SELECT token_address, chain, cohort, mcap_growth_percent, first_seen_at, snapshot, updated_at
        FROM mcap_social_pattern_24h
+       WHERE chain = $1
        ORDER BY cohort, mcap_growth_percent DESC`,
+      [scoped],
     )
 
     const winners: CombinedInternalExport[] = []
@@ -103,17 +136,20 @@ export async function listMcapSocialPatterns24h(): Promise<McapPatterns24hResult
 
 export async function refreshMcapSocialPatterns24h(
   now = new Date(),
+  chain: AppNetwork = 'sol',
 ): Promise<McapPatterns24hResult & { upserted: number; skippedNeutral: number }> {
+  const scoped = parseDbChain(chain)
+  const sql = mcapPatternRefreshSql(scoped)
   const since = new Date(now.getTime() - WINDOW_MS)
   const sinceIso = since.toISOString()
   const exportedAt = now.toISOString()
 
   let mcapRows: McapTrackingRow[]
   try {
-    const { rows } = await query<McapTrackingRow>(
-      `SELECT * FROM token_mcap_tracking WHERE first_seen_at >= $1 ORDER BY first_seen_at DESC`,
-      [sinceIso],
-    )
+    const { rows } = await query<McapTrackingRow>(sql.sourceSelect, [
+      sinceIso,
+      scoped,
+    ])
     mcapRows = rows
   } catch (error) {
     if (isMissingTableError(error)) {
@@ -132,7 +168,7 @@ export async function refreshMcapSocialPatterns24h(
   }
 
   try {
-    await query(`DELETE FROM mcap_social_pattern_24h WHERE first_seen_at < $1`, [sinceIso])
+    await query(sql.staleDelete, [sinceIso, scoped])
   } catch (error) {
     if (isMissingTableError(error)) {
       return {
@@ -158,12 +194,15 @@ export async function refreshMcapSocialPatterns24h(
     const tokenAddress = String(mcapRow.token_address ?? '')
     if (!tokenAddress) continue
 
+    const rowChain = parseDbChain(
+      typeof mcapRow.chain === 'string' ? mcapRow.chain : scoped,
+    )
+    if (rowChain !== scoped) continue
+
     const growth = toNum(mcapRow.mcap_growth_percent)
     const cohort = classifyMcapPatternCohort(growth)
     if (cohort === 'neutral') {
-      await query(`DELETE FROM mcap_social_pattern_24h WHERE token_address = $1`, [
-        tokenAddress,
-      ]).catch(() => {})
+      await query(sql.neutralDelete, [tokenAddress, scoped]).catch(() => {})
       neutralCount++
       continue
     }
@@ -180,25 +219,15 @@ export async function refreshMcapSocialPatterns24h(
     const firstSeenAt =
       rawFirstSeen instanceof Date ? toUtcIso(rawFirstSeen) : String(rawFirstSeen)
 
-    await query(
-      `INSERT INTO mcap_social_pattern_24h (
-         token_address, cohort, mcap_growth_percent, first_seen_at, snapshot, updated_at
-       ) VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (token_address) DO UPDATE SET
-         cohort = EXCLUDED.cohort,
-         mcap_growth_percent = EXCLUDED.mcap_growth_percent,
-         first_seen_at = EXCLUDED.first_seen_at,
-         snapshot = EXCLUDED.snapshot,
-         updated_at = EXCLUDED.updated_at`,
-      [
-        tokenAddress,
-        cohort,
-        growth ?? 0,
-        firstSeenAt,
-        JSON.stringify(snapshot),
-        exportedAt,
-      ],
-    )
+    await query(sql.upsert, [
+      tokenAddress,
+      scoped,
+      cohort,
+      growth ?? 0,
+      firstSeenAt,
+      JSON.stringify(snapshot),
+      exportedAt,
+    ])
 
     upserted++
     if (cohort === 'winner') winners.push(snapshot)
@@ -220,6 +249,18 @@ export async function refreshMcapSocialPatterns24h(
     upserted,
     skippedNeutral: neutralCount,
   }
+}
+
+/** Cron / authorized full refresh — both networks. */
+export async function refreshMcapSocialPatterns24hAllChains(
+  now = new Date(),
+): Promise<{
+  sol: Awaited<ReturnType<typeof refreshMcapSocialPatterns24h>>
+  robinhood: Awaited<ReturnType<typeof refreshMcapSocialPatterns24h>>
+}> {
+  const sol = await refreshMcapSocialPatterns24h(now, 'sol')
+  const robinhood = await refreshMcapSocialPatterns24h(now, 'robinhood')
+  return { sol, robinhood }
 }
 
 export function patternRules() {

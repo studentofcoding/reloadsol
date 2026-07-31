@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { refreshMcapSocialPatterns24h, patternRules } from '@/strategies/social/mcap-patterns-24h'
+import {
+  patternRules,
+  refreshMcapSocialPatterns24hAllChains,
+} from '@/strategies/social/mcap-patterns-24h'
 import { isSocialRollupAuthorized } from '@/utils/social/config'
 
 export const dynamic = 'force-dynamic'
@@ -15,20 +18,36 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await refreshMcapSocialPatterns24h()
-    const status = result.error ? 503 : 200
+    const { sol, robinhood } = await refreshMcapSocialPatterns24hAllChains()
+    const error = sol.error || robinhood.error
+    const status = error ? 503 : 200
     return NextResponse.json(
       {
-        success: !result.error,
+        success: !error,
         rules: patternRules(),
-        builtAt: result.builtAt,
-        winners: result.winners,
-        losers: result.losers,
-        neutralCount: result.neutralCount,
-        tokenCount: result.tokenCount,
-        upserted: result.upserted,
-        skippedNeutral: result.skippedNeutral,
-        error: result.error,
+        chains: {
+          sol: {
+            builtAt: sol.builtAt,
+            winners: sol.winners.length,
+            losers: sol.losers.length,
+            neutralCount: sol.neutralCount,
+            tokenCount: sol.tokenCount,
+            upserted: sol.upserted,
+            skippedNeutral: sol.skippedNeutral,
+            error: sol.error,
+          },
+          robinhood: {
+            builtAt: robinhood.builtAt,
+            winners: robinhood.winners.length,
+            losers: robinhood.losers.length,
+            neutralCount: robinhood.neutralCount,
+            tokenCount: robinhood.tokenCount,
+            upserted: robinhood.upserted,
+            skippedNeutral: robinhood.skippedNeutral,
+            error: robinhood.error,
+          },
+        },
+        error,
       },
       { status },
     )

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { toUtcIso } from '@/utils/datetime'
+import { mcapPatternRefreshSql } from './mcap-patterns-24h'
 
 /** Mirrors first_seen_at coercion in refreshMcapSocialPatterns24h. */
 function toPgTimestamptzParam(value: unknown, fallback: string): string {
@@ -18,5 +19,17 @@ describe('mcap pattern timestamptz params', () => {
   it('passes through ISO strings unchanged', () => {
     const iso = '2026-07-04T18:49:00.000Z'
     expect(toPgTimestamptzParam(iso, 'fallback')).toBe(iso)
+  })
+})
+
+describe('mcapPatternRefreshSql', () => {
+  it('scopes source/delete/upsert by chain and composite conflict key', () => {
+    const sql = mcapPatternRefreshSql('robinhood')
+    expect(sql.chain).toBe('robinhood')
+    expect(sql.sourceSelect).toContain('chain = $2')
+    expect(sql.staleDelete).toContain('chain = $2')
+    expect(sql.neutralDelete).toContain('chain = $2')
+    expect(sql.upsert).toContain('ON CONFLICT (token_address, chain)')
+    expect(sql.upsert).toContain('chain,')
   })
 })

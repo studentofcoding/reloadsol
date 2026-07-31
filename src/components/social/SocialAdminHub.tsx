@@ -5,6 +5,8 @@ import {
   copyJson,
   downloadJson,
 } from "@/components/token-locate/internal-export";
+import { useAppNetwork } from "@/contexts/AppNetworkContext";
+import type { AppNetwork } from "@/utils/app-network";
 import { isValidMintAddress } from "@/utils/jupiter";
 import { useQuery } from "@tanstack/react-query";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -102,8 +104,12 @@ type McapPatterns24hData = {
   rules?: { winnerMinGrowthPct: number; loserMaxGrowthPct: number };
 };
 
-async function fetchMcapPatterns24h(): Promise<McapPatterns24hData> {
-  const res = await fetch("/api/mcap-patterns/24h");
+async function fetchMcapPatterns24h(
+  chain: AppNetwork,
+): Promise<McapPatterns24hData> {
+  const res = await fetch(
+    `/api/mcap-patterns/24h?chain=${encodeURIComponent(chain)}`,
+  );
   const json = await res.json();
   if (!json.success) throw new Error(json.error || "Failed to load patterns");
   return {
@@ -150,8 +156,10 @@ function pipelineStatusClass(status?: string): string {
   return "text-gray-500";
 }
 
-async function fetchPatternMlStats(): Promise<PatternMlStats> {
-  const res = await fetch("/api/mcap-patterns/stats");
+async function fetchPatternMlStats(chain: AppNetwork): Promise<PatternMlStats> {
+  const res = await fetch(
+    `/api/mcap-patterns/stats?chain=${encodeURIComponent(chain)}`,
+  );
   const json = await res.json();
   if (!json.success) throw new Error(json.error || "Failed to load pattern ML stats");
   return {
@@ -229,6 +237,7 @@ function TokenCell({
 }
 
 export default function SocialAdminHub() {
+  const { network } = useAppNetwork();
   const [activeTab, setActiveTab] = useState<
     "overview" | "crosscheck" | "patterns"
   >("overview");
@@ -264,15 +273,15 @@ export default function SocialAdminHub() {
   });
 
   const patternsQuery = useQuery({
-    queryKey: ["mcap-patterns-24h"],
-    queryFn: fetchMcapPatterns24h,
+    queryKey: ["mcap-patterns-24h", network],
+    queryFn: () => fetchMcapPatterns24h(network),
     enabled: activeTab === "patterns",
     refetchInterval: activeTab === "patterns" ? 60_000 : false,
   });
 
   const patternMlStatsQuery = useQuery({
-    queryKey: ["mcap-patterns-ml-stats"],
-    queryFn: fetchPatternMlStats,
+    queryKey: ["mcap-patterns-ml-stats", network],
+    queryFn: () => fetchPatternMlStats(network),
     enabled: activeTab === "patterns",
     refetchInterval: activeTab === "patterns" ? 60_000 : false,
   });
@@ -424,13 +433,16 @@ export default function SocialAdminHub() {
     setPatternsRefreshLoading(true);
     setActionError(null);
     try {
-      const res = await fetch("/api/mcap-patterns/24h?refresh=true");
+      const res = await fetch(
+        `/api/mcap-patterns/24h?refresh=true&chain=${encodeURIComponent(network)}`,
+      );
       const json = await res.json();
       if (!json.success) {
         setActionError(json.error || "Pattern refresh failed");
         return;
       }
       await patternsQuery.refetch();
+      await patternMlStatsQuery.refetch();
     } catch (e) {
       setActionError(e instanceof Error ? e.message : String(e));
     } finally {

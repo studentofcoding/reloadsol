@@ -4,16 +4,18 @@ import {
   patternRules,
   refreshMcapSocialPatterns24h,
 } from '@/strategies/social/mcap-patterns-24h'
+import { parseDbChain } from '@/utils/app-network-db'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function GET(request: NextRequest) {
   try {
+    const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     const refresh = request.nextUrl.searchParams.get('refresh') === 'true'
     const result = refresh
-      ? await refreshMcapSocialPatterns24h()
-      : await listMcapSocialPatterns24h()
+      ? await refreshMcapSocialPatterns24h(new Date(), chain)
+      : await listMcapSocialPatterns24h(chain)
 
     if (result.error && result.winners.length === 0 && result.losers.length === 0) {
       return NextResponse.json(
@@ -39,6 +41,7 @@ export async function GET(request: NextRequest) {
       neutralCount: result.neutralCount,
       tokenCount: result.tokenCount,
       refreshed: refresh,
+      chain,
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)

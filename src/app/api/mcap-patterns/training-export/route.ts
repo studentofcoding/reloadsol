@@ -5,6 +5,7 @@ import {
   patternTrainingFeatureCoverage,
   patternTrainingRowToCsv,
 } from '@/strategies/social/pattern-training-export'
+import { parseDbChain } from '@/utils/app-network-db'
 import { isSocialRollupAuthorized } from '@/utils/social/config'
 
 export const dynamic = 'force-dynamic'
@@ -19,7 +20,8 @@ export async function GET(request: NextRequest) {
   }
 
   const format = request.nextUrl.searchParams.get('format') ?? 'json'
-  const { rows, skipped, error } = await listPatternTrainingRows()
+  const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
+  const { rows, skipped, error } = await listPatternTrainingRows(chain)
 
   if (error && rows.length === 0) {
     return NextResponse.json({ success: false, error, rows: [], skipped }, { status: 503 })
