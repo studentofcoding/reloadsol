@@ -58,6 +58,28 @@ bash scripts/docker-scope.sh detect-working
 
 Frontend-only deploys use `docker compose up -d --no-deps web` so **reloadsol-cron keeps running** without rebuild; **social-ingest** is restarted after web is healthy (always-on).
 
+## Edge nginx (Cloudflare → `reloadsol-nginx` :80)
+
+Multi-app origin on this VPS: `reloadsol.app`, `terminal.reloadsol.app`, `flowey.space` / `vs.flowey.space`.
+
+Configs live in [`nginx/`](nginx/):
+
+| File | Role |
+|------|------|
+| `nginx.conf` | Docker DNS `resolver 127.0.0.11` (re-resolve after container recreate) |
+| `conf.d/reloadsol.conf` | `reloadsol.app` / `www` → `web:3000` |
+| `conf.d/terminal.reloadsol.conf` | `terminal.reloadsol.app` → `btc-sentiment:8787` |
+| `conf.d/flowey.conf` | Flowey API + LiveKit signaling |
+| `conf.d/00-default-drop.conf` | Unknown Host → 444 |
+
+After changing nginx conf (or if you see **502** with healthy `reloadsol-web`):
+
+```bash
+docker exec reloadsol-nginx nginx -t && docker exec reloadsol-nginx nginx -s reload
+```
+
+With the resolver + variable `proxy_pass` setup, recreating `web` alone should **not** require an nginx reload. If conf files themselves change, always `nginx -t` + reload.
+
 ## CI / GitHub Actions
 
 Push to `main` triggers [`.github/workflows/deploy_docker.yml`](.github/workflows/deploy_docker.yml) on a self-hosted runner:
