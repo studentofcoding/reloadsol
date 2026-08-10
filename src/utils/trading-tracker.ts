@@ -1027,6 +1027,7 @@ class TradingTracker {
     slippageBps?: number
     solPriceUsd: number
     quoteResponse?: any
+    chain?: 'sol' | 'robinhood'
   }): Promise<void> {
     try {
       const {
@@ -1104,7 +1105,8 @@ class TradingTracker {
         slippage: slippageBps ? slippageBps / 100 : undefined,
         is_bot_operation: false, // Jupiter Terminal swaps are manual
         jupiter_swap: true,
-        swap_route: quoteResponse?.routePlan ? JSON.stringify(quoteResponse.routePlan) : undefined
+        swap_route: quoteResponse?.routePlan ? JSON.stringify(quoteResponse.routePlan) : undefined,
+        chain: params.chain ?? 'sol'
       }
 
       await this.trackOperation(record)
@@ -1227,7 +1229,8 @@ export const trackBuyOperation = (
   slippage?: number,
   priorityFee?: number,
   errors?: string[],
-  solPriceUsd?: number
+  solPriceUsd?: number,
+  chain: 'sol' | 'robinhood' = 'sol'
 ) => {
   return tradingTracker.trackOperation({
     walletAddress,
@@ -1246,7 +1249,8 @@ export const trackBuyOperation = (
     signatures,
     slippage,
     priorityFee,
-    errors
+    errors,
+    chain
   })
 }
 
@@ -1268,7 +1272,8 @@ export const trackSellOperation = (
   slippage?: number,
   priorityFee?: number,
   errors?: string[],
-  solPriceUsd?: number
+  solPriceUsd?: number,
+  chain: 'sol' | 'robinhood' = 'sol'
 ) => {
   return tradingTracker.trackOperation({
     walletAddress,
@@ -1287,7 +1292,8 @@ export const trackSellOperation = (
     signatures,
     slippage,
     priorityFee,
-    errors
+    errors,
+    chain
   })
 }
 
@@ -1299,7 +1305,8 @@ export const trackCloseOperation = (
   signatures: string[],
   feesPaid: number,
   errors?: string[],
-  solPriceUsd?: number
+  solPriceUsd?: number,
+  chain: 'sol' | 'robinhood' = 'sol'
 ) => {
   return tradingTracker.trackOperation({
     walletAddress,
@@ -1314,7 +1321,8 @@ export const trackCloseOperation = (
     feesPaid,
     solPriceUsd,
     signatures,
-    errors
+    errors,
+    chain
   })
 }
 

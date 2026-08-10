@@ -318,7 +318,9 @@ wait_for_health() {
     status="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || echo "missing")"
 
     if [[ "$status" == "healthy" ]]; then
-      if curl -fsS "$url" >/dev/null 2>&1; then
+      # nginx has a default_server that drops unknown Hosts (444), so the edge
+      # health check must send the real Host header or nginx closes the conn.
+      if curl -fsS -H "Host: reloadsol.app" "$url" >/dev/null 2>&1; then
         log "Health check OK (${url})"
         return 0
       fi

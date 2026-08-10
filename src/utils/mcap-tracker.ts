@@ -791,10 +791,10 @@ export async function trackTokenMcap(
     try {
       const data = await queryOne<McapSnapshot>(
         `SELECT * FROM token_mcap_tracking
-         WHERE token_address = $1
+         WHERE token_address = $1 AND chain = $2
          ORDER BY last_updated_at DESC
          LIMIT 1`,
-        [tokenAddress],
+        [tokenAddress, chain],
       )
       existingRecord = data ?? null
       if (existingRecord) {
@@ -1088,11 +1088,14 @@ type InsertMcapResult =
   | { status: 'inserted' }
   | { status: 'conflict'; existing: McapSnapshot }
 
-async function fetchMcapRecordByAddress(tokenAddress: string): Promise<McapSnapshot | null> {
+async function fetchMcapRecordByAddress(
+  tokenAddress: string,
+  chain: 'sol' | 'robinhood' = 'sol',
+): Promise<McapSnapshot | null> {
   try {
     const data = await queryOne<McapSnapshot>(
-      `SELECT * FROM token_mcap_tracking WHERE token_address = $1`,
-      [tokenAddress],
+      `SELECT * FROM token_mcap_tracking WHERE token_address = $1 AND chain = $2`,
+      [tokenAddress, chain],
     )
     if (!data) return null
     normalizeTrackingTimeline(data)
@@ -1149,7 +1152,7 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
     return { status: 'inserted' }
   } catch (error) {
     if (isUniqueViolation(error)) {
-      const existing = await fetchMcapRecordByAddress(record.token_address)
+      const existing = await fetchMcapRecordByAddress(record.token_address, record.chain ?? 'sol')
       if (existing) {
         log.info('price_tracking', 'Insert conflict — using existing MCap record', {
           tokenAddress: record.token_address,
@@ -1164,7 +1167,7 @@ async function insertMcapRecord(record: McapSnapshot): Promise<InsertMcapResult>
       tokenAddress: record.token_address,
       tokenSymbol: record.token_symbol,
     })
-    const existing = await fetchMcapRecordByAddress(record.token_address)
+    const existing = await fetchMcapRecordByAddress(record.token_address, record.chain ?? 'sol')
     if (existing) return { status: 'conflict', existing }
     return { status: 'inserted' }
   }
@@ -1232,8 +1235,8 @@ async function updateMcapInDatabase(record: McapSnapshot, includeThresholds: boo
     }
 
     await query(
-      `UPDATE token_mcap_tracking SET ${sets.join(', ')} WHERE token_address = $1`,
-      params,
+      `UPDATE token_mcap_tracking SET ${sets.join(', ')} WHERE token_address = $1 AND chain = $${paramIdx}`,
+      [...params, record.chain ?? 'sol'],
     )
 
     log.debug('price_tracking', 'Updated MCap record', {
@@ -1425,8 +1428,11 @@ export function buildMcapOutcomeFeatures(params: {
   }
 }
 
-export async function fetchMcapTrackingRow(tokenAddress: string): Promise<McapSnapshot | null> {
-  return fetchMcapRecordByAddress(tokenAddress)
+export async function fetchMcapTrackingRow(
+  tokenAddress: string,
+  chain: 'sol' | 'robinhood' = 'sol',
+): Promise<McapSnapshot | null> {
+  return fetchMcapRecordByAddress(tokenAddress, chain)
 }
 
 let ensureMcapMetaPromise: Promise<void> | null = null

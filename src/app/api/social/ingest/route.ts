@@ -62,7 +62,14 @@ function parseEvents(body: unknown): SocialIngestEvent[] | { error: string } {
     const token = typeof row.token_address === 'string' ? row.token_address.trim() : ''
     const source = typeof row.source === 'string' ? row.source.trim() : ''
     const eventType = row.event_type
-    if (!BASE58.test(token) || !source) continue
+    const chain: 'sol' | 'robinhood' =
+      row.chain === 'robinhood' ? 'robinhood' : 'sol'
+    // Sol mints are base58; RH mints are 0x (lowercased). Validate by chain.
+    const validToken =
+      chain === 'robinhood'
+        ? /^0x[a-f0-9]{40}$/i.test(token)
+        : BASE58.test(token)
+    if (!validToken || !source) continue
     if (eventType !== 'mention' && eventType !== 'wallet_buy' && eventType !== 'wallet_sell') {
       continue
     }
@@ -70,6 +77,7 @@ function parseEvents(body: unknown): SocialIngestEvent[] | { error: string } {
       token_address: token,
       event_type: eventType,
       source,
+      chain,
       channel_id: typeof row.channel_id === 'string' ? row.channel_id : null,
       channel_label: typeof row.channel_label === 'string' ? row.channel_label : null,
       wallet_address:

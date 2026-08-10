@@ -69,6 +69,8 @@ export type SocialIngestEvent = {
   external_message_id?: string | null
   occurred_at?: string
   raw_metadata?: Record<string, unknown>
+  /** sol | robinhood — prevents RH (lowercase 0x) mints colliding with Sol twins. */
+  chain?: 'sol' | 'robinhood'
 }
 
 export const EMPTY_SOCIAL_SNAPSHOT: SocialSnapshot = {

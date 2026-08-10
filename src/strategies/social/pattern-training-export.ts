@@ -11,6 +11,7 @@ import type { CombinedInternalExport } from './combined-pattern'
 
 export type PatternTrainingRow = {
   token_address: string
+  chain: 'sol' | 'robinhood'
   cohort: 'winner' | 'loser'
   pattern_class: 0 | 1
   first_seen_at: string
@@ -46,12 +47,13 @@ export async function listPatternTrainingRows(
   try {
     const { rows: dbRows } = await query<{
       token_address: string
+      chain: string
       cohort: string
       first_seen_at: unknown
       snapshot: unknown
       updated_at: unknown
     }>(
-      `SELECT token_address, cohort, first_seen_at, snapshot, updated_at
+      `SELECT token_address, chain, cohort, first_seen_at, snapshot, updated_at
        FROM mcap_social_pattern_24h
        WHERE cohort IN ('winner', 'loser') AND chain = $1
        ORDER BY first_seen_at ASC`,
@@ -82,6 +84,7 @@ export async function listPatternTrainingRows(
 
       rows.push({
         token_address: row.token_address,
+        chain: (row.chain === 'robinhood' ? 'robinhood' : 'sol') as 'sol' | 'robinhood',
         cohort: row.cohort as 'winner' | 'loser',
         pattern_class: patternClass,
         first_seen_at: toIso(row.first_seen_at, new Date().toISOString()),
@@ -167,6 +170,7 @@ export function patternTrainingFeatureCoverage(
 export function patternTrainingCsvHeader(): string {
   return [
     'token_address',
+    'chain',
     'cohort',
     'pattern_class',
     'first_seen_at',
@@ -178,6 +182,7 @@ export function patternTrainingCsvHeader(): string {
 export function patternTrainingRowToCsv(row: PatternTrainingRow): string {
   const cells = [
     row.token_address,
+    row.chain,
     row.cohort,
     String(row.pattern_class),
     row.first_seen_at,

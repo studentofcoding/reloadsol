@@ -15,8 +15,8 @@ import requests
 from pattern_features import PATTERN_FEATURE_COLUMNS, pattern_class_from_cohort
 
 
-def fetch_from_api(base_url: str, secret: str | None) -> pd.DataFrame:
-    params: dict[str, str] = {"format": "json"}
+def fetch_from_api(base_url: str, secret: str | None, chain: str = "sol") -> pd.DataFrame:
+    params: dict[str, str] = {"format": "json", "chain": chain}
     if secret:
         params["key"] = secret
     url = f"{base_url.rstrip('/')}/api/mcap-patterns/training-export"
@@ -68,6 +68,12 @@ def main() -> None:
         help="Rollup/training export secret",
     )
     parser.add_argument(
+        "--chain",
+        choices=["sol", "robinhood"],
+        default="sol",
+        help="Chain to export (default: sol)",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=Path("data/pattern/training.parquet"),
@@ -85,7 +91,7 @@ def main() -> None:
             parser.error("--csv required when --source csv")
         raw = load_source_csv(args.csv)
     else:
-        raw = fetch_from_api(args.api_base, args.secret)
+        raw = fetch_from_api(args.api_base, args.secret, args.chain)
 
     df = build_training_frame(raw)
     args.output.parent.mkdir(parents=True, exist_ok=True)

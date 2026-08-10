@@ -67,7 +67,7 @@ export async function insertSocialEvents(
 
     for (const e of batch) {
       placeholders.push(
-        `($${param}, $${param + 1}, $${param + 2}, $${param + 3}, $${param + 4}, $${param + 5}, $${param + 6}, $${param + 7}, $${param + 8}, $${param + 9}, $${param + 10})`,
+        `($${param}, $${param + 1}, $${param + 2}, $${param + 3}, $${param + 4}, $${param + 5}, $${param + 6}, $${param + 7}, $${param + 8}, $${param + 9}, $${param + 10}, $${param + 11})`,
       )
       values.push(
         e.token_address,
@@ -81,8 +81,9 @@ export async function insertSocialEvents(
         buildDedupeKey(e),
         e.occurred_at ?? new Date().toISOString(),
         JSON.stringify(e.raw_metadata ?? {}),
+        e.chain ?? 'sol',
       )
-      param += 11
+      param += 12
     }
 
     try {
@@ -90,7 +91,7 @@ export async function insertSocialEvents(
         `INSERT INTO social_token_events (
            token_address, event_type, source, channel_id, channel_label,
            wallet_address, wallet_label, external_message_id, dedupe_key,
-           occurred_at, raw_metadata
+           occurred_at, raw_metadata, chain
          ) VALUES ${placeholders.join(', ')}
          ON CONFLICT (dedupe_key) DO NOTHING
          RETURNING id`,
@@ -249,14 +250,15 @@ export async function fetchSocialEventsForTokenSince(
   tokenAddress: string,
   sinceIso: string,
   limit = 100,
+  chain: 'sol' | 'robinhood' = 'sol',
 ): Promise<SocialTokenEventRow[]> {
   try {
     const { rows } = await query<SocialTokenEventRow>(
       `SELECT * FROM social_token_events
-       WHERE token_address = $1 AND occurred_at >= $2
+       WHERE token_address = $1 AND chain = $4 AND occurred_at >= $2
        ORDER BY occurred_at DESC
        LIMIT $3`,
-      [tokenAddress, sinceIso, limit],
+      [tokenAddress, sinceIso, limit, chain],
     )
     return rows
   } catch (error) {

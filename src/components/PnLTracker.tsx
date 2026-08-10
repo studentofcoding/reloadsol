@@ -730,6 +730,16 @@ export default function PnLTracker() {
         const closedCycles: PnLRecord[] = [];
 
         const solPriceCache = solPriceUsd; // capture once
+        const ethPriceCache = ethPriceQuery.data ?? 3000;
+
+        // Chain-aware native price for cycles that lack trade-time USD values.
+        // Uses the cycle's own chain price (never the currently-viewed network's
+        // price) so a sol cycle viewed on robinhood isn't valued in ETH and vice
+        // versa. Prefer the trade-time quoteUsdPerUnit when recorded.
+        const nativeUsdForCycle = (cycle: Cycle): number => {
+          if (cycle.quoteUsdPerUnit > 0) return cycle.quoteUsdPerUnit;
+          return cycle.chain === "robinhood" ? ethPriceCache : solPriceCache;
+        };
 
         // Iterate chronologically through all operations and build cycles
         for (const op of allOpsUnsorted) {
@@ -914,7 +924,7 @@ export default function PnLTracker() {
                   cycle.totalUsdBought > 0 && cycle.totalUsdSold > 0;
                 const pnlUSD = hasUsd
                   ? cycle.totalUsdSold - cycle.totalUsdBought
-                  : pnlNative * solPriceCache;
+                  : pnlNative * nativeUsdForCycle(cycle);
                 const pnlPerc = hasUsd
                   ? (pnlUSD / cycle.totalUsdBought) * 100
                   : nativeBought > 0
@@ -1242,6 +1252,14 @@ export default function PnLTracker() {
 
   // ✅ NEW: Handle bulk sell
   const handleBulkSell = useCallback(async () => {
+    // Robinhood positions have no Solana RPC/Jupiter sell path — the RH
+    // sell flow lives on /sell. Guard so 0x mints never reach the Solana
+    // pipeline (bulk-sell UI is already hidden on RH; this is defense in depth).
+    if (isRobinhood) {
+      window.location.href = "/sell";
+      return;
+    }
+
     if (!connected || !publicKey || selectedTokens.size === 0) {
       setBulkSellError("Please connect your wallet and select tokens to sell");
       return;
@@ -2060,6 +2078,14 @@ export default function PnLTracker() {
     async (position: OpenPosition, event: React.MouseEvent) => {
       event.preventDefault();
       event.stopPropagation();
+
+      // Robinhood positions have no Solana RPC/Jupiter sell path — the RH
+      // sell flow lives on /sell. Guard so a 0x mint never reaches the
+      // Solana pipeline.
+      if (isRobinhood) {
+        window.location.href = "/sell";
+        return;
+      }
 
       if (!connected || !publicKey) {
         setSellError("Please connect your wallet first");

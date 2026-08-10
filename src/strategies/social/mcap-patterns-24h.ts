@@ -207,7 +207,7 @@ export async function refreshMcapSocialPatterns24h(
       continue
     }
 
-    const socialEvents = await fetchSocialEventsForTokenSince(tokenAddress, sinceIso)
+    const socialEvents = await fetchSocialEventsForTokenSince(tokenAddress, sinceIso, 100, scoped)
     const snapshot = buildCombinedPattern({
       tokenAddress,
       exportedAt,

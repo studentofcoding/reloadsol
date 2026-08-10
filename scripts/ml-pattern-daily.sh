@@ -121,7 +121,6 @@ if ! (cd "$ROOT/ml" && python3 export_pattern_data.py --quiet --output data/patt
   write_state "failed" 0 false "export failed"
   exit 1
 fi
-
 CHECK_JSON="$(cd "$ROOT/ml" && python3 check_pattern_dataset.py data/pattern/training.parquet --json 2>/dev/null || true)"
 if [[ -z "$CHECK_JSON" ]]; then
   log "[ERROR] check_pattern_dataset.py produced no output"

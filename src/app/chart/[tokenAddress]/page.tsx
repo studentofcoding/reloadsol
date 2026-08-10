@@ -201,6 +201,14 @@ export default function ChartPage() {
   const [balanceAfter, setBalanceAfter] = useState<number>(0);
 
   const handleBuy = useCallback(async () => {
+    // The buy form only implements the Solana pipeline. For robinhood (and
+    // other EVM chains) the buy flow lives on /sell — never run Jupiter with
+    // a 0x mint or write a SOL-typed record for an RH token.
+    if (chartChain !== "sol") {
+      window.location.href = "/sell";
+      return;
+    }
+
     if (!connected || !publicKey || !signAllTransactions) {
       setError("Please connect your wallet first");
       return;
