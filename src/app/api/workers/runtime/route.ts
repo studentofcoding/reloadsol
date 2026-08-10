@@ -6,7 +6,6 @@ import {
   type CronWorkerRuntimeEvent,
 } from '@/utils/workers/runtime-db'
 
-export const dynamic = 'force-dynamic'
 
 function getRuntimeSecret(): string {
   return (

@@ -10,6 +10,7 @@ import {
   writeWatchlistCache,
 } from '@/utils/watchlist/local-cache';
 import { pctFromBaseline } from '@/utils/watchlist/pct';
+import { addToWatchlist, removeFromWatchlist } from '@/actions/watchlist';
 
 export const GLOBAL_WATCHLIST_QUERY_KEY = 'global-watchlist';
 export const GLOBAL_WATCHLIST_PRICES_KEY = 'global-watchlist-prices';
@@ -115,23 +116,14 @@ export function useGlobalWatchlist() {
 
   const addMutation = useMutation({
     mutationFn: async (input: WatchlistMutationInput) => {
-      const res = await fetch('/api/watchlist', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tokenAddress: input.tokenAddress,
-          tokenSymbol: input.tokenSymbol,
-          logoUrl: input.logoUrl,
-          initialPrice: input.initialPrice,
-          chain: network,
-          wallet: network === 'robinhood' ? walletAddress : undefined,
-        }),
+      const result = await addToWatchlist({
+        tokenAddress: input.tokenAddress,
+        tokenSymbol: input.tokenSymbol,
+        logoUrl: input.logoUrl,
+        initialPrice: input.initialPrice,
+        chain: network,
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to add to watchlist');
-      }
-      return data.entry as WalletWatchlistEntry;
+      return result.entry as WalletWatchlistEntry;
     },
     onMutate: async (input) => {
       await queryClient.cancelQueries({ queryKey: listKey });
@@ -181,18 +173,7 @@ export function useGlobalWatchlist() {
 
   const removeMutation = useMutation({
     mutationFn: async (tokenAddress: string) => {
-      const qs = new URLSearchParams({
-        tokenAddress,
-        chain: network,
-      });
-      if (network === 'robinhood' && walletAddress) {
-        qs.set('wallet', walletAddress);
-      }
-      const res = await fetch(`/api/watchlist?${qs}`, { method: 'DELETE' });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to remove from watchlist');
-      }
+      await removeFromWatchlist(tokenAddress, network);
     },
     onMutate: async (tokenAddress) => {
       await queryClient.cancelQueries({ queryKey: listKey });

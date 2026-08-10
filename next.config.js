@@ -5,6 +5,14 @@ const optimizedImageHosts = imageHosts.filter(
 )
 
 const nextConfig = {
+  // ===== INSTANT NAVIGATIONS (Next 16.3) =====
+  // cacheComponents: server-cached components/data can be included in the
+  //   static shell and reused across client navigations.
+  // partialPrefetching: prefetch one reusable App Shell per route (instead of
+  //   per-link); <Link prefetch> opts into runtime prefetching of URL data.
+  cacheComponents: true,
+  partialPrefetching: true,
+
   // ===== CORE CONFIGURATION =====
   output: 'standalone',
   outputFileTracingRoot: require('path').join(__dirname),

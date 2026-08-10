@@ -1,6 +1,5 @@
 import SocialAdminHub from "@/components/social/SocialAdminHub";
 
-export const dynamic = "force-dynamic";
 
 export default function SocialAdminPage() {
   return (

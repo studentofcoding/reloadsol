@@ -24,7 +24,6 @@ import {
 } from '@/strategies/social/social-only-discovery'
 import type { SocialStrategy } from '@/strategies/types'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export const SOCIAL_SIM_WALLET =

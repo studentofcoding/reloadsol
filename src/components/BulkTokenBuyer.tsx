@@ -1664,6 +1664,7 @@ export default function BulkTokenBuyer() {
                               {isDevUser && (
                                 <Link
                                   href={`/dev/token-search?address=${encodeURIComponent(selectedToken)}`}
+                                  prefetch
                                   className="text-xs text-blue-400 hover:text-blue-300 underline"
                                 >
                                   Search this token
@@ -1711,6 +1712,7 @@ export default function BulkTokenBuyer() {
                               {isDevUser && (
                                 <Link
                                   href={`/dev/token-search?address=${encodeURIComponent(selectedToken)}`}
+                                  prefetch
                                   className="text-xs text-blue-400 hover:text-blue-300 underline"
                                 >
                                   Search this token

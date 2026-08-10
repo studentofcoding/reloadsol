@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { parseDbChain } from '@/utils/app-network-db'
 import { getOpenPositionPrices } from '@/utils/open-position-prices'
 
-export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
   try {

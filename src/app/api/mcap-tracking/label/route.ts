@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-export const dynamic = 'force-dynamic'
 import { query, queryOne } from '@/utils/db'
 import { TokenLabel } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'

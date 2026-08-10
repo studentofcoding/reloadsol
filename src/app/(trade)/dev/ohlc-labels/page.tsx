@@ -1,6 +1,5 @@
 import OhlcLabelsGallery from '@/components/signals/OhlcLabelsGallery'
 
-export const dynamic = 'force-dynamic'
 
 export default function OhlcLabelsPage() {
   return (

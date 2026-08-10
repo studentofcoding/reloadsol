@@ -1,6 +1,5 @@
 import StrategyAdminHub from "@/components/strategies/StrategyAdminHub";
 
-export const dynamic = "force-dynamic";
 
 export default function StrategiesAdminPage() {
   return (

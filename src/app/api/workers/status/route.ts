@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { getStrategyDomainHeartbeats } from '@/strategies/db'
 import { getCronServiceUrl } from '@/utils/workers/config'
 
-export const dynamic = 'force-dynamic'
 
 type CronWorkerRow = {
   id: string

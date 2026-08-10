@@ -46,7 +46,6 @@ import { isTokenRugged } from '@/utils/rug-list/db'
 import { sendGmgnRadarAlert } from '@/utils/telegram'
 import { log } from '@/utils/unified-logger'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 function getPollSecret(): string {

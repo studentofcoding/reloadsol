@@ -9,7 +9,6 @@ import {
 import { isValidMintAddress } from '@/utils/jupiter'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
-export const dynamic = 'force-dynamic'
 
 const SNAPSHOT_TTL_S = 10
 

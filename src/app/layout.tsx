@@ -1,4 +1,5 @@
 import "./globals.css";
+import { Suspense } from "react";
 import { WalletProvider } from "@/components/WalletProvider";
 import AppQueryClientProvider from "@/components/AppQueryClientProvider";
 import Header from "@/components/Header";
@@ -67,7 +68,9 @@ export default function RootLayout({
               <Header />
               <main className="flex-1">{children}</main>
             </div>
-            <McapSimOpenToastHost />
+            <Suspense fallback={null}>
+              <McapSimOpenToastHost />
+            </Suspense>
           </WalletProvider>
         </AppQueryClientProvider>
         {isVercelDeployment && <Analytics />}

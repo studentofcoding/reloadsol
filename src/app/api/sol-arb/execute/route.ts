@@ -8,7 +8,6 @@ import {
   prepareTriArbLegs,
 } from "@/utils/sol-arb";
 
-export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {

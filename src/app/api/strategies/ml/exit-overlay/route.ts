@@ -14,7 +14,6 @@ import {
 import { existsSync, readFileSync } from 'fs'
 import path from 'path'
 
-export const dynamic = 'force-dynamic'
 
 const PREVIEW_BASE = {
   stopLossPct: -50,

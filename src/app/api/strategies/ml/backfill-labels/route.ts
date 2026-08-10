@@ -4,7 +4,6 @@ import { requireDevSession } from '@/utils/api-auth'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import type { StrategyDomain } from '@/strategies/types'
 
-export const dynamic = 'force-dynamic'
 
 function getMlSecret(): string {
   return (

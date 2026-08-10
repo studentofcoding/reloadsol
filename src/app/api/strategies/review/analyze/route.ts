@@ -4,7 +4,6 @@ import {
   type StrategyReviewPayload,
 } from '@/strategies/strategy-review'
 
-export const dynamic = 'force-dynamic'
 
 async function anthropicPatterns(
   review: StrategyReviewPayload,

@@ -13,7 +13,6 @@ import {
 import { RH_USDG, RH_USDG_DECIMALS, RH_WETH } from '@/utils/dlmm/rh-univ2'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
-export const dynamic = 'force-dynamic'
 
 const PRICE_FILL_CAP = 15
 const PRICE_FILL_CONCURRENCY = 4

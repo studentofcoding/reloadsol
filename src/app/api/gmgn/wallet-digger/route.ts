@@ -3,7 +3,6 @@ import { getMergedGmgnRegistry } from '@/strategies/load-gmgn'
 import { runWalletDigger } from '@/strategies/wallet-digger/digger'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 function getSecret(): string {

@@ -13,7 +13,6 @@ import {
 import type { SignalsStrategyConfig } from '@/strategies/types'
 import { parseDbChain } from '@/utils/app-network-db'
 
-export const dynamic = 'force-dynamic'
 
 async function enrichSignalsWithPatternShadow(
   signals: ScoredSignal[],

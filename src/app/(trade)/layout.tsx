@@ -1,102 +1,31 @@
-"use client";
-
-import React, { useState } from "react";
-import { usePathname } from "next/navigation";
+import React from "react";
 import Footer from "@/components/Footer";
-import NavigationTabs from "@/components/NavigationTabs";
 import GlobalWatchlistBar from "@/components/GlobalWatchlistBar";
-import TradingHistory from "@/components/TradingHistory";
-import PnLTracker from "@/components/PnLTracker";
-import WalletConnectGate from "@/components/WalletConnectGate";
-import NetworkRouteGate from "@/components/NetworkRouteGate";
-import DevRouteGate from "@/components/DevRouteGate";
-import TradingDataProvider from "@/components/TradingDataProvider";
-import TradeProviderBar from "@/components/TradeProviderBar";
-import { useAppNetwork } from "@/contexts/AppNetworkContext";
-import {
-  isDevRoute,
-  isWalletRequiredRoute,
-} from "@/config/route-access";
+import TradeShellClient from "./trade-shell-client";
 
-function RouteAccessGate({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname() || "";
-
-  if (isDevRoute(pathname)) {
-    return <DevRouteGate>{children}</DevRouteGate>;
-  }
-
-  if (isWalletRequiredRoute(pathname)) {
-    return <WalletConnectGate>{children}</WalletConnectGate>;
-  }
-
-  return <>{children}</>;
-}
-
+/**
+ * (trade) App Shell — static server component.
+ *
+ * Under cacheComponents/partialPrefetching (Next 16.3 Instant Navigations)
+ * this layout is included in the prefetched App Shell per route, so the shared
+ * chrome (nav tabs + watchlist bar + footer) renders instantly on client
+ * navigation. Client-only state (nav tab bar, overlay tabs, route gates,
+ * TradingDataProvider) lives in TradeShellClient below this boundary.
+ */
 export default function TradeLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { network } = useAppNetwork();
-  const [activeOverlayTab, setActiveOverlayTab] = useState<string | null>(
-    null,
-  );
-
   return (
-    <TradingDataProvider>
     <main className="min-h-screen bg-black py-8 pb-24 md:pb-8">
       <div className="container mx-auto px-4">
-        <NavigationTabs
-          activeOverlayTab={activeOverlayTab}
-          onTabSelect={setActiveOverlayTab}
-        />
-
         <GlobalWatchlistBar />
 
-        <div className="max-w-8xl mx-auto min-h-[300px] mt-4 relative">
-          {activeOverlayTab === "history" && (
-            <WalletConnectGate
-              title="Connect to view history"
-              showTrending={false}
-              connectLabel="Connect Wallet"
-            >
-              <div className="w-full mt-8 border-t border-gray-800 pt-8 max-w-6xl mx-auto">
-                <h2 className="text-xl font-bold mb-4 text-white">
-                  Trading History
-                  {network === "robinhood" ? " (Robinhood)" : ""}
-                </h2>
-                <TradingHistory />
-              </div>
-            </WalletConnectGate>
-          )}
-
-          {activeOverlayTab === "pnl" && (
-            <WalletConnectGate
-              title="Connect to view P&amp;L"
-              showTrending={false}
-              connectLabel="Connect Wallet"
-            >
-              <div className="w-full mt-8 border-t border-gray-800 pt-8 max-w-6xl mx-auto">
-                <h2 className="text-xl font-bold mb-4 text-white">
-                  Profit & Loss Tracker
-                  {network === "robinhood" ? " (ETH)" : ""}
-                </h2>
-                <PnLTracker />
-              </div>
-            </WalletConnectGate>
-          )}
-
-          <div className="w-full mb-8">
-            <NetworkRouteGate>
-              <RouteAccessGate>{children}</RouteAccessGate>
-            </NetworkRouteGate>
-            {network === "sol" ? <TradeProviderBar /> : null}
-          </div>
-        </div>
+        <TradeShellClient>{children}</TradeShellClient>
       </div>
 
       <Footer />
     </main>
-    </TradingDataProvider>
   );
 }

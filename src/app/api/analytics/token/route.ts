@@ -6,7 +6,6 @@ import { EnhancedMomentumAnalyzer } from '@/utils/algo/momentum-analysis';
 import type { EnrichedTokenData } from '@/utils/data-aggregation';
 
 // Force dynamic rendering for this route
-export const dynamic = 'force-dynamic';
 
 interface TokenAnalyticsRequest {
     tokenAddresses: string[];

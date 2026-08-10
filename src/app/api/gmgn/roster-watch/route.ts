@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { runRosterWatch } from '@/strategies/wallet-digger/watch'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 function getSecret(): string {

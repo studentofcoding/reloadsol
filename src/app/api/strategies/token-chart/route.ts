@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { loadTokenMapChart } from '@/strategies/token-map-chart'
 import { isValidAnyChainTokenAddress } from '@/utils/gmgn-currencies'
 
-export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
   try {

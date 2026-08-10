@@ -4,7 +4,6 @@ import { query, queryOne } from '@/utils/db'
 import { getAppDayBounds } from '@/utils/datetime'
 
 // Force dynamic rendering
-export const dynamic = 'force-dynamic'
 
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'
 

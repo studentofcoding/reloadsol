@@ -5,9 +5,6 @@ import {
 } from '@/utils/open-position-prices'
 import { subscribeJson } from '@/utils/redis-cache'
 
-export const dynamic = 'force-dynamic'
-export const runtime = 'nodejs'
-
 function isOpenPriceEvent(v: unknown): v is OpenPriceEvent {
   if (!v || typeof v !== 'object') return false
   const o = v as Record<string, unknown>

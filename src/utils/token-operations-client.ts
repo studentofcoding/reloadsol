@@ -88,15 +88,8 @@ export const syncOperationsToApi = async () => {
   if (operations.length === 0) return;
 
   try {
-    const response = await fetch('/api/operations/sync', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ operations }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Sync failed: ${response.statusText}`);
-    }
+    const { syncOperations } = await import('@/actions/operations');
+    await syncOperations(operations);
 
     if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
       localStorage.setItem(LAST_SYNC_KEY, new Date().toISOString());
@@ -119,20 +112,13 @@ export const directUpdateOperation = async (
   solBalance?: number,
 ) => {
   try {
-    const response = await fetch('/api/operations/track', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ walletAddress, type, count, solBalance }),
+    const { trackOperation } = await import('@/actions/operations');
+    await trackOperation({
+      walletAddress,
+      operationType: type === 'close' ? 'close' : 'buy',
+      successCount: count,
+      solBalance,
     });
-
-    if (!response.ok) {
-      throw new Error(`Direct update failed: ${response.statusText}`);
-    }
-
-    const result = await response.json();
-    if (!result.success) {
-      throw new Error(result.error || 'Update failed');
-    }
   } catch (error) {
     console.error('Failed to update database directly:', error);
     cacheOperation(walletAddress, type, count);

@@ -17,7 +17,6 @@ import { updateAgentConfig } from '@/utils/dlmm/db'
 import { isSearchStrategyId } from '@/strategies/strategy-search-bandit'
 import type { ExecutionMode, StrategyDomain } from '@/strategies/types'
 
-export const dynamic = 'force-dynamic'
 
 type PromoteBody = {
   target_id: string

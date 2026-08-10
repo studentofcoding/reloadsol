@@ -3,7 +3,6 @@ import { query, queryOne } from '@/utils/db'
 import { countTrackerOutcomeStats } from '@/utils/trending-profit'
 
 // Force dynamic rendering for this route
-export const dynamic = 'force-dynamic'
 
 // Use alternate tables in local development to avoid prod collisions
 const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_tracker_dev' : 'trending_token_tracker'

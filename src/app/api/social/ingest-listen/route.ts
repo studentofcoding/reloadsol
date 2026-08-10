@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getMergedSocialRegistry } from '@/strategies/load-social'
 import { isSocialIngestAuthorized } from '@/utils/social/config'
 
-export const dynamic = 'force-dynamic'
 
 export type IngestListenChannel = {
   source: string

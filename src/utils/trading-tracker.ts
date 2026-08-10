@@ -266,6 +266,14 @@ class TradingTracker {
 
   // Delete record via API
   private async deleteViaAPI(id: string, walletAddress: string): Promise<void> {
+    // Client-side: use the Server Action (cookie session, updateTag invalidation).
+    // Server-side (cron/bot): fall back to the API route with API_HOST.
+    if (typeof window !== 'undefined') {
+      const { deleteTradingRecord } = await import('@/actions/records')
+      await deleteTradingRecord(id, walletAddress)
+      return
+    }
+
     // Use relative URL for client-side, absolute for server-side
     const baseUrl = typeof window !== 'undefined'
       ? ''
@@ -306,6 +314,14 @@ class TradingTracker {
 
   // Save record via API
   private async saveViaAPI(record: TrackingRecord): Promise<void> {
+    // Client-side: use the Server Action (cookie session, updateTag invalidation).
+    // Server-side (cron/bot): fall back to the API route with API_HOST.
+    if (typeof window !== 'undefined') {
+      const { addTradingRecord } = await import('@/actions/records')
+      await addTradingRecord(record)
+      return
+    }
+
     // Use relative URL for client-side, absolute for server-side
     const baseUrl = typeof window !== 'undefined'
       ? ''

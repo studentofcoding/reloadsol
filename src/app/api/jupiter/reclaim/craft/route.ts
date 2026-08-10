@@ -6,7 +6,6 @@ import {
   RECLAIM_MAX_MINTS,
 } from "@/utils/jupiter-reclaim";
 
-export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {

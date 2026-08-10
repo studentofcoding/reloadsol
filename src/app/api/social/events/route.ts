@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { fetchRecentSocialEventsFeed } from '@/strategies/social/db'
 
-export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
   const limit = Number(request.nextUrl.searchParams.get('limit') ?? 50)

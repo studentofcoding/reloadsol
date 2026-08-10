@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { quoteTriArb } from "@/utils/sol-arb";
 
-export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {

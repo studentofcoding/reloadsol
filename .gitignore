@@ -27,6 +27,7 @@ backups/
 *.session-journal
 # Graphify knowledge graph (regenerate: graphify update .)
 graphify-out/cache/
+.commandcode
 .cursor
 graphify-out/
 .agents

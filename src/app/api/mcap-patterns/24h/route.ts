@@ -6,7 +6,6 @@ import {
 } from '@/strategies/social/mcap-patterns-24h'
 import { parseDbChain } from '@/utils/app-network-db'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export async function GET(request: NextRequest) {

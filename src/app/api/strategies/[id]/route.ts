@@ -32,7 +32,6 @@ import type {
   DlmmStrategyOverride,
 } from '@/strategies/types'
 
-export const dynamic = 'force-dynamic'
 
 type PatchBody = {
   is_active?: boolean

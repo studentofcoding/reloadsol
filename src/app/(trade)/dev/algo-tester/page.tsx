@@ -1,6 +1,5 @@
 import AlgoTesterHub from "@/components/algo-tester/AlgoTesterHub";
 
-export const dynamic = "force-dynamic";
 
 export default function AlgoTesterPage() {
   return (

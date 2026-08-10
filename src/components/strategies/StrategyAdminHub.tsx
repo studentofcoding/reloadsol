@@ -1050,6 +1050,7 @@ export default function StrategyAdminHub() {
             </div>
             <Link
               href="/dev/signals?tab=tracker"
+              prefetch
               className="text-blue-400 text-sm underline mt-3 inline-block"
             >
               Open MCap tracker tab
@@ -1590,6 +1591,7 @@ export default function StrategyAdminHub() {
                               <td className="p-2">
                                 <Link
                                   href={`/dev/signals?tab=tracker&search=${encodeURIComponent(p.token_address)}`}
+                                  prefetch
                                   className="text-blue-400 underline"
                                 >
                                   {p.token_symbol || p.token_address.slice(0, 8)}

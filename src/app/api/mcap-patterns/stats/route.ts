@@ -3,7 +3,6 @@ import { getPatternTrainingStats } from '@/strategies/social/pattern-training-ex
 import { patternRules } from '@/strategies/social/mcap-patterns-24h'
 import { parseDbChain } from '@/utils/app-network-db'
 
-export const dynamic = 'force-dynamic'
 
 type PatternArtifactMetaModule = typeof import('@/strategies/pattern-artifact-meta.server')
 

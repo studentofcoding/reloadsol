@@ -1,10 +1,30 @@
 import fs from 'fs'
 import path from 'path'
+import { cacheTag, cacheLife } from 'next/cache'
 import { parseFrontMatter } from '@/lib/frontmatter'
 import { remark } from 'remark'
 import html from 'remark-html'
 
 const postsDirectory = path.join(process.cwd(), 'content/blog')
+
+/**
+ * Cached variants of the blog read functions. `'use cache'` (Next 16.3 Cache
+ * Components) lets the blog index/post content ship in the prefetched App
+ * Shell and be invalidated on-demand via `updateTag('blog')`.
+ */
+export async function getCachedSortedPostsData() {
+  'use cache'
+  cacheTag('blog')
+  cacheLife('days')
+  return getSortedPostsData()
+}
+
+export async function getCachedPostData(id: string) {
+  'use cache'
+  cacheTag('blog')
+  cacheLife('days')
+  return getPostData(id)
+}
 
 export function getSortedPostsData() {
   const fileNames = fs.readdirSync(postsDirectory)

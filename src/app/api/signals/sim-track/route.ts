@@ -24,7 +24,6 @@ import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { simWalletForChain } from '@/strategies/sim-wallets'
 import { STRATEGY_CHAINS, type StrategyChain } from '@/strategies/types'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 const SIGNALS_SIM_WALLET_LOCAL = SIGNALS_SIM_WALLET

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { OptimizedImage } from '@/components/OptimizedImage';
 import { useGlobalWatchlist } from '@/hooks/useGlobalWatchlist';
 
@@ -17,7 +17,6 @@ function pctColor(value: number | null | undefined): string {
 }
 
 export default function GlobalWatchlistBar() {
-  const router = useRouter();
   const { entries, priceChangePct, remove, isPending, walletConnected } =
     useGlobalWatchlist();
 
@@ -39,9 +38,9 @@ export default function GlobalWatchlistBar() {
               key={entry.id}
               className="flex items-center gap-1.5 shrink-0 rounded-md bg-gray-900/70 border border-gray-700 px-2 py-1"
             >
-              <button
-                type="button"
-                onClick={() => router.push(`/chart/${entry.token_address}`)}
+              <Link
+                href={`/chart/${entry.token_address}`}
+                prefetch
                 className="flex items-center gap-1.5 min-h-[28px] hover:opacity-90"
                 title={`Open ${symbol} chart`}
               >
@@ -64,7 +63,7 @@ export default function GlobalWatchlistBar() {
                 <span className={`text-xs font-semibold tabular-nums ${pctColor(pct)}`}>
                   {formatPct(pct)}
                 </span>
-              </button>
+              </Link>
               <button
                 type="button"
                 disabled={isPending}

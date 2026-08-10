@@ -70,7 +70,6 @@ import {
   type McapSimOpenPosition,
 } from '@/utils/mcap-sim-track'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 const MCAP_TRACKER_SIM_WALLET =

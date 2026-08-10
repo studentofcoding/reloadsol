@@ -6,7 +6,6 @@ import {
   WORKER_TRIGGER_PATHS,
 } from '@/utils/workers/config'
 
-export const dynamic = 'force-dynamic'
 
 export async function POST(request: NextRequest) {
   try {

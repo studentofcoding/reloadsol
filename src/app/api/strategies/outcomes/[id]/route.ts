@@ -7,7 +7,6 @@ import { applyManualTrainingClass } from '@/strategies/outcome-labeling'
 import { isLabeledTrainingClass } from '@/strategies/outcome-features'
 import type { OutcomeMlCondition, OutcomeMlLabel } from '@/strategies/types'
 
-export const dynamic = 'force-dynamic'
 
 const VALID_LABELS: OutcomeMlLabel[] = ['skip', 'interesting', 'anomaly']
 const VALID_CONDITIONS: OutcomeMlCondition[] = [

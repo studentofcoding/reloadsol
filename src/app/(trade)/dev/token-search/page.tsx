@@ -1,6 +1,5 @@
 import TokenLocateHub from '@/components/token-locate/TokenLocateHub'
 
-export const dynamic = 'force-dynamic'
 
 type PageProps = {
   searchParams: Promise<{ address?: string; view?: string }>

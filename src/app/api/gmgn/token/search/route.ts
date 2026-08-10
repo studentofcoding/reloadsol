@@ -3,7 +3,6 @@ import { searchTokensForChain, GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
-export const dynamic = 'force-dynamic'
 
 const SEARCH_TTL_S = 30
 

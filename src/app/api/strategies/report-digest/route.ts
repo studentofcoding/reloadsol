@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { sendStrategyReportDigest } from '@/strategies/report-notify'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 
-export const dynamic = 'force-dynamic'
 
 function getReportSecret(): string {
   return (

@@ -1,6 +1,5 @@
 import SignalsHub from "@/components/signals/SignalsHub";
 
-export const dynamic = "force-dynamic";
 
 export default function SignalsPage() {
   return (

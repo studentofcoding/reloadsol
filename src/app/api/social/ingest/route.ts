@@ -3,7 +3,6 @@ import { insertSocialEvents } from '@/strategies/social/db'
 import type { SocialIngestEvent } from '@/strategies/social/types'
 import { isSocialIngestAuthorized } from '@/utils/social/config'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/

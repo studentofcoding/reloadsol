@@ -36,10 +36,14 @@ DATABASE_URL="$(
   bash scripts/build-database-url.sh
 )"
 
-for f in db/init/00-extensions.sql db/init/01-roles.sql db/init/02-schema.sql db/init/03-token-locate-indexes.sql; do
+# Apply ALL db/init migrations in order. Each is idempotent (CREATE TABLE IF
+# NOT EXISTS / ADD COLUMN IF NOT EXISTS), so re-running on an existing volume is
+# safe and backfills any migrations added after the volume was first created
+# (the Docker entrypoint only runs init scripts on a fresh data dir).
+for f in db/init/*.sql; do
   [[ -f "$f" ]] || fail "Missing $f"
   log "Applying $f ..."
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
 done
 
-log "Schema applied (extensions + roles + tables)"
+log "Schema applied (extensions + roles + tables + migrations)"

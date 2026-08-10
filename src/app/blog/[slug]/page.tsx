@@ -1,4 +1,4 @@
-import { getAllPostIds, getPostData } from '@/lib/posts';
+import { getAllPostIds, getCachedPostData } from '@/lib/posts';
 import { notFound } from 'next/navigation';
 import { Metadata } from 'next';
 import Link from 'next/link';
@@ -13,7 +13,7 @@ type Props = {
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   try {
-    const post = await getPostData(slug);
+    const post = await getCachedPostData(slug);
     return {
       title: `${post.title} | ReloadSOL Blog`,
       description: `Read the latest post from the ReloadSOL team: ${post.title}`,
@@ -35,7 +35,7 @@ export default async function Post({ params }: Props) {
   const { slug } = await params;
   let post;
   try {
-    post = await getPostData(slug);
+    post = await getCachedPostData(slug);
   } catch (error) {
     notFound();
   }

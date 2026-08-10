@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useCallback } from 'react'
+import Link from 'next/link'
 import { TradeComparison as TradeComparisonType, TradeProvider, ProviderQuote } from '@/types'
 
 interface TradeComparisonProps {
@@ -246,14 +247,13 @@ export default function TradeComparison({ userPublicKey }: TradeComparisonProps)
                 {/* Dev Page Link */}
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-center">
                   <p className="text-gray-600 mb-2">For detailed analysis and advanced testing features:</p>
-                  <a
+                  <Link
                     href="/dev/pools-test"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    prefetch
                     className="inline-block bg-gray-700 text-white px-4 py-2 rounded-md hover:bg-gray-800 transition-colors"
                   >
                     🔧 Open Advanced Dev Tools
-                  </a>
+                  </Link>
                 </div>
               </div>
             )}

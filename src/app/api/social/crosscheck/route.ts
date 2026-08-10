@@ -3,7 +3,6 @@ import { listSignalPriceCrosschecks } from '@/strategies/social/crosscheck-db'
 import { runSignalCrosscheck } from '@/strategies/social/run-crosscheck'
 import { isSocialIngestAuthorized } from '@/utils/social/config'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 function isAuthorized(request: NextRequest): boolean {

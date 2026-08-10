@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isSolArbScanAuthorized, runSolArbScan } from "@/utils/sol-arb";
 
-export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {

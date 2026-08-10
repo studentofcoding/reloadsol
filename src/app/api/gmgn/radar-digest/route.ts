@@ -3,7 +3,6 @@ import { publishRadarDigest } from '@/strategies/gmgn-radar-digest'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { log } from '@/utils/unified-logger'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
 function getDigestSecret(): string {

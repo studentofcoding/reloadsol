@@ -1,9 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { cacheTag, cacheLife } from 'next/cache'
 import { getLpTerminalIndexerBase } from '@/utils/dlmm/lp-terminal'
 
-export const dynamic = 'force-dynamic'
 
 const ALLOWED_SORT = new Set(['tvl', 'vol', 'created'])
+
+/**
+ * Cached upstream fetch for LP Terminal pools. `'use cache'` (Next 16.3 Cache
+ * Components) makes the response reusable across requests for the same params
+ * and invalidatable via `updateTag('lp-terminal-pools')`.
+ */
+async function fetchLpPoolsCached(url: string): Promise<string> {
+  'use cache'
+  cacheTag('lp-terminal-pools')
+  cacheLife('minutes')
+  const res = await fetch(url, {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(20_000),
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    throw new Error(`Indexer HTTP ${res.status}`)
+  }
+  return text
+}
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
@@ -37,12 +57,7 @@ export async function GET(req: NextRequest) {
   const url = `${upstreamBase}/api/pools?${params.toString()}`
 
   try {
-    const res = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      next: { revalidate: 30 },
-      signal: AbortSignal.timeout(20_000),
-    })
-    const text = await res.text()
+    const text = await fetchLpPoolsCached(url)
     let body: unknown = null
     try {
       body = text.trim() ? JSON.parse(text) : null
@@ -50,20 +65,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(
         {
           success: false,
-          error: `Invalid JSON from indexer (${res.status})`,
+          error: `Invalid JSON from indexer (${'unknown status'})`,
           upstream: upstreamBase,
-        },
-        { status: 502 },
-      )
-    }
-
-    if (!res.ok) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Indexer HTTP ${res.status}`,
-          upstream: upstreamBase,
-          body,
         },
         { status: 502 },
       )

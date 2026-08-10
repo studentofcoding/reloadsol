@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { fetchTokenOhlc } from '@/strategies/token-map-chart'
 import { isValidMintAddress } from '@/utils/jupiter'
 
-export const dynamic = 'force-dynamic'
 
 function parseTime(raw: string | null): number | null {
   if (!raw?.trim()) return null

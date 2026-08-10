@@ -14,6 +14,7 @@ export default function TokenSearchLink({
   return (
     <Link
       href={`/dev/token-search?address=${encodeURIComponent(address)}`}
+      prefetch
       title="Open in token search"
       aria-label="Open in token search"
       className={`inline-flex shrink-0 items-center justify-center rounded p-0.5 text-gray-400 hover:bg-gray-700 hover:text-blue-300 ${className}`}

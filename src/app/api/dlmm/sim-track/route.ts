@@ -5,7 +5,6 @@ import { runDlmmScreen } from '@/utils/dlmm/screener'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import { getActiveDlmmForSim } from '@/strategies/load-dlmm'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 function getSimTrackSecret(): string {

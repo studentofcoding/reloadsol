@@ -14,7 +14,6 @@ import {
   readVolumeAtEntry,
 } from '@/strategies/outcome-features'
 
-export const dynamic = 'force-dynamic'
 
 function readFeatureString(
   features: Record<string, unknown> | null | undefined,

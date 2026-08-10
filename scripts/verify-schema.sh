@@ -29,6 +29,7 @@ TABLES=(
   trending_token_tracker_dev
   trending_token_summary_dev
   token_mcap_tracking
+  mcap_social_pattern_24h
   mcap_threshold_notifications
   token_ohlc_bars
   dlmm_agent_config

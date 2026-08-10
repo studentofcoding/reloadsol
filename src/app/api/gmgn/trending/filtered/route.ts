@@ -4,7 +4,6 @@ import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
 import { GMGN_FILTERED_CRITERIA } from '@/utils/gmgn-trending-filtered'
 import { getFilteredGmgnTrending } from '@/utils/gmgn-trending-feed'
 
-export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
   try {

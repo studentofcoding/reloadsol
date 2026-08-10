@@ -4,7 +4,6 @@ import { listStrategyReviewNotes } from '@/strategies/strategy-review-notes'
 import { buildStrategyReview } from '@/strategies/strategy-review'
 import type { StrategyDomain } from '@/strategies/types'
 
-export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
   try {

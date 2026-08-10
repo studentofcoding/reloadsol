@@ -20,7 +20,6 @@ import { checkGmgnLiveBoostForOpenPosition } from '@/strategies/gmgn-live-boost'
 import { simWalletForChain } from '@/strategies/sim-wallets'
 import { STRATEGY_CHAINS, type GmgnStrategy, type StrategyChain } from '@/strategies/types'
 
-export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 
 export { GMGN_SIM_WALLET }

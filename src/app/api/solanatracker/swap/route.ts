@@ -6,7 +6,6 @@ import {
   type RaptorQuoteAndSwapParams,
 } from "@/utils/solanatracker-raptor";
 
-export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {

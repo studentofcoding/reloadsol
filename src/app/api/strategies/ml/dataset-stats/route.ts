@@ -7,7 +7,6 @@ import {
 } from '@/strategies/ml-training-features'
 import type { StrategyDomain } from '@/strategies/types'
 
-export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
   try {

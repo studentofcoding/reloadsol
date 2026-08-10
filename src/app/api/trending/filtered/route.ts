@@ -8,7 +8,6 @@ import {
 } from '@/utils/trending-notification-dedup'
 
 // Force dynamic rendering for this route
-export const dynamic = 'force-dynamic'
 
 // Import the interfaces and cache from the main trending route
 // import type { TransformedToken } from '../route'

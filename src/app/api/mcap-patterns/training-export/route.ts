@@ -8,7 +8,6 @@ import {
 import { parseDbChain } from '@/utils/app-network-db'
 import { isSocialRollupAuthorized } from '@/utils/social/config'
 
-export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
   const key =

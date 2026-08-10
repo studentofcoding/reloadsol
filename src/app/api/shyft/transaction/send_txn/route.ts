@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { getShyftApiKey, ShyftAPIError } from "@/utils/shyft-api";
 import { sendShyftTransactionDirect } from "@/utils/shyft-transaction";
 
-export const dynamic = "force-dynamic";
 
 const VALID_NETWORKS = new Set(["mainnet-beta", "testnet", "devnet"]);
 

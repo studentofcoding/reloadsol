@@ -11,7 +11,6 @@ import {
   confirmSwapSignature,
 } from "@/utils/swap-executor";
 
-export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {

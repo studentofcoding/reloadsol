@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/utils/db'
 
 // Force dynamic rendering for this route
-export const dynamic = 'force-dynamic'
 
 // GET /api/trading/records/all?limit=<number>
 export async function GET(request: NextRequest) {

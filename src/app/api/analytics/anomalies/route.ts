@@ -8,7 +8,6 @@ import { LiquidityFilter } from '@/utils/algo/liquidity-analysis';
 import type { TokenMetrics } from '@/utils/algo/anomaly-detection';
 
 // Force dynamic rendering for this route
-export const dynamic = 'force-dynamic';
 
 interface AnalyticsRequest {
     tokens?: string[]; // Optional array of token addresses to analyze
