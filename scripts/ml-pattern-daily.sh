@@ -174,7 +174,12 @@ print(m.get('trained_at', 'null'), metrics.get('macro_f1', 'null'), metrics.get(
       log "Model trained_at=$TRAINED_AT macro_f1=$MACRO_F1 pattern_ready=$PATTERN_READY"
 
       RELOAD_URL="${API_BASE_URL%/}/api/ml/pattern/reload?key=${TRENDING_TRACKER_SECRET}"
-      RELOAD_BODY="$(curl -sf -X POST "$RELOAD_URL" 2>/dev/null || true)"
+      # nginx default_server drops unknown Hosts (444); edge hits need the Host header.
+      if [[ "$API_BASE_URL" == *"127.0.0.1"* || "$API_BASE_URL" == *"localhost"* ]]; then
+        RELOAD_BODY="$(curl -sf -H "Host: reloadsol.app" -X POST "$RELOAD_URL" 2>/dev/null || true)"
+      else
+        RELOAD_BODY="$(curl -sf -X POST "$RELOAD_URL" 2>/dev/null || true)"
+      fi
       if [[ -n "$RELOAD_BODY" ]]; then
         RUNTIME_LOADED="$(python3 -c "
 import json, sys

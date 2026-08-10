@@ -20,7 +20,12 @@ def fetch_from_api(base_url: str, secret: str | None, chain: str = "sol") -> pd.
     if secret:
         params["key"] = secret
     url = f"{base_url.rstrip('/')}/api/mcap-patterns/training-export"
-    response = requests.get(url, params=params, timeout=120)
+    headers = {}
+    # nginx has a default_server that drops unknown Hosts (444). When hitting
+    # the edge (127.0.0.1:80) send the real Host so the request is routed.
+    if "127.0.0.1" in base_url or "localhost" in base_url:
+        headers["Host"] = "reloadsol.app"
+    response = requests.get(url, params=params, headers=headers, timeout=120)
     response.raise_for_status()
     payload = response.json()
     rows = payload.get("rows") or []
