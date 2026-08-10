@@ -171,7 +171,7 @@ export function useDeleteRecord() {
   return useMutation({
     mutationFn: async (id: string) => {
       if (!walletAddress) throw new Error("Wallet not connected");
-      await tradingTracker.deleteRecord(id, walletAddress);
+      await tradingTracker.deleteRecord(id, walletAddress, network);
     },
     onSuccess: () => {
       if (walletAddress) {
@@ -277,7 +277,7 @@ function TradingDataProviderInner({ children }: { children: React.ReactNode }) {
     const unsubscribe = tradingTracker.subscribeToWallet(walletAddress, () => {
       console.log("📡 Real-time update received, invalidating queries...");
       refetchRecordsForWallet();
-    });
+    }, network);
 
     return () => {
       window.removeEventListener("reloadsol-wallet-session", onSessionReady);

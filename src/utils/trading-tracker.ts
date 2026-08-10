@@ -80,12 +80,22 @@ class TradingTracker {
   private readonly OLD_STORAGE_KEY = 'bulk_trading_records' // For cleanup
   private pollingInterval: NodeJS.Timeout | null = null
   private subscribers: Map<string, Set<(records: TrackingRecord[]) => void>> = new Map()
-  private cache: Map<string, TrackingRecord[]> = new Map() // Per-wallet cache
+  private cache: Map<string, TrackingRecord[]> = new Map() // Per-wallet-per-chain cache
   private isOnline: boolean = true
   private sseConnection: EventSource | null = null
   private reconnectAttempts = 0
   private maxReconnectAttempts = 5
   private readonly API_HOST = typeof process !== 'undefined' ? process.env.API_HOST : undefined;
+
+  /** Cache key is wallet + chain so SOL and Robinhood records never mix. */
+  private cacheKey(walletAddress: string, chain: 'sol' | 'robinhood' = 'sol'): string {
+    return `${walletAddress}:${chain}`
+  }
+
+  /** localStorage offline key is wallet + chain so offline records never mix chains. */
+  private offlineKey(walletAddress: string, chain: 'sol' | 'robinhood' = 'sol'): string {
+    return `offline_trading_${chain}_${walletAddress}`
+  }
 
   // ✅ NEW: Connection state management
   private connectionState: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' = 'disconnected'
@@ -197,8 +207,8 @@ class TradingTracker {
         this.saveToOfflineCache(newRecord)
       }
 
-      this.updateLocalCache(record.walletAddress, [newRecord])
-      this.notifySubscribers(record.walletAddress)
+      this.updateLocalCache(record.walletAddress, [newRecord], newRecord.chain ?? 'sol')
+      this.notifySubscribers(record.walletAddress, newRecord.chain ?? 'sol')
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
@@ -222,8 +232,8 @@ class TradingTracker {
 
       if (!this.isOnline) {
         this.saveToOfflineCache(newRecord)
-        this.updateLocalCache(record.walletAddress, [newRecord])
-        this.notifySubscribers(record.walletAddress)
+        this.updateLocalCache(record.walletAddress, [newRecord], newRecord.chain ?? 'sol')
+        this.notifySubscribers(record.walletAddress, newRecord.chain ?? 'sol')
         return newRecord
       }
 
@@ -232,35 +242,36 @@ class TradingTracker {
   }
 
   // Delete a trading record
-  async deleteRecord(id: string, walletAddress: string): Promise<void> {
+  async deleteRecord(id: string, walletAddress: string, chain: 'sol' | 'robinhood' = 'sol'): Promise<void> {
+    const key = this.cacheKey(walletAddress, chain)
     try {
       if (this.isOnline) {
         // Try to delete via API first
         await this.deleteViaAPI(id, walletAddress)
       } else {
         // Delete from offline cache
-        this.deleteFromOfflineCache(id, walletAddress)
+        this.deleteFromOfflineCache(id, walletAddress, chain)
       }
 
       // Update local cache
-      const cached = this.cache.get(walletAddress) || []
+      const cached = this.cache.get(key) || []
       const updated = cached.filter(r => r.id !== id)
-      this.cache.set(walletAddress, updated)
+      this.cache.set(key, updated)
 
       // Notify subscribers
-      this.notifySubscribers(walletAddress)
+      this.notifySubscribers(walletAddress, chain)
 
       console.log(`🗑️ Deleted record: ${id}`)
     } catch (error) {
       console.error('Failed to delete record:', error)
       // Fallback to offline cache on error
-      this.deleteFromOfflineCache(id, walletAddress)
+      this.deleteFromOfflineCache(id, walletAddress, chain)
 
       // Update local cache even on error to reflect UI change immediately
-      const cached = this.cache.get(walletAddress) || []
+      const cached = this.cache.get(key) || []
       const updated = cached.filter(r => r.id !== id)
-      this.cache.set(walletAddress, updated)
-      this.notifySubscribers(walletAddress)
+      this.cache.set(key, updated)
+      this.notifySubscribers(walletAddress, chain)
     }
   }
 
@@ -291,14 +302,14 @@ class TradingTracker {
   }
 
   // Delete from offline cache (localStorage)
-  private deleteFromOfflineCache(id: string, walletAddress: string): void {
+  private deleteFromOfflineCache(id: string, walletAddress: string, chain: 'sol' | 'robinhood' = 'sol'): void {
     // Only run in browser environment
     if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
       return
     }
 
     try {
-      const key = `offline_trading_${walletAddress}`
+      const key = this.offlineKey(walletAddress, chain)
       const cached = localStorage.getItem(key)
       if (!cached) return
 
@@ -350,7 +361,7 @@ class TradingTracker {
     }
 
     try {
-      const key = `offline_trading_${record.walletAddress}`
+      const key = this.offlineKey(record.walletAddress, record.chain ?? 'sol')
       const cached = localStorage.getItem(key)
       const records: TrackingRecord[] = cached ? JSON.parse(cached) : []
 
@@ -403,8 +414,9 @@ class TradingTracker {
   }
 
   // Update local cache
-  private updateLocalCache(walletAddress: string, records: TrackingRecord[]): void {
-    const cached = this.cache.get(walletAddress) || []
+  private updateLocalCache(walletAddress: string, records: TrackingRecord[], chain: 'sol' | 'robinhood' = 'sol'): void {
+    const key = this.cacheKey(walletAddress, chain)
+    const cached = this.cache.get(key) || []
 
     // If we're adding new records, prepend them
     if (records.length > 0) {
@@ -416,7 +428,7 @@ class TradingTracker {
       cached.splice(500)
     }
 
-    this.cache.set(walletAddress, cached)
+    this.cache.set(key, cached)
   }
 
   // Get records for specific wallet (with caching)
@@ -437,16 +449,16 @@ class TradingTracker {
     });
 
     // Return cached data if available and requested
-    if (useCache && this.cache.has(walletAddress)) {
+    if (useCache && this.cache.has(this.cacheKey(walletAddress, chain))) {
       console.log('📦 Returning cached data for wallet:', walletAddress.substring(0, 8) + '...');
-      return this.cache.get(walletAddress) || []
+      return this.cache.get(this.cacheKey(walletAddress, chain)) || []
     }
 
     try {
       // Include offline records in the query (only in browser)
       let offlineRecords: TrackingRecord[] = []
       if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-        const offlineKey = `offline_trading_${walletAddress}`
+        const offlineKey = this.offlineKey(walletAddress, chain)
         offlineRecords = localStorage.getItem(offlineKey)
           ? JSON.parse(localStorage.getItem(offlineKey) || '[]')
           : []
@@ -454,14 +466,14 @@ class TradingTracker {
 
       if (!this.isOnline) {
         // Return only offline records when offline
-        this.cache.set(walletAddress, offlineRecords)
+        this.cache.set(this.cacheKey(walletAddress, chain), offlineRecords)
         return offlineRecords
       }
 
       // Skip fetch in server-side contexts to prevent URL errors
       if (typeof window === 'undefined') {
         console.log('⚠️ Skipping fetch in server-side context, returning offline/cached data');
-        this.cache.set(walletAddress, offlineRecords)
+        this.cache.set(this.cacheKey(walletAddress, chain), offlineRecords)
         return offlineRecords
       }
 
@@ -498,7 +510,7 @@ class TradingTracker {
       deduped.sort((a, b) => b.timestamp - a.timestamp)
 
       // Update cache
-      this.cache.set(walletAddress, deduped)
+      this.cache.set(this.cacheKey(walletAddress, chain), deduped)
 
       return deduped
     } catch (error) {
@@ -513,13 +525,13 @@ class TradingTracker {
 
       let offlineRecords: TrackingRecord[] = []
       if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
-        const offlineKey = `offline_trading_${walletAddress}`
+        const offlineKey = this.offlineKey(walletAddress, chain)
         offlineRecords = localStorage.getItem(offlineKey)
           ? JSON.parse(localStorage.getItem(offlineKey) || '[]')
           : []
       }
 
-      const cached = this.cache.get(walletAddress) || []
+      const cached = this.cache.get(this.cacheKey(walletAddress, chain)) || []
       const fallback = [...offlineRecords, ...cached].filter(
         (record, index, self) =>
           self.findIndex((r) => r.id === record.id) === index,
@@ -624,7 +636,7 @@ class TradingTracker {
   /**
    * Set up Server-Sent Events connection for real-time updates
    */
-  private async setupSSEConnection(walletAddress: string) {
+  private async setupSSEConnection(walletAddress: string, chain: 'sol' | 'robinhood' = 'sol') {
     if (typeof window === 'undefined') return
 
     // ✅ NEW: Prevent duplicate connections for same wallet
@@ -642,7 +654,7 @@ class TradingTracker {
         clearTimeout(this.connectionDebounceTimeout)
       }
       this.connectionDebounceTimeout = setTimeout(() => {
-        this.setupSSEConnection(walletAddress)
+        this.setupSSEConnection(walletAddress, chain)
       }, this.CONNECTION_DEBOUNCE_MS)
       return
     }
@@ -653,7 +665,7 @@ class TradingTracker {
     const isConnected = await this.checkNetworkConnectivity()
     if (!isConnected) {
       console.warn('🌐 Network connectivity issues detected, falling back to polling')
-      this.startPolling(walletAddress)
+      this.startPolling(walletAddress, chain)
       return
     }
 
@@ -685,7 +697,7 @@ class TradingTracker {
           console.warn(`⏰ [${connectionAttemptId}] SSE connection timeout, cleaning up and falling back to polling`)
           this.setConnectionState('disconnected')
           this.cleanupSSEConnection()
-          this.startPolling(walletAddress)
+          this.startPolling(walletAddress, chain)
         }
       }, 15000) // 15 second timeout
 
@@ -707,14 +719,14 @@ class TradingTracker {
               console.log(`✅ [${connectionAttemptId}] SSE connected for wallet:`, data.wallet?.slice(0, 8) + '...', 'Connection ID:', data.connectionId)
               this.setConnectionState('connected')
               // Start health check monitoring
-              this.setupConnectionHealthCheck(connectionAttemptId, walletAddress)
+              this.setupConnectionHealthCheck(connectionAttemptId, walletAddress, chain)
               break
 
             case 'trade_update':
             case 'pnl_update':
             case 'balance_update':
               console.log(`🔄 [${connectionAttemptId}] Received trading update, refreshing data...`)
-              this.handleRealTimeUpdate(walletAddress)
+              this.handleRealTimeUpdate(walletAddress, chain)
               break
 
             case 'keepalive':
@@ -760,18 +772,18 @@ class TradingTracker {
           if (readyState === EventSource.CLOSED) {
             console.warn(`❌ [${connectionAttemptId}] SSE connection was closed, attempting reconnection`)
             this.setConnectionState('disconnected')
-            this.handleSSEReconnect(walletAddress)
+            this.handleSSEReconnect(walletAddress, chain)
           } else if (readyState === EventSource.CONNECTING && this.connectionState === 'connecting') {
             console.warn(`❌ [${connectionAttemptId}] SSE connection failed during connection attempt`)
             this.setConnectionState('disconnected')
             this.cleanupSSEConnection()
-            this.handleSSEReconnect(walletAddress)
+            this.handleSSEReconnect(walletAddress, chain)
           }
         } else {
           // Fallback if sseConnection is somehow null but onerror fired
           console.error(`❌ [${connectionAttemptId}] SSE connection error (instance null):`, error)
           this.setConnectionState('disconnected')
-          this.handleSSEReconnect(walletAddress)
+          this.handleSSEReconnect(walletAddress, chain)
         }
       }
 
@@ -792,7 +804,7 @@ class TradingTracker {
   /**
    * Handle SSE reconnection with exponential backoff
    */
-  private handleSSEReconnect(walletAddress: string) {
+  private handleSSEReconnect(walletAddress: string, chain: 'sol' | 'robinhood' = 'sol') {
     // ✅ NEW: Clear any existing reconnect timeout
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout)
@@ -805,7 +817,7 @@ class TradingTracker {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       console.warn('Max SSE reconnection attempts reached, falling back to polling only')
       this.setConnectionState('disconnected')
-      this.startPolling(walletAddress)
+      this.startPolling(walletAddress, chain)
       return
     }
 
@@ -819,7 +831,7 @@ class TradingTracker {
       this.reconnectTimeout = null
       // Check if we should still attempt reconnection
       if (this.subscribers.has(walletAddress) && this.subscribers.get(walletAddress)!.size > 0) {
-        this.setupSSEConnection(walletAddress)
+        this.setupSSEConnection(walletAddress, chain)
       } else {
         console.log('No active subscribers, skipping SSE reconnection')
         this.setConnectionState('disconnected')
@@ -830,7 +842,7 @@ class TradingTracker {
   /**
    * Set up connection health check monitoring
    */
-  private setupConnectionHealthCheck(connectionAttemptId: string, walletAddress: string): void {
+  private setupConnectionHealthCheck(connectionAttemptId: string, walletAddress: string, chain: 'sol' | 'robinhood' = 'sol'): void {
     // Clear any existing health check
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval)
@@ -850,7 +862,7 @@ class TradingTracker {
           console.warn(`⚠️ [${connectionAttemptId}] Connection health check failed (timeout), reconnecting...`)
           this.setConnectionState('disconnected')
           this.cleanupSSEConnection()
-          this.handleSSEReconnect(walletAddress)
+          this.handleSSEReconnect(walletAddress, chain)
         }
       }
     }, 30000) // Check every 30 seconds
@@ -896,7 +908,7 @@ class TradingTracker {
   /**
    * Start polling as fallback when SSE fails
    */
-  private startPolling(walletAddress: string) {
+  private startPolling(walletAddress: string, chain: 'sol' | 'robinhood' = 'sol') {
     // Prevent multiple polling intervals
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval)
@@ -909,8 +921,8 @@ class TradingTracker {
       try {
         // Only poll if we still have active subscribers for this wallet
         if (this.subscribers.has(walletAddress) && this.subscribers.get(walletAddress)!.size > 0) {
-          const records = await this.getWalletRecords(walletAddress, false) // Force fresh data
-          this.updateLocalCache(walletAddress, records)
+          const records = await this.getWalletRecords(walletAddress, false, chain) // Force fresh data
+          this.updateLocalCache(walletAddress, records, chain)
           this.notifySubscribers(walletAddress)
         } else {
           // No active subscribers, stop polling
@@ -937,7 +949,7 @@ class TradingTracker {
   /**
    * Subscribe to real-time wallet updates using SSE with polling fallback
    */
-  subscribeToWallet(walletAddress: string, callback: (records: TrackingRecord[]) => void): () => void {
+  subscribeToWallet(walletAddress: string, callback: (records: TrackingRecord[]) => void, chain: 'sol' | 'robinhood' = 'sol'): () => void {
     console.log(`🔔 Setting up real-time subscription for wallet: ${walletAddress.slice(0, 8)}...`)
 
     // Add callback to subscribers
@@ -946,13 +958,14 @@ class TradingTracker {
     }
     this.subscribers.get(walletAddress)!.add(callback)
 
-    // Immediately emit cached data
-    const cachedRecords = this.cache.get(walletAddress) || []
+    // Immediately emit cached data (chain-scoped so switching networks never
+    // shows the other chain's records)
+    const cachedRecords = this.cache.get(this.cacheKey(walletAddress, chain)) || []
     callback(cachedRecords)
 
     // ✅ NEW: Only setup connection if not already connected to this wallet
     if (this.currentWallet !== walletAddress || this.connectionState === 'disconnected') {
-      this.setupSSEConnection(walletAddress)
+      this.setupSSEConnection(walletAddress, chain)
     }
 
     // Return unsubscribe function
@@ -983,10 +996,10 @@ class TradingTracker {
   /**
    * Handle real-time update by refreshing data
    */
-  private async handleRealTimeUpdate(walletAddress: string) {
+  private async handleRealTimeUpdate(walletAddress: string, chain: 'sol' | 'robinhood' = 'sol') {
     try {
-      const records = await this.getWalletRecords(walletAddress, false)
-      this.updateLocalCache(walletAddress, records)
+      const records = await this.getWalletRecords(walletAddress, false, chain)
+      this.updateLocalCache(walletAddress, records, chain)
       this.notifySubscribers(walletAddress)
     } catch (error) {
       console.error('Error handling real-time update:', error)
@@ -1110,10 +1123,10 @@ class TradingTracker {
   }
 
   // Notify subscribers of changes
-  private notifySubscribers(walletAddress: string): void {
+  private notifySubscribers(walletAddress: string, chain: 'sol' | 'robinhood' = 'sol'): void {
     const walletSubscribers = this.subscribers.get(walletAddress)
     if (walletSubscribers) {
-      const records = this.cache.get(walletAddress) || []
+      const records = this.cache.get(this.cacheKey(walletAddress, chain)) || []
       walletSubscribers.forEach(callback => {
         callback(records)
       })
