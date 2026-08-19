@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { banConcentrationIfNeeded } from '@/strategies/concentration-ban'
+import { evaluateConcentrationBan } from '@/strategies/concentration-ban'
 import { buildGmgnTokenSnapshot } from '@/strategies/gmgn-token-snapshot'
-import { tokenInfo, tokenSecurity } from '@/utils/gmgn-cli'
-import {
-  isGmgnTradeChain,
-  isValidTradeTokenAddress,
-} from '@/utils/gmgn-currencies'
+import { GmgnApiError } from '@/utils/gmgn-api'
+import { isGmgnTradeChain, isValidTradeTokenAddress } from '@/utils/gmgn-currencies'
 import { isValidMintAddress } from '@/utils/jupiter'
-import { cacheGet, cacheSet } from '@/utils/redis-cache'
+import {
+  getGmgnTokenSnapshotCached,
+} from '@/utils/gmgn-snapshot-cache'
+import { cacheSet } from '@/utils/redis-cache'
 
 
 const SNAPSHOT_TTL_S = 10
@@ -20,12 +20,35 @@ function isHoneypot(security: Record<string, unknown>): boolean {
   )
 }
 
+/** Map a GMGN client failure to an HTTP status the client can act on. */
+function errorStatus(error: unknown): number {
+  if (error instanceof GmgnApiError) {
+    if (error.code === 'RATE_LIMIT') return 429
+    if (error.message.includes('timed out')) return 504
+    if (error.message.startsWith('Invalid JSON')) return 502
+  }
+  return 500
+}
+
 export async function GET(request: NextRequest) {
   try {
+    if (!process.env.GMGN_API_KEY?.trim()) {
+      return NextResponse.json(
+        { success: false, error: 'GMGN_API_KEY is not set' },
+        { status: 503 },
+      )
+    }
+
     const { searchParams } = new URL(request.url)
     const address = searchParams.get('address')?.trim() ?? ''
     const chainRaw = searchParams.get('chain')?.trim() || 'sol'
-    const chain = isGmgnTradeChain(chainRaw) ? chainRaw : 'sol'
+    if (!isGmgnTradeChain(chainRaw)) {
+      return NextResponse.json(
+        { success: false, error: 'chain must be sol or robinhood' },
+        { status: 400 },
+      )
+    }
+    const chain = chainRaw
 
     const addressOk =
       chain === 'robinhood'
@@ -38,19 +61,16 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Short-TTL cache: this endpoint is hit once per simulated trade leg.
-    const cacheKey = `gmgn:token-snapshot:${chain}:${address.toLowerCase()}`
-    const cached = await cacheGet<Record<string, unknown>>(cacheKey)
-    if (cached) {
-      return NextResponse.json(cached)
+    const cached = await getGmgnTokenSnapshotCached(chain, address)
+    if (!cached) {
+      // Nothing cached and nothing fetchable — surface the upstream problem.
+      throw new GmgnApiError(
+        'GMGN token info/security unavailable for this address',
+      )
     }
 
-    const [info, security] = await Promise.all([
-      tokenInfo({ chain, address }),
-      tokenSecurity({ chain, address }),
-    ])
+    const { info, security } = cached
 
-    const snapshot = buildGmgnTokenSnapshot(info, security)
     const symbol =
       typeof info.symbol === 'string'
         ? info.symbol
@@ -78,12 +98,10 @@ export async function GET(request: NextRequest) {
           ? Number(priceRaw)
           : null
 
-    const concBan = await banConcentrationIfNeeded({
-      tokenAddress: address,
-      tokenSymbol: symbol,
-      info,
-      security,
-    })
+    // Display-only concentration evaluation — no rug-marking side effects on
+    // this read path (those live in the strategy/detection pipeline).
+    const snapshot = buildGmgnTokenSnapshot(info, security)
+    const concBan = evaluateConcentrationBan(snapshot)
 
     const payload = {
       success: true,
@@ -92,19 +110,24 @@ export async function GET(request: NextRequest) {
       ...snapshot,
       holders: Number.isFinite(holders) ? holders : null,
       price_usd: Number.isFinite(priceUsd) ? priceUsd : null,
-      isHoneypot: isHoneypot(security as Record<string, unknown>),
-      concentrationBanned: concBan.banned,
+      isHoneypot: isHoneypot(security),
+      concentrationBanned: concBan.ban,
       concentrationReasons: concBan.reasons,
     }
-    void cacheSet(cacheKey, payload, SNAPSHOT_TTL_S)
+    // Short-TTL cache for the payload itself (this endpoint is hit per token
+    // card and per simulated trade leg).
+    void cacheSet(`gmgn:token-snapshot:${chain}:${address.toLowerCase()}`, payload, SNAPSHOT_TTL_S)
     return NextResponse.json(payload)
   } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error)
+    const status = errorStatus(error)
+    console.error(`[token-snapshot] ${status} ${msg}`, error)
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: msg,
       },
-      { status: 500 },
+      { status },
     )
   }
 }

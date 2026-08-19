@@ -11,7 +11,6 @@ import React, {
 import { useBoardInit } from "@/hooks/useBoardInit";
 import TokenSearchLink from "@/components/signals/shared/TokenSearchLink";
 import { useSearchParams, usePathname, useRouter } from "next/navigation";
-import Link from "next/link";
 import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useWallet, useConnection } from "@/components/WalletProvider";
 import {
@@ -288,15 +287,14 @@ const ChartItem = React.memo(
                 initialPrice={initialPrice}
                 logoUrl={logoUrl}
               />
-              <Link
+              <a
                 href={`/chart/${addr}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                prefetch
                 className="text-xs text-blue-400 hover:underline"
               >
                 Open
-              </Link>
+              </a>
             </div>
           </div>
 

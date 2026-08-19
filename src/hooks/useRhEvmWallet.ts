@@ -185,11 +185,13 @@ export function useRhEvmWallet() {
     }
   }, [ensureChain, refresh])
 
+  // ArrowRPC has no CORS headers, so reads must go through our proxy
+  // (/api/rh/rpc) instead of the browser POSTing to the RPC directly.
   const publicClient: PublicClient = useMemo(
     () =>
       createPublicClient({
         chain: RH_CHAIN,
-        transport: http(getRhRpcUrl()),
+        transport: http('/api/rh/rpc'),
       }),
     [],
   )

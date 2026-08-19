@@ -8,15 +8,30 @@ import { tokenSymbol } from '@/utils/dlmm/lp-terminal-pools'
 /** Robinhood Chain mainnet */
 export const RH_CHAIN_ID = 4663 as const
 
-/** Default ArrowRPC (no key). Prefer NEXT_PUBLIC_* in the browser for wallet_addEthereumChain. */
+/** Default ArrowRPC (no key, no CORS — proxy handles browser reads). */
 export const RH_DEFAULT_RPC = 'https://rpc.arrowrpc.com'
 
-export function getRhRpcUrl(): string {
+/** Official Robinhood Chain public RPC (sends CORS) — used as fallback. */
+export const RH_FALLBACK_RPC = 'https://rpc.mainnet.chain.robinhood.com'
+
+/**
+ * Ordered RH RPC endpoints. Prefer NEXT_PUBLIC_RPC_4663 / RPC_4663 in the
+ * browser for wallet_addEthereumChain; otherwise ArrowRPC first, official
+ * endpoint second.
+ */
+export function getRhRpcUrls(): string[] {
   const fromEnv =
     process.env.NEXT_PUBLIC_RPC_4663 ||
     process.env.RPC_4663 ||
     ''
-  return fromEnv.trim() || RH_DEFAULT_RPC
+  const primary = fromEnv.trim()
+  if (primary) return [primary, RH_DEFAULT_RPC, RH_FALLBACK_RPC]
+  return [RH_DEFAULT_RPC, RH_FALLBACK_RPC]
+}
+
+/** Primary RH RPC endpoint (first in the fallback list). */
+export function getRhRpcUrl(): string {
+  return getRhRpcUrls()[0]!
 }
 
 export const RH_CHAIN = defineChain({

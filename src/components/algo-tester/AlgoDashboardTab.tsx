@@ -872,7 +872,6 @@ export default function AlgoDashboardTab() {
         <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
           <Link
             href="/dev/strategies?tab=reports"
-            prefetch
             className="text-blue-400 underline"
           >
             Strategy reports (A/B)

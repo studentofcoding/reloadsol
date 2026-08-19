@@ -10,8 +10,68 @@ import type { GmgnTrackResponse, GmgnTrackRow } from './gmgn-cli'
 
 const DEFAULT_HOST = 'https://openapi.gmgn.ai'
 const DEFAULT_TIMEOUT_MS = 15_000
+/** Default max GMGN requests/second across the whole process (env-tunable). */
+const DEFAULT_MAX_REQ_PER_SEC = 5
+/** Cap on 429 retry sleeps — longer reset windows just fail fast (RATE_LIMIT). */
+const MAX_RETRY_WAIT_MS = 5_000
+/** How long a read-only GET respects a negative rate-limit cache (seconds). */
+const RATE_LIMIT_COOLDOWN_S = 30
 const PKCS8_PRIVATE_KEY_RE =
   /(-----BEGIN PRIVATE KEY-----[\s\S]+?-----END PRIVATE KEY-----)/
+
+const gate: { chain: Promise<void>; lastAt: number } = {
+  chain: Promise.resolve(),
+  lastAt: 0,
+}
+
+/** Global min-interval gate for all GMGN requests (serial, env-tunable). */
+function gmgnRateGate(): Promise<void> {
+  const maxPerSec = Number(process.env.GMGN_MAX_REQ_PER_SEC ?? DEFAULT_MAX_REQ_PER_SEC)
+  const minIntervalMs = Number.isFinite(maxPerSec) && maxPerSec > 0
+    ? Math.ceil(1000 / maxPerSec)
+    : 200
+  const next = gate.chain.then(async () => {
+    const now = Date.now()
+    const wait = Math.max(0, gate.lastAt + minIntervalMs - now)
+    if (wait > 0) await sleep(wait)
+    gate.lastAt = Date.now()
+  })
+  // Keep the chain alive even if a caller drops its reference.
+  gate.chain = next.catch(() => undefined)
+  return next
+}
+
+/** Remember 429s so read-only GETs skip upstream during the reset window. */
+const rateLimitCooldown: { untilMs: number; resetAt?: number } = {
+  untilMs: 0,
+  resetAt: undefined,
+}
+
+async function checkRateLimitCooldown(): Promise<void> {
+  if (rateLimitCooldown.untilMs > Date.now()) {
+    // Fail fast (429) instead of sleeping up to 30s inside a request.
+    throw new GmgnApiError(
+      'GMGN rate limit exceeded',
+      'RATE_LIMIT',
+      rateLimitCooldown.resetAt,
+    )
+  }
+}
+
+function markRateLimitCooldown(resetAt?: number): void {
+  const resetMs = resetAt ? resetAt * 1000 - Date.now() : RATE_LIMIT_COOLDOWN_S * 1000
+  const untilMs = Date.now() + Math.min(Math.max(resetMs, 1000), RATE_LIMIT_COOLDOWN_S * 1000)
+  if (untilMs > rateLimitCooldown.untilMs) {
+    rateLimitCooldown.untilMs = untilMs
+    rateLimitCooldown.resetAt = resetAt
+  }
+}
+
+/** Test-only hook to reset the negative rate-limit cache between tests. */
+export function __resetRateLimitCooldownForTests(): void {
+  rateLimitCooldown.untilMs = 0
+  rateLimitCooldown.resetAt = undefined
+}
 
 export class GmgnApiError extends Error {
   constructor(
@@ -228,11 +288,18 @@ async function gmgnHttp(
         const resetAt = parseResetAt(response.headers, body)
         if (attempt < maxAttempts) {
           const waitMs = resetAt
-            ? Math.min(Math.max(resetAt * 1000 - Date.now(), 1000), 30_000)
+            ? Math.min(Math.max(resetAt * 1000 - Date.now(), 1000), MAX_RETRY_WAIT_MS)
             : 3000
+          // Long reset windows won't clear in time — fail fast instead of
+          // holding the request (and the shared gate) for up to 30s.
+          if (resetAt && resetAt * 1000 - Date.now() > MAX_RETRY_WAIT_MS) {
+            markRateLimitCooldown(resetAt)
+            throw new GmgnApiError('GMGN rate limit exceeded', 'RATE_LIMIT', resetAt)
+          }
           await sleep(waitMs)
           continue
         }
+        markRateLimitCooldown(resetAt)
         throw new GmgnApiError('GMGN rate limit exceeded', 'RATE_LIMIT', resetAt)
       }
 
@@ -276,6 +343,9 @@ async function gmgnFetch(
     client_id: randomUUID(),
   }
   const bodyStr = body != null ? JSON.stringify(body) : null
+  // Read-only GETs skip upstream while a rate-limit window is open.
+  if (method === 'GET') await checkRateLimitCooldown()
+  await gmgnRateGate()
   return gmgnHttp(
     method,
     path,
@@ -310,6 +380,7 @@ async function gmgnSignedFetch(
   const signature = signGmgnMessage(message, privateKeyPem)
   // Never auto-retry POSTs that spend (swap) on 429.
   const autoRetry = method !== 'POST'
+  await gmgnRateGate()
   return gmgnHttp(
     method,
     path,

@@ -8,6 +8,7 @@ import {
   unmarkTokenPotential,
 } from '@/utils/potential-list/service'
 
+export const dynamic = 'force-dynamic'
 
 interface TradingSignalRow {
   token_address: string

@@ -24,11 +24,10 @@ import {
 import { fetchRecentSocialEvents, fetchSocialEventsForTokenSince } from './social/db'
 import {
   normalizeTrackRows,
-  tokenInfo,
-  tokenSecurity,
   trackKol,
   trackSmartMoney,
 } from '@/utils/gmgn-cli'
+import { getGmgnTokenSnapshotCached } from '@/utils/gmgn-snapshot-cache'
 import { evaluateGmgnSecurity } from './gmgn-security-gate'
 import { fetchJupiterMarketHints } from '@/utils/jupiter-metadata'
 
@@ -162,10 +161,12 @@ export async function gateGmgnCandidates(params: {
 
   for (const candidate of slice) {
     const chain = params.strategy.config.discovery.chain
-    const [info, security] = await Promise.all([
-      tokenInfo({ chain, address: candidate.tokenAddress }),
-      tokenSecurity({ chain, address: candidate.tokenAddress }),
-    ])
+    // Shared short-TTL cache (same key as the token-snapshot route) so cron
+    // bursts and UI reads dedupe. On a rate limit, stop gating early instead
+    // of burning the rest of the window on guaranteed 429s.
+    const cached = await getGmgnTokenSnapshotCached(chain, candidate.tokenAddress)
+    if (!cached) break
+    const { info, security } = cached
 
     // OHLC rug shadow first-check; enforce later (does not change pass)
     const ohlcShadow = await attachOhlcRugShadow(

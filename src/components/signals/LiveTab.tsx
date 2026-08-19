@@ -1141,11 +1141,21 @@ export default function LiveTab() {
       if (progress >= 100) progress = 0;
     }, 100);
 
-    autoUpdateIntervalRef.current = setInterval(() => {
-      void refetchTrending();
-      setAutoUpdateProgress(0);
-      progress = 0;
-    }, 5000);
+    // GMGN trending/filtered is rate-limited upstream; on robinhood the 30s
+    // react-query refetchInterval drives updates, so don't add a manual
+    // force-refetch loop here (it used to hammer the endpoint every 5s).
+    if (network === "robinhood") {
+      autoUpdateIntervalRef.current = setInterval(() => {
+        setAutoUpdateProgress(0);
+        progress = 0;
+      }, 5000);
+    } else {
+      autoUpdateIntervalRef.current = setInterval(() => {
+        void refetchTrending();
+        setAutoUpdateProgress(0);
+        progress = 0;
+      }, 5000);
+    }
 
     return () => {
       if (autoUpdateIntervalRef.current)
@@ -1153,7 +1163,7 @@ export default function LiveTab() {
       if (autoUpdateProgressRef.current)
         clearInterval(autoUpdateProgressRef.current);
     };
-  }, [isAnyTokenHovered, autoUpdateDepsKey, refetchTrending]);
+  }, [isAnyTokenHovered, autoUpdateDepsKey, refetchTrending, network]);
 
   // Fetch sell quote for sidebar position on hover
   const handleSidebarHover = async (token: UserToken) => {

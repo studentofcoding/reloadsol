@@ -15,10 +15,12 @@ import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
 
 const PRICE_FILL_CAP = 15
-const PRICE_FILL_CONCURRENCY = 4
+const PRICE_FILL_CONCURRENCY = 2
 const RESPONSE_TTL_S = 20
 const TOKEN_USD_TTL_S = 60
 const SEEN_TOKENS_TTL_S = 30 * 24 * 60 * 60 // 30 days
+
+export const maxDuration = 60
 
 type RhTokensSource = 'gmgn' | 'blockscout' | 'rpc'
 
@@ -72,7 +74,10 @@ async function fetchTokenUsdCached(address: string): Promise<number> {
     const px = extractGmgnTokenUsdPrice(info)
     if (px > 0) void cacheSet(key, px, TOKEN_USD_TTL_S)
     return px
-  } catch {
+  } catch (error) {
+    if (error instanceof GmgnApiError && error.code === 'RATE_LIMIT') {
+      throw error
+    }
     return 0
   }
 }
@@ -85,15 +90,25 @@ async function fillMissingUsd(tokens: UserToken[]): Promise<UserToken[]> {
     .filter(({ t }) => !(t.usdValue > 0))
     .slice(0, PRICE_FILL_CAP)
 
-  for (let i = 0; i < missing.length; i += PRICE_FILL_CONCURRENCY) {
-    const chunk = missing.slice(i, i + PRICE_FILL_CONCURRENCY)
-    const prices = await Promise.all(
-      chunk.map(({ t }) => fetchTokenUsdCached(t.mintAddress)),
-    )
-    chunk.forEach(({ t, i: idx }, j) => {
-      const px = prices[j]
-      if (px > 0) out[idx] = { ...t, usdValue: t.uiAmount * px }
-    })
+  try {
+    for (let i = 0; i < missing.length; i += PRICE_FILL_CONCURRENCY) {
+      const chunk = missing.slice(i, i + PRICE_FILL_CONCURRENCY)
+      const prices = await Promise.all(
+        chunk.map(({ t }) => fetchTokenUsdCached(t.mintAddress)),
+      )
+      chunk.forEach(({ t, i: idx }, j) => {
+        const px = prices[j]
+        if (px > 0) out[idx] = { ...t, usdValue: t.uiAmount * px }
+      })
+    }
+  } catch (error) {
+    // Rate limited: keep what's priced so far instead of burning the rest of
+    // the window (and the request budget) on guaranteed 429s.
+    if (error instanceof GmgnApiError && error.code === 'RATE_LIMIT') {
+      console.warn('[rh/wallet-tokens] price fill rate limited, returning partial')
+    } else {
+      throw error
+    }
   }
   return out
 }

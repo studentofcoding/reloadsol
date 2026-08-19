@@ -73,6 +73,7 @@ export default function TrendingTokens({
   const [loadingAxiom, setLoadingAxiom] = useState<Set<string>>(new Set())
 
   // Fetch complete token data
+  const fetchInFlightRef = useRef(false)
   useEffect(() => {
     const fetchTrendingTokens = async ({ initial }: { initial: boolean }) => {
       // Background refreshes keep the current rows on screen instead of flashing the spinner.
@@ -115,7 +116,13 @@ export default function TrendingTokens({
     // (server caches the GMGN call for 30s, so this costs one upstream call per window).
     const refreshMs = chain === 'robinhood' ? 30 * 1000 : 5 * 60 * 1000
     const intervalId = setInterval(() => {
-      void fetchTrendingTokens({ initial: false })
+      // Skip a tick if the previous fetch is still running (slow upstream /
+      // rate-limit backoff) so polls never stack.
+      if (fetchInFlightRef.current) return
+      fetchInFlightRef.current = true
+      void fetchTrendingTokens({ initial: false }).finally(() => {
+        fetchInFlightRef.current = false
+      })
     }, refreshMs)
 
     return () => clearInterval(intervalId)
