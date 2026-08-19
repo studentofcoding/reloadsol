@@ -230,6 +230,7 @@ export default function BulkTokenBuyer() {
     isPending: isInitialLoadSolTokens,
     error: solTokensQueryError,
     refetchTokens: refetchSolTokens,
+    refetchFresh: refetchSolTokensFresh,
     patchTokens,
   } = useWalletTokens({
     connection,
@@ -296,6 +297,15 @@ export default function BulkTokenBuyer() {
     }
     await refetchSolTokens(force);
   };
+
+  /** Post-trade refresh: bypass the server-side response cache. */
+  const refetchTokensFresh = useCallback(async (): Promise<void> => {
+    if (isRhChain) {
+      await rhWalletTokens.refetchFresh();
+      return;
+    }
+    await refetchSolTokensFresh();
+  }, [isRhChain, rhWalletTokens, refetchSolTokensFresh]);
 
   const tokensFetchError = isRhChain
     ? rhWalletTokens.error instanceof Error
@@ -656,9 +666,6 @@ export default function BulkTokenBuyer() {
   const refreshBalancesRef = useRef(refreshBalances);
   refreshBalancesRef.current = refreshBalances;
 
-  const refetchTokensRef = useRef(refetchTokens);
-  refetchTokensRef.current = refetchTokens;
-
   const runConfirmedRhBuy = useCallback(async () => {
     if (!tradeFromAddress) {
       setError(
@@ -804,8 +811,7 @@ export default function BulkTokenBuyer() {
         setSolAmount("");
         setTokenMints("");
         triggerPostBuyRefresh({
-          refreshWalletTokens: (forceRefresh) =>
-            refetchTokensRef.current(forceRefresh),
+          refreshWalletTokens: () => refetchTokensFresh(),
           refreshBalances: () => refreshBalancesRef.current(),
         });
       }
@@ -832,6 +838,7 @@ export default function BulkTokenBuyer() {
     trackOperation,
     triggerPostBuyRefresh,
     rhWalletTokens.tokens,
+    refetchTokensFresh,
   ]);
 
   const runGmgnBulkBuy = runConfirmedRhBuy;
@@ -1227,8 +1234,7 @@ export default function BulkTokenBuyer() {
         setSolAmount("");
         setTokenMints("");
         triggerPostBuyRefresh({
-          refreshWalletTokens: (forceRefresh) =>
-            refetchTokensRef.current(forceRefresh),
+          refreshWalletTokens: () => refetchTokensFresh(),
           refreshBalances: () => refreshBalancesRef.current(),
         });
       }
@@ -1269,6 +1275,7 @@ export default function BulkTokenBuyer() {
     solGmgnSynced,
     spendUnit,
     rhQuote,
+    refetchTokensFresh,
   ]);
 
   // Handle metadata updates from background enrichment

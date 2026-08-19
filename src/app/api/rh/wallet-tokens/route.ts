@@ -125,16 +125,22 @@ export async function GET(request: NextRequest) {
     }
     const walletNorm = wallet.toLowerCase()
 
+    // Post-trade refresh: bypass the response cache so the just-bought/sold
+    // token shows up immediately instead of waiting out the TTL.
+    const skipCache = request.nextUrl.searchParams.get('fresh') === '1'
+
     const cacheKey = `rh:wallet-tokens:${walletNorm}`
-    const cached = await cacheGet<CachedResponse>(cacheKey)
-    if (cached) {
-      return NextResponse.json({
-        success: true,
-        tokens: cached.tokens,
-        source: cached.source,
-        wallet: walletNorm,
-        cached: true,
-      })
+    if (!skipCache) {
+      const cached = await cacheGet<CachedResponse>(cacheKey)
+      if (cached) {
+        return NextResponse.json({
+          success: true,
+          tokens: cached.tokens,
+          source: cached.source,
+          wallet: walletNorm,
+          cached: true,
+        })
+      }
     }
 
     let source: RhTokensSource = 'gmgn'
@@ -193,12 +199,15 @@ export async function GET(request: NextRequest) {
     }
 
     tokens = sortRhTokensByUsd(tokens)
-    void cacheSet(cacheKey, { tokens, source } satisfies CachedResponse, RESPONSE_TTL_S)
+    if (!skipCache) {
+      void cacheSet(cacheKey, { tokens, source } satisfies CachedResponse, RESPONSE_TTL_S)
+    }
     return NextResponse.json({
       success: true,
       tokens,
       source,
       wallet: walletNorm,
+      fresh: skipCache,
     })
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)

@@ -39,10 +39,11 @@ async function fetchWalletTokens(
   _publicKey: PublicKey,
   walletAddress: string,
   _forceRefresh: boolean,
+  fresh = false,
 ): Promise<WalletTokensData> {
   const start = Date.now();
 
-  const portfolio = await fetchJupiterPortfolio(walletAddress);
+  const portfolio = await fetchJupiterPortfolio(walletAddress, fresh);
   const tokens = mapPortfolioToUserTokens(portfolio);
   const totalPortfolioUsd = portfolio.totalValue;
   const sourceLabel = "Jupiter Portfolio";
@@ -133,6 +134,17 @@ export function useWalletTokens({
     [connection, publicKey, walletAddress, query, queryClient, queryKey],
   );
 
+  /** Post-trade refresh: bypass the proxy's 15s response cache. */
+  const refetchFresh = useCallback(async (): Promise<void> => {
+    if (!connection || !publicKey || !walletAddress) return;
+    await queryClient.fetchQuery({
+      queryKey,
+      queryFn: () =>
+        fetchWalletTokens(connection, publicKey, walletAddress, true, true),
+      staleTime: 0,
+    });
+  }, [connection, publicKey, walletAddress, queryClient, queryKey]);
+
   const patchTokens = useCallback(
     (updater: (data: WalletTokensData) => WalletTokensData) => {
       queryClient.setQueryData<WalletTokensData>(queryKey, (prev) => {
@@ -146,6 +158,7 @@ export function useWalletTokens({
   return {
     ...query,
     refetchTokens,
+    refetchFresh,
     patchTokens,
     valuable: query.data?.valuable ?? [],
     dust: query.data?.dust ?? [],

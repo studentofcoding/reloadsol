@@ -113,14 +113,16 @@ async function fetchPortfolioFromUrl(
 // ponytail: dedupe in-flight client fetches per URL; upgrade path = React Query only
 const portfolioInflight = new Map<string, Promise<JupiterPortfolioResponse>>();
 
-/** Client-side fetch via Next.js proxy. */
+/** Client-side fetch via Next.js proxy. `fresh` bypasses the proxy response cache. */
 export async function fetchJupiterPortfolio(
   walletAddress: string,
+  fresh = false,
 ): Promise<JupiterPortfolioResponse> {
   const query = new URLSearchParams({
     wallet: walletAddress,
     include: "reclaimableLamports",
   });
+  if (fresh) query.set("fresh", "1");
   const url = `/api/jupiter/portfolio?${query.toString()}`;
 
   // ponytail: dedupe in-flight client fetches per URL; upgrade path = React Query only

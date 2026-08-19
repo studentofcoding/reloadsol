@@ -107,7 +107,7 @@ export default function ChartBuyModal({
       ? tokenQueryError.message
       : "";
 
-  const { allTokens, refetchTokens } = useWalletTokens({
+  const { allTokens, refetchFresh } = useWalletTokens({
     connection,
     publicKey,
     walletAddress,
@@ -374,7 +374,7 @@ export default function ChartBuyModal({
       if (buyResult.success) {
         setBuyAmount(initialBuyAmount);
         triggerPostBuyRefresh({
-          refreshWalletTokens: (forceRefresh) => refetchTokens(forceRefresh),
+          refreshWalletTokens: () => refetchFresh(),
           refreshBalances,
         });
       }
@@ -396,7 +396,7 @@ export default function ChartBuyModal({
     priorityFee,
     tokenInfo,
     trackOperation,
-    refetchTokens,
+    refetchFresh,
     refreshBalances,
     triggerPostBuyRefresh,
     initialBuyAmount,

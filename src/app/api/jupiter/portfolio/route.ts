@@ -28,6 +28,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid wallet address" }, { status: 400 });
     }
 
+    // Post-trade refresh: bypass the response cache so the just-bought/sold
+    // token shows up immediately instead of waiting out the TTL.
+    const skipCache = searchParams.get("fresh") === "1";
+
     const cached = await cacheGet<{
       status: string;
       totalValue: number;
@@ -37,7 +41,7 @@ export async function GET(request: NextRequest) {
       latencyMs: number;
     }>(portfolioCacheKey(wallet));
 
-    if (cached) {
+    if (cached && !skipCache) {
       return NextResponse.json(cached, {
         headers: {
           "Cache-Control": "private, max-age=15",
@@ -57,7 +61,9 @@ export async function GET(request: NextRequest) {
       latencyMs: portfolio.latencyMs ?? 0,
     };
 
-    await cacheSet(portfolioCacheKey(wallet), body, PORTFOLIO_CACHE_TTL_SECONDS);
+    if (!skipCache) {
+      await cacheSet(portfolioCacheKey(wallet), body, PORTFOLIO_CACHE_TTL_SECONDS);
+    }
 
     return NextResponse.json(body, {
       headers: {

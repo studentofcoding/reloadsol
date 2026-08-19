@@ -250,6 +250,7 @@ export default function BulkTokenSeller() {
     isFetching: isLoadingTokens,
     error: tokensQueryError,
     refetchTokens,
+    refetchFresh,
     patchTokens,
   } = useWalletTokens({
     connection,
@@ -532,6 +533,15 @@ export default function BulkTokenSeller() {
     },
     [isRhChain, rhWalletTokens, refetchTokens],
   );
+
+  /** Post-trade refresh: bypass the server-side response cache. */
+  const fetchTokensFresh = useCallback(async (): Promise<void> => {
+    if (isRhChain) {
+      await rhWalletTokens.refetchFresh();
+      return;
+    }
+    await refetchFresh();
+  }, [isRhChain, rhWalletTokens, refetchFresh]);
 
   // Handle token selection
   const toggleTokenSelection = (token: UserToken) => {
@@ -1403,7 +1413,7 @@ export default function BulkTokenSeller() {
         setSelectedTokens([]);
         setSelectedZeroBalanceTokens([]);
         triggerPostTradeRefresh({
-          refreshWalletTokens: (forceRefresh) => fetchTokens(forceRefresh ?? true),
+          refreshWalletTokens: () => fetchTokensFresh(),
         });
       }
     } catch (err) {
@@ -1440,7 +1450,7 @@ export default function BulkTokenSeller() {
     selectedZeroBalanceTokens,
     slippage,
     priorityFee,
-    fetchTokens,
+    fetchTokensFresh,
     autoTriggerShare,
     triggerPostTradeRefresh,
     showOutcome,
@@ -1502,8 +1512,7 @@ export default function BulkTokenSeller() {
         }
 
         triggerPostTradeRefresh({
-          refreshWalletTokens: (forceRefresh) =>
-            fetchTokens(forceRefresh ?? true),
+          refreshWalletTokens: () => fetchTokensFresh(),
         });
 
         showOutcome({
@@ -1548,7 +1557,7 @@ export default function BulkTokenSeller() {
     pendingCloseableTokens,
     slippage,
     priorityFee,
-    fetchTokens,
+    fetchTokensFresh,
     triggerPostTradeRefresh,
     showOutcome,
   ]);
@@ -1706,7 +1715,7 @@ export default function BulkTokenSeller() {
         setSelectedTokens([]);
         setSelectedZeroBalanceTokens([]);
         triggerPostTradeRefresh({
-          refreshWalletTokens: (forceRefresh) => fetchTokens(forceRefresh ?? true),
+          refreshWalletTokens: () => fetchTokensFresh(),
         });
       }
     } catch (err) {
@@ -1734,7 +1743,7 @@ export default function BulkTokenSeller() {
     selectedZeroBalanceTokens,
     slippage,
     priorityFee,
-    fetchTokens,
+    fetchTokensFresh,
     trackOperation,
     triggerPostTradeRefresh,
     showOutcome,
