@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { isAuthorizedRequest } from '@/utils/dlmm/config'
 import {
   listCronWorkerRuntime,
@@ -24,6 +24,7 @@ function extractKey(request: NextRequest): string | null {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   if (!isAuthorizedRequest(extractKey(request), getRuntimeSecret())) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }

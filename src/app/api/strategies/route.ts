@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { defaultAgentConfig } from '@/utils/dlmm/config'
 import { getAgentConfig } from '@/utils/dlmm/db'
 import {
@@ -18,6 +18,7 @@ import { parseStrategyChain } from '@/strategies/types'
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const chain = parseStrategyChain(request.nextUrl.searchParams.get('chain'))
     const [
       registry,

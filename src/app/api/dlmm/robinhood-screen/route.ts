@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { marketTrending } from '@/utils/gmgn-cli'
 import {
   applyRobinhoodLpFilters,
@@ -7,6 +7,7 @@ import {
 
 export async function GET(req: NextRequest) {
   try {
+    await connection()
     const sp = req.nextUrl.searchParams
     const minMcap = Number(sp.get('minMcap') ?? ROBINHOOD_LP_DEFAULTS.minMcap)
     const minVolume = Number(sp.get('minVolume') ?? ROBINHOOD_LP_DEFAULTS.minVolume)

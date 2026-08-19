@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { getAlgoPositions } from '@/strategies/algo-positions'
 import { parseStrategyChain } from '@/strategies/types'
 
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const limitParam = request.nextUrl.searchParams.get('limit')
     const closedLimit = limitParam ? Math.min(Number(limitParam) || 100, 500) : 100
     const chain = parseStrategyChain(request.nextUrl.searchParams.get('chain'))

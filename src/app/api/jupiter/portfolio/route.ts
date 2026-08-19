@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, connection } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { fetchJupiterPortfolioDirect } from "@/utils/jupiter-portfolio";
 import { cacheGet, cacheSet } from "@/utils/redis-cache";
@@ -11,6 +11,7 @@ function portfolioCacheKey(wallet: string): string {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url);
     const wallet = searchParams.get("wallet");
 

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { drainSimOpenAlerts } from '@/strategies/mcap-sim-open-alerts'
 import { drainGmgnLiveBoostToasts } from '@/strategies/gmgn-live-boost'
 import { drainSignalsEarlyAlerts } from '@/strategies/signals-early-alerts'
@@ -7,6 +7,7 @@ import { parseDbChain } from '@/utils/app-network-db'
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     // Stage-1 early enter first, then Stage-2 sim-open confirms
     const alerts = [

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { query, queryOne } from '@/utils/db'
 import { parseDbChain } from '@/utils/app-network-db'
 import { getRugList, markTokenRug } from '@/utils/rug-list/service'
@@ -23,6 +23,7 @@ interface TradingSignalRow {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     const { rows: data } = await query<TradingSignalRow>(
       `SELECT * FROM trading_signals

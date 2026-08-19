@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, connection } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import {
   fetchRaptorQuoteDirect,
@@ -8,6 +8,7 @@ import {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url);
     const inputMint = searchParams.get("inputMint");
     const outputMint = searchParams.get("outputMint");

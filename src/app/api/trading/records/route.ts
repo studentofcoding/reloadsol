@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { assertSessionWallet, requireWalletSession } from '@/utils/api-auth'
 import { parseDbChain } from '@/utils/app-network-db'
 import type { AppNetwork } from '@/utils/app-network'
@@ -123,6 +123,7 @@ function resolveAllowedOrigin(request: NextRequest): string | null {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const walletAddress = searchParams.get('wallet')
     const limit = parseInt(searchParams.get('limit') || '500')

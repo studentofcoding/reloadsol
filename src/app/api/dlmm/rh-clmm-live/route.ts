@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { rejectWrongNetwork } from '@/utils/app-network-api'
 import {
   isRhOwnerAddress,
@@ -8,6 +8,7 @@ import {
 } from '@/utils/dlmm/rh-clmm-live'
 
 export async function GET(req: NextRequest) {
+  await connection()
   const wrong = rejectWrongNetwork(req, 'robinhood')
   if (wrong) return wrong
 

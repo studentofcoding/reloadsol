@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { NextRequest } from 'next/server'
+import { NextRequest, connection } from 'next/server'
 import { queryOne } from '@/utils/db'
 import { withUnifiedLogging } from '@/utils/unified-logger'
 import {

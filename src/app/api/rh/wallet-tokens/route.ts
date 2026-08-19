@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { tokenInfo, walletHoldings, GmgnApiError } from '@/utils/gmgn-api'
 import type { UserToken } from '@/utils/jupiter'
 import {
@@ -115,6 +115,7 @@ async function fillMissingUsd(tokens: UserToken[]): Promise<UserToken[]> {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const wallet = request.nextUrl.searchParams.get('wallet')?.trim() ?? ''
     if (!isEvmAddress(wallet)) {
       return NextResponse.json(

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
 import { rejectWrongNetwork } from '@/utils/app-network-api';
 import { DbUnavailableError } from '@/utils/db-health';
 import { isDlmmApiAuthorized } from '@/utils/dlmm/config';
@@ -11,6 +11,7 @@ function getPassword(req: NextRequest): string | null {
 }
 
 export async function GET(req: NextRequest) {
+  await connection()
   const wrong = rejectWrongNetwork(req, 'sol');
   if (wrong) return wrong;
   try {

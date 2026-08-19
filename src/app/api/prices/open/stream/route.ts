@@ -1,4 +1,4 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, connection } from 'next/server'
 import {
   OPEN_PRICES_CHANNEL,
   type OpenPriceEvent,
@@ -17,6 +17,7 @@ function isOpenPriceEvent(v: unknown): v is OpenPriceEvent {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   const mintFilter = new Set(
     (request.nextUrl.searchParams.get('mints') || '')
       .split(',')

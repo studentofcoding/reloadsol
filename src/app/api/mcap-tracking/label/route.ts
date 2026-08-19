@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { query, queryOne } from '@/utils/db'
 import { TokenLabel } from '@/utils/mcap-tracker'
 import { log } from '@/utils/unified-logger'
@@ -95,6 +95,7 @@ export async function PUT(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const tokenAddress = searchParams.get('token')
     const labelFilter = searchParams.get('label')

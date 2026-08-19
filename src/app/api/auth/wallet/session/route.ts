@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
 import {
   createWalletSignInChallenge,
   verifyWalletSignature,
@@ -12,6 +12,7 @@ import {
 
 export async function GET(req: NextRequest) {
   try {
+    await connection()
     const address = req.nextUrl.searchParams.get('address')?.trim();
 
     if (!address) {

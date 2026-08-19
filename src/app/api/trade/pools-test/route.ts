@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { testJupiterPoolsTrading, stressTestJupiterPools, quickPoolsBenchmark } from '@/utils/jupiter-pools-test'
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const testType = searchParams.get('type') || 'comprehensive'
     const format = searchParams.get('format') || 'json'

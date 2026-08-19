@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { NextRequest } from 'next/server'
+import { NextRequest, connection } from 'next/server'
 import { query } from '@/utils/db'
 import {
   countTrackerOutcomeStats,

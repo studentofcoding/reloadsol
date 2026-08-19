@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { searchTokensForChain, GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
@@ -8,6 +8,7 @@ const SEARCH_TTL_S = 30
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     if (!process.env.GMGN_API_KEY?.trim()) {
       return NextResponse.json(
         { success: false, error: 'GMGN_API_KEY is not set' },

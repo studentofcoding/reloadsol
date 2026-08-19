@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { tradeOrderGet, GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
 
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     if (!process.env.GMGN_API_KEY?.trim() || !process.env.GMGN_PRIVATE_KEY?.trim()) {
       return NextResponse.json(
         { success: false, error: 'GMGN_API_KEY / GMGN_PRIVATE_KEY not set' },

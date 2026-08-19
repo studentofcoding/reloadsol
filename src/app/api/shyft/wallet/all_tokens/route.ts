@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, connection } from "next/server";
 import { PublicKey } from "@solana/web3.js";
 import { getShyftApiKey, ShyftAPIError } from "@/utils/shyft-api";
 import { fetchShyftAllTokensDirect } from "@/utils/shyft-wallet";
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const apiKey = getShyftApiKey();
     if (!apiKey) {
       return NextResponse.json(

@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { fetchKyberRoute } from '@/utils/kyber-aggregator'
 
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const tokenIn = request.nextUrl.searchParams.get('tokenIn')?.trim() ?? ''
     const tokenOut = request.nextUrl.searchParams.get('tokenOut')?.trim() ?? ''
     const amountIn = request.nextUrl.searchParams.get('amountIn')?.trim() ?? ''

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
 import { DbUnavailableError } from '@/utils/db-health';
 import { isDlmmApiAuthorized } from '@/utils/dlmm/config';
 import { defaultAgentConfig } from '@/utils/dlmm/config';
@@ -19,6 +19,7 @@ function envConfigFallback(): DlmmAgentConfig {
 }
 
 export async function GET() {
+  await connection()
   let config: DlmmAgentConfig = envConfigFallback();
   let dbStatus = await getDlmmDbStatus().catch(() => ({
     configured: false,

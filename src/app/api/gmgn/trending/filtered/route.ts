@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
 import { GMGN_FILTERED_CRITERIA } from '@/utils/gmgn-trending-filtered'
@@ -7,6 +7,7 @@ import { getFilteredGmgnTrending } from '@/utils/gmgn-trending-feed'
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     if (!process.env.GMGN_API_KEY?.trim()) {
       return NextResponse.json(
         { success: false, error: 'GMGN_API_KEY is not set' },

@@ -1,7 +1,8 @@
-import { NextRequest } from 'next/server'
+import { NextRequest, connection } from 'next/server'
 import { getLogs } from '@/utils/api-logger'
 
 export async function GET(request: NextRequest) {
+  await connection()
   const { searchParams } = new URL(request.url)
   const level = searchParams.get('level')
   const endpoint = searchParams.get('endpoint')

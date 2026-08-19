@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { walletHoldings, GmgnApiError } from '@/utils/gmgn-api'
 import { isGmgnTradeChain } from '@/utils/gmgn-currencies'
 import { resolveGmgnBoundWallets, boundAddressForChain } from '@/utils/gmgn-bound-wallets'
@@ -6,6 +6,7 @@ import { resolveGmgnBoundWallets, boundAddressForChain } from '@/utils/gmgn-boun
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     if (!process.env.GMGN_API_KEY?.trim() || !process.env.GMGN_PRIVATE_KEY?.trim()) {
       return NextResponse.json(
         { success: false, error: 'GMGN keys not set' },

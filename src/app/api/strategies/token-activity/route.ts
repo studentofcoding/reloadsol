@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { fetchTokenMapActivity } from '@/strategies/token-map-activity'
 import { isValidAnyChainTokenAddress } from '@/utils/gmgn-currencies'
 
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const address = searchParams.get('address')?.trim() ?? ''
     const hours = Number(searchParams.get('hours') ?? 24)

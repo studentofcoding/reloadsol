@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { NextRequest } from 'next/server'
+import { NextRequest, connection } from 'next/server'
 import { query, queryOne } from '@/utils/db'
 import {
   getAppDayBounds,
@@ -230,6 +230,7 @@ async function findSummaryForDate(dateStr: string): Promise<SummaryRow | null> {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const searchParams = request.nextUrl.searchParams
     const refresh = searchParams.get('refresh') === 'true'
     const nocache = searchParams.get('nocache') === 'true'

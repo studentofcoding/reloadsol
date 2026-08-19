@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 
 // Force dynamic rendering for this route
 
@@ -32,6 +32,7 @@ function calculateBackoff(consecutiveErrors: number, maxBackoff: number): number
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const mintAddress = searchParams.get('pairAddress') // Keep parameter name for backward compatibility
 

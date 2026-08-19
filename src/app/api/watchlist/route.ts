@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
 import { requireWalletSession } from '@/utils/api-auth';
 import { parseDbChain } from '@/utils/app-network-db';
 import {
@@ -34,6 +34,7 @@ function resolveWallet(
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'));
     const resolved = resolveWallet(request, chain);
     if (resolved instanceof NextResponse) return resolved;

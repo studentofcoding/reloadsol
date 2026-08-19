@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import {
   normalizeSubscribeWallet,
   walletsMatch,
@@ -98,6 +98,7 @@ function safeEnqueue(connectionId: string, data: Uint8Array): boolean {
 // GET /api/trading/subscribe?wallet=<address>
 // In the GET function, around line 100
 export async function GET(request: NextRequest) {
+  await connection()
   const { searchParams } = new URL(request.url)
   const walletAddress = searchParams.get('wallet')
   const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { getPatternTrainingStats } from '@/strategies/social/pattern-training-export'
 import { patternRules } from '@/strategies/social/mcap-patterns-24h'
 import { parseDbChain } from '@/utils/app-network-db'
@@ -12,6 +12,7 @@ function getPatternArtifactMeta(): Promise<PatternArtifactMetaModule> {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     const stats = await getPatternTrainingStats(chain)
     const patternMeta = await getPatternArtifactMeta()

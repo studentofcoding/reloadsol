@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import {
   deleteTelegramSignalChannel,
   listTelegramSignalChannels,
@@ -8,6 +8,7 @@ import { slugify } from '@/strategies/social/crosscheck-slug'
 
 
 export async function GET() {
+  await connection()
   const channels = await listTelegramSignalChannels(false)
   return NextResponse.json({ success: true, channels })
 }

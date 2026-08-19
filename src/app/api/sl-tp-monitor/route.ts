@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { 
   addSLTPPosition, 
   cleanupOldSLTPPositions,
@@ -20,6 +20,7 @@ function isServiceAuthorized(request: NextRequest): boolean {
 // GET - Monitor all active SL/TP positions
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const action = searchParams.get('action')
     const wallet = searchParams.get('wallet')

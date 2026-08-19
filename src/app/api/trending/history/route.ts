@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { query, queryOne } from '@/utils/db'
 import { countTrackerOutcomeStats } from '@/utils/trending-profit'
 
@@ -111,6 +111,7 @@ function buildWhereClause(params: FilterParams): { sql: string; values: unknown[
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const searchParams = request.nextUrl.searchParams
 
     const status = searchParams.get('status') || 'all'

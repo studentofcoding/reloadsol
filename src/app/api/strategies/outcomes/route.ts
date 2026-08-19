@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { listStrategyOutcomes } from '@/strategies/db'
 import { resolveEffectiveTrainingClass } from '@/strategies/ml-training-features'
 import { parseStrategyChain } from '@/strategies/types'
@@ -136,6 +136,7 @@ function toCsv(rows: StrategyOutcomeRow[], recomputeLabels: boolean): string {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const format = searchParams.get('format')
     const strategyId = searchParams.get('strategyId') ?? undefined

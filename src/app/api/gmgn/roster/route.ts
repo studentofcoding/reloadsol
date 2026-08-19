@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import {
   buildScoreParts,
   listDigHitsForWallets,
@@ -13,6 +13,7 @@ import {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const status = request.nextUrl.searchParams.get('status') as RosterStatus | null
     const [roster, digRuns, signals] = await Promise.all([
       listRoster(status ? { status, limit: 300 } : { limit: 300 }),

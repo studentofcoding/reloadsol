@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import {
   captureDetectSnapshot,
   fetchLastOhlcRugBars,
@@ -13,6 +13,7 @@ import { isValidMintAddress } from '@/utils/jupiter'
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const address = searchParams.get('address')?.trim() ?? ''
     if (!address || !isValidMintAddress(address)) {

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import {
   listPatternTrainingRows,
   patternTrainingCsvHeader,
@@ -10,6 +10,7 @@ import { isSocialRollupAuthorized } from '@/utils/social/config'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   const key =
     request.nextUrl.searchParams.get('key') ??
     request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')

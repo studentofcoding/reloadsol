@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { fetchTokenOhlc } from '@/strategies/token-map-chart'
 import { isValidMintAddress } from '@/utils/jupiter'
 
@@ -17,6 +17,7 @@ function parseTime(raw: string | null): number | null {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const address = searchParams.get('address')?.trim() ?? ''
     if (!address || !isValidMintAddress(address)) {

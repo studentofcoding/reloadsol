@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { loadOutcomesForMlDataset } from '@/strategies/db'
 import {
   computeMlDatasetStats,
@@ -10,6 +10,7 @@ import type { StrategyDomain } from '@/strategies/types'
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const domain = searchParams.get('domain') as StrategyDomain | null
     const strategyId = searchParams.get('strategyId') ?? undefined

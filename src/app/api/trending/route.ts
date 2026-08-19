@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { NextRequest } from 'next/server'
+import { NextRequest, connection } from 'next/server'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse, TokenCache, TransformedToken } from '@/types'
 import { fetchAxiomTokenInfo, getRiskIndicators, calculateFeeToMarketCapRatio } from '@/utils/axiom'
 import { assessTokenRisk, formatDetailedRiskForDiscord, getRiskEmoji } from '@/utils/risk-assessment'
@@ -710,6 +710,7 @@ export async function POST(request: NextRequest) {
 
 export async function GET(req: NextRequest) {
   try {
+    await connection()
     const currentTime = Date.now();
 
     // Parse query parameters

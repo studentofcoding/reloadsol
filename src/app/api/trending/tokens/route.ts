@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { NextRequest } from 'next/server'
+import { NextRequest, connection } from 'next/server'
 import { query, queryOne } from '@/utils/db'
 import { getAppDayBounds } from '@/utils/datetime'
 
@@ -9,6 +9,7 @@ const TRACKER_TABLE = process.env.NODE_ENV === 'development' ? 'trending_token_t
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const searchParams = request.nextUrl.searchParams
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')

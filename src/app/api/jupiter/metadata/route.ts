@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { fetchTokenMetadataFromJupiter, fetchTokensFromJupiterV2 } from '@/utils/jupiter-metadata'
 
 // Server-side cache with longer TTL since it's on the server
@@ -31,6 +31,7 @@ const MIN_REQUEST_INTERVAL = 200 // 200ms between requests for batch calls
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const mintAddress = searchParams.get('mint')
 

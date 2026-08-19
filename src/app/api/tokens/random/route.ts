@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { getRandomTokens } from '@/utils/jupiter-pools-test'
 
 // Caching for random tokens with shorter TTL
@@ -122,6 +122,7 @@ async function getRandomTokensWithCache(count: number): Promise<any[]> {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const count = parseInt(searchParams.get('count') || '10')
     

@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { runTradeComparisonTests, testSingleTrade, benchmarkProviders } from '@/utils/trade-comparison-test'
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const testType = searchParams.get('type') || 'comprehensive'
     const iterations = parseInt(searchParams.get('iterations') || '3')

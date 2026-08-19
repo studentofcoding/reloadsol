@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { listSignalPriceCrosschecks } from '@/strategies/social/crosscheck-db'
 import { runSignalCrosscheck } from '@/strategies/social/run-crosscheck'
 import { isSocialIngestAuthorized } from '@/utils/social/config'
@@ -13,6 +13,7 @@ function isAuthorized(request: NextRequest): boolean {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   const limit = Number(request.nextUrl.searchParams.get('limit') ?? 50)
   const hours = Number(request.nextUrl.searchParams.get('hours') ?? 48)
   const status = request.nextUrl.searchParams.get('status') ?? undefined

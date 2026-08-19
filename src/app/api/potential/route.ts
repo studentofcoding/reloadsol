@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import type { DlmmPotentialSource } from '@/types/dlmm'
 import { parseDbChain } from '@/utils/app-network-db'
 import {
@@ -20,6 +20,7 @@ const VALID_SOURCES: DlmmPotentialSource[] = [
 
 export async function GET(req: NextRequest) {
   try {
+    await connection()
     const chain = parseDbChain(req.nextUrl.searchParams.get('chain'))
     const entries = await getPotentialList(chain)
     return NextResponse.json({ success: true, entries })

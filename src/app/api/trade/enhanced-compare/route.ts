@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { performEnhancedTradeComparison } from '@/utils/trade-comparison'
 
 export async function POST(request: NextRequest) {
@@ -111,6 +111,7 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     
     const tokenAddress = searchParams.get('tokenAddress')

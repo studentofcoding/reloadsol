@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import {
   listStrategyReviewNotes,
   upsertStrategyReviewNote,
@@ -8,6 +8,7 @@ import {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const keysRaw = searchParams.get('periodKeys')
     const periodKeys = keysRaw

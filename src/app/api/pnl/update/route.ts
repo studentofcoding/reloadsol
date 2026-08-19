@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { query } from '@/utils/db'
 
 function getPnLUpdateSecret(): string {

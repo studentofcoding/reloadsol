@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { evaluateConcentrationBan } from '@/strategies/concentration-ban'
 import { buildGmgnTokenSnapshot } from '@/strategies/gmgn-token-snapshot'
 import { GmgnApiError } from '@/utils/gmgn-api'
@@ -32,6 +32,7 @@ function errorStatus(error: unknown): number {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     if (!process.env.GMGN_API_KEY?.trim()) {
       return NextResponse.json(
         { success: false, error: 'GMGN_API_KEY is not set' },

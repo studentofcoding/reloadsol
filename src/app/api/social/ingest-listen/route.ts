@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { getMergedSocialRegistry } from '@/strategies/load-social'
 import { isSocialIngestAuthorized } from '@/utils/social/config'
 
@@ -40,6 +40,7 @@ export function collectListenChannelPeers(
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   const key = request.nextUrl.searchParams.get('key')
   if (!isSocialIngestAuthorized(key)) {
     return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })

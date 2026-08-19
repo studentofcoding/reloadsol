@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import {
   deleteTrackedWallet,
   fetchSocialIngestStats,
@@ -10,6 +10,7 @@ import { normalizeSolanaAddress } from '@/utils/solana-address'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   const rollupsLimit = Number(request.nextUrl.searchParams.get('rollups_limit') ?? 50)
   const [wallets, rollups, stats] = await Promise.all([
     listTrackedWallets(false),

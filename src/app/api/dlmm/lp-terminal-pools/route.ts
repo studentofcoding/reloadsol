@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { cacheTag, cacheLife } from 'next/cache'
 import { getLpTerminalIndexerBase } from '@/utils/dlmm/lp-terminal'
 
@@ -26,6 +26,7 @@ async function fetchLpPoolsCached(url: string): Promise<string> {
 }
 
 export async function GET(req: NextRequest) {
+  await connection()
   const sp = req.nextUrl.searchParams
   const upstreamBase = getLpTerminalIndexerBase()
   const params = new URLSearchParams()

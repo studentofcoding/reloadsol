@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
 import type { TokenRugSource } from '@/types/rug-list';
 import { parseDbChain } from '@/utils/app-network-db';
 import {
@@ -25,6 +25,7 @@ const VALID_SOURCES: TokenRugSource[] = [
 
 export async function GET(req: NextRequest) {
   try {
+    await connection()
     const chain = parseDbChain(req.nextUrl.searchParams.get('chain'));
     const entries = await getRugList(chain);
     return NextResponse.json({ success: true, entries });

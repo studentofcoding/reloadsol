@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { trackTokenMcap, getMcapDisplayString, isInTrackingRange, cleanupOldMcapRecords, getTrackingHealthStats, STOP_LOSS_THRESHOLD, MAX_TRACKING_AGE_MS, TokenLabel, normalizeTrackingTimeline, type McapSnapshot } from '@/utils/mcap-tracker'
 import { query, queryOne } from '@/utils/db'
 import { getSolPriceUSD } from '@/utils/solana'
@@ -103,6 +103,7 @@ function buildMcapListWhere(params: McapListFilterParams): { sql: string; values
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const action = searchParams.get('action')
     const tokenAddress = searchParams.get('token')

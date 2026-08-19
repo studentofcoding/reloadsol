@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import {
   listMcapSocialPatterns24h,
   patternRules,
@@ -10,6 +10,7 @@ export const maxDuration = 120
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const chain = parseDbChain(request.nextUrl.searchParams.get('chain'))
     const refresh = request.nextUrl.searchParams.get('refresh') === 'true'
     const result = refresh

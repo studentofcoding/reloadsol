@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, connection } from 'next/server'
 import { cacheTag, cacheLife } from 'next/cache'
 import { JupiterBaseAsset, JupiterPool, JupiterResponse } from '@/types'
 
@@ -79,6 +79,7 @@ async function getTrendingPricesCached(): Promise<TokenPrice[]> {
 
 export async function GET() {
   try {
+    await connection()
     const uniquePrices = await getTrendingPricesCached()
 
     return NextResponse.json(

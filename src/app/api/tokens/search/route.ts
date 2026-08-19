@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { searchTokenStats } from '@/utils/jupiter-pools-test'
 
 // Enhanced caching for token search results
@@ -118,6 +118,7 @@ async function searchTokenWithCache(address: string): Promise<any> {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const address = searchParams.get('address')
     

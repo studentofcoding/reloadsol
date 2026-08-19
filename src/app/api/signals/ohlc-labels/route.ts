@@ -1,10 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { listSignalOhlcLabels } from '@/strategies/signal-ohlc-labels'
 import type { SignalOhlcLabelKind } from '@/strategies/signal-ohlc-window'
 
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const labelRaw = searchParams.get('label')?.trim()
     const label =

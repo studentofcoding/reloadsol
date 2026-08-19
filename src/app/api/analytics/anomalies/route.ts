@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
 import { withUnifiedLogging } from '@/utils/unified-logger';
 import { dataAggregationService } from '@/utils/data-aggregation';
 import { ZScoreAnomalyDetector } from '@/utils/algo/anomaly-detection';
@@ -69,6 +69,7 @@ export const GET = withUnifiedLogging(async (request: NextRequest, logger) => {
     const startTime = Date.now();
 
     try {
+        await connection()
         const { searchParams } = new URL(request.url);
         const timeframe = (searchParams.get('timeframe') as '1h' | '4h' | '24h' | '7d') || '24h';
         const includeCorrelation = searchParams.get('includeCorrelation') === 'true';

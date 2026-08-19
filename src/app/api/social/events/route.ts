@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { fetchRecentSocialEventsFeed } from '@/strategies/social/db'
 
 
 export async function GET(request: NextRequest) {
+  await connection()
   const limit = Number(request.nextUrl.searchParams.get('limit') ?? 50)
   const hours = Number(request.nextUrl.searchParams.get('hours') ?? 24)
   const telegramOnly = request.nextUrl.searchParams.get('telegram_only') !== 'false'

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { fetchTokenPricesBatch, getJupiterApiVersion, JupiterAPIError } from '@/utils/jupiter-api'
 import { cacheGet, cacheSet } from '@/utils/redis-cache'
 
@@ -294,6 +294,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  await connection()
   const { searchParams } = new URL(request.url)
   const tokensParam = searchParams.get('tokens') || searchParams.get('token')
   const tokens = tokensParam ? tokensParam.split(',').filter(Boolean) : []

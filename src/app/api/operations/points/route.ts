@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, connection } from 'next/server';
 import { queryOne } from '@/utils/db';
 import { fetchWalletStats } from '@/utils/points';
 
@@ -15,6 +15,7 @@ interface WalletStatsResponse {
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url);
     const walletAddress = searchParams.get('wallet');
 

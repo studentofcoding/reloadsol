@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { aggregateStrategyReports } from '@/strategies/db'
 import {
   DEFAULT_REPORT_TIMEZONE,
@@ -10,6 +10,7 @@ import type { StrategyDomain } from '@/strategies/types'
 
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const domain = searchParams.get('domain') as StrategyDomain | null
     const strategyId = searchParams.get('strategy_id') ?? undefined

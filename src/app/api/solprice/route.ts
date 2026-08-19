@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, connection } from 'next/server'
 import { getSolPriceUSDCore, getCachedPriceInfo, warmSolPriceCacheFromRedis } from '../../../utils/sol-price-core'
 
 // Request deduplication for concurrent requests
@@ -6,6 +6,7 @@ let ongoingRequest: Promise<{ price: number; source: string }> | null = null
 
 export async function GET() {
   try {
+    await connection()
     await warmSolPriceCacheFromRedis()
     const cachedInfo = getCachedPriceInfo();
 

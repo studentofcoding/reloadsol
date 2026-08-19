@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, connection } from 'next/server'
 import { query } from '@/utils/db'
 
 // Force dynamic rendering for this route
@@ -6,6 +6,7 @@ import { query } from '@/utils/db'
 // GET /api/trading/records/all?limit=<number>
 export async function GET(request: NextRequest) {
   try {
+    await connection()
     const { searchParams } = new URL(request.url)
     const limit = parseInt(searchParams.get('limit') || '1000')
 
