@@ -2,6 +2,7 @@
 
 import React, {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -15,7 +16,7 @@ import {
 import { WalletNotification } from "@/components/WalletNotification";
 import { WalletSessionProvider } from "@/components/WalletSessionContext";
 import { RpcProvider, useRpc } from "@/contexts/RpcContext";
-import { AppNetworkProvider } from "@/contexts/AppNetworkContext";
+import { AppNetworkProvider, useAppNetwork } from "@/contexts/AppNetworkContext";
 import { RhWalletModeProvider } from "@/contexts/RhWalletModeContext";
 import { TradeProviderProvider } from "@/contexts/TradeProviderContext";
 import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
@@ -177,6 +178,36 @@ export function useConnection() {
     throw new Error("useConnection must be used within a WalletProvider");
   }
   return ctx;
+}
+
+/**
+ * Disconnect the wallet for the given chain (or the active chain by default).
+ * Sol: calls the Jupiter adapter's disconnect (from useUnifiedWallet).
+ * Robinhood: clears the Rabby/EVM wallet state via useRhEvmWallet().disconnect.
+ */
+export function useDisconnectWallet() {
+  const { disconnect: disconnectSol, connected: solConnected } = useWallet();
+  const rh = useRhEvmWallet();
+  const { network } = useAppNetwork();
+
+  const disconnectActive = useCallback(async () => {
+    if (network === "robinhood") {
+      await rh.disconnect();
+    } else {
+      if (solConnected) await disconnectSol();
+      // Also clear RH state if it was connected — disconnecting one chain
+      // should not leave the other half-connected in the same UI session.
+      await rh.disconnect();
+    }
+  }, [network, solConnected, disconnectSol, rh]);
+
+  return {
+    disconnectActive,
+    solConnected,
+    rhConnected: Boolean(rh.address),
+    disconnectSol: disconnectSol,
+    disconnectRh: rh.disconnect,
+  };
 }
 
 /** Resolved base58 address from Jupiter wallet state (all known shapes). */

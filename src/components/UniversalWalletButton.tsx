@@ -10,6 +10,7 @@ import { useAppNetwork } from "@/contexts/AppNetworkContext";
 import { useRhWalletMode } from "@/contexts/RhWalletModeContext";
 import { useGmgnBoundWallets } from "@/hooks/useGmgnBoundWallets";
 import { useRhEvmWallet } from "@/hooks/useRhEvmWallet";
+import { useDisconnectWallet } from "@/components/WalletProvider";
 import { resolveRhActiveAddress } from "@/utils/rh-wallet-mode";
 
 interface UniversalWalletButtonProps {
@@ -35,6 +36,17 @@ export default function UniversalWalletButton({
   // EVM-only whitelist: show toggle when Rabby is present so they can connect.
   const showRhToggle = canUseRh || rh.hasProvider;
   const [rhHint, setRhHint] = useState<string | null>(null);
+  const { disconnectActive, disconnectRh } = useDisconnectWallet();
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const handleDisconnect = async () => {
+    setDisconnecting(true);
+    try {
+      await disconnectActive();
+    } finally {
+      setDisconnecting(false);
+    }
+  };
 
   if (variant === "jupiter") {
     return (
@@ -110,9 +122,20 @@ export default function UniversalWalletButton({
 
       {network === "sol" ? (
         connected ? (
-          <UnifiedWalletButton
-            currentUserClassName="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium transition-colors border border-gray-600"
-          />
+          <div className="flex items-center gap-1.5">
+            <UnifiedWalletButton
+              currentUserClassName="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium transition-colors border border-gray-600"
+            />
+            <button
+              type="button"
+              onClick={() => void handleDisconnect()}
+              disabled={disconnecting}
+              title="Disconnect Solana wallet"
+              className="px-2.5 py-2 rounded-lg font-semibold border border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed text-xs"
+            >
+              {disconnecting ? "…" : "Disconnect"}
+            </button>
+          </div>
         ) : (
           <button
             type="button"
@@ -139,18 +162,29 @@ export default function UniversalWalletButton({
         </div>
       ) : rh.address ? (
         <div className="flex flex-col gap-1">
-          <button
-            type="button"
-            onClick={() => void rh.connect()}
-            className="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium border border-gray-600 font-mono text-sm"
-            title={rh.address}
-          >
-            {shortAddr(rh.address)}
-            {!rh.isCorrectChain ? " · switch RH" : ""}
-            {activeRh ? (
-              <span className="text-gray-400 text-[10px] ml-1">parent</span>
-            ) : null}
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => void rh.connect()}
+              className="bg-black hover:bg-gray-800 text-white px-4 py-2 rounded-lg font-medium border border-gray-600 font-mono text-sm"
+              title={rh.address}
+            >
+              {shortAddr(rh.address)}
+              {!rh.isCorrectChain ? " · switch RH" : ""}
+              {activeRh ? (
+                <span className="text-gray-400 text-[10px] ml-1">parent</span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => void disconnectRh()}
+              disabled={disconnecting}
+              title="Disconnect Robinhood wallet"
+              className="px-2.5 py-2 rounded-lg font-semibold border border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed text-xs"
+            >
+              {disconnecting ? "…" : "Disconnect"}
+            </button>
+          </div>
           {rh.error ? (
             <span className="text-[10px] text-red-400 max-w-[180px]">{rh.error}</span>
           ) : null}

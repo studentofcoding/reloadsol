@@ -185,6 +185,22 @@ export function useRhEvmWallet() {
     }
   }, [ensureChain, refresh])
 
+  const disconnect = useCallback(async () => {
+    setError(null)
+    const eth = getEthereumProvider()
+    // EIP-1193 has no standard "disconnect" — best-effort notify the
+    // provider and clear our local state. Rabby (like most wallets) does
+    // not revoke permissions via RPC; the user can lock/remove the site
+    // in the wallet UI, but the app must no longer consider it connected.
+    try {
+      await eth?.request({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] })
+    } catch {
+      /* non-standard / unsupported — ignore */
+    }
+    setAddress(null)
+    setChainId(null)
+  }, [])
+
   // ArrowRPC has no CORS headers, so reads must go through our proxy
   // (/api/rh/rpc) instead of the browser POSTing to the RPC directly.
   // Defer creation until after mount: viem's createPublicClient internally
@@ -234,6 +250,7 @@ export function useRhEvmWallet() {
     connecting,
     error,
     connect,
+    disconnect,
     ensureChain,
     refresh,
     publicClient,
